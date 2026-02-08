@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared PromptCard state and helpers.
-Encapsulates negative prompt visibility, modal toggles (LoRA/TI/Style), style selection, and token insertion into prompt fields.
+Encapsulates capability-gated negative prompt visibility, modal toggles (LoRA/TI/Style), style selection, and token insertion into prompt fields.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PromptInsertPayload` (type): Token insertion payload accepted by `onInsertToken`.
@@ -23,14 +23,12 @@ export type PromptInsertPayload = string | { token: string; target?: 'positive' 
 export function usePromptCard(options: {
   prompt: Ref<string>
   negative: Ref<string>
-  defaultShowNegative?: boolean
   supportsNegative?: boolean
 }) {
   const stylesStore = useStylesStore()
 
   const supportsNegative = options.supportsNegative !== false
-  const showNegative = ref(Boolean(options.defaultShowNegative) && supportsNegative)
-  const hideNegative = computed(() => !showNegative.value)
+  const hideNegative = computed(() => !supportsNegative)
 
   const showLora = ref(false)
   const showTI = ref(false)
@@ -38,11 +36,6 @@ export function usePromptCard(options: {
 
   const styleName = ref('')
   const styleNames = computed(() => stylesStore.names())
-
-  function toggleNegative(): void {
-    if (!supportsNegative) return
-    showNegative.value = !showNegative.value
-  }
 
   function appendToken(target: Ref<string>, token: string): void {
     if (!token) return
@@ -60,7 +53,6 @@ export function usePromptCard(options: {
     }
 
     if (target === 'negative') {
-      showNegative.value = true
       appendToken(options.negative, token)
       return
     }
@@ -76,9 +68,6 @@ export function usePromptCard(options: {
       appendToken(options.prompt, style.prompt)
     }
     if (style.negative) {
-      if (supportsNegative) {
-        showNegative.value = true
-      }
       appendToken(options.negative, style.negative)
     }
   }
@@ -88,9 +77,7 @@ export function usePromptCard(options: {
   }
 
   return {
-    showNegative,
     hideNegative,
-    toggleNegative,
     showLora,
     showTI,
     showStyle,

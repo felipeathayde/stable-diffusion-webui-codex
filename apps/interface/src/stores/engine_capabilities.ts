@@ -7,10 +7,15 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Pinia store for backend engine capability gating.
-Fetches `/api/engines/capabilities` and exposes cached capability + asset-contract + backend-owned dependency-check maps so views/components can gate
-UI features, required asset selection, and readiness indicators from a single contract surface.
+Fetches `/api/engines/capabilities` and exposes cached capability + family + asset-contract + backend-owned dependency-check maps so views/components can gate
+UI features, required asset selection, family-specific behavior, and readiness indicators from a single contract surface.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `asEngineDependencyCheckRow` (function): Validates/coerces one dependency-check row from unknown payload data.
+- `asEngineDependencyStatus` (function): Validates/coerces one dependency status payload per semantic engine.
+- `parseDependencyChecks` (function): Parses strict `dependency_checks` map from capabilities response.
+- `parseEngineIdToSemanticMap` (function): Parses strict `engine_id_to_semantic_engine` map from capabilities response.
+- `parseFamilyCapabilities` (function): Parses strict `families` capability map from capabilities response.
 - `useEngineCapabilitiesStore` (store): Pinia store exposing engine capabilities, load state, and lookup helpers.
 */
 
@@ -21,6 +26,7 @@ import type {
   EngineAssetContractVariants,
   EngineCapabilitiesResponse,
   EngineCapabilities,
+  FamilyCapabilities,
   EngineDependencyStatus,
   EngineDependencyCheckRow,
 } from '../api/types'
@@ -122,8 +128,40 @@ function parseEngineIdToSemanticMap(payload: unknown): Record<string, string> {
   return out
 }
 
+function parseFamilyCapabilities(payload: unknown): Record<string, FamilyCapabilities> {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} missing 'families' object.`)
+  }
+  const raw = payload as Record<string, unknown>
+  const out: Record<string, FamilyCapabilities> = {}
+  for (const [family, value] of Object.entries(raw)) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} family capability '${family}' must be an object.`)
+    }
+    const row = value as Record<string, unknown>
+    const supportsNegative = row.supports_negative_prompt
+    const showsClipSkip = row.shows_clip_skip
+    if (typeof supportsNegative !== 'boolean') {
+      throw new Error(
+        `${CAPABILITIES_CONTRACT_ERROR_PREFIX} family capability '${family}' has non-boolean 'supports_negative_prompt'.`,
+      )
+    }
+    if (typeof showsClipSkip !== 'boolean') {
+      throw new Error(
+        `${CAPABILITIES_CONTRACT_ERROR_PREFIX} family capability '${family}' has non-boolean 'shows_clip_skip'.`,
+      )
+    }
+    out[family] = {
+      supports_negative_prompt: supportsNegative,
+      shows_clip_skip: showsClipSkip,
+    }
+  }
+  return out
+}
+
 export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () => {
   const engines = ref<Record<string, EngineCapabilities>>({})
+  const families = ref<Record<string, FamilyCapabilities>>({})
   const assetContracts = ref<Record<string, EngineAssetContractVariants>>({})
   const dependencyChecks = ref<Record<string, EngineDependencyStatus>>({})
   const engineIdToSemanticEngine = ref<Record<string, string>>({})
@@ -150,8 +188,10 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
         }
         const nextDependencyChecks = parseDependencyChecks(res.dependency_checks)
         const nextEngineMap = parseEngineIdToSemanticMap(res.engine_id_to_semantic_engine)
+        const nextFamilies = parseFamilyCapabilities(res.families)
 
         engines.value = res.engines
+        families.value = nextFamilies
         assetContracts.value = res.asset_contracts ?? {}
         dependencyChecks.value = nextDependencyChecks
         engineIdToSemanticEngine.value = nextEngineMap
@@ -196,6 +236,18 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     return dependencyChecks.value[semantic] ?? null
   }
 
+  function getFamily(family: string | null | undefined): FamilyCapabilities | null {
+    const key = String(family || '').trim().toLowerCase()
+    if (!key) return null
+    return families.value[key] ?? null
+  }
+
+  function getFamilyForEngine(engine: string | null | undefined): FamilyCapabilities | null {
+    const semantic = semanticEngineForId(engine)
+    if (!semantic) return null
+    return getFamily(semantic)
+  }
+
   function firstDependencyError(engine: string | null | undefined): string {
     const status = getDependencyStatus(engine)
     if (!status) return "Dependency checks are not available for this engine."
@@ -231,6 +283,7 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
 
   return {
     engines,
+    families,
     assetContracts,
     dependencyChecks,
     engineIdToSemanticEngine,
@@ -242,6 +295,8 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     init,
     semanticEngineForId,
     get,
+    getFamily,
+    getFamilyForEngine,
     getAssetVariants,
     getDependencyStatus,
     firstDependencyError,

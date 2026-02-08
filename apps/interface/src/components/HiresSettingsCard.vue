@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Hires (second pass) settings panel.
-Renders hires controls (scale/denoise/steps/upscaler + Spandrel tile config, including min tile and OOM fallback preference) and optional hires refiner settings when enabled.
+Renders hires controls (scale/denoise/steps/upscaler + Spandrel tile config, including min tile and OOM fallback preference) and optional
+second-pass swap-model settings when enabled.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -101,16 +102,16 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
     <div v-if="enabled && showRefiner" class="hr-refiner">
       <RefinerSettingsCard
-        label="Hires Refiner"
+        label="Second-Pass Swap Model"
         :dense="true"
+        :model-choices="refinerModelChoices"
         v-model:enabled="refinerEnabled"
         v-model:steps="refinerSteps"
         v-model:cfg="refinerCfg"
         v-model:seed="refinerSeed"
         v-model:model="refinerModel"
-        v-model:vae="refinerVae"
       />
-      <p class="hr-hint">Runs after the hires pass; choose a refiner checkpoint and overrides here.</p>
+      <p class="hr-hint">Runs at the configured second-pass step; choose checkpoint swap and overrides here.</p>
     </div>
   </div>
 </template>
@@ -145,7 +146,7 @@ const props = defineProps<{
   refinerCfg?: number
   refinerSeed?: number
   refinerModel?: string
-  refinerVae?: string
+  refinerModelChoices?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -162,7 +163,6 @@ const emit = defineEmits<{
   (e: 'update:refinerCfg', value: number): void
   (e: 'update:refinerSeed', value: number): void
   (e: 'update:refinerModel', value: string): void
-  (e: 'update:refinerVae', value: string): void
 }>()
 
 const disabled = computed(() => Boolean(props.disabled))
@@ -229,10 +229,7 @@ const refinerModel = computed({
   get: () => props.refinerModel ?? '',
   set: (value: string) => emit('update:refinerModel', value),
 })
-const refinerVae = computed({
-  get: () => props.refinerVae ?? '',
-  set: (value: string) => emit('update:refinerVae', value),
-})
+const refinerModelChoices = computed(() => Array.isArray(props.refinerModelChoices) ? props.refinerModelChoices : [])
 
 function toggle(): void {
   emit('update:enabled', !props.enabled)

@@ -808,3 +808,70 @@ Correct command:
 ```bash
 rg -n 'Running `.sangoi` pytest without exporting|Wrong command:|Correct command:' COMMON_MISTAKES.md
 ```
+
+### Assuming Anima has `sampler.py` and `conditioning.py` under `runtime/families/anima`
+
+Wrong command:
+```bash
+rg -n "def |for |while |torch\\.cat|torch\\.stack|permute\\(|view\\(|reshape\\(|repeat\\(|interpolate\\(|einsum|matmul|bmm|chunk\\(|split\\(" apps/backend/runtime/families/anima/wan_vae.py apps/backend/runtime/families/anima/loader.py apps/backend/runtime/families/anima/sampler.py apps/backend/runtime/families/anima/conditioning.py
+```
+
+Cause and fix:
+`sampler.py` and `conditioning.py` do not exist in `apps/backend/runtime/families/anima`. Shared sampling logic lives in `apps/backend/runtime/sampling/*`.
+List the family directory first, then target real files.
+
+Correct command:
+```bash
+ls -1 apps/backend/runtime/families/anima
+rg -n "def |for |while |torch\\.cat|torch\\.stack|permute\\(|view\\(|reshape\\(|repeat\\(|interpolate\\(|einsum|matmul|bmm|chunk\\(|split\\(" apps/backend/runtime/families/anima/wan_vae.py apps/backend/runtime/families/anima/loader.py apps/backend/runtime/sampling/inner_loop.py apps/backend/runtime/sampling/condition.py
+```
+
+### Assuming `runtime/sampling/samplers.py` exists
+
+Wrong command:
+```bash
+rg -n "def |for .* in |while |torch\\.cat|torch\\.stack|chunk\\(|split\\(" apps/backend/runtime/sampling/driver.py apps/backend/runtime/sampling/sigma_schedules.py apps/backend/runtime/sampling/samplers.py
+```
+
+Cause and fix:
+This repo does not have `apps/backend/runtime/sampling/samplers.py`; sampler selection is registry/context-driven across other modules.
+Use `rg --files apps/backend/runtime/sampling` (or `ls`) before targeting filenames.
+
+Correct command:
+```bash
+rg --files apps/backend/runtime/sampling
+rg -n "def |for .* in |while |torch\\.cat|torch\\.stack|chunk\\(|split\\(" apps/backend/runtime/sampling/driver.py apps/backend/runtime/sampling/sigma_schedules.py apps/backend/runtime/sampling/inner_loop.py apps/backend/runtime/sampling/condition.py
+```
+
+### Assuming image API helpers live in `interfaces/api/image_io.py` or `interfaces/api/media.py`
+
+Wrong command:
+```bash
+rg -n "def encode_images|def save_generated_images|for .* in images|base64|PNG" apps/backend/interfaces/api/tasks/generation_tasks.py apps/backend/interfaces/api/image_io.py apps/backend/interfaces/api/media.py
+```
+
+Cause and fix:
+In this repo, image task helpers are consolidated in `apps/backend/interfaces/api/tasks/generation_tasks.py`; `image_io.py` and `media.py` are not present at those paths.
+Discover existing files with `rg --files` before multi-path grep.
+
+Correct command:
+```bash
+rg --files apps/backend/interfaces/api | rg 'tasks|generation'
+rg -n "def encode_images|def save_generated_images|for .* in images|base64|PNG" apps/backend/interfaces/api/tasks/generation_tasks.py
+```
+
+### Grepping headings with backticks using double quotes (yet again)
+
+Wrong command:
+```bash
+rg -n "Assuming Anima has `sampler.py`|Assuming `runtime/sampling/samplers.py` exists|Assuming image API helpers live" COMMON_MISTAKES.md
+```
+
+Cause and fix:
+Backticks inside double quotes trigger shell command substitution in `bash` (`sampler.py`/`runtime/sampling/samplers.py` were treated as commands/paths).
+Use single-quoted regex for literal backticks.
+
+Correct command:
+```bash
+rg -n 'Assuming Anima has `sampler.py`|Assuming `runtime/sampling/samplers.py` exists|Assuming image API helpers live' COMMON_MISTAKES.md
+```

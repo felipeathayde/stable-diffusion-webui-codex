@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-07
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -51,3 +51,4 @@ Status: Active
 - 2026-02-06: `models.py` `engine_id_to_semantic_engine` now also maps `flux1_fill -> flux1` to keep strict frontend known-id semantic resolution in sync.
 - 2026-02-05: `ui.py` tab allowlist now accepts `anima`; unknown/empty tab types are fail-loud (`400` for create payloads, `500` on invalid persisted `tabs.json` entries) instead of silent coercion to `sd15`.
 - 2026-02-07: `generation.py` now validates Anima sampler selections early (txt2img/img2img + hires sampler overrides) against the semantic capability allowlist, returning HTTP 400 instead of late runtime `NotImplementedError`.
+- 2026-02-08: `generation.py` now parses `extras.er_sde` / `img2img_extras.er_sde` strictly (unknown-key rejection, solver normalization, numeric bounds/finite checks), enforces ER-SDE Anima-only release scope on base+hires sampler fields, and validates prompt `<sampler:...>` control tags against release scope/allowlists.

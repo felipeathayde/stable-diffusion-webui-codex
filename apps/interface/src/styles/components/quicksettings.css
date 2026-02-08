@@ -67,6 +67,7 @@
   .quicksettings .qs-group-wan-vae { flex: 1 1 120px; max-width: 200px; }
   .quicksettings .qs-group-attention { flex: 0 0 auto; min-width: 85px; }
   .quicksettings .qs-group-models { flex: 0 0 auto; }
+  .quicksettings .qs-group-mode-toggle { flex: 0 0 auto; }
   .quicksettings .qs-group-overrides { flex: 0 0 auto; }
   .quicksettings .qs-group-advanced-toggle { flex: 0 0 auto; }
   .quicksettings .qs-group-perf-vram { flex: 0 0 auto; min-width: 80px; }
@@ -181,6 +182,13 @@
 
   .quicksettings.quicksettings-loading .select-md {
     animation: qs-select-pulse 0.85s ease-in-out infinite alternate;
+  }
+
+  .quicksettings-path-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    min-width: min(30rem, 80vw);
   }
 
   @keyframes qs-select-pulse {

@@ -204,7 +204,13 @@ function openBatchMenu(): void {
   void nextTick(() => {
     updateBatchMenuPosition()
     const firstInput = batchMenuPanelEl.value?.querySelector<HTMLInputElement>('input')
-    firstInput?.focus()
+    if (firstInput) {
+      try {
+        firstInput.focus({ preventScroll: true })
+      } catch {
+        firstInput.focus()
+      }
+    }
   })
 }
 

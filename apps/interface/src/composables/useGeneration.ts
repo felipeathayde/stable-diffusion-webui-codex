@@ -280,6 +280,15 @@ export function useGeneration(tabId: string) {
       state.value.errorMessage = message
       return
     }
+    const familyCaps = backendCaps.getFamilyForEngine(engineOverrideForRequest)
+    if (!familyCaps) {
+      const message = `Family capabilities missing for '${engineOverrideForRequest}'.`
+      console.error(`[useGeneration] ${message}`)
+      state.value.status = 'error'
+      state.value.errorMessage = message
+      return
+    }
+    const supportsNegative = familyCaps.supports_negative_prompt
 
     const assetContract = backendCaps.getAssetContract(engineOverrideForRequest, { checkpointCoreOnly: modelIsCoreOnly })
 
@@ -385,7 +394,6 @@ export function useGeneration(tabId: string) {
       let taskId = ''
       if (p.useInitImage) {
         const isFlowModel = Boolean(config.capabilities.usesDistilledCfg) && !config.capabilities.usesCfg
-        const supportsNegative = Boolean(config.capabilities.usesNegativePrompt)
         const img2imgExtras: Record<string, unknown> = { ...extras }
 
         const payload: any = {
@@ -453,7 +461,6 @@ export function useGeneration(tabId: string) {
       } else {
         let payload: Txt2ImgRequest
         try {
-          const supportsNegative = Boolean(config.capabilities.usesNegativePrompt)
           payload = buildTxt2ImgPayload({
             prompt: p.prompt,
             negativePrompt: supportsNegative ? p.negativePrompt : '',

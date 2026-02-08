@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Refiner configuration card (e.g., SDXL).
-Renders a compact refiner enable switch and optional fields (model/VAE/steps/CFG/seed), emitting updates to parent views.
+Purpose: Swap-model configuration card (first pass or hires second pass).
+Renders a compact enable switch and optional fields (checkpoint swap step + CFG/seed), emitting updates to parent views.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RefinerSettingsCard` (component): Refiner settings panel component.
@@ -26,12 +26,12 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
     <div v-if="enabled" class="rf-grid">
       <div class="rf-cell">
-        <label class="label-muted">Model</label>
-        <input class="ui-input ui-input-sm" type="text" :value="model" @change="onModelChange" />
-      </div>
-      <div class="rf-cell">
-        <label class="label-muted">VAE</label>
-        <input class="ui-input ui-input-sm" type="text" :value="vae" @change="onVaeChange" />
+        <label class="label-muted">Checkpoint Swap</label>
+        <select class="select-md" :value="model" @change="onModelChange">
+          <option value="">Keep current model</option>
+          <option v-if="showCurrentModelOption" :value="model">{{ model }}</option>
+          <option v-for="choice in normalizedModelChoices" :key="choice" :value="choice">{{ choice }}</option>
+        </select>
       </div>
       <div class="rf-cell">
         <label class="label-muted">Steps</label>
@@ -52,17 +52,19 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 // tags: refiner, settings, grid
+import { computed } from 'vue'
+
 const props = withDefaults(defineProps<{
   enabled: boolean
   steps: number
   cfg: number
   seed: number
   model?: string
-  vae?: string
+  modelChoices?: string[]
   label?: string
   dense?: boolean
 }>(), {
-  label: 'Refiner',
+  label: 'Swap Model',
   dense: false,
 })
 
@@ -72,8 +74,25 @@ const emit = defineEmits<{
   (e: 'update:cfg', value: number): void
   (e: 'update:seed', value: number): void
   (e: 'update:model', value: string): void
-  (e: 'update:vae', value: string): void
 }>()
+
+const normalizedModelChoices = computed(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of props.modelChoices || []) {
+    const value = String(raw || '').trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    out.push(value)
+  }
+  return out
+})
+
+const showCurrentModelOption = computed(() => {
+  const current = String(props.model || '').trim()
+  if (!current) return false
+  return !normalizedModelChoices.value.includes(current)
+})
 
 function toggle(): void {
   emit('update:enabled', !props.enabled)
@@ -95,11 +114,7 @@ function onSeedChange(event: Event): void {
 }
 
 function onModelChange(event: Event): void {
-  emit('update:model', (event.target as HTMLInputElement).value)
-}
-
-function onVaeChange(event: Event): void {
-  emit('update:vae', (event.target as HTMLInputElement).value)
+  emit('update:model', (event.target as HTMLSelectElement).value)
 }
 </script>
 

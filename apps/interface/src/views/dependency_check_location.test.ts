@@ -46,8 +46,12 @@ describe('dependency check panel location', () => {
 
   it('keeps dependency readiness gating in image and WAN tabs', () => {
     expect(imageSource).toContain('const dependencyReady = computed(() => Boolean(dependencyStatus.value?.ready))')
+    expect(imageSource).toContain('const familyCapabilities = computed(() => engineCaps.getFamilyForEngine(resolvedEngineForMode.value))')
     expect(imageSource).toContain(
-      'dependencyReady.value && (params.value.useInitImage ? supportsImg2Img.value : supportsTxt2Img.value)',
+      'dependencyReady.value',
+    )
+    expect(imageSource).toContain(
+      '&& Boolean(familyCapabilities.value)',
     )
     expect(imageSource).toContain('if (!dependencyStatus.value) return')
     expect(imageSource).toContain('if (!dependencyStatus.value.ready) return')

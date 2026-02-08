@@ -15,7 +15,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DEVICE_VALUES` (const): Allowed device tokens for requests.
 - `DeviceEnum` (const): Zod enum built from `DEVICE_VALUES`.
 - `RefinerOptionsSchema` (const): Zod schema for refiner options.
-- `UpscalerTileSchema` (const): Zod schema for upscaler tiling config (tile/overlap + OOM fallback).
 - `UpscalerTileSchema` (const): Zod schema for upscaler tiling config (tile/overlap + OOM fallback + min tile).
 - `HiresOptionsSchema` (const): Zod schema for hires options (including nested refiner).
 - `PromptSchema` (const): Zod schema for prompt validation/normalization.
@@ -309,7 +308,6 @@ export function buildTxt2ImgPayload(
             cfg: state.hires.refiner.cfg,
             seed: state.hires.refiner.seed,
             model: state.hires.refiner.model,
-            vae: state.hires.refiner.vae,
           }
         : undefined,
     }
@@ -321,7 +319,6 @@ export function buildTxt2ImgPayload(
       cfg: state.refiner.cfg,
       seed: state.refiner.seed,
       model: state.refiner.model,
-      vae: state.refiner.vae,
     }
   }
   // Merge engine-specific extras from state (e.g., tenc_sha for Z Image)

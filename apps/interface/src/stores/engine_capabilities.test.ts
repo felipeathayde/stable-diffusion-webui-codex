@@ -38,6 +38,33 @@ function sd15Surface() {
   }
 }
 
+function familyCaps() {
+  return {
+    sd15: {
+      supports_negative_prompt: true,
+      shows_clip_skip: true,
+    },
+  }
+}
+
+function engineToSemanticMap() {
+  return {
+    sd15: 'sd15',
+    sdxl: 'sdxl',
+    flux1: 'flux1',
+    flux1_chroma: 'flux1',
+    flux1_kontext: 'flux1',
+    flux1_fill: 'flux1',
+    zimage: 'zimage',
+    anima: 'anima',
+    wan22: 'wan22',
+    wan22_14b: 'wan22',
+    wan22_5b: 'wan22',
+    hunyuan_video: 'hunyuan_video',
+    svd: 'svd',
+  }
+}
+
 describe('useEngineCapabilitiesStore dependency checks', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -47,6 +74,8 @@ describe('useEngineCapabilitiesStore dependency checks', () => {
   it('loads dependency checks when contract is valid', async () => {
     mockedFetchEngineCapabilities.mockResolvedValue({
       engines: { sd15: sd15Surface() },
+      families: familyCaps(),
+      engine_id_to_semantic_engine: engineToSemanticMap(),
       dependency_checks: {
         sd15: {
           ready: true,
@@ -62,6 +91,8 @@ describe('useEngineCapabilitiesStore dependency checks', () => {
 
     expect(store.loaded).toBe(true)
     expect(store.get('sd15')?.supports_txt2img).toBe(true)
+    expect(store.getFamily('sd15')?.supports_negative_prompt).toBe(true)
+    expect(store.getFamilyForEngine('sd15')?.shows_clip_skip).toBe(true)
     expect(store.getDependencyStatus('sd15')?.ready).toBe(true)
     expect(store.firstDependencyError('sd15')).toBe('')
   })
@@ -69,6 +100,8 @@ describe('useEngineCapabilitiesStore dependency checks', () => {
   it('fails loud when dependency_checks are missing', async () => {
     mockedFetchEngineCapabilities.mockResolvedValue({
       engines: { sd15: sd15Surface() },
+      families: familyCaps(),
+      engine_id_to_semantic_engine: engineToSemanticMap(),
     } as any)
 
     const store = useEngineCapabilitiesStore()
@@ -80,6 +113,8 @@ describe('useEngineCapabilitiesStore dependency checks', () => {
   it('fails loud when ready flag conflicts with check rows', async () => {
     mockedFetchEngineCapabilities.mockResolvedValue({
       engines: { sd15: sd15Surface() },
+      families: familyCaps(),
+      engine_id_to_semantic_engine: engineToSemanticMap(),
       dependency_checks: {
         sd15: {
           ready: true,
@@ -92,6 +127,25 @@ describe('useEngineCapabilitiesStore dependency checks', () => {
 
     const store = useEngineCapabilitiesStore()
     await expect(store.init()).rejects.toThrow(/inconsistent/i)
+    expect(store.loaded).toBe(false)
+  })
+
+  it('fails loud when families are missing', async () => {
+    mockedFetchEngineCapabilities.mockResolvedValue({
+      engines: { sd15: sd15Surface() },
+      engine_id_to_semantic_engine: engineToSemanticMap(),
+      dependency_checks: {
+        sd15: {
+          ready: true,
+          checks: [
+            { id: 'capability_surface', label: 'Capability Surface', ok: true, message: 'ready' },
+          ],
+        },
+      },
+    } as any)
+
+    const store = useEngineCapabilitiesStore()
+    await expect(store.init()).rejects.toThrow(/families/i)
     expect(store.loaded).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 # apps/backend/runtime/processing Overview
 Date: 2025-10-28
-Last Review: 2026-02-03
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -13,3 +13,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to processing primitives (`__init__.py`, `conditioners.py`, `datatypes.py`) (doc-only change; part of rollout).
 - 2026-01-29: `CodexProcessingImg2Img` now includes explicit mask enforcement selection (`post_blend` vs `per_step_clamp`) for Codex-native masked img2img.
 - 2026-02-03: Processing models use `CodexHiresConfig` for hires configuration (renamed).
+- 2026-02-08: `datatypes.py` now includes `ErSdeOptions` and `SamplingPlan.er_sde` to carry normalized ER-SDE runtime options through pipeline stages.

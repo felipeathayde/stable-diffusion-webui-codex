@@ -9,15 +9,19 @@ Required Notice: see NOTICE
 Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
 Capability surfaces include per-engine asset contracts plus backend-owned dependency checks so the UI can enforce sha-only external asset
-selection and readiness gating deterministically.
+selection and readiness gating deterministically. Also provides prompt token-counting (`/api/models/prompt-token-count`) using vendored
+offline tokenizers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
+- `_count_prompt_tokens` (function): Returns tokenizer-accurate prompt token counts for supported semantic engines.
 """
 
 from __future__ import annotations
 
 import logging
+import math
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
 
@@ -27,6 +31,87 @@ from apps.backend.runtime.sampling import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 from apps.backend.interfaces.api.path_utils import _normalize_inventory_for_api
 from apps.backend.interfaces.api.serializers import _serialize_checkpoint
 from apps.backend.interfaces.api.file_metadata import read_file_metadata
+
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+_HF_ROOT = _REPO_ROOT / "apps/backend/huggingface"
+
+_PROMPT_TOKENIZER_DIRS: Dict[str, Path] = {
+    "sd15": _HF_ROOT / "runwayml/stable-diffusion-v1-5/tokenizer",
+    "sdxl": _HF_ROOT / "stabilityai/stable-diffusion-xl-base-1.0/tokenizer",
+    "flux1": _HF_ROOT / "black-forest-labs/FLUX.1-dev/tokenizer_2",
+    "chroma": _HF_ROOT / "Chroma/tokenizer",
+    "zimage": _HF_ROOT / "Tongyi-MAI/Z-Image/tokenizer",
+    "wan": _HF_ROOT / "Wan-AI/Wan2.2-T2V-A14B-Diffusers/tokenizer",
+    "anima_qwen": _HF_ROOT / "circlestone-labs/Anima/qwen25_tokenizer",
+    "anima_t5": _HF_ROOT / "circlestone-labs/Anima/t5_tokenizer",
+}
+
+_ENGINE_TOKENIZER_KEY: Dict[str, str] = {
+    "sd15": "sd15",
+    "sd20": "sd15",
+    "sdxl": "sdxl",
+    "flux1": "flux1",
+    "flux1_kontext": "flux1",
+    "chroma": "chroma",
+    "flux1_chroma": "chroma",
+    "zimage": "zimage",
+    "anima": "anima",
+    "wan": "wan",
+    "wan22": "wan",
+    "wan22_5b": "wan",
+    "wan22_14b": "wan",
+}
+
+
+@lru_cache(maxsize=32)
+def _load_tokenizer(tokenizer_dir: str) -> Any:
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(tokenizer_dir, local_files_only=True, use_fast=True)
+
+
+def _tokenize_len(tokenizer: Any, prompt: str) -> int:
+    encoded = tokenizer([prompt], truncation=False, add_special_tokens=False)
+    ids = encoded.get("input_ids")
+    if not (isinstance(ids, list) and ids and isinstance(ids[0], list)):
+        raise RuntimeError("Prompt tokenizer returned invalid 'input_ids' payload.")
+    return len(ids[0])
+
+
+def _resolve_tokenizer_path(key: str) -> Path:
+    candidate = _PROMPT_TOKENIZER_DIRS.get(key)
+    if candidate is None:
+        raise RuntimeError(f"Unsupported prompt tokenizer key '{key}'.")
+    if not candidate.exists():
+        raise RuntimeError(
+            f"Prompt tokenizer directory missing for '{key}': {candidate}. "
+            "Expected vendored Hugging Face assets under apps/backend/huggingface."
+        )
+    return candidate
+
+
+def _count_prompt_tokens(engine: str, prompt: str) -> int:
+    normalized = str(engine or "").strip().lower()
+    if not normalized:
+        raise RuntimeError("Prompt token count requires a non-empty engine id.")
+    if not prompt:
+        return 0
+    tokenizer_key = _ENGINE_TOKENIZER_KEY.get(normalized)
+    if tokenizer_key is None:
+        raise RuntimeError(
+            f"Unsupported engine '{engine}' for prompt token count. "
+            f"Supported: {', '.join(sorted(_ENGINE_TOKENIZER_KEY.keys()))}."
+        )
+
+    if tokenizer_key == "anima":
+        qwen_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_qwen")))
+        t5_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_t5")))
+        qwen_count = _tokenize_len(qwen_tok, prompt)
+        t5_count = _tokenize_len(t5_tok, prompt)
+        return max(qwen_count, t5_count)
+
+    tokenizer = _load_tokenizer(str(_resolve_tokenizer_path(tokenizer_key)))
+    return _tokenize_len(tokenizer, prompt)
 
 
 def build_router(
@@ -123,6 +208,27 @@ def build_router(
             "file.size.megabytes": round(size_bytes / 1_000_000, 3),
             "file.size.gigabytes": round(size_bytes / 1_000_000_000, 3),
             "metadata": {"raw": dict(meta.flat), "nested": dict(meta.nested)},
+        }
+
+    @router.post("/api/models/prompt-token-count")
+    def prompt_token_count(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        engine = str(payload.get("engine") or "").strip()
+        if not engine:
+            raise HTTPException(status_code=400, detail="'engine' is required.")
+        prompt = str(payload.get("prompt") or "")
+        try:
+            count = _count_prompt_tokens(engine=engine, prompt=prompt)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "Unsupported engine" in message:
+                raise HTTPException(status_code=400, detail=message)
+            raise HTTPException(status_code=500, detail=message)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to count prompt tokens: {exc}")
+        return {
+            "engine": engine,
+            "prompt_len": len(prompt),
+            "count": max(0, math.trunc(count)),
         }
 
     @router.post("/api/models/inventory/refresh")

@@ -32,7 +32,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setFallbackOnOom` (function): Updates the global “fallback on OOM” preference used by upscaler tiling (hires-fix + `/upscale`).
 - `setMinTile` (function): Updates the global `min_tile` preference used as the tiled OOM fallback lower bound (hires-fix + `/upscale`).
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
-- `toggleInitImage` (function): Toggles init-image usage (img2img).
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
 - `clearInit` (function): Clears init image fields.
 - `toggleMask` (function): Toggles mask usage (inpaint) for masked img2img.
@@ -57,9 +56,8 @@ Symbols (top-level; keep in sync; no ghosts):
       <PromptCard
         v-model:prompt="promptText"
         v-model:negative="negativeText"
-        :defaultShowNegative="defaultShowNegative"
         :supportsNegative="supportsNegative"
-        :allowNegativeToggle="supportsNegative"
+        :token-engine="resolvedEngineForMode"
         :enableAssets="enableAssets"
         :enableStyles="enableStyles"
         :toolbarLabel="toolbarLabel"
@@ -77,18 +75,7 @@ Symbols (top-level; keep in sync; no ghosts):
           {{ errorMessage }}
         </div>
 
-        <div v-if="supportsImg2Img" class="panel-section">
-          <button
-            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-            type="button"
-            :aria-pressed="params.useInitImage"
-            :disabled="isRunning"
-            @click="toggleInitImage"
-          >
-            Use Initial Image (img2img)
-          </button>
-
-          <div v-if="params.useInitImage">
+        <div v-if="supportsImg2Img && params.useInitImage" class="panel-section">
             <InitialImageCard
               label="Initial Image"
               :src="params.initImageData"
@@ -231,7 +218,6 @@ Symbols (top-level; keep in sync; no ghosts):
                 @update:modelValue="(v) => setParams({ maskBlur: Math.max(0, Math.trunc(v)) })"
               />
             </div>
-          </div>
         </div>
       </PromptCard>
 
@@ -298,7 +284,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :refinerCfg="showHiresRefiner ? params.hires.refiner?.cfg : undefined"
             :refinerSeed="showHiresRefiner ? params.hires.refiner?.seed : undefined"
             :refinerModel="showHiresRefiner ? params.hires.refiner?.model : undefined"
-            :refinerVae="showHiresRefiner ? params.hires.refiner?.vae : undefined"
+            :refinerModelChoices="showHiresRefiner ? swapModelChoices : undefined"
             @update:enabled="(v) => setHires({ enabled: v })"
             @update:denoise="(v) => setHires({ denoise: clampFloat(v, 0, 1) })"
             @update:scale="(v) => setHires({ scale: v })"
@@ -312,7 +298,6 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:refinerCfg="(v) => setHiresRefiner({ cfg: v })"
             @update:refinerSeed="(v) => setHiresRefiner({ seed: Math.trunc(v) })"
             @update:refinerModel="(v) => setHiresRefiner({ model: v })"
-            @update:refinerVae="(v) => setHiresRefiner({ vae: v })"
           />
 
           <RefinerSettingsCard
@@ -322,13 +307,12 @@ Symbols (top-level; keep in sync; no ghosts):
             :cfg="params.refiner.cfg"
             :seed="params.refiner.seed"
             :model="params.refiner.model"
-            :vae="params.refiner.vae"
+            :modelChoices="swapModelChoices"
             @update:enabled="(v) => setRefiner({ enabled: v })"
             @update:steps="(v) => setRefiner({ steps: Math.max(0, Math.trunc(v)) })"
             @update:cfg="(v) => setRefiner({ cfg: v })"
             @update:seed="(v) => setRefiner({ seed: Math.trunc(v) })"
             @update:model="(v) => setRefiner({ model: v })"
-            @update:vae="(v) => setRefiner({ vae: v })"
           />
         </div>
       </div>
@@ -432,16 +416,19 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchSamplers, fetchSchedulers } from '../api/client'
+import { fetchPaths, fetchSamplers, fetchSchedulers } from '../api/client'
 import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { resolveEngineForRequest, useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
 import { defaultImageParamsForType, useModelTabsStore, type ImageBaseParams, type ImageTabType, type TabByType } from '../stores/model_tabs'
 import { getEngineConfig, getEngineDefaults } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
+import { normalizeTabFamily } from '../utils/engine_taxonomy'
+import { filterModelTitlesForFamily } from '../utils/model_family_filters'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
@@ -457,6 +444,7 @@ import SliderField from '../components/ui/SliderField.vue'
 const props = defineProps<{ tabId: string; type: ImageTabType }>()
 const store = useModelTabsStore()
 const engineCaps = useEngineCapabilitiesStore()
+const quicksettingsStore = useQuicksettingsStore()
 const bootstrap = useBootstrapStore()
 const workflows = useWorkflowsStore()
 const upscalersStore = useUpscalersStore()
@@ -486,6 +474,7 @@ const {
 
 const leftStack = ref<HTMLElement | null>(null)
 const previewStyle = ref<Record<string, string>>({})
+const modelPaths = ref<Record<string, string[]>>({})
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
 
@@ -493,9 +482,11 @@ onMounted(() => {
   bootstrap
     .runRequired('Failed to initialize image tab controls', async () => {
       await upscalersStore.load()
-      const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
+      await quicksettingsStore.init()
+      const [samp, sched, pathRes] = await Promise.all([fetchSamplers(), fetchSchedulers(), fetchPaths()])
       samplers.value = samp.samplers
       schedulers.value = sched.schedulers
+      modelPaths.value = (pathRes.paths || {}) as Record<string, string[]>
     })
     .catch(() => {
       // Fatal state is already set by bootstrap store.
@@ -534,12 +525,13 @@ const params = computed<ImageBaseParams>(() => imageTab.value?.params ?? fallbac
 const engineConfig = computed(() => getEngineConfig(props.type))
 const resolvedEngineForMode = computed(() => resolveEngineForRequest(props.type, Boolean(params.value.useInitImage)))
 const engineSurface = computed(() => engineCaps.get(resolvedEngineForMode.value))
+const familyCapabilities = computed(() => engineCaps.getFamilyForEngine(resolvedEngineForMode.value))
 const dependencyStatus = computed(() => engineCaps.getDependencyStatus(resolvedEngineForMode.value))
 const dependencyError = computed(() => engineCaps.firstDependencyError(resolvedEngineForMode.value))
 const dependencyReady = computed(() => Boolean(dependencyStatus.value?.ready))
 
 const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean(params.value.zimageTurbo ?? true) : false)
-const supportsNegative = computed(() => engineConfig.value.capabilities.usesNegativePrompt)
+const supportsNegative = computed(() => Boolean(familyCapabilities.value?.supports_negative_prompt))
 const supportsTxt2Img = computed(() => {
   const surf = engineSurface.value
   if (!surf) return false
@@ -551,13 +543,16 @@ const supportsImg2Img = computed(() => {
   return Boolean(surf.supports_img2img)
 })
 const canGenerateForCurrentMode = computed(() =>
-  dependencyReady.value && (params.value.useInitImage ? supportsImg2Img.value : supportsTxt2Img.value),
+  dependencyReady.value
+  && Boolean(familyCapabilities.value)
+  && (params.value.useInitImage ? supportsImg2Img.value : supportsTxt2Img.value),
 )
 const generateDisabledReason = computed(() => {
   if (isRunning.value) return ''
   if (!dependencyStatus.value) return `Dependency checks for '${resolvedEngineForMode.value}' are not available.`
   if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
   if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
+  if (!familyCapabilities.value) return `Family capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (params.value.useInitImage && !supportsImg2Img.value) return `${engineConfig.value.label} does not support img2img.`
   if (!params.value.useInitImage && !supportsTxt2Img.value) return `${engineConfig.value.label} does not support txt2img.`
   return ''
@@ -571,9 +566,13 @@ const toolbarLabel = computed(() => {
 })
 
 const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
-const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux1')
+const showClipSkip = computed(() => Boolean(familyCapabilities.value?.shows_clip_skip))
 const minClipSkip = computed(() => 0)
-const defaultShowNegative = computed(() => props.type === 'sdxl' && supportsNegative.value)
+const swapModelChoices = computed(() => {
+  const family = normalizeTabFamily(props.type)
+  if (!family || family === 'wan') return []
+  return filterModelTitlesForFamily(quicksettingsStore.models, family, modelPaths.value)
+})
 
 const showHires = computed(() => {
   if (props.type === 'zimage') return false
@@ -672,6 +671,14 @@ watch(showGlobalRefiner, (show) => {
 watch([supportsImg2Img, showHires, showGlobalRefiner, () => params.value.useInitImage], () => {
   void nextTick(syncPreviewHeight)
 })
+
+watch(
+  () => params.value.useInitImage,
+  (enabled, wasEnabled) => {
+    if (!enabled || wasEnabled) return
+    maybeApplyKontextDefaults()
+  },
+)
 
 const images = computed(() => gallery.value)
 
@@ -856,7 +863,6 @@ function setHiresRefiner(patch: Partial<NonNullable<ImageBaseParams['hires']['re
     cfg: 3.5,
     seed: -1,
     model: undefined,
-    vae: undefined,
     ...(params.value.hires.refiner || {}),
     ...patch,
   }
@@ -894,25 +900,7 @@ function snapInitImageDim(value: number): number {
   return Math.max(_INIT_IMAGE_DIM_MIN, Math.min(_INIT_IMAGE_DIM_MAX, snapped))
 }
 
-function toggleInitImage(): void {
-  const checked = !Boolean(params.value.useInitImage)
-  const wasEnabled = Boolean(params.value.useInitImage)
-  setParams({ useInitImage: checked })
-  if (!checked) {
-    setParams({
-      initImageData: '',
-      initImageName: '',
-      useMask: false,
-      maskImageData: '',
-      maskImageName: '',
-    })
-    return
-  }
-  if (!wasEnabled) maybeApplyKontextDefaults()
-}
-
 async function onInitFileSet(file: File): Promise<void> {
-  const wasEnabled = Boolean(params.value.useInitImage)
   const dataUrl = await readFileAsDataURL(file)
   const patch: Partial<ImageBaseParams> = {
     initImageData: dataUrl,
@@ -930,7 +918,6 @@ async function onInitFileSet(file: File): Promise<void> {
     // ignore: keep current dims
   }
   setParams(patch)
-  if (!wasEnabled) maybeApplyKontextDefaults()
 }
 
 function clearInit(): void {
@@ -996,7 +983,6 @@ function download(image: GeneratedImage, index: number): void {
 
 async function sendToImg2Img(image: GeneratedImage): Promise<void> {
   if (!supportsImg2Img.value) return
-  const wasEnabled = Boolean(params.value.useInitImage)
   const dataUrl = toDataUrl(image)
   const patch: Partial<ImageBaseParams> = {
     useInitImage: true,
@@ -1014,7 +1000,6 @@ async function sendToImg2Img(image: GeneratedImage): Promise<void> {
     // ignore
   }
   setParams(patch)
-  if (!wasEnabled) maybeApplyKontextDefaults()
 }
 
 function readFileAsDataURL(file: File): Promise<string> {

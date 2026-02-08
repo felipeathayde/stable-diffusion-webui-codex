@@ -12,6 +12,7 @@ with an optional toggle to switch between raw and nested views for file metadata
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AssetMetadataModal` (component): Modal for displaying a JSON metadata payload.
+- `showTreePayload` (const): Computed gate selecting nested-tree view when payload is object-like and beautify mode applies.
 -->
 
 <template>
@@ -24,7 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
       No metadata available for this selection.
     </div>
 
-    <div v-else-if="isTreePayload" class="card text-sm cdx-metadata-modal__viewer">
+    <div v-else-if="showTreePayload" class="card text-sm cdx-metadata-modal__viewer">
       <div class="cdx-metadata-modal__overlay">
         <button
           class="btn-icon cdx-metadata-modal__icon-btn"
@@ -161,5 +162,11 @@ const pretty = computed(() => {
 const isTreePayload = computed(() => {
   const payload = displayPayload.value
   return payload !== null && payload !== undefined && typeof payload === 'object'
+})
+
+const showTreePayload = computed(() => {
+  if (!isTreePayload.value) return false
+  if (!supportsBeautifyToggle.value) return true
+  return beautify.value
 })
 </script>

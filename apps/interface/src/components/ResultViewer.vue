@@ -6,11 +6,15 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-	Purpose: Viewer for generated images/videos with zoom overlay.
-	Displays generated outputs and provides an overlay viewer for zoom/pan actions and per-item controls (including per-frame downloads when available).
+Purpose: Viewer for generated images/videos with zoom overlay.
+Displays generated outputs and provides an overlay viewer for zoom/pan actions, wheel/keyboard zoom controls, and per-item controls
+(including per-frame downloads when available).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ResultViewer` (component): Viewer component for generated outputs and overlay interactions.
+- `adjustZoom` (function): Applies bounded zoom delta updates shared by button and wheel handlers.
+- `onOverlayWheel` (function): Handles overlay mouse-wheel zoom in/out interactions.
+- `onWindowKeydown` (function): Handles keyboard shortcuts for overlay interactions (`Escape` closes zoom).
 -->
 
 <template>
@@ -68,7 +72,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </template>
 
     <!-- Zoom overlay -->
-    <div v-if="zoomedImage" class="image-zoom-overlay" @click.self="closeZoom">
+    <div v-if="zoomedImage" class="image-zoom-overlay" @click.self="closeZoom" @wheel.prevent="onOverlayWheel">
       <div class="image-zoom-main">
         <img
           :src="imageUrl(zoomedImage)"
@@ -85,14 +89,14 @@ Symbols (top-level; keep in sync; no ghosts):
           <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomOut">-</button>
           <button class="btn btn-sm btn-secondary" type="button" @click.stop="closeZoom">Close</button>
         </div>
-        <span class="caption">Drag to pan</span>
+        <span class="caption">Drag to pan · Scroll to zoom · Esc to close</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { GeneratedImage } from '../api/types'
 
 const props = defineProps<{
@@ -147,12 +151,17 @@ function closeZoom(): void {
   window.removeEventListener('mouseup', onPanEnd)
 }
 
+function adjustZoom(delta: number): void {
+  const next = zoom.value + delta
+  zoom.value = Math.max(0.25, Math.min(8, next))
+}
+
 function zoomIn(): void {
-  zoom.value = Math.min(zoom.value + 0.25, 8)
+  adjustZoom(0.25)
 }
 
 function zoomOut(): void {
-  zoom.value = Math.max(zoom.value - 0.25, 0.25)
+  adjustZoom(-0.25)
 }
 
 function setZoom(value: number): void {
@@ -193,6 +202,27 @@ function onPanEnd(): void {
   window.removeEventListener('mousemove', onPanMove)
   window.removeEventListener('mouseup', onPanEnd)
 }
+
+function onOverlayWheel(event: WheelEvent): void {
+  if (!zoomedImage.value) return
+  const delta = event.deltaY < 0 ? 0.25 : -0.25
+  adjustZoom(delta)
+}
+
+function onWindowKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+  if (!zoomedImage.value) return
+  closeZoom()
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onWindowKeydown)
+})
+
+onBeforeUnmount(() => {
+  closeZoom()
+  window.removeEventListener('keydown', onWindowKeydown)
+})
 </script>
 
 <!-- styles moved to styles/components/result-viewer.css -->

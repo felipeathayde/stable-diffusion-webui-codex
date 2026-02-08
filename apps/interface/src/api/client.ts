@@ -44,6 +44,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fetchVersion` (function): Fetches backend version (`/version`).
 - `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
 - `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
+- `fetchPromptTokenCount` (function): Counts prompt tokens via backend tokenizer (`POST /models/prompt-token-count`).
 - `fetchPaths` (function): Fetches configured paths (`/paths`).
 - `updatePaths` (function): Updates configured paths (`POST /paths`).
 - `fetchSettingsSchema` (function): Fetches settings schema (`/settings/schema`).
@@ -83,6 +84,8 @@ import type {
   UiPresetApplyResponse,
   InventoryResponse,
   EngineCapabilitiesResponse,
+  PromptTokenCountRequest,
+  PromptTokenCountResponse,
   FileMetadataResponse,
   CheckpointMetadataResponse,
   PngInfoAnalyzeResponse,
@@ -362,6 +365,13 @@ export function fetchEmbeddings(): Promise<EmbeddingsResponse> {
 
 export function fetchEngineCapabilities(): Promise<EngineCapabilitiesResponse> {
   return requestJson<EngineCapabilitiesResponse>('/engines/capabilities')
+}
+
+export function fetchPromptTokenCount(payload: PromptTokenCountRequest): Promise<PromptTokenCountResponse> {
+  return requestJson<PromptTokenCountResponse>('/models/prompt-token-count', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export function fetchPaths(): Promise<PathsResponse> {

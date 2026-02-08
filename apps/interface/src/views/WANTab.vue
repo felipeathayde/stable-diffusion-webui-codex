@@ -6,10 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-	Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
-	Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
-	renders progress/results via task events (frames and/or exported video).
-	Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot) and surfaces a one-shot “Reconnected” toast.
+Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
+Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
+renders progress/results via task events (frames and/or exported video).
+Passes explicit `token-engine="wan"` context to `PromptCard` so prompt token counting uses the WAN tokenizer contract.
+Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot) and surfaces a one-shot “Reconnected” toast.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
@@ -69,7 +70,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <section v-if="tab" class="panels wan-panels">
     <div class="panel-stack">
-      <PromptCard v-model:prompt="videoPrompt" v-model:negative="videoNegative" fieldsId="wan-guided-prompt">
+      <PromptCard v-model:prompt="videoPrompt" v-model:negative="videoNegative" token-engine="wan" fieldsId="wan-guided-prompt">
         <div v-if="mode !== 'txt2vid'" class="gen-card">
           <div class="row-split">
             <span class="label-muted">Input</span>

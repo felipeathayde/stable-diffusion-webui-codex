@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Prompt panel wrapper with toolbars and modals.
-Renders `PromptFields` and an optional toolbar for Negative prompt toggling, asset insertion (LoRA/TI), and styles creation/application.
+Renders `PromptFields` and an optional toolbar for asset insertion (LoRA/TI) and styles creation/application.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PromptCard` (component): Prompt panel with prompt/negative fields, optional assets/styles controls, and insertion modals.
@@ -21,16 +21,6 @@ Symbols (top-level; keep in sync; no ghosts):
           <button class="btn btn-sm btn-secondary" type="button" @click="showTI = true">Textual Inversion</button>
           <button class="btn btn-sm btn-secondary" type="button" @click="showLora = true">LoRA</button>
         </template>
-
-        <button
-          v-if="supportsNegative && allowNegativeToggle"
-          :class="['btn', 'btn-sm', showNegative ? 'btn-secondary' : 'btn-outline']"
-          type="button"
-          :title="showNegative ? 'Hide negative prompt' : 'Show negative prompt'"
-          @click="toggleNegative"
-        >
-          Negative
-        </button>
 
         <template v-if="enableStyles">
           <label class="label-muted styles-label">{{ stylesLabel }}</label>
@@ -54,9 +44,20 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <div class="panel-body">
       <div v-if="fieldsId" :id="fieldsId">
-        <PromptFields v-model:prompt="innerPrompt" v-model:negative="innerNegative" :hide-negative="hideNegative" />
+        <PromptFields
+          v-model:prompt="innerPrompt"
+          v-model:negative="innerNegative"
+          :hide-negative="hideNegative"
+          :token-engine="tokenEngine"
+        />
       </div>
-      <PromptFields v-else v-model:prompt="innerPrompt" v-model:negative="innerNegative" :hide-negative="hideNegative" />
+      <PromptFields
+        v-else
+        v-model:prompt="innerPrompt"
+        v-model:negative="innerNegative"
+        :hide-negative="hideNegative"
+        :token-engine="tokenEngine"
+      />
 
       <slot />
     </div>
@@ -84,9 +85,8 @@ const props = withDefaults(defineProps<{
   enableStyles?: boolean
   stylesLabel?: string
   toolbarLabel?: string
-  defaultShowNegative?: boolean
-  allowNegativeToggle?: boolean
   supportsNegative?: boolean
+  tokenEngine?: string
   fieldsId?: string
 }>(), {
   title: 'Prompt',
@@ -94,9 +94,8 @@ const props = withDefaults(defineProps<{
   enableStyles: true,
   stylesLabel: 'Styles',
   toolbarLabel: '',
-  defaultShowNegative: false,
-  allowNegativeToggle: true,
   supportsNegative: true,
+  tokenEngine: '',
   fieldsId: '',
 })
 
@@ -116,9 +115,7 @@ const innerNegative = computed({
 })
 
 const {
-  showNegative,
   hideNegative,
-  toggleNegative,
   showLora,
   showTI,
   showStyle,
@@ -130,9 +127,10 @@ const {
 } = usePromptCard({
   prompt: innerPrompt,
   negative: innerNegative,
-  defaultShowNegative: props.defaultShowNegative,
   supportsNegative: props.supportsNegative,
 })
+
+const tokenEngine = computed(() => String(props.tokenEngine || '').trim())
 
 const instance = getCurrentInstance()
 const styleListId = `style-list-${instance?.uid ?? Math.floor(Math.random() * 1_000_000_000)}`

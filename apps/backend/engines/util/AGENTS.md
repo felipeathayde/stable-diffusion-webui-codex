@@ -1,7 +1,7 @@
 # apps/backend/engines/util Overview
 <!-- tags: backend, engines, util, adapters -->
 Date: 2025-10-28
-Last Review: 2026-02-03
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 - 2026-01-29: `build_img2img_processing` now maps mask/inpaint controls from `Img2ImgRequest` into `CodexProcessingImg2Img` (mask enforcement + blur/invert/full-res/filled-content knobs).
 - 2026-01-02: Added standardized file header docstrings to engine util modules (doc-only change; part of rollout).
 - 2026-01-06: `schedulers.py` now expects canonical sampler/scheduler strings (lowercase; spaces/`++` preserved); empty/unknown values raise immediately.
+- 2026-02-08: `build_{txt2img,img2img}_processing` now copies `extras.er_sde` mappings before storing overrides, preserving request-local ER-SDE options without shared mutable aliasing.

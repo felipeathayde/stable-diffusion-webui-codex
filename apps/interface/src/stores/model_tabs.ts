@@ -38,6 +38,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
+- `cloneParamsForPersist` (function): Deep-clones tab params snapshots used by debounced persistence rollback.
+- `scheduleParamsPersist` (function): Schedules debounced `/api/ui/tabs/:id` params PATCH calls.
+- `flushParamsPersist` (function): Flushes pending params PATCH for a tab, resolves queued promises, and rolls back on API failure.
 - `useModelTabsStore` (store): Pinia store for tabs; loads/syncs with backend, provides CRUD/reorder actions, and exposes computed helpers.
 */
 
@@ -497,6 +500,25 @@ export function requiredTypesFromCapabilities(engines: Record<string, unknown>):
 export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
+  const pendingParamsPersists = new Map<string, PendingParamsPersist>()
+
+  const PARAMS_PERSIST_DEBOUNCE_MS = 220
+
+  type PersistDeferred = {
+    version: number
+    resolve: () => void
+    reject: (reason?: unknown) => void
+  }
+
+  type PendingParamsPersist = {
+    timer: ReturnType<typeof setTimeout> | null
+    inFlight: boolean
+    version: number
+    persistedVersion: number
+    deferreds: PersistDeferred[]
+    snapshotParams: Record<string, unknown> | null
+    snapshotUpdatedAt: string
+  }
 
   async function resolveRequiredTypesFromCapabilities(): Promise<BaseTabType[]> {
     const capsStore = useEngineCapabilitiesStore()
@@ -525,6 +547,119 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       `${operation}: ${message}`,
       { cause: error, details: details ?? null },
     )
+  }
+
+  function cloneParamsForPersist(value: Record<string, unknown>): Record<string, unknown> {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(value)
+    }
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
+  }
+
+  function getPendingParamsPersist(tabId: string, tab: BaseTab): PendingParamsPersist {
+    const existing = pendingParamsPersists.get(tabId)
+    if (existing) return existing
+    const created: PendingParamsPersist = {
+      timer: null,
+      inFlight: false,
+      version: 0,
+      persistedVersion: 0,
+      deferreds: [],
+      snapshotParams: null,
+      snapshotUpdatedAt: tab.meta.updatedAt,
+    }
+    pendingParamsPersists.set(tabId, created)
+    return created
+  }
+
+  function clearPendingParamsPersist(tabId: string, reason: unknown): void {
+    const pending = pendingParamsPersists.get(tabId)
+    if (!pending) return
+    if (pending.timer !== null) {
+      clearTimeout(pending.timer)
+      pending.timer = null
+    }
+    const rejectList = pending.deferreds
+    pending.deferreds = []
+    rejectList.forEach((entry) => entry.reject(reason))
+    pendingParamsPersists.delete(tabId)
+  }
+
+  function scheduleParamsPersist(tabId: string): void {
+    const pending = pendingParamsPersists.get(tabId)
+    if (!pending) return
+    if (pending.timer !== null) {
+      clearTimeout(pending.timer)
+    }
+    pending.timer = setTimeout(() => {
+      pending.timer = null
+      void flushParamsPersist(tabId)
+    }, PARAMS_PERSIST_DEBOUNCE_MS)
+  }
+
+  async function flushParamsPersist(tabId: string): Promise<void> {
+    const pending = pendingParamsPersists.get(tabId)
+    if (!pending) return
+    if (pending.inFlight) {
+      scheduleParamsPersist(tabId)
+      return
+    }
+    if (pending.version <= pending.persistedVersion) {
+      if (pending.deferreds.length === 0 && pending.timer === null) {
+        pendingParamsPersists.delete(tabId)
+      }
+      return
+    }
+
+    let tab: BaseTab
+    try {
+      tab = ensureTabOrThrow(tabId)
+    } catch (error) {
+      clearPendingParamsPersist(tabId, error)
+      return
+    }
+    const versionToPersist = pending.version
+    const paramsSnapshot = cloneParamsForPersist(tab.params as Record<string, unknown>)
+    const updatedAtSnapshot = tab.meta.updatedAt
+
+    pending.inFlight = true
+    try {
+      await updateTabApi(tabId, { params: tab.params })
+      pending.persistedVersion = versionToPersist
+
+      const resolveList = pending.deferreds.filter((entry) => entry.version <= versionToPersist)
+      pending.deferreds = pending.deferreds.filter((entry) => entry.version > versionToPersist)
+      resolveList.forEach((entry) => entry.resolve())
+
+      if (pending.version > pending.persistedVersion) {
+        pending.snapshotParams = paramsSnapshot
+        pending.snapshotUpdatedAt = updatedAtSnapshot
+      } else {
+        pending.snapshotParams = null
+        pending.snapshotUpdatedAt = tab.meta.updatedAt
+      }
+      save()
+    } catch (error) {
+      if (pending.snapshotParams) {
+        tab.params = cloneParamsForPersist(pending.snapshotParams)
+      }
+      tab.meta.updatedAt = pending.snapshotUpdatedAt
+      pending.version = pending.persistedVersion
+      pending.snapshotParams = null
+
+      const mapped = mapApiError(`Failed to update params for tab '${tabId}'`, error, { id: tabId })
+      const rejectList = pending.deferreds
+      pending.deferreds = []
+      rejectList.forEach((entry) => entry.reject(mapped))
+      save()
+    } finally {
+      pending.inFlight = false
+      if (pending.version > pending.persistedVersion) {
+        scheduleParamsPersist(tabId)
+      } else if (pending.deferreds.length === 0 && pending.timer === null) {
+        pendingParamsPersists.delete(tabId)
+      }
+    }
   }
 
   function preferredSamplingDefaultsForType(type: BaseTabType): { sampler: string; scheduler: string } | null {
@@ -571,6 +706,14 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   }
 
   async function load(): Promise<void> {
+    if (pendingParamsPersists.size > 0) {
+      for (const tabId of pendingParamsPersists.keys()) {
+        clearPendingParamsPersist(
+          tabId,
+          new ModelTabsStoreError('invalid_response', 'Tabs were reloaded while param updates were pending.'),
+        )
+      }
+    }
     const requiredTypes = await resolveRequiredTypesFromCapabilities()
     const preferredActiveId = activeId.value || (() => {
       try {
@@ -651,6 +794,10 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     } catch (error) {
       throw mapApiError(`Failed to remove tab '${id}'`, error, { id })
     }
+    clearPendingParamsPersist(
+      id,
+      new ModelTabsStoreError('tab_not_found', `Tab not found: '${id}'.`, { details: { id } }),
+    )
     tabs.value = tabs.value.filter(t => t.id !== id)
     if (activeId.value === id) activeId.value = tabs.value[0]?.id ?? ''
     normalizeOrder()
@@ -725,31 +872,24 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     const t = ensureTabOrThrow(id)
     const current = (t.params && typeof t.params === 'object' && !Array.isArray(t.params)) ? (t.params as T) : ({} as T)
     if (current !== t.params) t.params = current
-    const previousEntries = new Map<string, { existed: boolean; value: unknown }>()
-    for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
-      previousEntries.set(key, {
-        existed: Object.prototype.hasOwnProperty.call(current, key),
-        value: (current as Record<string, unknown>)[key],
-      })
+
+    const pending = getPendingParamsPersist(id, t)
+    if (pending.snapshotParams === null) {
+      pending.snapshotParams = cloneParamsForPersist(current as unknown as Record<string, unknown>)
+      pending.snapshotUpdatedAt = t.meta.updatedAt
     }
-    const previousUpdatedAt = t.meta.updatedAt
+
     Object.assign(current, patch)
     t.meta.updatedAt = nowIso()
-    try {
-      await updateTabApi(id, { params: t.params })
-    } catch (error) {
-      for (const [key, snapshot] of previousEntries.entries()) {
-        if (snapshot.existed) {
-          ;(current as Record<string, unknown>)[key] = snapshot.value
-        } else {
-          delete (current as Record<string, unknown>)[key]
-        }
-      }
-      t.meta.updatedAt = previousUpdatedAt
-      save()
-      throw mapApiError(`Failed to update params for tab '${id}'`, error, { id })
-    }
+
+    pending.version += 1
+    const targetVersion = pending.version
+    const persistPromise = new Promise<void>((resolve, reject) => {
+      pending.deferreds.push({ version: targetVersion, resolve, reject })
+    })
+    scheduleParamsPersist(id)
     save()
+    return persistPromise
   }
 
   function normalizeOrder(): void {

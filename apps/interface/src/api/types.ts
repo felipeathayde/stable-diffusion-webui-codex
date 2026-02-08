@@ -33,9 +33,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `MemoryResponse` (interface): `/api/memory` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
 - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
+- `FamilyCapabilities` (interface): Per-family capability flags from backend (`families`) used to gate prompt/clip controls.
 - `EngineDependencyCheckRow` (interface): One dependency-check row returned by backend readiness contract.
 - `EngineDependencyStatus` (interface): Aggregated dependency status (`ready + checks`) for one semantic engine.
 - `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
+- `PromptTokenCountRequest` (interface): Request payload for `/api/models/prompt-token-count`.
+- `PromptTokenCountResponse` (interface): Response payload for `/api/models/prompt-token-count`.
 - `EngineAssetContract` (interface): Per-engine asset requirements contract exposed by the backend (VAE/text encoders).
 - `EngineAssetContractVariants` (interface): Base vs core-only contract variants for one engine id.
 - `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
@@ -288,6 +291,11 @@ export interface EngineCapabilities {
   default_scheduler?: string | null
 }
 
+export interface FamilyCapabilities {
+  supports_negative_prompt: boolean
+  shows_clip_skip: boolean
+}
+
 export interface EngineDependencyCheckRow {
   id: string
   label: string
@@ -302,11 +310,22 @@ export interface EngineDependencyStatus {
 
 export interface EngineCapabilitiesResponse {
   engines: Record<string, EngineCapabilities>
-  families?: Record<string, unknown>
+  families?: Record<string, FamilyCapabilities>
   smart_cache?: Record<string, { hits: number; misses: number }>
   asset_contracts?: Record<string, EngineAssetContractVariants>
   engine_id_to_semantic_engine: Record<string, string>
   dependency_checks: Record<string, EngineDependencyStatus>
+}
+
+export interface PromptTokenCountRequest {
+  engine: string
+  prompt: string
+}
+
+export interface PromptTokenCountResponse {
+  engine: string
+  prompt_len: number
+  count: number
 }
 
 export interface EngineAssetContract {

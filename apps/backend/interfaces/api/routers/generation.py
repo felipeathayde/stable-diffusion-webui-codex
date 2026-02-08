@@ -153,6 +153,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise HTTPException(status_code=400, detail=f"'{key}' must be a number")
         result = float(value)
+        if not math.isfinite(result):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a finite number")
         if minimum is not None and result < minimum:
             raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
         if maximum is not None and result > maximum:
@@ -415,8 +417,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "min_tile": int(tile_cfg.min_tile),
                 }
                 hires_cfg = {
-                    "denoise": float(hires['denoise']),
-                    "scale": float(hires['scale']),
+                    "denoise": _require_float_field(hires, 'denoise'),
+                    "scale": _require_float_field(hires, 'scale'),
                     "resize_x": _require_int_field(hires, 'resize_x'),
                     "resize_y": _require_int_field(hires, 'resize_y'),
                     "steps": _require_int_field(hires, 'steps', minimum=0),
@@ -428,8 +430,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "scheduler": hires.get('scheduler'),
                     "prompt": hires.get('prompt') or '',
                     "negative_prompt": hires.get('negative_prompt') or '',
-                    "cfg": float(hires.get('cfg')) if hires.get('cfg') is not None else None,
-                    "distilled_cfg": float(hires.get('distilled_cfg')) if hires.get('distilled_cfg') is not None else None,
+                    "cfg": _require_float_field(hires, 'cfg') if hires.get('cfg') is not None else None,
+                    "distilled_cfg": _require_float_field(hires, 'distilled_cfg') if hires.get('distilled_cfg') is not None else None,
                     "refiner": refiner_cfg,
                 }
 

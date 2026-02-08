@@ -78,6 +78,8 @@ class Txt2ImgKeys:
         "tile",
         "checkpoint",
         "modules",
+        "refiner",
+        "distilled_cfg",
     })
     
     # Infra

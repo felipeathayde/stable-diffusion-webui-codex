@@ -890,3 +890,33 @@ Correct command:
 ```bash
 rg -n 'Flux1 GGUF T5 loader `model` unbound fix|State: Completed|Behavior matrix|4 passed|OK_HEADER_CHANGED|No broken markdown links' .sangoi/CHANGELOG.md .sangoi/plans/2026-02-08-flux1-gguf-unbound-model-fix.md .sangoi/task-logs/2026-02-08-flux1-gguf-unbound-model-fix.md .sangoi/dev/tests/backend/AGENTS.md
 ```
+
+### Grepping with backticks inside double quotes triggered shell substitution
+
+Wrong command:
+```bash
+rg -n "test_txt2img_accepts_extras_hires_refiner_key|Repair `extras.hires.refiner` contract mismatch" .sangoi/dev/tests/backend/test_api_hires_naming_cutover.py .sangoi/plans/2026-02-08-refiner-hires-contract-repair.md
+```
+
+Cause and fix:
+Backticks inside a double-quoted regex triggered `bash` command substitution (`extras.hires.refiner` was executed as a command). Use single quotes around patterns that contain literal backticks.
+
+Correct command:
+```bash
+rg -n 'test_txt2img_accepts_extras_hires_refiner_key|Repair `extras\.hires\.refiner` contract mismatch' .sangoi/dev/tests/backend/test_api_hires_naming_cutover.py .sangoi/plans/2026-02-08-refiner-hires-contract-repair.md
+```
+
+### Conflict-marker grep pattern too broad matched tokenizer separators
+
+Wrong command:
+```bash
+rg -n "^(<<<<<<<|=======|>>>>>>>)" .
+```
+
+Cause and fix:
+The pattern matched plain separator lines like `========` in tokenizer assets, producing false positives. Use the strict conflict-marker pattern that requires exact markers and spacing.
+
+Correct command:
+```bash
+rg -n "^(<<<<<<<|=======|>>>>>>>)( |$)" .
+```

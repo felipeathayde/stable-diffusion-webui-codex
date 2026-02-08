@@ -15,6 +15,7 @@ Status: Active
 - `lora_apply.py` — Applies native LoRA selections to loaded networks.
 - `unet.py` — Codex-native UNet patcher built on typed helpers (`SamplingReservation`, `ControlNetChain`) for deterministic sampling reservations, ControlNet chaining, and patch registration.
 - `denoiser.py` — Generic `DenoiserPatcher` wrapper (ControlNet-free) for non-UNet denoisers; wraps `SamplerModel` and exposes the shared `ModelPatcher` surface.
+- `vae_normalization_policy.py` — Typed VAE normalization policy resolver (`enum` + `dataclasses`) with explicit per-family shift contracts.
 - Additional patch modules (e.g., adapters) live here as they are ported.
 
 ## Notes
@@ -35,6 +36,7 @@ Status: Active
 - 2026-01-20: Global LoRA apply mode now supports `merge` (default; merges into weights once) vs `online` (patch during forward) via `CODEX_LORA_APPLY_MODE` / `--lora-apply-mode`.
 - 2026-02-07: VAE decode/encode paths now cast forward inputs using the active storage dtype (not compute dtype) and size batches with that same dtype to prevent bf16/float input-bias mismatches when `storage != compute`.
 - 2026-02-08: `_NormalizingFirstStage` now supports optional per-channel latent stats (`latents_mean`/`latents_std`) in addition to scalar `scaling_factor`/`shift_factor`; 4D/5D rank, channel count, and non-finite/invalid stats are fail-loud.
+- 2026-02-08: VAE normalization now resolves scale/shift via `vae_normalization_policy.py` with explicit family shift contracts: no-shift families reject explicit numeric shifts; shift-required families fail loud on missing/`None` shift.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

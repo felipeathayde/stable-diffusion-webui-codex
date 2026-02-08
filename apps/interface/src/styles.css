@@ -274,6 +274,7 @@
 
   /* component CSS imported below */
   @import "./styles/components/generation-settings-card.css";
+  @import "./styles/components/img2img-inpaint-params-card.css";
   @import "./styles/components/hires-settings-card.css";
   @import "./styles/components/refiner-settings-card.css";
   @import "./styles/components/result-viewer.css";

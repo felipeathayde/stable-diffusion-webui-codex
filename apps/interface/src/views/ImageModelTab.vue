@@ -75,130 +75,34 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <div v-if="supportsImg2Img && params.useInitImage" class="panel-section">
-            <InitialImageCard
-              label="Initial Image"
-              :src="params.initImageData"
-              :has-image="Boolean(params.initImageData)"
-              :disabled="isRunning"
-              @set="onInitFileSet"
-              @clear="clearInit"
-            >
-              <template #footer>
-                <p v-if="params.initImageName" class="caption">{{ params.initImageName }}</p>
-              </template>
-            </InitialImageCard>
-
-            <SliderField
-              label="Denoise"
-              :modelValue="params.denoiseStrength"
-              :min="0"
-              :max="1"
-              :step="0.01"
-              :inputStep="0.05"
-              inputClass="cdx-input-w-xs"
-              :disabled="isRunning"
-              @update:modelValue="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
-            />
-
-            <div v-if="params.useMask">
-              <InitialImageCard
-                label="Mask"
-                accept="image/*"
-                :src="params.maskImageData"
-                :has-image="Boolean(params.maskImageData)"
-                :disabled="isRunning"
-                placeholder="Select a mask image (RGBA/alpha supported)."
-                @set="onMaskFileSet"
-                @clear="clearMask"
-              >
-                <template #footer>
-                  <p v-if="params.maskImageName" class="caption">{{ params.maskImageName }}</p>
-                </template>
-              </InitialImageCard>
-
-              <div class="panel-section">
-                <label class="label-muted">Enforcement</label>
-                <select
-                  class="select-md"
-                  :disabled="isRunning"
-                  :value="params.maskEnforcement"
-                  @change="setParams({ maskEnforcement: (($event.target as HTMLSelectElement).value === 'per_step_clamp' ? 'per_step_clamp' : 'post_blend') })"
-                >
-                  <option value="post_blend">Forge-style (post-sample blend)</option>
-                  <option value="per_step_clamp">Clamp per step</option>
-                </select>
-              </div>
-
-              <div class="panel-section">
-                <label class="label-muted">Masked content</label>
-                <select
-                  class="select-md"
-                  :disabled="isRunning"
-                  :value="params.inpaintingFill"
-                  @change="setParams({ inpaintingFill: Math.max(0, Math.min(3, Math.trunc(Number(($event.target as HTMLSelectElement).value)))) })"
-                >
-                  <option :value="1">Original</option>
-                  <option :value="0">Fill</option>
-                  <option :value="2">Latent noise</option>
-                  <option :value="3">Latent nothing</option>
-                </select>
-              </div>
-
-              <button
-                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.inpaintFullRes ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :aria-pressed="params.inpaintFullRes"
-                :disabled="isRunning"
-                @click="setParams({ inpaintFullRes: !params.inpaintFullRes })"
-              >
-                Inpaint area: Only masked (full-res)
-              </button>
-
-              <SliderField
-                v-if="params.inpaintFullRes"
-                label="Only masked padding"
-                :modelValue="params.inpaintFullResPadding"
-                :min="0"
-                :max="256"
-                :step="1"
-                :inputStep="1"
-                inputClass="cdx-input-w-xs"
-                :disabled="isRunning"
-                @update:modelValue="(v) => setParams({ inpaintFullResPadding: Math.max(0, Math.trunc(v)) })"
-              />
-
-              <button
-                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.maskInvert ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :aria-pressed="params.maskInvert"
-                :disabled="isRunning"
-                @click="setParams({ maskInvert: !params.maskInvert })"
-              >
-                Invert mask
-              </button>
-
-              <button
-                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.maskRound ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :aria-pressed="params.maskRound"
-                :disabled="isRunning"
-                @click="setParams({ maskRound: !params.maskRound })"
-              >
-                Round mask
-              </button>
-
-              <SliderField
-                label="Mask blur"
-                :modelValue="params.maskBlur"
-                :min="0"
-                :max="64"
-                :step="1"
-                :inputStep="1"
-                inputClass="cdx-input-w-xs"
-                :disabled="isRunning"
-                @update:modelValue="(v) => setParams({ maskBlur: Math.max(0, Math.trunc(v)) })"
-              />
-            </div>
+          <Img2ImgInpaintParamsCard
+            :disabled="isRunning"
+            :initImageData="params.initImageData"
+            :initImageName="params.initImageName"
+            :denoiseStrength="params.denoiseStrength"
+            :useMask="params.useMask"
+            :maskImageData="params.maskImageData"
+            :maskImageName="params.maskImageName"
+            :maskEnforcement="params.maskEnforcement"
+            :inpaintingFill="params.inpaintingFill"
+            :inpaintFullRes="params.inpaintFullRes"
+            :inpaintFullResPadding="params.inpaintFullResPadding"
+            :maskInvert="params.maskInvert"
+            :maskRound="params.maskRound"
+            :maskBlur="params.maskBlur"
+            @set:initImage="onInitFileSet"
+            @clear:initImage="clearInit"
+            @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
+            @set:maskImage="onMaskFileSet"
+            @clear:maskImage="clearMask"
+            @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
+            @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
+            @toggle:inpaintFullRes="setParams({ inpaintFullRes: !params.inpaintFullRes })"
+            @update:inpaintFullResPadding="(v) => setParams({ inpaintFullResPadding: normalizeNonNegativeInt(v) })"
+            @toggle:maskInvert="setParams({ maskInvert: !params.maskInvert })"
+            @toggle:maskRound="setParams({ maskRound: !params.maskRound })"
+            @update:maskBlur="(v) => setParams({ maskBlur: normalizeNonNegativeInt(v) })"
+          />
         </div>
       </PromptCard>
 
@@ -261,7 +165,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :base-width="params.width"
             :base-height="params.height"
             :refinerEnabled="showHiresRefiner ? params.hires.refiner?.enabled : undefined"
-            :refinerSteps="showHiresRefiner ? params.hires.refiner?.steps : undefined"
+            :refinerSwapAtStep="showHiresRefiner ? params.hires.refiner?.swapAtStep : undefined"
             :refinerCfg="showHiresRefiner ? params.hires.refiner?.cfg : undefined"
             :refinerSeed="showHiresRefiner ? params.hires.refiner?.seed : undefined"
             :refinerModel="showHiresRefiner ? params.hires.refiner?.model : undefined"
@@ -275,7 +179,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:minTile="setMinTile"
             @update:fallbackOnOom="setFallbackOnOom"
             @update:refinerEnabled="(v) => setHiresRefiner({ enabled: v })"
-            @update:refinerSteps="(v) => setHiresRefiner({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:refinerSwapAtStep="(v) => setHiresRefiner({ swapAtStep: Math.max(1, Math.trunc(v)) })"
             @update:refinerCfg="(v) => setHiresRefiner({ cfg: v })"
             @update:refinerSeed="(v) => setHiresRefiner({ seed: Math.trunc(v) })"
             @update:refinerModel="(v) => setHiresRefiner({ model: v })"
@@ -284,13 +188,13 @@ Symbols (top-level; keep in sync; no ghosts):
           <RefinerSettingsCard
             v-if="showGlobalRefiner"
             :enabled="params.refiner.enabled"
-            :steps="params.refiner.steps"
+            :swapAtStep="params.refiner.swapAtStep"
             :cfg="params.refiner.cfg"
             :seed="params.refiner.seed"
             :model="params.refiner.model"
             :modelChoices="swapModelChoices"
             @update:enabled="(v) => setRefiner({ enabled: v })"
-            @update:steps="(v) => setRefiner({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:swapAtStep="(v) => setRefiner({ swapAtStep: Math.max(1, Math.trunc(v)) })"
             @update:cfg="(v) => setRefiner({ cfg: v })"
             @update:seed="(v) => setRefiner({ seed: Math.trunc(v) })"
             @update:model="(v) => setRefiner({ model: v })"
@@ -410,9 +314,10 @@ import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import { normalizeTabFamily } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
+import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt } from '../utils/image_params'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
-import InitialImageCard from '../components/InitialImageCard.vue'
+import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
 import WanSubHeader from '../components/wan/WanSubHeader.vue'
@@ -420,7 +325,6 @@ import ResultViewer from '../components/ResultViewer.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
-import SliderField from '../components/ui/SliderField.vue'
 
 const props = defineProps<{ tabId: string; type: ImageTabType }>()
 const store = useModelTabsStore()
@@ -840,18 +744,23 @@ function setHires(patch: Partial<ImageBaseParams['hires']>): void {
 function setHiresRefiner(patch: Partial<NonNullable<ImageBaseParams['hires']['refiner']>>): void {
   const nextRefiner = {
     enabled: false,
-    steps: 0,
+    swapAtStep: 1,
     cfg: 3.5,
     seed: -1,
     model: undefined,
     ...(params.value.hires.refiner || {}),
     ...patch,
   }
+  const swapAtStep = Number(nextRefiner.swapAtStep)
+  nextRefiner.swapAtStep = Number.isFinite(swapAtStep) && swapAtStep >= 1 ? Math.trunc(swapAtStep) : 1
   setHires({ refiner: nextRefiner })
 }
 
 function setRefiner(patch: Partial<ImageBaseParams['refiner']>): void {
-  setParams({ refiner: { ...params.value.refiner, ...patch } })
+  const nextRefiner = { ...params.value.refiner, ...patch }
+  const swapAtStep = Number(nextRefiner.swapAtStep)
+  nextRefiner.swapAtStep = Number.isFinite(swapAtStep) && swapAtStep >= 1 ? Math.trunc(swapAtStep) : 1
+  setParams({ refiner: nextRefiner })
 }
 
 function clampFloat(value: number, min: number, max: number): number {

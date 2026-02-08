@@ -10,22 +10,25 @@ Purpose: Swap-model configuration card (first pass or hires second pass).
 Renders a compact enable switch and optional fields (checkpoint swap step + CFG/seed), emitting updates to parent views.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RefinerSettingsCard` (component): Refiner settings panel component.
+- `RefinerSettingsCard` (component): Swap-model settings panel component.
 - `toggle` (function): Toggles `enabled` via `update:enabled`.
 -->
 
 <template>
-  <div :class="['refiner-card', { 'refiner-card--dense': dense } ]">
-    <div class="rf-header">
+  <div :class="['gen-card', 'refiner-card', { 'refiner-card--dense': dense } ]">
+    <div class="row-split">
       <span class="label-muted">{{ label }}</span>
-      <button class="rf-switch" type="button" @click="toggle">
-        <span class="rf-switch-track" :data-on="enabled ? '1' : '0'">
-          <span class="rf-switch-thumb" />
-        </span>
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :aria-pressed="enabled"
+        @click="toggle"
+      >
+        {{ enabled ? 'Enabled' : 'Disabled' }}
       </button>
     </div>
     <div v-if="enabled" class="rf-grid">
-      <div class="rf-cell">
+      <div class="field rf-field--full">
         <label class="label-muted">Checkpoint Swap</label>
         <select class="select-md" :value="model" @change="onModelChange">
           <option value="">Keep current model</option>
@@ -33,15 +36,15 @@ Symbols (top-level; keep in sync; no ghosts):
           <option v-for="choice in normalizedModelChoices" :key="choice" :value="choice">{{ choice }}</option>
         </select>
       </div>
-      <div class="rf-cell">
-        <label class="label-muted">Steps</label>
-        <input class="ui-input ui-input-sm" type="number" min="0" :value="steps" @change="onStepsChange" />
+      <div class="field">
+        <label class="label-muted">Swap At Step</label>
+        <input class="ui-input ui-input-sm" type="number" min="1" :value="normalizedSwapAtStep" @change="onSwapAtStepChange" />
       </div>
-      <div class="rf-cell">
+      <div class="field">
         <label class="label-muted">CFG</label>
         <input class="ui-input ui-input-sm" type="number" step="0.1" :value="cfg" @change="onCfgChange" />
       </div>
-      <div class="rf-cell">
+      <div class="field">
         <label class="label-muted">Seed</label>
         <input class="ui-input ui-input-sm" type="number" :value="seed" @change="onSeedChange" />
         <p class="rf-hint">Use -1 for random</p>
@@ -56,7 +59,7 @@ import { computed } from 'vue'
 
 const props = withDefaults(defineProps<{
   enabled: boolean
-  steps: number
+  swapAtStep: number
   cfg: number
   seed: number
   model?: string
@@ -70,7 +73,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:enabled', value: boolean): void
-  (e: 'update:steps', value: number): void
+  (e: 'update:swapAtStep', value: number): void
   (e: 'update:cfg', value: number): void
   (e: 'update:seed', value: number): void
   (e: 'update:model', value: string): void
@@ -98,9 +101,15 @@ function toggle(): void {
   emit('update:enabled', !props.enabled)
 }
 
-function onStepsChange(event: Event): void {
+const normalizedSwapAtStep = computed(() => {
+  const v = Number(props.swapAtStep)
+  if (!Number.isFinite(v) || v < 1) return 1
+  return Math.trunc(v)
+})
+
+function onSwapAtStepChange(event: Event): void {
   const v = Number((event.target as HTMLInputElement).value)
-  emit('update:steps', Number.isNaN(v) || v < 0 ? 0 : v)
+  emit('update:swapAtStep', Number.isNaN(v) || v < 1 ? 1 : Math.trunc(v))
 }
 
 function onCfgChange(event: Event): void {

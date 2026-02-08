@@ -17,17 +17,20 @@ Symbols (top-level; keep in sync; no ghosts):
 -->
 
 <template>
-  <div class="hires-card">
-    <div class="hr-header">
+  <div class="gen-card hires-card">
+    <div class="row-split">
       <span class="label-muted">Hires (second pass)</span>
-      <button class="hr-switch" type="button" @click="toggle">
-        <span class="hr-switch-track" :data-on="enabled ? '1' : '0'">
-          <span class="hr-switch-thumb" />
-        </span>
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :aria-pressed="enabled"
+        @click="toggle"
+      >
+        {{ enabled ? 'Enabled' : 'Disabled' }}
       </button>
     </div>
     <div v-if="enabled" class="hr-grid">
-      <div class="hr-cell">
+      <div class="field">
         <SliderField
           label="Scale"
           :modelValue="scale"
@@ -42,7 +45,7 @@ Symbols (top-level; keep in sync; no ghosts):
         />
         <p class="hr-hint" v-if="targetWidth && targetHeight">Target ~ {{ targetWidth }}×{{ targetHeight }}</p>
       </div>
-      <div class="hr-cell">
+      <div class="field">
         <SliderField
           label="Denoise"
           :modelValue="denoise"
@@ -56,7 +59,7 @@ Symbols (top-level; keep in sync; no ghosts):
           @update:modelValue="(v) => emit('update:denoise', v)"
         />
       </div>
-      <div class="hr-cell">
+      <div class="field">
         <label class="label-muted">Hires steps</label>
         <input
           class="ui-input ui-input-sm"
@@ -68,7 +71,7 @@ Symbols (top-level; keep in sync; no ghosts):
         />
         <p class="hr-hint">0 = reuse base steps</p>
       </div>
-      <div class="hr-cell">
+      <div class="field">
         <label class="label-muted">Upscaler</label>
         <select class="select-md" :value="upscaler" :disabled="disabled || !enabled || upscalersLoading" @change="onUpscalerChange">
           <option v-if="upscalersLoading" :value="upscaler">Loading…</option>
@@ -84,7 +87,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <p class="hr-hint" v-if="upscalersError">Error: {{ upscalersError }}</p>
         <p class="hr-hint" v-else-if="upscaler && !isUpscalerKnown">Select an upscaler id from `GET /api/upscalers`.</p>
       </div>
-      <div class="hr-cell hr-cell--span2">
+      <div class="field hr-field--full">
         <label class="label-muted">Tile</label>
         <UpscalerTileControls
           :tileSize="tileConfig.tile"
@@ -106,12 +109,12 @@ Symbols (top-level; keep in sync; no ghosts):
         :dense="true"
         :model-choices="refinerModelChoices"
         v-model:enabled="refinerEnabled"
-        v-model:steps="refinerSteps"
+        v-model:swapAtStep="refinerSwapAtStep"
         v-model:cfg="refinerCfg"
         v-model:seed="refinerSeed"
         v-model:model="refinerModel"
       />
-      <p class="hr-hint">Runs at the configured second-pass step; choose checkpoint swap and overrides here.</p>
+      <p class="hr-hint">Swap uses step-pointer semantics in the second pass (switch model at the selected step).</p>
     </div>
   </div>
 </template>
@@ -142,7 +145,7 @@ const props = defineProps<{
   baseWidth?: number
   baseHeight?: number
   refinerEnabled?: boolean
-  refinerSteps?: number
+  refinerSwapAtStep?: number
   refinerCfg?: number
   refinerSeed?: number
   refinerModel?: string
@@ -159,7 +162,7 @@ const emit = defineEmits<{
   (e: 'update:minTile', value: number): void
   (e: 'update:fallbackOnOom', value: boolean): void
   (e: 'update:refinerEnabled', value: boolean): void
-  (e: 'update:refinerSteps', value: number): void
+  (e: 'update:refinerSwapAtStep', value: number): void
   (e: 'update:refinerCfg', value: number): void
   (e: 'update:refinerSeed', value: number): void
   (e: 'update:refinerModel', value: string): void
@@ -213,9 +216,13 @@ const refinerEnabled = computed({
   get: () => Boolean(props.refinerEnabled),
   set: (value: boolean) => emit('update:refinerEnabled', value),
 })
-const refinerSteps = computed({
-  get: () => Number.isFinite(props.refinerSteps) ? Number(props.refinerSteps) : 0,
-  set: (value: number) => emit('update:refinerSteps', value),
+const refinerSwapAtStep = computed({
+  get: () => {
+    const value = Number(props.refinerSwapAtStep)
+    if (!Number.isFinite(value) || value < 1) return 1
+    return Math.trunc(value)
+  },
+  set: (value: number) => emit('update:refinerSwapAtStep', value),
 })
 const refinerCfg = computed({
   get: () => Number.isFinite(props.refinerCfg) ? Number(props.refinerCfg) : 7,

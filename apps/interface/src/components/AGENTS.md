@@ -62,3 +62,5 @@ Status: Active
 - 2026-02-06: `QuickSettingsBar.vue` now resolves family fallback using canonical taxonomy helpers + backend `engine_id_to_semantic_engine` mapping (no duplicated ad-hoc alias table in the component).
 - 2026-02-06: `QuickSettingsBar.vue` family fallback now guards on `engineCaps.loaded` before semantic-map resolution (prevents pre-bootstrap alias-map throws while preserving fail-loud behavior after load).
 - 2026-02-06: `QuickSettingsBar.vue` now narrows active tabs with typed `ImageTab`/`WanTab` helpers and updates image-tab params through a typed helper (`updateImageTabParams`), reducing `tab.params as any` usage in model/text-encoder/ZImage/WAN controls.
+- 2026-02-08: `RefinerSettingsCard.vue` / `HiresSettingsCard.vue` swap-model controls now use step-pointer semantics (`Swap At Step`, min 1) and avoid “refiner step-count” wording.
+- 2026-02-08: Added `Img2ImgInpaintParamsCard.vue` to host detailed init-image + inpaint mask controls extracted from `ImageModelTab.vue`; parent view remains the source of truth for normalization/clamps and file handlers.

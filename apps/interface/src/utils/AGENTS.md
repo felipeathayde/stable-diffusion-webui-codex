@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-02-07
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -14,5 +14,7 @@ Status: Active
 - 2026-01-03: Added standardized file header block to `xyz.ts` (doc-only change; part of rollout).
 - 2026-01-29: Added PNG infotext parsing + sampler/scheduler mapping helpers (`pnginfo.ts`) with unit tests.
 - 2026-02-03: XYZ axis ids for hires are now `hires_scale` / `hires_steps`.
+- 2026-02-08: XYZ keeps axis id `refiner_steps` for sweep compatibility, but the UI label now reflects swap-pointer semantics (`Swap at step`).
 - 2026-02-06: Added `engine_taxonomy.ts` as canonical frontend engine taxonomy mapping (tab-family aliases, request engine-id resolution, semantic-engine resolution, and centralized sampler/scheduler fallback defaults).
 - 2026-02-07: Updated Anima fallback sampling defaults to `euler/simple` in `engine_taxonomy.ts` and added `engine_taxonomy.test.ts` regression coverage.
+- 2026-02-08: Added `image_params.ts` + `image_params.test.ts` for pure img2img/inpaint normalization helpers (`normalizeMaskEnforcement`, `normalizeInpaintingFill`, `normalizeNonNegativeInt`) used by `ImageModelTab.vue`.

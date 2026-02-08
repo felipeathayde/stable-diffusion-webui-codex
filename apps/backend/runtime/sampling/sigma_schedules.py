@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Sigma schedule construction utilities for diffusion samplers.
 Defines canonical scheduler names and builds sigma schedules (Karras, exponential, DDIM, align-your-steps, etc.).
+SIMPLE schedules are predictor-aware and support explicit mode selection (legacy shifted-linspace vs Comfy-style sigma downsample).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SchedulerName` (enum): Canonical scheduler names for sigma schedule construction (strict, no silent fallback).
@@ -36,6 +37,7 @@ from enum import Enum
 from typing import Optional
 
 import torch
+from apps.backend.runtime.sampling_adapters.prediction import SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS
 
 
 class SchedulerName(str, Enum):
@@ -153,11 +155,44 @@ def _simple_schedule_from_predictor(
 ) -> torch.Tensor:
     """Predictor-ladder 'simple' schedule built via predictor sigma/timestep.
 
-    Mirrors the reference schedule-linker `get_sigmas(n)` behavior:
-    - Construct a linear ladder of timesteps from high→low over the predictor domain.
-    - Map timesteps back to sigmas via `predictor.sigma(t)`.
-    - Append a terminal 0 as the last sigma.
+    Behavior depends on predictor configuration:
+    - If `predictor.simple_schedule_mode == "comfy_downsample_sigmas"`, build a ComfyUI-style ladder by downsampling
+      `predictor.sigmas` from the **end** and appending a terminal 0.
+    - Otherwise, use the legacy Codex behavior:
+      - special-case `prediction_type="const"` for FlowMatch-style shifted linspace ladders,
+      - else construct a linear ladder of timesteps and map via `predictor.sigma(t)`,
+      - append a terminal 0.
     """
+
+    mode = getattr(predictor, "simple_schedule_mode", None)
+    if isinstance(mode, str) and mode.strip().lower() == SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS:
+        base_sigmas = getattr(predictor, "sigmas", None)
+        if base_sigmas is None:
+            raise RuntimeError("predictor is missing sigmas ladder required for Comfy-style simple schedule")
+        steps_i = int(steps)
+        if steps_i <= 0:
+            raise ValueError("steps must be >= 1 for Comfy-style simple schedule")
+        sigmas = torch.as_tensor(base_sigmas, device=device, dtype=dtype)
+        if sigmas.ndim != 1:
+            raise RuntimeError(
+                "predictor.sigmas must be a 1D ladder for Comfy-style simple schedule; "
+                f"got shape={tuple(sigmas.shape)}."
+            )
+        if sigmas.numel() == 0:
+            raise RuntimeError("predictor.sigmas is empty; cannot build Comfy-style simple sigma schedule")
+        if not torch.isfinite(sigmas).all().item():
+            raise RuntimeError("predictor.sigmas must contain only finite values for Comfy-style simple schedule.")
+        if (sigmas[1:] < sigmas[:-1]).any().item():
+            raise RuntimeError(
+                "predictor.sigmas must be monotonically non-decreasing (sigma_min -> sigma_max) "
+                "for Comfy-style simple schedule."
+            )
+        total = int(sigmas.numel())
+        # ComfyUI parity: `int(i * (len(sigmas) / steps))` for i in [0..steps-1] (non-negative),
+        # which is equivalent to floor(i * total / steps) == (i * total) // steps.
+        indices = [total - 1 - ((i * total) // steps_i) for i in range(steps_i)]
+        ladder = sigmas[torch.as_tensor(indices, device=device, dtype=torch.long)]
+        return _append_zero(ladder, device=device, dtype=dtype)
 
     # Special case: FlowMatchEulerPrediction (Z Image Turbo) expects the diffusers
     # `ZImagePipeline` schedule shape:

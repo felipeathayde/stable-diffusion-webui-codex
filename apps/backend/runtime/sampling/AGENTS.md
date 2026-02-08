@@ -30,6 +30,10 @@ Status: Active
 - Canonical names: sampler/scheduler strings are strict and must match `SamplerKind` / `SchedulerName` values (no alias mapping; empty values are invalid).
 - Karras Sigmas: Euler in diffusers typically uses Karras sigmas when enabled. We intentionally reuse the Karras schedule for `EULER_DISCRETE`. The integrator determines ODE vs ancestral behavior.
 - Simple schedule: `SIMPLE` is predictor-aware and always appends a terminal 0.
+- 2026-02-08: `SIMPLE` now supports predictor-selected modes:
+  - `flowmatch_shifted_linspace` (legacy/default for flow predictors),
+  - `comfy_downsample_sigmas` (ComfyUI parity: downsample predictor sigma ladder from the tail, then append terminal 0).
+  Anima explicitly uses the Comfy mode via its predictor spec; FlowMatch families remain on legacy mode unless opted in.
 - Sigma dtype: the sigma ladder is always built and used in **fp32** (even when the diffusion core runs bf16/fp16). Casting sigmas to low precision quantizes the schedule/timestep mapping and can cause severe “golesma/checkerboard/noise soup” regressions (notably SDXL).
 - Flow-match shift source-of-truth: for flow-match predictors (`prediction_type='const'`), the schedule uses `flow_shift` resolved from diffusers `scheduler_config.json` (vendored HF mirror or diffusers repo dir):
   - Fixed shift: applies `shift * t / (1 + (shift - 1) * t)` on a base `linspace(1→1/N)` ladder.
@@ -59,6 +63,7 @@ Status: Active
 - 2026-01-30: Flow-match sampling no longer forces latents to fp32; latents now follow the core role dtype (SDXL parity). Sigma ladders remain fp32.
 - 2026-01-31: Added opt-in global profiling (`CODEX_PROFILE`) at sampling seams to attribute time to per-step regions, model calls, and CPU↔GPU transfers.
 - 2026-02-07: `ConditionCrossAttn` now fails loud on non-tensor/invalid-rank/zero-length cross-attn inputs in `can_concat` and `concat` to prevent raw divide-by-zero failures during concat math.
+- 2026-02-08: Added Comfy SIMPLE parity branch for discrete flow predictors (`simple_schedule_mode="comfy_downsample_sigmas"`) with strict fail-loud guards (`steps>=1`, 1D finite monotone `predictor.sigmas`) and kept FlowMatch SIMPLE path unchanged by default.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

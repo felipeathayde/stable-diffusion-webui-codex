@@ -17,6 +17,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `make_beta_schedule` (function): Creates standard beta schedules (linear/cosine/sqrt variants) as tensors.
 - `time_snr_shift` (function): Applies an SNR-based time shift parameterization.
 - `rescale_zero_terminal_snr_sigmas` (function): Rescales sigmas for “zero terminal SNR” behavior.
+- `SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS` (constant): Predictor opt-in for Comfy-style SIMPLE sigma downsample.
+- `SIMPLE_SCHEDULE_MODE_FLOWMATCH_SHIFTED_LINSPACE` (constant): Predictor default SIMPLE mode (legacy shifted-linspace behavior).
+- `FLOW_SIMPLE_SCHEDULE_MODES` (constant): Allowed SIMPLE schedule mode values for flow predictors.
 - `AbstractPrediction` (class): Base prediction module interface (torch.nn.Module) for mapping model output → prediction.
 - `Prediction` (class): Standard prediction implementation (inherits `AbstractPrediction`).
 - `PredictionEDM` (class): EDM-style prediction wrapper (inherits `Prediction`).
@@ -33,6 +36,16 @@ import torch
 import numpy as np
 
 from apps.backend.runtime.model_registry.flow_shift import calculate_shift
+
+
+SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS = "comfy_downsample_sigmas"
+SIMPLE_SCHEDULE_MODE_FLOWMATCH_SHIFTED_LINSPACE = "flowmatch_shifted_linspace"
+FLOW_SIMPLE_SCHEDULE_MODES = frozenset(
+    {
+        SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS,
+        SIMPLE_SCHEDULE_MODE_FLOWMATCH_SHIFTED_LINSPACE,
+    }
+)
 
 
 def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
@@ -258,10 +271,24 @@ class PredictionFlow(AbstractPrediction):
         shift: float = 1.0,
         multiplier: float = 1000.0,
         timesteps: int = 1000,
+        simple_schedule_mode: str | None = None,
     ):
         super().__init__(sigma_data=sigma_data, prediction_type=prediction_type)
         self.shift = float(shift)
         self.multiplier = float(multiplier)
+        if simple_schedule_mode is None:
+            # Default behavior: keep legacy SIMPLE schedule semantics (FlowMatch-style shifted-linspace).
+            # The sigma scheduler opts-in to Comfy parity only when set to `comfy_downsample_sigmas`.
+            self.simple_schedule_mode = SIMPLE_SCHEDULE_MODE_FLOWMATCH_SHIFTED_LINSPACE
+        else:
+            value = str(simple_schedule_mode).strip().lower()
+            if value not in FLOW_SIMPLE_SCHEDULE_MODES:
+                raise ValueError(
+                    "Invalid simple_schedule_mode for flow predictor: "
+                    f"{simple_schedule_mode!r} "
+                    f"(expected one of {sorted(FLOW_SIMPLE_SCHEDULE_MODES)})."
+                )
+            self.simple_schedule_mode = value
         if timesteps <= 0:
             raise ValueError("timesteps must be >= 1")
         ts = self.sigma((torch.arange(1, timesteps + 1, 1) / float(timesteps)) * self.multiplier)
@@ -304,6 +331,7 @@ class PredictionDiscreteFlow(PredictionFlow):
         shift: float = 1.0,
         timesteps: int = 1000,
         multiplier: float = 1000.0,
+        simple_schedule_mode: str | None = None,
     ):
         super().__init__(
             sigma_data=sigma_data,
@@ -311,6 +339,7 @@ class PredictionDiscreteFlow(PredictionFlow):
             shift=shift,
             multiplier=multiplier,
             timesteps=timesteps,
+            simple_schedule_mode=simple_schedule_mode,
         )
 
 

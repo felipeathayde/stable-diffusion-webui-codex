@@ -11,6 +11,7 @@ Status: Active
 - Keep this folder small and focused; consider consolidating these adapters into the sampling stack when call sites are fully native.
 - 2025-11-28: `prediction_from_diffusers_scheduler` preserves scheduler `sigma_data`/`prediction_type` when constructing `Prediction`, avoiding silent scaling drift for v-pred SDXL variants.
 - 2026-01-02: Added standardized file header docstrings to adapter modules (doc-only change; part of rollout).
+- 2026-02-08: Flow predictors now expose explicit SIMPLE schedule mode constants (`SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS`, `SIMPLE_SCHEDULE_MODE_FLOWMATCH_SHIFTED_LINSPACE`) and validate `simple_schedule_mode` against `FLOW_SIMPLE_SCHEDULE_MODES` (fail loud on unknown values).
 
 ## Invariants (SamplerModel.apply_model)
 - `c_crossattn` deve ser Tensor 3D (B,S,C); erro explícito se inválido.

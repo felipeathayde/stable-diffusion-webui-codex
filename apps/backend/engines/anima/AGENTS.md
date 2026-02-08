@@ -18,3 +18,4 @@ Status: Draft
 - Capability exposure follows the Anima conditioning contract (`crossattn` + pooled `vector` + `t5xxl_ids/t5xxl_weights`); keep `AnimaEngine.capabilities()` in sync with `runtime/model_registry/capabilities.py`.
 - Runtime device consistency checks normalize equivalent labels (`cuda` and `cuda:0`) before mismatch validation; only real device mismatches should fail, and missing `denoiser.load_device` fails loud.
 - Conditioning requires dual tokenization (Qwen embeddings + T5 ids/weights), per `.sangoi/research/models/hf-circlestone-labs-anima.md`.
+- 2026-02-08: `spec._predictor()` opts Anima into `simple_schedule_mode="comfy_downsample_sigmas"` so `scheduler=simple` follows ComfyUI-style downsample of `predictor.sigmas` (parity target), while other flow families keep their existing SIMPLE behavior.

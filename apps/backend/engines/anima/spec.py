@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Anima engine specification and runtime assembly (Cosmos Predict2 / Anima adapter).
 Assembles a Codex-native runtime from the parsed Anima core bundle plus sha-selected external assets (Qwen3-0.6B TE + WanVAE-style VAE),
 producing a denoiser patcher suitable for the canonical txt2img/img2img pipelines (Option A).
+Sets Anima predictor defaults, including SIMPLE schedule mode selection for ComfyUI sigma-ladder parity.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AnimaTextPipelines` (dataclass): Text pipeline container (Qwen3 embeddings + offline T5 tokenizer).
@@ -33,7 +34,10 @@ from apps.backend.runtime.model_registry.family_runtime import FamilyRuntimeSpec
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
-from apps.backend.runtime.sampling_adapters.prediction import PredictionDiscreteFlow
+from apps.backend.runtime.sampling_adapters.prediction import (
+    SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS,
+    PredictionDiscreteFlow,
+)
 
 logger = logging.getLogger("backend.engines.anima.spec")
 
@@ -102,6 +106,7 @@ def _predictor(*, spec: AnimaEngineSpec) -> PredictionDiscreteFlow:
         shift=float(spec.flow_shift),
         multiplier=float(spec.flow_multiplier),
         timesteps=1000,
+        simple_schedule_mode=SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS,
     )
 
 

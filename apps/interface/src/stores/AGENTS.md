@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-02-06
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -52,6 +52,7 @@ Status: Active
 - 2026-02-06: Added `bootstrap.ts` to own hard-fatal startup sequencing (`engine_capabilities`, tabs, quicksettings) and retry state; `engine_capabilities.ts` now enforces strict `dependency_checks` parsing (no permissive fallback).
 - 2026-02-06: `quicksettings.ts` inventory/path loaders are now fail-loud during init (inventory/path contract failures surface instead of silently clearing state).
 - 2026-02-06: `model_tabs.ts` tab mutations are now fail-loud: removed silent catches, added typed `ModelTabsStoreError`, made structural mutations API-first, and added explicit rollback semantics for `updateParams` persistence failures.
+- 2026-02-08: `model_tabs.ts` params serialization now recursively unwraps nested reactive/proxy branches before persistence (`snapshot/patch/persist/rollback`) and fails loud with `serialization_failure` on unsupported nested values (no permissive fallback).
 - 2026-02-06: `engine_capabilities.ts` now strictly parses `engine_id_to_semantic_engine` and resolves known engine-id aliases to semantic engines fail-loud; it also exposes centralized sampler/scheduler default resolution from backend capabilities.
 - 2026-02-06: `model_tabs.ts` and `xyz.ts` now use centralized taxonomy/default helpers (`utils/engine_taxonomy.ts`) and prefer backend sampler/scheduler defaults (with shared fallback policy).
 - 2026-02-06: `model_tabs.ts` now exports typed tab-param contracts (`TabParamsByType`, `TabByType`, `WanAssetsParams`) as the Phase 5 baseline for removing `any` usage across WAN/Image consumers.

@@ -34,6 +34,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `requiredTypesFromCapabilities` (function): Derives required tab types from backend capability map (adds `anima` only when exposed).
 - `asRecordObject` (function): Narrowing helper that normalizes unknown values into plain records for merge-safe processing.
 - `isPlainRecord` (function): Validates object values as plain record payloads (no arrays/class instances) for patch serialization safety.
+- `PersistSerializationPhase` (type): Serialization boundary phases used by params persistence snapshots and rollback.
+- `serializationFailure` (function): Factory for typed fail-loud params serialization errors with contextual details.
+- `normalizeSerializableForPersist` (function): Recursively unwraps reactive/proxy branches into plain clone-safe structures for persistence.
 - `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
@@ -533,6 +536,8 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     snapshotUpdatedAt: string
   }
 
+  type PersistSerializationPhase = 'snapshot' | 'patch' | 'persist' | 'rollback'
+
   async function resolveRequiredTypesFromCapabilities(): Promise<BaseTabType[]> {
     const capsStore = useEngineCapabilitiesStore()
     await capsStore.init()
@@ -562,27 +567,101 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     )
   }
 
+  function serializationFailure(
+    tabId: string,
+    phase: PersistSerializationPhase,
+    message: string,
+    options?: { cause?: unknown; details?: Record<string, unknown> },
+  ): ModelTabsStoreError {
+    return new ModelTabsStoreError(
+      'serialization_failure',
+      `Failed to serialize params for tab '${tabId}' (${phase}): ${message}`,
+      {
+        cause: options?.cause,
+        details: {
+          tabId,
+          phase,
+          ...(options?.details ?? {}),
+        },
+      },
+    )
+  }
+
+  function normalizeSerializableForPersist(
+    tabId: string,
+    phase: PersistSerializationPhase,
+    value: unknown,
+    path: string,
+    seen: WeakSet<object>,
+  ): unknown {
+    if (value === null) return null
+    const kind = typeof value
+    if (kind === 'string' || kind === 'number' || kind === 'boolean' || kind === 'bigint') return value
+    if (kind === 'undefined') return undefined
+    if (kind === 'function' || kind === 'symbol') {
+      throw serializationFailure(tabId, phase, `Unsupported value type '${kind}' at '${path}'.`, { details: { path, kind } })
+    }
+    if (kind !== 'object') return value
+
+    const raw = toRaw(value as object)
+    if (Array.isArray(raw)) {
+      if (seen.has(raw)) {
+        throw serializationFailure(tabId, phase, `Circular reference found at '${path}'.`, { details: { path, kind: 'array' } })
+      }
+      seen.add(raw)
+      const normalizedArray = raw.map((entry, index) =>
+        normalizeSerializableForPersist(tabId, phase, entry, `${path}[${index}]`, seen),
+      )
+      seen.delete(raw)
+      return normalizedArray
+    }
+
+    const prototype = Object.getPrototypeOf(raw)
+    if (prototype !== Object.prototype && prototype !== null) {
+      const ctorName = (raw as { constructor?: { name?: string } }).constructor?.name ?? 'unknown'
+      throw serializationFailure(tabId, phase, `Unsupported object type '${ctorName}' at '${path}'.`, {
+        details: { path, ctorName },
+      })
+    }
+
+    if (seen.has(raw as object)) {
+      throw serializationFailure(tabId, phase, `Circular reference found at '${path}'.`, { details: { path, kind: 'object' } })
+    }
+    seen.add(raw as object)
+    const normalizedRecord: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+      normalizedRecord[key] = normalizeSerializableForPersist(tabId, phase, entry, `${path}.${key}`, seen)
+    }
+    seen.delete(raw as object)
+    return normalizedRecord
+  }
+
   function cloneParamsForPersist(
     tabId: string,
-    phase: 'snapshot' | 'patch' | 'persist' | 'rollback',
+    phase: PersistSerializationPhase,
     value: Record<string, unknown>,
   ): Record<string, unknown> {
     if (typeof structuredClone !== 'function') {
-      throw new ModelTabsStoreError(
-        'serialization_failure',
-        `Failed to serialize params for tab '${tabId}' (${phase}): structuredClone is unavailable.`,
-        { details: { tabId, phase } },
-      )
+      throw serializationFailure(tabId, phase, 'structuredClone is unavailable.')
     }
+
+    let normalizedValue: unknown
     try {
-      return structuredClone(toRaw(value))
+      normalizedValue = normalizeSerializableForPersist(tabId, phase, value, '$', new WeakSet<object>())
+    } catch (error) {
+      if (error instanceof ModelTabsStoreError) throw error
+      const message = error instanceof Error ? error.message : String(error)
+      throw serializationFailure(tabId, phase, message, { cause: error })
+    }
+    if (!isPlainRecord(normalizedValue)) {
+      throw serializationFailure(tabId, phase, "Root params payload must be a plain object.", { details: { path: '$' } })
+    }
+
+    try {
+      return structuredClone(normalizedValue)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new ModelTabsStoreError(
-        'serialization_failure',
-        `Failed to serialize params for tab '${tabId}' (${phase}): ${message}`,
-        { cause: error, details: { tabId, phase } },
-      )
+      throw serializationFailure(tabId, phase, message, { cause: error })
     }
   }
 

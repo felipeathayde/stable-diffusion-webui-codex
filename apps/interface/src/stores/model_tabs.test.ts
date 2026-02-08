@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Vitest coverage for model-tab normalization and params persistence serialization invariants.
 Locks fail-loud behavior for unknown tab types, validates capability-driven Anima tab auto-inclusion, and ensures
-`updateParams` persistence rejects non-serializable payloads without hanging deferred promises.
+`updateParams` persistence handles nested reactive payload branches while still rejecting non-serializable payloads
+without hanging deferred promises.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `model_tabs.test` (module): Model tabs normalization/capabilities + params-persistence serialization tests.
@@ -168,6 +169,22 @@ describe('useModelTabsStore params persistence serialization', () => {
     const payload = mockedUpdateTabApi.mock.calls[0]?.[1] as { params: Record<string, unknown> }
     expect(payload.params.useInitImage).toBe(true)
     expect(payload.params.initImageName).toBe('init.png')
+  })
+
+  it('serializes nested reactive branches in patch payloads', async () => {
+    const store = createSeededStore()
+    const currentHires = reactive((store.tabs[0] as any).params.hires) as any
+    const patch = { hires: { ...currentHires, enabled: true } } as any
+
+    const persistPromise = store.updateParams('tab-1', patch)
+    await vi.advanceTimersByTimeAsync(300)
+    await expect(persistPromise).resolves.toBeUndefined()
+
+    expect(mockedUpdateTabApi).toHaveBeenCalledTimes(1)
+    const payload = mockedUpdateTabApi.mock.calls[0]?.[1] as { params: Record<string, unknown> }
+    const hires = payload.params.hires as Record<string, unknown>
+    expect(hires.enabled).toBe(true)
+    expect((hires.refiner as Record<string, unknown>).enabled).toBe(false)
   })
 
   it('fails loud with serialization_failure for non-serializable patch values', async () => {

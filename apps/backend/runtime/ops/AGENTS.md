@@ -15,3 +15,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to ops facades and GGUF runtime helpers (doc-only change; part of rollout).
 - 2026-01-29: Added `ops/codexpack_cuda.py` to best-effort load the `codexpack_cuda` extension (prebuilt or in-place build) for CodexPack packed GGUF execution.
 - 2026-02-09: `DynamicSwapInstaller` getter path now rematerializes inference parameters before wrapping so ops/manual-cast linear calls do not inherit inference tensors in conditioning paths.
+- 2026-02-09: `get_weight_and_bias(...)` now rematerializes inference source parameters into layer state (subtype-preserving) and guarantees non-inference weight/bias outputs to prevent version-counter faults in `CodexOperations.Linear.forward`.

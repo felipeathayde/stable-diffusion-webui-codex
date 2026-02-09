@@ -21,6 +21,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `get_operation_context` (function): Returns the active `OperationContext` (resolved from env/defaults).
 - `_resolve_device` (function): Resolves a default device for operations (explicit override vs runtime defaults).
 - `_resolve_dtype` (function): Resolves a default dtype for operations (explicit override vs runtime defaults).
+- `_materialize_layer_parameter` (function): Rematerializes a layer parameter out of inference mode and writes it back to the layer.
+- `_materialize_non_inference_tensor` (function): Ensures derived weight/bias tensors are non-inference before execution.
 - `get_weight_and_bias` (function): Fetches weight/bias tensors for a layer, applying patches and optional streaming hooks.
 - `weights_manual_cast` (function): Fetches weight/bias for a layer, moving/casting to the requested device/dtype (optionally streamed).
 - `main_stream_worker` (function): Stream worker used to stage weights/biases for streamed execution.
@@ -215,6 +217,51 @@ def _resolve_dtype(default: torch.dtype = torch.float32) -> torch.dtype:
     return ctx.dtype if ctx.dtype is not None else default
 
 
+def _materialize_non_inference_tensor(
+    tensor: Optional[torch.Tensor],
+    *,
+    label: str,
+) -> Optional[torch.Tensor]:
+    if tensor is None or not torch.is_inference(tensor):
+        return tensor
+    requires_grad = bool(getattr(tensor, "requires_grad", False))
+    with torch.inference_mode(False), torch.no_grad():
+        rematerialized = tensor.to(device=tensor.device, dtype=tensor.dtype, copy=True)
+    if torch.is_inference(rematerialized):
+        raise RuntimeError(f"Failed to materialize non-inference tensor for {label}.")
+    if requires_grad:
+        rematerialized = rematerialized.detach().requires_grad_(True)
+    return rematerialized
+
+
+def _materialize_layer_parameter(layer, attr_name: str) -> Optional[torch.Tensor]:
+    parameter = getattr(layer, attr_name)
+    if parameter is None:
+        return None
+    if not torch.is_inference(parameter):
+        return parameter
+
+    requires_grad = bool(getattr(parameter, "requires_grad", False))
+    with torch.inference_mode(False), torch.no_grad():
+        rematerialized = parameter.to(device=parameter.device, dtype=parameter.dtype, copy=True)
+    if torch.is_inference(rematerialized):
+        raise RuntimeError(f"Failed to materialize non-inference parameter for {layer.__class__.__name__}.{attr_name}.")
+
+    if isinstance(parameter, torch.nn.Parameter):
+        if hasattr(parameter, "copy_with_data"):
+            replacement = parameter.copy_with_data(rematerialized)
+        else:
+            replacement = torch.nn.Parameter(rematerialized, requires_grad=requires_grad)
+        if torch.is_inference(replacement):
+            raise RuntimeError(
+                f"Failed to materialize non-inference parameter for {layer.__class__.__name__}.{attr_name}.",
+            )
+        setattr(layer, attr_name, replacement)
+        return getattr(layer, attr_name)
+    setattr(layer, attr_name, rematerialized)
+    return getattr(layer, attr_name)
+
+
 def get_weight_and_bias(
     layer,
     weight_args: Optional[Dict[str, object]] = None,
@@ -230,7 +277,7 @@ def get_weight_and_bias(
 
     weight = None
     if layer.weight is not None:
-        weight = layer.weight
+        weight = _materialize_layer_parameter(layer, "weight")
         if weight_fn is not None:
             if (
                 weight_fn is dequantize_tensor
@@ -264,7 +311,7 @@ def get_weight_and_bias(
 
     bias = None
     if layer.bias is not None:
-        bias = layer.bias
+        bias = _materialize_layer_parameter(layer, "bias")
         if bias_fn is not None:
             if (
                 bias_fn is dequantize_tensor
@@ -299,6 +346,8 @@ def get_weight_and_bias(
         has_bias=bias is not None,
         has_patches=patches is not None,
     )
+    weight = _materialize_non_inference_tensor(weight, label=f"{layer.__class__.__name__}.weight")
+    bias = _materialize_non_inference_tensor(bias, label=f"{layer.__class__.__name__}.bias")
     return weight, bias
 
 

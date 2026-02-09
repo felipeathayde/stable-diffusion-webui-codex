@@ -73,7 +73,7 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
             label=self.engine_id,
         )
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
@@ -86,7 +86,7 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
             if unload_clip:
                 memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_prompt_lengths_on_ui(self, prompt: str):
         runtime = self._require_runtime()
         engine = runtime.primary_classic()

@@ -201,102 +201,122 @@ class ClassicTextProcessingEngine:
         target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
 
         while True:
-            desired_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
-            self._apply_precision(target_device, desired_dtype)
+            with torch.inference_mode(False), torch.no_grad():
+                # Conditioning must not run under inference mode: inference tensors can trip PyTorch internals
+                # that rely on version counters (e.g. "Inference tensors do not track version counter").
+                desired_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+                self._apply_precision(target_device, desired_dtype)
 
-            # Ensure embedding weights use a stable compute dtype to avoid overflow
-            # regardless of TE compute dtype. We do NOT rely on a `position_ids`
-            # attribute existing on embeddings (many CLIP variants do not expose it).
-            embeddings = self.text_encoder.transformer.text_model.embeddings
-            if hasattr(embeddings, "position_embedding"):
-                embeddings.position_embedding = embeddings.position_embedding.to(dtype=desired_dtype)
-            if hasattr(embeddings, "token_embedding"):
-                embeddings.token_embedding = embeddings.token_embedding.to(dtype=desired_dtype)
+                # Ensure embedding weights use a stable compute dtype to avoid overflow
+                # regardless of TE compute dtype. We do NOT rely on a `position_ids`
+                # attribute existing on embeddings (many CLIP variants do not expose it).
+                embeddings = self.text_encoder.transformer.text_model.embeddings
+                if hasattr(embeddings, "position_embedding"):
+                    embeddings.position_embedding = embeddings.position_embedding.to(dtype=desired_dtype)
+                if hasattr(embeddings, "token_embedding"):
+                    embeddings.token_embedding = embeddings.token_embedding.to(dtype=desired_dtype)
 
-            tokens_device = tokens.to(target_device)
+                tokens_device = tokens.to(target_device)
 
-            # Build masks/ids once, on device. Only forward what the model supports.
-            batch, seqlen = tokens_device.shape[0], tokens_device.shape[1]
-            attention_mask = (tokens_device != self.id_pad).to(dtype=torch.long, device=target_device)
-            position_ids = torch.arange(seqlen, device=target_device).unsqueeze(0).expand(batch, -1)
+                # Build masks/ids once, on device. Only forward what the model supports.
+                batch, seqlen = tokens_device.shape[0], tokens_device.shape[1]
+                attention_mask = (tokens_device != self.id_pad).to(dtype=torch.long, device=target_device)
+                position_ids = torch.arange(seqlen, device=target_device).unsqueeze(0).expand(batch, -1)
 
-            # Prefer the high-level wrapper to reduce coupling on internal structure
-            fwd = self.text_encoder.forward
-            try:
-                sig = inspect.signature(fwd)
-                allowed = set(sig.parameters.keys())
-            except (ValueError, TypeError):  # builtins/torchscript edge cases
-                allowed = {"input_ids", "attention_mask", "position_ids", "output_hidden_states"}
+                # Prefer the high-level wrapper to reduce coupling on internal structure
+                fwd = self.text_encoder.forward
+                try:
+                    sig = inspect.signature(fwd)
+                    allowed = set(sig.parameters.keys())
+                except (ValueError, TypeError):  # builtins/torchscript edge cases
+                    allowed = {"input_ids", "attention_mask", "position_ids", "output_hidden_states"}
 
-            kwargs = {"output_hidden_states": True}
-            if "attention_mask" in allowed:
-                kwargs["attention_mask"] = attention_mask
-            if "position_ids" in allowed:
-                kwargs["position_ids"] = position_ids
+                kwargs = {"output_hidden_states": True}
+                if "attention_mask" in allowed:
+                    kwargs["attention_mask"] = attention_mask
+                if "position_ids" in allowed:
+                    kwargs["position_ids"] = position_ids
 
-            # Route via wrapper to let it normalise return types across variants
-            outputs = self.text_encoder(tokens_device, **kwargs)
+                # Route via wrapper to let it normalise return types across variants
+                outputs = self.text_encoder(tokens_device, **kwargs)
 
-            effective_clip_skip = max(int(self.clip_skip), int(self.minimal_clip_skip))
-            hidden_states = getattr(outputs, "hidden_states", None)
+                effective_clip_skip = max(int(self.clip_skip), int(self.minimal_clip_skip))
+                hidden_states = getattr(outputs, "hidden_states", None)
 
-            # Match WebUI semantics: clip_skip=1 means "no skip" and must use the
-            # *post* final-layer-norm embedding (HF: outputs.last_hidden_state).
-            if effective_clip_skip <= 1:
-                z = getattr(outputs, "last_hidden_state", None)
-                if not isinstance(z, torch.Tensor):
-                    if not isinstance(hidden_states, (tuple, list)) or not hidden_states:
-                        raise RuntimeError("CLIP output is missing both last_hidden_state and hidden_states.")
-                    z = hidden_states[-1]
-                    final_ln = getattr(getattr(self.text_encoder.transformer, "text_model", None), "final_layer_norm", None)
-                    if callable(final_ln):
-                        z = final_ln(z)
-                    else:
-                        raise RuntimeError(
-                            "CLIP output is missing last_hidden_state and the text model lacks final_layer_norm; "
-                            "cannot produce a normalized clip_skip=1 embedding."
+                # Match WebUI semantics: clip_skip=1 means "no skip" and must use the
+                # *post* final-layer-norm embedding (HF: outputs.last_hidden_state).
+                if effective_clip_skip <= 1:
+                    z = getattr(outputs, "last_hidden_state", None)
+                    if not isinstance(z, torch.Tensor):
+                        if not isinstance(hidden_states, (tuple, list)) or not hidden_states:
+                            raise RuntimeError("CLIP output is missing both last_hidden_state and hidden_states.")
+                        z = hidden_states[-1]
+                        final_ln = getattr(
+                            getattr(self.text_encoder.transformer, "text_model", None),
+                            "final_layer_norm",
+                            None,
                         )
-            else:
-                if not isinstance(hidden_states, (tuple, list)) or not hidden_states:
-                    raise RuntimeError("CLIP output is missing hidden_states (required for clip_skip > 1).")
-                if effective_clip_skip > len(hidden_states):
-                    raise ValueError(
-                        f"clip_skip={effective_clip_skip} exceeds available hidden_states ({len(hidden_states)})."
-                    )
-                z = hidden_states[-effective_clip_skip]
-                if self.final_layer_norm:
-                    # final_layer_norm lives on the inner text model
-                    z = self.text_encoder.transformer.text_model.final_layer_norm(z)
+                        if callable(final_ln):
+                            z = final_ln(z)
+                        else:
+                            raise RuntimeError(
+                                "CLIP output is missing last_hidden_state and the text model lacks final_layer_norm; "
+                                "cannot produce a normalized clip_skip=1 embedding."
+                            )
+                else:
+                    if not isinstance(hidden_states, (tuple, list)) or not hidden_states:
+                        raise RuntimeError("CLIP output is missing hidden_states (required for clip_skip > 1).")
+                    if effective_clip_skip > len(hidden_states):
+                        raise ValueError(
+                            f"clip_skip={effective_clip_skip} exceeds available hidden_states ({len(hidden_states)})."
+                        )
+                    z = hidden_states[-effective_clip_skip]
+                    if self.final_layer_norm:
+                        # final_layer_norm lives on the inner text model
+                        z = self.text_encoder.transformer.text_model.final_layer_norm(z)
 
-            pooled_output = outputs.pooler_output if self.return_pooled else None
-            if pooled_output is not None and self.text_projection and self.embedding_key != 'clip_l':
-                pooled_output = self.text_encoder.transformer.text_projection(pooled_output)
+                pooled_output = outputs.pooler_output if self.return_pooled else None
+                if pooled_output is not None and self.text_projection and self.embedding_key != "clip_l":
+                    pooled_output = self.text_encoder.transformer.text_projection(pooled_output)
 
-            if pooled_output is not None:
-                z.pooled = pooled_output
+                if pooled_output is not None:
+                    z.pooled = pooled_output
 
-            has_nan = torch.isnan(z).any() or (pooled_output is not None and torch.isnan(pooled_output).any())
-            if has_nan:
-                logger.warning(
-                    "CLIP encoding produced NaNs on %s using dtype %s; requesting precision fallback.",
-                    target_device,
-                    str(desired_dtype),
-                )
-                next_dtype = memory_management.manager.report_precision_failure(
-                    DeviceRole.TEXT_ENCODER,
-                    location="clip.encode",
-                    reason="NaN detected in CLIP output",
-                )
-                if next_dtype is None:
-                    hint = memory_management.manager.precision_hint(DeviceRole.TEXT_ENCODER)
+                if torch.is_inference(z) or (pooled_output is not None and torch.is_inference(pooled_output)):
+                    bad = []
+                    if torch.is_inference(z):
+                        bad.append("z")
+                    if pooled_output is not None and torch.is_inference(pooled_output):
+                        bad.append("pooled_output")
                     raise RuntimeError(
-                        f"Text encoder produced NaNs on {target_device} with dtype {desired_dtype}. {hint}"
+                        "CLIP encoding produced inference tensors "
+                        f"({', '.join(bad)}) on device={target_device} dtype={desired_dtype}, "
+                        "which violates runtime invariants and can trigger PyTorch version-counter errors. "
+                        "Ensure text conditioning runs outside torch.inference_mode()."
                     )
-                self._apply_precision(target_device, next_dtype)
-                memory_management.manager.soft_empty_cache(force=True)
-                continue
 
-            return z
+                has_nan = torch.isnan(z).any() or (pooled_output is not None and torch.isnan(pooled_output).any())
+                if has_nan:
+                    logger.warning(
+                        "CLIP encoding produced NaNs on %s using dtype %s; requesting precision fallback.",
+                        target_device,
+                        str(desired_dtype),
+                    )
+                    next_dtype = memory_management.manager.report_precision_failure(
+                        DeviceRole.TEXT_ENCODER,
+                        location="clip.encode",
+                        reason="NaN detected in CLIP output",
+                    )
+                    if next_dtype is None:
+                        hint = memory_management.manager.precision_hint(DeviceRole.TEXT_ENCODER)
+                        raise RuntimeError(
+                            f"Text encoder produced NaNs on {target_device} with dtype {desired_dtype}. {hint}"
+                        )
+                    self._apply_precision(target_device, next_dtype)
+                    memory_management.manager.soft_empty_cache(force=True)
+                    continue
+
+                return z
 
     def tokenize_line(self, line):
         parsed = parsing.parse_prompt_attention(line, self.emphasis.name)

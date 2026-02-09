@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-02-05
+Last Review: 2026-02-09
 Status: Active
 
 ## Scope
@@ -71,3 +71,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-02-05: Anima minimal-bundle metadata now canonicalizes `tenc_path` to the single resolved external text-encoder path (exactly one required) instead of preserving raw override payload shapes; both `vae_path` and resolved `tenc_path` are checked for on-disk existence with fail-loud diagnostics.
 - 2026-02-05: `registry.py` discovery roots now include Anima (`anima_ckpt`, `anima_vae`, and default `models/anima`) so checkpoint/vae inventory and family hints align with the Anima model directory layout.
 - 2026-02-08: Fixed Flux GGUF T5 loader unbound-local bug in `_load_huggingface_component`: smart-offload now only decides initial text-encoder load device, while `IntegratedT5` construction always executes before `load_state_dict(...)` for both GGUF and non-GGUF paths.
+- 2026-02-09: `codex_loader(...)` now uses `torch.no_grad()` (not `torch.inference_mode()`), preventing inference-tensor parameters from being created during model assembly/load in long-lived WebUI processes.

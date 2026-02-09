@@ -1375,7 +1375,7 @@ def _apply_prediction_type(codex_components: Dict[str, Any], parsed: ParsedCheck
     scheduler.config.prediction_type = desired or current or "epsilon"
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def codex_loader(
     sd_path: str,
     additional_state_dicts=None,

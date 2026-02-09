@@ -989,3 +989,50 @@ rg --files apps/backend/runtime | rg 'model_registry/capabilities\\.py$'
 rg --files apps/backend/runtime/pipeline_stages | rg 'hires_fix\\.py$'
 rg -n "img2img|inpaint|mask" apps/interface/README.md README.md .sangoi/CHANGELOG.md -g '*.md'
 ```
+
+### Selecting latest task log with wildcard that also matches `AGENTS.md`
+
+Wrong command:
+```bash
+ls -1t .sangoi/task-logs/*.md | head -n 1
+```
+
+Cause and fix:
+The wildcard includes `.sangoi/task-logs/AGENTS.md`, so the result may not be a real task log.
+Exclude `AGENTS.md` explicitly and pick the newest markdown file by timestamp.
+
+Correct command:
+```bash
+ls -1t .sangoi/task-logs/*.md | rg -v '/AGENTS\.md$' | head -n 1
+```
+
+### Using double quotes around `rg` patterns that include backticks
+
+Wrong command:
+```bash
+rg -n "mode\` omitted|Explicit `null`|mode omitted|fail-loud" .sangoi/reference/api/tasks-and-streaming.md
+```
+
+Cause and fix:
+Backticks inside double quotes trigger shell command substitution (`null` was executed).
+Use single quotes when the pattern contains backticks.
+
+Correct command:
+```bash
+rg -n 'mode` omitted|Explicit `null`|mode omitted|fail-loud' .sangoi/reference/api/tasks-and-streaming.md
+```
+
+### Using unescaped `{}` in `rg` regex for literal route paths
+
+Wrong command:
+```bash
+rg -n "@router.post\(\"/api/tasks/{task_id}/cancel\"\)" apps/backend/interfaces/api/routers/tasks.py
+```
+
+Cause and fix:
+In regex mode, `{}` are quantifier tokens. Literal braces in paths must be escaped, or use fixed-string search.
+
+Correct command:
+```bash
+rg -n -F '@router.post("/api/tasks/{task_id}/cancel")' apps/backend/interfaces/api/routers/tasks.py
+```

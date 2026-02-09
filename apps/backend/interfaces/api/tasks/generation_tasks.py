@@ -26,7 +26,7 @@ import threading
 from typing import Any, Callable, Mapping, Optional
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.task_registry import TaskEntry, unregister_task
+from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, unregister_task
 
 logger = logging.getLogger("backend.api.tasks.generation")
 
@@ -151,7 +151,7 @@ def run_image_task(
                 push({"type": "status", "stage": "waiting_for_inference"})
 
             acquired = acquire_inference_gate(
-                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode == "immediate"),
+                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
             )
             if not acquired:
                 entry.error = "cancelled"
@@ -177,7 +177,7 @@ def run_image_task(
                     model_ref=model_ref,
                     engine_options=engine_options,
                 ):
-                    if entry.cancel_requested and entry.cancel_mode == "immediate":
+                    if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
                         entry.error = "cancelled"
                         return
 

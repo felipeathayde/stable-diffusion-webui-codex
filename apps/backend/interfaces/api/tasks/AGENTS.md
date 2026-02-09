@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/tasks Overview
 <!-- tags: backend, api, tasks, orchestration -->
 Date: 2026-01-30
-Last Review: 2026-02-03
+Last Review: 2026-02-09
 Status: Active
 
 ## Purpose
@@ -15,3 +15,4 @@ Status: Active
 ## Notes
 - This package must remain import-light (avoid importing torch-heavy modules at import time). Prefer local imports inside functions.
 - Cancellation semantics are owned by `apps/backend/interfaces/api/task_registry.py` and must be preserved (always emit `end`).
+- 2026-02-09: Task workers now compare cancellation policy using `TaskCancelMode.IMMEDIATE` (enumized contract from `task_registry.py`) instead of raw string literals.

@@ -22,7 +22,7 @@ import threading
 from typing import Any, Callable, Mapping
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.task_registry import TaskEntry
+from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
 
 def run_supir_enhance_task(
@@ -53,7 +53,7 @@ def run_supir_enhance_task(
                 push({"type": "status", "stage": "waiting_for_inference"})
 
             acquired = acquire_inference_gate(
-                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode == "immediate"),
+                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
             )
             if not acquired:
                 entry.error = "cancelled"
@@ -65,7 +65,7 @@ def run_supir_enhance_task(
             apply_primary_device(device)
 
             push({"type": "progress", "stage": "enhance", "percent": None, "step": None, "total_steps": None, "eta_seconds": None})
-            if entry.cancel_requested and entry.cancel_mode == "immediate":
+            if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
                 entry.error = "cancelled"
                 return
 

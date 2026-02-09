@@ -23,7 +23,14 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
-from apps.backend.interfaces.api.task_registry import get_task, request_task_cancel
+from apps.backend.interfaces.api.task_registry import (
+    TaskCancelMode,
+    TaskEventType,
+    get_task,
+    parse_task_cancel_mode,
+    request_task_cancel,
+    restore_task_cancel_request,
+)
 
 
 def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
@@ -53,11 +60,9 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
                 return {"status": "error", "error": entry.error, "last_event_id": entry.last_event_id()}
             entry.schedule_cleanup(task_id)
             out = entry.result or {"status": "completed", "result": {}}
-            try:
-                if isinstance(out, dict):
-                    out.setdefault("last_event_id", entry.last_event_id())
-            except Exception:
-                pass
+            if not isinstance(out, dict):
+                raise RuntimeError("Task result payload must be a dict.")
+            out.setdefault("last_event_id", entry.last_event_id())
             return out
         snap = entry.snapshot_running()
         snap["task_id"] = task_id
@@ -90,7 +95,7 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
                     oldest, newest = entry.buffer_window()
                     gap_id = max(int(last_id) + 1, (int(oldest) - 1) if int(oldest) > 0 else int(last_id) + 1)
                     gap_payload = {
-                        "type": "gap",
+                        "type": TaskEventType.GAP.value,
                         "oldest_event_id": int(oldest),
                         "newest_event_id": int(newest),
                         "last_event_id": int(entry.last_event_id()),
@@ -118,10 +123,10 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
                     primary_id, end_id = terminal_ids
                     if int(last_id) < int(primary_id):
                         if entry.error:
-                            err_payload = {"type": "error", "message": entry.error}
+                            err_payload = {"type": TaskEventType.ERROR.value, "message": entry.error}
                             yield _sse(event_id=int(primary_id), json_payload=json.dumps(err_payload))
                         else:
-                            result_payload: dict[str, Any] = {"type": "result", "images": [], "info": {}}
+                            result_payload: dict[str, Any] = {"type": TaskEventType.RESULT.value, "images": [], "info": {}}
                             if isinstance(entry.result, dict):
                                 result_obj = entry.result.get("result")
                                 if isinstance(result_obj, dict):
@@ -130,7 +135,7 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
                         last_id = int(primary_id)
 
                     if int(last_id) < int(end_id):
-                        yield _sse(event_id=int(end_id), json_payload=json.dumps({"type": "end"}))
+                        yield _sse(event_id=int(end_id), json_payload=json.dumps({"type": TaskEventType.END.value}))
                         last_id = int(end_id)
 
                     entry.schedule_cleanup(task_id)
@@ -142,16 +147,39 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
 
     @router.post("/api/tasks/{task_id}/cancel")
     async def task_cancel(task_id: str, payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
-        mode_raw = str(payload.get("mode", "immediate")).strip().lower() if isinstance(payload, dict) else "immediate"
-        mode = "after_current" if mode_raw == "after_current" else "immediate"
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="cancel payload must be an object")
+        try:
+            mode = parse_task_cancel_mode(payload.get("mode", TaskCancelMode.IMMEDIATE.value))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        entry = get_task(task_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        previous_cancel_requested = bool(entry.cancel_requested)
+        previous_cancel_mode = entry.cancel_mode
+
+        stop_generating = None
+        if mode is TaskCancelMode.IMMEDIATE:
+            stop_generating = getattr(backend_state, "stop_generating", None)
+            if not callable(stop_generating):
+                raise RuntimeError("backend_state.stop_generating is required for immediate cancellation")
+
         ok = request_task_cancel(task_id, mode=mode)
         if not ok:
             raise HTTPException(status_code=404, detail="Task not found")
-        if mode == "immediate":
+
+        if mode is TaskCancelMode.IMMEDIATE:
             try:
-                backend_state.stop_generating()
+                stop_generating()
             except Exception:
-                pass
-        return {"status": "cancelling", "mode": mode}
+                restore_task_cancel_request(
+                    task_id,
+                    cancel_requested=previous_cancel_requested,
+                    cancel_mode=previous_cancel_mode,
+                )
+                raise
+        return {"status": "cancelling", "mode": mode.value}
 
     return router

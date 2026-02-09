@@ -37,7 +37,7 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from apps.backend.interfaces.api.path_utils import _path_from_api
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.task_registry import TaskEntry, register_task, unregister_task
+from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, register_task, unregister_task
 
 
 def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapshot, generation_provenance, save_generated_images, param_utils) -> APIRouter:
@@ -2208,7 +2208,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     push({"type": "status", "stage": "waiting_for_inference"})
 
                 acquired = acquire_inference_gate(
-                    should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode == "immediate"),
+                    should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
                 )
                 if not acquired:
                     entry.error = "cancelled"
@@ -2229,7 +2229,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     smart_cache=bool(getattr(req, "smart_cache", False)),
                 ):
                     for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
-                        if entry.cancel_requested and entry.cancel_mode == "immediate":
+                        if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
                             entry.error = "cancelled"
                             return
                         if isinstance(ev, ProgressEvent):

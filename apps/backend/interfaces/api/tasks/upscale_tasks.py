@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.task_registry import TaskEntry
+from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
 logger = logging.getLogger("backend.api.tasks.upscale")
 
@@ -107,7 +107,7 @@ def run_upscale_task(
                 push({"type": "status", "stage": "waiting_for_inference"})
 
             acquired = acquire_inference_gate(
-                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode == "immediate"),
+                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
             )
             if not acquired:
                 entry.error = "cancelled"
@@ -118,7 +118,7 @@ def run_upscale_task(
 
             apply_primary_device(device)
 
-            if entry.cancel_requested and entry.cancel_mode == "immediate":
+            if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
                 entry.error = "cancelled"
                 return
 
@@ -134,7 +134,7 @@ def run_upscale_task(
 
             # Tile progress callback.
             def on_tile(step: int, total: int) -> None:
-                if entry.cancel_requested and entry.cancel_mode == "immediate":
+                if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
                     raise RuntimeError("cancelled")
                 percent = None
                 try:
@@ -235,7 +235,7 @@ def run_upscaler_download_task(
                 expected_sha256_by_hf_path = {}
 
             for item in items:
-                if entry.cancel_requested and entry.cancel_mode == "immediate":
+                if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
                     raise RuntimeError("cancelled")
 
                 completed += 1

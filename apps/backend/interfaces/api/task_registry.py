@@ -12,11 +12,19 @@ Tracks task status, bounded SSE replay buffers, and cancellation requests for AP
 Symbols (top-level; keep in sync; no ghosts):
 - `tasks` (constant): In-memory task registry mapping task_id -> TaskEntry.
 - `tasks_lock` (constant): Lock protecting access to the in-memory task registry.
+- `TaskEventType` (enum): Canonical SSE event type literals used by task streams.
+- `TaskCancelMode` (enum): Cancellation policy (`immediate` or `after_current`) shared across routes/workers.
+- `TaskStatusStage` (enum): Canonical running-stage lifecycle values for status snapshots/events.
+- `parse_task_cancel_mode` (function): Strict parser for cancellation mode values.
+- `normalize_task_event` (function): Strict normalizer for non-terminal task events before buffering.
+- `BufferedEvent` (dataclass): Bounded replay-buffer record for one serialized event payload.
 - `TaskEntry` (class): In-memory task registry entry (snapshot/result/error + bounded event buffer + cancellation flags).
 - `get_task` (function): Reads a task entry by id from the in-process registry.
 - `register_task` (function): Registers a new task entry in the in-process registry.
 - `unregister_task` (function): Unregisters a task by id from the in-process registry.
 - `request_task_cancel` (function): Marks a task as cancelled (`immediate` vs `after_current`) for worker/coordinator checks.
+- `clear_task_cancel_request` (function): Clears cancellation request state for a task entry (used for fail-loud rollback paths).
+- `restore_task_cancel_request` (function): Restores previous cancel-request state for fail-loud rollback paths.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Deque, Dict, Optional, Tuple
 
 tasks: Dict[str, "TaskEntry"] = {}
@@ -65,10 +74,89 @@ TASK_EVENT_BUFFER_MAX_BYTES = _parse_int_env(
 ) * 1024 * 1024
 
 
+class TaskEventType(StrEnum):
+    STATUS = "status"
+    PROGRESS = "progress"
+    RESULT = "result"
+    ERROR = "error"
+    END = "end"
+    GAP = "gap"
+
+
+class TaskCancelMode(StrEnum):
+    IMMEDIATE = "immediate"
+    AFTER_CURRENT = "after_current"
+
+
+class TaskStatusStage(StrEnum):
+    QUEUED = "queued"
+    WAITING_FOR_INFERENCE = "waiting_for_inference"
+    RUNNING = "running"
+
+
+_NON_TERMINAL_EVENT_TYPES = frozenset({TaskEventType.STATUS, TaskEventType.PROGRESS})
+
+
+def parse_task_cancel_mode(raw_mode: Any) -> TaskCancelMode:
+    normalized = str(raw_mode).strip().lower()
+    if normalized == TaskCancelMode.IMMEDIATE.value:
+        return TaskCancelMode.IMMEDIATE
+    if normalized == TaskCancelMode.AFTER_CURRENT.value:
+        return TaskCancelMode.AFTER_CURRENT
+    raise ValueError(
+        "Invalid cancel mode; expected 'immediate' or 'after_current' "
+        f"(got {raw_mode!r})."
+    )
+
+
+def normalize_task_event(event: Dict[str, Any]) -> tuple[TaskEventType, Dict[str, Any]]:
+    raw_type = event.get("type")
+    normalized_type = str(raw_type or "").strip().lower()
+    if not normalized_type:
+        raise ValueError("event.type is required")
+    try:
+        event_type = TaskEventType(normalized_type)
+    except ValueError as exc:
+        raise ValueError(
+            f"Unsupported task event type {raw_type!r}; "
+            f"allowed non-terminal types are: {TaskEventType.STATUS.value}, {TaskEventType.PROGRESS.value}."
+        ) from exc
+
+    if event_type not in _NON_TERMINAL_EVENT_TYPES:
+        raise ValueError(
+            f"event.type {event_type.value!r} is terminal-only and cannot be pushed via TaskEntry.push_event"
+        )
+
+    normalized: Dict[str, Any] = dict(event)
+    normalized["type"] = event_type.value
+
+    if event_type is TaskEventType.STATUS:
+        raw_stage = event.get("stage")
+        stage_text = str(raw_stage or "").strip().lower()
+        if not stage_text:
+            raise ValueError("status event requires a non-empty stage")
+        try:
+            stage = TaskStatusStage(stage_text)
+        except ValueError as exc:
+            allowed = ", ".join(stage.value for stage in TaskStatusStage)
+            raise ValueError(
+                f"Unsupported status stage {raw_stage!r}; allowed values: {allowed}."
+            ) from exc
+        normalized["stage"] = stage.value
+        return event_type, normalized
+
+    raw_stage = event.get("stage")
+    stage_text = str(raw_stage or "").strip()
+    if not stage_text:
+        raise ValueError("progress event requires a non-empty stage")
+    normalized["stage"] = stage_text
+    return event_type, normalized
+
+
 @dataclass(frozen=True, slots=True)
 class BufferedEvent:
     event_id: int
-    event_type: str
+    event_type: TaskEventType
     json_payload: str
     byte_len: int
 
@@ -89,19 +177,19 @@ class TaskEntry:
         self._events_bytes: int = 0
         self._events_ever_dropped: bool = False
         self._last_event_id: int = 0
-        self._status_stage: str = "queued"
+        self._status_stage: TaskStatusStage = TaskStatusStage.QUEUED
         self._progress: dict[str, Any] | None = None
         self._preview_image: dict[str, str] | None = None
         self._preview_step: int | None = None
         self._created_at_ms: int = int(time.time() * 1000)
         self._started_at_ms: int | None = None
         self._finished_at_ms: int | None = None
-        self.result: Optional[Dict[str, Any]] = None
+        self.result: Dict[str, Any] | None = None
         self.error: Optional[str] = None
         self.done: asyncio.Future[bool] = loop.create_future()
         self.cleanup_handle: Optional[asyncio.TimerHandle] = None
         self.cancel_requested: bool = False
-        self.cancel_mode: str = "immediate"  # immediate | after_current
+        self.cancel_mode: TaskCancelMode = TaskCancelMode.IMMEDIATE
         self.last_preview_id_sent: int = 0
 
     def schedule_cleanup(self, task_id: str, delay: float = 300.0) -> None:
@@ -121,28 +209,28 @@ class TaskEntry:
         except RuntimeError:
             running = None
 
+        event_type, normalized_event = normalize_task_event(event)
+
         if running is self.loop:
-            self._push_event_nowait(event)
+            self._push_event_nowait(event_type, normalized_event)
             return
 
-        self.loop.call_soon_threadsafe(self._push_event_nowait, dict(event))
+        self.loop.call_soon_threadsafe(self._push_event_nowait, event_type, dict(normalized_event))
 
-    def _push_event_nowait(self, event: Dict[str, Any]) -> None:
+    def _push_event_nowait(self, event_type: TaskEventType, event: Dict[str, Any]) -> None:
         if self.done.done():
             raise RuntimeError("Cannot push events to a finished task.")
 
-        event_type = str(event.get("type", "") or "").strip().lower()
-        if not event_type:
-            raise ValueError("event.type is required")
-
-        if self._started_at_ms is None and event_type == "status" and str(event.get("stage", "") or "") == "running":
+        if (
+            self._started_at_ms is None
+            and event_type is TaskEventType.STATUS
+            and str(event.get("stage", "") or "") == TaskStatusStage.RUNNING.value
+        ):
             self._started_at_ms = int(time.time() * 1000)
 
-        if event_type == "status":
-            stage = str(event.get("stage", "") or "").strip()
-            if stage:
-                self._status_stage = stage
-        elif event_type == "progress":
+        if event_type is TaskEventType.STATUS:
+            self._status_stage = TaskStatusStage(str(event["stage"]))
+        elif event_type is TaskEventType.PROGRESS:
             stage = str(event.get("stage", "") or "").strip()
             self._progress = {
                 "stage": stage,
@@ -221,7 +309,7 @@ class TaskEntry:
         oldest, newest = self.buffer_window()
         out: Dict[str, Any] = {
             "status": "running",
-            "stage": self._status_stage,
+            "stage": self._status_stage.value,
             "progress": dict(self._progress) if isinstance(self._progress, dict) else None,
             "last_event_id": int(self.last_event_id()),
             "buffer_oldest_event_id": int(oldest),
@@ -296,14 +384,59 @@ def unregister_task(task_id: str) -> None:
         tasks.pop(task_id, None)
 
 
-def request_task_cancel(task_id: str, *, mode: str = "immediate") -> bool:
+def request_task_cancel(
+    task_id: str, *, mode: TaskCancelMode | str = TaskCancelMode.IMMEDIATE
+) -> bool:
+    normalized_mode = parse_task_cancel_mode(mode)
     with tasks_lock:
         entry = tasks.get(task_id)
         if entry is None:
             return False
         entry.cancel_requested = True
-        entry.cancel_mode = mode if mode in {"immediate", "after_current"} else "immediate"
+        entry.cancel_mode = normalized_mode
         return True
 
 
-__all__ = ["tasks", "tasks_lock", "TaskEntry", "BufferedEvent", "TASK_EVENT_BUFFER_MAX_EVENTS", "TASK_EVENT_BUFFER_MAX_BYTES", "get_task", "register_task", "unregister_task", "request_task_cancel"]
+def clear_task_cancel_request(task_id: str) -> bool:
+    return restore_task_cancel_request(
+        task_id,
+        cancel_requested=False,
+        cancel_mode=TaskCancelMode.IMMEDIATE,
+    )
+
+
+def restore_task_cancel_request(
+    task_id: str,
+    *,
+    cancel_requested: bool,
+    cancel_mode: TaskCancelMode | str = TaskCancelMode.IMMEDIATE,
+) -> bool:
+    normalized_mode = parse_task_cancel_mode(cancel_mode)
+    with tasks_lock:
+        entry = tasks.get(task_id)
+        if entry is None:
+            return False
+        entry.cancel_requested = bool(cancel_requested)
+        entry.cancel_mode = normalized_mode
+        return True
+
+
+__all__ = [
+    "tasks",
+    "tasks_lock",
+    "TaskEventType",
+    "TaskCancelMode",
+    "TaskStatusStage",
+    "parse_task_cancel_mode",
+    "normalize_task_event",
+    "TaskEntry",
+    "BufferedEvent",
+    "TASK_EVENT_BUFFER_MAX_EVENTS",
+    "TASK_EVENT_BUFFER_MAX_BYTES",
+    "get_task",
+    "register_task",
+    "unregister_task",
+    "request_task_cancel",
+    "clear_task_cancel_request",
+    "restore_task_cancel_request",
+]

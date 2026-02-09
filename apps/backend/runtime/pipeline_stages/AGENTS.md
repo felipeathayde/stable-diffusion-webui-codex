@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-02-08
+Last Review: 2026-02-09
 Status: Active
 
 ## Purpose
@@ -39,3 +39,4 @@ Status: Active
 - 2026-01-27: `video.py:export_video(...)` now passes a task label into engine export so outputs land under `output/{txt2vid,img2vid}-videos/<date>/...` (stable dirs; UI serves via `/api/output/{rel_path}`).
 - 2026-02-01: Added `hires_fix.py` to centralize hires pass prep and fix `denoise` semantics (no more inverted `start_at_step` mapping).
 - 2026-02-08: Sampling stages now carry typed ER-SDE options (`SamplingPlan.er_sde`) from plan build to execution; `execute_sampling(...)` forwards options into `CodexSampler.sample(...)` and latent diagnostics include effective ER-SDE metadata when sampler is `er sde`.
+- 2026-02-09: `sampling_execute` now gates LoRA apply/reset on `codex_objects_after_applying_lora` capability and fails loud only when LoRA selections are present without engine support, while still resetting stale LoRA state for no-selection runs.

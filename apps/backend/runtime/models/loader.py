@@ -79,7 +79,6 @@ from apps.backend.runtime.model_registry.specs import (
     VAESignature,
 )
 from apps.backend.runtime.models import api as model_api
-from apps.backend.runtime.models.key_normalization import _normalize_unet_state_dict, _strip_transformer_prefixes
 from apps.backend.runtime.models.text_encoder_overrides import (
     _canonical_override_family,
     TextEncoderOverrideConfig,
@@ -325,7 +324,13 @@ def _flux_signature_from_vendored_hf(
     single_layers_raw = transformer_cfg.get("num_single_layers", 38)
     single_layers = int(single_layers_raw) if isinstance(single_layers_raw, (int, float, str)) else 38
 
-    guidance_embed = bool(transformer_cfg.get("guidance_embeds", False))
+    guidance_embed_raw = transformer_cfg.get("guidance_embeds", False)
+    if not isinstance(guidance_embed_raw, bool):
+        raise RuntimeError(
+            "Flux signature metadata error: 'guidance_embeds' must be a boolean in vendored transformer config "
+            f"(got {type(guidance_embed_raw).__name__})."
+        )
+    guidance_embed = guidance_embed_raw
 
     suffix = Path(model_path).suffix.lower()
     quantization = QuantizationHint()
@@ -504,9 +509,6 @@ def _maybe_convert_sdxl_vae_state_dict(
     if family not in (
         ModelFamily.SDXL,
         ModelFamily.SDXL_REFINER,
-        ModelFamily.FLUX,
-        ModelFamily.FLUX_KONTEXT,
-        ModelFamily.ZIMAGE,
     ):
         return state_dict
 
@@ -1311,41 +1313,32 @@ def _load_huggingface_component(
                     prefer=str(bool(getattr(mem_config, "gpu_prefer_construct", False))),
                 )) from exc
 
-        if cls_name == "UNet2DConditionModel":
-            state_dict = _normalize_unet_state_dict(state_dict, config_json)
-        elif cls_name in {"FluxTransformer2DModel", "ChromaTransformer2DModel", "SD3Transformer2DModel", "ZImageTransformer2DModel"}:
-            # Strip common prefixes from transformer state dict keys (similar to UNet normalization)
-            state_dict = _strip_transformer_prefixes(state_dict)
-
-            # NOTE: GGUF key names now match Codex model names directly
-            # No remapping needed - components.py uses .lin and .adaLN_modulation
+        if cls_name in {"UNet2DConditionModel", "FluxTransformer2DModel", "ChromaTransformer2DModel", "SD3Transformer2DModel", "ZImageTransformer2DModel"}:
+            LOGGER.debug(
+                "Core load: using parser/keymap output directly for %s (no legacy remap normalization).",
+                cls_name,
+            )
 
 
         _trace.event("load_state_dict", module=module_name, architecture=architecture_value, tensors=len(state_dict))
         
-        # GGUF models require PyTorch's load_state_dict to trigger _load_from_state_dict hooks
-        # in CodexOperationsGGUF.Linear which handle the .weight/.bias mapping from GGUF format
         if storage_dtype == "gguf":
-            LOGGER.debug("Using PyTorch load_state_dict for GGUF model")
-            missing, unexpected = model.load_state_dict(dict(state_dict), strict=False)
-            if missing:
-                LOGGER.warning('%s Missing: %d keys: %s', core_label, len(missing), missing[:10])
-            if unexpected:
-                LOGGER.warning('%s Unexpected: %d keys: %s', core_label, len(unexpected), unexpected[:10])
+            LOGGER.debug("Using strict PyTorch load_state_dict for GGUF model")
+            try:
+                model.load_state_dict(dict(state_dict), strict=True)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"GGUF core load failed (strict): {core_label}. "
+                    "Legacy permissive loading is disabled; add/update keymap or parser prefixes."
+                ) from exc
         else:
             from .state_dict import safe_load_state_dict as _safe_load
-            if family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
-                missing, unexpected = _safe_load(model, state_dict, log_name=core_label)
-                if missing or unexpected:
-                    raise RuntimeError(
-                        f"SDXL core load failed (strict): {core_label} missing={len(missing)} unexpected={len(unexpected)} "
-                        f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
-                    )
-            else:
-                try:
-                    _safe_load(model, state_dict, log_name=core_label)
-                except Exception:
-                    load_state_dict(model, state_dict, log_name=core_label)
+            missing, unexpected = _safe_load(model, state_dict, log_name=core_label)
+            if missing or unexpected:
+                raise RuntimeError(
+                    f"Core load failed (strict): {core_label} missing={len(missing)} unexpected={len(unexpected)} "
+                    f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+                )
 
         # Avoid assigning to model.config (read-only on diffusers models)
         model.storage_dtype = storage_dtype

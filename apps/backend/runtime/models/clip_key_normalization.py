@@ -52,6 +52,7 @@ _ESSENTIAL_KEYS: tuple[str, ...] = (
 
 def _strip_known_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
     stripped: Dict[str, Any] = {}
+    source_keys: Dict[str, str] = {}
     for raw_key, value in sd.items():
         key = str(raw_key)
         changed = True
@@ -62,7 +63,15 @@ def _strip_known_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
                     key = key[len(prefix) :]
                     changed = True
                     break
+        source = str(raw_key)
+        previous_source = source_keys.get(key)
+        if previous_source is not None and previous_source != source:
+            raise RuntimeError(
+                "CLIP prefix stripping collision: destination key "
+                f"{key!r} maps to multiple source keys ({previous_source!r}, {source!r})."
+            )
         stripped[key] = value
+        source_keys[key] = source
     return stripped
 
 
@@ -128,6 +137,11 @@ def normalize_codex_clip_state_dict(
         if k.startswith("text_model.") and not k.startswith("transformer.")
     ]
     for old_key, new_key in keys_to_rename:
+        if new_key in work and new_key != old_key:
+            raise RuntimeError(
+                "CLIP key normalization collision: destination key "
+                f"{new_key!r} already exists while remapping {old_key!r}."
+            )
         work[new_key] = work.pop(old_key)
 
     transformers_convert(work, "transformer.", "transformer.text_model.", num_layers)

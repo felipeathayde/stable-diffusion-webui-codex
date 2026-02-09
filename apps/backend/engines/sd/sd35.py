@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Codex-native Stable Diffusion 3.5 engine.
-Assembles an `SDEngineRuntime` using `SD35_SPEC`; optional text-encoder behavior is controlled via `CODEX_SD3_ENABLE_T5`.
-When smart offload is enabled, CLIP patcher unload is stage-scoped (only unload when this call loaded it) to avoid unload/reload between cond+uncond.
+Purpose: Codex-native Stable Diffusion 3.5 engine entrypoint (temporarily disabled).
+The module preserves SD3.5 conditioning helpers, but runtime assembly is blocked behind a fail-loud `NotImplementedError`
+until the SD3.5 conditioning/keymap port is finalized.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_opts` (function): Loads SD3/SD35 environment flags (currently `CODEX_SD3_ENABLE_T5`) into a simple namespace.
@@ -33,17 +33,13 @@ from apps.backend.engines.common.capabilities_presets import (
 from apps.backend.engines.common.model_scopes import stage_scoped_model_load
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
-from apps.backend.engines.sd.factory import CodexSDFamilyFactory
-from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime
+from apps.backend.engines.sd.spec import SDEngineRuntime
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
-
 logger = logging.getLogger("backend.engines.sd.sd35")
-
-_SD35_FACTORY = CodexSDFamilyFactory(spec=SD35_SPEC)
 
 
 def _opts():
@@ -76,14 +72,10 @@ class StableDiffusion3(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        assembly = _SD35_FACTORY.assemble(bundle, options=dict(options))
-        runtime = assembly.runtime
-        self._runtime = runtime
-        self.register_model_family("sd3")
-
-        logger.debug("StableDiffusion3 runtime prepared with classic branches=%s", runtime.classic_order)
-
-        return assembly.codex_objects
+        del bundle, options
+        raise NotImplementedError(
+            "Engine 'sd35' is temporarily disabled until SD3.5 conditioning/keymap port is finalized."
+        )
 
     def _on_unload(self) -> None:
         self._runtime = None

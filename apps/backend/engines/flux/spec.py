@@ -32,9 +32,6 @@ from apps.backend.runtime.families.flux.model import FluxTransformer2DModel
 from apps.backend.runtime.families.flux.streaming import (
     StreamingConfig,
     StreamedFluxCore,
-    StreamingPolicy,
-    CoreController,
-    trace_execution_plan,
 )
 from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.denoiser import DenoiserPatcher
@@ -43,8 +40,6 @@ from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.sampling_adapters.prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
-from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.infra.config.args import dynamic_args
 
 logger = logging.getLogger("backend.engines.flux.spec")
@@ -106,104 +101,30 @@ def _maybe_enable_streaming_core(
     spec: FluxEngineSpec,
     engine_options: Mapping[str, Any] | None,
 ) -> object:
-    """Optionally wrap a Flux core with StreamedFluxCore based on engine options and VRAM state.
+    """Return the Flux core without streaming.
 
-    Streaming is currently only applied to the Flux engine (not Chroma) and only when
-    the transformer is a FluxTransformer2DModel instance.
+    Flux core streaming is temporarily disabled until the global, capability-driven
+    streaming module contract is finalized.
     """
     if spec.name != "flux1":
         return transformer
 
     streamed: StreamedFluxCore | None = None
-    base_core: FluxTransformer2DModel | None = None
     if isinstance(transformer, StreamedFluxCore):
         streamed = transformer
-        base_core = transformer.base_core
-    elif isinstance(transformer, FluxTransformer2DModel):
-        base_core = transformer
-    else:
+    elif not isinstance(transformer, FluxTransformer2DModel):
         return transformer
 
     options = dict(engine_options or {})
     streaming_config = StreamingConfig.from_options(options)
-
-    core_device = memory_management.manager.get_device(DeviceRole.CORE)
-    free_mb: int | None = None
-    try:
-        free_bytes = memory_management.manager.get_free_memory(core_device)
-        free_mb = int(free_bytes // (1024 * 1024))
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Flux streaming: failed to probe free memory (%s)", exc)
-
-    should_stream = bool(streaming_config.enabled)
-    if not should_stream and streaming_config.auto_enable_threshold_mb > 0:
-        if free_mb is not None:
-            should_stream = streaming_config.should_enable(free_mb)
-
-    if not should_stream:
-        if free_mb is None:
-            logger.debug("Flux streaming disabled (enabled=%s)", streaming_config.enabled)
-        else:
-            logger.debug("Flux streaming disabled (enabled=%s, free_vram_mb=%d)", streaming_config.enabled, free_mb)
-        if streamed is not None:
-            try:
-                streamed.controller.compute_device = core_device
-                streamed.move_all_to_compute()
-                streamed.controller.reset()
-                logger.info("Flux streaming disabled; reverted StreamedFluxCore -> FluxTransformer2DModel")
-                return streamed.base_core
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Flux streaming: failed to disable streamed core; keeping StreamedFluxCore active: %s",
-                    exc,
-                    exc_info=True,
-                )
-        return transformer
-
-    # Streaming is desired; if already wrapped, keep the existing wrapper.
+    if streaming_config.enabled or streaming_config.auto_enable_threshold_mb > 0:
+        raise NotImplementedError(
+            "Flux core streaming is not implemented in the current capability contract. "
+            "Disable streaming options and retry."
+        )
     if streamed is not None:
-        return streamed
-
-    try:
-        plan = trace_execution_plan(base_core, blocks_per_segment=streaming_config.blocks_per_segment)
-        storage_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
-
-        controller = CoreController(
-            storage_device=storage_device,
-            compute_device=core_device,
-            policy=StreamingPolicy(streaming_config.policy),
-            window_size=streaming_config.window_size,
-        )
-
-        streamed = StreamedFluxCore(base_core, plan, controller)
-
-        # Preserve loader metadata expected by SamplerModel / patchers.
-        for attr in (
-            "storage_dtype",
-            "computation_dtype",
-            "load_device",
-            "initial_device",
-            "offload_device",
-            "architecture",
-        ):
-            if hasattr(base_core, attr):
-                setattr(streamed, attr, getattr(base_core, attr))
-        if hasattr(base_core, "codex_config"):
-            streamed.codex_config = base_core.codex_config
-
-        logger.info(
-            "Flux streaming enabled (policy=%s, blocks_per_segment=%d, window_size=%d, free_vram_mb=%d)",
-            streaming_config.policy,
-            streaming_config.blocks_per_segment,
-            streaming_config.window_size,
-            free_mb or 0,
-        )
-        return streamed
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Failed to enable Flux streaming; falling back to non-streaming core: %s", exc, exc_info=True
-        )
-        return transformer
+        return streamed.base_core
+    return transformer
 
 
 def _is_clip_encoder(model: object) -> bool:

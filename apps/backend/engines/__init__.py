@@ -72,7 +72,6 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     _maybe_register("flux1_kontext", registration.register_kontext)
     _maybe_register("flux1_chroma", registration.register_chroma)
     _maybe_register("sd20", registration.register_sd20)
-    _maybe_register("sd35", registration.register_sd35)
     _maybe_register("zimage", registration.register_zimage)
     _maybe_register("anima", registration.register_anima)
     # Optional engines are not auto-registered in strict mode (no silent fallbacks)

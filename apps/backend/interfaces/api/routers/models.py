@@ -274,6 +274,7 @@ def build_router(
     def list_engine_capabilities() -> Dict[str, Any]:
         try:
             from apps.backend.runtime.model_registry.capabilities import (
+                ENGINE_ID_TO_SEMANTIC_ENGINE,
                 serialize_engine_capabilities,
                 serialize_family_capabilities,
             )
@@ -296,28 +297,8 @@ def build_router(
                     "base": contract_for_engine(engine_id).as_dict(),
                     "core_only": contract_for_core_only(engine_id).as_dict(),
                 }
-            # Explicit mapping between key spaces (engine ids vs semantic engine tags) to prevent drift.
             engine_id_to_semantic_engine: Dict[str, str] = {
-                # Diffusion family: SD2 behaves like SD15 in the UI surface.
-                "sd15": "sd15",
-                "sd20": "sd15",
-                "sdxl": "sdxl",
-                "sdxl_refiner": "sdxl",
-                # SD3/SD3.5 are treated as SDXL-like surface today (no dedicated semantic tag yet).
-                "sd35": "sdxl",
-                # Flow family.
-                "flux1": "flux1",
-                "flux1_kontext": "flux1",
-                "flux1_fill": "flux1",
-                "flux1_chroma": "chroma",
-                "zimage": "zimage",
-                "anima": "anima",
-                # Video engines.
-                "wan22_5b": "wan22",
-                "wan22_14b": "wan22",
-                "wan22_animate_14b": "wan22",
-                "svd": "svd",
-                "hunyuan_video": "hunyuan_video",
+                engine_id: semantic.value for engine_id, semantic in ENGINE_ID_TO_SEMANTIC_ENGINE.items()
             }
             engines = serialize_engine_capabilities()
             dependency_checks = build_engine_dependency_checks(

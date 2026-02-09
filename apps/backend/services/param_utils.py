@@ -71,10 +71,9 @@ def as_bool(payload: dict, key: str, default: Optional[bool] = None) -> bool:
     if v is None:
         if default is None:
             raise ValueError(f"missing bool field: {key}")
-        return bool(default)
+        if not isinstance(default, bool):
+            raise ValueError(f"default for bool field must be boolean: {key}")
+        return default
     if isinstance(v, bool):
         return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    s = str(v).strip().lower()
-    return s in ("1", "true", "yes", "on")
+    raise ValueError(f"invalid bool field: {key} (expected boolean, got {type(v).__name__})")

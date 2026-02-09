@@ -1,6 +1,6 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Last Review: 2026-02-08
+Last Review: 2026-02-09
 Status: Active
 
 ## Purpose
@@ -42,3 +42,4 @@ Status: Active
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.
 - `activate_control()` recompõe o composite (`build_composite`) sempre que os nós mudam (ex.: após `add_control_node`).
 - 2025-11-02: removido `@property` duplicado em `control_nodes` que podia levar a `TypeError: 'property' object is not callable` em tempo de acesso.
+- 2026-02-09: LoRA apply now clears stale patch state on empty selections and fails loud on partial patcher contracts; LoRA refresh/merge materialization now runs with inference-mode disabled to avoid inference-tensor version-counter faults across consecutive runs.

@@ -1036,3 +1036,19 @@ Correct command:
 ```bash
 rg -n -F '@router.post("/api/tasks/{task_id}/cancel")' apps/backend/interfaces/api/routers/tasks.py
 ```
+
+### Using backticks inside a double-quoted `rg` alternation
+
+Wrong command:
+```bash
+rg -n "hires sentinel \\+ consecutive-generation inference tensor remediation|hires-scheduler-lora-inference-fix|LoRA apply now clears stale patch state|sampling_execute now gates LoRA apply/reset|Added `test_lora_loader_tensor_mode.py`|Added task log for hires sentinel" .sangoi/CHANGELOG.md .sangoi/plans/2026-02-09-hires-scheduler-lora-inference-fix.md apps/backend/patchers/AGENTS.md apps/backend/runtime/pipeline_stages/AGENTS.md .sangoi/dev/tests/backend/AGENTS.md .sangoi/plans/AGENTS.md .sangoi/task-logs/AGENTS.md .sangoi/task-logs/2026-02-09-hires-scheduler-lora-inference-fix.md | sed -n '1,260p'
+```
+
+Cause and fix:
+Backticks inside double quotes trigger shell command substitution, so parts of the regex were executed by bash and produced noisy/invalid output.
+Use single quotes around patterns that include backticks.
+
+Correct command:
+```bash
+rg -n 'hires sentinel \+ consecutive-generation inference tensor remediation|hires-scheduler-lora-inference-fix|LoRA apply now clears stale patch state|sampling_execute now gates LoRA apply/reset|Added `test_lora_loader_tensor_mode.py`|Added task log for hires sentinel' .sangoi/CHANGELOG.md .sangoi/plans/2026-02-09-hires-scheduler-lora-inference-fix.md apps/backend/patchers/AGENTS.md apps/backend/runtime/pipeline_stages/AGENTS.md .sangoi/dev/tests/backend/AGENTS.md .sangoi/plans/AGENTS.md .sangoi/task-logs/AGENTS.md .sangoi/task-logs/2026-02-09-hires-scheduler-lora-inference-fix.md
+```

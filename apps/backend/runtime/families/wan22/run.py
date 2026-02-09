@@ -38,9 +38,9 @@ from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 
 from .config import (
     RunConfig,
-    WAN_FLOW_MULTIPLIER,
     as_torch_dtype,
     resolve_device_name,
+    resolve_wan_flow_multiplier,
 )
 from .diagnostics import cuda_empty_cache, get_logger, log_cuda_mem
 from .sampling import (
@@ -117,11 +117,20 @@ def _try_clear_cache() -> None:
 
 def _resolve_offload_level(cfg: RunConfig) -> int:
     if cfg.offload_level is not None:
-        try:
-            return max(0, int(cfg.offload_level))
-        except Exception:
-            return 0
-    return 3 if bool(getattr(cfg, "aggressive_offload", True)) else 0
+        if isinstance(cfg.offload_level, bool) or not isinstance(cfg.offload_level, int):
+            raise RuntimeError(
+                f"WAN22 GGUF: offload_level must be an integer when provided, got {type(cfg.offload_level).__name__}."
+            )
+        if cfg.offload_level < 0:
+            raise RuntimeError(f"WAN22 GGUF: offload_level must be >= 0, got {cfg.offload_level}.")
+        return cfg.offload_level
+    aggressive_offload = getattr(cfg, "aggressive_offload", True)
+    if not isinstance(aggressive_offload, bool):
+        raise RuntimeError(
+            "WAN22 GGUF: aggressive_offload must be a boolean in RunConfig "
+            f"(got {type(aggressive_offload).__name__})."
+        )
+    return 3 if aggressive_offload else 0
 
 
 def _require_flow_shift(stage: str, value: object | None) -> float:
@@ -138,7 +147,11 @@ def _require_flow_shift(stage: str, value: object | None) -> float:
 
 
 def _parse_sampler(value: object | None) -> tuple[str | None, str | None]:
-    raw = str(value or "").strip().lower()
+    if value is None:
+        return None, None
+    if not isinstance(value, str):
+        raise RuntimeError(f"WAN22 GGUF: sampler must be a string when provided, got {value!r}.")
+    raw = value.strip().lower()
     if not raw:
         return None, None
     parts = raw.split()
@@ -182,8 +195,21 @@ def _build_shared_scheduler(
     if total_steps < 2:
         raise RuntimeError(f"WAN22 GGUF requires total steps >=2, got: {total_steps} ({steps_hi}+{steps_lo}).")
 
-    sampler_eff = str(sampler_hi).strip() if sampler_hi else (str(sampler_lo).strip() if sampler_lo else None)
-    scheduler_eff = str(scheduler_hi).strip() if scheduler_hi else (str(scheduler_lo).strip() if scheduler_lo else None)
+    if sampler_hi is not None and not isinstance(sampler_hi, str):
+        raise RuntimeError(f"WAN22 GGUF: high sampler must be a string when provided, got {sampler_hi!r}.")
+    if sampler_lo is not None and not isinstance(sampler_lo, str):
+        raise RuntimeError(f"WAN22 GGUF: low sampler must be a string when provided, got {sampler_lo!r}.")
+    if scheduler_hi is not None and not isinstance(scheduler_hi, str):
+        raise RuntimeError(f"WAN22 GGUF: high scheduler must be a string when provided, got {scheduler_hi!r}.")
+    if scheduler_lo is not None and not isinstance(scheduler_lo, str):
+        raise RuntimeError(f"WAN22 GGUF: low scheduler must be a string when provided, got {scheduler_lo!r}.")
+
+    sampler_eff = sampler_hi.strip() if isinstance(sampler_hi, str) and sampler_hi.strip() else (
+        sampler_lo.strip() if isinstance(sampler_lo, str) and sampler_lo.strip() else None
+    )
+    scheduler_eff = scheduler_hi.strip() if isinstance(scheduler_hi, str) and scheduler_hi.strip() else (
+        scheduler_lo.strip() if isinstance(scheduler_lo, str) and scheduler_lo.strip() else None
+    )
 
     return make_scheduler(
         total_steps,
@@ -230,6 +256,7 @@ def _build_i2v_seed_state(
     latent_frames: int,
     h_lat: int,
     w_lat: int,
+    flow_multiplier: float,
     device: torch.device,
     dtype: torch.dtype,
     logger: Any,
@@ -238,7 +265,7 @@ def _build_i2v_seed_state(
 
     This is the critical ownership seam for WAN22 GGUF img2vid:
     - Noise latents must be seeded from RNG and scaled by `scheduler.init_noise_sigma`
-      (Diffusers parity; do **not** multiply by `WAN_FLOW_MULTIPLIER`).
+      (Diffusers parity; do **not** multiply by the WAN flow multiplier).
     - The conditioning channels are constant across timesteps (mask4 + VAE-encoded video_condition).
     """
 
@@ -302,7 +329,7 @@ def _build_i2v_seed_state(
         str(seed_val),
         float(init_noise_sigma),
         float(sigma0),
-        float(WAN_FLOW_MULTIPLIER),
+        float(flow_multiplier),
     )
     return state
 
@@ -327,6 +354,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
+    flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
 
     lvl = _resolve_offload_level(cfg)
 
@@ -352,7 +380,13 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
     te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    if bool(getattr(cfg, "te_kernel_required", False)):
+    te_kernel_required = getattr(cfg, "te_kernel_required", False)
+    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
+        raise RuntimeError(
+            "WAN22 GGUF: te_kernel_required must be boolean when provided "
+            f"(got {type(te_kernel_required).__name__})."
+        )
+    if bool(te_kernel_required):
         te_impl_val = "cuda_fp8"
     te_required = te_impl_val == "cuda_fp8"
     if te_required:
@@ -463,7 +497,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_hi_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="high",
     )
 
@@ -529,7 +563,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_lo_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="low",
     )
 
@@ -571,6 +605,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
+    flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
 
     hi_model = load_stage_model_from_gguf(
@@ -588,7 +623,13 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
     te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    if bool(getattr(cfg, "te_kernel_required", False)):
+    te_kernel_required = getattr(cfg, "te_kernel_required", False)
+    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
+        raise RuntimeError(
+            "WAN22 GGUF: te_kernel_required must be boolean when provided "
+            f"(got {type(te_kernel_required).__name__})."
+        )
+    if bool(te_kernel_required):
         te_impl_val = "cuda_fp8"
     te_required = te_impl_val == "cuda_fp8"
     if te_required:
@@ -667,7 +708,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         state_init=None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_hi_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="high",
         emit_logs=False,
     )
@@ -719,7 +760,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         state_init=seed_latents,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_lo_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="low",
         emit_logs=False,
     )
@@ -768,6 +809,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
+    flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
 
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
@@ -775,7 +817,13 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
     te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    if bool(getattr(cfg, "te_kernel_required", False)):
+    te_kernel_required = getattr(cfg, "te_kernel_required", False)
+    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
+        raise RuntimeError(
+            "WAN22 GGUF: te_kernel_required must be boolean when provided "
+            f"(got {type(te_kernel_required).__name__})."
+        )
+    if bool(te_kernel_required):
         te_impl_val = "cuda_fp8"
     te_required = te_impl_val == "cuda_fp8"
     if te_required:
@@ -892,6 +940,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         latent_frames=t,
         h_lat=h_lat,
         w_lat=w_lat,
+        flow_multiplier=flow_multiplier,
         device=dev,
         dtype=dt,
         logger=log,
@@ -919,7 +968,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_hi_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="high",
     )
 
@@ -971,7 +1020,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_lo_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="low",
     )
 
@@ -1013,13 +1062,20 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
+    flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
     te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    if bool(getattr(cfg, "te_kernel_required", False)):
+    te_kernel_required = getattr(cfg, "te_kernel_required", False)
+    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
+        raise RuntimeError(
+            "WAN22 GGUF: te_kernel_required must be boolean when provided "
+            f"(got {type(te_kernel_required).__name__})."
+        )
+    if bool(te_kernel_required):
         te_impl_val = "cuda_fp8"
     te_required = te_impl_val == "cuda_fp8"
     if te_required:
@@ -1118,6 +1174,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         latent_frames=t,
         h_lat=h_lat,
         w_lat=w_lat,
+        flow_multiplier=flow_multiplier,
         device=dev,
         dtype=dt,
         logger=log,
@@ -1144,7 +1201,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         state_init=seed_hi,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_hi_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="high",
         emit_logs=False,
     )
@@ -1196,7 +1253,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         state_init=seed_lo,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
         flow_shift=flow_shift_lo_value,
-        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        flow_multiplier=flow_multiplier,
         stage_name="low",
         emit_logs=False,
     )

@@ -16,9 +16,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `RunConfig` (dataclass): Full run configuration (geometry, prompts, devices/dtypes, assets, and both stages).
 - `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
 - `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
+- `_coerce_bool` (function): Best-effort coercion of optional values to `bool` (returns `None` on failure).
 - `as_torch_dtype` (function): Parses dtype strings into torch dtypes (with validation).
 - `resolve_device_name` (function): Normalizes device names (`cuda`/`cpu`/etc) into runtime-compatible values.
 - `resolve_i2v_order` (function): Resolves the image-to-video conditioning channel order policy.
+- `resolve_wan_flow_multiplier` (function): Resolves WAN timestep multiplier from scheduler metadata (`num_train_timesteps`).
 - `build_wan22_gguf_run_config` (function): Builds a validated GGUF `RunConfig` from a request-like object and its extras mapping.
 """
 
@@ -130,6 +132,8 @@ def _coerce_int(value: Any) -> Optional[int]:
     try:
         if value is None:
             return None
+        if isinstance(value, bool):
+            return None
         return int(value)
     except Exception:
         return None
@@ -139,9 +143,43 @@ def _coerce_float(value: Any) -> Optional[float]:
     try:
         if value is None:
             return None
+        if isinstance(value, bool):
+            return None
         return float(value)
     except Exception:
         return None
+
+
+def _coerce_bool(value: Any) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def resolve_wan_flow_multiplier(metadata_dir: str) -> float:
+    from .scheduler import load_wan_scheduler_config
+
+    vendor_dir = str(metadata_dir or "").strip()
+    if not vendor_dir:
+        raise RuntimeError("WAN22 GGUF: cannot resolve flow multiplier without metadata_dir.")
+    vendor_dir = os.path.expanduser(vendor_dir)
+    if not os.path.isdir(os.path.join(vendor_dir, "scheduler")):
+        parent = os.path.dirname(vendor_dir)
+        if parent and os.path.isdir(os.path.join(parent, "scheduler")):
+            vendor_dir = parent
+    cfg = load_wan_scheduler_config(vendor_dir)
+    raw = cfg.get("num_train_timesteps")
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise RuntimeError(
+            "WAN22 GGUF: scheduler_config.json must define integer 'num_train_timesteps' for flow multiplier."
+        )
+    if raw <= 0:
+        raise RuntimeError(
+            f"WAN22 GGUF: scheduler_config.json has invalid num_train_timesteps={raw!r} (expected > 0)."
+        )
+    return float(raw)
 
 
 def build_wan22_gguf_run_config(
@@ -270,7 +308,12 @@ def build_wan22_gguf_run_config(
                 f"wan_high.flow_shift={hi_flow_shift_override} wan_low.flow_shift={lo_flow_shift_override}. "
                 "Schedule must be continuous."
             )
-    effective_flow_shift = float(hi_flow_shift_override or lo_flow_shift_override or default_flow_shift)
+    if hi_flow_shift_override is not None:
+        effective_flow_shift = float(hi_flow_shift_override)
+    elif lo_flow_shift_override is not None:
+        effective_flow_shift = float(lo_flow_shift_override)
+    else:
+        effective_flow_shift = float(default_flow_shift)
 
     hi_steps_override = None
     if isinstance(wh_raw, dict) and wh_raw.get("steps") is not None:
@@ -340,16 +383,54 @@ def build_wan22_gguf_run_config(
         if not os.path.isfile(model_dir):
             raise RuntimeError(f"WAN22 GGUF: {stage} model not found: {model_dir}")
 
-        steps = _coerce_int(raw.get("steps"))
+        raw_steps = raw.get("steps")
+        steps = _coerce_int(raw_steps)
+        if raw_steps is not None and steps is None:
+            raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be an int, got: {raw_steps!r}")
         steps = int(steps) if steps is not None else int(default_steps)
         if int(steps) < 1:
             raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be >= 1, got: {steps}")
 
-        cfg_scale = _coerce_float(raw.get("cfg_scale")) if raw.get("cfg_scale") is not None else default_cfg
-        sampler = str(raw.get("sampler")).strip() if raw.get("sampler") else None
-        scheduler = str(raw.get("scheduler")).strip() if raw.get("scheduler") else None
-        flow_shift = _coerce_float(raw.get("flow_shift")) if raw.get("flow_shift") is not None else None
-        seed = _coerce_int(raw.get("seed")) if raw.get("seed") is not None else None
+        raw_cfg_scale = raw.get("cfg_scale")
+        if raw_cfg_scale is None:
+            cfg_scale = default_cfg
+        else:
+            cfg_scale = _coerce_float(raw_cfg_scale)
+            if cfg_scale is None:
+                raise RuntimeError(f"WAN22 GGUF: {stage}.cfg_scale must be a float, got: {raw_cfg_scale!r}")
+
+        raw_sampler = raw.get("sampler")
+        if raw_sampler is None:
+            sampler = None
+        elif isinstance(raw_sampler, str):
+            sampler = raw_sampler.strip() or None
+        else:
+            raise RuntimeError(f"WAN22 GGUF: {stage}.sampler must be a string, got: {raw_sampler!r}")
+
+        raw_scheduler = raw.get("scheduler")
+        if raw_scheduler is None:
+            scheduler = None
+        elif isinstance(raw_scheduler, str):
+            scheduler = raw_scheduler.strip() or None
+        else:
+            raise RuntimeError(f"WAN22 GGUF: {stage}.scheduler must be a string, got: {raw_scheduler!r}")
+
+        raw_flow_shift = raw.get("flow_shift")
+        if raw_flow_shift is None:
+            flow_shift = None
+        else:
+            flow_shift = _coerce_float(raw_flow_shift)
+            if flow_shift is None:
+                raise RuntimeError(f"WAN22 GGUF: {stage}.flow_shift must be a float, got: {raw_flow_shift!r}")
+
+        raw_seed = raw.get("seed")
+        if raw_seed is None:
+            seed = None
+        else:
+            seed = _coerce_int(raw_seed)
+            if seed is None:
+                raise RuntimeError(f"WAN22 GGUF: {stage}.seed must be an int, got: {raw_seed!r}")
+
         lora_sha = str(raw.get("lora_sha") or "").strip().lower() or None
         lora_weight = _coerce_float(raw.get("lora_weight")) if raw.get("lora_weight") is not None else None
         if lora_weight is not None and not lora_sha:
@@ -391,14 +472,40 @@ def build_wan22_gguf_run_config(
     if hi_seed is not None:
         seed = hi_seed
 
-    sampler_fallback = str(getattr(request, "sampler", "") or "").strip() or "uni-pc"
-    scheduler_fallback = str(getattr(request, "scheduler", "") or "").strip() or "simple"
+    request_sampler = getattr(request, "sampler", None)
+    if request_sampler in (None, ""):
+        sampler_fallback = "uni-pc"
+    elif isinstance(request_sampler, str):
+        sampler_fallback = request_sampler.strip() or "uni-pc"
+    else:
+        raise RuntimeError(f"WAN22 GGUF: request.sampler must be a string when provided, got: {request_sampler!r}")
+    request_scheduler = getattr(request, "scheduler", None)
+    if request_scheduler in (None, ""):
+        scheduler_fallback = "simple"
+    elif isinstance(request_scheduler, str):
+        scheduler_fallback = request_scheduler.strip() or "simple"
+    else:
+        raise RuntimeError(
+            f"WAN22 GGUF: request.scheduler must be a string when provided, got: {request_scheduler!r}"
+        )
 
     tokenizer_dir = str(extras.get("wan_tokenizer_dir") or "").strip() or None
 
-    offload_level = _coerce_int(extras.get("gguf_offload_level"))
-    if offload_level is not None and offload_level < 0:
+    offload_level_raw = extras.get("gguf_offload_level")
+    if offload_level_raw is None:
         offload_level = None
+    else:
+        offload_level = _coerce_int(offload_level_raw)
+        if offload_level is None:
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_offload_level' must be an integer when provided, "
+                f"got {offload_level_raw!r}."
+            )
+        if offload_level < 0:
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_offload_level' must be >= 0 when provided, "
+                f"got {offload_level!r}."
+            )
 
     if logger is not None:
         try:
@@ -415,6 +522,21 @@ def build_wan22_gguf_run_config(
     height = int(getattr(request, "height", 432) or 432)
     if height % 16 != 0 or width % 16 != 0:
         raise RuntimeError(f"WAN22 GGUF: height and width have to be divisible by 16 but are {height} and {width}.")
+
+    aggressive_offload_raw = extras.get("gguf_offload", True)
+    aggressive_offload = _coerce_bool(aggressive_offload_raw)
+    if aggressive_offload is None:
+        raise RuntimeError(
+            f"WAN22 GGUF: 'gguf_offload' must be a boolean when provided, got {aggressive_offload_raw!r}."
+        )
+
+    te_kernel_required_raw = extras.get("gguf_te_kernel_required", False)
+    te_kernel_required = _coerce_bool(te_kernel_required_raw)
+    if te_kernel_required is None:
+        raise RuntimeError(
+            "WAN22 GGUF: 'gguf_te_kernel_required' must be a boolean when provided, "
+            f"got {te_kernel_required_raw!r}."
+        )
 
     return RunConfig(
         width=width,
@@ -441,11 +563,11 @@ def build_wan22_gguf_run_config(
         log_mem_interval=(
             int(extras.get("gguf_log_mem_interval", 0)) if extras.get("gguf_log_mem_interval") not in (None, "", 0) else None
         ),
-        aggressive_offload=bool(extras.get("gguf_offload", True)),
+        aggressive_offload=aggressive_offload,
         offload_level=offload_level,
         te_device=(str(extras.get("gguf_te_device")).lower() if extras.get("gguf_te_device") is not None else None),
         te_impl=(str(extras.get("gguf_te_impl")).lower() if extras.get("gguf_te_impl") is not None else None),
-        te_kernel_required=bool(extras.get("gguf_te_kernel_required", False)),
+        te_kernel_required=te_kernel_required,
         high=StageConfig(
             model_dir=hi_dir,
             sampler=str(hi_sampler or sampler_fallback),

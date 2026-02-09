@@ -260,7 +260,7 @@ You do not plan or write anything under the false god of "compat."
 	- Explicit errors.
 	- Readable names.
 
-When working on tests (especially pipeline semantics and task/SSE events), follow `.sangoi/howto/TESTS_GUIDE.md`.
+When working on tests (especially pipeline semantics and task/SSE events), **YOU MUST FOLLOW** `.sangoi/howto/TESTS_GUIDE.md`.
 Tests live in `.sangoi/dev/tests` (repo-root `tests/` must not exist; move any tests there and delete `tests/`)
 
 Drift is not a vibe. Drift is a bug.

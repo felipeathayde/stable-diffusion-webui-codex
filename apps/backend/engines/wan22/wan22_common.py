@@ -91,15 +91,33 @@ class WanStageOptions:
             if not os.path.isfile(lora_path):
                 raise ValueError(f"WAN stage LoRA file not found: {lora_path}")
 
+        raw_steps = obj.get("steps")
+        if raw_steps is None:
+            steps = int(default_steps)
+        else:
+            if isinstance(raw_steps, bool) or not isinstance(raw_steps, int):
+                raise ValueError("WAN stage 'steps' must be an integer when provided.")
+            steps = int(raw_steps)
+        if steps < 1:
+            raise ValueError("WAN stage 'steps' must be >= 1.")
+
+        raw_lightning = obj.get("lightning", False)
+        if raw_lightning is None:
+            lightning = False
+        elif isinstance(raw_lightning, bool):
+            lightning = raw_lightning
+        else:
+            raise ValueError("WAN stage 'lightning' must be a boolean when provided.")
+
         return WanStageOptions(
             model_dir=str(obj.get("model_dir")) if obj.get("model_dir") else None,
             sampler=str(obj.get("sampler")) if obj.get("sampler") else None,
             scheduler=str(obj.get("scheduler")) if obj.get("scheduler") else None,
-            steps=int(obj.get("steps") or default_steps),
+            steps=steps,
             cfg_scale=(float(obj.get("cfg_scale")) if obj.get("cfg_scale") is not None else default_cfg),
             lora_path=lora_path,
             lora_weight=lora_weight,
-            lightning=bool(obj.get("lightning", False)),
+            lightning=lightning,
         )
 
 

@@ -54,8 +54,10 @@ def register_sdxl(*, registry: EngineRegistry | None = None, replace: bool = Fal
 
 
 def register_sd35(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
-    from apps.backend.engines.sd.sd35 import StableDiffusion3
-    _reg("sd35", StableDiffusion3, registry=registry, replace=replace, aliases=("sd-3.5", "sd3"))
+    del registry, replace
+    raise NotImplementedError(
+        "Engine 'sd35' is temporarily disabled until SD3.5 conditioning/keymap port is finalized."
+    )
 
 
 def register_flux(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:

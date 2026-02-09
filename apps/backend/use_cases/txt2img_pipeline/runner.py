@@ -752,9 +752,34 @@ class Txt2ImgPipelineRunner:
                 f"Invalid 'hires.upscaler': {upscaler_id!r}. "
                 "Expected a 'latent:*' or 'spandrel:*' upscaler id from GET /api/upscalers."
             )
-        target_width = hi_cfg.resize_x or int(processing.width * hi_cfg.scale)
-        target_height = hi_cfg.resize_y or int(processing.height * hi_cfg.scale)
-        steps = hi_cfg.second_pass_steps or processing.steps
+        if hi_cfg.resize_x is not None:
+            target_width = int(hi_cfg.resize_x)
+            if target_width <= 0:
+                raise ValueError("Hires is enabled but 'hires.resize_x' must be > 0 when provided.")
+        else:
+            if hi_cfg.scale is None:
+                raise ValueError(
+                    "Hires is enabled but neither 'hires.resize_x' nor 'hires.scale' is set. "
+                    "Provide explicit dimensions or a scale."
+                )
+            target_width = int(processing.width * hi_cfg.scale)
+        if hi_cfg.resize_y is not None:
+            target_height = int(hi_cfg.resize_y)
+            if target_height <= 0:
+                raise ValueError("Hires is enabled but 'hires.resize_y' must be > 0 when provided.")
+        else:
+            if hi_cfg.scale is None:
+                raise ValueError(
+                    "Hires is enabled but neither 'hires.resize_y' nor 'hires.scale' is set. "
+                    "Provide explicit dimensions or a scale."
+                )
+            target_height = int(processing.height * hi_cfg.scale)
+        if hi_cfg.second_pass_steps is not None:
+            steps = int(hi_cfg.second_pass_steps)
+            if steps <= 0:
+                raise ValueError("Hires is enabled but 'hires.steps' must be > 0 when provided.")
+        else:
+            steps = int(processing.steps)
         denoise = float(hi_cfg.denoise)
         cfg_scale = hi_cfg.cfg
         return HiResPlan(

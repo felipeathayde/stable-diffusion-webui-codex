@@ -115,8 +115,8 @@ _TRANSFORMER_PREFIXES: tuple[str, ...] = (
 )
 
 
-def _strip_unet_prefixes_mapping(sd: Mapping[str, Any]) -> Dict[str, str]:
-    mapping: Dict[str, str] = {}
+def _strip_unet_prefixes_mapping(sd: Mapping[str, Any]) -> Dict[str, Any]:
+    mapping: Dict[str, Any] = {}
     for key in list(sd.keys()):
         name = str(key)
         changed = True
@@ -127,6 +127,12 @@ def _strip_unet_prefixes_mapping(sd: Mapping[str, Any]) -> Dict[str, str]:
                     name = name[len(prefix):]
                     changed = True
                     break
+        previous = mapping.get(name)
+        if previous is not None and previous != key:
+            raise RuntimeError(
+                "UNet prefix stripping collision: destination key "
+                f"{name!r} maps to multiple source keys ({previous!r}, {key!r})."
+            )
         mapping[name] = key
     return mapping
 
@@ -241,12 +247,9 @@ def _build_diffusers_to_ldm_map(unet_config: Mapping[str, Any]) -> Dict[str, str
 
 def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[str, Any]) -> Mapping[str, Any]:
     stripped_map = _strip_unet_prefixes_mapping(state_dict)
-    # Already LDM layout
-    if any(k.startswith("input_blocks.") for k in stripped_map.keys()):
-        return RemapKeysView(state_dict, stripped_map)
 
     diff_to_ldm = _build_diffusers_to_ldm_map(config)
-    remap: Dict[str, str] = {}
+    remap: Dict[str, Any] = {}
     leftovers: list[str] = []
     for key in stripped_map.keys():
         if key.startswith((
@@ -258,11 +261,25 @@ def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[st
             "label_emb.",
             "add_embedding.",
         )):
-            remap[key] = stripped_map[key]
+            source_key = stripped_map[key]
+            previous = remap.get(key)
+            if previous is not None and previous != source_key:
+                raise RuntimeError(
+                    "UNet state dict normalisation collision: destination key "
+                    f"{key!r} maps to multiple source keys ({previous!r}, {source_key!r})."
+                )
+            remap[key] = source_key
             continue
         target = diff_to_ldm.get(key)
         if target is not None:
-            remap[target] = stripped_map[key]
+            source_key = stripped_map[key]
+            previous = remap.get(target)
+            if previous is not None and previous != source_key:
+                raise RuntimeError(
+                    "UNet state dict normalisation collision: destination key "
+                    f"{target!r} maps to multiple source keys ({previous!r}, {source_key!r})."
+                )
+            remap[target] = source_key
         else:
             leftovers.append(key)
 
@@ -281,7 +298,7 @@ def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[st
 
 
 def _strip_transformer_prefixes(state_dict: Mapping[str, Any]) -> Mapping[str, Any]:
-    mapping: Dict[str, str] = {}
+    mapping: Dict[str, Any] = {}
     for raw_key in state_dict.keys():
         key = str(raw_key)
         new_key = key
@@ -293,5 +310,11 @@ def _strip_transformer_prefixes(state_dict: Mapping[str, Any]) -> Mapping[str, A
                     new_key = new_key[len(prefix):]
                     changed = True
                     break
+        previous = mapping.get(new_key)
+        if previous is not None and previous != key:
+            raise RuntimeError(
+                "Transformer prefix stripping collision: destination key "
+                f"{new_key!r} maps to multiple source keys ({previous!r}, {key!r})."
+            )
         mapping[new_key] = key
     return RemapKeysView(state_dict, mapping)

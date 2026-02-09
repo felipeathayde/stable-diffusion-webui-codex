@@ -58,7 +58,8 @@ class CodexLoraLoader:
         self.online_parents: List[torch.nn.Module] = []
         self.loaded_signature = ""
 
-    @torch.inference_mode()
+    @torch.inference_mode(False)
+    @torch.no_grad()
     def refresh(
         self,
         lora_patches: MutableMapping[Tuple[str, float, float, bool], Dict[str, List[LoraPatchEntry]]],
@@ -154,7 +155,7 @@ class CodexLoraLoader:
                     )
 
                 if gguf_parameter is None:
-                    merged = merged.to(dtype=parameter.dtype, device=parameter.device)
+                    merged = merged.to(dtype=parameter.dtype, device=parameter.device).clone()
 
                 if gguf_parameter is not None:
                     # Re-quantize offline-merged weights back into GGUF packed storage.

@@ -283,6 +283,17 @@ class VectorEmbedder(nn.Module):
 
 
 def split_qkv(qkv, head_dim):
+    if not isinstance(head_dim, int) or head_dim <= 0:
+        raise RuntimeError(f"SD3.5 MMDiT: invalid head_dim={head_dim!r} (expected positive integer).")
+    if qkv.ndim != 3:
+        raise RuntimeError(f"SD3.5 MMDiT: expected qkv rank 3 [B,L,C], got shape={tuple(qkv.shape)}.")
+    channels = int(qkv.shape[-1])
+    divisor = int(3 * head_dim)
+    if channels % divisor != 0:
+        raise RuntimeError(
+            "SD3.5 MMDiT: fused qkv channels are incompatible with head_dim "
+            f"(channels={channels}, head_dim={head_dim}, divisor={divisor})."
+        )
     qkv = qkv.reshape(qkv.shape[0], qkv.shape[1], 3, -1, head_dim).movedim(2, 0)
     return qkv[0], qkv[1], qkv[2]
 
@@ -306,6 +317,10 @@ class SelfAttention(nn.Module):
         device=None,
     ):
         super().__init__()
+        if dim % num_heads != 0:
+            raise RuntimeError(
+                f"SD3.5 MMDiT: attention dim must be divisible by num_heads (dim={dim}, num_heads={num_heads})."
+            )
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
 

@@ -60,7 +60,17 @@ class FluxTransformer2DModel(nn.Module):
 
             theta = raw_config.pop("theta", 10000)
             positional = FluxPositionalConfig(patch_size=2, axes_dim=axes_dim, theta=theta)
-            guidance_enabled = raw_config.pop("guidance_embed", None) or raw_config.pop("guidance_embeds", False)
+            guidance_embed = raw_config.pop("guidance_embed", None)
+            guidance_embeds = raw_config.pop("guidance_embeds", None)
+            if guidance_embed is not None and not isinstance(guidance_embed, bool):
+                raise RuntimeError(
+                    "Flux transformer config error: 'guidance_embed' must be a boolean when provided."
+                )
+            if guidance_embeds is not None and not isinstance(guidance_embeds, bool):
+                raise RuntimeError(
+                    "Flux transformer config error: 'guidance_embeds' must be a boolean when provided."
+                )
+            guidance_enabled = guidance_embed if guidance_embed is not None else (guidance_embeds if guidance_embeds is not None else False)
             guidance = FluxGuidanceConfig(enabled=guidance_enabled)
             
             # Map HF config names to internal names

@@ -70,8 +70,23 @@ def resolve_sampler_scheduler_override(
     if not base_scheduler_value:
         raise ValueError("base_scheduler must be a non-empty scheduler name")
 
-    sampler_override_value = str(sampler_override).strip() if isinstance(sampler_override, str) else ""
-    scheduler_override_value = str(scheduler_override).strip() if isinstance(scheduler_override, str) else ""
+    def _normalize_override(value: str | None, *, kind: str) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError(f"{kind}_override must be a string when provided")
+        normalized = value.strip()
+        if normalized == "":
+            return ""
+        lowered = normalized.lower()
+        if kind == "sampler" and lowered in {"use same sampler", "use same"}:
+            return ""
+        if kind == "scheduler" and lowered in {"use same scheduler", "use same"}:
+            return ""
+        return normalized
+
+    sampler_override_value = _normalize_override(sampler_override, kind="sampler")
+    scheduler_override_value = _normalize_override(scheduler_override, kind="scheduler")
 
     sampler_name = sampler_override_value or base_sampler_value
     if scheduler_override_value:

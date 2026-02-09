@@ -131,10 +131,16 @@ def execute_sampling(
     run_before_sampling_hooks(processing, prompt_context, plan.seeds, plan.subseeds)
 
     merged = collect_lora_selections(prompt_loras)
-    if merged:
+    if hasattr(model, "codex_objects_after_applying_lora") and model.codex_objects_after_applying_lora is not None:
         stats = apply_loras_to_engine(model, merged)
-        logger.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
-    model.codex_objects = model.codex_objects_after_applying_lora.shallow_copy()
+        if merged:
+            logger.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
+        model.codex_objects = model.codex_objects_after_applying_lora.shallow_copy()
+    elif merged:
+        raise RuntimeError(
+            "Prompt/global LoRA selections were provided, but the active model does not expose "
+            "`codex_objects_after_applying_lora`."
+        )
 
     if processing.scripts is not None:
         processing.scripts.process_before_every_sampling(

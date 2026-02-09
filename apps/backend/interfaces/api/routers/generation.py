@@ -61,7 +61,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Vid2VidRequest,
     )
     from apps.backend.interfaces.api.device_selection import parse_device_from_payload
-    from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, SemanticEngine
+    from apps.backend.runtime.model_registry.capabilities import (
+        ENGINE_SURFACES,
+        SemanticEngine,
+        engine_supports_cfg,
+    )
 
     def _ensure_default_engines_registered() -> None:
         # Generation endpoints require the engine registry, but API startup should remain import-light.
@@ -97,20 +101,21 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Precedence: payload value when present (not null) → options snapshot.
         """
         snap = _opts_snapshot()
+        payload_obj = payload if isinstance(payload, dict) else dict(payload)
         smart_offload = (
-            bool(payload.get("smart_offload"))
+            _require_bool_field(payload_obj, "smart_offload")
             if payload.get("smart_offload") is not None
-            else bool(getattr(snap, "codex_smart_offload", False))
+            else _require_options_bool(snap, "codex_smart_offload")
         )
         smart_fallback = (
-            bool(payload.get("smart_fallback"))
+            _require_bool_field(payload_obj, "smart_fallback")
             if payload.get("smart_fallback") is not None
-            else bool(getattr(snap, "codex_smart_fallback", False))
+            else _require_options_bool(snap, "codex_smart_fallback")
         )
         smart_cache = (
-            bool(payload.get("smart_cache"))
+            _require_bool_field(payload_obj, "smart_cache")
             if payload.get("smart_cache") is not None
-            else bool(getattr(snap, "codex_smart_cache", False))
+            else _require_options_bool(snap, "codex_smart_cache")
         )
         return smart_offload, smart_fallback, smart_cache
 
@@ -160,6 +165,39 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if maximum is not None and result > maximum:
             raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
         return result
+
+
+    def _require_bool_field(payload: Dict[str, Any], key: str) -> bool:
+        if key not in payload:
+            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+        value = payload[key]
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a boolean")
+        return value
+
+
+    def _optional_bool_field(payload: Dict[str, Any], key: str) -> Optional[bool]:
+        if key not in payload or payload.get(key) is None:
+            return None
+        value = payload[key]
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a boolean")
+        return value
+
+
+    def _require_options_bool(options_snapshot: Any, key: str) -> bool:
+        value = getattr(options_snapshot, key, False)
+        if not isinstance(value, bool):
+            raise RuntimeError(f"Invalid options value: '{key}' must be a boolean (got {type(value).__name__}).")
+        return value
+
+
+    def _reject_not_implemented_engine(engine_key: str, *, field_name: str) -> None:
+        if engine_key == "sd35":
+            raise HTTPException(
+                status_code=501,
+                detail=f"Engine '{field_name}=sd35' is temporarily disabled until SD3.5 conditioning/keymap port is finalized.",
+            )
 
 
     def _resolve_wan_metadata_dir(payload: Dict[str, Any]) -> str:
@@ -378,7 +416,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if not isinstance(hires, dict):
                 raise HTTPException(status_code=400, detail="'extras.hires' must be an object")
             _reject_unknown_keys(hires, _TXT2IMG_HIRES_KEYS | {"enable"}, "extras.hires")
-            if bool(hires.get('enable')):
+            if _optional_bool_field(hires, "enable") is True:
                 required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
                 for key in required:
                     if key not in hires:
@@ -396,7 +434,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     if not isinstance(refiner_raw, dict):
                         raise HTTPException(status_code=400, detail="'extras.hires.refiner' must be an object")
                     _reject_unknown_keys(refiner_raw, {"enable", "switch_at_step", "cfg", "seed", "model", "vae"}, "extras.hires.refiner")
-                    if bool(refiner_raw.get('enable')):
+                    if _optional_bool_field(refiner_raw, "enable") is True:
                         refiner_cfg = {
                             "switch_at_step": _require_int_field(refiner_raw, 'switch_at_step', minimum=1),
                             "cfg": _require_float_field(refiner_raw, 'cfg'),
@@ -441,7 +479,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if not isinstance(refiner, dict):
                 raise HTTPException(status_code=400, detail="'extras.refiner' must be an object")
             _reject_unknown_keys(refiner, {"enable", "switch_at_step", "cfg", "seed", "model", "vae"}, "extras.refiner")
-            if bool(refiner.get('enable')):
+            if _optional_bool_field(refiner, "enable") is True:
                 ref_cfg: Dict[str, Any] = {
                     "switch_at_step": _require_int_field(refiner, 'switch_at_step', minimum=1),
                     "cfg": _require_float_field(refiner, 'cfg'),
@@ -580,6 +618,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not raw:
             return ""
         key = raw.lower()
+        if key in {"sd35", "sd3", "sd-3.5"}:
+            return "sd35"
         from apps.backend.core.registry import registry as _engine_registry
         try:
             _ensure_default_engines_registered()
@@ -836,6 +876,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not engine_key:
             raise HTTPException(status_code=400, detail="Missing engine key (engine)")
         engine_id = engine_key
+        _reject_not_implemented_engine(engine_key, field_name="engine")
 
         prompt = _require_str_field(payload, 'prompt', allow_empty=True)
         negative_prompt = str(payload.get('negative_prompt') or '')
@@ -847,8 +888,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
-        distilled_guidance_engines = {"flux1", "flux1_kontext", "flux1_chroma"}
-        if engine_id in distilled_guidance_engines:
+        supports_cfg = engine_supports_cfg(engine_id)
+        if not supports_cfg:
             if 'cfg' in payload:
                 raise HTTPException(
                     status_code=400,
@@ -863,7 +904,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if 'distilled_cfg' in payload:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"'distilled_cfg' is only supported for engines: {sorted(distilled_guidance_engines)}",
+                    detail=f"Engine '{engine_id}' does not support 'distilled_cfg'; use 'cfg'.",
                 )
             if 'cfg' not in payload:
                 raise HTTPException(status_code=400, detail="Missing 'cfg'")
@@ -950,20 +991,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         metadata["hr"] = bool(hires_cfg)
         metadata["distilled_cfg_scale"] = distilled_cfg_scale
 
-        # Smart offload/fallback flags: prefer payload when present, otherwise fall back to options snapshot.
-        snap = _opts_snapshot()
-        if "smart_offload" in payload:
-            smart_offload = bool(payload.get("smart_offload"))
-        else:
-            smart_offload = bool(getattr(snap, "codex_smart_offload", False))
-        if "smart_fallback" in payload:
-            smart_fallback = bool(payload.get("smart_fallback"))
-        else:
-            smart_fallback = bool(getattr(snap, "codex_smart_fallback", False))
-        if "smart_cache" in payload:
-            smart_cache = bool(payload.get("smart_cache"))
-        else:
-            smart_cache = bool(getattr(snap, "codex_smart_cache", False))
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
 
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
@@ -1115,6 +1143,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         engine_key = _canonical_engine_key(engine_override)
         if not engine_key:
             raise HTTPException(status_code=400, detail="Missing engine key (engine)")
+        _reject_not_implemented_engine(engine_key, field_name="engine")
         model_ref = model_override
 
         prompt = _p.require(payload, 'img2img_prompt') or ''
@@ -1132,12 +1161,27 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         else:
             raise HTTPException(status_code=400, detail="'img2img_steps' is required")
 
-        if 'img2img_cfg_scale' in payload:
+        supports_cfg = engine_supports_cfg(engine_key)
+        if supports_cfg:
+            if 'img2img_cfg_scale' not in payload:
+                raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
+            if 'img2img_distilled_cfg_scale' in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Engine '{engine_key}' does not support 'img2img_distilled_cfg_scale'; use 'img2img_cfg_scale'.",
+                )
             cfg_scale = _require_float_field(payload, 'img2img_cfg_scale')
+            distilled_cfg_scale = None
         else:
-            raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
-
-        distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
+            if 'img2img_cfg_scale' in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Engine '{engine_key}' does not support 'img2img_cfg_scale'; use 'img2img_distilled_cfg_scale'.",
+                )
+            if 'img2img_distilled_cfg_scale' not in payload:
+                raise HTTPException(status_code=400, detail="'img2img_distilled_cfg_scale' is required")
+            cfg_scale = 1.0
+            distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale')
         image_cfg_scale = _require_float_field(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
         denoise = _require_float_field(payload, 'img2img_denoising_strength')
         def _snap_dim(value: int) -> int:
@@ -1374,6 +1418,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if 'eta_noise_seed_delta' in extras:
             metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
 
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
         req = Img2ImgRequest(
             task=TaskType.IMG2IMG,
             prompt=prompt,
@@ -1402,9 +1447,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             steps=steps_val,
             extras=extras,
             hires=hires_data if hires_data.get("enable") else None,
-            smart_offload=bool(payload.get("smart_offload")) if payload.get("smart_offload") is not None else bool(getattr(_opts_snapshot(), "codex_smart_offload", False)),
-            smart_fallback=bool(payload.get("smart_fallback")) if payload.get("smart_fallback") is not None else bool(getattr(_opts_snapshot(), "codex_smart_fallback", False)),
-            smart_cache=bool(payload.get("smart_cache")) if payload.get("smart_cache") is not None else bool(getattr(_opts_snapshot(), "codex_smart_cache", False)),
+            smart_offload=smart_offload,
+            smart_fallback=smart_fallback,
+            smart_cache=smart_cache,
         )
 
         return req, engine_key, model_ref
@@ -1475,7 +1520,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
                 raise HTTPException(status_code=400, detail="'video_return_frames' must be a boolean when provided")
             if isinstance(raw_return_frames, bool):
-                extras["video_return_frames"] = bool(raw_return_frames)
+                extras["video_return_frames"] = raw_return_frames
         # Video export options (structured in request.video_options; also kept in extras.video for debugging)
         video_options = None
         try:
@@ -1487,13 +1532,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 pix_fmt=(str(payload.get("video_pix_fmt")).strip() if payload.get("video_pix_fmt") else None),
                 crf=(int(payload.get("video_crf")) if payload.get("video_crf") is not None else None),
                 loop_count=(int(payload.get("video_loop_count")) if payload.get("video_loop_count") is not None else None),
-                pingpong=(bool(payload.get("video_pingpong")) if payload.get("video_pingpong") is not None else None),
-                save_metadata=(bool(payload.get("video_save_metadata")) if payload.get("video_save_metadata") is not None else None),
-                save_output=(bool(payload.get("video_save_output")) if payload.get("video_save_output") is not None else None),
-                trim_to_audio=(bool(payload.get("video_trim_to_audio")) if payload.get("video_trim_to_audio") is not None else None),
+                pingpong=_optional_bool_field(payload, "video_pingpong"),
+                save_metadata=_optional_bool_field(payload, "video_save_metadata"),
+                save_output=_optional_bool_field(payload, "video_save_output"),
+                trim_to_audio=_optional_bool_field(payload, "video_trim_to_audio"),
             ).as_dict()
-        except Exception:
-            video_options = None
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid video export options: {exc}") from exc
         if video_options:
             extras["video"] = {
                 "video_filename_prefix": payload.get("video_filename_prefix"),
@@ -1657,7 +1704,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
                 raise HTTPException(status_code=400, detail="'video_return_frames' must be a boolean when provided")
             if isinstance(raw_return_frames, bool):
-                extras["video_return_frames"] = bool(raw_return_frames)
+                extras["video_return_frames"] = raw_return_frames
         video_options = None
         try:
             from apps.backend.core.params.video import VideoExportOptions
@@ -1668,13 +1715,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 pix_fmt=(str(payload.get("video_pix_fmt")).strip() if payload.get("video_pix_fmt") else None),
                 crf=(int(payload.get("video_crf")) if payload.get("video_crf") is not None else None),
                 loop_count=(int(payload.get("video_loop_count")) if payload.get("video_loop_count") is not None else None),
-                pingpong=(bool(payload.get("video_pingpong")) if payload.get("video_pingpong") is not None else None),
-                save_metadata=(bool(payload.get("video_save_metadata")) if payload.get("video_save_metadata") is not None else None),
-                save_output=(bool(payload.get("video_save_output")) if payload.get("video_save_output") is not None else None),
-                trim_to_audio=(bool(payload.get("video_trim_to_audio")) if payload.get("video_trim_to_audio") is not None else None),
+                pingpong=_optional_bool_field(payload, "video_pingpong"),
+                save_metadata=_optional_bool_field(payload, "video_save_metadata"),
+                save_output=_optional_bool_field(payload, "video_save_output"),
+                trim_to_audio=_optional_bool_field(payload, "video_trim_to_audio"),
             ).as_dict()
-        except Exception:
-            video_options = None
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid video export options: {exc}") from exc
         if video_options:
             extras["video"] = {
                 "video_filename_prefix": payload.get("video_filename_prefix"),
@@ -1905,279 +1954,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return out
 
     def prepare_vid2vid(payload: Dict[str, Any]) -> Tuple[Vid2VidRequest, str, Optional[str]]:
-        prompt = payload.get("vid2vid_prompt", "")
-        negative_prompt = payload.get("vid2vid_neg_prompt", "")
-        width_val = int(payload.get("vid2vid_width", 768))
-        height_val = int(payload.get("vid2vid_height", 432))
-        _wan_require_dims_multiple_of_16(task="vid2vid", width=width_val, height=height_val)
-        steps_val = int(payload.get("vid2vid_steps", 30))
-        fps_val = int(payload.get("vid2vid_fps", 24))
-        frames_val = int(payload.get("vid2vid_num_frames", 16))
-        sampler_name = str(payload.get("vid2vid_sampler", ""))
-        scheduler_name = str(payload.get("vid2vid_scheduler", ""))
-        if sampler_name.strip() or scheduler_name.strip():
-            try:
-                from apps.backend.types.samplers import SamplerKind
-                from apps.backend.runtime.sampling.context import SchedulerName
-
-                if sampler_name.strip():
-                    SamplerKind.from_string(sampler_name.strip())
-                if scheduler_name.strip():
-                    SchedulerName.from_string(scheduler_name.strip())
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        seed_val = int(payload.get("vid2vid_seed", -1))
-        cfg_val = float(payload.get("vid2vid_cfg_scale", 7.0))
-        strength_val = payload.get("vid2vid_strength")
-        strength = float(strength_val) if strength_val is not None else None
-
-        method_raw = str(payload.get("vid2vid_method") or "flow_chunks")
-        method = method_raw.strip().lower()
-
-        # Driving/original video is required for classic vid2vid methods; optional for wan_animate (used for audio copy).
-        video_path = ""
-        video_path_raw = payload.get("vid2vid_video_path") or payload.get("vid2vid_video")
-        if video_path_raw:
-            video_path = _resolve_vid2vid_input_path(video_path_raw, field="video_path")
-        elif method != "wan_animate":
-            raise RuntimeError("vid2vid_video_path is required (use upload)")
-
-        # WAN-Animate inputs (preprocessed pose/face, optional bg/mask, plus reference image).
-        ref_image = None
-        pose_path = ""
-        face_path = ""
-        bg_path = ""
-        mask_path = ""
-        animate_mode = str(payload.get("vid2vid_animate_mode") or "animate")
-        seg_val = int(payload.get("vid2vid_segment_frame_length", 77))
-        prev_val = int(payload.get("vid2vid_prev_segment_conditioning_frames", 1))
-        motion_bs_val = payload.get("vid2vid_motion_encode_batch_size")
-        motion_bs = int(motion_bs_val) if motion_bs_val is not None else None
-
-        if method == "wan_animate":
-            ref_b64 = payload.get("vid2vid_reference_image")
-            if ref_b64:
-                ref_image = media.decode_image(ref_b64)
-            else:
-                ref_path = payload.get("vid2vid_reference_image_path")
-                if ref_path:
-                    from PIL import Image  # type: ignore
-
-                    rp = _resolve_vid2vid_input_path(ref_path, field="reference_image")
-                    img = Image.open(Path(rp))
-                    ref_image = img.copy()
-                    img.close()
-            if ref_image is None:
-                raise RuntimeError("vid2vid wan_animate requires a reference image (upload or vid2vid_reference_image)")
-
-            pose_raw = payload.get("vid2vid_pose_video_path") or payload.get("vid2vid_pose_video")
-            face_raw = payload.get("vid2vid_face_video_path") or payload.get("vid2vid_face_video")
-            pose_path = _resolve_vid2vid_input_path(pose_raw, field="pose_video")
-            face_path = _resolve_vid2vid_input_path(face_raw, field="face_video")
-
-            mode_lc = animate_mode.strip().lower()
-            if mode_lc in {"replace", "replacement"}:
-                bg_raw = payload.get("vid2vid_background_video_path") or payload.get("vid2vid_background_video")
-                mask_raw = payload.get("vid2vid_mask_video_path") or payload.get("vid2vid_mask_video")
-                bg_path = _resolve_vid2vid_input_path(bg_raw, field="background_video")
-                mask_path = _resolve_vid2vid_input_path(mask_raw, field="mask_video")
-
-        extras: Dict[str, Any] = {}
-        if "video_return_frames" in payload:
-            raw_return_frames = payload.get("video_return_frames")
-            if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
-                raise HTTPException(status_code=400, detail="'video_return_frames' must be a boolean when provided")
-            if isinstance(raw_return_frames, bool):
-                extras["video_return_frames"] = bool(raw_return_frames)
-        video_options = None
-        try:
-            from apps.backend.core.params.video import VideoExportOptions
-
-            video_options = VideoExportOptions(
-                filename_prefix=(str(payload.get("video_filename_prefix")).strip() if payload.get("video_filename_prefix") else None),
-                format=(str(payload.get("video_format")).strip() if payload.get("video_format") else None),
-                pix_fmt=(str(payload.get("video_pix_fmt")).strip() if payload.get("video_pix_fmt") else None),
-                crf=(int(payload.get("video_crf")) if payload.get("video_crf") is not None else None),
-                loop_count=(int(payload.get("video_loop_count")) if payload.get("video_loop_count") is not None else None),
-                pingpong=(bool(payload.get("video_pingpong")) if payload.get("video_pingpong") is not None else None),
-                save_metadata=(bool(payload.get("video_save_metadata")) if payload.get("video_save_metadata") is not None else None),
-                save_output=(bool(payload.get("video_save_output")) if payload.get("video_save_output") is not None else None),
-                trim_to_audio=(bool(payload.get("video_trim_to_audio")) if payload.get("video_trim_to_audio") is not None else None),
-            ).as_dict()
-        except Exception:
-            video_options = None
-        if video_options:
-            extras["video"] = {
-                "video_filename_prefix": payload.get("video_filename_prefix"),
-                "video_format": payload.get("video_format"),
-                "video_pix_fmt": payload.get("video_pix_fmt"),
-                "video_crf": payload.get("video_crf"),
-                "video_loop_count": payload.get("video_loop_count"),
-                "video_pingpong": payload.get("video_pingpong"),
-                "video_save_metadata": payload.get("video_save_metadata"),
-                "video_save_output": payload.get("video_save_output"),
-                "video_trim_to_audio": payload.get("video_trim_to_audio"),
-            }
-        if isinstance(payload.get("video_interpolation"), dict):
-            extras["video_interpolation"] = payload.get("video_interpolation")
-        if method != "wan_animate":
-            # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
-            from apps.backend.inventory.cache import resolve_asset_by_sha
-
-            def _require_sha_field(key: str) -> str:
-                val = payload.get(key)
-                if isinstance(val, dict):
-                    raise HTTPException(status_code=400, detail=f"'{key}' must be a string sha256, got object")
-                if not isinstance(val, str) or not val.strip():
-                    raise HTTPException(status_code=400, detail=f"'{key}' is required and must be a non-empty sha256 string")
-                return val.strip().lower()
-
-            def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
-                raw = payload.get(stage_key)
-                if not isinstance(raw, dict):
-                    raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
-                if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
-                    raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
-                if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
-                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
-                sha_raw = raw.get("model_sha")
-                if not isinstance(sha_raw, str) or not sha_raw.strip():
-                    raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
-                sha = sha_raw.strip().lower()
-                model_path = resolve_asset_by_sha(sha)
-                if not model_path:
-                    raise HTTPException(status_code=409, detail=f"WAN stage model not found for sha: {sha}")
-                if not str(model_path).lower().endswith(".gguf"):
-                    raise HTTPException(status_code=409, detail=f"WAN stage sha does not resolve to a .gguf file: {sha}")
-                out: dict[str, object] = dict(raw)
-                out.pop("model_sha", None)
-                out["model_dir"] = model_path
-                if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
-                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
-                if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
-                    lora_sha = str(out.get("lora_sha")).strip().lower()
-                    if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
-                        raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_sha' must be sha256 (64 lowercase hex)")
-                    lora_path = resolve_asset_by_sha(lora_sha)
-                    if not lora_path:
-                        raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
-                    if not str(lora_path).lower().endswith(".safetensors"):
-                        raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
-                    out["lora_sha"] = lora_sha
-                return out
-
-            extras["wan_high"] = _resolve_wan_stage("wan_high")
-            extras["wan_low"] = _resolve_wan_stage("wan_low")
-
-            if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
-                raise HTTPException(status_code=400, detail="WAN sha-only mode: do not send wan_*_path fields; send wan_vae_sha/wan_tenc_sha instead.")
-
-            wan_vae_sha = _require_sha_field("wan_vae_sha")
-            wan_tenc_sha = _require_sha_field("wan_tenc_sha")
-
-            wan_vae_path = resolve_asset_by_sha(wan_vae_sha)
-            if not wan_vae_path:
-                raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
-            extras["wan_vae_path"] = wan_vae_path
-
-            wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
-            if not wan_tenc_path:
-                raise HTTPException(status_code=409, detail=f"WAN text encoder not found for sha: {wan_tenc_sha}")
-            te_lower = str(wan_tenc_path).lower()
-            if not (te_lower.endswith(".safetensors") or te_lower.endswith(".gguf")):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"WAN text encoder sha must resolve to a .safetensors or .gguf file: {wan_tenc_sha}",
-                )
-            extras["wan_text_encoder_path"] = wan_tenc_path
-
-            extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
-
-            for key in (
-                "gguf_offload",
-                "gguf_offload_level",
-                "gguf_sdpa_policy",
-                "gguf_attn_chunk",
-                "gguf_cache_policy",
-                "gguf_cache_limit_mb",
-                "gguf_log_mem_interval",
-                "gguf_te_device",
-                "gguf_te_impl",
-                "gguf_te_kernel_required",
-            ):
-                if key in payload and payload.get(key) is not None:
-                    extras[key] = payload.get(key)
-        else:
-            # wan_animate: keep repo-scoped model_dir normalization (Diffusers dir inputs); stage LoRA is sha-only (`lora_sha`).
-            if isinstance(payload.get("wan_high"), dict):
-                extras["wan_high"] = _normalize_wan_stage_payload_strict(payload.get("wan_high"), field="wan_high")
-            if isinstance(payload.get("wan_low"), dict):
-                extras["wan_low"] = _normalize_wan_stage_payload_strict(payload.get("wan_low"), field="wan_low")
-            for key in ("wan_metadata_dir", "wan_tokenizer_dir"):
-                if key in payload and payload.get(key) is not None:
-                    extras[key] = _resolve_vid2vid_input_dir(str(payload.get(key)), field=key)
-
-        extras["vid2vid"] = {
-            "method": method_raw,
-            "use_source_fps": bool(payload.get("vid2vid_use_source_fps", True)),
-            "use_source_frames": bool(payload.get("vid2vid_use_source_frames", True)),
-            "start_seconds": payload.get("vid2vid_start_seconds"),
-            "end_seconds": payload.get("vid2vid_end_seconds"),
-            "max_frames": payload.get("vid2vid_max_frames"),
-            "chunk_frames": payload.get("vid2vid_chunk_frames"),
-            "overlap_frames": payload.get("vid2vid_overlap_frames"),
-            "preview_frames": payload.get("vid2vid_preview_frames"),
-        }
-        extras["vid2vid_flow"] = {
-            "enabled": bool(payload.get("vid2vid_flow_enabled", True)),
-            "use_large": bool(payload.get("vid2vid_flow_use_large", False)),
-            "downscale": payload.get("vid2vid_flow_downscale", 2),
-            "device": payload.get("vid2vid_flow_device", None),
-        }
-
-        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
-        req = Vid2VidRequest(
-            task=TaskType.VID2VID,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            sampler=(sampler_name.strip() or None),
-            scheduler=(scheduler_name.strip() or None),
-            video_path=video_path,
-            reference_image=ref_image,
-            pose_video_path=pose_path,
-            face_video_path=face_path,
-            background_video_path=bg_path,
-            mask_video_path=mask_path,
-            animate_mode=animate_mode,
-            segment_frame_length=seg_val,
-            prev_segment_conditioning_frames=prev_val,
-            motion_encode_batch_size=motion_bs,
-            width=width_val,
-            height=height_val,
-            steps=steps_val,
-            fps=fps_val,
-            num_frames=frames_val,
-            seed=seed_val,
-            guidance_scale=cfg_val,
-            strength=strength,
-            video_options=video_options,
-            extras=extras,
-            smart_offload=smart_offload,
-            smart_fallback=smart_fallback,
-            smart_cache=smart_cache,
+        del payload
+        raise NotImplementedError(
+            "vid2vid is temporarily disabled until the capability-driven router/runtime contract is finalized."
         )
-
-        if method == "wan_animate":
-            engine_key = "wan22_animate_14b"
-            model_dir = payload.get("vid2vid_model_dir")
-            if not isinstance(model_dir, str) or not model_dir.strip():
-                raise RuntimeError("vid2vid wan_animate requires 'vid2vid_model_dir' (repo-scoped path)")
-            model_ref = _resolve_vid2vid_input_dir(model_dir.strip(), field="model_dir")
-            return req, engine_key, model_ref
-
-        engine_key = "wan22_5b"
-        model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
-        return req, engine_key, model_ref
 
     def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType, *, device: str) -> None:
         def push(event: Dict[str, Any]) -> None:
@@ -2191,7 +1971,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             elif task_type == TaskType.IMG2VID:
                 req, engine_key, model_ref = prepare_img2vid(payload)
             elif task_type == TaskType.VID2VID:
-                req, engine_key, model_ref = prepare_vid2vid(payload)
+                raise NotImplementedError(
+                    "vid2vid is temporarily disabled until the capability-driven router/runtime contract is finalized."
+                )
             else:
                 raise RuntimeError(f"Unsupported video task: {task_type}")
         except Exception as err:
@@ -2219,14 +2001,27 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
                 apply_primary_device(device)
 
-                engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
+                engine_opts = {"export_video": _require_options_bool(_opts_snapshot(), "codex_export_video")}
                 from apps.backend.interfaces.api.tasks.generation_tasks import encode_images as _encode_images
                 from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
 
+                smart_offload = getattr(req, "smart_offload", False)
+                smart_fallback = getattr(req, "smart_fallback", False)
+                smart_cache = getattr(req, "smart_cache", False)
+                for field_name, field_value in (
+                    ("smart_offload", smart_offload),
+                    ("smart_fallback", smart_fallback),
+                    ("smart_cache", smart_cache),
+                ):
+                    if not isinstance(field_value, bool):
+                        raise RuntimeError(
+                            f"Invalid request field '{field_name}': expected boolean, got {type(field_value).__name__}."
+                        )
+
                 with smart_runtime_overrides(
-                    smart_offload=bool(getattr(req, "smart_offload", False)),
-                    smart_fallback=bool(getattr(req, "smart_fallback", False)),
-                    smart_cache=bool(getattr(req, "smart_cache", False)),
+                    smart_offload=smart_offload,
+                    smart_fallback=smart_fallback,
+                    smart_cache=smart_cache,
                 ):
                     for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
                         if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
@@ -2379,59 +2174,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         For security, path-based inputs are restricted to the backend working directory.
         """
-        try:
-            data = json.loads(payload) if payload else {}
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"payload must be JSON: {exc}")
-        if not isinstance(data, dict):
-            raise HTTPException(status_code=400, detail="payload must be JSON object")
-
-        device = _parse_explicit_device(data)
-        loop = asyncio.get_running_loop()
-        entry = TaskEntry(loop)
-        task_id = f"task(api-vid2vid-{uuid4().hex})"
-        register_task(task_id, entry)
-
-        uploaded_paths: list[str] = []
-        try:
-            import shutil as _shutil
-
-            up_dir = CODEX_ROOT / ".tmp" / "uploads" / "vid2vid"
-            up_dir.mkdir(parents=True, exist_ok=True)
-
-            def _save(upload: UploadFile, *, default_suffix: str) -> str:
-                suffix = default_suffix
-                try:
-                    name = str(upload.filename or "")
-                    if "." in name:
-                        suffix = "." + name.rsplit(".", 1)[1].lower()
-                except Exception:
-                    suffix = default_suffix
-                dst = up_dir / f"{uuid4().hex}{suffix}"
-                with dst.open("wb") as f:
-                    _shutil.copyfileobj(upload.file, f)
-                uploaded_paths.append(str(dst))
-                return str(dst)
-
-            if video is not None:
-                data["vid2vid_video_path"] = _save(video, default_suffix=".mp4")
-            if reference_image is not None:
-                data["vid2vid_reference_image_path"] = _save(reference_image, default_suffix=".png")
-            if pose_video is not None:
-                data["vid2vid_pose_video_path"] = _save(pose_video, default_suffix=".mp4")
-            if face_video is not None:
-                data["vid2vid_face_video_path"] = _save(face_video, default_suffix=".mp4")
-            if background_video is not None:
-                data["vid2vid_background_video_path"] = _save(background_video, default_suffix=".mp4")
-            if mask_video is not None:
-                data["vid2vid_mask_video_path"] = _save(mask_video, default_suffix=".mp4")
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"failed to save uploaded files: {exc}")
-
-        if uploaded_paths:
-            data["__vid2vid_uploaded_paths"] = uploaded_paths
-
-        run_video_task(task_id, data, entry, TaskType.VID2VID, device=device)
-        return {"task_id": task_id}
+        del video, reference_image, pose_video, face_video, background_video, mask_video, payload
+        raise HTTPException(
+            status_code=501,
+            detail="vid2vid is temporarily disabled until the capability-driven router/runtime contract is finalized.",
+        )
 
     return router

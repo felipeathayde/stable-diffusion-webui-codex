@@ -68,17 +68,43 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
     Each selection item must carry `path` and optional `weight` fields.
     """
     stats = AppliedStats()
-    if not selections:
+    selected = list(selections or [])
+
+    codex_objects = getattr(engine, "codex_objects_after_applying_lora", None)
+    if codex_objects is None:
+        raise RuntimeError("Engine is missing codex_objects_after_applying_lora required for LoRA application.")
+
+    unet_patcher = getattr(codex_objects, "denoiser", None)
+    text_encoders = getattr(codex_objects, "text_encoders", None)
+    clip_entry = text_encoders.get("clip") if isinstance(text_encoders, dict) else None
+    clip_patcher = getattr(clip_entry, "patcher", None) if clip_entry is not None else None
+
+    if not selected:
+        if unet_patcher is None and clip_patcher is None:
+            return stats
+        if unet_patcher is None or clip_patcher is None:
+            raise RuntimeError(
+                "Engine exposes partial LoRA patcher state for empty selection reset "
+                "(expected both denoiser and text_encoders['clip'].patcher)."
+            )
+        unet_patcher.lora_patches = {}
+        clip_patcher.lora_patches = {}
+        unet_patcher.refresh_loras()
+        clip_patcher.refresh_loras()
         return stats
 
+    if unet_patcher is None or clip_patcher is None:
+        raise RuntimeError(
+            "LoRA selections were provided, but the active engine does not expose CLIP patchers "
+            "(expected denoiser + text_encoders['clip'].patcher)."
+        )
+
     unet_map, clip_map = _build_to_load_maps(engine)
-    unet_patcher = engine.codex_objects_after_applying_lora.denoiser
-    clip_patcher = engine.codex_objects_after_applying_lora.text_encoders["clip"].patcher
 
     apply_mode = read_lora_apply_mode()
     online_mode = apply_mode == LoraApplyMode.ONLINE
 
-    for sel in selections:
+    for sel in selected:
         path = str(getattr(sel, "path", None) or sel.get("path"))  # type: ignore[attr-defined]
         if not path:
             continue

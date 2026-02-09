@@ -15,7 +15,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
 - `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler allow-lists).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
+- `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
+- `semantic_engine_for_engine_id` (function): Resolve a semantic engine tag from an API engine id (fail-loud on unknown ids).
+- `engine_supports_cfg` (function): Return whether the engine family supports classic CFG (`cfg`) via family capabilities.
 - `serialize_engine_capabilities` (function): Returns engine capability surfaces as JSON-serializable dicts.
 - `serialize_family_capabilities` (function): Returns model family capability surfaces as JSON-serializable dicts.
 """
@@ -25,6 +28,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Mapping
+
+from apps.backend.runtime.model_registry.specs import ModelFamily
 
 
 class SemanticEngine(str, Enum):
@@ -197,10 +202,61 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     ),
 }
 
+ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
+    "sd15": SemanticEngine.SD15,
+    "sd20": SemanticEngine.SD15,
+    "sdxl": SemanticEngine.SDXL,
+    "sdxl_refiner": SemanticEngine.SDXL,
+    "sd35": SemanticEngine.SDXL,
+    "flux1": SemanticEngine.FLUX,
+    "flux1_kontext": SemanticEngine.FLUX,
+    "flux1_fill": SemanticEngine.FLUX,
+    "flux1_chroma": SemanticEngine.CHROMA,
+    "zimage": SemanticEngine.ZIMAGE,
+    "anima": SemanticEngine.ANIMA,
+    "wan22_5b": SemanticEngine.WAN22,
+    "wan22_14b": SemanticEngine.WAN22,
+    "wan22_animate_14b": SemanticEngine.WAN22,
+    "svd": SemanticEngine.SVD,
+    "hunyuan_video": SemanticEngine.HUNYUAN_VIDEO,
+}
+
+_SEMANTIC_ENGINE_PRIMARY_FAMILY: Dict[SemanticEngine, ModelFamily] = {
+    SemanticEngine.SD15: ModelFamily.SD15,
+    SemanticEngine.SDXL: ModelFamily.SDXL,
+    SemanticEngine.FLUX: ModelFamily.FLUX,
+    SemanticEngine.CHROMA: ModelFamily.CHROMA,
+    SemanticEngine.ZIMAGE: ModelFamily.ZIMAGE,
+    SemanticEngine.ANIMA: ModelFamily.ANIMA,
+    SemanticEngine.WAN22: ModelFamily.WAN22,
+    SemanticEngine.HUNYUAN_VIDEO: ModelFamily.HUNYUAN,
+    SemanticEngine.SVD: ModelFamily.SVD,
+}
+
 
 def list_engine_capabilities() -> Mapping[str, EngineParamSurface]:
     """Return engine capability surfaces keyed by semantic engine tag."""
     return {engine.value: surface for engine, surface in ENGINE_SURFACES.items()}
+
+
+def semantic_engine_for_engine_id(engine_id: str) -> SemanticEngine:
+    normalized = str(engine_id or "").strip()
+    if normalized == "":
+        raise KeyError("Engine id is empty.")
+    if normalized not in ENGINE_ID_TO_SEMANTIC_ENGINE:
+        raise KeyError(f"Unknown engine id for semantic mapping: {normalized!r}")
+    return ENGINE_ID_TO_SEMANTIC_ENGINE[normalized]
+
+
+def engine_supports_cfg(engine_id: str) -> bool:
+    from apps.backend.runtime.model_registry.family_runtime import get_family_spec
+
+    semantic = semantic_engine_for_engine_id(engine_id)
+    family = _SEMANTIC_ENGINE_PRIMARY_FAMILY.get(semantic)
+    if family is None:
+        raise KeyError(f"No primary family mapping for semantic engine {semantic.value!r}.")
+    spec = get_family_spec(family)
+    return bool(spec.capabilities.supports_cfg)
 
 
 def serialize_engine_capabilities() -> Dict[str, Dict[str, object]]:
@@ -226,7 +282,10 @@ __all__ = [
     "SemanticEngine",
     "EngineParamSurface",
     "ENGINE_SURFACES",
+    "ENGINE_ID_TO_SEMANTIC_ENGINE",
     "list_engine_capabilities",
+    "semantic_engine_for_engine_id",
+    "engine_supports_cfg",
     "serialize_engine_capabilities",
     "serialize_family_capabilities",
 ]

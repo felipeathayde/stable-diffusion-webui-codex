@@ -37,6 +37,7 @@ Status: Active
 - 2026-02-07: VAE decode/encode paths now cast forward inputs using the active storage dtype (not compute dtype) and size batches with that same dtype to prevent bf16/float input-bias mismatches when `storage != compute`.
 - 2026-02-08: `_NormalizingFirstStage` now supports optional per-channel latent stats (`latents_mean`/`latents_std`) in addition to scalar `scaling_factor`/`shift_factor`; 4D/5D rank, channel count, and non-finite/invalid stats are fail-loud.
 - 2026-02-08: VAE normalization now resolves scale/shift via `vae_normalization_policy.py` with explicit family shift contracts: no-shift families reject explicit numeric shifts; shift-required families fail loud on missing/`None` shift.
+- 2026-02-09: `lora_loader` device-restore/offload/apply/restore parameter rewrites now route through `runtime.attr_access.tensor2parameter(...)`; same-device inference parameters are normalized and fail loud if non-inference materialization cannot be guaranteed.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

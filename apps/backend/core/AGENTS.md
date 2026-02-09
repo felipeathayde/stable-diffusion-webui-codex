@@ -1,6 +1,6 @@
 # apps/backend/core Overview
 Date: 2025-10-28
-Last Review: 2026-02-03
+Last Review: 2026-02-09
 Status: Active
 
 ## Purpose
@@ -34,3 +34,4 @@ Status: Active
 - 2026-01-06: Refreshed the `orchestrator.py` module header block to reflect the current engine-options fingerprint fields (`vae_source`/`tenc_source`) (doc-only change).
 - 2026-01-29: `Img2ImgRequest` now carries explicit mask/inpaint controls (enforcement mode + blur/invert/full-res/filled-content knobs) for Codex-native masked img2img.
 - 2026-02-03: Image request dataclasses now carry hires config via `hires` (renamed field; no alias).
+- 2026-02-09: `InferenceOrchestrator` no longer scrubs traceback chains before wrapping load/execution failures; wrapped `EngineLoadError`/`EngineExecutionError` now preserve source-frame causality for diagnostics.

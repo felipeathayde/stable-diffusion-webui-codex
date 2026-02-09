@@ -114,34 +114,6 @@ class InferenceOrchestrator:
         }
         return InferenceOrchestrator._freeze_engine_options(relevant)
 
-    @staticmethod
-    def _scrub_exception_tracebacks(exc: BaseException) -> None:
-        """Best-effort traceback scrub to avoid holding large tensors in exception frames.
-
-        Python tracebacks keep references to stack frames (and thus locals). On load/inference
-        failures this can pin large CPU tensors/state dicts in memory longer than intended.
-        Scrubbing the tracebacks allows GC to reclaim memory after we unload models.
-        """
-
-        stack: list[BaseException] = [exc]
-        visited: set[int] = set()
-        while stack:
-            current = stack.pop()
-            ident = id(current)
-            if ident in visited:
-                continue
-            visited.add(ident)
-            with contextlib.suppress(Exception):
-                current.__traceback__ = None
-            nested = []
-            with contextlib.suppress(Exception):
-                if current.__cause__ is not None:
-                    nested.append(current.__cause__)
-            with contextlib.suppress(Exception):
-                if current.__context__ is not None:
-                    nested.append(current.__context__)
-            stack.extend(nested)
-
     def _purge_vram(self, *, reason: str, clear_engine_cache: bool = False) -> None:
         for cached_engine in list(self._engine_cache.values()):
             if not clear_engine_cache and not getattr(cached_engine, "_is_loaded", False):
@@ -285,7 +257,6 @@ class InferenceOrchestrator:
                         self._engine_options_fingerprint.pop(normalized_key, None)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Engine '%s' failed during load (model=%s).", engine_key, model_ref)
-                    self._scrub_exception_tracebacks(exc)
                     with contextlib.suppress(Exception):
                         engine.unload()
                         engine.mark_unloaded()
@@ -306,7 +277,6 @@ class InferenceOrchestrator:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("Engine '%s' failed during '%s'", engine_key, task.value)
-            self._scrub_exception_tracebacks(exc)
             with contextlib.suppress(Exception):
                 engine.unload()
                 engine.mark_unloaded()

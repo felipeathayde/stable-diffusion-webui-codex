@@ -7,9 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Attribute patching helpers for runtime modules.
-Provides dotted-path getters/setters used by patchers and runtime glue code.
+Provides dotted-path getters/setters used by patchers and runtime glue code, including
+non-inference parameter materialization for safe writable runtime reattachment.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_materialize_parameter_tensor` (function): Normalizes tensors/parameters into non-inference writable tensors for parameter wrapping.
 - `set_attr` (function): Sets a nested attribute on an object by dotted path (type-aware).
 - `set_attr_raw` (function): Sets a nested attribute by dotted path without conversions.
 - `copy_to_param` (function): Copies a tensor/value into an existing `nn.Parameter` or tensor attribute.
@@ -23,11 +25,20 @@ from __future__ import annotations
 import torch
 
 
+@torch.inference_mode(False)
+@torch.no_grad()
+def _materialize_parameter_tensor(value: torch.Tensor | torch.nn.Parameter) -> torch.Tensor:
+    tensor = value.detach() if isinstance(value, torch.nn.Parameter) else value
+    if torch.is_inference(tensor):
+        tensor = tensor.clone()
+    return tensor
+
+
 def set_attr(obj, attr, value):
     attrs = attr.split(".")
     for name in attrs[:-1]:
         obj = getattr(obj, name)
-    setattr(obj, attrs[-1], torch.nn.Parameter(value, requires_grad=False))
+    setattr(obj, attrs[-1], tensor2parameter(value))
 
 
 def set_attr_raw(obj, attr, value):
@@ -63,9 +74,13 @@ def get_attr_with_parent(obj, attr):
 
 
 def tensor2parameter(x):
-    if isinstance(x, torch.nn.Parameter):
+    if isinstance(x, torch.nn.Parameter) and not x.requires_grad and not torch.is_inference(x):
         return x
-    return torch.nn.Parameter(x, requires_grad=False)
+    tensor = _materialize_parameter_tensor(x)
+    parameter = torch.nn.Parameter(tensor, requires_grad=False)
+    if torch.is_inference(parameter):
+        raise RuntimeError("tensor2parameter produced inference parameter; materialization failed")
+    return parameter
 
 
 __all__ = [
@@ -76,4 +91,3 @@ __all__ = [
     "set_attr_raw",
     "tensor2parameter",
 ]
-

@@ -27,13 +27,14 @@ Status: Active
 - 2026-01-18: `useGeneration(tabId)` now derives required VAE/text encoder count from backend-provided `asset_contracts` and uses `models[].core_only` (via `quicksettings.isModelCoreOnly(...)`) to enforce core-only requirements (no duplicated per-engine lists in the UI).
 - 2026-01-18: `useGeneration(tabId)` maps the `chroma` tab type to backend engine id `flux1_chroma` (keeps tab taxonomy explicit while requests use canonical engine keys).
 - 2026-01-28: `useGeneration(tabId)` emits `extras.zimage_variant="turbo"|"base"` for Z-Image requests; both variants use classic CFG (negative prompts supported) and the toggle exists to drive scheduler shift + recommended defaults.
-- 2026-02-03: `useGeneration(tabId)` hires payloads now emit `extras.hires` (txt2img) and `img2img_hires_*` (img2img).
-- 2026-02-04: `useGeneration(tabId)` now also propagates the global `min_tile` preference into hires tile payloads (`extras.hires.tile.min_tile` and `img2img_hires_tile.min_tile`, clamped to `tile`).
+- 2026-02-03: `useGeneration(tabId)` hires payloads emit `extras.hires` in txt2img requests.
+- 2026-02-04: `useGeneration(tabId)` propagates the global `min_tile` preference into txt2img hires tile payloads (`extras.hires.tile.min_tile`, clamped to `tile`).
 - 2026-01-03: Added standardized file header blocks to composables (doc-only change; part of rollout).
 - 2026-02-05: `useGeneration(tabId)` now hard-checks backend engine surface before request send; missing capabilities or unsupported mode (`supports_txt2img`/`supports_img2img`) fail loud with explicit errors.
 - 2026-02-05: `useGeneration` now exports `resolveEngineForRequest(...)` as the canonical tab-type/mode engine mapper; `ImageModelTab.vue` reuses it so disable-state and request preflight stay in parity.
 - 2026-02-06: `useVideoGeneration(tabId)` default WAN video params now include `returnFrames` (default false) and align interpolation defaults (`rifeEnabled`/`rifeModel`) with the canonical WAN params surface (prevents drift between store/view/composable defaults).
 - 2026-02-06: `useGeneration` engine mapping now delegates to `utils/engine_taxonomy.ts` so request engine-id resolution (`flux1_kontext`, `flux1_chroma`) is centralized and shared with other frontend modules.
 - 2026-02-08: `useGeneration.ts` now exports `isGenerationRunningForTab(tabId)` so header quicksettings controls can enforce run-lock behavior on mode toggles (e.g., INPAINT).
+- 2026-02-08: `useGeneration.ts` now sanitizes img2img payloads via `sanitizeImg2ImgPayload(...)` so `img2img_hires_*` keys are never sent (policy: img2img runs without hires).
 - 2026-02-06: `useVideoGeneration(tabId)` now consumes typed WAN tab params (`TabByType<'wan'>`) and shared `WanAssetsParams` from `model_tabs.ts` instead of local `tab.params as any` casting for core WAN param reads.
 - 2026-02-06: `useVideoGeneration(tabId)` now imports shared `WanAssetsParams` from `model_tabs.ts` (no local duplicate interface), keeping WAN asset typing aligned across store/view/composable layers.

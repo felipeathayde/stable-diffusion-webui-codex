@@ -152,9 +152,22 @@ Symbols (top-level; keep in sync; no ghosts):
             v-if="showHires"
             :disabled="isRunning"
             :enabled="params.hires.enabled"
+            :samplers="filteredSamplers"
+            :schedulers="filteredHiresSchedulers"
+            :sampler="hiresSampler"
+            :scheduler="hiresScheduler"
             :denoise="params.hires.denoise"
             :scale="params.hires.scale"
             :steps="params.hires.steps"
+            :cfg-label="cfgLabel"
+            :cfg="hiresCfgValue"
+            :resize-x="params.hires.resizeX"
+            :resize-y="params.hires.resizeY"
+            :checkpoint="params.hires.checkpoint"
+            :model-choices="swapModelChoices"
+            :prompt="params.hires.prompt ?? ''"
+            :negative-prompt="params.hires.negativePrompt ?? ''"
+            :supports-negative="supportsNegative"
             :upscaler="params.hires.upscaler"
             :tile="params.hires.tile"
             :minTile="minTile"
@@ -172,8 +185,16 @@ Symbols (top-level; keep in sync; no ghosts):
             :refinerModelChoices="showHiresRefiner ? swapModelChoices : undefined"
             @update:enabled="(v) => setHires({ enabled: v })"
             @update:denoise="(v) => setHires({ denoise: clampFloat(v, 0, 1) })"
-            @update:scale="(v) => setHires({ scale: v })"
+            @update:scale="(v) => setHires({ scale: clampFloat(v, 1, 4) })"
             @update:steps="(v) => setHires({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:cfg="onHiresCfgChange"
+            @update:resizeX="(v) => setHires({ resizeX: Math.max(0, Math.trunc(v)) })"
+            @update:resizeY="(v) => setHires({ resizeY: Math.max(0, Math.trunc(v)) })"
+            @update:checkpoint="(v) => setHires({ checkpoint: String(v || '').trim() || undefined })"
+            @update:prompt="(v) => setHires({ prompt: String(v || '') })"
+            @update:negativePrompt="(v) => setHires({ negativePrompt: String(v || '') })"
+            @update:sampler="onHiresSamplerChange"
+            @update:scheduler="onHiresSchedulerChange"
             @update:upscaler="(v) => setHires({ upscaler: v })"
             @update:tile="(v) => setHires({ tile: v })"
             @update:minTile="setMinTile"
@@ -314,7 +335,7 @@ import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import { normalizeTabFamily } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
-import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt } from '../utils/image_params'
+import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy } from '../utils/image_params'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
@@ -459,12 +480,14 @@ const swapModelChoices = computed(() => {
   return filterModelTitlesForFamily(quicksettingsStore.models, family, modelPaths.value)
 })
 
-const showHires = computed(() => {
+const supportsHiresForEngine = computed(() => {
   if (props.type === 'zimage') return false
   const surf = engineSurface.value
   if (!surf) return true
   return surf.supports_hires
 })
+const hiresModePolicy = computed(() => resolveHiresModePolicy(Boolean(params.value.useInitImage), supportsHiresForEngine.value))
+const showHires = computed(() => hiresModePolicy.value.showCard)
 
 const showHiresRefiner = computed(() => !Boolean(params.value.useInitImage))
 
@@ -495,6 +518,42 @@ const filteredSchedulers = computed(() => {
   return list
 })
 
+const hiresSampler = computed(() => {
+  const override = String(params.value.hires.sampler || '').trim()
+  if (override) return override
+  return params.value.sampler
+})
+
+const hiresScheduler = computed(() => {
+  const override = String(params.value.hires.scheduler || '').trim()
+  if (override) return override
+  return params.value.scheduler
+})
+
+const hiresCfgValue = computed(() => {
+  if (engineConfig.value.capabilities.usesDistilledCfg) {
+    const value = Number(params.value.hires.distilledCfg)
+    if (Number.isFinite(value)) return value
+    return params.value.cfgScale
+  }
+  const value = Number(params.value.hires.cfg)
+  if (Number.isFinite(value)) return value
+  return params.value.cfgScale
+})
+
+const filteredHiresSchedulers = computed(() => {
+  let list = schedulers.value
+  const allowed = engineSurface.value?.schedulers as string[] | null | undefined
+  if (allowed && allowed.length > 0) list = list.filter((entry) => allowed.includes(entry.name))
+  const spec = samplers.value.find((entry) => entry.name === hiresSampler.value)
+  const allowedBySampler = spec?.allowed_schedulers
+  if (Array.isArray(allowedBySampler) && allowedBySampler.length > 0) {
+    const allowedSet = new Set(allowedBySampler)
+    list = list.filter((entry) => allowedSet.has(entry.name))
+  }
+  return list
+})
+
 function onSamplerChange(value: string): void {
   const spec = samplers.value.find(s => s.name === value)
   const scheduler = params.value.scheduler
@@ -505,6 +564,31 @@ function onSamplerChange(value: string): void {
     }
   }
   setParams({ sampler: value })
+}
+
+function onHiresSamplerChange(value: string): void {
+  const spec = samplers.value.find((entry) => entry.name === value)
+  const currentScheduler = hiresScheduler.value
+  if (spec && Array.isArray(spec.allowed_schedulers) && spec.allowed_schedulers.length > 0) {
+    if (!spec.allowed_schedulers.includes(currentScheduler)) {
+      setHires({ sampler: value, scheduler: spec.default_scheduler })
+      return
+    }
+  }
+  setHires({ sampler: value })
+}
+
+function onHiresSchedulerChange(value: string): void {
+  setHires({ scheduler: value })
+}
+
+function onHiresCfgChange(value: number): void {
+  const normalized = clampFloat(value, 0, 30)
+  if (engineConfig.value.capabilities.usesDistilledCfg) {
+    setHires({ distilledCfg: normalized, cfg: undefined })
+    return
+  }
+  setHires({ cfg: normalized, distilledCfg: undefined })
 }
 
 watch([() => params.value.sampler, () => params.value.scheduler, samplers], () => {
@@ -540,8 +624,8 @@ watch([supportsImg2Img, () => engineCaps.loaded], ([supported, capsLoaded]) => {
   })
 }, { immediate: true })
 
-watch(showHires, (show) => {
-  if (show) return
+watch(() => hiresModePolicy.value.resetState, (shouldReset) => {
+  if (!shouldReset) return
   if (!params.value.hires.enabled && !params.value.hires.refiner?.enabled) return
   setHires({ enabled: false })
   setHiresRefiner({ enabled: false })

@@ -1,18 +1,22 @@
 @layer components {
-  .hires-card .hr-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.8rem;
-  }
-
   .hires-card .hr-field--full {
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
   }
 
   .hires-card .hr-hint {
     margin: 0;
     font-size: 0.72rem;
     opacity: 0.72;
+  }
+
+  .hires-card .hr-scale-pseudo-disabled .cdx-slider-field__label,
+  .hires-card .hr-scale-pseudo-disabled .cdx-slider-field__slider,
+  .hires-card .hr-scale-pseudo-disabled .cdx-slider-field__right {
+    opacity: 0.5;
+  }
+
+  .hires-card .ui-textarea.h-prompt-sm {
+    min-height: 6.5rem;
   }
 
   .hires-card .hr-refiner {
@@ -25,8 +29,8 @@
   }
 
   @media (max-width: 56rem) {
-    .hires-card .hr-grid {
-      grid-template-columns: minmax(0, 1fr);
+    .hires-card .gc-row {
+      gap: 0.75rem;
     }
   }
 }

@@ -42,7 +42,7 @@ Status: Active
 - 2026-01-29: `model_tabs.ts` image-tab params now include masked img2img (“inpaint”) fields (`useMask`, `maskImageData`, and inpaint controls like enforcement/full-res/padding/invert/round/blur/fill mode) so the model tab can drive Codex-native masking end-to-end.
 - 2026-02-01: `presets.ts` now supports an `upscale` mode for the standalone `/upscale` workspace presets.
 - 2026-02-01: Added `upscalers.ts` store to cache local upscalers inventory (`/api/upscalers`) and persist the global tile OOM fallback preference (shared by hires-fix + `/upscale`).
-- 2026-02-04: `upscalers.ts` now also persists the global `min_tile` preference for tiled upscaling (OOM fallback lower bound), propagated by both txt2img (`extras.hires.tile.min_tile`) and img2img (`img2img_hires_tile.min_tile`), and used by `/upscale`.
+- 2026-02-04: `upscalers.ts` now also persists the global `min_tile` preference for tiled upscaling (OOM fallback lower bound), propagated to txt2img hires payloads (`extras.hires.tile.min_tile`) and used by `/upscale`.
 - 2026-02-05: `model_tabs.ts` now supports `anima` as a tab type and derives required auto-created tabs from backend `/api/engines/capabilities` (`anima` is auto-created only when exposed there).
 - 2026-02-05: `model_tabs.normalizeTabType()` is fail-loud for unknown/empty types (no silent fallback to `sd15`); aliases are normalized through a canonical map.
 - 2026-02-05: `model_tabs.load()` now fails loud when `/api/ui/tabs` cannot provide a valid `tabs` array (local fallback no longer masks backend tab-type contract errors).
@@ -54,6 +54,7 @@ Status: Active
 - 2026-02-06: `model_tabs.ts` tab mutations are now fail-loud: removed silent catches, added typed `ModelTabsStoreError`, made structural mutations API-first, and added explicit rollback semantics for `updateParams` persistence failures.
 - 2026-02-08: `model_tabs.ts` params serialization now recursively unwraps nested reactive/proxy branches before persistence (`snapshot/patch/persist/rollback`) and fails loud with `serialization_failure` on unsupported nested values (no permissive fallback).
 - 2026-02-08: image-tab swap-model state now uses pointer semantics (`swapAtStep`, min 1) for both global and hires nested refiner configs; defaults/normalization clamp invalid values to `1` to keep UI payloads valid.
+- 2026-02-08: image-tab hires defaults now use `scale=2` (`resizeX/resizeY=0` unchanged), and `xyz.ts` hires fallback objects were aligned to `scale: 2.0` to avoid default drift.
 - 2026-02-06: `engine_capabilities.ts` now strictly parses `engine_id_to_semantic_engine` and resolves known engine-id aliases to semantic engines fail-loud; it also exposes centralized sampler/scheduler default resolution from backend capabilities.
 - 2026-02-06: `model_tabs.ts` and `xyz.ts` now use centralized taxonomy/default helpers (`utils/engine_taxonomy.ts`) and prefer backend sampler/scheduler defaults (with shared fallback policy).
 - 2026-02-06: `model_tabs.ts` now exports typed tab-param contracts (`TabParamsByType`, `TabByType`, `WanAssetsParams`) as the Phase 5 baseline for removing `any` usage across WAN/Image consumers.

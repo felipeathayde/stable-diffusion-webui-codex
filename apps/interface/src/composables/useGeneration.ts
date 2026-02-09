@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
-starts `/api/txt2img` and `/api/img2img` (including optional hires settings with shared tile prefs: fallback/min_tile), and consumes task SSE events to update UI state.
+starts `/api/txt2img` and `/api/img2img` (with optional hires settings in txt2img only), and consumes task SSE events to update UI state.
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
 - `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
+- `sanitizeImg2ImgPayload` (function): Removes hires keys from img2img payloads (policy: img2img does not send hires settings).
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
   `vae_sha`/`tenc_sha` (core-only checkpoints) and enforcing engine-level external asset requirements via backend `asset_contracts`.
@@ -71,6 +72,22 @@ export interface GenerationState {
 const MAX_HISTORY = 8
 const RESUME_STORAGE_PREFIX = 'codex.resume.image'
 const resumeAttempts = new Set<string>()
+const IMG2IMG_HIRES_KEYS = [
+  'img2img_hires_enable',
+  'img2img_hires_scale',
+  'img2img_hires_resize_x',
+  'img2img_hires_resize_y',
+  'img2img_hires_steps',
+  'img2img_hires_denoise',
+  'img2img_hires_upscaler',
+  'img2img_hires_sampling',
+  'img2img_hires_scheduler',
+  'img2img_hires_prompt',
+  'img2img_hires_neg_prompt',
+  'img2img_hires_cfg',
+  'img2img_hires_distilled_cfg',
+  'img2img_hires_tile',
+] as const
 
 type ResumeState = {
   taskId: string
@@ -146,6 +163,14 @@ function defaultState(): GenerationState {
 
 export function resolveEngineForRequest(tabType: string, useInitImage: boolean): string {
   return resolveImageRequestEngineId(tabType, useInitImage)
+}
+
+export function sanitizeImg2ImgPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = { ...payload }
+  for (const key of IMG2IMG_HIRES_KEYS) {
+    delete sanitized[key]
+  }
+  return sanitized
 }
 
 export function isGenerationRunningForTab(tabId: string): boolean {
@@ -427,31 +452,6 @@ export function useGeneration(tabId: string) {
           smart_cache: quicksettings.smartCache,
           img2img_extras: img2imgExtras,
         }
-        if (p.hires?.enabled) {
-          payload.img2img_hires_enable = true
-          payload.img2img_hires_scale = p.hires.scale
-          payload.img2img_hires_resize_x = p.hires.resizeX
-          payload.img2img_hires_resize_y = p.hires.resizeY
-          payload.img2img_hires_steps = p.hires.steps
-          payload.img2img_hires_denoise = p.hires.denoise
-          payload.img2img_hires_upscaler = p.hires.upscaler
-          const hrSampler = String(p.hires.sampler || '').trim()
-          if (hrSampler) payload.img2img_hires_sampling = hrSampler
-          const hrScheduler = String(p.hires.scheduler || '').trim()
-          if (hrScheduler) payload.img2img_hires_scheduler = hrScheduler
-          payload.img2img_hires_prompt = p.hires.prompt ?? ''
-          payload.img2img_hires_neg_prompt = supportsNegative ? (p.hires.negativePrompt ?? '') : ''
-          if (p.hires.cfg !== undefined) payload.img2img_hires_cfg = p.hires.cfg
-          if (p.hires.distilledCfg !== undefined) payload.img2img_hires_distilled_cfg = p.hires.distilledCfg
-          const hiresTileSize = Math.trunc(p.hires.tile?.tile ?? 256)
-          const hiresMinTilePref = Math.trunc(Number(upscalersStore.minTile) || 128)
-          payload.img2img_hires_tile = {
-            tile: hiresTileSize,
-            overlap: Math.trunc(p.hires.tile?.overlap ?? 16),
-            fallback_on_oom: Boolean(upscalersStore.fallbackOnOom),
-            min_tile: Math.max(1, Math.min(hiresTileSize, hiresMinTilePref)),
-          }
-        }
         if (p.useMask) {
           payload.img2img_mask_enforcement = p.maskEnforcement
           payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(p.inpaintingFill))))
@@ -461,7 +461,7 @@ export function useGeneration(tabId: string) {
           payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(p.maskBlur)))
           payload.img2img_mask_round = Boolean(p.maskRound)
         }
-        const { task_id } = await startImg2Img(payload)
+        const { task_id } = await startImg2Img(sanitizeImg2ImgPayload(payload))
         taskId = task_id
       } else {
         let payload: Txt2ImgRequest

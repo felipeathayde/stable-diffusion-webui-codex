@@ -319,7 +319,7 @@ function defaultParams<T extends BaseTabType>(
   const hiresDefaults: HiresFormState = {
     enabled: false,
     denoise: 0.4,
-    scale: 1.5,
+    scale: 2,
     resizeX: 0,
     resizeY: 0,
     steps: 0,

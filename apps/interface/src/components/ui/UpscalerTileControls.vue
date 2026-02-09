@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setTileSize` (function): Sets tile size and clamps overlap to `< tile`.
 - `setOverlap` (function): Sets overlap and clamps to `[0, tile-1]`.
 - `setMinTile` (function): Sets min tile and clamps to `[1, tile]`.
+- `presetButtonClass` (function): Returns preset button classes for the selected visual variant.
 -->
 
 <template>
@@ -22,9 +23,9 @@ Symbols (top-level; keep in sync; no ghosts):
       <button
         v-for="preset in presets"
         :key="preset"
-        class="btn qs-toggle-btn qs-toggle-btn--sm"
-        :class="tileSize === preset ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off'"
+        :class="presetButtonClass(preset)"
         type="button"
+        :aria-pressed="tileSizeIsSelected(preset)"
         :disabled="disabled"
         @click="setTileSize(preset)"
       >
@@ -78,13 +79,16 @@ import NumberStepperInput from './NumberStepperInput.vue'
 
 const presets = [128, 256, 512, 768] as const
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   tileSize: number
   overlap: number
   minTile: number
   fallbackOnOom: boolean
   disabled?: boolean
-}>()
+  presetVariant?: 'toggle' | 'resolution'
+}>(), {
+  presetVariant: 'toggle',
+})
 
 const emit = defineEmits<{
   (e: 'update:tileSize', value: number): void
@@ -101,6 +105,17 @@ function setTileSize(value: number): void {
   if (Number.isFinite(nextOverlap) && nextOverlap !== Math.trunc(Number(props.overlap))) {
     emit('update:overlap', nextOverlap)
   }
+}
+
+function presetButtonClass(preset: number): string[] {
+  if (props.presetVariant === 'resolution') {
+    return ['btn', 'btn-sm', 'btn-outline']
+  }
+  return ['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', tileSizeIsSelected(preset) ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']
+}
+
+function tileSizeIsSelected(preset: number): boolean {
+  return Math.trunc(Number(props.tileSize)) === Math.trunc(Number(preset))
 }
 
 function setOverlap(value: number): void {

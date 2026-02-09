@@ -188,12 +188,12 @@ export const useXyzStore = defineStore('xyz', () => {
         form.height = Number(value)
         break
       case 'hires_scale':
-        form.hires = form.hires || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
+        form.hires = form.hires || { enabled: true, scale: 2.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
         form.hires.enabled = true
         form.hires.scale = Number(value)
         break
       case 'hires_steps':
-        form.hires = form.hires || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
+        form.hires = form.hires || { enabled: true, scale: 2.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
         form.hires.enabled = true
         form.hires.steps = Number(value)
         break

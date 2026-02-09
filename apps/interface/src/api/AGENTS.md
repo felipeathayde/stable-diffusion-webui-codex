@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-02-06
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -40,3 +40,4 @@ Status: Active
 - 2026-02-03: `/api/upscalers/remote` DTO now includes `manifest_errors` and categorizes `weights[]` as either curated (`curated=true` with `meta`) or raw listing (`curated=false`).
 - 2026-02-04: `payloads.ts` now propagates the global hires `min_tile` preference into `extras.hires.tile.min_tile` (clamped to `tile`) to keep hires tile fallback behavior configurable and drift-free.
 - 2026-02-05: `ApiTab.type` now includes `anima` in `types.ts` so UI tab persistence contracts match backend tab allowlist updates.
+- 2026-02-08: `payloads.ts` now falls back `extras.hires.{prompt,negative_prompt}` to base prompts when hires prompt overrides are blank.

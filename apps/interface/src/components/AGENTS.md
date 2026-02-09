@@ -11,7 +11,7 @@ Status: Active
 - Components should be presentational and rely on Pinia stores or props for state.
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.
-- Generation + hires + refiner controls live in `GenerationSettingsCard.vue`, `HiresSettingsCard.vue`, and `RefinerSettingsCard.vue`, all using CSS grid layouts.
+- Generation + hires + refiner controls live in `GenerationSettingsCard.vue`, `HiresSettingsCard.vue`, and `RefinerSettingsCard.vue`, following shared `gen-card` organization with component-specific row/grid arrangements.
 - Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
 - `QuickSettingsBar.vue` renders per-tab selectors in the main header row; it includes a nested, collapsible Advanced area (Smart toggles + Attention Backend / Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `uiBlocks.semanticEngine` when available (otherwise `sd15`).
 - 2026-01-18: `QuickSettingsBar.vue` now supports the `chroma` model tab type (mapped to backend engine id `flux1_chroma`) and renders a dedicated `QuickSettingsChroma.vue` selector row.
@@ -64,3 +64,4 @@ Status: Active
 - 2026-02-06: `QuickSettingsBar.vue` now narrows active tabs with typed `ImageTab`/`WanTab` helpers and updates image-tab params through a typed helper (`updateImageTabParams`), reducing `tab.params as any` usage in model/text-encoder/ZImage/WAN controls.
 - 2026-02-08: `RefinerSettingsCard.vue` / `HiresSettingsCard.vue` swap-model controls now use step-pointer semantics (`Swap At Step`, min 1) and avoid “refiner step-count” wording.
 - 2026-02-08: Added `Img2ImgInpaintParamsCard.vue` to host detailed init-image + inpaint mask controls extracted from `ImageModelTab.vue`; parent view remains the source of truth for normalization/clamps and file handlers.
+- 2026-02-08: `HiresSettingsCard.vue` now follows the Basic Parameters row organization (sampler/scheduler/steps; upscaler/cfg/denoise; scale/width/height; model selector; prompt overrides) and keeps tile controls below prompts.

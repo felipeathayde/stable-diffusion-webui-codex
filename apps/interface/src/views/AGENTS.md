@@ -56,3 +56,4 @@ Status: Active
 - 2026-02-06: `ImageModelTab.vue` now narrows to typed image tabs and removed core helper casts (`setParams`/`setHires`/`setRefiner`/history apply) as part of Phase 5 `any` reduction.
 - 2026-02-08: `ImageModelTab.vue` swap-model controls now bind step-pointer semantics (`swapAtStep`) for both global and hires nested swap config (UI clamps to min 1).
 - 2026-02-08: `ImageModelTab.vue` now composes `Img2ImgInpaintParamsCard.vue` for detailed img2img/inpaint controls (init-image, denoise, mask parameters), removing the large inline block while keeping parent-owned state updates and normalization.
+- 2026-02-08: `ImageModelTab.vue` now hides `HiresSettingsCard` while `useInitImage=true` (img2img mode), keeps global swap-model controls visible, and routes hires card visibility/reset behavior through `resolveHiresModePolicy(...)`.

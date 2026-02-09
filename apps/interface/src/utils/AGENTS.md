@@ -18,3 +18,4 @@ Status: Active
 - 2026-02-06: Added `engine_taxonomy.ts` as canonical frontend engine taxonomy mapping (tab-family aliases, request engine-id resolution, semantic-engine resolution, and centralized sampler/scheduler fallback defaults).
 - 2026-02-07: Updated Anima fallback sampling defaults to `euler/simple` in `engine_taxonomy.ts` and added `engine_taxonomy.test.ts` regression coverage.
 - 2026-02-08: Added `image_params.ts` + `image_params.test.ts` for pure img2img/inpaint normalization helpers (`normalizeMaskEnforcement`, `normalizeInpaintingFill`, `normalizeNonNegativeInt`) used by `ImageModelTab.vue`.
+- 2026-02-08: `image_params.ts` now also exposes hires policy/text helpers (`resolveTextOverride`, `resolveHiresModePolicy`) used by payload/view wiring to keep mode visibility and prompt fallback behavior deterministic.

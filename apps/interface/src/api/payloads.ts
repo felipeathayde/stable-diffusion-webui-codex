@@ -30,6 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
 */
 
 import { z, ZodError } from 'zod'
+import { resolveTextOverride } from '../utils/image_params'
 
 // Engines that use distilled guidance (single-branch conditioning) and therefore use distilled_cfg.
 const DISTILLED_CFG_ENGINES = ['flux1', 'flux1_kontext', 'flux1_chroma'] as const
@@ -276,6 +277,8 @@ export function buildTxt2ImgPayload(
     batch_count: state.batchCount,
   }
   if (state.hires?.enabled) {
+    const hiresPrompt = resolveTextOverride(state.prompt, state.hires.prompt)
+    const hiresNegativePrompt = resolveTextOverride(state.negativePrompt, state.hires.negativePrompt)
     const tile = state.hires.tile ?? { tile: 256, overlap: 16 }
     const tileSize = Math.max(1, Math.trunc(tile.tile))
     const minTile = Math.max(1, Math.min(tileSize, hiresMinTilePref))
@@ -297,8 +300,8 @@ export function buildTxt2ImgPayload(
       modules: state.hires.modules && state.hires.modules.length > 0 ? state.hires.modules : undefined,
       sampler: state.hires.sampler,
       scheduler: state.hires.scheduler,
-      prompt: state.hires.prompt,
-      negative_prompt: state.hires.negativePrompt,
+      prompt: hiresPrompt,
+      negative_prompt: hiresNegativePrompt,
       cfg: state.hires.cfg,
       distilled_cfg: state.hires.distilledCfg,
       refiner: state.hires.refiner?.enabled

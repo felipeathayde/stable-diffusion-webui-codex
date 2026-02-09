@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, ui, primitives -->
 # apps/interface/src/components/ui Overview
 Date: 2025-12-23
-Last Review: 2026-02-04
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -23,3 +23,4 @@ Status: Active
 - 2026-01-13: `JsonTreeView.vue` supports expand/collapse-all signals (used by the metadata modal controls).
 - 2026-01-29: Added `Dropzone.vue` with styles in `apps/interface/src/styles/components/cdx-dropzone.css`.
 - 2026-02-04: `UpscalerTileControls.vue` now exposes `min_tile` as an Advanced control (keeps backend tile fallback behavior visible and configurable).
+- 2026-02-08: `UpscalerTileControls.vue` now supports `presetVariant='resolution'` so hires tile preset buttons can match the Basic Parameters resolution-button pattern while keeping legacy toggle styling as default.

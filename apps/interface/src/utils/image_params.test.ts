@@ -13,7 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 */
 
 import { describe, expect, it } from 'vitest'
-import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt } from './image_params'
+import { isHiresVisibleForMode, normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy, resolveTextOverride } from './image_params'
 
 describe('image_params normalizers', () => {
   it('normalizes mask enforcement into strict enum', () => {
@@ -39,5 +39,27 @@ describe('image_params normalizers', () => {
 
   it('keeps NaN behavior explicit for non-negative int', () => {
     expect(Number.isNaN(normalizeNonNegativeInt(Number.NaN))).toBe(true)
+  })
+
+  it('falls back to base text when override is blank', () => {
+    expect(resolveTextOverride('base prompt', '')).toBe('base prompt')
+    expect(resolveTextOverride('base prompt', '   ')).toBe('base prompt')
+    expect(resolveTextOverride('base prompt', undefined)).toBe('base prompt')
+  })
+
+  it('uses override text when non-blank', () => {
+    expect(resolveTextOverride('base prompt', 'hires prompt')).toBe('hires prompt')
+  })
+
+  it('shows hires only for txt2img mode when engine supports it', () => {
+    expect(isHiresVisibleForMode(false, true)).toBe(true)
+    expect(isHiresVisibleForMode(true, true)).toBe(false)
+    expect(isHiresVisibleForMode(false, false)).toBe(false)
+  })
+
+  it('resolves hires policy without resetting state on mode switch', () => {
+    expect(resolveHiresModePolicy(false, true)).toEqual({ showCard: true, resetState: false })
+    expect(resolveHiresModePolicy(true, true)).toEqual({ showCard: false, resetState: false })
+    expect(resolveHiresModePolicy(false, false)).toEqual({ showCard: false, resetState: true })
   })
 })

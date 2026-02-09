@@ -20,7 +20,7 @@ import { reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createTabApi, deleteTabApi, fetchTabs, reorderTabsApi, updateTabApi } from '../api/client'
-import { normalizeTabType, requiredTypesFromCapabilities, useModelTabsStore } from './model_tabs'
+import { defaultImageParamsForType, normalizeTabType, requiredTypesFromCapabilities, useModelTabsStore } from './model_tabs'
 
 vi.mock('../api/client', () => ({
   fetchTabs: vi.fn(),
@@ -153,6 +153,15 @@ describe('requiredTypesFromCapabilities', () => {
   it('does not include anima when capabilities omit anima', () => {
     const types = requiredTypesFromCapabilities({ sd15: {}, sdxl: {} })
     expect(types).not.toContain('anima')
+  })
+})
+
+describe('defaultImageParamsForType', () => {
+  it('uses hires scale default of 2 with resize overrides at 0', () => {
+    const defaults = defaultImageParamsForType('sdxl')
+    expect(defaults.hires.scale).toBe(2)
+    expect(defaults.hires.resizeX).toBe(0)
+    expect(defaults.hires.resizeY).toBe(0)
   })
 })
 

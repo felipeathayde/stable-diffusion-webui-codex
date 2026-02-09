@@ -129,6 +129,39 @@ describe('buildTxt2ImgPayload', () => {
     expect((payload.extras as any)?.hires?.tile?.min_tile).toBe(256)
   })
 
+  it('falls back hires prompts to base prompts when overrides are blank', () => {
+    const payload = buildTxt2ImgPayload({
+      prompt: 'base prompt',
+      negativePrompt: 'base negative',
+      width: 512,
+      height: 512,
+      steps: 20,
+      guidanceScale: 7,
+      sampler: 'euler',
+      scheduler: 'karras',
+      seed: 42,
+      clipSkip: 0,
+      batchSize: 1,
+      batchCount: 1,
+      device: 'cuda',
+      hires: {
+        enabled: true,
+        denoise: 0.4,
+        scale: 2,
+        resizeX: 0,
+        resizeY: 0,
+        steps: 0,
+        upscaler: 'latent:nearest',
+        tile: { tile: 256, overlap: 16 },
+        prompt: '   ',
+        negativePrompt: '',
+      },
+    })
+
+    expect((payload.extras as any)?.hires?.prompt).toBe('base prompt')
+    expect((payload.extras as any)?.hires?.negative_prompt).toBe('base negative')
+  })
+
   it('uses cfg (not distilled_cfg) for zimage', () => {
     const payload = buildTxt2ImgPayload({
       prompt: 'test prompt',

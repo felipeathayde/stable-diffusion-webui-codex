@@ -210,7 +210,7 @@ class ZImageEngine(CodexDiffusionEngine):
         )
 
     @timeline_node("text_encoding", "get_learned_conditioning")
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
         runtime = self._require_runtime()
@@ -278,7 +278,7 @@ class ZImageEngine(CodexDiffusionEngine):
 
         return cond
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         runtime = self._require_runtime()
         tokens = runtime.text.qwen3_text.tokenize([prompt])

@@ -44,12 +44,8 @@ def get_parameter_devices(model) -> Dict[str, torch.device]:
 def set_parameter_devices(model, parameter_devices: Mapping[str, torch.device]) -> None:
     for key, device in parameter_devices.items():
         parameter = utils.get_attr(model, key)
-        needs_materialization = parameter.device != device or torch.is_inference(parameter)
-        if needs_materialization:
-            moved = parameter.to(device=device) if parameter.device != device else parameter
-            parameter = utils.tensor2parameter(moved)
-            if torch.is_inference(parameter):
-                raise RuntimeError(f"Failed to materialize non-inference parameter for {key}")
+        if parameter.device != device:
+            parameter = utils.tensor2parameter(parameter.to(device=device))
             utils.set_attr_raw(model, key, parameter)
 
 
@@ -62,7 +58,6 @@ class CodexLoraLoader:
         self.online_parents: List[torch.nn.Module] = []
         self.loaded_signature = ""
 
-    @torch.inference_mode(False)
     @torch.no_grad()
     def refresh(
         self,
@@ -177,7 +172,7 @@ class CodexLoraLoader:
                     ).to(device=parameter.device, dtype=gguf_parameter.computation_dtype)
                     utils.set_attr_raw(self.model, param_key, restored)
                 else:
-                    utils.set_attr_raw(self.model, param_key, utils.tensor2parameter(merged))
+                    utils.set_attr_raw(self.model, param_key, torch.nn.Parameter(merged, requires_grad=False))
 
                 if progress is not None:
                     progress.update(len(entries))
@@ -202,7 +197,7 @@ class CodexLoraLoader:
                 utils.set_attr_raw(self.model, key, restored)
                 continue
             restored = tensor.to(device=target_device).clone()
-            utils.set_attr_raw(self.model, key, utils.tensor2parameter(restored))
+            utils.set_attr_raw(self.model, key, torch.nn.Parameter(restored, requires_grad=False))
         self.backup.clear()
 
     def _register_online(self, param_key: str, entries: Sequence[LoraPatchEntry]) -> None:
@@ -255,7 +250,7 @@ class CodexLoraLoader:
             utils.set_attr_raw(
                 self.model,
                 key,
-                utils.tensor2parameter(parameter.to(device=offload_device).clone()),
+                torch.nn.Parameter(parameter.to(device=offload_device).clone(), requires_grad=False),
             )
 
 __all__ = [

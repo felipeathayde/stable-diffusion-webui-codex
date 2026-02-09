@@ -55,4 +55,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to runtime modules (doc-only change; part of rollout).
 - 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py` and diagnostics modules) (doc-only change; part of rollout).
 - 2026-01-03: Standardized upstream references in runtime docs/comments to prefer Hugging Face Diffusers as the behaviour baseline.
-- 2026-02-09: `runtime.attr_access.tensor2parameter(...)` now force-materializes inference tensors into writable non-inference `nn.Parameter`s and fails loud if materialization invariants are violated.
+- 2026-02-09: Version-counter mitigation is handled at engine conditioning entrypoints (`torch.no_grad()`); runtime no longer carries inference-tensor materialization shims for this class of failure.

@@ -199,7 +199,6 @@ def _pad_mismatch(diff: torch.Tensor, current: torch.Tensor, *, key: str) -> tor
     return expanded
 
 
-@torch.inference_mode(False)
 @torch.no_grad()
 def weight_decompose(
     dora_scale: torch.Tensor,
@@ -242,7 +241,6 @@ def weight_decompose(
     return weight
 
 
-@torch.inference_mode(False)
 @torch.no_grad()
 def merge_lora_to_weight(
     patches: Sequence[LoraPatchEntry],

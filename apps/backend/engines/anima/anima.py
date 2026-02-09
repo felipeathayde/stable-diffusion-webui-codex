@@ -176,7 +176,7 @@ class AnimaEngine(CodexDiffusionEngine):
     def _require_runtime(self) -> AnimaEngineRuntime:
         return require_runtime(self._runtime, label=self.engine_id)
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_learned_conditioning(self, prompt: list[str]):
         runtime = self._require_runtime()
         qwen_patcher = self.codex_objects.text_encoders["qwen3"]
@@ -253,7 +253,7 @@ class AnimaEngine(CodexDiffusionEngine):
                 self._set_cached_cond(cache_key, detach_to_cpu(cond), enabled=use_cache)
             return cond
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         runtime = self._require_runtime()
         prompt_text = str(prompt or "")

@@ -147,7 +147,7 @@ class Flux(CodexDiffusionEngine):
             label=self.engine_id,
         )
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         clip_patcher = self.codex_objects.text_encoders["clip"].patcher
@@ -200,7 +200,7 @@ class Flux(CodexDiffusionEngine):
 
             return cond
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_prompt_lengths_on_ui(self, prompt: str):
         runtime = self._require_runtime()
         token_count = len(runtime.text.t5_text.tokenize([prompt])[0])

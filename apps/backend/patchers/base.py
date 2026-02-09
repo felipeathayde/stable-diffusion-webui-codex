@@ -30,8 +30,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Tuple
 
-import torch
-
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management
@@ -492,42 +490,15 @@ class ModelPatcher:
                     sd.pop(k)
         return sd
 
-    @torch.inference_mode(False)
-    @torch.no_grad()
-    def _materialize_inference_parameters(self) -> None:
-        from apps.backend.quantization.tensor import CodexParameter
-
-        alias_remap: Dict[int, torch.nn.Parameter] = {}
-        rematerialized = 0
-        for name, parameter in list(self.model.named_parameters(remove_duplicate=False)):
-            if not torch.is_inference(parameter):
-                continue
-            replacement = alias_remap.get(id(parameter))
-            if replacement is None:
-                cloned = parameter.detach().clone()
-                if isinstance(parameter, CodexParameter):
-                    replacement = parameter.copy_with_data(cloned)
-                else:
-                    replacement = torch.nn.Parameter(cloned, requires_grad=parameter.requires_grad)
-                if torch.is_inference(replacement):
-                    raise RuntimeError(f"Failed to materialize non-inference parameter for '{name}'.")
-                alias_remap[id(parameter)] = replacement
-            utils.set_attr_raw(self.model, name, replacement)
-            rematerialized += 1
-        if rematerialized:
-            logger.debug("Rematerialized %d inference parameters during patcher move.", rematerialized)
-
     def codex_patch_model(self, target_device=None):
         self._object_registry.apply_to_model(self.model)
 
         if target_device is not None:
-            with torch.inference_mode(False), torch.no_grad():
-                try:
-                    # Prefer non_blocking=True to leverage pinned host buffers
-                    self.model.to(target_device, non_blocking=True)
-                except TypeError:
-                    self.model.to(target_device)
-                self._materialize_inference_parameters()
+            try:
+                # Prefer non_blocking=True to leverage pinned host buffers
+                self.model.to(target_device, non_blocking=True)
+            except TypeError:
+                self.model.to(target_device)
             self.current_device = target_device
             logger.debug("Moved model to device %s during patch", target_device)
 
@@ -535,9 +506,7 @@ class ModelPatcher:
 
     def codex_unpatch_model(self, target_device=None):
         if target_device is not None:
-            with torch.inference_mode(False), torch.no_grad():
-                self.model.to(target_device)
-                self._materialize_inference_parameters()
+            self.model.to(target_device)
             self.current_device = target_device
             logger.debug("Moved model to device %s during unpatch", target_device)
 

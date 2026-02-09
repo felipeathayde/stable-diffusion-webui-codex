@@ -1,6 +1,6 @@
 # apps/backend/engines/flux Overview
 Date: 2025-12-06
-Last Review: 2026-02-01
+Last Review: 2026-02-09
 Status: Active
 
 ## Purpose
@@ -26,3 +26,4 @@ Status: Active
 - 2026-01-31: Flux/Chroma engines now rely on the default `CodexDiffusionEngine.encode_first_stage/decode_first_stage` implementation for the common image-VAE semantics (no behavior change; reduces duplication).
 - 2026-01-31: Kontext no longer duplicates `_build_components`; it inherits Flux runtime assembly (factory-driven) to reduce drift. Flux conditioning caching now uses shared cache helpers (CPU storage + device restore) and `_on_unload` clears the streaming controller reference.
 - 2026-02-01: Flux clip-skip handling is now Flux-local (`apps/backend/engines/flux/_clip_skip.py`) and validates/reset semantics mirror SD (no compat shims). Text-encoder patcher load/unload is stage-scoped via `stage_scoped_model_load(...)` to avoid unload/reload churn under smart-offload.
+- 2026-02-09: Flux/Chroma conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).

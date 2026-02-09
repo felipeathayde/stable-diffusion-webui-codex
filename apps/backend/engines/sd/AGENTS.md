@@ -27,7 +27,7 @@ Status: Active
 - 2026-01-31: SD-family clip-skip handling is centralized in `apps/backend/engines/sd/_clip_skip.py` (validation + reset semantics + cache invalidation). SDXL no longer overrides `txt2img`; mode streaming lives in `apps/backend/use_cases/` (Option A).
 - 2026-01-31: SD engines now use the shared `require_runtime(...)` helper for consistent runtime guards; SDXL `_on_unload` clears embed caches to avoid stale state across unload/reload.
 - 2026-02-01: SDXL base/refiner text-conditioning caches now reuse engine-common cache helpers (`_get_cached_cond/_set_cached_cond`) and tensor-tree moves (`detach_to_cpu` / `move_to_device`) to remove local boilerplate while preserving Smart Cache override semantics.
-- 2026-02-09: SD/SDXL conditioning entrypoints now run under `torch.no_grad()` instead of `torch.inference_mode()` to avoid inference-tensor leaks that can trigger PyTorch version-counter faults.
+- 2026-02-09: SD-family conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 
 ### Event Emission
 - Mode streaming wrappers live in `apps/backend/use_cases/{txt2img,img2img}.py` and are invoked via `CodexDiffusionEngine.txt2img/img2img` (Option A).

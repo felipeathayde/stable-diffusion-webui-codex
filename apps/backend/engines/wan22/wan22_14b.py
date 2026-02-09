@@ -134,7 +134,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
     def _require_runtime(self) -> WanEngineRuntime:
         return require_runtime(self._runtime, label=self.engine_id)
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_learned_conditioning(self, prompt: list[str]):
         """Encode text prompts using T5."""
         runtime = self._require_runtime()
@@ -143,7 +143,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
         cond_t5 = runtime.text.t5_text(prompt)
         return {"crossattn": cond_t5}
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         runtime = self._require_runtime()
         token_count = len(runtime.text.t5_text.tokenize([prompt])[0])

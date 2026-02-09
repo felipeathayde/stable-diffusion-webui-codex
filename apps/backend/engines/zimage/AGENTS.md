@@ -1,6 +1,6 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
-Last Review: 2026-01-31
+Last Review: 2026-02-09
 Status: Active
 
 ## Purpose
@@ -36,3 +36,4 @@ Status: Active
 - 2026-01-30: Removed dev-only Diffusers bypass flag (`CODEX_ZIMAGE_DIFFUSERS_BYPASS`) and downgraded Z-Image assembly/sampler logs to debug (default runs are quiet). External VAE/TEnc loading now follows memory-manager role dtypes (options `codex_vae_dtype` / `codex_te_dtype`) instead of a Z-Image-specific `dtype` override path.
 - 2026-01-31: `ZImageEngine.encode_first_stage/decode_first_stage` now delegate to the shared `CodexDiffusionEngine` VAE stage implementation (timeline spans preserved; no behavior change).
 - 2026-01-31: ZImage conditioning caching now uses the shared engine cache helpers (hit/miss metrics + CPU storage + explicit restore to device/dtype). `clip_skip` is handled as a default no-op by the base engine (Z-Image does not use CLIP).
+- 2026-02-09: ZImage conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).

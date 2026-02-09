@@ -1,7 +1,7 @@
 # apps/backend/engines/anima Overview
 <!-- tags: backend, engines, anima, cosmos -->
 Date: 2026-02-05
-Last Review: 2026-02-06
+Last Review: 2026-02-09
 Status: Draft
 
 ## Purpose
@@ -19,3 +19,4 @@ Status: Draft
 - Runtime device consistency checks normalize equivalent labels (`cuda` and `cuda:0`) before mismatch validation; only real device mismatches should fail, and missing `denoiser.load_device` fails loud.
 - Conditioning requires dual tokenization (Qwen embeddings + T5 ids/weights), per `.sangoi/research/models/hf-circlestone-labs-anima.md`.
 - 2026-02-08: `spec._predictor()` opts Anima into `simple_schedule_mode="comfy_downsample_sigmas"` so `scheduler=simple` follows ComfyUI-style downsample of `predictor.sigmas` (parity target), while other flow families keep their existing SIMPLE behavior.
+- 2026-02-09: Anima conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).

@@ -1237,7 +1237,15 @@ class DynamicSwapInstaller:
                     if param is None:
                         return None
                     if isinstance(param, torch.nn.Parameter):
-                        return torch.nn.Parameter(param.to(target_device), requires_grad=param.requires_grad)
+                        requires_grad = bool(param.requires_grad)
+                        moved = param.to(target_device)
+                        if torch.is_inference(moved):
+                            with torch.inference_mode(False), torch.no_grad():
+                                moved = moved.clone()
+                        wrapped = torch.nn.Parameter(moved, requires_grad=requires_grad)
+                        if torch.is_inference(wrapped):
+                            raise RuntimeError("DynamicSwapInstaller failed to materialize non-inference parameter.")
+                        return wrapped
                     return param.to(target_device)
             if "_buffers" in self.__dict__:
                 buffers = self.__dict__["_buffers"]

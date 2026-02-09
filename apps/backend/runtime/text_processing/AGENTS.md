@@ -1,7 +1,7 @@
 # Text Processing Runtime — AGENTS Notes
 <!-- tags: backend, runtime, text-processing -->
 Date: 2025-11-03
-Last Review: 2026-01-26
+Last Review: 2026-02-09
 Status: Active
 
 ## Scope
@@ -42,3 +42,4 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 - Prompt token-merging tags (`<merge:...>` / `<tm:...>`) are stripped during parsing but intentionally have no effect in Codex.
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `emphasis.py`, `extra_nets.py`, `parsing.py`, and `textual_inversion.py` (doc-only change; part of rollout).
 - 2026-01-25: CLIP Skip control tags now accept `0` as a first-class “use default” sentinel (no more clamping to 1 during parsing).
+- 2026-02-09: `ClassicTextProcessingEngine._apply_precision` now enforces precision transitions outside inference mode and rematerializes inference parameters (alias-safe) so CLIP conditioning does not leak inference tensors across consecutive runs.

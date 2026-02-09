@@ -27,6 +27,7 @@ import os
 from collections import namedtuple
 from . import parsing, emphasis
 from .textual_inversion import EmbeddingDatabase
+from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.infra.config.args import dynamic_args
@@ -95,6 +96,7 @@ class ClassicTextProcessingEngine:
 
         self._current_device: torch.device | None = None
         self._current_dtype: torch.dtype | None = None
+        self._precision_materialized = False
 
         self.emphasis = emphasis.get_current_option(dynamic_args.get('emphasis_name', 'original'))()
         self.text_projection = text_projection
@@ -148,12 +150,43 @@ class ClassicTextProcessingEngine:
 
         return tokenized
 
+    @torch.inference_mode(False)
+    @torch.no_grad()
+    def _materialize_inference_parameters(self) -> None:
+        alias_remap: dict[int, torch.nn.Parameter] = {}
+        rematerialized = 0
+        for name, parameter in list(self.text_encoder.named_parameters(remove_duplicate=False)):
+            if not torch.is_inference(parameter):
+                continue
+            replacement = alias_remap.get(id(parameter))
+            if replacement is None:
+                replacement = torch.nn.Parameter(parameter.detach().clone(), requires_grad=parameter.requires_grad)
+                alias_remap[id(parameter)] = replacement
+            utils.set_attr_raw(self.text_encoder, name, replacement)
+            rematerialized += 1
+        if rematerialized:
+            logger.debug(
+                "Rematerialized %d text-encoder parameters outside inference mode.",
+                rematerialized,
+            )
+
+    def _has_inference_parameters(self) -> bool:
+        for _name, parameter in self.text_encoder.named_parameters(remove_duplicate=False):
+            if torch.is_inference(parameter):
+                return True
+        return False
+
     def _apply_precision(self, device: torch.device, dtype: torch.dtype) -> None:
-        if self._current_device == device and self._current_dtype == dtype:
+        same_precision = self._current_device == device and self._current_dtype == dtype
+        if same_precision and self._precision_materialized and not self._has_inference_parameters():
             return
-        self.text_encoder.to(device=device, dtype=dtype)
+        with torch.inference_mode(False), torch.no_grad():
+            if not same_precision:
+                self.text_encoder.to(device=device, dtype=dtype)
+            self._materialize_inference_parameters()
         self._current_device = device
         self._current_dtype = dtype
+        self._precision_materialized = True
 
     def encode_with_transformers(self, tokens):
         """Encode token ids with a CLIP text transformer.

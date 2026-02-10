@@ -13,6 +13,8 @@ Includes sha-selected external-asset engines (e.g., Z-Image and Anima) where VAE
 Symbols (top-level; keep in sync; no ghosts):
 - `TextEncoderKind` (enum): UI-friendly label for the expected text encoder selection kind.
 - `EngineAssetContract` (dataclass): Required VAE/text encoder contract for a specific engine request context.
+- `contract_owner_for_engine` (function): Resolve canonical asset-contract owner engine id for an API/runtime engine id.
+- `contract_owner_for_semantic_engine` (function): Resolve canonical asset-contract owner engine id for a semantic engine surface.
 - `contract_for_engine` (function): Base contract for an engine when the selected checkpoint is not core-only.
 - `contract_for_core_only` (function): Contract for an engine when the selected checkpoint is core-only.
 - `contract_for_request` (function): Resolve the effective contract for an engine request (e.g. core-only checkpoints).
@@ -180,6 +182,28 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
         sha_only=True,
         notes="External-assets-first: requires WanVAE-style VAE (3D conv; `qwen_image_vae.safetensors`) + 1 Qwen3-0.6B text encoder via sha selection.",
     ),
+    "wan22_5b": EngineAssetContract(
+        requires_vae=True,
+        tenc_slots=("t5xxl",),
+        tenc_slot_labels=("T5-XXL",),
+        tenc_kind=TextEncoderKind.T5,
+        sha_only=True,
+        notes="External-assets-first: requires WAN VAE + 1 T5 text encoder via sha selection.",
+    ),
+    "svd": EngineAssetContract(
+        requires_vae=False,
+        tenc_slots=(),
+        tenc_kind=TextEncoderKind.NONE,
+        sha_only=True,
+        notes="Monolithic video checkpoint; external VAE/text encoders are optional overrides.",
+    ),
+    "hunyuan_video": EngineAssetContract(
+        requires_vae=False,
+        tenc_slots=(),
+        tenc_kind=TextEncoderKind.NONE,
+        sha_only=True,
+        notes="Monolithic video checkpoint; external VAE/text encoders are optional overrides.",
+    ),
     # Chroma safetensors are treated as monolithic; GGUF selections remain core-only.
     "flux1_chroma": EngineAssetContract(
         requires_vae=False,
@@ -190,6 +214,57 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
     ),
 }
 
+_CONTRACT_OWNER_BY_ENGINE_ID: dict[str, str] = {
+    "sd15": "sd15",
+    "sd20": "sd20",
+    "sdxl": "sdxl",
+    "sdxl_refiner": "sdxl_refiner",
+    "sd35": "sd35",
+    "flux1": "flux1",
+    "flux1_kontext": "flux1_kontext",
+    "flux1_fill": "flux1",
+    "flux1_chroma": "flux1_chroma",
+    "zimage": "zimage",
+    "anima": "anima",
+    "wan22_5b": "wan22_5b",
+    "wan22_14b": "wan22_5b",
+    "wan22_animate_14b": "wan22_5b",
+    "svd": "svd",
+    "hunyuan_video": "hunyuan_video",
+}
+
+_CONTRACT_OWNER_BY_SEMANTIC_ENGINE: dict[str, str] = {
+    "sd15": "sd15",
+    "sdxl": "sdxl",
+    "flux1": "flux1",
+    "chroma": "flux1_chroma",
+    "zimage": "zimage",
+    "anima": "anima",
+    "wan22": "wan22_5b",
+    "svd": "svd",
+    "hunyuan_video": "hunyuan_video",
+}
+
+
+def contract_owner_for_engine(engine_id: str) -> str:
+    key = str(engine_id or "").strip().lower()
+    if not key:
+        raise ValueError("engine_id required")
+    owner = _CONTRACT_OWNER_BY_ENGINE_ID.get(key)
+    if owner is None:
+        raise KeyError(f"Engine asset contract owner missing for engine_id={key!r}")
+    return owner
+
+
+def contract_owner_for_semantic_engine(semantic_engine: str) -> str:
+    key = str(semantic_engine or "").strip().lower()
+    if not key:
+        raise ValueError("semantic_engine required")
+    owner = _CONTRACT_OWNER_BY_SEMANTIC_ENGINE.get(key)
+    if owner is None:
+        raise KeyError(f"Engine asset contract owner missing for semantic_engine={key!r}")
+    return owner
+
 
 def contract_for_engine(engine_id: str) -> EngineAssetContract:
     """Return the base contract for an engine.
@@ -197,26 +272,22 @@ def contract_for_engine(engine_id: str) -> EngineAssetContract:
     This is the contract for non-core-only checkpoint selections.
     """
 
-    key = str(engine_id or "").strip().lower()
-    if not key:
-        raise ValueError("engine_id required")
-    contract = _BASE_CONTRACTS.get(key)
+    owner = contract_owner_for_engine(engine_id)
+    contract = _BASE_CONTRACTS.get(owner)
     if contract is None:
-        raise KeyError(f"Engine asset contract missing for engine_id={key!r}")
+        raise KeyError(f"Engine asset contract missing for owner_engine_id={owner!r}")
     return contract
 
 
 def contract_for_core_only(engine_id: str) -> EngineAssetContract:
     """Return the contract when the selected checkpoint is core-only."""
 
-    key = str(engine_id or "").strip().lower()
-    if not key:
-        raise ValueError("engine_id required")
+    owner = contract_owner_for_engine(engine_id)
 
-    if key in ("flux1", "flux1_kontext", "zimage", "anima"):
-        return contract_for_engine(key)
+    if owner in ("flux1", "flux1_kontext", "zimage", "anima", "wan22_5b", "svd", "hunyuan_video"):
+        return contract_for_engine(owner)
 
-    if key == "flux1_chroma":
+    if owner == "flux1_chroma":
         return EngineAssetContract(
             requires_vae=True,
             tenc_slots=("t5xxl",),
@@ -226,7 +297,7 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
             notes="Core-only checkpoint: requires external VAE + 1 T5 text encoder.",
         )
 
-    if key in ("sd15", "sd20"):
+    if owner in ("sd15", "sd20"):
         return EngineAssetContract(
             requires_vae=True,
             tenc_slots=("clip_l",),
@@ -236,8 +307,8 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
             notes="Core-only checkpoint: requires external VAE + 1 CLIP text encoder.",
         )
 
-    if key in ("sdxl", "sdxl_refiner"):
-        if key == "sdxl_refiner":
+    if owner in ("sdxl", "sdxl_refiner"):
+        if owner == "sdxl_refiner":
             return EngineAssetContract(
                 requires_vae=True,
                 tenc_slots=("clip_g",),
@@ -255,7 +326,7 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
             notes="Core-only checkpoint: requires external VAE + 2 SDXL text encoders.",
         )
 
-    if key == "sd35":
+    if owner == "sd35":
         enable_t5 = env_flag("CODEX_SD3_ENABLE_T5", default=True)
         slots = ("clip_l", "clip_g", "t5xxl") if enable_t5 else ("clip_l", "clip_g")
         labels = ("CLIP-L", "CLIP-G", "T5-XXL") if enable_t5 else ("CLIP-L", "CLIP-G")
@@ -271,7 +342,7 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
             ),
         )
 
-    base = contract_for_engine(key)
+    base = contract_for_engine(owner)
     return EngineAssetContract(
         requires_vae=True,
         tenc_slots=("clip_l",),
@@ -293,4 +364,4 @@ def contract_for_request(*, engine_id: str, checkpoint_core_only: bool) -> Engin
 def known_engine_ids() -> tuple[str, ...]:
     """Return engine ids covered by the contract mapping."""
 
-    return tuple(sorted(_BASE_CONTRACTS.keys()))
+    return tuple(sorted(_CONTRACT_OWNER_BY_ENGINE_ID.keys()))

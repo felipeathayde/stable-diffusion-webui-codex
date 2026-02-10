@@ -33,3 +33,4 @@ Status: Draft
 - 2026-01-14: Flux parser now surfaces a targeted error when a GGUF file contains Diffusers Flux keys (`transformer_blocks.*`) instead of the expected Comfy/Codex layout (`double_blocks.*`), directing operators to re-convert via the Tools GGUF converter.
 - 2026-01-29: CodexPack `*.codexpack.gguf` now counts as GGUF quantization for parser quantization detection (so loaders build GGUF ops and use hook-based `load_state_dict`, not the conservative copier).
 - 2026-02-10: SDXL nested UNet label-embedding key normalization moved out of parser converters into canonical checkpoint keymap (`apps/backend/runtime/state_dict/keymap_sdxl_checkpoint.py`); SDXL parser plan no longer runs UNet key normalization converters.
+- 2026-02-10: CLIP converter structural conversions (projection transpose paths in `converters/clip.py`) are now globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`: `auto` fails loud, `convert` opt-in allows conversion.

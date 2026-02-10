@@ -8,9 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
-Capability surfaces include per-engine asset contracts plus backend-owned dependency checks so the UI can enforce sha-only external asset
-selection and readiness gating deterministically. Also provides prompt token-counting (`/api/models/prompt-token-count`) using vendored
-offline tokenizers.
+Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
+so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
+(`/api/models/prompt-token-count`) using vendored offline tokenizers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -281,7 +281,7 @@ def build_router(
             from apps.backend.core.contracts.asset_requirements import (
                 contract_for_core_only,
                 contract_for_engine,
-                known_engine_ids,
+                contract_owner_for_semantic_engine,
             )
             from apps.backend.interfaces.api.dependency_checks import build_engine_dependency_checks
             try:
@@ -291,16 +291,17 @@ def build_router(
             except Exception:
                 cache_stats = {}
 
-            asset_contracts: Dict[str, Any] = {}
-            for engine_id in known_engine_ids():
-                asset_contracts[engine_id] = {
-                    "base": contract_for_engine(engine_id).as_dict(),
-                    "core_only": contract_for_core_only(engine_id).as_dict(),
-                }
             engine_id_to_semantic_engine: Dict[str, str] = {
                 engine_id: semantic.value for engine_id, semantic in ENGINE_ID_TO_SEMANTIC_ENGINE.items()
             }
             engines = serialize_engine_capabilities()
+            asset_contracts: Dict[str, Any] = {}
+            for semantic_engine in sorted(engines.keys()):
+                contract_owner_engine_id = contract_owner_for_semantic_engine(semantic_engine)
+                asset_contracts[semantic_engine] = {
+                    "base": contract_for_engine(contract_owner_engine_id).as_dict(),
+                    "core_only": contract_for_core_only(contract_owner_engine_id).as_dict(),
+                }
             dependency_checks = build_engine_dependency_checks(
                 engine_capabilities=engines,
                 model_api=model_api,

@@ -8,6 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: State-dict conversion and filtering helpers for CLIP vision encoders.
 Normalizes OpenCLIP-style layouts into HF naming, rekeys diffusers/HF outputs, and provides diagnostics for loading.
+Structural conversion operations (projection transpose and fused in_proj -> split Q/K/V converter paths) are globally policy-gated by
+`CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger for state-dict conversion and filtering diagnostics.
@@ -26,6 +28,10 @@ from typing import Dict, Iterable, Tuple
 
 import torch
 
+from apps.backend.infra.config.weight_structural_conversion import (
+    ENV_WEIGHT_STRUCTURAL_CONVERSION,
+    is_structural_weight_conversion_enabled,
+)
 from apps.backend.runtime.models.state_dict import (
     state_dict_prefix_replace,
     transformers_convert,
@@ -41,6 +47,12 @@ def _transpose_projection(weight: torch.Tensor) -> torch.Tensor:
     if weight.ndim != 2:
         raise ClipVisionLoadError(
             f"Clip vision projection weight must be 2-D; received shape {tuple(weight.shape)}."
+        )
+    if not is_structural_weight_conversion_enabled():
+        raise ClipVisionLoadError(
+            "Clip vision projection conversion requires structural conversion (transpose), "
+            f"but {ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto forbids it. "
+            f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
         )
     return weight.transpose(0, 1).contiguous()
 

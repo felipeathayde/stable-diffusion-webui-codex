@@ -1147,3 +1147,56 @@ Correct command:
 ```bash
 rg -n 'Reading a non-existent `\.sangoi/AGENTS.md` path directly|Opening guessed plan filenames copied from task-log slugs' COMMON_MISTAKES.md
 ```
+
+### Forgetting to export `CODEX_ROOT` before importing backend API modules
+
+Wrong command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"; PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY'
+import importlib
+from fastapi.testclient import TestClient
+run_api=importlib.import_module('apps.backend.interfaces.api.run_api')
+app=run_api.create_api_app(argv=['--core-device=cpu','--te-device=cpu','--vae-device=cpu'], env={})
+with TestClient(app) as client:
+    data=client.get('/api/engines/capabilities').json()
+print('asset_contracts keys:', sorted(data.get('asset_contracts',{}).keys()))
+print('engine map subset:', {k:data['engine_id_to_semantic_engine'][k] for k in ['flux1_chroma','flux1_fill','wan22_5b','wan22_14b','svd','hunyuan_video','sd35'] if k in data['engine_id_to_semantic_engine']})
+print('engine keys:', sorted(data.get('engines',{}).keys()))
+PY
+```
+
+Cause and fix:
+Set `CODEX_ROOT` as a shell variable but did not export it, so backend imports that require environment access failed (`OSError: CODEX_ROOT not set`). Export `CODEX_ROOT` (and `PYTHONPATH` as needed) before invoking Python.
+
+Correct command:
+```bash
+export CODEX_ROOT="$(git rev-parse --show-toplevel)"
+export PYTHONPATH="$CODEX_ROOT"
+"$CODEX_ROOT/.venv/bin/python" - <<'PY'
+import importlib
+from fastapi.testclient import TestClient
+run_api=importlib.import_module('apps.backend.interfaces.api.run_api')
+app=run_api.create_api_app(argv=['--core-device=cpu','--te-device=cpu','--vae-device=cpu'], env={})
+with TestClient(app) as client:
+    data=client.get('/api/engines/capabilities').json()
+print('asset_contracts keys:', sorted(data.get('asset_contracts',{}).keys()))
+print('engine map subset:', {k:data['engine_id_to_semantic_engine'][k] for k in ['flux1_chroma','flux1_fill','wan22_5b','wan22_14b','svd','hunyuan_video','sd35'] if k in data['engine_id_to_semantic_engine']})
+print('engine keys:', sorted(data.get('engines',{}).keys()))
+PY
+```
+
+### Grepping guessed engine directories that do not exist
+
+Wrong command:
+```bash
+rg -n "class .*SVD|class .*Hunyuan|class .*Wan|text_encoder|vae|requires" apps/backend/engines/svd apps/backend/engines/hunyuan apps/backend/engines/wan22 -g '*.py'
+```
+
+Cause and fix:
+Assumed dedicated `apps/backend/engines/svd` and `apps/backend/engines/hunyuan` folders exist; in this repo those optional engines are declared via import paths in `apps/backend/engines/registration.py` (e.g. `.video.svd.engine`, `.video.hunyuan.engine`) and may be absent in the local tree. Confirm real paths before narrowing with `rg`.
+
+Correct command:
+```bash
+ls -1 apps/backend/engines
+rg -n 'register_svd|register_hunyuan_video|video\\.svd|video\\.hunyuan|wan22_14b|wan22_5b|wan22_animate_14b' apps/backend/engines/registration.py apps/backend/engines/wan22 -g '*.py'
+```

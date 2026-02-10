@@ -22,5 +22,6 @@ Notes:
 - 2026-02-08: Added strict Anima keymaps (`keymap_anima.py`) with explicit style detection, wrapper normalization, required-key validation, and collision/unknown fail-loud behavior.
 - 2026-02-10: Added canonical T5 text-encoder keymap (`keymap_t5_text_encoder.py`) so loader paths no longer perform ad-hoc inline prefix normalization.
 - 2026-02-10: Expanded SDXL checkpoint keymap to normalize nested UNet label-embedding keys (`label_emb.0.0.*` → `label_emb.0.*`), removing parser-side SDXL UNet normalization converter usage.
+- 2026-02-10: Structural conversion seams in keymaps are globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto` fail-loud / `convert` explicit opt-in): SDXL CLIP blocks split↔fused QKV/projection conversion in `auto`, and SDXL VAE blocks 1x1-conv flattening in `auto`.
 
 Last Review: 2026-02-10

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: SDXL VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
 Normalizes common LDM layouts into diffusers keyspace, strips wrapper prefixes, and flattens 1×1 Conv projection weights lazily.
 Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
+Flattening conversion is globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_sdxl_vae_state_dict` (function): Returns (detected_style, remapped_view) for SDXL/Flow16 VAE keys.
@@ -19,6 +20,10 @@ from __future__ import annotations
 from collections.abc import MutableMapping, Sequence
 from typing import TypeVar
 
+from apps.backend.infra.config.weight_structural_conversion import (
+    ENV_WEIGHT_STRUCTURAL_CONVERSION,
+    is_structural_weight_conversion_enabled,
+)
 from apps.backend.runtime.state_dict.key_mapping import (
     KeyMappingError,
     KeySentinel,
@@ -89,10 +94,17 @@ class _SDXLVAERemapView(MutableMapping[str, _T]):
     This view flattens those tensors on access (and caches the flattened copy) to avoid eager materialization.
     """
 
-    def __init__(self, base: MutableMapping[str, _T], mapping: dict[str, str]):
+    def __init__(
+        self,
+        base: MutableMapping[str, _T],
+        mapping: dict[str, str],
+        *,
+        allow_structural_conversion: bool,
+    ):
         self._base = base
         self._map = dict(mapping)
         self._cache: dict[str, _T] = {}
+        self._allow_structural_conversion = bool(allow_structural_conversion)
 
     @staticmethod
     def _should_flatten(key: str) -> bool:
@@ -124,6 +136,14 @@ class _SDXLVAERemapView(MutableMapping[str, _T]):
         except Exception:
             return value
 
+    @staticmethod
+    def _requires_flatten(value: _T) -> bool:
+        ndim = getattr(value, "ndim", None)
+        shape = getattr(value, "shape", None)
+        if ndim != 4 or not shape:
+            return False
+        return tuple(shape[-2:]) == (1, 1)
+
     def __getitem__(self, k: str) -> _T:
         cached = self._cache.get(k)
         if cached is not None:
@@ -131,6 +151,12 @@ class _SDXLVAERemapView(MutableMapping[str, _T]):
 
         v = self._base[self._map[k]]
         if self._should_flatten(k):
+            if not self._allow_structural_conversion and self._requires_flatten(v):
+                raise KeyMappingError(
+                    "SDXL VAE key remap requires structural conversion (flatten 1x1 conv -> linear), "
+                    f"but {ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto forbids it. "
+                    f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
+                )
             v = self._flatten_conv_to_linear(v)
             self._cache[k] = v
         return v
@@ -371,13 +397,18 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
         KeyStyle.DIFFUSERS: lambda k: k,
         KeyStyle.LDM: _ldm_to_diffusers,
     }
+    allow_structural_conversion = is_structural_weight_conversion_enabled()
 
     return remap_state_dict_view(
         filtered,
         detector=_DETECTOR,
         normalize=_normalize,
         mappers=mappers,
-        view_factory=lambda base, mapping: _SDXLVAERemapView(base, mapping),
+        view_factory=lambda base, mapping: _SDXLVAERemapView(
+            base,
+            mapping,
+            allow_structural_conversion=allow_structural_conversion,
+        ),
         output_validator=_validate_output,
     )
 

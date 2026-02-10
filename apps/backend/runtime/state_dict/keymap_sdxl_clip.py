@@ -20,6 +20,8 @@ canonicalize `logit_scale` (default `ln(100)`); canonicalize optional projection
 for OpenCLIP-style fused attention weights (`attn.in_proj_{weight,bias}`), expose either split Q/K/V projections or fused `in_proj` keys.
 The QKV layout can be selected via the `qkv_impl` argument (`"auto"`, `"split"` or `"fused"`).
 `"auto"` keeps the native layout: OpenCLIP-style weights stay fused, HF/Codex weights stay split.
+Structural conversion operations in this keymap (QKV split/fuse and projection transpose) are globally policy-gated by
+`CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 """
 
 from __future__ import annotations
@@ -29,6 +31,10 @@ from dataclasses import dataclass
 from math import log
 from typing import Literal, TypeVar
 
+from apps.backend.infra.config.weight_structural_conversion import (
+    ENV_WEIGHT_STRUCTURAL_CONVERSION,
+    is_structural_weight_conversion_enabled,
+)
 from apps.backend.runtime.state_dict.key_mapping import (
     KeyMappingError,
     KeyStyle,
@@ -295,6 +301,8 @@ def _remap_clip_state_dict(
             f"sdxl_clip: invalid qkv_impl={qkv_impl!r} (expected one of: auto, split, fused)"
         )
 
+    allow_structural_conversion = is_structural_weight_conversion_enabled()
+
     if len(state_dict) == 1 and "state_dict" in state_dict:
         inner = state_dict.get("state_dict")
         if isinstance(inner, MutableMapping):
@@ -312,6 +320,21 @@ def _remap_clip_state_dict(
         wants_fused_qkv = style is KeyStyle.OPENCLIP
     else:
         wants_fused_qkv = qkv_impl == "fused"
+
+    requires_qkv_conversion = (
+        (style is KeyStyle.OPENCLIP and not wants_fused_qkv)
+        or (style in {KeyStyle.HF, KeyStyle.CODEX} and wants_fused_qkv)
+    )
+    if requires_qkv_conversion and not allow_structural_conversion:
+        if style is KeyStyle.OPENCLIP:
+            conversion = "fused->split (slice)"
+        else:
+            conversion = "split->fused (concat)"
+        raise KeyMappingError(
+            "sdxl_clip: structural conversion is disabled by policy "
+            f"({ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto). Requested qkv_impl={qkv_impl!r} "
+            f"requires {conversion}. Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
+        )
 
     qkv_weights_by_layer: dict[int, dict[str, str]] = {}
     qkv_biases_by_layer: dict[int, dict[str, str]] = {}
@@ -370,6 +393,13 @@ def _remap_clip_state_dict(
                 raise KeyMappingError(f"sdxl_clip: multiple text_projection sources: {seen_proj!r},{key!r}")
             seen_proj = key
             if transpose_projection:
+                if not allow_structural_conversion:
+                    raise KeyMappingError(
+                        "sdxl_clip: structural conversion is disabled by policy "
+                        f"({ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto). "
+                        "Projection transpose requires conversion. "
+                        f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
+                    )
                 _put("transformer.text_projection.weight", _Transpose(raw_key))
             else:
                 _put("transformer.text_projection.weight", _Direct(raw_key))

@@ -9,6 +9,8 @@ Required Notice: see NOTICE
 Purpose: CLIP state-dict key normalization for Codex integrated text encoders.
 Provides a strict, model-keyspace-focused normalizer used by the loader to accept common wrapper/prefix variants, drop HF-only buffers
 (`position_ids`), and canonicalize `logit_scale`/`text_projection` into the exact key layout expected by `IntegratedCLIP` + `CodexCLIPTextModel`.
+Structural conversion operations (projection transpose and fused in_proj -> split Q/K/V converter paths) are globally policy-gated by
+`CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `normalize_codex_clip_state_dict` (function): Normalizes a CLIP state dict into the Codex integrated CLIP key layout (strict essentials).
@@ -20,6 +22,10 @@ from typing import Any, Dict, Mapping
 
 import torch
 
+from apps.backend.infra.config.weight_structural_conversion import (
+    ENV_WEIGHT_STRUCTURAL_CONVERSION,
+    is_structural_weight_conversion_enabled,
+)
 from apps.backend.runtime.models.state_dict import transformers_convert
 
 
@@ -101,6 +107,12 @@ def _normalize_text_projection(work: Dict[str, Any], *, keep_projection: bool, t
         return
 
     if isinstance(projection, torch.Tensor) and transpose:
+        if not is_structural_weight_conversion_enabled():
+            raise RuntimeError(
+                "CLIP projection normalization requires structural conversion (transpose), "
+                f"but {ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto forbids it. "
+                f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
+            )
         projection = projection.transpose(0, 1).contiguous()
     work["transformer.text_projection.weight"] = projection
     work.pop("text_projection.weight", None)

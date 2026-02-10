@@ -9,6 +9,8 @@ Required Notice: see NOTICE
 Purpose: CLIP state-dict conversion helpers for model parsing (SD1.5/SD2.x/SDXL).
 Normalizes CLIP checkpoints into the expected Codex/HF-like key layout using `transformers_convert`, fixes position-id dtype when requested,
 and canonicalizes text-projection keys (handling alias/prefix variants).
+Structural conversion operations (projection transpose and fused in_proj -> split Q/K/V converter paths) are globally policy-gated by
+`CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_ensure_position_ids_long` (function): Ensures `position_ids` tensors are `torch.long` (rounding when needed).
@@ -28,6 +30,10 @@ from typing import Any, Dict
 
 import torch
 
+from apps.backend.infra.config.weight_structural_conversion import (
+    ENV_WEIGHT_STRUCTURAL_CONVERSION,
+    is_structural_weight_conversion_enabled,
+)
 from apps.backend.runtime.models.state_dict import transformers_convert
 
 
@@ -57,6 +63,12 @@ def _normalize_text_projection(sd: Dict[str, Any], alias: str, *, transpose: boo
     if key_plain in sd:
         tensor = sd.pop(key_plain)
         if isinstance(tensor, torch.Tensor) and transpose:
+            if not is_structural_weight_conversion_enabled():
+                raise RuntimeError(
+                    "CLIP converter requires structural conversion (projection transpose), "
+                    f"but {ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto forbids it. "
+                    f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
+                )
             tensor = tensor.transpose(0, 1).contiguous()
         sd[f"{alias}.text_projection.weight"] = tensor
 
@@ -68,6 +80,12 @@ def _normalize_text_projection(sd: Dict[str, Any], alias: str, *, transpose: boo
     if key_transform in sd:
         tensor = sd.pop(key_transform)
         if isinstance(tensor, torch.Tensor) and transpose:
+            if not is_structural_weight_conversion_enabled():
+                raise RuntimeError(
+                    "CLIP converter requires structural conversion (projection transpose), "
+                    f"but {ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto forbids it. "
+                    f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
+                )
             tensor = tensor.transpose(0, 1).contiguous()
         sd[f"{alias}.text_projection.weight"] = tensor
         sd[f"{alias}.transformer.text_projection.weight"] = tensor

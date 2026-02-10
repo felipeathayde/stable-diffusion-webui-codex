@@ -1,6 +1,6 @@
 # apps/backend/runtime/vision/clip Overview
 Date: 2025-10-31
-Last Review: 2026-01-18
+Last Review: 2026-02-10
 Status: Active
 
 ## Purpose
@@ -13,3 +13,4 @@ Status: Active
 - Update `.sangoi/plans/2026-01-27-codex-legacy-backlog.md` entry #9 when behaviour changes or new variants land.
 - 2026-01-02: Added standardized file header docstrings to CLIP vision runtime modules (doc-only change; part of rollout).
 - 2026-01-18: `clip/__init__.py` is a package marker (no re-exports); import types/helpers from the defining modules (`encoder.py`, `errors.py`, `types.py`, etc.).
+- 2026-02-10: Clip vision OpenCLIP projection transpose conversion in `state_dict.py` is now globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto` fail-loud / `convert` opt-in).

@@ -9,6 +9,8 @@ Required Notice: see NOTICE
 Purpose: State dict loading and key-mapping helpers with trace/keymap logging.
 Provides relaxed load helpers that log missing/unexpected keys and write diagnostics to `logs/parser_keymap.log`, plus utilities for
 filtering and renaming keys (including transformer-style conversions) without eagerly materializing tensors (SafeTensors is only materialized up-front on Windows).
+Structural conversion operations (e.g. fused in_proj -> split Q/K/V) are globally policy-gated by
+`CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_append_key_record` (function): Appends a JSON record to the parser keymap log.
@@ -28,6 +30,10 @@ import json
 import sys
 from pathlib import Path
 
+from apps.backend.infra.config.weight_structural_conversion import (
+    ENV_WEIGHT_STRUCTURAL_CONVERSION,
+    is_structural_weight_conversion_enabled,
+)
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.state_dict.views import FilterPrefixView
 
@@ -102,6 +108,7 @@ def try_filter_state_dict(sd, prefix_list, new_prefix=''):
 
 
 def transformers_convert(sd, prefix_from, prefix_to, number):
+    allow_structural_conversion = is_structural_weight_conversion_enabled()
     keys_to_replace = {
         "{}positional_embedding": "{}embeddings.position_embedding.weight",
         "{}token_embedding.weight": "{}embeddings.token_embedding.weight",
@@ -133,6 +140,13 @@ def transformers_convert(sd, prefix_from, prefix_to, number):
         for y in ["weight", "bias"]:
             k_from = "{}transformer.resblocks.{}.attn.in_proj_{}".format(prefix_from, resblock, y)
             if k_from in sd:
+                if not allow_structural_conversion:
+                    raise RuntimeError(
+                        "transformers_convert: structural conversion is disabled by policy "
+                        f"({ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto). "
+                        "Cannot split OpenCLIP fused in_proj tensors into q/k/v projections. "
+                        f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
+                    )
                 weights = sd.pop(k_from)
                 shape_from = weights.shape[0] // 3
                 for x in range(3):

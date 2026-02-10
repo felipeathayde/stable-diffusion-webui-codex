@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Backend-owned engine dependency check contract for WebUI readiness surfaces.
 Builds deterministic per-engine check rows from backend inventory/model-registry state so the frontend can render a strict
-"Dependency Check" panel and disable generation when required assets are missing.
+"Dependency Check" panel and disable generation when required assets are missing. Semantic-engine asset checks resolve through the
+canonical contract owner seam (`contract_owner_for_semantic_engine`) to prevent drift between API surfaces.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DependencyCheckRow` (dataclass): One backend dependency row (`id/label/ok/message`) rendered by the frontend.
@@ -22,7 +23,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from apps.backend.core.contracts.asset_requirements import contract_for_engine
+from apps.backend.core.contracts.asset_requirements import (
+    contract_for_engine,
+    contract_owner_for_semantic_engine,
+)
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.inventory import cache as inventory_cache
 
@@ -79,15 +83,6 @@ _CHECKPOINT_REQUIRED_ENGINES: frozenset[str] = frozenset(
         "hunyuan_video",
     }
 )
-
-_CONTRACT_ENGINE_BY_SEMANTIC: Mapping[str, str] = {
-    "sd15": "sd15",
-    "sdxl": "sdxl",
-    "flux1": "flux1",
-    "chroma": "flux1_chroma",
-    "zimage": "zimage",
-    "anima": "anima",
-}
 
 _WAN_METADATA_PREFIX = "wan-ai/wan2.2-"
 
@@ -229,60 +224,59 @@ def build_engine_dependency_checks(
                 )
             )
 
-        contract_engine = _CONTRACT_ENGINE_BY_SEMANTIC.get(semantic_engine)
-        if contract_engine is not None:
-            contract = contract_for_engine(contract_engine)
-            if contract.requires_vae:
-                has_vae = vae_count > 0
-                checks.append(
-                    DependencyCheckRow(
-                        id="vae_inventory",
-                        label="VAE Inventory",
-                        ok=has_vae,
-                        message=(
-                            f"{vae_count} VAE file(s) discovered."
-                            if has_vae
-                            else "No VAE files discovered. Configure VAE roots and refresh inventory."
-                        ),
-                    )
+        contract_engine = contract_owner_for_semantic_engine(semantic_engine)
+        contract = contract_for_engine(contract_engine)
+        if contract.requires_vae:
+            has_vae = vae_count > 0
+            checks.append(
+                DependencyCheckRow(
+                    id="vae_inventory",
+                    label="VAE Inventory",
+                    ok=has_vae,
+                    message=(
+                        f"{vae_count} VAE file(s) discovered."
+                        if has_vae
+                        else "No VAE files discovered. Configure VAE roots and refresh inventory."
+                    ),
                 )
-            if contract.tenc_count > 0:
-                required = int(contract.tenc_count)
-                has_tenc = text_encoder_count >= required
+            )
+        if contract.tenc_count > 0:
+            required = int(contract.tenc_count)
+            has_tenc = text_encoder_count >= required
+            checks.append(
+                DependencyCheckRow(
+                    id="text_encoder_inventory",
+                    label="Text Encoder Inventory",
+                    ok=has_tenc,
+                    message=(
+                        f"{text_encoder_count} text encoder file(s) discovered (requires >= {required})."
+                        if has_tenc
+                        else (
+                            f"Only {text_encoder_count} text encoder file(s) discovered "
+                            f"(requires >= {required}). Configure text-encoder roots and refresh inventory."
+                        )
+                    ),
+                )
+            )
+            required_slots = tuple(str(slot) for slot in contract.tenc_slots)
+            if required_slots:
+                missing_slots = [slot for slot in required_slots if slot not in text_encoder_slots]
+                has_required_slots = len(missing_slots) == 0
                 checks.append(
                     DependencyCheckRow(
-                        id="text_encoder_inventory",
-                        label="Text Encoder Inventory",
-                        ok=has_tenc,
+                        id="text_encoder_slots",
+                        label="Text Encoder Slots",
+                        ok=has_required_slots,
                         message=(
-                            f"{text_encoder_count} text encoder file(s) discovered (requires >= {required})."
-                            if has_tenc
+                            f"Required slots available: {', '.join(required_slots)}."
+                            if has_required_slots
                             else (
-                                f"Only {text_encoder_count} text encoder file(s) discovered "
-                                f"(requires >= {required}). Configure text-encoder roots and refresh inventory."
+                                "Missing required text encoder slot(s): "
+                                f"{', '.join(missing_slots)}."
                             )
                         ),
                     )
                 )
-                required_slots = tuple(str(slot) for slot in contract.tenc_slots)
-                if required_slots:
-                    missing_slots = [slot for slot in required_slots if slot not in text_encoder_slots]
-                    has_required_slots = len(missing_slots) == 0
-                    checks.append(
-                        DependencyCheckRow(
-                            id="text_encoder_slots",
-                            label="Text Encoder Slots",
-                            ok=has_required_slots,
-                            message=(
-                                f"Required slots available: {', '.join(required_slots)}."
-                                if has_required_slots
-                                else (
-                                    "Missing required text encoder slot(s): "
-                                    f"{', '.join(missing_slots)}."
-                                )
-                            ),
-                        )
-                    )
 
         if semantic_engine == "wan22":
             has_wan_models = wan_model_count > 0

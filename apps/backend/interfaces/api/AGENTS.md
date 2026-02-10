@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-09
+Last Review: 2026-02-10
 Status: Active
 
 ## Purpose
@@ -43,3 +43,5 @@ Status: Active
 - 2026-02-08: Swap-model request contract now uses `switch_at_step` in both `extras.refiner` and `extras.hires.refiner` (step-pointer semantics, not step-count semantics) with strict bounds validation in `routers/generation.py`.
 - 2026-02-08: Img2img numeric parsing now uses finite-float validation for core + hires float fields in `routers/generation.py` (rejects `NaN`/`Infinity` with HTTP 400).
 - 2026-02-09: Task contracts are now typed in `task_registry.py` (`TaskEventType`, `TaskCancelMode`, `TaskStatusStage`) with strict non-terminal event normalization and fail-loud cancel-mode parsing (`immediate`/`after_current` only).
+- 2026-02-10: `/api/engines/capabilities` now emits `asset_contracts` keyed by semantic engine (owner-resolved from canonical engine ids) so frontend semantic gating cannot drift from alias-heavy `engine_id_to_semantic_engine` maps.
+- 2026-02-10: `dependency_checks.py` now resolves semantic asset contracts only via `contract_owner_for_semantic_engine(...)` (no local semantic-map duplication), so readiness rows fail loud if semantic/contract ownership drifts.

@@ -15,7 +15,9 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import errno
+from enum import Enum
 from io import BytesIO
 import json
 import os
@@ -23,17 +25,167 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Final
 
 from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 
 
 def build_router(*, codex_root: Path) -> APIRouter:
     router = APIRouter()
-    _gguf_conversion_jobs: Dict[str, Dict[str, Any]] = {}
-    _gguf_conversion_controls: Dict[str, Dict[str, Any]] = {}
-    _codexpack_pack_jobs: Dict[str, Dict[str, Any]] = {}
-    _codexpack_pack_controls: Dict[str, Dict[str, Any]] = {}
+
+    class _ToolJobStatus(str, Enum):
+        PENDING = "pending"
+        LOADING_CONFIG = "loading_config"
+        LOADING_WEIGHTS = "loading_weights"
+        CONVERTING = "converting"
+        VERIFYING = "verifying"
+        FINALIZING = "finalizing"
+        PACKING_CODEXPACK = "packing_codexpack"
+        CANCELLING = "cancelling"
+        CANCELLED = "cancelled"
+        COMPLETE = "complete"
+        ERROR = "error"
+
+    _TERMINAL_JOB_STATUSES: Final[set[_ToolJobStatus]] = {
+        _ToolJobStatus.COMPLETE,
+        _ToolJobStatus.ERROR,
+        _ToolJobStatus.CANCELLED,
+    }
+    _ALLOWED_JOB_STATUS_TRANSITIONS: Final[dict[_ToolJobStatus, set[_ToolJobStatus]]] = {
+        _ToolJobStatus.PENDING: {
+            _ToolJobStatus.LOADING_CONFIG,
+            _ToolJobStatus.FINALIZING,
+            _ToolJobStatus.PACKING_CODEXPACK,
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.LOADING_CONFIG: {
+            _ToolJobStatus.LOADING_WEIGHTS,
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.LOADING_WEIGHTS: {
+            _ToolJobStatus.CONVERTING,
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.CONVERTING: {
+            _ToolJobStatus.VERIFYING,
+            _ToolJobStatus.FINALIZING,
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.VERIFYING: {
+            _ToolJobStatus.FINALIZING,
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.FINALIZING: {
+            _ToolJobStatus.PACKING_CODEXPACK,
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.COMPLETE,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.PACKING_CODEXPACK: {
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.COMPLETE,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.CANCELLING: {
+            _ToolJobStatus.LOADING_CONFIG,
+            _ToolJobStatus.LOADING_WEIGHTS,
+            _ToolJobStatus.CONVERTING,
+            _ToolJobStatus.VERIFYING,
+            _ToolJobStatus.FINALIZING,
+            _ToolJobStatus.PACKING_CODEXPACK,
+            _ToolJobStatus.COMPLETE,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.CANCELLED: set(),
+        _ToolJobStatus.COMPLETE: set(),
+        _ToolJobStatus.ERROR: set(),
+    }
+
+    @dataclass(slots=True)
+    class _ToolJobState:
+        status: _ToolJobStatus
+        progress: float
+        current_tensor: str
+        error: str | None
+        output_path: str
+        codexpack_output_path: str | None = None
+
+        def to_payload(self) -> Dict[str, Any]:
+            payload: Dict[str, Any] = {
+                "status": self.status.value,
+                "progress": self.progress,
+                "current_tensor": self.current_tensor,
+                "error": self.error,
+                "output_path": self.output_path,
+            }
+            if self.codexpack_output_path is not None:
+                payload["codexpack_output_path"] = self.codexpack_output_path
+            return payload
+
+    @dataclass(slots=True)
+    class _GgufConversionControl:
+        cancel_event: threading.Event
+        tmp_path: Path
+        final_path: Path
+        codexpack_path: Path | None
+        base_tmp_path: Path | None
+        codexpack_keymap_id: str | None = None
+
+    @dataclass(slots=True)
+    class _CodexPackControl:
+        src_path: Path
+        final_path: Path
+
+    _gguf_conversion_jobs: Dict[str, _ToolJobState] = {}
+    _gguf_conversion_controls: Dict[str, _GgufConversionControl] = {}
+    _codexpack_pack_jobs: Dict[str, _ToolJobState] = {}
+    _codexpack_pack_controls: Dict[str, _CodexPackControl] = {}
+    _job_state_lock = threading.RLock()
+    _UNSET = object()
+
+    def _normalize_job_status(raw: _ToolJobStatus | str) -> _ToolJobStatus:
+        if isinstance(raw, _ToolJobStatus):
+            return raw
+        text = str(raw or "").strip()
+        try:
+            return _ToolJobStatus(text)
+        except ValueError as exc:
+            raise RuntimeError(f"Unknown tool job status: {text!r}") from exc
+
+    def _set_job_state(
+        job: _ToolJobState,
+        *,
+        status: _ToolJobStatus | str | None = None,
+        progress: float | None = None,
+        current_tensor: str | None = None,
+        error: object = _UNSET,
+    ) -> None:
+        if status is not None:
+            next_status = _normalize_job_status(status)
+            if next_status != job.status:
+                allowed = _ALLOWED_JOB_STATUS_TRANSITIONS.get(job.status, set())
+                if next_status not in allowed:
+                    raise RuntimeError(f"Invalid tool-job status transition: {job.status.value} -> {next_status.value}")
+            job.status = next_status
+        if progress is not None:
+            job.progress = float(progress)
+        if current_tensor is not None:
+            job.current_tensor = str(current_tensor)
+        if error is not _UNSET:
+            job.error = None if error is None else str(error)
 
     def _alloc_nonexistent_path(parent: Path, *, prefix: str, suffix: str) -> Path:
         for _ in range(64):
@@ -357,38 +509,36 @@ def build_router(*, codex_root: Path) -> APIRouter:
             tmp_path = Path(tmp_handle.name)
             tmp_handle.close()
 
-        # Create job entry
-        _gguf_conversion_jobs[job_id] = {
-            "status": "pending",
-            "progress": 0,
-            "current_tensor": "",
-            "error": None,
-            "output_path": str(final_path),
-        }
-        if codexpack_path is not None:
-            _gguf_conversion_jobs[job_id]["codexpack_output_path"] = str(codexpack_path)
-
         cancel_event = threading.Event()
-        _gguf_conversion_controls[job_id] = {
-            "cancel_event": cancel_event,
-            "tmp_path": tmp_path,
-            "final_path": final_path,
-            "codexpack_path": codexpack_path,
-            "base_tmp_path": base_tmp_path,
-        }
-        if codexpack_keymap_id is not None:
-            _gguf_conversion_controls[job_id]["codexpack_keymap_id"] = codexpack_keymap_id
+        with _job_state_lock:
+            _gguf_conversion_jobs[job_id] = _ToolJobState(
+                status=_ToolJobStatus.PENDING,
+                progress=0.0,
+                current_tensor="",
+                error=None,
+                output_path=str(final_path),
+                codexpack_output_path=(str(codexpack_path) if codexpack_path is not None else None),
+            )
+            _gguf_conversion_controls[job_id] = _GgufConversionControl(
+                cancel_event=cancel_event,
+                tmp_path=tmp_path,
+                final_path=final_path,
+                codexpack_path=codexpack_path,
+                base_tmp_path=base_tmp_path,
+                codexpack_keymap_id=codexpack_keymap_id,
+            )
 
         def run_conversion() -> None:
+            converted_ok = False
             try:
-                job = _gguf_conversion_jobs[job_id]
-                ctrl = _gguf_conversion_controls[job_id]
-                converted_ok = False
+                with _job_state_lock:
+                    job = _gguf_conversion_jobs[job_id]
+                    ctrl = _gguf_conversion_controls[job_id]
 
                 config = ConversionConfig(
                     config_path=config_path,
                     safetensors_path=safetensors_path,
-                    output_path=str(ctrl["tmp_path"]),
+                    output_path=str(ctrl.tmp_path),
                     profile_id=profile_id,
                     quantization=quant,
                     comfy_layout=comfy_layout,
@@ -397,40 +547,40 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 )
 
                 def progress_cb(prog):
-                    status = prog.status
-                    percent = prog.progress_percent
-                    if status == "complete":
+                    status = _normalize_job_status(prog.status)
+                    percent = float(prog.progress_percent)
+                    if status is _ToolJobStatus.COMPLETE:
                         # The converter reports completion before we atomically move the temp
                         # file into place; keep polling until final rename finishes.
-                        status = "finalizing"
+                        status = _ToolJobStatus.FINALIZING
                         percent = min(99.9, percent)
-                    job.update(
-                        {
-                            "status": status,
-                            "progress": percent,
-                            "current_tensor": prog.current_tensor,
-                        }
-                    )
+                    with _job_state_lock:
+                        _set_job_state(
+                            job,
+                            status=status,
+                            progress=percent,
+                            current_tensor=prog.current_tensor,
+                        )
 
                 convert_safetensors_to_gguf(
                     config,
                     progress_callback=progress_cb,
-                    should_cancel=lambda: bool(ctrl["cancel_event"].is_set()),
+                    should_cancel=lambda: bool(ctrl.cancel_event.is_set()),
                 )
                 converted_ok = True
 
-                job["status"] = "finalizing"
-                job["progress"] = 99.9
-                if ctrl.get("codexpack_path") is None:
-                    os.replace(str(ctrl["tmp_path"]), str(ctrl["final_path"]))
+                with _job_state_lock:
+                    _set_job_state(job, status=_ToolJobStatus.FINALIZING, progress=99.9)
+                if ctrl.codexpack_path is None:
+                    os.replace(str(ctrl.tmp_path), str(ctrl.final_path))
 
-                if ctrl.get("codexpack_path") is not None:
+                if ctrl.codexpack_path is not None:
                     from apps.backend.runtime.tools.codexpack_packer import pack_gguf_to_codexpack_v1
 
-                    codexpack_final_path = Path(ctrl["codexpack_path"])
-                    base_tmp = Path(ctrl["tmp_path"])
-                    job["status"] = "packing_codexpack"
-                    job["progress"] = 99.95
+                    codexpack_final_path = ctrl.codexpack_path
+                    base_tmp = ctrl.tmp_path
+                    with _job_state_lock:
+                        _set_job_state(job, status=_ToolJobStatus.PACKING_CODEXPACK, progress=99.95)
 
                     pack_tmp_path = _alloc_nonexistent_path(
                         codexpack_final_path.parent,
@@ -438,8 +588,8 @@ def build_router(*, codex_root: Path) -> APIRouter:
                         suffix=codexpack_final_path.suffix or ".gguf",
                     )
                     try:
-                        keymap_id = ctrl.get("codexpack_keymap_id")
-                        if not isinstance(keymap_id, str) or not keymap_id.strip():
+                        keymap_id = ctrl.codexpack_keymap_id
+                        if not keymap_id:
                             raise RuntimeError(
                                 "codexpack_keymap_id is missing from conversion job controls (internal invariant)."
                             )
@@ -455,34 +605,35 @@ def build_router(*, codex_root: Path) -> APIRouter:
                                 pack_tmp_path.unlink()
                         except Exception:
                             pass
-                    if ctrl.get("base_tmp_path") is not None:
+                    if ctrl.base_tmp_path is not None:
                         try:
                             base_tmp.unlink()
                         except Exception:
                             pass
 
-                job["status"] = "complete"
-                job["progress"] = 100
+                with _job_state_lock:
+                    _set_job_state(job, status=_ToolJobStatus.COMPLETE, progress=100)
 
             except GGUFConversionCancelled:
-                job = _gguf_conversion_jobs[job_id]
-                job["status"] = "cancelled"
-                job["error"] = None
+                with _job_state_lock:
+                    job = _gguf_conversion_jobs[job_id]
+                    _set_job_state(job, status=_ToolJobStatus.CANCELLED, error=None)
                 try:
-                    ctrl = _gguf_conversion_controls[job_id]
-                    tmp = Path(ctrl["tmp_path"])
+                    with _job_state_lock:
+                        ctrl = _gguf_conversion_controls[job_id]
+                    tmp = ctrl.tmp_path
                     if tmp.exists():
                         tmp.unlink()
                 except Exception:
                     pass
             except Exception as exc:
-                job = _gguf_conversion_jobs[job_id]
                 msg = str(exc)
                 try:
-                    ctrl = _gguf_conversion_controls[job_id]
-                    tmp = Path(ctrl["tmp_path"])
-                    if ctrl.get("codexpack_path") is not None and converted_ok and tmp.exists():
-                        base_failed_path = _derive_base_failed_path(Path(ctrl["codexpack_path"]), job_id=job_id)
+                    with _job_state_lock:
+                        ctrl = _gguf_conversion_controls[job_id]
+                    tmp = ctrl.tmp_path
+                    if ctrl.codexpack_path is not None and converted_ok and tmp.exists():
+                        base_failed_path = _derive_base_failed_path(ctrl.codexpack_path, job_id=job_id)
                         try:
                             _replace_or_copy(tmp, base_failed_path)
                             msg = f"{msg}\nPreserved base GGUF (packing failed): {str(base_failed_path)}"
@@ -496,8 +647,9 @@ def build_router(*, codex_root: Path) -> APIRouter:
                             tmp.unlink()
                 except Exception:
                     pass
-                job["error"] = msg
-                job["status"] = "error"
+                with _job_state_lock:
+                    job = _gguf_conversion_jobs[job_id]
+                    _set_job_state(job, status=_ToolJobStatus.ERROR, error=msg)
 
         thread = threading.Thread(target=run_conversion, daemon=True)
         thread.start()
@@ -506,22 +658,25 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
     @router.get("/api/tools/convert-gguf/{job_id}")
     async def get_gguf_conversion_status(job_id: str) -> Dict[str, Any]:
-        if job_id not in _gguf_conversion_jobs:
-            raise HTTPException(status_code=404, detail="Job not found")
-        return _gguf_conversion_jobs[job_id]
+        with _job_state_lock:
+            job = _gguf_conversion_jobs.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            return job.to_payload()
 
     @router.post("/api/tools/convert-gguf/{job_id}/cancel")
     async def cancel_gguf_conversion(job_id: str) -> Dict[str, Any]:
-        job = _gguf_conversion_jobs.get(job_id)
-        ctrl = _gguf_conversion_controls.get(job_id)
-        if job is None or ctrl is None:
-            raise HTTPException(status_code=404, detail="Job not found")
+        with _job_state_lock:
+            job = _gguf_conversion_jobs.get(job_id)
+            ctrl = _gguf_conversion_controls.get(job_id)
+            if job is None or ctrl is None:
+                raise HTTPException(status_code=404, detail="Job not found")
 
-        if job.get("status") in {"complete", "error", "cancelled"}:
-            raise HTTPException(status_code=409, detail=f"Job is not cancellable (status={job.get('status')})")
+            if job.status in _TERMINAL_JOB_STATUSES:
+                raise HTTPException(status_code=409, detail=f"Job is not cancellable (status={job.status.value})")
 
-        ctrl["cancel_event"].set()
-        job["status"] = "cancelling"
+            ctrl.cancel_event.set()
+            _set_job_state(job, status=_ToolJobStatus.CANCELLING)
         return {"ok": True}
 
     @router.post("/api/tools/codexpack/pack-v1")
@@ -586,32 +741,34 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
         job_id = str(uuid.uuid4())[:8]
         final_path.parent.mkdir(parents=True, exist_ok=True)
-        _codexpack_pack_jobs[job_id] = {
-            "status": "pending",
-            "progress": 0,
-            "current_tensor": "",
-            "error": None,
-            "output_path": str(final_path),
-        }
-        _codexpack_pack_controls[job_id] = {
-            "src_path": src_path,
-            "final_path": final_path,
-        }
+        with _job_state_lock:
+            _codexpack_pack_jobs[job_id] = _ToolJobState(
+                status=_ToolJobStatus.PENDING,
+                progress=0.0,
+                current_tensor="",
+                error=None,
+                output_path=str(final_path),
+            )
+            _codexpack_pack_controls[job_id] = _CodexPackControl(
+                src_path=src_path,
+                final_path=final_path,
+            )
 
         def run_pack() -> None:
             try:
-                job = _codexpack_pack_jobs[job_id]
-                ctrl = _codexpack_pack_controls[job_id]
+                with _job_state_lock:
+                    job = _codexpack_pack_jobs[job_id]
+                    ctrl = _codexpack_pack_controls[job_id]
                 from apps.backend.runtime.tools.codexpack_packer import pack_gguf_to_codexpack_v1
 
-                job["status"] = "packing_codexpack"
-                job["progress"] = 1.0
+                with _job_state_lock:
+                    _set_job_state(job, status=_ToolJobStatus.PACKING_CODEXPACK, progress=1.0)
 
-                out_final = Path(ctrl["final_path"])
+                out_final = ctrl.final_path
                 out_tmp = _alloc_nonexistent_path(out_final.parent, prefix=f"{out_final.stem}.part-{job_id}-", suffix=out_final.suffix or ".gguf")
                 try:
                     pack_gguf_to_codexpack_v1(
-                        str(ctrl["src_path"]),
+                        str(ctrl.src_path),
                         str(out_tmp),
                         keymap_id=keymap_id,
                     )
@@ -623,12 +780,12 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     except Exception:
                         pass
 
-                job["status"] = "complete"
-                job["progress"] = 100.0
+                with _job_state_lock:
+                    _set_job_state(job, status=_ToolJobStatus.COMPLETE, progress=100.0)
             except Exception as exc:
-                job = _codexpack_pack_jobs[job_id]
-                job["status"] = "error"
-                job["error"] = str(exc)
+                with _job_state_lock:
+                    job = _codexpack_pack_jobs[job_id]
+                    _set_job_state(job, status=_ToolJobStatus.ERROR, error=str(exc))
 
         thread = threading.Thread(target=run_pack, daemon=True)
         thread.start()
@@ -637,9 +794,11 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
     @router.get("/api/tools/codexpack/pack-v1/{job_id}")
     async def get_codexpack_pack_status(job_id: str) -> Dict[str, Any]:
-        if job_id not in _codexpack_pack_jobs:
-            raise HTTPException(status_code=404, detail="Job not found")
-        return _codexpack_pack_jobs[job_id]
+        with _job_state_lock:
+            job = _codexpack_pack_jobs.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            return job.to_payload()
 
     @router.get("/api/tools/browse-files")
     async def browse_files(path: str = "", extensions: str = "") -> Dict[str, Any]:

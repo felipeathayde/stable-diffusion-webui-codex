@@ -825,15 +825,7 @@ def _load_huggingface_component(
             selected=te_dtype,
             hint=_safetensors_primary_dtype_hint(weights_path),
         )
-        from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
-
-        te_load_device = te_device
-        if smart_offload_enabled() and te_device.type != "cpu":
-            # Avoid loading TE weights onto GPU only to immediately offload them.
-            te_load_device = torch.device("cpu")
-            LOGGER.info("[loader] Smart offload: loading %s on CPU (initial)", component_name)
-
-        to_args = dict(device=te_load_device, dtype=te_dtype)
+        to_args = dict(device=te_device, dtype=te_dtype)
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
         from apps.backend.infra.config.sdxl_te_qkv_impl import SdxlTeQkvImpl, read_sdxl_te_qkv_impl
@@ -1069,8 +1061,6 @@ def _load_huggingface_component(
             selected=storage_dtype,
             hint=_safetensors_primary_dtype_hint(weights_path),
         )
-        from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
-
         state_dict_dtype = detect_state_dict_dtype(state_dict)
         if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "gguf"]:
             LOGGER.info("Using Detected T5 Data Type: %s", state_dict_dtype)
@@ -1082,9 +1072,6 @@ def _load_huggingface_component(
             LOGGER.info("Using Default T5 Data Type: %s", storage_dtype)
 
         te_load_device = te_device
-        if smart_offload_enabled() and te_device.type != "cpu" and storage_dtype != "gguf":
-            te_load_device = torch.device("cpu")
-            LOGGER.info("[loader] Smart offload: loading %s on CPU (initial)", component_name)
 
         from transformers import modeling_utils
 
@@ -1552,23 +1539,6 @@ def codex_loader(
             component_states.pop(component_name, None)
         if component_obj is not None:
             codex_components[component_name] = component_obj
-            # Smart offload: ensure text encoders end up on CPU after load to free VRAM for the denoiser.
-            # When smart offload is enabled we already attempt to *load* them on CPU to avoid a redundant GPU→CPU hop.
-            from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
-
-            if smart_offload_enabled() and component_name in ("text_encoder", "text_encoder_2"):
-                try:
-                    already_cpu = False
-                    if isinstance(component_obj, torch.nn.Module):
-                        params = list(component_obj.parameters())
-                        if params:
-                            already_cpu = params[0].device.type == "cpu"
-                    if not already_cpu:
-                        component_obj.to("cpu")
-                        memory_management.manager.soft_empty_cache(force=True)
-                        LOGGER.info("[loader] Smart offload: moved %s to CPU after load", component_name)
-                except Exception as e:
-                    LOGGER.warning("[loader] Smart offload: failed to move %s to CPU: %s", component_name, e)
 
     yaml_prediction = None
     config_filename = os.path.splitext(sd_path)[0] + ".yaml"

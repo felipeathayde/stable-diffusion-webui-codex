@@ -1052,3 +1052,19 @@ Correct command:
 ```bash
 rg -n 'hires sentinel \+ consecutive-generation inference tensor remediation|hires-scheduler-lora-inference-fix|LoRA apply now clears stale patch state|sampling_execute now gates LoRA apply/reset|Added `test_lora_loader_tensor_mode.py`|Added task log for hires sentinel' .sangoi/CHANGELOG.md .sangoi/plans/2026-02-09-hires-scheduler-lora-inference-fix.md apps/backend/patchers/AGENTS.md apps/backend/runtime/pipeline_stages/AGENTS.md .sangoi/dev/tests/backend/AGENTS.md .sangoi/plans/AGENTS.md .sangoi/task-logs/AGENTS.md .sangoi/task-logs/2026-02-09-hires-scheduler-lora-inference-fix.md
 ```
+
+### Opening a guessed stage filename that does not exist
+
+Wrong command:
+```bash
+sed -n '1,360p' apps/backend/runtime/pipeline_stages/sampling.py
+```
+
+Cause and fix:
+Guessed filename was stale (`sampling.py` was renamed/split). Confirm exact stage file names first, then open the real module.
+
+Correct command:
+```bash
+ls -1 apps/backend/runtime/pipeline_stages
+sed -n '1,360p' apps/backend/runtime/pipeline_stages/sampling_execute.py
+```

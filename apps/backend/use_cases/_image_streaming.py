@@ -126,45 +126,78 @@ def _decode_generation_output(
 
     import torch
 
+    from apps.backend.runtime.memory.smart_offload_invariants import (
+        enforce_smart_offload_post_decode_residency,
+    )
     from apps.backend.runtime.processing.conditioners import decode_latent_batch
     from apps.backend.runtime.processing.datatypes import GenerationResult
     from apps.backend.runtime.pipeline_stages.image_io import latents_to_pil
 
     decoded_images: Any | None = None
     latents: Any = None
+    metadata: dict[str, Any] = {}
+    metadata_error: RuntimeError | None = None
+    cache_hit = False
     if isinstance(output, GenerationResult):
         latents = output.samples
         decoded_images = output.decoded
+        if not isinstance(output.metadata, dict):
+            metadata_error = RuntimeError(
+                f"{task_label} pipeline returned metadata as {type(output.metadata).__name__}; expected dict."
+            )
+        else:
+            metadata = output.metadata
     else:
         latents = output
         decoded_images = None
 
-    decode_start = time.perf_counter()
-    if decoded_images is not None:
-        if isinstance(decoded_images, torch.Tensor):
-            images = latents_to_pil(decoded_images)
-        elif isinstance(decoded_images, list):
-            try:
-                from PIL import Image as _PILImage
-
-                if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
-                    raise TypeError("decoded images are not PIL.Image.Image")
-            except Exception as exc:
-                raise RuntimeError(
-                    f"{task_label} pipeline returned decoded images, but they are not a PIL image list"
-                ) from exc
-            images = decoded_images
-        else:
-            raise RuntimeError(
-                f"{task_label} pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
-            )
+    raw_cache_hit = metadata.get("conditioning_cache_hit", False)
+    if not isinstance(raw_cache_hit, bool):
+        metadata_error = RuntimeError(
+            f"{task_label} pipeline metadata['conditioning_cache_hit'] must be bool; got {type(raw_cache_hit).__name__}."
+        )
     else:
-        if not isinstance(latents, torch.Tensor):
-            raise RuntimeError(
-                f"{task_label} pipeline returned {type(latents).__name__}; expected torch.Tensor (latents)"
-            )
-        decoded = decode_latent_batch(engine, latents)
-        images = latents_to_pil(decoded)
+        cache_hit = raw_cache_hit
+
+    decode_start = time.perf_counter()
+    decode_succeeded = False
+    try:
+        if metadata_error is None:
+            if decoded_images is not None:
+                if isinstance(decoded_images, torch.Tensor):
+                    images = latents_to_pil(decoded_images)
+                elif isinstance(decoded_images, list):
+                    try:
+                        from PIL import Image as _PILImage
+
+                        if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
+                            raise TypeError("decoded images are not PIL.Image.Image")
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"{task_label} pipeline returned decoded images, but they are not a PIL image list"
+                        ) from exc
+                    images = decoded_images
+                else:
+                    raise RuntimeError(
+                        f"{task_label} pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
+                    )
+            else:
+                if not isinstance(latents, torch.Tensor):
+                    raise RuntimeError(
+                        f"{task_label} pipeline returned {type(latents).__name__}; expected torch.Tensor (latents)"
+                    )
+                decoded = decode_latent_batch(engine, latents)
+                images = latents_to_pil(decoded)
+            decode_succeeded = True
+    finally:
+        enforce_smart_offload_post_decode_residency(
+            engine,
+            stage=f"{task_label}.decode",
+            keep_denoiser_warm=cache_hit and decode_succeeded,
+        )
+
+    if metadata_error is not None:
+        raise metadata_error
 
     decode_end = time.perf_counter()
     decode_ms = max(0.0, (decode_end - decode_start) * 1000.0)

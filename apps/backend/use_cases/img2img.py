@@ -10,7 +10,7 @@ Purpose: Image-to-image use case orchestration and canonical streaming wrapper (
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass.
 The hires pass init is prepared via the global hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
-When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
+When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
@@ -38,6 +38,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime.memory.smart_offload_invariants import (
     enforce_smart_offload_pre_conditioning_residency,
+    enforce_smart_offload_text_encoders_off,
 )
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
@@ -150,19 +151,23 @@ def _compute_conditioning_payload(
 
     uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
 
-    clip_patcher = None
-    clip_loaded_here = False
+    text_encoder_patchers: list[tuple[str, object]] = []
     needs_conditioning = cond is None or (uncond is None and not uses_distilled_cfg)
     if needs_conditioning and smart_offload_enabled():
-        try:
-            clip_patcher = sd_model.codex_objects.text_encoders["clip"].patcher
-        except Exception:
-            clip_patcher = None
-        if clip_patcher is not None:
-            clip_loaded_here = not memory_management.manager.is_model_loaded(clip_patcher)
-            if clip_loaded_here:
-                pipeline_log("[img2img.conditioning] smart_offload: loading CLIP patcher for stage")
-                memory_management.manager.load_model(clip_patcher)
+        codex_objects = getattr(sd_model, "codex_objects", None)
+        text_encoders = getattr(codex_objects, "text_encoders", None) if codex_objects is not None else None
+        if isinstance(text_encoders, dict):
+            for name, entry in text_encoders.items():
+                if entry is None:
+                    continue
+                patcher = getattr(entry, "patcher", None)
+                patcher_obj = patcher if patcher is not None else entry
+                text_encoder_patchers.append((str(name), patcher_obj))
+            for name, patcher in text_encoder_patchers:
+                if memory_management.manager.is_model_loaded(patcher):
+                    continue
+                pipeline_log(f"[img2img.conditioning] smart_offload: loading text encoder '{name}' patcher for stage")
+                memory_management.manager.load_model(patcher)
 
     try:
         if cond is None:
@@ -183,9 +188,10 @@ def _compute_conditioning_payload(
             else:
                 uncond = sd_model.get_learned_conditioning(negatives)
     finally:
-        if clip_patcher is not None and clip_loaded_here:
-            pipeline_log("[img2img.conditioning] smart_offload: unloading CLIP patcher after stage")
-            memory_management.manager.unload_model(clip_patcher)
+        if smart_offload_enabled():
+            if text_encoder_patchers:
+                pipeline_log("[img2img.conditioning] smart_offload: unloading text encoders after stage")
+            enforce_smart_offload_text_encoders_off(sd_model, stage="img2img.conditioning(post)")
 
     return ConditioningPayload(conditioning=cond, unconditional=uncond)
 

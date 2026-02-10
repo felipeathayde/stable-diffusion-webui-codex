@@ -15,6 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
   no longer needed (e.g., Smart Cache hit provides embeddings without TE execution).
 - `enforce_smart_offload_pre_sampling_residency` (function): Ensures text encoders are not resident on the accelerator at
   sampling start, and optionally enforces VAE residency rules based on live-preview needs.
+- `enforce_smart_offload_post_decode_residency` (function): Enforces post-decode residency policy (VAE off accelerator; denoiser
+  prewarmed on Smart Cache hit, unloaded on miss).
 """
 
 from __future__ import annotations
@@ -169,8 +171,64 @@ def enforce_smart_offload_pre_sampling_residency(
             memory_management.manager.unload_model(vae_patcher)
 
 
+def enforce_smart_offload_post_decode_residency(
+    sd_model: Any,
+    *,
+    stage: str,
+    keep_denoiser_warm: bool,
+) -> None:
+    """Enforce post-decode residency policy for VAE/denoiser.
+
+    Policy:
+    - VAE must not remain resident on accelerator after decode.
+    - Denoiser stays/warms on accelerator only when `keep_denoiser_warm` is True
+      (Smart Cache hit path with unchanged prompts).
+    - Otherwise denoiser is unloaded after decode.
+    """
+
+    if not smart_offload_enabled():
+        return
+
+    codex_objects = getattr(sd_model, "codex_objects", None)
+    if codex_objects is None:
+        return
+
+    vae_patcher = _resolve_vae_patcher(sd_model)
+    if vae_patcher is not None and _is_model_loaded_on_accelerator(vae_patcher):
+        _LOGGER.warning(
+            "[smart-offload] stage=%s: VAE remained resident after decode; unloading.",
+            stage,
+        )
+        memory_management.manager.unload_model(vae_patcher)
+
+    denoiser = getattr(codex_objects, "denoiser", None)
+    if denoiser is None:
+        return
+
+    denoiser_target = _as_device(getattr(denoiser, "load_device", None))
+    if denoiser_target is not None and denoiser_target.type == "cpu":
+        return
+
+    if keep_denoiser_warm:
+        if not _is_model_loaded_on_accelerator(denoiser):
+            _LOGGER.debug(
+                "[smart-offload] stage=%s: Smart Cache hit; prewarming denoiser on accelerator.",
+                stage,
+            )
+            memory_management.manager.load_model(denoiser)
+        return
+
+    if _is_model_loaded_on_accelerator(denoiser):
+        _LOGGER.debug(
+            "[smart-offload] stage=%s: Smart Cache miss; unloading denoiser after decode.",
+            stage,
+        )
+        memory_management.manager.unload_model(denoiser)
+
+
 __all__ = [
     "enforce_smart_offload_pre_conditioning_residency",
     "enforce_smart_offload_text_encoders_off",
     "enforce_smart_offload_pre_sampling_residency",
+    "enforce_smart_offload_post_decode_residency",
 ]

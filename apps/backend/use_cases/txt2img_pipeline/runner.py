@@ -10,7 +10,7 @@ Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional
 Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata.
 The hires stage delegates init preparation and `denoise` semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
-When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
+When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PrepareState` (dataclass): Prepared per-run state (resolved engine + plans + prompt context) used across stages.
@@ -151,7 +151,7 @@ class Txt2ImgPipelineRunner:
         if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
             return None, None
 
-        enforce_smart_offload_pre_conditioning_residency(sd_model, stage="txt2img.conditioning")
+        setattr(processing, "_codex_conditioning_cache_hit", False)
 
         prompts = list(context.prompts or [getattr(processing, "prompt", "")])
         negative_prompts = list(context.negative_prompts or [getattr(processing, "negative_prompt", "")])
@@ -187,22 +187,29 @@ class Txt2ImgPipelineRunner:
             cached = self._conditioning_cache.get(key)
             if cached is not None:
                 record_smart_cache_hit("sdxl.runner.conditioning")
+                setattr(processing, "_codex_conditioning_cache_hit", True)
                 enforce_smart_offload_text_encoders_off(sd_model, stage="txt2img.conditioning(cache-hit)")
                 return cached
             record_smart_cache_miss("sdxl.runner.conditioning")
 
-        clip_patcher = None
-        clip_loaded_here = False
+        enforce_smart_offload_pre_conditioning_residency(sd_model, stage="txt2img.conditioning")
+
+        text_encoder_patchers: list[tuple[str, object]] = []
         if smart_offload_enabled():
-            try:
-                clip_patcher = sd_model.codex_objects.text_encoders["clip"].patcher
-            except Exception:
-                clip_patcher = None
-            if clip_patcher is not None:
-                clip_loaded_here = not memory_management.manager.is_model_loaded(clip_patcher)
-                if clip_loaded_here:
-                    pipeline_log("[conditioning] smart_offload: loading CLIP patcher for stage")
-                    memory_management.manager.load_model(clip_patcher)
+            codex_objects = getattr(sd_model, "codex_objects", None)
+            text_encoders = getattr(codex_objects, "text_encoders", None) if codex_objects is not None else None
+            if isinstance(text_encoders, dict):
+                for name, entry in text_encoders.items():
+                    if entry is None:
+                        continue
+                    patcher = getattr(entry, "patcher", None)
+                    patcher_obj = patcher if patcher is not None else entry
+                    text_encoder_patchers.append((str(name), patcher_obj))
+                for name, patcher in text_encoder_patchers:
+                    if memory_management.manager.is_model_loaded(patcher):
+                        continue
+                    pipeline_log(f"[conditioning] smart_offload: loading text encoder '{name}' patcher for stage")
+                    memory_management.manager.load_model(patcher)
 
         try:
             # Distilled CFG models (Flux) don't use uncond - skip generating it entirely
@@ -236,9 +243,10 @@ class Txt2ImgPipelineRunner:
                             "Check CLIP encoders or prompt handling before sampling."
                         )
         finally:
-            if clip_patcher is not None and clip_loaded_here:
-                pipeline_log("[conditioning] smart_offload: unloading CLIP patcher after stage")
-                memory_management.manager.unload_model(clip_patcher)
+            if smart_offload_enabled():
+                if text_encoder_patchers:
+                    pipeline_log("[conditioning] smart_offload: unloading text encoders after stage")
+                enforce_smart_offload_text_encoders_off(sd_model, stage="txt2img.conditioning(post)")
 
         pair = (cond, uncond)
         if cache_enabled and key is not None:
@@ -428,7 +436,11 @@ class Txt2ImgPipelineRunner:
         except Exception:
             pass  # Timeline should never break generation
 
-        return GenerationResult(samples=final_samples, decoded=None)
+        return GenerationResult(
+            samples=final_samples,
+            decoded=None,
+            metadata={"conditioning_cache_hit": bool(getattr(processing, "_codex_conditioning_cache_hit", False))},
+        )
 
     # ------------------------------------------------------------------ stages
     @pipeline_trace

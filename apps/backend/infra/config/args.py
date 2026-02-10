@@ -863,8 +863,8 @@ def initialize(
     """Parse runtime arguments applying CLI/env/settings precedence.
 
     Returns the parsed namespace and freshly built RuntimeMemoryConfig.
-    When ``strict`` is True, raises RuntimeError if required device flags
-    are missing after applying overrides.
+    When ``strict`` is True, raises RuntimeError for unknown CLI arguments and
+    if required device flags are missing after applying overrides.
     """
     global _args, _memory_config, _UNKNOWN
 
@@ -878,6 +878,12 @@ def initialize(
             "Deprecated precision flag(s) detected: "
             + ", ".join(deprecated)
             + ". Use '--core-in-*' variants instead."
+        )
+    if strict and unknown:
+        raise RuntimeError(
+            "Unknown CLI argument(s): "
+            + ", ".join(unknown)
+            + ". Remove unsupported flags from the runtime bootstrap command."
         )
 
     source_env = env if env is not None else os.environ

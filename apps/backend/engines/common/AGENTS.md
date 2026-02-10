@@ -1,6 +1,6 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
-Last Review: 2026-02-01
+Last Review: 2026-02-10
 Status: Active
 
 ## Purpose
@@ -39,3 +39,4 @@ Status: Active
   - Conditioning cache helpers (`_get_cached_cond/_set_cached_cond`) accept per-call enable overrides and store arbitrary payloads (tensors/dicts/tuples), with hit/miss metrics.
   - Default `set_clip_skip` is a no-op for engines without `"clip"` in `required_text_encoders` (engines with CLIP must still implement clip-skip; fail loud otherwise).
 - 2026-02-05: Added Anima-specific `tenc_path` invariant in `base.py`: Anima accepts exactly one external text encoder path and now fails loud when `tenc_path` is passed as `list[str]`.
+- 2026-02-10: Batch 4C tightened `base.py` typing/fail-loud surfaces: `LoadOptions` + `EngineStatus` are explicit, `status()` now rejects non-string/blank `engine_id` and non-bool `loaded`, and normalized `TextEncoderOverrideConfig` is persisted in load options.

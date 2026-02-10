@@ -1,6 +1,6 @@
 # apps/backend/runtime/processing Overview
 Date: 2025-10-28
-Last Review: 2026-02-08
+Last Review: 2026-02-10
 Status: Active
 
 ## Purpose
@@ -15,3 +15,4 @@ Status: Active
 - 2026-02-03: Processing models use `CodexHiresConfig` for hires configuration (renamed).
 - 2026-02-08: `datatypes.py` now includes `ErSdeOptions` and `SamplingPlan.er_sde` to carry normalized ER-SDE runtime options through pipeline stages.
 - 2026-02-08: `processing.models.RefinerConfig` now uses `swap_at_step` (serialized as `switch_at_step`) to represent swap-pointer semantics; `CodexHiresConfig.update_from_payload` reads nested refiner pointers from `refiner.switch_at_step`.
+- 2026-02-10: Batch 4C tightened `datatypes.py` typing contracts with a closed init-image mode selector (`Literal["pixel","latent"]`), closed prompt controls (`_PromptControls`), and explicit `dict[str, object]` / `Mapping[str, object]` metadata surfaces for generation/video payload dataclasses.

@@ -2,7 +2,7 @@
 
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-09
+Last Review: 2026-02-10
 Status: Active
 
 ## Purpose
@@ -37,6 +37,7 @@ Status: Active
 - 2026-02-01: `wan22_5b` is now GGUF-only (Diffusers directory-loading branch removed). WAN22 GGUF scheduler is Diffusers-free in the runtime; WAN22 VAE IO and `vid2vid.method=\"wan_animate\"` remain Diffusers-based until their dedicated port plans are executed.
 - 2026-02-03: `wan22_14b` is no longer registered by default (kept unreachable) until it is ported to the canonical Option A use-cases.
 - 2026-02-09: WAN22 prompt conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
+- 2026-02-10: `diffusers_loader.py` no longer swallows attention/accelerator hook or logger emit exceptions; hook import/apply and log emit failures now surface as contextual `RuntimeError`.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

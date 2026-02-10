@@ -13,6 +13,8 @@ External-asset-first families (e.g., Z-Image and Anima) treat `vae_path` as sele
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
+- `LoadOptions` (dataclass): Typed engine load-option contract with normalized selectors and passthrough extras.
+- `EngineStatus` (TypedDict): Explicit status mapping returned by `CodexDiffusionEngine.status()`.
 - `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
 - `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration, canonical task wrappers
   (e.g. `txt2img` delegates to `apps/backend/use_cases/txt2img.py`), and runtime helpers including explicit asset-source selection
@@ -24,8 +26,8 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, TypedDict, cast
 
 import safetensors.torch as sf
 import torch
@@ -47,6 +49,133 @@ from apps.backend.runtime.models.state_dict import safe_load_state_dict
 
 
 logger = logging.getLogger("backend.engines.common.base")
+
+
+class EngineStatus(TypedDict, total=False):
+    """Typed status mapping exposed by Codex diffusion engines."""
+
+    engine_id: str
+    loaded: bool
+    model_ref: str
+    bundle_source: str
+    families: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class LoadOptions:
+    """Normalized engine load options with explicit typed fields."""
+
+    tenc_source: Literal["built_in", "external"] = "built_in"
+    tenc_path: str | list[str] | None = None
+    text_encoder_override: TextEncoderOverrideConfig | None = None
+    vae_path: str | None = None
+    vae_source: Literal["built_in", "external"] | None = None
+    core_streaming_enabled: bool | None = None
+    extras: dict[str, object] = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(cls, raw_options: Mapping[str, Any]) -> "LoadOptions":
+        working: dict[str, object] = dict(raw_options)
+
+        tenc_source_raw = working.pop("tenc_source", "built_in")
+        if not isinstance(tenc_source_raw, str) or not tenc_source_raw.strip():
+            raise TypeError("tenc_source must be a non-empty string when provided.")
+        tenc_source = tenc_source_raw.strip().lower()
+        if tenc_source not in {"built_in", "external"}:
+            raise RuntimeError("tenc_source must be 'built_in' or 'external' when provided.")
+
+        tenc_path_raw = working.pop("tenc_path", None)
+        tenc_path: str | list[str] | None = None
+        if isinstance(tenc_path_raw, str):
+            tenc_path = tenc_path_raw.strip() or None
+        elif isinstance(tenc_path_raw, list):
+            cleaned: list[str] = []
+            for entry in tenc_path_raw:
+                if not isinstance(entry, str):
+                    raise TypeError("tenc_path must be a string or array of strings when provided.")
+                item = entry.strip()
+                if item:
+                    cleaned.append(item)
+            tenc_path = cleaned or None
+        elif tenc_path_raw is not None:
+            raise TypeError("tenc_path must be a string or array of strings when provided.")
+
+        text_encoder_override_raw = working.pop("text_encoder_override", None)
+        text_encoder_override: TextEncoderOverrideConfig | None
+        if text_encoder_override_raw is None:
+            text_encoder_override = None
+        elif isinstance(text_encoder_override_raw, TextEncoderOverrideConfig):
+            text_encoder_override = text_encoder_override_raw
+        else:
+            raise TypeError("text_encoder_override must be TextEncoderOverrideConfig after normalization.")
+
+        vae_path_raw = working.pop("vae_path", None)
+        vae_path: str | None
+        if isinstance(vae_path_raw, str):
+            vae_path = vae_path_raw.strip() or None
+        elif vae_path_raw is not None:
+            raise TypeError("vae_path must be a non-empty string when provided.")
+        else:
+            vae_path = None
+
+        vae_source_raw = working.pop("vae_source", None)
+        vae_source: Literal["built_in", "external"] | None = None
+        if isinstance(vae_source_raw, str) and vae_source_raw.strip():
+            normalized_vae_source = vae_source_raw.strip().lower()
+            if normalized_vae_source not in {"built_in", "external"}:
+                raise RuntimeError("vae_source must be 'built_in' or 'external' when provided.")
+            vae_source = normalized_vae_source
+        elif vae_source_raw is not None and not isinstance(vae_source_raw, str):
+            raise TypeError("vae_source must be a non-empty string when provided.")
+
+        explicit_streaming: bool | None = None
+        legacy_streaming: bool | None = None
+        if "core_streaming_enabled" in working:
+            explicit_streaming_raw = working.pop("core_streaming_enabled")
+            if not isinstance(explicit_streaming_raw, bool):
+                raise TypeError("core_streaming_enabled must be a boolean when provided.")
+            explicit_streaming = explicit_streaming_raw
+        if "codex_core_streaming" in working:
+            legacy_streaming_raw = working.pop("codex_core_streaming")
+            if not isinstance(legacy_streaming_raw, bool):
+                raise TypeError("codex_core_streaming must be a boolean when provided.")
+            legacy_streaming = legacy_streaming_raw
+        if (
+            explicit_streaming is not None
+            and legacy_streaming is not None
+            and explicit_streaming != legacy_streaming
+        ):
+            raise RuntimeError(
+                "Conflicting streaming flags: core_streaming_enabled and codex_core_streaming must match."
+            )
+        core_streaming_enabled = (
+            explicit_streaming if explicit_streaming is not None else legacy_streaming
+        )
+
+        return cls(
+            tenc_source=tenc_source,
+            tenc_path=tenc_path,
+            text_encoder_override=text_encoder_override,
+            vae_path=vae_path,
+            vae_source=vae_source,
+            core_streaming_enabled=core_streaming_enabled,
+            extras=working,
+        )
+
+    def to_component_options(self) -> dict[str, object]:
+        options: dict[str, object] = dict(self.extras)
+        options["tenc_source"] = self.tenc_source
+        if self.tenc_path is not None:
+            options["tenc_path"] = self.tenc_path
+        if self.text_encoder_override is not None:
+            options["text_encoder_override"] = self.text_encoder_override
+        if self.vae_path is not None:
+            options["vae_path"] = self.vae_path
+        if self.vae_source is not None:
+            options["vae_source"] = self.vae_source
+        if self.core_streaming_enabled is not None:
+            options["core_streaming_enabled"] = self.core_streaming_enabled
+        return options
 
 
 @dataclass(slots=True)
@@ -209,17 +338,17 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     def __init__(self, *, logger: logging.Logger | None = None) -> None:  # noqa: D401
         super().__init__()
         self._logger = logger or logging.getLogger(self.__class__.__name__)
-        self.model_config: Any | None = None
+        self.model_config: object | None = None
         self.is_inpaint: bool = False
         self.current_lora_hash = "[]"
         self._component_tracker = _ComponentTracker(logger=self._logger)
         self._model_families: set[str] = set()
         self._tiling_enabled = False
         self._use_distilled_cfg_scale = False
-        self._component_source: Mapping[str, Any] | None = None
+        self._component_source: Mapping[str, object] | None = None
         self._current_bundle: DiffusionModelBundle | None = None
         self._current_model_ref: str | None = None
-        self._load_options: dict[str, Any] = {}
+        self._load_options: LoadOptions = LoadOptions()
         # Conditioning cache: keyed by a tuple -> arbitrary cache payload (typically tensors stored on CPU).
         # Subclasses can use this for caching conditioning outputs (CLIP/T5/Qwen3/etc).
         # Keep payload tensors on CPU to avoid pinning VRAM between jobs.
@@ -461,7 +590,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._current_bundle = bundle
         self._current_model_ref = model_ref
         self._component_source = bundle.components
-        self._load_options = raw_options
+        load_options_payload: dict[str, Any] = dict(raw_options)
+        if te_override_cfg is not None:
+            load_options_payload["text_encoder_override"] = te_override_cfg
+        self._load_options = LoadOptions.from_mapping(load_options_payload)
 
         self.model_config = bundle.estimated_config
         try:
@@ -469,11 +601,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("Failed to determine inpaint capability.") from exc
 
-        # Map UI setting name to engine option name for streaming
-        if "codex_core_streaming" in self._load_options:
-            self._load_options["core_streaming_enabled"] = bool(self._load_options.pop("codex_core_streaming"))
-
-        components = self._build_components(bundle, options=self._load_options)
+        components = self._build_components(bundle, options=self._load_options.to_component_options())
 
         # For GGUF checkpoints, text encoders are never embedded; fail fast with a clear message.
         if is_core_only_gguf:
@@ -497,11 +625,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         #   engine-specific assembly.
         # - For full checkpoints, engines may treat `vae_path` as an optional state-dict
         #   override (SD/SDXL/Flux/etc). ZImage always treats it as external selection.
-        raw_vae_path = self._load_options.get("vae_path")
+        raw_vae_path = self._load_options.vae_path
         vae_path = raw_vae_path.strip() if isinstance(raw_vae_path, str) and raw_vae_path.strip() else None
 
-        raw_vae_source = self._load_options.get("vae_source")
-        vae_source = raw_vae_source.strip().lower() if isinstance(raw_vae_source, str) and raw_vae_source.strip() else None
+        vae_source = self._load_options.vae_source
         if vae_source is None:
             vae_source = "external" if vae_path else "built_in"
         if vae_source not in {"built_in", "external"}:
@@ -607,7 +734,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             self._component_source = None
             self._current_bundle = None
             self._current_model_ref = None
-            self._load_options = {}
+            self._load_options = LoadOptions()
             self.mark_unloaded()
 
     def _unload_bound_models_from_memory_manager(self) -> None:
@@ -665,7 +792,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self,
         bundle: DiffusionModelBundle,
         *,
-        options: Mapping[str, Any],
+        options: Mapping[str, object],
     ) -> CodexObjects:
         """Construct CodexObjects for the provided bundle."""
 
@@ -677,15 +804,27 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     def model_ref(self) -> Optional[str]:
         return self._current_model_ref
 
-    def status(self) -> Mapping[str, Any]:  # type: ignore[override]
+    def status(self) -> EngineStatus:  # type: ignore[override]
         data = dict(super().status())
+        raw_engine_id = data.get("engine_id", self.engine_id)
+        if not isinstance(raw_engine_id, str):
+            raise RuntimeError("Base engine status must provide 'engine_id' as a string.")
+        engine_id = raw_engine_id.strip()
+        if not engine_id:
+            raise RuntimeError("Base engine status must provide a non-empty 'engine_id'.")
+        data["engine_id"] = engine_id
+
+        raw_loaded = data.get("loaded", self._is_loaded)
+        if not isinstance(raw_loaded, bool):
+            raise RuntimeError("Base engine status must provide 'loaded' as a boolean.")
+        data["loaded"] = raw_loaded
         if self._current_model_ref is not None:
             data["model_ref"] = self._current_model_ref
         if self._current_bundle is not None:
             data["bundle_source"] = self._current_bundle.source
         if self._model_families:
             data["families"] = tuple(sorted(self._model_families))
-        return data
+        return cast(EngineStatus, data)
 
     # ------------------------------------------------------------------ Model families
     def register_model_family(self, family: str) -> None:

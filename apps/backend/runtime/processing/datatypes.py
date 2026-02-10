@@ -26,9 +26,27 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, TypedDict
 
 from apps.backend.core.rng import NoiseSettings
+
+
+_InitImageMode = Literal["pixel", "latent"]
+
+
+class _PromptControls(TypedDict, total=False):
+    """Normalized prompt-control keys supported by extra-net parsing."""
+
+    clip_skip: int
+    sampler: str
+    scheduler: str
+    width: int
+    height: int
+    cfg: float
+    steps: int
+    seed: int
+    denoise: float
+    tiling: bool
 
 
 @dataclass(slots=True)
@@ -37,18 +55,18 @@ class ExtraNetworkDescriptor:
 
     path: str
     weight: float
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class PromptContext:
     """Normalized prompt state after preprocessing."""
 
-    prompts: List[str]
-    negative_prompts: List[str]
+    prompts: list[str]
+    negative_prompts: list[str]
     loras: Sequence[Any]
-    controls: Dict[str, Any]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    controls: _PromptControls
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -57,7 +75,7 @@ class ConditioningPayload:
 
     conditioning: Any
     unconditional: Any
-    extras: Dict[str, Any] = field(default_factory=dict)
+    extras: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -78,8 +96,8 @@ class SamplingPlan:
     scheduler_name: str | None
     steps: int
     guidance_scale: float
-    seeds: List[int]
-    subseeds: List[int]
+    seeds: list[int]
+    subseeds: list[int]
     subseed_strength: float
     noise_settings: NoiseSettings
     er_sde: ErSdeOptions | None = None
@@ -107,7 +125,7 @@ class InitImageBundle:
     tensor: Any
     latents: Any | None
     mask: Any | None = None
-    mode: str = "pixel"  # or "latent"
+    mode: _InitImageMode = "pixel"
 
 
 @dataclass(slots=True)
@@ -115,7 +133,7 @@ class AppliedExtra:
     """Record of applied extra network or post-processing effect."""
 
     name: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -124,8 +142,8 @@ class GenerationResult:
 
     samples: Any
     decoded: Any | None
-    applied_extras: List[AppliedExtra] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    applied_extras: list[AppliedExtra] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -140,7 +158,7 @@ class VideoPlan:
     width: int
     height: int
     guidance_scale: float | None
-    extras: Dict[str, Any] = field(default_factory=dict)
+    extras: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -148,5 +166,5 @@ class VideoResult:
     """Result bundle for video workflows."""
 
     frames: Sequence[Any]
-    metadata: Dict[str, Any]
-    video_meta: Dict[str, Any] | None = None
+    metadata: dict[str, object]
+    video_meta: dict[str, object] | None = None

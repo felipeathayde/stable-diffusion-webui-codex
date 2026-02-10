@@ -213,13 +213,23 @@ def load_wan_diffusers_pipeline(
 
     try:
         from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as apply_attn  # type: ignore
-        from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as apply_accel  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f"Failed to import WAN diffusers attention hook: {exc}") from exc
 
+    try:
         apply_attn(pipe, logger=logger)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to apply WAN diffusers attention hook: {exc}") from exc
+
+    try:
+        from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as apply_accel  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f"Failed to import WAN diffusers accelerator hook: {exc}") from exc
+
+    try:
         apply_accel(pipe, logger=logger)
-    except Exception:
-        # Best effort; do not block execution on optional accelerator hooks.
-        pass
+    except Exception as exc:
+        raise RuntimeError(f"Failed to apply WAN diffusers accelerator hook: {exc}") from exc
 
     if logger is not None:
         try:
@@ -230,8 +240,8 @@ def load_wan_diffusers_pipeline(
                 device,
                 str(torch_dtype).replace("torch.", ""),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f"Failed to emit WAN diffusers load log: {exc}") from exc
 
     return pipe
 

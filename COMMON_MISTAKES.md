@@ -1084,3 +1084,19 @@ Correct command:
 ls -1 apps/backend/runtime/pipeline_stages
 sed -n '1,360p' apps/backend/runtime/pipeline_stages/sampling_execute.py
 ```
+
+### Using backticks in a double-quoted `rg` pattern (Batch 4B docs sweep)
+
+Wrong command:
+```bash
+rg -n "2026-02-10: `config/args.py` strict runtime path|2026-02-10: `diffusers_loader.py` no longer swallows|2026-02-10: Added Batch 4B regressions|Updated the open-items scrutiny execution plan|Added Batch 4B scrutiny log" apps/backend/infra/AGENTS.md apps/backend/engines/wan22/AGENTS.md .sangoi/dev/tests/backend/AGENTS.md .sangoi/plans/AGENTS.md .sangoi/task-logs/AGENTS.md
+```
+
+Cause and fix:
+Backticks inside double quotes were interpreted by bash as command substitution, producing `/bin/bash: ... command not found`.
+Use a pattern without backticks or wrap the whole pattern in single quotes.
+
+Correct command:
+```bash
+rg -n 'strict runtime path now fails loud on unknown CLI arguments|no longer swallows attention/accelerator hook|Added Batch 4B regressions|Updated the open-items scrutiny execution plan|Added Batch 4B scrutiny log' apps/backend/infra/AGENTS.md apps/backend/engines/wan22/AGENTS.md .sangoi/dev/tests/backend/AGENTS.md .sangoi/plans/AGENTS.md .sangoi/task-logs/AGENTS.md
+```

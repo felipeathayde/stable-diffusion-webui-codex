@@ -1100,3 +1100,50 @@ Correct command:
 ```bash
 rg -n 'strict runtime path now fails loud on unknown CLI arguments|no longer swallows attention/accelerator hook|Added Batch 4B regressions|Updated the open-items scrutiny execution plan|Added Batch 4B scrutiny log' apps/backend/infra/AGENTS.md apps/backend/engines/wan22/AGENTS.md .sangoi/dev/tests/backend/AGENTS.md .sangoi/plans/AGENTS.md .sangoi/task-logs/AGENTS.md
 ```
+
+### Reading a non-existent `.sangoi/AGENTS.md` path directly
+
+Wrong command:
+```bash
+sed -n '1,260p' .sangoi/AGENTS.md
+```
+
+Cause and fix:
+Assumed a top-level `.sangoi/AGENTS.md` exists. In this repo, `.sangoi` folder guidance is split across scoped AGENTS files (e.g., `.sangoi/plans/AGENTS.md`, `.sangoi/task-logs/AGENTS.md`).
+
+Correct command:
+```bash
+find .sangoi -name AGENTS.md -maxdepth 3 -print
+sed -n '1,260p' .sangoi/task-logs/AGENTS.md
+```
+
+### Opening guessed plan filenames copied from task-log slugs
+
+Wrong command:
+```bash
+for f in .sangoi/plans/2026-02-10-backend-scrutiny-batch4c-typing-pass.md .sangoi/plans/2026-02-10-backend-scrutiny-batch4b-args-wan-fail-loud.md .sangoi/plans/2026-02-10-backend-scrutiny-batch4a-tools-state-typing.md; do echo "===== $f ====="; sed -n '1,220p' "$f"; echo; done
+```
+
+Cause and fix:
+Mixed task-log filenames with plan filenames and opened non-existent paths. Confirm actual plan slugs from `.sangoi/plans/` before reading.
+
+Correct command:
+```bash
+ls -1 .sangoi/plans | rg 'backend-scrutiny|batch4'
+sed -n '1,260p' .sangoi/plans/2026-02-10-backend-scrutiny-open-items-execution-plan.md
+```
+
+### Using backticks in a double-quoted `rg` pattern (COMMON_MISTAKES lookup)
+
+Wrong command:
+```bash
+rg -n "Reading a non-existent `.sangoi/AGENTS.md` path directly|Opening guessed plan filenames copied from task-log slugs" COMMON_MISTAKES.md
+```
+
+Cause and fix:
+Backticks inside double quotes triggered bash command substitution (`.sangoi/AGENTS.md` attempted as a command). Use single quotes for regex patterns that contain backticks.
+
+Correct command:
+```bash
+rg -n 'Reading a non-existent `\.sangoi/AGENTS.md` path directly|Opening guessed plan filenames copied from task-log slugs' COMMON_MISTAKES.md
+```

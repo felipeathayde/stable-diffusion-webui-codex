@@ -20,8 +20,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `MLP` (class): SwiGLU feed-forward block.
 - `TransformerBlock` (class): One transformer layer (attn + MLP + residual/norm plumbing).
 - `Qwen3Model` (class): Core Qwen3 transformer stack (embeddings + blocks + forward).
-- `Qwen3_4B` (class): Convenience wrapper for the 4B variant (loads config, provides encode-style forward usage).
-- `Qwen3_06B` (class): Convenience wrapper for the 0.6B variant (Anima text encoder; 1024-dim, 28 layers).
+- `Qwen3_4B` (class): Convenience wrapper for the 4B variant (loads config, provides encode-style forward usage, strict load contract in `load_sd`).
+- `Qwen3_06B` (class): Convenience wrapper for the 0.6B variant (Anima text encoder; 1024-dim, 28 layers, strict load contract in `load_sd`).
 - `remap_gguf_keys` (function): Remaps GGUF state dict keys to this implementation’s expected parameter names.
 """
 
@@ -467,7 +467,14 @@ class Qwen3_4B(nn.Module):
         Returns:
             Tuple of (missing_keys, unexpected_keys)
         """
-        return self.load_state_dict(state_dict, strict=False)
+        missing, unexpected = self.load_state_dict(state_dict, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                "Qwen3 strict load failed: "
+                f"missing={len(missing)} unexpected={len(unexpected)} "
+                f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+            )
+        return missing, unexpected
 
 class Qwen3_06B(nn.Module):
     """Qwen3-0.6B for text encoding (Anima).
@@ -540,7 +547,14 @@ class Qwen3_06B(nn.Module):
         return hidden_states, intermediate
 
     def load_sd(self, state_dict: dict) -> Tuple[List[str], List[str]]:
-        return self.load_state_dict(state_dict, strict=False)
+        missing, unexpected = self.load_state_dict(state_dict, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                "Qwen3-0.6B strict load failed: "
+                f"missing={len(missing)} unexpected={len(unexpected)} "
+                f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+            )
+        return missing, unexpected
 
 
 # =============================================================================

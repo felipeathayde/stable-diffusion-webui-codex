@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Component conversion helpers for the Codex model parser.
-Re-exports CLIP/T5 conversion helpers and UNet normalization utilities used by family-specific parser plans.
+Re-exports CLIP/T5 conversion helpers used by family-specific parser plans.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `convert_clip` (function): Generic CLIP converter (alias-aware; OpenCLIP key normalization).
@@ -18,7 +18,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `convert_t5_encoder` (function): T5 encoder converter (enforces stable layer-norm dtype).
 - `convert_umt5_encoder` (function): UMT5 encoder converter (T5-compatible normalization).
 - `convert_t5xxl_encoder` (function): T5-XXL encoder converter (T5-compatible normalization).
-- `normalize_label_embeddings` (function): UNet label-embedding key normalizer for nested sequential SDXL label-embedding keys (`label_emb.0.0.*`).
 """
 
 from .clip import (
@@ -29,7 +28,6 @@ from .clip import (
     convert_sdxl_clip_l,
 )
 from .t5 import convert_t5_encoder, convert_umt5_encoder, convert_t5xxl_encoder
-from .unet import normalize_label_embeddings
 
 __all__ = [
     "convert_clip",
@@ -40,5 +38,4 @@ __all__ = [
     "convert_t5_encoder",
     "convert_umt5_encoder",
     "convert_t5xxl_encoder",
-    "normalize_label_embeddings",
 ]

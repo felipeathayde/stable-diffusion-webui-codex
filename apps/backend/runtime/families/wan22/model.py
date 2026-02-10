@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanTransformer2DModel` (class): Full WAN transformer stack (embeddings/blocks/forward); used by `runtime/wan22/wan22.py`.
 - `remap_wan22_gguf_state_dict` (function): Remaps WAN22 transformer state-dict keys into this module’s expected parameter keys (Diffusers/WAN-export/Codex).
 - `infer_wan_architecture_from_state_dict` (function): Infers `WanArchitectureConfig` from a loaded state dict (dims/layers/heads).
-- `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with remapping).
+- `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with strict fail-loud key mismatch handling).
 """
 
 from __future__ import annotations
@@ -759,10 +759,12 @@ def load_wan_transformer_from_state_dict(
 
     model = WanTransformer2DModel(config)
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    if missing:
-        logger.warning("WAN state_dict missing %d keys (sample=%s)", len(missing), missing[:5])
-    if unexpected:
-        logger.debug("WAN state_dict has %d unexpected keys (sample=%s)", len(unexpected), unexpected[:5])
+    if missing or unexpected:
+        raise RuntimeError(
+            "WAN transformer strict load failed: "
+            f"missing={len(missing)} unexpected={len(unexpected)} "
+            f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+        )
 
     logger.info(
         "Loaded WanTransformer2DModel: %d blocks, d_model=%d",

@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-02-09
+Last Review: 2026-02-10
 Status: Active
 
 ## Scope
@@ -73,3 +73,5 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-02-08: Fixed Flux GGUF T5 loader unbound-local bug in `_load_huggingface_component`: `IntegratedT5` construction now always executes before `load_state_dict(...)` for both GGUF and non-GGUF paths.
 - 2026-02-09: `codex_loader(...)` now uses `torch.no_grad()` (not `torch.inference_mode()`), preventing inference-tensor parameters from being created during model assembly/load in long-lived WebUI processes.
 - 2026-02-09: Smart-offload TE load policy now keeps text-encoder load-on-conditioning-device semantics in the loader (no forced CPU staging at initial load). TE offload sequencing remains conditioning-owned: encoders are unloaded after embeddings are generated, while Smart Cache hit paths can skip TE execution entirely.
+- 2026-02-10: Removed ad-hoc T5 inline key normalization from `loader.py`; `_load_huggingface_component` now delegates T5 key-style remap to canonical state-dict module `apps/backend/runtime/state_dict/keymap_t5_text_encoder.py`.
+- 2026-02-10: `_parse_checkpoint` now applies SDXL checkpoint keymap normalization in auto-family parses when nested UNet label keys (`model.diffusion_model.label_emb.0.<idx>.*`) are detected, removing parser-side SDXL UNet key normalization dependency.

@@ -13,7 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
 - `_prompt_clean` (function): Diffusers-style prompt cleaning (optional ftfy + HTML unescape + whitespace collapse).
 - `_resolve_max_sequence_length` (function): Chooses a safe tokenizer max length, clamped to `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH`.
-- `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer.
+- `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation.
 """
 
 from __future__ import annotations
@@ -269,7 +269,13 @@ def get_text_context(
             from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
             sd = load_gguf_state_dict(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
-        enc.load_state_dict(sd, strict=False)
+        missing, unexpected = enc.load_state_dict(sd, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                "WAN22 GGUF: text encoder strict load failed: "
+                f"missing={len(missing)} unexpected={len(unexpected)} "
+                f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+            )
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {exc}") from exc
 

@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `NoiseRefinerBlock` (class): Noise-refiner variant block used for specific refinement passes.
 - `FinalLayer` (class): Final projection layer mapping hidden states back to output channels/patches.
 - `ZImageTransformer2DModel` (class): Full ZImage transformer model (owns embeddings, blocks, refiners, and forward pass).
-- `load_zimage_from_state_dict` (function): Loads `ZImageTransformer2DModel` weights from a checkpoint state dict (with validation/remapping).
+- `load_zimage_from_state_dict` (function): Loads `ZImageTransformer2DModel` weights from a checkpoint state dict (strict fail-loud on missing/unexpected keys).
 """
 
 from __future__ import annotations
@@ -1185,11 +1185,12 @@ def load_zimage_from_state_dict(
     model = ZImageTransformer2DModel(config=config)
     
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    
-    if missing:
-        logger.warning(f"Missing {len(missing)} keys: {missing[:5]}...")
-    if unexpected:
-        logger.warning(f"Unexpected {len(unexpected)} keys: {unexpected[:5]}...")
+    if missing or unexpected:
+        raise RuntimeError(
+            "ZImage transformer strict load failed: "
+            f"missing={len(missing)} unexpected={len(unexpected)} "
+            f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+        )
     
     return model
 

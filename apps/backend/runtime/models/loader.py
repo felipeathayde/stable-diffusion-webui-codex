@@ -11,7 +11,7 @@ Resolves TE/VAE overrides (`tenc_path` shorthand), normalizes state_dict layouts
 Includes core-only families (e.g., Anima) that are not diffusers repositories: the loader returns a minimal bundle and leaves external asset loading to engines.
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
-Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths.
+Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 key normalization to a canonical keymap module.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_read_json` (function): Reads a required JSON metadata file with explicit errors (used by vendored-HF signature builders).
 - `_zimage_signature_from_vendored_hf` (function): Builds a Z-Image `ModelSignature` from vendored HF metadata (`Tongyi-MAI/Z-Image-Turbo` layout; no state-dict detector).
 - `_flux_signature_from_vendored_hf` (function): Builds a Flux `ModelSignature` from vendored HF metadata (no state-dict detector).
+- `_requires_sdxl_checkpoint_keymap` (function): Determines whether SDXL checkpoint keymap normalization must run for a checkpoint parse call.
 - `_parse_checkpoint` (function): Parses one checkpoint (plus optional addons) into `ParsedCheckpoint` for bundle assembly.
 - `_build_diffusion_bundle` (function): Assembles a `DiffusionModelBundle` from a parsed checkpoint and loader options.
 - `_load_component_config` (function): Loads a component config dict from a diffusers component directory.
@@ -30,7 +31,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
 - `_safetensors_primary_dtype_hint` (function): Best-effort safetensors dtype hint reader (header-only, whole-file).
 - `_log_weights_dtype_hint` (function): Emits pipeline-debug logs for (role, selected dtype, weights dtype hint).
-- `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory.
+- `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory (including canonical keymap-owned T5 remap).
 - `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
 - `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution (incl. `tenc_path` shorthand),
   VAE layout handling, dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
@@ -386,6 +387,30 @@ def _flux_signature_from_vendored_hf(
     )
 
 
+def _requires_sdxl_checkpoint_keymap(
+    state_dict: Mapping[str, Any],
+    *,
+    expected_family: ModelFamily | None,
+) -> bool:
+    if expected_family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+        return True
+    if expected_family is not None:
+        return False
+    for raw_key in state_dict.keys():
+        key = str(raw_key)
+        while key.startswith("module."):
+            key = key[len("module.") :]
+        if key.startswith(
+            (
+                "model.diffusion_model.label_emb.0.",
+                "model.model.diffusion_model.label_emb.0.",
+                "diffusion_model.label_emb.0.",
+            )
+        ):
+            return True
+    return False
+
+
 def _parse_checkpoint(
     primary_path: str,
     additional_paths: list[str] | None,
@@ -393,7 +418,7 @@ def _parse_checkpoint(
     expected_family: ModelFamily | None = None,
 ) -> ParsedCheckpoint:
     base_state = _load_state_dict(primary_path)
-    if expected_family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+    if _requires_sdxl_checkpoint_keymap(base_state, expected_family=expected_family):
         from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import remap_sdxl_checkpoint_state_dict
 
         _, base_state = remap_sdxl_checkpoint_state_dict(base_state)
@@ -417,7 +442,7 @@ def _parse_checkpoint(
         replacements: Dict[str, Mapping[str, Any]] = {}
         for extra in additional_paths:
             extra_state = _load_state_dict(extra)
-            if expected_family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+            if _requires_sdxl_checkpoint_keymap(extra_state, expected_family=expected_family):
                 from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import remap_sdxl_checkpoint_state_dict
 
                 _, extra_state = remap_sdxl_checkpoint_state_dict(extra_state)
@@ -1093,23 +1118,11 @@ def _load_huggingface_component(
             storage_dtype=storage_dtype if isinstance(storage_dtype, torch.dtype) else None,
         )
 
-        # Normalize T5 state dict keys: add transformer. prefix if missing
-        # T5 files often have keys like encoder.block.* but model expects transformer.encoder.block.*
         if hasattr(state_dict, "keys"):
-            keys_to_check = list(state_dict.keys())
-            needs_prefix = any(k.startswith("encoder.") or k == "shared.weight" for k in keys_to_check[:50])
-            if needs_prefix:
-                # Create a new dict with normalized keys
-                normalized_sd = {}
-                for k, v in (
-                    state_dict.items() if hasattr(state_dict, "items") else [(k, state_dict[k]) for k in keys_to_check]
-                ):
-                    if k.startswith("encoder.") or k == "shared.weight" or k.startswith("embed_tokens"):
-                        new_key = f"transformer.{k}"
-                        normalized_sd[new_key] = v
-                    else:
-                        normalized_sd[k] = v
-                state_dict = normalized_sd
+            from apps.backend.runtime.state_dict.keymap_t5_text_encoder import remap_t5_text_encoder_state_dict
+
+            _, remapped_state_dict = remap_t5_text_encoder_state_dict(state_dict)
+            state_dict = remapped_state_dict
 
         load_state_dict(
             model,

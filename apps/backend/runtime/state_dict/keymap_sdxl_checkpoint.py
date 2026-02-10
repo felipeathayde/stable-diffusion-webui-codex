@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: SDXL checkpoint wrapper/prefix key normalization (Comfy/original SDXL layout).
 Provides a strict, fail-loud remap that canonicalizes common wrapper prefixes (DDP `module.`, duplicated `model.model.*`,
-`diffusion_model.*`, `vae.*`) into canonical prefixes used by Codex detectors/parser plans.
+`diffusion_model.*`, `vae.*`) and SDXL UNet nested label-embedding keys into canonical prefixes used by Codex detectors/parser plans.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_sdxl_checkpoint_state_dict` (function): Returns (detected_style, remapped_view) for SDXL checkpoint wrapper/prefix normalization.
@@ -51,7 +51,8 @@ def remap_sdxl_checkpoint_state_dict(state_dict: MutableMapping[str, _T]) -> tup
 
     This is intentionally string-only and import-light. It does **not** attempt to convert
     diffusers-style component weights into original SDXL keys; it only normalizes wrapper
-    prefixes so Codex detectors and parser plans can match reliably.
+    prefixes (and known nested label-embedding key layouts) so Codex detectors and parser
+    plans can match reliably.
     """
 
     def _normalize(key: str) -> str:
@@ -66,6 +67,11 @@ def remap_sdxl_checkpoint_state_dict(state_dict: MutableMapping[str, _T]) -> tup
             k = "model.diffusion_model." + k[len("model.model.diffusion_model.") :]
         if k.startswith("diffusion_model."):
             k = "model.diffusion_model." + k[len("diffusion_model.") :]
+        if k.startswith("model.diffusion_model.label_emb.0."):
+            suffix = k[len("model.diffusion_model.label_emb.0.") :]
+            suffix_parts = suffix.split(".")
+            if len(suffix_parts) >= 2 and suffix_parts[0].isdigit():
+                k = "model.diffusion_model.label_emb." + ".".join([suffix_parts[0], *suffix_parts[1:]])
 
         # Conditioner wrappers.
         while k.startswith("model.model.conditioner."):

@@ -6,13 +6,13 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Qwen3-4B text encoder wrapper for Z Image (GGUF or safetensors).
+Purpose: Qwen3-4B text encoder wrapper for Z Image (GGUF or safetensors) with strict fail-loud load semantics.
 Wraps the Qwen3 model used by Z Image (Turbo/Base variants) for text encoding, preferring vendored HF tokenizers under `apps/backend/huggingface/Tongyi-MAI/**`.
 GGUF loads are constructed under `using_codex_operations(weight_format="gguf")` so `torch.nn` layers can load packed `CodexParameter` weights.
 This module follows the “Flux pattern” by providing a small text-processing engine wrapper for consistent interfaces.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `ZImageTextEncoder` (class): nn.Module wrapper for Qwen3-4B; supports loading from GGUF/safetensors, tokenization, and embedding extraction
+- `ZImageTextEncoder` (class): nn.Module wrapper for Qwen3-4B; supports loading from GGUF/safetensors with strict key validation, tokenization, and embedding extraction
   (contains nested helpers for tokenizer loading, chat templating, debug tracing, and encode/tokenize APIs).
 - `ZImageTextProcessingEngine` (class): Thin adapter providing a consistent callable interface (`__call__`, `tokenize`) around `ZImageTextEncoder`.
 """
@@ -126,11 +126,7 @@ class ZImageTextEncoder(nn.Module):
 
                 # Load state dict - patched layers will handle GGUF tensors correctly
                 try:
-                    missing, unexpected = model.load_sd(state_dict)
-                    if missing:
-                        logger.warning("Missing keys: %s", missing[:10])
-                    if unexpected:
-                        logger.debug("Unexpected keys: %s", unexpected[:10])
+                    model.load_sd(state_dict)
                 except RuntimeError as e:
                     logger.error("RuntimeError during load_sd: %s", e)
                     # Dump model shape for comparison
@@ -175,11 +171,7 @@ class ZImageTextEncoder(nn.Module):
                 model = Qwen3_4B(config, dtype=torch_dtype)
                 
                 # Load weights - native implementation has compatible key format
-                missing, unexpected = model.load_sd(state_dict)
-                if missing:
-                    logger.warning("Missing keys: %s", missing[:10])
-                if unexpected:
-                    logger.debug("Unexpected keys: %s", unexpected[:10])
+                model.load_sd(state_dict)
                 
                 # Move to target dtype
                 model.to(dtype=torch_dtype)

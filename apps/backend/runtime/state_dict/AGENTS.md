@@ -9,6 +9,7 @@ Key files:
 - `apps/backend/runtime/state_dict/keymap_sdxl_clip.py`: SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
 - `apps/backend/runtime/state_dict/keymap_sdxl_checkpoint.py`: SDXL checkpoint wrapper/prefix key normalization (Comfy/original SDXL layout).
 - `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`: SDXL/Flow16 VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
+- `apps/backend/runtime/state_dict/keymap_t5_text_encoder.py`: T5 text-encoder key-style detection + remap (HF `encoder.*`/`shared.weight` → IntegratedT5 `transformer.*`).
 - `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`: WAN22 transformer key-style detector + remap (Diffusers/WAN-export/Codex).
 - `apps/backend/runtime/state_dict/tools.py`: Small state-dict utilities and diagnostics helpers.
 - `apps/backend/runtime/state_dict/views.py`: Mapping views (prefix/filter/remap/cast) + `LazySafetensorsDict`.
@@ -19,5 +20,7 @@ Notes:
 - Helpers should remain generic and not import model-family runtime code.
 - Key remaps must be explicit and strict: unknown/ambiguous layouts raise (no silent fallbacks). Use the family-specific keymap modules from loaders.
 - 2026-02-08: Added strict Anima keymaps (`keymap_anima.py`) with explicit style detection, wrapper normalization, required-key validation, and collision/unknown fail-loud behavior.
+- 2026-02-10: Added canonical T5 text-encoder keymap (`keymap_t5_text_encoder.py`) so loader paths no longer perform ad-hoc inline prefix normalization.
+- 2026-02-10: Expanded SDXL checkpoint keymap to normalize nested UNet label-embedding keys (`label_emb.0.0.*` → `label_emb.0.*`), removing parser-side SDXL UNet normalization converter usage.
 
-Last Review: 2026-02-08
+Last Review: 2026-02-10

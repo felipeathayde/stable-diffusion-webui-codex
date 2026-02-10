@@ -7,32 +7,27 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: SDXL parser plan builder (UNet + optional VAE + CLIP-L/CLIP-G).
-Builds split/validation steps and registers text-encoder aliases; CLIP key conversion is deferred to the loader keymaps to keep parsing lazy.
+Builds split/validation steps and registers text-encoder aliases; checkpoint/CLIP key normalization is deferred to loader keymaps to keep parsing lazy.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_plan` (function): Builds and returns the SDXL `ParserPlanBundle` (also used for SDXL refiner).
 - `_validate_unet_channels` (function): Validates UNet `channels_in` vs the `ModelSignature` expectation.
 - `_register_base_text_encoders` (function): Registers SDXL base text-encoder aliases in the parser context.
 - `_register_refiner_text_encoders` (function): Registers SDXL refiner text-encoder aliases in the parser context.
-- `_normalize_unet_label_embeddings` (function): Normalizes nested SDXL label-embedding keys on the UNet component.
 """
 
 from __future__ import annotations
-
-from typing import Dict
 
 import torch
 
 from apps.backend.runtime.model_registry.specs import ModelFamily, ModelSignature
 
 from ..builders import build_estimated_config, register_text_encoder
-from ..converters.unet import normalize_label_embeddings
 from ..errors import ValidationError
 from ..specs import (
     ParserPlan,
     ParserPlanBundle,
     SplitSpec,
-    ConverterSpec,
     ValidationSpec,
 )
 from ..quantization import validate_component_dtypes
@@ -47,9 +42,7 @@ def build_plan(signature: ModelSignature) -> ParserPlanBundle:
                 SplitSpec(name="vae", prefixes=("first_stage_model.", "vae."), required=False),
                 SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.model.",)),
             ],
-            converters=(
-                ConverterSpec(component="unet", function=_normalize_unet_label_embeddings),
-            ),
+            converters=(),
             validations=(
                 ValidationSpec(name="unet_channels", function=_validate_unet_channels),
                 ValidationSpec(name="register_text_encoders", function=_register_refiner_text_encoders),
@@ -65,9 +58,7 @@ def build_plan(signature: ModelSignature) -> ParserPlanBundle:
             SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.model.", "conditioner.embedders.0.")),
             SplitSpec(name="text_encoder_2", prefixes=("conditioner.embedders.1.model.", "conditioner.embedders.1.")),
         ],
-        converters=(
-            ConverterSpec(component="unet", function=_normalize_unet_label_embeddings),
-        ),
+        converters=(),
         validations=(
             ValidationSpec(name="unet_channels", function=_validate_unet_channels),
             ValidationSpec(name="register_text_encoders", function=_register_base_text_encoders),
@@ -98,7 +89,3 @@ def _validate_unet_channels(context):
 
 def _register_refiner_text_encoders(context) -> None:
     register_text_encoder(context, "clip_g", "text_encoder")
-
-
-def _normalize_unet_label_embeddings(tensors: Dict[str, torch.Tensor], context):
-    return normalize_label_embeddings(tensors)

@@ -1037,6 +1037,22 @@ Correct command:
 rg -n -F '@router.post("/api/tasks/{task_id}/cancel")' apps/backend/interfaces/api/routers/tasks.py
 ```
 
+### Using `\n` in `rg` pattern without multiline mode
+
+Wrong command:
+```bash
+rg -n "def codex_root\(|@pytest\.fixture\s*\ndef .*codex_root|codex_root: Path" .sangoi/dev/tests -g '*.py'
+```
+
+Cause and fix:
+`rg` does not accept literal newlines in a single-line regex unless multiline mode (`-U`) is enabled.
+For this use case, run a simpler single-line search.
+
+Correct command:
+```bash
+rg -n "codex_root" .sangoi/dev/tests -g '*.py'
+```
+
 ### Using backticks inside a double-quoted `rg` alternation
 
 Wrong command:

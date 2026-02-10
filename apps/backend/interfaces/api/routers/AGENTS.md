@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-09
+Last Review: 2026-02-10
 Status: Active
 
 ## Purpose
@@ -56,3 +56,5 @@ Status: Active
 - 2026-02-08: `generation.py` swap-model contract now uses `switch_at_step` (global `extras.refiner` + nested `extras.hires.refiner`) with strict pointer validation (`1 <= switch_at_step < total_steps`) so SDXL model swap runs on a step pointer, not a refiner step-count.
 - 2026-02-08: `generation.py` img2img numeric parsing now uses `_require_float_field` for core + hires numeric fields (`img2img_cfg_scale`, `img2img_denoising_strength`, `img2img_hires_*` float controls), enforcing finite-number 400s for `NaN`/`Infinity`.
 - 2026-02-09: `tasks.py` now parses `/api/tasks/{task_id}/cancel` mode through typed `TaskCancelMode` parsing (invalid values return HTTP 400), and emits gap/result/error/end payload type literals via `TaskEventType` enum values (wire format preserved). `generation.py` worker cancel checks now compare against `TaskCancelMode.IMMEDIATE`.
+- 2026-02-10: `generation.py` now uses internal parser DTO seams for core txt2img/img2img normalization (`_Txt2ImgPayloadDTO`, `_Img2ImgCoreDTO` + parser helpers), keeping extras/hires/asset-contract flow unchanged while reducing dict-heavy parser blocks.
+- 2026-02-10: `generation.py` now extends parser DTO seams into active video modes (`_parse_txt2vid_core_dto`, `_parse_img2vid_core_dto`) while preserving WAN sha-only asset contracts and current request/task/SSE behavior (validated by video request-capture parity tests).

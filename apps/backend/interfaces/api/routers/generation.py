@@ -29,6 +29,7 @@ import math
 import os
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from uuid import uuid4
@@ -868,14 +869,64 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "components": [f"{slot}={slot_to_path[slot]}" for slot in contract.tenc_slots],
                 }
 
-    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
+    @dataclass(frozen=True, slots=True)
+    class _Txt2ImgPayloadDTO:
+        engine_key: str
+        prompt: str
+        negative_prompt: str
+        width: int
+        height: int
+        steps: int
+        cfg_scale: float
+        distilled_cfg_scale: float
+        sampler_name: str
+        scheduler_name: str
+        seed: int
+        clip_skip: int | None
+
+    @dataclass(frozen=True, slots=True)
+    class _Img2ImgCoreDTO:
+        engine_key: str
+        model_ref: Any
+        prompt: Any
+        negative_prompt: Any
+        styles: List[Any]
+        batch_count: int
+        batch_size: int
+        steps: int
+        cfg_scale: float
+        distilled_cfg_scale: float | None
+        image_cfg_scale: float | None
+        denoise: float
+        width: int
+        height: int
+        sampler_name: str
+        scheduler_name: str
+        seed: int
+        clip_skip: int | None
+        noise_source: Any
+        ensd_raw: Any
+
+    @dataclass(frozen=True, slots=True)
+    class _VideoCoreDTO:
+        prompt: str
+        negative_prompt: str
+        width: int
+        height: int
+        steps: int
+        fps: int
+        num_frames: int
+        sampler_name: str
+        scheduler_name: str
+        seed: int
+        guidance_scale: float
+
+    def _parse_txt2img_payload_dto(payload: Dict[str, Any]) -> _Txt2ImgPayloadDTO:
         _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
         engine_override = payload.get('engine')
-        model_override = payload.get('model')
         engine_key = _canonical_engine_key(engine_override)
         if not engine_key:
             raise HTTPException(status_code=400, detail="Missing engine key (engine)")
-        engine_id = engine_key
         _reject_not_implemented_engine(engine_key, field_name="engine")
 
         prompt = _require_str_field(payload, 'prompt', allow_empty=True)
@@ -888,15 +939,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
-        supports_cfg = engine_supports_cfg(engine_id)
+        supports_cfg = engine_supports_cfg(engine_key)
         if not supports_cfg:
             if 'cfg' in payload:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Engine '{engine_id}' does not accept 'cfg'; use 'distilled_cfg'.",
+                    detail=f"Engine '{engine_key}' does not accept 'cfg'; use 'distilled_cfg'.",
                 )
             if 'distilled_cfg' not in payload:
-                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'distilled_cfg'.")
+                raise HTTPException(status_code=400, detail=f"Engine '{engine_key}' requires 'distilled_cfg'.")
             # Flow models (Flux/Chroma) use distilled guidance (no classic CFG); keep cfg neutral.
             cfg_scale = 1.0
             distilled_cfg_scale = _require_float_field(payload, 'distilled_cfg')
@@ -904,7 +955,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if 'distilled_cfg' in payload:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Engine '{engine_id}' does not support 'distilled_cfg'; use 'cfg'.",
+                    detail=f"Engine '{engine_key}' does not support 'distilled_cfg'; use 'cfg'.",
                 )
             if 'cfg' not in payload:
                 raise HTTPException(status_code=400, detail="Missing 'cfg'")
@@ -939,6 +990,251 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = _require_int_field(payload, 'seed')
         clip_skip = _require_int_field(payload, 'clip_skip', minimum=0, maximum=12) if 'clip_skip' in payload else None
+
+        return _Txt2ImgPayloadDTO(
+            engine_key=engine_key,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps_val,
+            cfg_scale=cfg_scale,
+            distilled_cfg_scale=distilled_cfg_scale,
+            sampler_name=sampler_name,
+            scheduler_name=scheduler_name,
+            seed=seed_val,
+            clip_skip=clip_skip,
+        )
+
+    def _parse_img2img_core_dto(
+        payload: Dict[str, Any],
+        *,
+        init_w: int,
+        init_h: int,
+    ) -> _Img2ImgCoreDTO:
+        engine_override = payload.get('engine')
+        model_override = payload.get('model')
+        engine_key = _canonical_engine_key(engine_override)
+        if not engine_key:
+            raise HTTPException(status_code=400, detail="Missing engine key (engine)")
+        _reject_not_implemented_engine(engine_key, field_name="engine")
+        model_ref = model_override
+
+        prompt = _p.require(payload, 'img2img_prompt') or ''
+        negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
+        _validate_prompt_sampler_controls(
+            engine_key=engine_key,
+            prompt=str(prompt),
+            field_name="img2img_prompt",
+        )
+        styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
+        batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
+        batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
+        if 'img2img_steps' in payload:
+            steps_val = _p.as_int(payload, 'img2img_steps')
+        else:
+            raise HTTPException(status_code=400, detail="'img2img_steps' is required")
+
+        supports_cfg = engine_supports_cfg(engine_key)
+        if supports_cfg:
+            if 'img2img_cfg_scale' not in payload:
+                raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
+            if 'img2img_distilled_cfg_scale' in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Engine '{engine_key}' does not support 'img2img_distilled_cfg_scale'; use 'img2img_cfg_scale'.",
+                )
+            cfg_scale = _require_float_field(payload, 'img2img_cfg_scale')
+            distilled_cfg_scale = None
+        else:
+            if 'img2img_cfg_scale' in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Engine '{engine_key}' does not support 'img2img_cfg_scale'; use 'img2img_distilled_cfg_scale'.",
+                )
+            if 'img2img_distilled_cfg_scale' not in payload:
+                raise HTTPException(status_code=400, detail="'img2img_distilled_cfg_scale' is required")
+            cfg_scale = 1.0
+            distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale')
+        image_cfg_scale = _require_float_field(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
+        denoise = _require_float_field(payload, 'img2img_denoising_strength')
+
+        def _snap_dim(value: int) -> int:
+            if not value:
+                return 0
+            value = max(8, min(8192, int(value)))
+            return int(((value + 4) // 8) * 8)
+
+        if 'img2img_width' in payload:
+            width_val = _p.as_int(payload, 'img2img_width')
+        else:
+            width_val = _snap_dim(int(init_w) if init_w else 0)
+            if not width_val:
+                raise HTTPException(status_code=400, detail="'img2img_width' is required")
+
+        if 'img2img_height' in payload:
+            height_val = _p.as_int(payload, 'img2img_height')
+        else:
+            height_val = _snap_dim(int(init_h) if init_h else 0)
+            if not height_val:
+                raise HTTPException(status_code=400, detail="'img2img_height' is required")
+        sampler_name = str(_p.require(payload, 'img2img_sampling'))
+        scheduler_name = str(_p.require(payload, 'img2img_scheduler'))
+        _validate_er_sde_release_scope(
+            engine_key=engine_key,
+            sampler=sampler_name,
+            field_name="img2img_sampling",
+        )
+        _validate_anima_sampler_allowlist(
+            engine_key=engine_key,
+            sampler=sampler_name,
+            field_name="img2img_sampling",
+        )
+        try:
+            from apps.backend.runtime.sampling.registry import get_sampler_spec
+            from apps.backend.runtime.sampling.context import SchedulerName
+
+            spec = get_sampler_spec(str(sampler_name))
+            SchedulerName.from_string(str(scheduler_name))
+            if not spec.is_supported_scheduler(str(scheduler_name)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Scheduler '{scheduler_name}' is not supported by sampler '{sampler_name}'. "
+                        f"Allowed: {sorted(spec.allowed_schedulers)}"
+                    ),
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        seed_val = _p.as_int(payload, 'img2img_seed')
+        clip_skip = _p.as_int(payload, 'img2img_clip_skip') if 'img2img_clip_skip' in payload else None
+        if clip_skip is not None:
+            if clip_skip < 0 or clip_skip > 12:
+                raise HTTPException(status_code=400, detail="'img2img_clip_skip' must be in [0, 12]")
+        noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
+        ensd_raw = payload.get('img2img_eta_noise_seed_delta')
+
+        return _Img2ImgCoreDTO(
+            engine_key=engine_key,
+            model_ref=model_ref,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            styles=styles,
+            batch_count=batch_count,
+            batch_size=batch_size,
+            steps=steps_val,
+            cfg_scale=cfg_scale,
+            distilled_cfg_scale=distilled_cfg_scale,
+            image_cfg_scale=image_cfg_scale,
+            denoise=denoise,
+            width=width_val,
+            height=height_val,
+            sampler_name=sampler_name,
+            scheduler_name=scheduler_name,
+            seed=seed_val,
+            clip_skip=clip_skip,
+            noise_source=noise_source,
+            ensd_raw=ensd_raw,
+        )
+
+    def _parse_video_core_dto(
+        payload: Dict[str, Any],
+        *,
+        task_prefix: str,
+        default_width: int,
+        default_height: int,
+        default_steps: int,
+        default_fps: int,
+        default_frames: int,
+        default_sampler: str,
+        default_scheduler: str,
+        default_seed: int,
+        default_cfg_scale: float,
+    ) -> _VideoCoreDTO:
+        prompt = payload.get(f'{task_prefix}_prompt', '')
+        negative_prompt = payload.get(f'{task_prefix}_neg_prompt', '')
+        width_val = int(payload.get(f'{task_prefix}_width', default_width))
+        height_val = int(payload.get(f'{task_prefix}_height', default_height))
+        _wan_require_dims_multiple_of_16(task=task_prefix, width=width_val, height=height_val)
+        steps_val = int(payload.get(f'{task_prefix}_steps', default_steps))
+        fps_val = int(payload.get(f'{task_prefix}_fps', default_fps))
+        frames_val = int(payload.get(f'{task_prefix}_num_frames', default_frames))
+        sampler_name = str(payload.get(f'{task_prefix}_sampler', payload.get(f'{task_prefix}_sampling', default_sampler)))
+        scheduler_name = str(payload.get(f'{task_prefix}_scheduler', default_scheduler))
+        try:
+            from apps.backend.types.samplers import SamplerKind
+            from apps.backend.runtime.sampling.context import SchedulerName
+
+            SamplerKind.from_string(sampler_name)
+            SchedulerName.from_string(scheduler_name)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        seed_val = int(payload.get(f'{task_prefix}_seed', default_seed))
+        guidance_scale = float(payload.get(f'{task_prefix}_cfg_scale', default_cfg_scale))
+
+        return _VideoCoreDTO(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width_val,
+            height=height_val,
+            steps=steps_val,
+            fps=fps_val,
+            num_frames=frames_val,
+            sampler_name=sampler_name,
+            scheduler_name=scheduler_name,
+            seed=seed_val,
+            guidance_scale=guidance_scale,
+        )
+
+    def _parse_txt2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+        return _parse_video_core_dto(
+            payload,
+            task_prefix='txt2vid',
+            default_width=768,
+            default_height=432,
+            default_steps=30,
+            default_fps=24,
+            default_frames=16,
+            default_sampler='uni-pc',
+            default_scheduler='simple',
+            default_seed=-1,
+            default_cfg_scale=7.0,
+        )
+
+    def _parse_img2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+        return _parse_video_core_dto(
+            payload,
+            task_prefix='img2vid',
+            default_width=768,
+            default_height=432,
+            default_steps=30,
+            default_fps=24,
+            default_frames=16,
+            default_sampler='uni-pc',
+            default_scheduler='simple',
+            default_seed=-1,
+            default_cfg_scale=7.0,
+        )
+
+    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
+        model_override = payload.get('model')
+        parsed = _parse_txt2img_payload_dto(payload)
+        engine_key = parsed.engine_key
+        engine_id = engine_key
+        prompt = parsed.prompt
+        negative_prompt = parsed.negative_prompt
+        width = parsed.width
+        height = parsed.height
+        steps_val = parsed.steps
+        cfg_scale = parsed.cfg_scale
+        distilled_cfg_scale = parsed.distilled_cfg_scale
+        sampler_name = parsed.sampler_name
+        scheduler_name = parsed.scheduler_name
+        seed_val = parsed.seed
+        clip_skip = parsed.clip_skip
+
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
         extras, hires_cfg = _parse_txt2img_extras(payload)
@@ -1138,108 +1434,27 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if isinstance(raw_enforcement, str) and raw_enforcement.strip():
                 raise HTTPException(status_code=400, detail="'img2img_mask_enforcement' requires 'img2img_mask'")
 
-        engine_override = payload.get('engine')
-        model_override = payload.get('model')
-        engine_key = _canonical_engine_key(engine_override)
-        if not engine_key:
-            raise HTTPException(status_code=400, detail="Missing engine key (engine)")
-        _reject_not_implemented_engine(engine_key, field_name="engine")
-        model_ref = model_override
-
-        prompt = _p.require(payload, 'img2img_prompt') or ''
-        negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
-        _validate_prompt_sampler_controls(
-            engine_key=engine_key,
-            prompt=str(prompt),
-            field_name="img2img_prompt",
-        )
-        styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
-        batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
-        batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
-        if 'img2img_steps' in payload:
-            steps_val = _p.as_int(payload, 'img2img_steps')
-        else:
-            raise HTTPException(status_code=400, detail="'img2img_steps' is required")
-
-        supports_cfg = engine_supports_cfg(engine_key)
-        if supports_cfg:
-            if 'img2img_cfg_scale' not in payload:
-                raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
-            if 'img2img_distilled_cfg_scale' in payload:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Engine '{engine_key}' does not support 'img2img_distilled_cfg_scale'; use 'img2img_cfg_scale'.",
-                )
-            cfg_scale = _require_float_field(payload, 'img2img_cfg_scale')
-            distilled_cfg_scale = None
-        else:
-            if 'img2img_cfg_scale' in payload:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Engine '{engine_key}' does not support 'img2img_cfg_scale'; use 'img2img_distilled_cfg_scale'.",
-                )
-            if 'img2img_distilled_cfg_scale' not in payload:
-                raise HTTPException(status_code=400, detail="'img2img_distilled_cfg_scale' is required")
-            cfg_scale = 1.0
-            distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale')
-        image_cfg_scale = _require_float_field(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
-        denoise = _require_float_field(payload, 'img2img_denoising_strength')
-        def _snap_dim(value: int) -> int:
-            if not value:
-                return 0
-            value = max(8, min(8192, int(value)))
-            return int(((value + 4) // 8) * 8)
-
-        if 'img2img_width' in payload:
-            width_val = _p.as_int(payload, 'img2img_width')
-        else:
-            width_val = _snap_dim(int(init_w) if init_w else 0)
-            if not width_val:
-                raise HTTPException(status_code=400, detail="'img2img_width' is required")
-
-        if 'img2img_height' in payload:
-            height_val = _p.as_int(payload, 'img2img_height')
-        else:
-            height_val = _snap_dim(int(init_h) if init_h else 0)
-            if not height_val:
-                raise HTTPException(status_code=400, detail="'img2img_height' is required")
-        sampler_name = _p.require(payload, 'img2img_sampling')
-        scheduler_name = _p.require(payload, 'img2img_scheduler')
-        _validate_er_sde_release_scope(
-            engine_key=engine_key,
-            sampler=str(sampler_name),
-            field_name="img2img_sampling",
-        )
-        _validate_anima_sampler_allowlist(
-            engine_key=engine_key,
-            sampler=str(sampler_name),
-            field_name="img2img_sampling",
-        )
-        try:
-            from apps.backend.runtime.sampling.registry import get_sampler_spec
-            from apps.backend.runtime.sampling.context import SchedulerName
-
-            spec = get_sampler_spec(str(sampler_name))
-            SchedulerName.from_string(str(scheduler_name))
-            if not spec.is_supported_scheduler(str(scheduler_name)):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Scheduler '{scheduler_name}' is not supported by sampler '{sampler_name}'. "
-                        f"Allowed: {sorted(spec.allowed_schedulers)}"
-                    ),
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        seed_val = _p.as_int(payload, 'img2img_seed')
-        clip_skip = _p.as_int(payload, 'img2img_clip_skip') if 'img2img_clip_skip' in payload else None
-        if clip_skip is not None:
-            if clip_skip < 0 or clip_skip > 12:
-                raise HTTPException(status_code=400, detail="'img2img_clip_skip' must be in [0, 12]")
-        noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
-        ensd_raw = payload.get('img2img_eta_noise_seed_delta')
+        core = _parse_img2img_core_dto(payload, init_w=init_w, init_h=init_h)
+        engine_key = core.engine_key
+        model_ref = core.model_ref
+        prompt = core.prompt
+        negative_prompt = core.negative_prompt
+        styles = core.styles
+        batch_count = core.batch_count
+        batch_size = core.batch_size
+        steps_val = core.steps
+        cfg_scale = core.cfg_scale
+        distilled_cfg_scale = core.distilled_cfg_scale
+        image_cfg_scale = core.image_cfg_scale
+        denoise = core.denoise
+        width_val = core.width
+        height_val = core.height
+        sampler_name = core.sampler_name
+        scheduler_name = core.scheduler_name
+        seed_val = core.seed
+        clip_skip = core.clip_skip
+        noise_source = core.noise_source
+        ensd_raw = core.ensd_raw
 
         def _reject_legacy_hires_keys(payload: Mapping[str, Any]) -> None:
             prefix = "img2img_"
@@ -1493,26 +1708,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
-        prompt = payload.get('txt2vid_prompt', '')
-        negative_prompt = payload.get('txt2vid_neg_prompt', '')
-        width_val = int(payload.get('txt2vid_width', 768))
-        height_val = int(payload.get('txt2vid_height', 432))
-        _wan_require_dims_multiple_of_16(task="txt2vid", width=width_val, height=height_val)
-        steps_val = int(payload.get('txt2vid_steps', 30))
-        fps_val = int(payload.get('txt2vid_fps', 24))
-        frames_val = int(payload.get('txt2vid_num_frames', 16))
-        sampler_name = str(payload.get('txt2vid_sampler', payload.get('txt2vid_sampling', 'uni-pc')))
-        scheduler_name = str(payload.get('txt2vid_scheduler', 'simple'))
-        try:
-            from apps.backend.types.samplers import SamplerKind
-            from apps.backend.runtime.sampling.context import SchedulerName
-
-            SamplerKind.from_string(sampler_name)
-            SchedulerName.from_string(scheduler_name)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        seed_val = int(payload.get('txt2vid_seed', -1))
-        cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
+        parsed = _parse_txt2vid_core_dto(payload)
+        prompt = parsed.prompt
+        negative_prompt = parsed.negative_prompt
+        width_val = parsed.width
+        height_val = parsed.height
+        steps_val = parsed.steps
+        fps_val = parsed.fps
+        frames_val = parsed.num_frames
+        sampler_name = parsed.sampler_name
+        scheduler_name = parsed.scheduler_name
+        seed_val = parsed.seed
+        cfg_val = parsed.guidance_scale
 
         extras: Dict[str, Any] = {}
         if "video_return_frames" in payload:
@@ -1674,26 +1881,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
-        prompt = payload.get('img2vid_prompt', '')
-        negative_prompt = payload.get('img2vid_neg_prompt', '')
-        width_val = int(payload.get('img2vid_width', 768))
-        height_val = int(payload.get('img2vid_height', 432))
-        _wan_require_dims_multiple_of_16(task="img2vid", width=width_val, height=height_val)
-        steps_val = int(payload.get('img2vid_steps', 30))
-        fps_val = int(payload.get('img2vid_fps', 24))
-        frames_val = int(payload.get('img2vid_num_frames', 16))
-        sampler_name = str(payload.get('img2vid_sampler', payload.get('img2vid_sampling', 'uni-pc')))
-        scheduler_name = str(payload.get('img2vid_scheduler', 'simple'))
-        try:
-            from apps.backend.types.samplers import SamplerKind
-            from apps.backend.runtime.sampling.context import SchedulerName
-
-            SamplerKind.from_string(sampler_name)
-            SchedulerName.from_string(scheduler_name)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        seed_val = int(payload.get('img2vid_seed', -1))
-        cfg_val = float(payload.get('img2vid_cfg_scale', 7.0))
+        parsed = _parse_img2vid_core_dto(payload)
+        prompt = parsed.prompt
+        negative_prompt = parsed.negative_prompt
+        width_val = parsed.width
+        height_val = parsed.height
+        steps_val = parsed.steps
+        fps_val = parsed.fps
+        frames_val = parsed.num_frames
+        sampler_name = parsed.sampler_name
+        scheduler_name = parsed.scheduler_name
+        seed_val = parsed.seed
+        cfg_val = parsed.guidance_scale
 
         init_image_data = payload.get('img2vid_init_image')
         init_image = media.decode_image(init_image_data) if init_image_data else None

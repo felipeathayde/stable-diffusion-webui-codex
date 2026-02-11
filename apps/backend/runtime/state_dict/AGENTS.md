@@ -25,5 +25,6 @@ Notes:
 - 2026-02-10: Structural conversion seams in keymaps are globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto` fail-loud / `convert` explicit opt-in): SDXL CLIP blocks split↔fused QKV/projection conversion in `auto`, and SDXL VAE blocks 1x1-conv flattening in `auto`.
 - 2026-02-11: `keymap_sdxl_clip.py` now exposes generic CLIP layout detection/remap APIs (`detect_clip_layout_metadata`, `remap_clip_state_dict_with_layout`) and SDXL wrappers with cache-hint support (`*_with_layout`) to avoid repeated style detection on warm SHA layout cache hits.
 - 2026-02-11: SDXL CLIP projection handling is orientation-aware (`auto|linear|matmul`) instead of hard-coded transpose; AUTO keeps native orientation and only transposes when explicitly requested (and policy allows structural conversion).
+- 2026-02-11: `keymap_sdxl_vae.py` now maps mid-attention aliases under `encoder/decoder.mid.block_1.{q,k,v,proj_out,norm}.*` (and `mid.block_1.attn_1.*`) to canonical `mid_block.attentions.0.{to_q,to_k,to_v,to_out.0,group_norm}.*`, preventing SDXL VAE missing mid-attention keys on alias-style exports while preserving resnet-key remaps.
 
 Last Review: 2026-02-11

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: SDXL VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
 Normalizes common LDM layouts into diffusers keyspace, strips wrapper prefixes, and flattens 1×1 Conv projection weights lazily.
+Supports legacy mid-attention aliases under both `mid.attn_1.*` and `mid.block_1.*` naming variants.
 Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
 Flattening conversion is globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
@@ -298,13 +299,41 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
 
         elif key.startswith("encoder.mid.block_") or key.startswith("decoder.mid.block_"):
             parts = key.split(".")
-            if len(parts) >= 4 and parts[2].startswith("block_"):
+            prefix = "encoder" if parts[0] == "encoder" else "decoder"
+            table = {
+                "q": "to_q",
+                "k": "to_k",
+                "v": "to_v",
+                "proj_out": "to_out.0",
+                "norm": "group_norm",
+                # older / alternative naming
+                "query": "to_q",
+                "key": "to_k",
+                "value": "to_v",
+                "proj_attn": "to_out.0",
+            }
+
+            # Some SDXL VAE exports encode mid attention heads under `mid.block_1.*`
+            # (or `mid.block_1.attn_1.*`) instead of `mid.attn_1.*`.
+            if len(parts) >= 5 and parts[2] == "block_1":
+                head = None
+                rest = ""
+                if parts[3] in table and len(parts) >= 5:
+                    head = parts[3]
+                    rest = ".".join(parts[4:])
+                elif len(parts) >= 6 and parts[3] == "attn_1" and parts[4] in table:
+                    head = parts[4]
+                    rest = ".".join(parts[5:])
+                if head is not None and rest:
+                    mapped = table[head]
+                    new_key = f"{prefix}.mid_block.attentions.0.{mapped}.{rest}"
+
+            if len(parts) >= 4 and parts[2].startswith("block_") and new_key == key:
                 try:
                     block_index = int(parts[2].split("_", 1)[1]) - 1
                 except (IndexError, ValueError):
                     block_index = 0
                 rest = ".".join(parts[3:])
-                prefix = "encoder" if parts[0] == "encoder" else "decoder"
                 new_key = f"{prefix}.mid_block.resnets.{block_index}.{rest}"
 
         elif key.startswith("encoder.mid.attn_1.") or key.startswith("decoder.mid.attn_1."):

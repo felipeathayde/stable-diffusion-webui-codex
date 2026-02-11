@@ -41,6 +41,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
 - `_assert_flux_core_gguf_vae_path_not_checkpoint` (function): Rejects Flux core-only requests where `vae_path` equals the core GGUF checkpoint path.
 - `_safetensors_primary_dtype_hint` (function): Best-effort safetensors dtype hint reader (header-only, whole-file).
+- `_sanitize_sdxl_vae_shift_config` (function): Removes neutral SDXL `shift_factor` emission from VAE configs and rejects non-neutral values.
 - `_log_weights_dtype_hint` (function): Emits pipeline-debug logs for (role, selected dtype, weights dtype hint).
 - `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory (including canonical keymap-owned T5 remap).
 - `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
@@ -909,6 +910,46 @@ def _native_weights_storage_dtype(weights_path: str | None, state_dict: Mapping[
             break
     return None
 
+
+def _sanitize_sdxl_vae_shift_config(
+    config: Mapping[str, Any] | object,
+    *,
+    family: ModelFamily | None,
+) -> Mapping[str, Any] | object:
+    """Normalize SDXL VAE config emission for shift-factor policy compatibility.
+
+    SDXL families do not use latent shift in runtime normalization policy.
+    Legacy configs may still emit `shift_factor=0.0`; strip this neutral value
+    so downstream policy resolution sees an absent field.
+    """
+
+    if family not in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+        return config
+    if not isinstance(config, Mapping):
+        return config
+    if "shift_factor" not in config:
+        return config
+
+    cleaned = dict(config)
+    raw = cleaned.get("shift_factor")
+    if raw is None:
+        cleaned.pop("shift_factor", None)
+        return cleaned
+
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "SDXL VAE config must omit shift_factor (or use neutral 0.0 for legacy configs); "
+            f"received {raw!r}."
+        ) from exc
+    if not math.isfinite(value):
+        raise RuntimeError(f"SDXL VAE config shift_factor must be finite; received {raw!r}.")
+    if value == 0.0:
+        cleaned.pop("shift_factor", None)
+        return cleaned
+    raise RuntimeError(f"SDXL VAE config must omit shift_factor; received non-neutral value {raw!r}.")
+
 def _load_huggingface_component(
     parsed: ParsedCheckpoint,
     component_name: str,
@@ -1014,6 +1055,7 @@ def _load_huggingface_component(
             config_json = _load_component_config(component_path)
         if vae_cls is AutoencoderKL_LDM:
             config_json = sanitize_ldm_vae_config(config_json)
+        config_json = _sanitize_sdxl_vae_shift_config(config_json, family=family)
         vae_device = memory_management.manager.get_device(DeviceRole.VAE)
         vae_dtype = memory_management.manager.dtype_for_role(
             DeviceRole.VAE,

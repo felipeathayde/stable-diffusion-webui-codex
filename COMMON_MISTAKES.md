@@ -1300,3 +1300,18 @@ print(inspect.getsourcefile(m))
 PY
 )"
 ```
+
+### Expanding `CODEX_ROOT` before assignment in one-liner
+
+Wrong command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/model_registry/test_vae_selection.py
+```
+
+Cause and fix:
+Shell expanded `$CODEX_ROOT` in `PYTHONPATH`/python path before the assignment took effect, resolving to `/.venv/bin/python`. Assign `CODEX_ROOT` first (or use `$PWD`) in a separate command segment.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)" && PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/model_registry/test_vae_selection.py
+```

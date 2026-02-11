@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-02-10
+Last Review: 2026-02-11
 Status: Active
 
 ## Scope
@@ -82,4 +82,5 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-02-11: `_maybe_convert_sdxl_vae_state_dict` now preflights canonical SDXL mid-attention projection keys (`to_q/to_k/to_v/to_out.0`) immediately after keymap remap so lane/shape contract violations are raised explicitly before strict-load missing accounting.
 - 2026-02-11: SDXL VAE loader now detects canonical projection lane (`linear_2d` vs `conv1x1_4d`) and applies native 4D replacement modules (`_Conv1x1Projection`) on mid-block attentions for the conv lane, so 4D checkpoints load without keymap flattening.
 - 2026-02-11: Native 4D projection replacement accepts both plain `torch.nn.Linear` and Codex-op patched linear-like modules (inside `using_codex_operations`) to avoid loader-path type mismatch.
+- 2026-02-11: SDXL/SDXL refiner VAE component configs now strip neutral `shift_factor=0.0`/`None` before VAE construction; non-neutral shift emission fails loud to keep SDXL no-shift policy explicit without touching normalization policy.
 - 2026-02-11: Flux core-only GGUF path now has explicit VAE causality guards: rejects `vae_path` equal to the model checkpoint path and validates Flux VAE state_dict keyspace (`encoder.`/`decoder.`) before strict load, with family-specific error guidance when missing keys occur.

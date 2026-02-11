@@ -224,6 +224,7 @@ def _load_external_vae(vae_path: str | None, *, torch_dtype) -> object:
     16-channel latent space as Flux.
     """
     from apps.backend.runtime.common.vae import load_flow16_vae
+    from apps.backend.runtime.model_registry.specs import ModelFamily
     
     if vae_path is None or not str(vae_path).strip():
         raise ValueError(
@@ -231,7 +232,7 @@ def _load_external_vae(vae_path: str | None, *, torch_dtype) -> object:
             "Please select a VAE so the request can include 'vae_sha' (sha256)."
         )
     
-    return load_flow16_vae(vae_path, dtype=torch_dtype)
+    return load_flow16_vae(vae_path, dtype=torch_dtype, family=ModelFamily.ZIMAGE)
 
 
 def _load_external_text_encoder(tenc_path: str | None, *, torch_dtype) -> object:

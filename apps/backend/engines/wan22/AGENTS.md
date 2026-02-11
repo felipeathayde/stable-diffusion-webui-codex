@@ -2,7 +2,7 @@
 
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-10
+Last Review: 2026-02-11
 Status: Active
 
 ## Purpose
@@ -38,6 +38,7 @@ Status: Active
 - 2026-02-03: `wan22_14b` is no longer registered by default (kept unreachable) until it is ported to the canonical Option A use-cases.
 - 2026-02-09: WAN22 prompt conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-10: `diffusers_loader.py` no longer swallows attention/accelerator hook or logger emit exceptions; hook import/apply and log emit failures now surface as contextual `RuntimeError`.
+- 2026-02-11: `diffusers_loader.py` now wraps native WAN VAE instances with a strict diffusers-compat adapter (`encode/decode` contract), including 5D video batch adaptation and explicit `dtype` exposure, so pipeline calls consume `latents`/`sample` outputs without fallback shims.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

@@ -41,6 +41,13 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_miss,
 )
 from apps.backend.runtime.model_registry.specs import ModelFamily
+from apps.backend.runtime.common.vae_lane_policy import (
+    detect_vae_layout,
+    resolve_vae_layout_lane,
+    strip_known_vae_prefixes,
+    uses_ldm_native_lane,
+)
+from apps.backend.runtime.common.vae_ldm import is_ldm_native_vae_instance
 from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
 from apps.backend.runtime.models.text_encoder_overrides import TextEncoderOverrideConfig
 from apps.backend.runtime.state_dict.tools import get_state_dict_after_quant
@@ -658,11 +665,29 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 )
             vae_device = getattr(components.vae, "device", None) or getattr(components.vae, "load_device", None)
             state_dict = load_torch_file(vae_path, device=vae_device)
-            if bundle.family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
-                from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
-
-                _, state_dict = remap_sdxl_vae_state_dict(state_dict)
+            state_dict = strip_known_vae_prefixes(state_dict)
+            vae_layout = detect_vae_layout(state_dict)
+            vae_lane = resolve_vae_layout_lane(family=bundle.family, layout=vae_layout)
             vae_target = getattr(components.vae, "first_stage_model", components.vae)
+            vae_base = getattr(vae_target, "_base", vae_target)
+            if uses_ldm_native_lane(vae_lane):
+                if not is_ldm_native_vae_instance(vae_base):
+                    raise RuntimeError(
+                        "VAE override selected native LDM lane, but current VAE component is diffusers-native. "
+                        "Reload the checkpoint with matching lane policy or set CODEX_VAE_LAYOUT_LANE=diffusers_native "
+                        "when using diffusers-style VAE overrides."
+                    )
+            else:
+                if bundle.family in (
+                    ModelFamily.SDXL,
+                    ModelFamily.SDXL_REFINER,
+                    ModelFamily.FLUX,
+                    ModelFamily.FLUX_KONTEXT,
+                    ModelFamily.ZIMAGE,
+                ):
+                    from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
+
+                    _, state_dict = remap_sdxl_vae_state_dict(state_dict)
             if not hasattr(vae_target, "state_dict"):
                 raise TypeError(
                     "VAE override target does not expose state_dict(); "

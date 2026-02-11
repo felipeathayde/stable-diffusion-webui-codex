@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `timestep_embedding` (function): UNet timestep embedding helper (re-export).
 - `FluxTransformer2DModel` (class): Native Flux transformer core.
 - `ChromaTransformer2DModel` (class): Native Chroma transformer core.
-- `AutoencoderKLWan` (class): WAN22-specific VAE implementation.
+- `AutoencoderKL_LDM` (class): Native LDM VAE implementation shared across families.
 - `SD3Transformer2DModel` (class): SD3 transformer core.
 - `__all__` (constant): Export list for the re-exported symbols.
 """
@@ -30,7 +30,7 @@ from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.nn.unet.layers import Downsample, ResBlock, SpatialTransformer, TimestepEmbedSequential
 from apps.backend.runtime.common.nn.unet.model import UNet2DConditionModel
 from apps.backend.runtime.common.nn.unet.utils import conv_nd, exists, timestep_embedding
-from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
+from apps.backend.runtime.families.wan22.vae import AutoencoderKL_LDM
 from apps.backend.runtime.families.flux import FluxTransformer2DModel, FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalConfig
 from apps.backend.runtime.families.flux.flux import (
     attention,
@@ -47,7 +47,7 @@ from apps.backend.runtime.families.chroma.chroma import ChromaTransformer2DModel
 from apps.backend.runtime.families.sd.cnets import cldm, t2i_adapter
 
 __all__ = [
-    "AutoencoderKLWan",
+    "AutoencoderKL_LDM",
     "ChromaTransformer2DModel",
     "Dummy",
     "EmbedND",

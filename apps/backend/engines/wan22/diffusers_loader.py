@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_pipeline_class` (function): Resolves a diffusers pipeline class by name (errors with actionable message when missing).
 - `_copy_tree` (function): Copies a directory tree into a destination directory (preserving structure).
 - `_link_or_copy` (function): Hard-links (or copies) a file into a destination path.
+- `_DiffusersNativeVaeAdapter` (class): Adapts native WAN `AutoencoderKL_LDM` encode/decode outputs to diffusers WAN pipeline expectations.
 - `prepare_wan_diffusers_dir` (function): Builds a ready-to-load diffusers directory under the vendor cache for a WAN engine.
 - `load_wan_diffusers_pipeline` (function): Loads a WAN diffusers pipeline from a weights directory (calls `prepare_wan_diffusers_dir`).
 """
@@ -27,7 +28,11 @@ import json
 import os
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+
+import torch
+from torch import nn
 
 from apps.backend.infra.config.repo_root import repo_scratch_path
 
@@ -93,6 +98,149 @@ def _link_or_copy(src: Path, dst: Path) -> None:
             "or copy the config/tokenizer files into your weights directory."
         )
     os.symlink(src, dst)
+
+
+class _DiffusersNativeVaeAdapter(nn.Module):
+    """Expose native WAN VAE with diffusers-compatible encode/decode outputs."""
+
+    def __init__(self, wrapped_vae: nn.Module) -> None:
+        super().__init__()
+        self.wrapped_vae = wrapped_vae
+
+    @property
+    def config(self) -> Any:
+        return getattr(self.wrapped_vae, "config", None)
+
+    @property
+    def dtype(self) -> torch.dtype:
+        wrapped_dtype = getattr(self.wrapped_vae, "dtype", None)
+        if isinstance(wrapped_dtype, torch.dtype):
+            return wrapped_dtype
+        first_parameter = next(self.wrapped_vae.parameters(), None)
+        if first_parameter is not None:
+            return first_parameter.dtype
+        return torch.float32
+
+    @staticmethod
+    def _flatten_video_batch(sample: torch.Tensor) -> tuple[torch.Tensor, int, int]:
+        if sample.ndim != 5:
+            raise RuntimeError(
+                "WAN22 diffusers VAE adapter expected 5D tensor [B,C,T,H,W] for video input "
+                f"(got shape={tuple(sample.shape)})."
+            )
+        batch, channels, frames, height, width = sample.shape
+        flattened = sample.permute(0, 2, 1, 3, 4).reshape(batch * frames, channels, height, width)
+        return flattened, int(batch), int(frames)
+
+    @staticmethod
+    def _restore_video_batch(sample: torch.Tensor, *, batch: int, frames: int) -> torch.Tensor:
+        if sample.ndim != 4:
+            raise RuntimeError(
+                "WAN22 diffusers VAE adapter expected 4D frame batch [B*T,C,H,W] "
+                f"(got shape={tuple(sample.shape)})."
+            )
+        batch_frames, channels, height, width = sample.shape
+        expected = int(batch) * int(frames)
+        if int(batch_frames) != expected:
+            raise RuntimeError(
+                "WAN22 diffusers VAE adapter frame-batch mismatch "
+                f"(expected B*T={expected}, got {int(batch_frames)})."
+            )
+        return (
+            sample.view(int(batch), int(frames), int(channels), int(height), int(width))
+            .permute(0, 2, 1, 3, 4)
+            .contiguous()
+        )
+
+    def encode(self, sample: torch.Tensor, return_dict: bool = True, **_kwargs: Any) -> Any:
+        flattened = False
+        batch_size = 0
+        frame_count = 0
+        encoded_input = sample
+        if torch.is_tensor(sample) and sample.ndim == 5:
+            encoded_input, batch_size, frame_count = self._flatten_video_batch(sample)
+            flattened = True
+        encoded = self.wrapped_vae.encode(encoded_input)
+        payload: Any
+        if hasattr(encoded, "latent_dist") or hasattr(encoded, "latents"):
+            payload = encoded
+        elif torch.is_tensor(encoded):
+            payload = SimpleNamespace(latents=encoded)
+        elif isinstance(encoded, (tuple, list)) and encoded and torch.is_tensor(encoded[0]):
+            payload = SimpleNamespace(latents=encoded[0])
+        else:
+            raise RuntimeError(
+                "WAN22 diffusers VAE adapter expected encode output with latent_dist/latents or tensor, "
+                f"got type={type(encoded).__name__}."
+            )
+        if flattened and hasattr(payload, "latents"):
+            latents = getattr(payload, "latents")
+            if not torch.is_tensor(latents):
+                raise RuntimeError(
+                    "WAN22 diffusers VAE adapter expected tensor latents for 5D input adaptation "
+                    f"(got type={type(latents).__name__})."
+                )
+            payload = SimpleNamespace(latents=self._restore_video_batch(latents, batch=batch_size, frames=frame_count))
+
+        if return_dict:
+            return payload
+
+        latent_dist = getattr(payload, "latent_dist", None)
+        if latent_dist is not None:
+            return (latent_dist,)
+        return (payload.latents,)
+
+    def decode(self, latents: torch.Tensor, return_dict: bool = True, **_kwargs: Any) -> Any:
+        flattened = False
+        batch_size = 0
+        frame_count = 0
+        decode_input = latents
+        if torch.is_tensor(latents) and latents.ndim == 5:
+            decode_input, batch_size, frame_count = self._flatten_video_batch(latents)
+            flattened = True
+        decoded = self.wrapped_vae.decode(decode_input)
+        sample = getattr(decoded, "sample", None)
+        if sample is None:
+            if torch.is_tensor(decoded):
+                sample = decoded
+            elif isinstance(decoded, (tuple, list)) and decoded and torch.is_tensor(decoded[0]):
+                sample = decoded[0]
+            else:
+                raise RuntimeError(
+                    "WAN22 diffusers VAE adapter expected decode output tensor/sample, "
+                    f"got type={type(decoded).__name__}."
+                )
+        if flattened:
+            sample = self._restore_video_batch(sample, batch=batch_size, frames=frame_count)
+
+        if not return_dict:
+            return (sample,)
+        return SimpleNamespace(sample=sample)
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        return self.wrapped_vae(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return super().__getattr__(name)
+        except AttributeError as exc:
+            wrapped = super().__getattr__("wrapped_vae")
+            if hasattr(wrapped, name):
+                return getattr(wrapped, name)
+            raise exc
+
+
+def _load_native_vae(base_dir: Path, torch_dtype):
+    try:
+        from apps.backend.runtime.families.wan22.vae_io import load_vae as _load_native_ldm_vae
+    except Exception as exc:
+        raise RuntimeError(f"Failed to import native LDM VAE loader for WAN pipelines: {exc}") from exc
+    native_vae = _load_native_ldm_vae(
+        str(base_dir / "vae"),
+        torch_dtype=torch_dtype,
+        enable_tiling=False,
+    )
+    return _DiffusersNativeVaeAdapter(native_vae)
 
 
 def prepare_wan_diffusers_dir(*, weights_dir: Path, vendor_dir: Path, engine_id: str) -> Path:
@@ -191,17 +339,7 @@ def load_wan_diffusers_pipeline(
     pipeline_cls = _resolve_pipeline_class(class_name)
     torch_dtype = _torch_dtype(dtype)
 
-    try:
-        from diffusers import AutoencoderKLWan  # type: ignore
-    except Exception as exc:
-        raise RuntimeError(f"diffusers AutoencoderKLWan is required for WAN pipelines: {exc}") from exc
-
-    vae = AutoencoderKLWan.from_pretrained(
-        str(base_dir),
-        subfolder="vae",
-        torch_dtype=torch_dtype,
-        local_files_only=True,
-    )
+    vae = _load_native_vae(base_dir, torch_dtype)
     pipe = pipeline_cls.from_pretrained(
         str(base_dir),
         torch_dtype=torch_dtype,

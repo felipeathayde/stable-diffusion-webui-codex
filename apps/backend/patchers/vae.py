@@ -34,10 +34,10 @@ try:  # Optional import; diffusers may not be present in minimal environments
 except Exception:  # noqa: BLE001
     DiffusersAutoencoderKL = None
 
-try:  # Optional; only needed to detect WAN VAEs explicitly
-    from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
+try:  # Optional; only needed to detect native LDM VAEs explicitly
+    from apps.backend.runtime.families.wan22.vae import AutoencoderKL_LDM
 except Exception:  # noqa: BLE001
-    AutoencoderKLWan = None
+    AutoencoderKL_LDM = None
 
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
@@ -466,7 +466,7 @@ class VAE:
 
                 if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
                     encoded_raw = base.encode(pixels_in, return_dict=True)
-                elif AutoencoderKLWan is not None and isinstance(base, AutoencoderKLWan):
+                elif AutoencoderKL_LDM is not None and isinstance(base, AutoencoderKL_LDM):
                     encoded_raw = base.encode(pixels_in, regulation)
                 else:
                     try:
@@ -612,7 +612,7 @@ class VAE:
 
                     if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
                         encoded_raw = base.encode(pixels_in, return_dict=True)
-                    elif AutoencoderKLWan is not None and isinstance(base, AutoencoderKLWan):
+                    elif AutoencoderKL_LDM is not None and isinstance(base, AutoencoderKL_LDM):
                         encoded_raw = base.encode(pixels_in, regulation)
                     else:
                         try:

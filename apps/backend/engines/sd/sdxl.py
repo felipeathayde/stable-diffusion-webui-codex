@@ -319,15 +319,6 @@ class StableDiffusionXL(CodexDiffusionEngine):
         self._cond_cache.clear()
         self._embed_cache.clear()
 
-        base_vae = getattr(runtime.vae.first_stage_model, "_base", runtime.vae.first_stage_model)
-        base_vae_mod = getattr(getattr(base_vae, "__class__", object), "__module__", "")
-        base_vae_name = getattr(getattr(base_vae, "__class__", object), "__name__", "")
-        if base_vae_name == "AutoencoderKLWan" and "wan22.vae" in str(base_vae_mod):
-            raise RuntimeError(
-                "SDXL engine received a WAN22-style VAE (AutoencoderKLWan); "
-                "this combination is not supported. Use a compatible SDXL VAE or remove the WAN VAE from the checkpoint."
-            )
-
         logger.debug(
             "StableDiffusionXL runtime prepared with branches=%s clip_skip=%d",
             runtime.classic_order,

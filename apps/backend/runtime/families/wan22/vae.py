@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN 2.2 VAE implementation (`AutoencoderKLWan`) for video latent encode/decode.
-Defines the WAN22-specific VAE blocks (ResNet/Attention/Encoder/Decoder) and the final `AutoencoderKLWan` module used by WAN engines to
+Purpose: Native LDM 2D VAE implementation (`AutoencoderKL_LDM`) for latent encode/decode.
+Defines the shared LDM VAE blocks (ResNet/Attention/Encoder/Decoder) and the final `AutoencoderKL_LDM` module used by image/video engines to
 encode frames to latents and decode latents back to RGB, including distribution sampling utilities.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `AttnBlock` (class): Spatial attention block used at configured resolutions (uses single-head attention helper).
 - `Encoder` (class): VAE encoder mapping images → latent moments (mu/logvar) via conv/resnet/attn stacks.
 - `Decoder` (class): VAE decoder mapping latents → images via conv/resnet/attn/upsample stacks.
-- `AutoencoderKLWan` (class): Full VAE module (diffusers-style `ConfigMixin`); wires encoder/decoder + quantization layers and exposes
+- `AutoencoderKL_LDM` (class): Full VAE module (`ConfigMixin`); wires encoder/decoder + quantization layers and exposes
   encode/decode APIs (contains nested helpers for config defaults and tensor plumbing).
 """
 
@@ -304,7 +304,7 @@ class Decoder(nn.Module):
         return h
 
 
-class AutoencoderKLWan(nn.Module, ConfigMixin):
+class AutoencoderKL_LDM(nn.Module, ConfigMixin):
     config_name = 'config.json'
 
     @register_to_config

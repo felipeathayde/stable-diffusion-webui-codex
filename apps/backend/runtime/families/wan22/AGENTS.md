@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-10
+Last Review: 2026-02-11
 Status: Active
 
 ## Purpose
@@ -52,6 +52,9 @@ Status: Active
 - 2026-01-23: Centralized WAN22 transformer key remapping in `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`; `model.py:remap_wan22_gguf_state_dict` delegates to it and `stage_lora.py` treats key-style detection failures as “no match” (so LoRA application remains fail-loud at the “0 targets” boundary).
 - 2026-02-08: `wan_latent_norms.py` now exposes `WAN21_LATENTS_MEAN` / `WAN21_LATENTS_STD` constants as shared source-of-truth for Wan21 latent stats (reused by Anima VAE config to avoid duplicated literals).
 - 2026-02-10: WAN22 strict-load contract hardened: `load_wan_transformer_from_state_dict` and `text_context.get_text_context` now fail loud on any missing/unexpected keys instead of warning/debug-only continuation.
+- 2026-02-11: `vae_io.decode_latents_to_frames` now fails loud unless input latents match supported WAN VAE latent channels (`16`/`48`); implicit C-slicing remains removed to keep decode contracts explicit and traceable.
+- 2026-02-11: `vae_io` now accepts both tensor and wrapped VAE encode/decode outputs (`latent_dist`/`latents` and `sample`) with strict type checks and explicit 5D↔4D frame-batch adaptation for the native 2D VAE lane.
+- 2026-02-11: `vae_io.load_vae` now fails loud before strict load when state_dicts expose 3D kernel weights (unsupported by native 2D lane) or when inferred latent channels disagree with config latent channels.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

@@ -69,9 +69,17 @@ if TYPE_CHECKING:  # pragma: no cover
 
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.args import args
+from apps.backend.infra.config.vae_layout_lane import VaeLayoutLane
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
+from apps.backend.runtime.common.vae_lane_policy import (
+    detect_vae_layout,
+    resolve_vae_layout_lane,
+    strip_known_vae_prefixes,
+    uses_ldm_native_lane,
+)
+from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.model_parser import parse_state_dict
@@ -104,7 +112,6 @@ from apps.backend.runtime.checkpoint.io import load_torch_file, read_arbitrary_c
 from apps.backend.runtime.state_dict.tools import beautiful_print_gguf_state_dict_statics
 from apps.backend.runtime.state_dict.key_mapping import KeyMappingError
 from apps.backend.runtime.state_dict.keymap_sdxl_clip import ClipLayoutMetadata
-from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
 from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
 
 LOGGER = logging.getLogger(__name__)
@@ -628,16 +635,40 @@ def _load_component_config(component_path: str) -> Dict[str, Any]:
     return {}
 
 
-def _resolve_vae_class(signature: ModelSignature | None, *, layout: str = "diffusers"):
+def _resolve_vae_class(
+    signature: ModelSignature | None,
+    *,
+    layout: str = "diffusers",
+    lane: VaeLayoutLane | None = None,
+):
     """Select the appropriate VAE class.
 
-    - WAN22 family always uses AutoencoderKLWan.
-    - All other families use diffusers AutoencoderKL regardless of VAE layout.
+    - WAN22 family uses the shared native LDM `AutoencoderKL_LDM` lane.
+    - Other families choose the runtime lane class:
+      - LDM lane: `AutoencoderKL_LDM`
+      - Diffusers lane: `diffusers.AutoencoderKL`
     """
 
     family = getattr(signature, "family", None)
     if family is ModelFamily.WAN22:
-        return AutoencoderKLWan
+        if lane is not None and lane is not VaeLayoutLane.LDM_NATIVE:
+            raise RuntimeError(
+                "WAN22 supports only native LDM VAE lane; "
+                f"resolved lane={getattr(lane, 'value', lane)!r}."
+            )
+        if layout != "ldm":
+            raise RuntimeError(
+                "WAN22 native VAE lane requires LDM keyspace layout; "
+                f"detected layout={layout!r}."
+            )
+        return AutoencoderKL_LDM
+    if lane is not None and uses_ldm_native_lane(lane):
+        if layout != "ldm":
+            raise RuntimeError(
+                "Native LDM VAE lane requires LDM keyspace layout; "
+                f"detected layout={layout!r} for family={getattr(family, 'value', family)!r}."
+            )
+        return AutoencoderKL_LDM
     from diffusers import AutoencoderKL
 
     return AutoencoderKL
@@ -720,7 +751,7 @@ def _maybe_convert_sdxl_vae_state_dict(
     state_dict: Mapping[str, Any],
     signature: Optional[ModelSignature],
 ) -> Mapping[str, Any]:
-    """Normalize SDXL/Flow16 VAE weights into diffusers `AutoencoderKL` keyspace.
+    """Normalize LDM-style Flow/SDXL VAE weights into diffusers `AutoencoderKL` keyspace.
 
     This is a thin wrapper around the strict, string-only keymap in
     `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`. It:
@@ -729,13 +760,16 @@ def _maybe_convert_sdxl_vae_state_dict(
     - Validates canonical mid-attention projection lanes (`linear_2d` or `conv1x1_4d`).
     - Drops known non-weight training metadata (`model_ema.decay`, `model_ema.num_updates`).
 
-    Unknown/ambiguous layouts raise (fail loud). Non-SDXL/Flow16 families are returned
+    Unknown/ambiguous layouts raise (fail loud). Families outside the Flow/SDXL lane are returned
     unchanged.
     """
     family = getattr(signature, "family", None) if signature is not None else None
     if family not in (
         ModelFamily.SDXL,
         ModelFamily.SDXL_REFINER,
+        ModelFamily.FLUX,
+        ModelFamily.FLUX_KONTEXT,
+        ModelFamily.ZIMAGE,
     ):
         return state_dict
 
@@ -754,15 +788,8 @@ def _maybe_convert_sdxl_vae_state_dict(
 
 
 def _detect_vae_layout(sd: Mapping[str, Any]) -> str:
-    """Return 'ldm' if keys look like LDM VAE (encoder.down.*), else 'diffusers'."""
-
-    if not hasattr(sd, "keys"):
-        return "diffusers"
-    keys = list(sd.keys())
-    for k in keys:
-        if isinstance(k, str) and (k.startswith("encoder.down.") or k.startswith("decoder.conv_in")):
-            return "ldm"
-    return "diffusers"
+    """Detect VAE keyspace layout using shared fail-loud sentinels."""
+    return detect_vae_layout(sd)
 
 
 def _assert_flux_vae_state_dict_keyspace(state_dict: Mapping[str, Any], *, weights_path: str | None) -> None:
@@ -956,59 +983,37 @@ def _load_huggingface_component(
             list(state_dict.keys())[:5] if hasattr(state_dict, "keys") else None,
         )
 
-        # Normalise SDXL VAE layouts that use the original LDM-style naming before
-        # we inspect layout or strip prefixes. This keeps UNet/CLIP detection
-        # independent from how the VAE block was stored in the checkpoint.
-        state_dict = _maybe_convert_sdxl_vae_state_dict(state_dict, getattr(parsed, "signature", None))
-
+        state_dict = strip_known_vae_prefixes(state_dict)
         vae_layout = _detect_vae_layout(state_dict)
-        LOGGER.debug("VAE layout detected=%s", vae_layout)
+        signature = getattr(parsed, "signature", None)
+        vae_lane = resolve_vae_layout_lane(family=getattr(signature, "family", None), layout=vae_layout)
+        using_ldm_native = uses_ldm_native_lane(vae_lane)
 
-        def _strip_prefixes(sd: Mapping[str, Any]) -> Mapping[str, Any]:
-            """Return a lazy view with VAE prefixes stripped.
+        # Diffusers lane expects canonical diffusers keyspace.
+        if not using_ldm_native:
+            state_dict = _maybe_convert_sdxl_vae_state_dict(state_dict, signature)
 
-            Uses RemapKeysView so tensors load on demand; avoids materialising
-            the entire VAE just to rename keys (important for large XL VAEs).
-            """
-            from apps.backend.runtime.state_dict.views import RemapKeysView
-
-            prefixes = (
-                "first_stage_model.",
-                "vae.",
-                "model.",
-            )
-
-            mapping: Dict[str, str] = {}
-            for raw_key in sd.keys():  # only touch key names, not tensors
-                key = str(raw_key)
-                new_key = key
-                changed = True
-                while changed:
-                    changed = False
-                    for prefix in prefixes:
-                        if new_key.startswith(prefix):
-                            new_key = new_key[len(prefix) :]
-                            changed = True
-                            break
-                mapping[new_key] = key
-
-            if not mapping:
-                return sd
-            return RemapKeysView(sd, mapping)
-
-        state_dict = _strip_prefixes(state_dict)
-        # Convert LDM-style VAE keys to diffusers-style for SDXL/FLUX
-        state_dict = _maybe_convert_sdxl_vae_state_dict(state_dict, getattr(parsed, "signature", None))
         if family in (ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT):
             _assert_flux_vae_state_dict_keyspace(state_dict, weights_path=weights_path)
-        vae_projection_lane = _detect_sdxl_vae_projection_lane(state_dict, getattr(parsed, "signature", None))
-        LOGGER.debug("VAE projection lane=%s", vae_projection_lane)
 
-        vae_cls = _resolve_vae_class(getattr(parsed, "signature", None), layout=vae_layout)
+        if using_ldm_native:
+            vae_projection_lane = "linear_2d"
+        else:
+            vae_projection_lane = _detect_sdxl_vae_projection_lane(state_dict, signature)
+        LOGGER.debug(
+            "VAE layout detected=%s lane=%s projection_lane=%s",
+            vae_layout,
+            vae_lane.value,
+            vae_projection_lane,
+        )
+
+        vae_cls = _resolve_vae_class(signature, layout=vae_layout, lane=vae_lane)
         try:
             config_json = vae_cls.load_config(component_path)
         except Exception:
             config_json = _load_component_config(component_path)
+        if vae_cls is AutoencoderKL_LDM:
+            config_json = sanitize_ldm_vae_config(config_json)
         vae_device = memory_management.manager.get_device(DeviceRole.VAE)
         vae_dtype = memory_management.manager.dtype_for_role(
             DeviceRole.VAE,

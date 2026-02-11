@@ -20,9 +20,19 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional, Mapping, Any
+from typing import Optional
 
 import torch
+
+from apps.backend.infra.config.vae_layout_lane import VaeLayoutLane
+from apps.backend.runtime.common.vae_lane_policy import (
+    detect_vae_layout,
+    resolve_vae_layout_lane,
+    strip_known_vae_prefixes,
+    uses_ldm_native_lane,
+)
+from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
+from apps.backend.runtime.model_registry.specs import ModelFamily
 
 logger = logging.getLogger("backend.runtime.common.vae")
 
@@ -70,6 +80,7 @@ def load_flow16_vae(
     vae_path: str,
     dtype: torch.dtype = torch.bfloat16,
     device: Optional[str] = None,
+    family: ModelFamily = ModelFamily.ZIMAGE,
 ) -> object:
     """Load a 16-channel flow VAE from a path.
     
@@ -92,36 +103,6 @@ def load_flow16_vae(
     
     logger.info("Loading Flow16 VAE from: %s", vae_path)
 
-    def _strip_known_prefixes(sd: Mapping[str, Any]) -> dict[str, Any]:
-        """Strip common VAE prefixes (checkpoint exports) to diffusers keys.
-
-        Flow16 VAEs show up in a few layouts:
-        - diffusers keys (encoder.*, decoder.*)
-        - same keys prefixed with first_stage_model./vae./model./module.
-
-        We normalise by repeatedly removing known prefixes.
-        """
-        prefixes = (
-            "first_stage_model.",
-            "vae.",
-            "model.",
-            "module.",
-        )
-        out: dict[str, Any] = {}
-        for raw_key, value in sd.items():
-            key = str(raw_key)
-            new_key = key
-            changed = True
-            while changed:
-                changed = False
-                for prefix in prefixes:
-                    if new_key.startswith(prefix):
-                        new_key = new_key[len(prefix) :]
-                        changed = True
-                        break
-            out[new_key] = value
-        return out
-    
     try:
         if os.path.isdir(vae_path):
             # Diffusers directory format
@@ -140,14 +121,20 @@ def load_flow16_vae(
 
                 state_dict = load_torch_file(vae_path, device="cpu")
 
-            if isinstance(state_dict, Mapping):
-                state_dict = _strip_known_prefixes(state_dict)
-                # Normalize LDM-style Flow16 VAEs (same conversion as SDXL/Flux).
+            state_dict = strip_known_vae_prefixes(state_dict)
+            vae_layout = detect_vae_layout(state_dict)
+            vae_lane = resolve_vae_layout_lane(family=family, layout=vae_layout)
+            using_ldm_native = uses_ldm_native_lane(vae_lane)
+
+            if using_ldm_native:
+                vae = AutoencoderKL_LDM.from_config(sanitize_ldm_vae_config(FLOW16_VAE_CONFIG))
+            else:
+                # Normalize LDM-style Flow16 VAEs to diffusers keyspace when diffusers lane is active.
                 from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
 
                 _, state_dict = remap_sdxl_vae_state_dict(state_dict)
-            
-            vae = AutoencoderKL(**FLOW16_VAE_CONFIG)
+                vae = AutoencoderKL.from_config(FLOW16_VAE_CONFIG)
+
             expected_total = len(vae.state_dict())
             missing, unexpected = vae.load_state_dict(state_dict, strict=False)
             
@@ -163,7 +150,7 @@ def load_flow16_vae(
                 if ratio > 0.05:
                     raise ValueError(
                         f"Incompatible Flow16 VAE at {vae_path}: missing {len(missing)}/{expected_total} keys "
-                        f"after prefix stripping. Please supply a 16-channel Flow VAE (Flux/Z Image)."
+                        f"(lane={vae_lane.value}, layout={vae_layout}). Please supply a matching 16-channel Flow VAE."
                     )
             
             vae = vae.to(dtype=dtype)

@@ -39,10 +39,10 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - Normalization converges on Diffusers-style text encoder keys: converts legacy resblocks to `text_model.*` and accepts plain `text_model.*` roots by lifting them into the active wrapper namespace.
 
 ## Updates
-- 2025-11-22: VAE selection now prefers diffusers `AutoencoderKL` for SD/SDXL/Flux/etc., reserving `AutoencoderKLWan` only for WAN22 so SDXL latents are decoded with the proper architecture.
+- 2025-11-22: VAE selection now prefers diffusers `AutoencoderKL` for SD/SDXL/Flux/etc., reserving WAN22 for the native `AutoencoderKL_LDM` lane so SDXL latents are decoded with the proper architecture.
 - 2025-11-23: VAE loader now fails fast when weights are missing (e.g., pruned checkpoints without VAE); error names missing key count and asks for a compatible VAE.
 - 2025-11-23: VAE loader logs missing/expected/unexpected key counts before raising, making “frame cinza” cases debuggable when a single safetensors lacks VAE tensors.
-- 2025-11-23: `_resolve_vae_class` no longer routes non‑WAN22 families through `AutoencoderKLWan` even when the VAE layout looks like LDM; layout is used only for key mapping, not for selecting the WAN22 VAE outside the WAN22 family.
+- 2025-11-23: `_resolve_vae_class` no longer routes non‑WAN22 families through the WAN native `AutoencoderKL_LDM` class when the VAE layout looks like LDM; layout is used only for key mapping outside the WAN22 family.
 - 2025-11-24: `_maybe_convert_sdxl_vae_state_dict` now materialises lazy SafeTensors views before reshaping mid-attn projections to avoid torch_cpu.dll crashes on Windows during SDXL VAE conversion.
 - 2025-12-11: `_maybe_convert_sdxl_vae_state_dict` expanded to cover `ModelFamily.ZIMAGE`, since Z Image uses the same Flow16 VAE layouts as Flux; external VAEs loaded via `runtime.common.vae.load_flow16_vae` reuse this converter.
 - 2025-11-25: Loader now preserves scheduler-provided `prediction_type` when it disagrees with the model signature, logging the mismatch instead of forcing the signature value; the signature hint remains accessible via `scheduler.config.codex_signature_prediction_type`.

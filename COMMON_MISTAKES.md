@@ -1276,3 +1276,27 @@ Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT
 Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$(git rev-parse --show-toplevel)"; PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`
 Cause and fix: `PYTHONPATH` was set for the subprocess, but `CODEX_ROOT` was not exported into the subprocess environment; repo init failed with `OSError: CODEX_ROOT not set`.
 Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$(git rev-parse --show-toplevel)"; CODEX_ROOT="$CODEX_ROOT" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`
+
+### Inspecting diffusers source with system Python
+
+Wrong command:
+```bash
+FILE="$(python - <<'PY'
+import inspect, diffusers.models.autoencoders.autoencoder_kl as m
+print(inspect.getsourcefile(m))
+PY
+)"
+```
+
+Cause and fix:
+`python` resolved to the system interpreter (outside `$CODEX_ROOT/.venv`), so `diffusers` was unavailable (`ModuleNotFoundError`). Use the repo venv Python and set `PYTHONPATH` to repo root.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"
+FILE="$($CODEX_ROOT/.venv/bin/python - <<'PY'
+import inspect, diffusers.models.autoencoders.autoencoder_kl as m
+print(inspect.getsourcefile(m))
+PY
+)"
+```

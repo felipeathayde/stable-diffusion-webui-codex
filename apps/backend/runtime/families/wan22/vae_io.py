@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
-Loads the WAN VAE via Diffusers, applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
+Loads the WAN VAE via native `AutoencoderKL_LDM`, applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
 Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_vae_dtype_candidates` (function): Ordered dtype candidates for VAE encode/decode attempts (requested dtype first).
 - `vae_encode_video_condition` (function): Encodes the Diffusers-style I2V conditioning video into latents (deterministic mode).
 - `vae_decode_video` (function): Decodes video latents to frames; can validate the expected output frame count.
-- `decode_latents_to_frames` (function): Adapts latents to the expected 16-channel VAE decode input and returns frames (optional frame-count validation).
+- `decode_latents_to_frames` (function): Validates strict WAN latent-channel decode input (no implicit slicing) and returns frames (optional frame-count validation).
 """
 
 from __future__ import annotations
@@ -28,21 +28,107 @@ import torch
 
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
+from apps.backend.runtime.checkpoint.io import load_torch_file
+from apps.backend.runtime.models.state_dict import safe_load_state_dict
+from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
 
-from .config import RunConfig, as_torch_dtype, resolve_device_name, resolve_i2v_order
+from .config import RunConfig, as_torch_dtype, resolve_device_name
 from .diagnostics import cuda_empty_cache, get_logger, log_numerics_enabled, summarize_numerics, warn_fallback
 from .wan_latent_norms import resolve_norm
+
+_SUPPORTED_WAN_VAE_LATENT_CHANNELS = (16, 48)
+
+
+def _detect_temporal_kernel_weight(
+    state_dict: dict[str, Any],
+) -> tuple[str, tuple[int, ...]] | None:
+    for key, tensor in state_dict.items():
+        if not torch.is_tensor(tensor):
+            continue
+        if not str(key).endswith(".weight"):
+            continue
+        if int(tensor.ndim) == 5:
+            return str(key), tuple(int(dim) for dim in tensor.shape)
+    return None
+
+
+def _infer_latent_channels_from_state_dict(state_dict: dict[str, Any]) -> int | None:
+    candidates: tuple[tuple[str, int], ...] = (
+        ("post_quant_conv.weight", 0),
+        ("quant_conv.weight", 0),
+        ("encoder.conv_out.weight", 0),
+        ("decoder.conv_in.weight", 1),
+    )
+    for key, axis in candidates:
+        tensor = state_dict.get(key)
+        if not torch.is_tensor(tensor):
+            continue
+        shape = tuple(int(dim) for dim in tensor.shape)
+        if len(shape) < 2 or axis >= len(shape):
+            continue
+        value = int(shape[axis])
+        if key in {"quant_conv.weight", "encoder.conv_out.weight"} and value % 2 == 0:
+            value = value // 2
+        if value > 0:
+            return value
+    return None
 
 
 def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling: bool = False):
     if not vae_path:
         raise RuntimeError("WAN22 GGUF: wan_vae_dir is required when running the GGUF runtime (VAE path missing).")
 
-    from diffusers import AutoencoderKLWan  # type: ignore
-
     path = os.path.expanduser(str(vae_path))
+
+    def _instantiate_with_state_dict(state_dict_path: str, config_dir: str) -> AutoencoderKL_LDM:
+        state_dict = load_torch_file(state_dict_path, device="cpu")
+        temporal_weight = _detect_temporal_kernel_weight(state_dict)
+        if temporal_weight is not None:
+            weight_key, weight_shape = temporal_weight
+            raise RuntimeError(
+                "WAN22 GGUF: native AutoencoderKL_LDM lane only supports 2D VAE kernels; "
+                f"detected 3D kernel weight key={weight_key!r} shape={weight_shape}. "
+                "Use a 2D-compatible WAN VAE weights file."
+            )
+        config = AutoencoderKL_LDM.load_config(config_dir)
+        native_config = sanitize_ldm_vae_config(config)
+        inferred_latent_channels = _infer_latent_channels_from_state_dict(state_dict)
+        if inferred_latent_channels is not None:
+            configured_channels = native_config.get("latent_channels")
+            if configured_channels is None:
+                native_config["latent_channels"] = int(inferred_latent_channels)
+            elif int(configured_channels) != int(inferred_latent_channels):
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE config/state_dict latent channel mismatch "
+                    f"(config latent_channels={int(configured_channels)} inferred={int(inferred_latent_channels)})."
+                )
+        vae = AutoencoderKL_LDM.from_config(native_config)
+        missing, unexpected = safe_load_state_dict(vae, state_dict, log_name="WAN22 VAE")
+        if missing or unexpected:
+            raise RuntimeError(
+                "WAN22 GGUF: native VAE load failed strict validation "
+                f"(missing={len(missing)} unexpected={len(unexpected)} "
+                f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]})."
+            )
+        return vae
+
     if os.path.isdir(path):
-        vae = AutoencoderKLWan.from_pretrained(path, torch_dtype=torch_dtype, local_files_only=True)
+        weights_candidates = (
+            "diffusion_pytorch_model.safetensors",
+            "diffusion_pytorch_model.bin",
+            "model.safetensors",
+            "model.bin",
+            "pytorch_model.bin",
+        )
+        state_dict_path = None
+        for name in weights_candidates:
+            candidate = os.path.join(path, name)
+            if os.path.isfile(candidate):
+                state_dict_path = candidate
+                break
+        if state_dict_path is None:
+            raise RuntimeError(f"WAN22 GGUF: no VAE weights file found under directory: {path}")
+        vae = _instantiate_with_state_dict(state_dict_path, path).to(dtype=torch_dtype)
         if enable_tiling and hasattr(vae, "enable_tiling"):
             try:
                 vae.enable_tiling()
@@ -50,12 +136,14 @@ def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling
                 pass
         return vae
     if os.path.isfile(path):
-        loader = getattr(AutoencoderKLWan, "from_single_file", None)
-        if loader is None:
+        config_dir = os.path.dirname(path)
+        config_path = os.path.join(config_dir, "config.json")
+        if not os.path.isfile(config_path):
             raise RuntimeError(
-                f"AutoencoderKLWan.from_single_file not available; provide a directory instead of file: {path}"
+                "WAN22 GGUF: single-file VAE load requires sibling config.json. "
+                f"Provide a directory VAE path instead of file: {path}"
             )
-        vae = loader(path, torch_dtype=torch_dtype)
+        vae = _instantiate_with_state_dict(path, config_dir).to(dtype=torch_dtype)
         if enable_tiling and hasattr(vae, "enable_tiling"):
             try:
                 vae.enable_tiling()
@@ -76,7 +164,14 @@ def _retrieve_latents(encoder_output: Any, *, sample_mode: str) -> torch.Tensor:
         raise ValueError(f"Unsupported VAE sample_mode: {sample_mode!r} (expected 'mode' or 'sample')")
     if hasattr(encoder_output, "latents"):
         return encoder_output.latents
-    raise AttributeError("VAE encode output has neither latent_dist nor latents")
+    if torch.is_tensor(encoder_output):
+        return encoder_output
+    if isinstance(encoder_output, (tuple, list)) and encoder_output and torch.is_tensor(encoder_output[0]):
+        return encoder_output[0]
+    raise AttributeError(
+        "VAE encode output has neither latent_dist nor latents "
+        f"(type={type(encoder_output).__name__})."
+    )
 
 
 def _maybe_resize_hw(x: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
@@ -180,6 +275,43 @@ def _vae_dtype_candidates(*, device: str, preferred: torch.dtype) -> list[torch.
     return [torch.float32]
 
 
+def _assert_supported_wan_vae_latent_channels(channels: int, *, context: str) -> None:
+    if int(channels) in _SUPPORTED_WAN_VAE_LATENT_CHANNELS:
+        return
+    supported = ", ".join(str(value) for value in _SUPPORTED_WAN_VAE_LATENT_CHANNELS)
+    raise RuntimeError(
+        f"WAN22 GGUF: {context} supports latent channels [{supported}] only (got C={int(channels)}). "
+        "If C includes mask/image channels (e.g., I2V model-input state), pass pure VAE latents to decode."
+    )
+
+
+def _to_frame_batch_4d(video_tensor: torch.Tensor) -> tuple[torch.Tensor, int, int]:
+    """Convert `[B,C,T,H,W]` tensor to frame-batched `[B*T,C,H,W]`."""
+    if video_tensor.ndim != 5:
+        raise RuntimeError(
+            f"WAN22 GGUF: expected 5D video tensor [B,C,T,H,W], got shape={tuple(video_tensor.shape)}."
+        )
+    b, c, t, h, w = video_tensor.shape
+    batched = video_tensor.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+    return batched, int(b), int(t)
+
+
+def _from_frame_batch_4d(frame_tensor: torch.Tensor, *, batch: int, frames: int) -> torch.Tensor:
+    """Convert frame-batched `[B*T,C,H,W]` tensor back to `[B,C,T,H,W]`."""
+    if frame_tensor.ndim != 4:
+        raise RuntimeError(
+            f"WAN22 GGUF: expected 4D frame-batch tensor [B*T,C,H,W], got shape={tuple(frame_tensor.shape)}."
+        )
+    bt, c, h, w = frame_tensor.shape
+    expected = int(batch) * int(frames)
+    if int(bt) != expected:
+        raise RuntimeError(
+            "WAN22 GGUF: frame-batch reshape mismatch "
+            f"(B*T={expected} expected, got {int(bt)})."
+        )
+    return frame_tensor.view(int(batch), int(frames), int(c), int(h), int(w)).permute(0, 2, 1, 3, 4).contiguous()
+
+
 def vae_encode_video_condition(
     init_image: Any,
     *,
@@ -193,8 +325,6 @@ def vae_encode_video_condition(
     offload_after: bool = True,
 ) -> torch.Tensor:
     log = get_logger(logger)
-    norm = resolve_norm(None, channels=16)
-    log.info("[wan22.gguf] VAE latent norm=%s channels=%d", norm.name, norm.channels)
 
     if int(num_frames) <= 0:
         raise RuntimeError(f"WAN22 GGUF: invalid num_frames={num_frames} for I2V video_condition")
@@ -237,9 +367,23 @@ def vae_encode_video_condition(
                 [image, image.new_zeros((image.shape[0], image.shape[1], int(num_frames) - 1, int(height), int(width)))],
                 dim=2,
             )
+            video_batched, batch_size, frame_count = _to_frame_batch_4d(video_condition)
 
             with torch.no_grad():
-                encoded = _retrieve_latents(vae.encode(video_condition), sample_mode="mode")
+                encoded_raw = _retrieve_latents(vae.encode(video_batched), sample_mode="mode")
+            if encoded_raw.ndim == 4:
+                encoded = _from_frame_batch_4d(encoded_raw, batch=batch_size, frames=frame_count)
+            elif encoded_raw.ndim == 5:
+                encoded = encoded_raw
+            else:
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE encode produced unsupported tensor rank "
+                    f"(shape={tuple(encoded_raw.shape)})."
+                )
+            latent_channels = int(encoded.shape[1])
+            _assert_supported_wan_vae_latent_channels(latent_channels, context="VAE encode")
+            norm = resolve_norm(None, channels=latent_channels)
+            log.info("[wan22.gguf] VAE latent norm=%s channels=%d", norm.name, norm.channels)
             encoded = norm.process_in(encoded)
 
             if not torch.isfinite(encoded).all():
@@ -300,8 +444,6 @@ def vae_decode_video(
     _ = model_dir  # kept for signature symmetry (callers pass stage dir; current VAE loads from explicit path)
     log = get_logger(logger)
 
-    norm = resolve_norm(None, channels=16)
-
     if hasattr(video_latents, "ndim"):
         if video_latents.ndim == 4:
             video_latents = video_latents.unsqueeze(2)
@@ -312,11 +454,8 @@ def vae_decode_video(
 
     b, c, t_lat, h, w = video_latents.shape
 
-    if int(c) != 16:
-        raise RuntimeError(
-            f"WAN22 VAE decode expects 16 channels but received C={c}. "
-            "If using I2V checkpoints that embed mask+image+latents, slice the latent channels before decode."
-        )
+    _assert_supported_wan_vae_latent_channels(int(c), context="VAE decode")
+    norm = resolve_norm(None, channels=int(c))
 
     from PIL import Image
 
@@ -339,7 +478,27 @@ def vae_decode_video(
                 f"(bad={n_bad} dtype={torch_dtype} device={attempt_device}; {summarize_numerics(lat, name='lat_unnorm')})."
             )
         with torch.no_grad():
-            img = vae.decode(lat).sample
+            lat_batched, batch_size, frame_count = _to_frame_batch_4d(lat)
+            decoded = vae.decode(lat_batched)
+            sample = getattr(decoded, "sample", None)
+            if sample is not None:
+                img = sample
+            elif torch.is_tensor(decoded):
+                img = decoded
+            elif isinstance(decoded, (tuple, list)) and decoded and torch.is_tensor(decoded[0]):
+                img = decoded[0]
+            else:
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE decode output has no tensor sample "
+                    f"(type={type(decoded).__name__})."
+                )
+            if img.ndim == 4:
+                img = _from_frame_batch_4d(img, batch=batch_size, frames=frame_count)
+            elif img.ndim != 5:
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE decode produced unsupported tensor rank "
+                    f"(shape={tuple(img.shape)})."
+                )
         if offload_after:
             try:
                 vae.to("cpu")
@@ -454,15 +613,7 @@ def decode_latents_to_frames(
     _ = debug_preview  # debug-only clamp removed (no env-driven behavior)
 
     c = int(x.shape[1])
-    if c != 16:
-        if c >= 16:
-            if resolve_i2v_order() == "lat_first":
-                x = x[:, :16, ...]
-            else:
-                x = x[:, -16:, ...]
-            log.info("[wan22.gguf] decode latents: sliced to 16 channels from C=%d", c)
-        else:
-            raise RuntimeError(f"WAN22 GGUF: expected ≥16 latent channels for decode, got {c}")
+    _assert_supported_wan_vae_latent_channels(c, context="decode")
 
     if not torch.isfinite(x).all():
         n_bad = int((~torch.isfinite(x)).sum().item())

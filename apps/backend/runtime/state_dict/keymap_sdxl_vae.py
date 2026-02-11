@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: SDXL VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
 Normalizes common LDM layouts into diffusers keyspace, strips wrapper prefixes, and flattens 1×1 Conv projection weights lazily.
-Supports legacy mid-attention aliases under both `mid.attn_1.*` and `mid.block_1.*` naming variants.
+Supports legacy mid-attention aliases under `mid.attn_1.*`, prefixed `mid.attn_1.to_*`, and `mid.block_1.*` naming variants.
 Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
 Flattening conversion is globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
@@ -311,6 +311,11 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
                 "key": "to_k",
                 "value": "to_v",
                 "proj_attn": "to_out.0",
+                # already-prefixed variants seen in some exports
+                "to_q": "to_q",
+                "to_k": "to_k",
+                "to_v": "to_v",
+                "to_out": "to_out.0",
             }
 
             # Some SDXL VAE exports encode mid attention heads under `mid.block_1.*`
@@ -326,6 +331,8 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
                     rest = ".".join(parts[5:])
                 if head is not None and rest:
                     mapped = table[head]
+                    if head == "to_out" and rest.startswith("0."):
+                        mapped = "to_out"
                     new_key = f"{prefix}.mid_block.attentions.0.{mapped}.{rest}"
 
             if len(parts) >= 4 and parts[2].startswith("block_") and new_key == key:
@@ -358,10 +365,17 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
                 "key": "to_k",
                 "value": "to_v",
                 "proj_attn": "to_out.0",
+                # already-prefixed variants seen in some exports
+                "to_q": "to_q",
+                "to_k": "to_k",
+                "to_v": "to_v",
+                "to_out": "to_out.0",
             }
 
             mapped = table.get(head)
             if mapped is not None and rest:
+                if head == "to_out" and rest.startswith("0."):
+                    mapped = "to_out"
                 new_key = f"{prefix}.mid_block.attentions.0.{mapped}.{rest}"
 
         if "nin_shortcut." in key:

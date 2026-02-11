@@ -1,7 +1,7 @@
 # AGENT — Model Parser
 <!-- tags: runtime, model-parser -->
 Date: 2025-10-29
-Last Review: 2026-02-10
+Last Review: 2026-02-11
 Status: Draft
 
 ## Mandate
@@ -34,3 +34,4 @@ Status: Draft
 - 2026-01-29: CodexPack `*.codexpack.gguf` now counts as GGUF quantization for parser quantization detection (so loaders build GGUF ops and use hook-based `load_state_dict`, not the conservative copier).
 - 2026-02-10: SDXL nested UNet label-embedding key normalization moved out of parser converters into canonical checkpoint keymap (`apps/backend/runtime/state_dict/keymap_sdxl_checkpoint.py`); SDXL parser plan no longer runs UNet key normalization converters.
 - 2026-02-10: CLIP converter structural conversions (projection transpose paths in `converters/clip.py`) are now globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`: `auto` fails loud, `convert` opt-in allows conversion.
+- 2026-02-11: CLIP parser converter now delegates to canonical CLIP keymap normalization (`normalize_codex_clip_state_dict_with_layout`) and keeps native layout in AUTO (`qkv_impl=auto`, `projection_orientation=auto`) instead of forcing projection transpose.

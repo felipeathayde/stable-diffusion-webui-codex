@@ -13,7 +13,7 @@ Structural conversion operations (projection transpose and fused in_proj -> spli
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger for state-dict conversion and filtering diagnostics.
-- `_transpose_projection` (function): Validates and transposes projection weights to match HF conventions.
+- `_projection_weight_for_orientation` (function): Returns projection weights for a target orientation (`linear` or `matmul`).
 - `convert_openclip_checkpoint` (function): In-place OpenCLIP→HF key conversion for vision checkpoints.
 - `rekey_vision_state_dict` (function): Re-prefix helper for state dicts produced by diffusers/HF.
 - `cleaned_state_dict` (function): Filters a state dict to keep only keys under the allowed prefixes.
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, MutableMapping
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Literal, Tuple
 
 import torch
 
@@ -43,11 +43,18 @@ from .specs import ClipVisionVariantSpec
 logger = logging.getLogger("backend.runtime.vision.clip.state_dict")
 
 
-def _transpose_projection(weight: torch.Tensor) -> torch.Tensor:
+def _projection_weight_for_orientation(
+    weight: torch.Tensor,
+    *,
+    source_orientation: Literal["linear", "matmul"],
+    target_orientation: Literal["linear", "matmul"],
+) -> torch.Tensor:
     if weight.ndim != 2:
         raise ClipVisionLoadError(
             f"Clip vision projection weight must be 2-D; received shape {tuple(weight.shape)}."
         )
+    if source_orientation == target_orientation:
+        return weight
     if not is_structural_weight_conversion_enabled():
         raise ClipVisionLoadError(
             "Clip vision projection conversion requires structural conversion (transpose), "
@@ -62,6 +69,7 @@ def convert_openclip_checkpoint(
     *,
     prefix: str,
     spec: ClipVisionVariantSpec | None = None,
+    projection_orientation: Literal["auto", "linear", "matmul"] = "auto",
 ) -> None:
     """Mutate an OpenCLIP-style state dict so it matches HF naming."""
     if spec is None:
@@ -84,7 +92,16 @@ def convert_openclip_checkpoint(
             state_dict[target] = state_dict.pop(source)
     proj_key = f"{prefix}.proj"
     if proj_key in state_dict:
-        state_dict["visual_projection.weight"] = _transpose_projection(state_dict.pop(proj_key))
+        source_orientation: Literal["linear", "matmul"] = "matmul"
+        if projection_orientation == "auto":
+            target_orientation: Literal["linear", "matmul"] = source_orientation
+        else:
+            target_orientation = projection_orientation
+        state_dict["visual_projection.weight"] = _projection_weight_for_orientation(
+            state_dict.pop(proj_key),
+            source_orientation=source_orientation,
+            target_orientation=target_orientation,
+        )
     transformers_convert(state_dict, f"{prefix}.", "vision_model.", spec.num_hidden_layers)
 
 

@@ -8,12 +8,12 @@ Required Notice: see NOTICE
 
 Purpose: SD3/SD3.5 parser plan builder (DiT core + optional VAE + CLIP-L/CLIP-G/T5XXL).
 Defines split/conversion/validation steps for SD3-family checkpoints, converting embedded CLIP and (optional) T5-XXL components and
-validating core presence and required text-encoder keys.
+validating core presence and required text-encoder keys. CLIP-G conversion keeps native projection orientation in `auto` mode.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_plan` (function): Builds and returns the SD3 `ParserPlanBundle`.
 - `_convert_clip_l` (function): Converts CLIP-L tensors and registers the `clip_l` alias mapping.
-- `_convert_clip_g` (function): Converts CLIP-G tensors when present and registers the `clip_g` alias mapping.
+- `_convert_clip_g` (function): Converts CLIP-G tensors when present (auto/native projection orientation) and registers the `clip_g` alias mapping.
 - `_convert_t5` (function): Converts T5-XXL tensors when present and registers the `t5xxl` alias mapping.
 - `_validate_transformer_core` (function): Validates presence of required SD3 transformer keys.
 - `_validate_clip_l` (function): Validates CLIP-L conversion output presence.
@@ -87,7 +87,7 @@ def _convert_clip_g(tensors: Dict[str, torch.Tensor], context):
             layers=32,
             ensure_position_ids=True,
             drop_logit_scale=True,
-            transpose_projection=True,
+            projection_orientation="auto",
         )
         register_text_encoder(context, "clip_g", "text_encoder_2")
         return converted

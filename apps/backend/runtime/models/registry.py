@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Checkpoint/VAE discovery with sha256 caching and telemetry.
+Purpose: Checkpoint/VAE discovery with sha256 and layout-metadata caching.
 Scans configured model roots (via `apps/paths.json` accessors) for checkpoint and VAE weight files, computes sha256 hashes, and maintains a
-persistent cache in `models/.hashes.json` to support fast UI inventory and backend SHA-based resolution.
+persistent cache in `models/.hashes.json` (schema v2) for fast UI inventory, backend SHA-based resolution, and CLIP layout metadata reuse.
 Family hints and root selection cover SD/Flux/Anima/WAN/ZImage keyspaces.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -17,8 +17,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_sha256` (function): Computes sha256 digest for a file path.
 - `detect_safetensors_primary_dtype` (function): Best-effort safetensors dtype hint reader (header-only parse; used for defaults/telemetry).
 - `_HashCacheEntry` (dataclass): Cache entry for one file (sha + mtime + size) used to avoid re-hashing unchanged files.
-- `_load_hash_cache` (function): Loads `.hashes.json` cache from disk.
-- `_save_hash_cache` (function): Writes `.hashes.json` cache to disk.
+- `LayoutMetadata` (dataclass): Typed CLIP layout metadata entry (`qkv_layout`, `projection_orientation`, optional `source_style`).
+- `_load_hash_cache` (function): Loads `.hashes.json` cache from disk (v1/v2 migration aware).
+- `_save_hash_cache` (function): Writes `.hashes.json` cache to disk (v2 schema).
 - `ModelRegistry` (class): Registry service; scans paths, maintains caches, and produces `CheckpointRecord`/`VAERecord` lists for UI/API (also provides public hash-cache helpers).
 - `get_registry` (function): Returns the singleton `ModelRegistry` instance.
 - `list_checkpoints` (function): Returns checkpoint records (optional refresh).
@@ -36,7 +37,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.infra.config.repo_root import get_repo_root
@@ -54,6 +55,10 @@ _LOGGER = logging.getLogger("backend.registry")
 _ALLOWED_CHECKPOINT_EXTS = {".ckpt", ".safetensor", ".safetensors", ".pt", ".bin", ".gguf"}
 _CHECKPOINT_BLACKLIST_SUFFIXES = {".vae.ckpt", ".vae.safetensor", ".vae.safetensors", ".vae.pt"}
 _VAE_EXTS = {".safetensor", ".safetensors", ".ckpt", ".pt"}
+_HASH_CACHE_SCHEMA_VERSION = 2
+_LAYOUT_QKV_VALUES = frozenset({"split", "fused"})
+_LAYOUT_PROJECTION_VALUES = frozenset({"none", "linear", "matmul"})
+_LAYOUT_STYLE_VALUES = frozenset({"codex", "hf", "openclip"})
 
 def _default_models_root() -> Path:
     return get_repo_root() / "models"
@@ -80,51 +85,184 @@ class _HashCacheEntry:
     dtype: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class LayoutMetadata:
+    qkv_layout: str
+    projection_orientation: str
+    source_style: str | None = None
+
+
 # Persistent hash cache file location (under models/)
 _HASH_CACHE_FILE = _default_models_root() / ".hashes.json"
 
 
-def _load_hash_cache() -> Dict[str, _HashCacheEntry]:
-    """Load persistent hash cache from disk."""
-    cache: Dict[str, _HashCacheEntry] = {}
+def _parse_file_cache_entry(*, path: str, raw: Mapping[str, Any]) -> _HashCacheEntry:
+    return _HashCacheEntry(
+        mtime=float(raw.get("mtime", 0)),
+        size=int(raw.get("size", 0)),
+        sha256=str(raw.get("sha256", "")),
+        short_hash=str(raw.get("short_hash", "")),
+        dtype=(str(raw.get("dtype", "")).strip() or None),
+    )
+
+
+def _parse_layout_metadata(*, sha256: str, layout_key: str, raw: Mapping[str, Any]) -> LayoutMetadata:
+    qkv_layout = str(raw.get("qkv_layout", "")).strip().lower()
+    projection_orientation = str(raw.get("projection_orientation", "")).strip().lower()
+    source_style_raw = raw.get("source_style")
+    source_style = None if source_style_raw is None else str(source_style_raw).strip().lower()
+    if qkv_layout not in _LAYOUT_QKV_VALUES:
+        allowed = ", ".join(sorted(_LAYOUT_QKV_VALUES))
+        raise RuntimeError(
+            f"Invalid layout metadata qkv_layout for sha={sha256} key={layout_key!r}: "
+            f"{qkv_layout!r} (allowed: {allowed})"
+        )
+    if projection_orientation not in _LAYOUT_PROJECTION_VALUES:
+        allowed = ", ".join(sorted(_LAYOUT_PROJECTION_VALUES))
+        raise RuntimeError(
+            f"Invalid layout metadata projection_orientation for sha={sha256} key={layout_key!r}: "
+            f"{projection_orientation!r} (allowed: {allowed})"
+        )
+    if source_style and source_style not in _LAYOUT_STYLE_VALUES:
+        allowed = ", ".join(sorted(_LAYOUT_STYLE_VALUES))
+        raise RuntimeError(
+            f"Invalid layout metadata source_style for sha={sha256} key={layout_key!r}: "
+            f"{source_style!r} (allowed: {allowed})"
+        )
+    return LayoutMetadata(
+        qkv_layout=qkv_layout,
+        projection_orientation=projection_orientation,
+        source_style=source_style or None,
+    )
+
+
+def _serialize_layout_metadata(metadata: LayoutMetadata) -> dict[str, str]:
+    payload = {
+        "qkv_layout": metadata.qkv_layout,
+        "projection_orientation": metadata.projection_orientation,
+    }
+    if metadata.source_style:
+        payload["source_style"] = metadata.source_style
+    return payload
+
+
+def _looks_like_v1_file_cache(raw: Mapping[str, Any]) -> bool:
+    if not raw:
+        return True
+    for value in raw.values():
+        if not isinstance(value, Mapping):
+            return False
+        required = {"mtime", "size", "sha256", "short_hash"}
+        if not required.issubset(value.keys()):
+            return False
+    return True
+
+
+def _load_hash_cache() -> tuple[Dict[str, _HashCacheEntry], Dict[str, Dict[str, LayoutMetadata]]]:
+    """Load persistent hash/layout cache from disk."""
+    file_cache: Dict[str, _HashCacheEntry] = {}
+    layout_cache: Dict[str, Dict[str, LayoutMetadata]] = {}
     _LOGGER.info("loading hash cache from %s", _HASH_CACHE_FILE)
     try:
-        if _HASH_CACHE_FILE.is_file():
-            with _HASH_CACHE_FILE.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-            for path, entry in data.items():
-                if isinstance(entry, dict):
-                    cache[path] = _HashCacheEntry(
-                        mtime=float(entry.get("mtime", 0)),
-                        size=int(entry.get("size", 0)),
-                        sha256=str(entry.get("sha256", "")),
-                        short_hash=str(entry.get("short_hash", "")),
-                        dtype=(str(entry.get("dtype", "")).strip() or None),
-                    )
-            _LOGGER.info("hash cache loaded: %d entries", len(cache))
-        else:
+        if not _HASH_CACHE_FILE.is_file():
             _LOGGER.info("hash cache not found, will compute hashes on first scan")
-    except Exception as e:
-        _LOGGER.warning("hash cache load failed: %s", e)
-    return cache
+            return file_cache, layout_cache
+        with _HASH_CACHE_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, Mapping):
+            raise RuntimeError("hash cache root must be a JSON object")
+
+        if "schema_version" not in data:
+            if not _looks_like_v1_file_cache(data):
+                raise RuntimeError(
+                    "legacy hash cache payload is malformed (expected path->entry mapping with mtime/size/sha256/short_hash)"
+                )
+            for path, entry in data.items():
+                if not isinstance(path, str) or not isinstance(entry, Mapping):
+                    continue
+                file_cache[path] = _parse_file_cache_entry(path=path, raw=entry)
+            _LOGGER.info("hash cache loaded (v1): %d file entries", len(file_cache))
+            return file_cache, layout_cache
+
+        schema_version = int(data.get("schema_version"))
+        if schema_version != _HASH_CACHE_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"unsupported cache schema version: {schema_version} (expected {_HASH_CACHE_SCHEMA_VERSION})"
+            )
+        files_raw = data.get("files", {})
+        if not isinstance(files_raw, Mapping):
+            raise RuntimeError("hash cache schema v2 requires object field 'files'")
+        for path, entry in files_raw.items():
+            if not isinstance(path, str) or not isinstance(entry, Mapping):
+                continue
+            file_cache[path] = _parse_file_cache_entry(path=path, raw=entry)
+
+        layouts_raw = data.get("layout_by_sha", {})
+        if not isinstance(layouts_raw, Mapping):
+            raise RuntimeError("hash cache schema v2 requires object field 'layout_by_sha'")
+        for sha256, by_key in layouts_raw.items():
+            if not isinstance(sha256, str):
+                continue
+            sha_norm = sha256.strip().lower()
+            if not sha_norm:
+                continue
+            if not isinstance(by_key, Mapping):
+                raise RuntimeError(f"layout_by_sha[{sha_norm!r}] must be an object")
+            parsed: Dict[str, LayoutMetadata] = {}
+            for layout_key, raw_metadata in by_key.items():
+                if not isinstance(layout_key, str):
+                    continue
+                if not isinstance(raw_metadata, Mapping):
+                    raise RuntimeError(
+                        f"layout metadata for sha={sha_norm} key={layout_key!r} must be an object"
+                    )
+                parsed[layout_key] = _parse_layout_metadata(
+                    sha256=sha_norm,
+                    layout_key=layout_key,
+                    raw=raw_metadata,
+                )
+            if parsed:
+                layout_cache[sha_norm] = parsed
+        _LOGGER.info(
+            "hash cache loaded (v2): file_entries=%d layout_entries=%d",
+            len(file_cache),
+            sum(len(v) for v in layout_cache.values()),
+        )
+    except Exception as exc:
+        raise RuntimeError(f"hash cache load failed: {exc}") from exc
+    return file_cache, layout_cache
 
 
-def _save_hash_cache(cache: Dict[str, _HashCacheEntry]) -> None:
-    """Persist hash cache to disk."""
+def _save_hash_cache(
+    file_cache: Dict[str, _HashCacheEntry],
+    layout_cache: Dict[str, Dict[str, LayoutMetadata]],
+) -> None:
+    """Persist hash/layout cache to disk (schema v2)."""
     try:
-        data = {
-            path: {
-                "mtime": entry.mtime,
-                "size": entry.size,
-                "sha256": entry.sha256,
-                "short_hash": entry.short_hash,
-                "dtype": entry.dtype,
+        payload = {
+            "schema_version": _HASH_CACHE_SCHEMA_VERSION,
+            "files": {
+                path: {
+                    "mtime": entry.mtime,
+                    "size": entry.size,
+                    "sha256": entry.sha256,
+                    "short_hash": entry.short_hash,
+                    "dtype": entry.dtype,
+                }
+                for path, entry in file_cache.items()
             }
-            for path, entry in cache.items()
+            ,
+            "layout_by_sha": {
+                sha256: {
+                    layout_key: _serialize_layout_metadata(metadata)
+                    for layout_key, metadata in by_key.items()
+                }
+                for sha256, by_key in layout_cache.items()
+            },
         }
         _HASH_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         with _HASH_CACHE_FILE.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(payload, f, indent=2)
     except Exception as e:
         _LOGGER.debug("hash cache save failed: %s", e)
 
@@ -139,14 +277,21 @@ class ModelRegistry:
         self._checkpoints: Dict[str, CheckpointRecord] = {}
         self._vaes: Dict[str, VAERecord] = {}
         self._hash_cache: Dict[str, _HashCacheEntry] | None = None  # Lazy load
+        self._layout_cache: Dict[str, Dict[str, LayoutMetadata]] | None = None  # Lazy load
         self._hash_cache_dirty = False  # Track if we need to save
         self._last_scan: float | None = None
 
     def _ensure_hash_cache(self) -> Dict[str, _HashCacheEntry]:
         """Lazy load hash cache on first access."""
         if self._hash_cache is None:
-            self._hash_cache = _load_hash_cache()
+            self._hash_cache, self._layout_cache = _load_hash_cache()
         return self._hash_cache
+
+    def _ensure_layout_cache(self) -> Dict[str, Dict[str, LayoutMetadata]]:
+        self._ensure_hash_cache()
+        if self._layout_cache is None:
+            self._layout_cache = {}
+        return self._layout_cache
 
     # ------------------------------------------------------------------
     # Public API
@@ -167,8 +312,53 @@ class ModelRegistry:
 
         with self._lock:
             if self._hash_cache_dirty:
-                _save_hash_cache(self._ensure_hash_cache())
+                _save_hash_cache(self._ensure_hash_cache(), self._ensure_layout_cache())
                 self._hash_cache_dirty = False
+
+    def get_layout_metadata(self, *, sha256: str, layout_key: str) -> LayoutMetadata | None:
+        sha = str(sha256).strip().lower()
+        key = str(layout_key).strip()
+        if not sha:
+            raise ValueError("sha256 must be a non-empty string")
+        if not key:
+            raise ValueError("layout_key must be a non-empty string")
+        with self._lock:
+            by_sha = self._ensure_layout_cache().get(sha)
+            if by_sha is None:
+                return None
+            return by_sha.get(key)
+
+    def set_layout_metadata(
+        self,
+        *,
+        sha256: str,
+        layout_key: str,
+        metadata: LayoutMetadata,
+    ) -> None:
+        sha = str(sha256).strip().lower()
+        key = str(layout_key).strip()
+        if not sha:
+            raise ValueError("sha256 must be a non-empty string")
+        if not key:
+            raise ValueError("layout_key must be a non-empty string")
+        if metadata.qkv_layout not in _LAYOUT_QKV_VALUES:
+            raise ValueError(f"invalid qkv_layout: {metadata.qkv_layout!r}")
+        if metadata.projection_orientation not in _LAYOUT_PROJECTION_VALUES:
+            raise ValueError(f"invalid projection_orientation: {metadata.projection_orientation!r}")
+        if metadata.source_style is not None and metadata.source_style not in _LAYOUT_STYLE_VALUES:
+            raise ValueError(f"invalid source_style: {metadata.source_style!r}")
+        with self._lock:
+            cache = self._ensure_layout_cache()
+            by_sha = cache.setdefault(sha, {})
+            previous = by_sha.get(key)
+            if previous is not None and previous != metadata:
+                raise RuntimeError(
+                    "layout metadata conflict for sha=%s key=%s: existing=%s incoming=%s"
+                    % (sha, key, previous, metadata)
+                )
+            if previous != metadata:
+                by_sha[key] = metadata
+                self._hash_cache_dirty = True
 
     def list_checkpoints(self, *, refresh: bool = False) -> List[CheckpointRecord]:
         if refresh:
@@ -215,7 +405,7 @@ class ModelRegistry:
         self._last_scan = time.time()
         # Persist hash cache if we computed any new hashes
         if self._hash_cache_dirty:
-            _save_hash_cache(self._ensure_hash_cache())
+            _save_hash_cache(self._ensure_hash_cache(), self._ensure_layout_cache())
             self._hash_cache_dirty = False
         _LOGGER.info(
             "model_registry: scan complete checkpoints=%d vaes=%d ms=%.1f",
@@ -426,6 +616,7 @@ def refresh() -> None:
 
 
 __all__ = [
+    "LayoutMetadata",
     "ModelRegistry",
     "get_registry",
     "list_checkpoints",

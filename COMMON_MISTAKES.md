@@ -1200,3 +1200,59 @@ Correct command:
 ls -1 apps/backend/engines
 rg -n 'register_svd|register_hunyuan_video|video\\.svd|video\\.hunyuan|wan22_14b|wan22_5b|wan22_animate_14b' apps/backend/engines/registration.py apps/backend/engines/wan22 -g '*.py'
 ```
+
+### Reading a guessed CLIP vision file path that does not exist
+
+Wrong command:
+```bash
+sed -n '1,360p' apps/backend/runtime/vision/clip/model.py
+```
+
+Cause and fix:
+Guessed a `model.py` file in `runtime/vision/clip`, but this package uses `encoder.py`, `state_dict.py`, and related modules instead. List actual files before opening specific paths.
+
+Correct command:
+```bash
+find apps/backend/runtime/vision/clip -maxdepth 2 -type f -name '*.py' -print
+sed -n '1,320p' apps/backend/runtime/vision/clip/encoder.py
+```
+
+### Reading a guessed LoRA module file that does not exist
+
+Wrong command:
+```bash
+sed -n '1,340p' apps/backend/runtime/adapters/lora/apply.py
+```
+
+Cause and fix:
+Assumed an `apply.py` module exists under LoRA adapters; in this repo LoRA logic is split across `mapping.py`, `loader.py`, `pipeline.py`, and `selections.py`. Enumerate files first, then inspect the right module.
+
+Correct command:
+```bash
+find apps/backend/runtime/adapters/lora -maxdepth 2 -type f -name '*.py' -print
+sed -n '1,340p' apps/backend/runtime/adapters/lora/mapping.py
+```
+
+### Running repo imports with system Python instead of repo venv
+
+Wrong command:
+```bash
+python - <<'PY'
+import inspect
+from transformers.models.clip.modeling_clip import CLIPAttention
+print(inspect.signature(CLIPAttention.forward))
+PY
+```
+
+Cause and fix:
+Used system `python`, which does not include repo dependencies (`transformers`), causing `ModuleNotFoundError`. Use the workspace venv Python with `CODEX_ROOT`/`PYTHONPATH` set.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"
+PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY'
+import inspect
+from transformers.models.clip.modeling_clip import CLIPAttention
+print(inspect.signature(CLIPAttention.forward))
+PY
+```

@@ -6,8 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Public facade for checkpoint and VAE registry operations.
-Provides lightweight wrappers for listing assets and resolving checkpoints by name/path/title or SHA identifiers.
+Purpose: Public facade for checkpoint/VAE registry operations and SHA layout metadata cache access.
+Provides lightweight wrappers for listing assets, resolving checkpoints by name/path/title or SHA identifiers, and reading/writing
+CLIP layout metadata keyed by `(sha256, layout_key)`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `list_checkpoints` (function): Return discovered checkpoint records (optionally refresh the registry cache).
@@ -17,14 +18,17 @@ Symbols (top-level; keep in sync; no ghosts):
 - `find_checkpoint` (function): Resolve a checkpoint record by name/title/filename/stem/path.
 - `_HEX_RE` (constant): Regex used to validate hex-only SHA strings.
 - `find_checkpoint_by_sha` (function): Resolve a checkpoint record by sha256 (64 hex) or short-hash (10 hex).
+- `hash_for_file` (function): Resolve `(sha256, short_hash)` for a weights file path through the registry cache.
+- `get_layout_metadata` (function): Read cached layout metadata for a given `(sha256, layout_key)`.
+- `set_layout_metadata` (function): Write cached layout metadata for a given `(sha256, layout_key)` (conflict fail-loud).
 - `refresh` (function): Force a registry rescan.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Mapping, Optional
 
 from . import registry
 from .types import CheckpointRecord, VAERecord
@@ -100,6 +104,40 @@ def find_checkpoint_by_sha(sha256: str) -> Optional[CheckpointRecord]:
     return None
 
 
+def hash_for_file(path: str | Path) -> tuple[str | None, str | None]:
+    file_path = Path(path)
+    return registry.get_registry().hash_for(file_path)
+
+
+def get_layout_metadata(sha256: str, layout_key: str) -> dict[str, str] | None:
+    entry = registry.get_registry().get_layout_metadata(sha256=sha256, layout_key=layout_key)
+    if entry is None:
+        return None
+    payload = {
+        "qkv_layout": entry.qkv_layout,
+        "projection_orientation": entry.projection_orientation,
+    }
+    if entry.source_style:
+        payload["source_style"] = entry.source_style
+    return payload
+
+
+def set_layout_metadata(sha256: str, layout_key: str, metadata: Mapping[str, object]) -> None:
+    qkv_layout = str(metadata.get("qkv_layout", "")).strip().lower()
+    projection_orientation = str(metadata.get("projection_orientation", "")).strip().lower()
+    source_style_raw = metadata.get("source_style")
+    source_style = None if source_style_raw is None else str(source_style_raw).strip().lower() or None
+    registry.get_registry().set_layout_metadata(
+        sha256=sha256,
+        layout_key=layout_key,
+        metadata=registry.LayoutMetadata(
+            qkv_layout=qkv_layout,
+            projection_orientation=projection_orientation,
+            source_style=source_style,
+        ),
+    )
+
+
 def refresh() -> None:
     registry.refresh()
 
@@ -107,9 +145,12 @@ def refresh() -> None:
 __all__ = [
     "find_checkpoint",
     "find_checkpoint_by_sha",
+    "get_layout_metadata",
+    "hash_for_file",
     "list_checkpoints",
     "list_checkpoints_as_dict",
     "list_vaes",
     "list_vaes_as_dict",
     "refresh",
+    "set_layout_metadata",
 ]

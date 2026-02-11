@@ -9,21 +9,46 @@ Required Notice: see NOTICE
 Purpose: CLIP wrapper module used to integrate transformer backbones with optional text projection.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_MatmulProjection` (class): Projection head with matmul-oriented weight semantics (`x @ weight`).
 - `IntegratedCLIP` (class): Wraps a CLIP-like transformer and exposes HF-style forward outputs.
 """
 
 import torch
 
 
+class _MatmulProjection(torch.nn.Module):
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.empty((embed_dim, embed_dim)))
+        torch.nn.init.normal_(self.weight, std=embed_dim ** -0.5)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return hidden_states @ self.weight
+
+
 class IntegratedCLIP(torch.nn.Module):
-    def __init__(self, cls, config, add_text_projection: bool = False):
+    def __init__(
+        self,
+        cls,
+        config,
+        add_text_projection: bool = False,
+        text_projection_layout: str = "linear",
+    ):
         super().__init__()
         self.transformer = cls(config)
         self.logit_scale = torch.nn.Parameter(torch.tensor(4.6055))
 
         if add_text_projection:
             embed_dim = config.hidden_size
-            self.transformer.text_projection = torch.nn.Linear(embed_dim, embed_dim, bias=False)
+            if text_projection_layout == "linear":
+                self.transformer.text_projection = torch.nn.Linear(embed_dim, embed_dim, bias=False)
+            elif text_projection_layout == "matmul":
+                self.transformer.text_projection = _MatmulProjection(embed_dim)
+            else:
+                raise ValueError(
+                    "IntegratedCLIP text_projection_layout must be one of: linear, matmul; "
+                    f"got: {text_projection_layout!r}"
+                )
 
     def forward(
         self,

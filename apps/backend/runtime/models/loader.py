@@ -18,6 +18,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DiffusionModelBundle` (dataclass): Loaded model components and configs (UNet/VAE/text encoders + signature + quant/layout info).
 - `_supported_inference_dtypes` (function): Returns supported inference dtypes for a given model family.
 - `_prediction_type_value` (function): Converts a `PredictionKind` into the string value expected by configs/pipelines.
+- `_clip_layout_cache_key` (function): Builds the canonical `(family component)` cache key used for SHA layout metadata lookups.
+- `_clip_layout_metadata_from_cache` (function): Parses cached layout metadata payloads into typed CLIP layout metadata.
+- `_clip_layout_metadata_to_cache` (function): Serializes resolved CLIP layout metadata for registry cache persistence.
+- `_clip_layout_hint_from_cache` (function): Applies precedence rules to decide when cached layout metadata may be consumed.
+- `_projection_module_layout` (function): Resolves the projection module layout (`linear`/`matmul`) from resolved CLIP metadata.
 - `_load_state_dict` (function): Loads a state dict from disk (handles supported formats) for downstream parsing.
 - `_read_json` (function): Reads a required JSON metadata file with explicit errors (used by vendored-HF signature builders).
 - `_zimage_signature_from_vendored_hf` (function): Builds a Z-Image `ModelSignature` from vendored HF metadata (`Tongyi-MAI/Z-Image-Turbo` layout; no state-dict detector).
@@ -90,6 +95,7 @@ from apps.backend.runtime.models.state_dict import load_state_dict, transformers
 from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_torch_file, read_arbitrary_config
 from apps.backend.runtime.state_dict.tools import beautiful_print_gguf_state_dict_statics
+from apps.backend.runtime.state_dict.keymap_sdxl_clip import ClipLayoutMetadata
 from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
 from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
 
@@ -168,6 +174,8 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.WAN22: "wan22_14b",
 }
 
+_CLIP_LAYOUT_CACHE_PREFIX = "clip"
+
 
 def _supported_inference_dtypes(family: ModelFamily) -> tuple[torch.dtype, ...]:
     return SUPPORTED_INFERENCE_DTYPES.get(family, DEFAULT_SUPPORTED_DTYPES)
@@ -175,6 +183,63 @@ def _supported_inference_dtypes(family: ModelFamily) -> tuple[torch.dtype, ...]:
 
 def _prediction_type_value(prediction: PredictionKind) -> str:
     return PREDICTION_TYPE_MAP.get(prediction, "epsilon")
+
+
+def _clip_layout_cache_key(component_name: str) -> str:
+    return f"{_CLIP_LAYOUT_CACHE_PREFIX}:{component_name}"
+
+
+def _clip_layout_metadata_from_cache(payload: Mapping[str, object] | None) -> ClipLayoutMetadata | None:
+    if payload is None:
+        return None
+    qkv_layout = str(payload.get("qkv_layout", "")).strip().lower()
+    projection_orientation = str(payload.get("projection_orientation", "")).strip().lower()
+    source_style_raw = payload.get("source_style")
+    source_style = None if source_style_raw is None else str(source_style_raw).strip().lower() or None
+    if qkv_layout not in {"split", "fused"}:
+        raise RuntimeError(
+            f"Invalid cached qkv_layout={qkv_layout!r} for clip layout metadata (expected split|fused)."
+        )
+    if projection_orientation not in {"none", "linear", "matmul"}:
+        raise RuntimeError(
+            "Invalid cached projection_orientation=%r for clip layout metadata "
+            "(expected none|linear|matmul)." % (projection_orientation,)
+        )
+    if source_style is not None and source_style not in {"codex", "hf", "openclip"}:
+        raise RuntimeError(
+            f"Invalid cached source_style={source_style!r} for clip layout metadata (expected codex|hf|openclip)."
+        )
+    return ClipLayoutMetadata(
+        qkv_layout=qkv_layout,
+        projection_orientation=projection_orientation,
+        source_style=source_style,
+    )
+
+
+def _clip_layout_metadata_to_cache(layout: ClipLayoutMetadata) -> dict[str, str]:
+    payload = {
+        "qkv_layout": layout.qkv_layout,
+        "projection_orientation": layout.projection_orientation,
+    }
+    if layout.source_style:
+        payload["source_style"] = layout.source_style
+    return payload
+
+
+def _clip_layout_hint_from_cache(
+    cached_layout: ClipLayoutMetadata | None,
+    *,
+    allow_cache: bool,
+) -> ClipLayoutMetadata | None:
+    return cached_layout if allow_cache else None
+
+
+def _projection_module_layout(add_projection: bool, layout: ClipLayoutMetadata) -> str:
+    if not add_projection:
+        return "linear"
+    if layout.projection_orientation not in {"linear", "matmul"}:
+        return "linear"
+    return layout.projection_orientation
 
 
 def _load_state_dict(path: str) -> Mapping[str, Any]:
@@ -859,7 +924,7 @@ def _load_huggingface_component(
             CodexCLIPTextModel,
             CodexCLIPTextModelFusedQKV,
         )
-        from apps.backend.runtime.models.clip_key_normalization import normalize_codex_clip_state_dict
+        from apps.backend.runtime.models.clip_key_normalization import normalize_codex_clip_state_dict_with_layout
 
         # CLIP-ViT-Large-patch14 default config (used by Flux CLIP-L and SD1.x/2.x)
         _CLIP_L_DEFAULT_CONFIG = {
@@ -958,38 +1023,72 @@ def _load_huggingface_component(
 
         cfg = CodexCLIPTextConfig.from_dict(config_json)
 
+        layout_sha: str | None = None
+        cached_layout: ClipLayoutMetadata | None = None
+        layout_key = _clip_layout_cache_key(component_name)
+        if isinstance(weights_path, str) and weights_path.strip():
+            layout_sha, _ = model_api.hash_for_file(weights_path)
+            if layout_sha:
+                cached_layout = _clip_layout_metadata_from_cache(
+                    model_api.get_layout_metadata(layout_sha, layout_key)
+                )
+
         clip_model_cls = CodexCLIPTextModel
+        clip_layout = ClipLayoutMetadata(qkv_layout="split", projection_orientation="none", source_style=None)
+        persist_layout_metadata = True
         if family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER) and component_name in {"text_encoder", "text_encoder_2"}:
             from apps.backend.runtime.state_dict.keymap_sdxl_clip import (
-                remap_sdxl_clip_g_state_dict,
-                remap_sdxl_clip_l_state_dict,
+                remap_sdxl_clip_g_state_dict_with_layout,
+                remap_sdxl_clip_l_state_dict_with_layout,
             )
 
             requested_qkv = read_sdxl_te_qkv_impl()
             requested_impl = requested_qkv.value
+            persist_layout_metadata = requested_qkv is SdxlTeQkvImpl.AUTO
+            layout_hint = _clip_layout_hint_from_cache(
+                cached_layout,
+                allow_cache=persist_layout_metadata,
+            )
             if family is ModelFamily.SDXL and component_name == "text_encoder":
-                style, state_dict = remap_sdxl_clip_l_state_dict(state_dict, qkv_impl=requested_impl)
+                _style, clip_layout, state_dict = remap_sdxl_clip_l_state_dict_with_layout(
+                    state_dict,
+                    qkv_impl=requested_impl,
+                    layout_metadata=layout_hint,
+                )
             else:
-                style, state_dict = remap_sdxl_clip_g_state_dict(state_dict, qkv_impl=requested_impl)
-
-            resolved_impl = requested_impl
-            if requested_qkv is SdxlTeQkvImpl.AUTO:
-                # auto keeps native layout: OpenCLIP stays fused, HF/Codex stays split.
-                from apps.backend.runtime.state_dict.key_mapping import KeyStyle
-
-                resolved_impl = "fused" if style is KeyStyle.OPENCLIP else "split"
-
-            clip_model_cls = CodexCLIPTextModelFusedQKV if resolved_impl == "fused" else CodexCLIPTextModel
+                _style, clip_layout, state_dict = remap_sdxl_clip_g_state_dict_with_layout(
+                    state_dict,
+                    qkv_impl=requested_impl,
+                    projection_orientation="auto",
+                    layout_metadata=layout_hint,
+                )
         else:
-            state_dict = normalize_codex_clip_state_dict(
+            state_dict, clip_layout = normalize_codex_clip_state_dict_with_layout(
                 state_dict,
                 num_layers=cfg.num_hidden_layers,
                 keep_projection=add_proj,
-                transpose_projection=component_name in {"text_encoder_2", "text_encoder_3"},
+                qkv_impl="auto",
+                projection_orientation="auto",
+                layout_metadata=cached_layout,
+                require_projection=False,
             )
 
+        clip_model_cls = CodexCLIPTextModelFusedQKV if clip_layout.qkv_layout == "fused" else CodexCLIPTextModel
+        if layout_sha and persist_layout_metadata:
+            model_api.set_layout_metadata(
+                layout_sha,
+                layout_key,
+                _clip_layout_metadata_to_cache(clip_layout),
+            )
+
+        projection_layout = _projection_module_layout(add_proj, clip_layout)
         with using_codex_operations(**to_args, manual_cast_enabled=True):
-            model = IntegratedCLIP(clip_model_cls, cfg, add_text_projection=add_proj).to(**to_args)
+            model = IntegratedCLIP(
+                clip_model_cls,
+                cfg,
+                add_text_projection=add_proj,
+                text_projection_layout=projection_layout,
+            ).to(**to_args)
 
         # Compute dtype is distinct from storage dtype. Keep weights in `te_dtype`,
         # but allow activations to run in higher precision when configured.

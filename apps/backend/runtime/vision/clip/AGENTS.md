@@ -1,6 +1,6 @@
 # apps/backend/runtime/vision/clip Overview
 Date: 2025-10-31
-Last Review: 2026-02-10
+Last Review: 2026-02-11
 Status: Active
 
 ## Purpose
@@ -14,3 +14,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to CLIP vision runtime modules (doc-only change; part of rollout).
 - 2026-01-18: `clip/__init__.py` is a package marker (no re-exports); import types/helpers from the defining modules (`encoder.py`, `errors.py`, `types.py`, etc.).
 - 2026-02-10: Clip vision OpenCLIP projection transpose conversion in `state_dict.py` is now globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto` fail-loud / `convert` opt-in).
+- 2026-02-11: `convert_openclip_checkpoint(...)` now supports projection orientation policy (`projection_orientation=auto|linear|matmul`); AUTO keeps native OpenCLIP projection orientation and only transposes when explicitly targeting `linear` (policy-gated).

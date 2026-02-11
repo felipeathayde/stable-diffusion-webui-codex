@@ -1,6 +1,6 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Last Review: 2026-02-09
+Last Review: 2026-02-11
 Status: Active
 
 ## Purpose
@@ -44,3 +44,4 @@ Status: Active
 - 2025-11-02: removido `@property` duplicado em `control_nodes` que podia levar a `TypeError: 'property' object is not callable` em tempo de acesso.
 - 2026-02-09: LoRA apply now clears stale patch state on empty selections and fails loud on partial patcher contracts.
 - 2026-02-09: LoRA refresh/merge must run outside `torch.inference_mode()`; internal inference-mode disabling was removed to keep version-counter fixes scoped to correct request entrypoints.
+- 2026-02-11: `lora_apply.py` empty-selection reset now clears/refreshes denoiser + any available text-encoder patchers (engine-key agnostic) instead of hardcoding `text_encoders['clip']`; non-empty selection path remains fail-loud when CLIP mapping prerequisites are absent.

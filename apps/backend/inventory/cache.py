@@ -19,8 +19,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_hash_file_sha256` (function): Computes sha256 by directly reading the file (fallback when the registry cache fails).
 - `_get_file_sha256` (function): Computes/loads SHA256 for a file via the model registry cache.
 - `resolve_asset_by_sha` (function): Resolves a SHA256 hash to a file path using the current inventory snapshot.
+- `resolve_vae_path_by_sha` (function): Resolves a SHA256 hash to a VAE file path only.
 - `resolve_text_encoder_slot_by_sha` (function): Resolves a SHA256 hash to a cached text-encoder slot (when available).
 - `_SHA_TO_PATH` (constant): Lazy cache mapping `sha256 -> path` populated from the current inventory.
+- `_SHA_TO_VAE_PATH` (constant): Lazy cache mapping `sha256 -> vae_path` populated from the current inventory.
 - `scan_all` (function): Scans configured roots and returns an `Inventory` snapshot.
 - `init` (function): Initializes the process-local inventory cache.
 - `get` (function): Returns the cached inventory as a JSON-friendly dict.
@@ -100,6 +102,7 @@ def _get_file_sha256(path: str) -> str:
 
 # SHA256 -> Path resolution cache (populated during scan)
 _SHA_TO_PATH: Dict[str, str] = {}
+_SHA_TO_VAE_PATH: Dict[str, str] = {}
 _SHA_TO_TEXT_ENCODER_SLOT: Dict[str, str] = {}
 
 
@@ -118,6 +121,21 @@ def resolve_asset_by_sha(sha256: str) -> str | None:
             if sha and path:
                 _SHA_TO_PATH[sha] = path
     return _SHA_TO_PATH.get(sha256)
+
+
+def resolve_vae_path_by_sha(sha256: str) -> str | None:
+    """Resolve a SHA256 hash to a VAE file path from the inventory cache."""
+    global _SHA_TO_VAE_PATH
+    if not _SHA_TO_VAE_PATH:
+        inv = get()
+        for item in inv.get("vaes", []):
+            if not isinstance(item, dict):
+                continue
+            sha = item.get("sha256")
+            path = item.get("path")
+            if isinstance(sha, str) and sha and isinstance(path, str) and path:
+                _SHA_TO_VAE_PATH[sha] = path
+    return _SHA_TO_VAE_PATH.get(str(sha256 or "").strip())
 
 def resolve_text_encoder_slot_by_sha(sha256: str) -> str | None:
     """Resolve a text encoder sha256 to its cached slot label (if known)."""
@@ -211,6 +229,7 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
 def init(models_root: str | None = None, hf_root: str | None = None) -> None:
     global _CACHE
     _SHA_TO_PATH.clear()
+    _SHA_TO_VAE_PATH.clear()
     _SHA_TO_TEXT_ENCODER_SLOT.clear()
     _CACHE = scan_all(models_root=models_root, hf_root=hf_root)
 
@@ -230,6 +249,7 @@ def refresh(models_root: str | None = None, hf_root: str | None = None) -> Dict[
     """
     global _CACHE
     _SHA_TO_PATH.clear()
+    _SHA_TO_VAE_PATH.clear()
     _SHA_TO_TEXT_ENCODER_SLOT.clear()
     _CACHE = scan_all(models_root=models_root, hf_root=hf_root)
     return asdict(_CACHE)

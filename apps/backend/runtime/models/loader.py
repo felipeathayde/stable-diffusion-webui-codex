@@ -35,9 +35,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_vae_class` (function): Picks the VAE class/loader path based on model signature and layout (`diffusers` vs legacy layouts).
 - `_maybe_convert_sdxl_vae_state_dict` (function): Applies SDXL-specific VAE key conversions and preflights canonical projection keys for explicit lane-shape failures.
 - `_detect_sdxl_vae_projection_lane` (function): Detects SDXL VAE canonical projection lane (`linear_2d` or `conv1x1_4d`) from remapped keys.
+- `_assert_flux_vae_state_dict_keyspace` (function): Validates Flux VAE keyspace and rejects non-VAE assets with explicit causality.
 - `_Conv1x1Projection` (class): Native 1x1-conv projection module compatible with diffusers attention 3D inputs.
 - `_apply_sdxl_vae_conv_projection_lane` (function): Replaces SDXL VAE mid-attention projection modules with native 1x1-conv projections.
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
+- `_assert_flux_core_gguf_vae_path_not_checkpoint` (function): Rejects Flux core-only requests where `vae_path` equals the core GGUF checkpoint path.
 - `_safetensors_primary_dtype_hint` (function): Best-effort safetensors dtype hint reader (header-only, whole-file).
 - `_log_weights_dtype_hint` (function): Emits pipeline-debug logs for (role, selected dtype, weights dtype hint).
 - `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory (including canonical keymap-owned T5 remap).
@@ -763,6 +765,39 @@ def _detect_vae_layout(sd: Mapping[str, Any]) -> str:
     return "diffusers"
 
 
+def _assert_flux_vae_state_dict_keyspace(state_dict: Mapping[str, Any], *, weights_path: str | None) -> None:
+    """Fail loud when Flux VAE loading receives a non-VAE state_dict."""
+    key_prefixes = ("encoder.", "decoder.", "module.encoder.", "module.decoder.")
+    sample_keys: list[str] = []
+    for raw_key in state_dict.keys():
+        if not isinstance(raw_key, str):
+            continue
+        if len(sample_keys) < 8:
+            sample_keys.append(raw_key)
+        if raw_key.startswith(key_prefixes):
+            return
+
+    origin = str(weights_path).strip() if isinstance(weights_path, str) and weights_path.strip() else "<unknown>"
+    raise RuntimeError(
+        "Flux VAE rejected non-VAE asset keyspace at "
+        f"{origin}. Expected AutoencoderKL keys under 'encoder.'/'decoder.'; "
+        "this usually means extras.vae_sha resolved to a non-VAE asset (for example the core GGUF checkpoint). "
+        f"Sample keys: {sample_keys}"
+    )
+
+
+def _assert_flux_core_gguf_vae_path_not_checkpoint(*, model_ref: str, vae_path: str) -> None:
+    """Reject configurations where Flux core checkpoint and VAE path are the same file."""
+    model_realpath = os.path.realpath(os.path.expanduser(model_ref.strip()))
+    vae_realpath = os.path.realpath(os.path.expanduser(vae_path.strip()))
+    if model_realpath == vae_realpath:
+        raise RuntimeError(
+            "Flux GGUF core-only VAE path resolves to the same file as the core checkpoint. "
+            "Select a SHA from inventory.vaes (do not reuse the model checkpoint SHA in extras.vae_sha). "
+            f"path={vae_realpath}"
+        )
+
+
 def _safetensors_primary_dtype_hint(weights_path: str | None) -> str | None:
     if not weights_path:
         return None
@@ -964,6 +999,8 @@ def _load_huggingface_component(
         state_dict = _strip_prefixes(state_dict)
         # Convert LDM-style VAE keys to diffusers-style for SDXL/FLUX
         state_dict = _maybe_convert_sdxl_vae_state_dict(state_dict, getattr(parsed, "signature", None))
+        if family in (ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT):
+            _assert_flux_vae_state_dict_keyspace(state_dict, weights_path=weights_path)
         vae_projection_lane = _detect_sdxl_vae_projection_lane(state_dict, getattr(parsed, "signature", None))
         LOGGER.debug("VAE projection lane=%s", vae_projection_lane)
 
@@ -1010,11 +1047,21 @@ def _load_huggingface_component(
                 family_name,
                 sample,
             )
+            if family in (ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT):
+                guidance = (
+                    "Provided VAE weights are incompatible with Flux AutoencoderKL. "
+                    "Verify extras.vae_sha resolves to inventory.vaes and does not point to the core GGUF checkpoint."
+                )
+            else:
+                guidance = (
+                    "Provided VAE weights are incompatible with the expected keyspace for this model family. "
+                    "The required VAE keys do not match after normalization."
+                )
             raise RuntimeError(
                 "VAE state_dict missing %d/%d keys for family %s. "
-                "Checkpoint likely lacks a compatible VAE; supply an SDXL VAE ou separate VAE weights. "
+                "%s "
                 "Sample missing keys: %s"
-                % (len(missing), expected_total, family_name, sample)
+                % (len(missing), expected_total, family_name, guidance, sample)
             )
 
         if unexpected:
@@ -1659,6 +1706,7 @@ def codex_loader(
         vae_path = os.path.expanduser(vae_path.strip())
         if not os.path.isfile(vae_path):
             raise RuntimeError(f"Flux GGUF core-only VAE path not found: {vae_path}")
+        _assert_flux_core_gguf_vae_path_not_checkpoint(model_ref=sd_path, vae_path=vae_path)
 
     te_override_cfg = text_encoder_override
     if te_override_cfg is None and tenc_path is not None and parsed.signature.family is not ModelFamily.ZIMAGE:

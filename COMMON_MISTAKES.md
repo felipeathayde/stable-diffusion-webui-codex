@@ -1268,3 +1268,11 @@ Correct command: `rg -n "DIFFUSERS legacy aliases|DIFFUSERS mid-attention alias 
 Wrong command: `sed -n '1,220p' .sangoi/dev/tests/backend/model_registry/AGENTS.md`
 Cause and fix: I assumed an `AGENTS.md` existed under `.sangoi/dev/tests/backend/model_registry/`; it does not. The applicable scope file is `.sangoi/dev/tests/backend/AGENTS.md`.
 Correct command: `sed -n '1,220p' .sangoi/dev/tests/backend/AGENTS.md`
+
+Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$(git rev-parse --show-toplevel)" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`
+Cause and fix: I used `$CODEX_ROOT` in the same env-assignment expression where it is first defined; shell expansion happened before assignment, so the interpreter path became `/.venv/bin/python`.
+Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$(git rev-parse --show-toplevel)"; PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`
+
+Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$(git rev-parse --show-toplevel)"; PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`
+Cause and fix: `PYTHONPATH` was set for the subprocess, but `CODEX_ROOT` was not exported into the subprocess environment; repo init failed with `OSError: CODEX_ROOT not set`.
+Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$(git rev-parse --show-toplevel)"; CODEX_ROOT="$CODEX_ROOT" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`

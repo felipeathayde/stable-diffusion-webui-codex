@@ -14,6 +14,7 @@ Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.
 Includes strict ER-SDE option parsing (`extras.er_sde` / `img2img_extras.er_sde`) plus release-scope enforcement for sampler fields and
 prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
+Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -761,6 +762,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         extras: Dict[str, Any],
         field_prefix: str,
         resolve_asset_by_sha,  # type: ignore[no-untyped-def]
+        resolve_vae_path_by_sha,  # type: ignore[no-untyped-def]
         models_api: Any,
     ) -> None:
         if "vae_path" in extras or "tenc_path" in extras:
@@ -805,8 +807,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
 
         if vae_sha:
-            vae_path = resolve_asset_by_sha(vae_sha)
+            vae_path = resolve_vae_path_by_sha(vae_sha)
             if not vae_path:
+                non_vae_path = resolve_asset_by_sha(vae_sha)
+                if non_vae_path:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"'{vae_field}' resolved to a non-VAE asset path: {non_vae_path}. "
+                            "Select a SHA from inventory.vaes."
+                        ),
+                    )
                 raise HTTPException(status_code=409, detail=f"Asset not found for sha: {vae_sha}")
             extras["vae_path"] = vae_path
 
@@ -1290,7 +1301,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
 
         # Resolve model assets from SHA (if provided in extras)
-        from apps.backend.inventory.cache import resolve_asset_by_sha
+        from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
         from apps.backend.runtime.models import api as _models_api
         model_override = _resolve_model_ref_from_sha_or_name(
             model_override=model_override,
@@ -1305,6 +1316,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             extras=extras,
             field_prefix="extras",
             resolve_asset_by_sha=resolve_asset_by_sha,
+            resolve_vae_path_by_sha=resolve_vae_path_by_sha,
             models_api=_models_api,
         )
 
@@ -1599,7 +1611,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail="img2img_eta_noise_seed_delta must be numeric")
 
         # Resolve SHA-based assets (if provided in img2img_extras)
-        from apps.backend.inventory.cache import resolve_asset_by_sha
+        from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
         from apps.backend.runtime.models import api as _models_api
         engine_id = engine_key
 
@@ -1619,6 +1631,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             extras=extras,
             field_prefix="img2img_extras",
             resolve_asset_by_sha=resolve_asset_by_sha,
+            resolve_vae_path_by_sha=resolve_vae_path_by_sha,
             models_api=_models_api,
         )
 

@@ -12,6 +12,7 @@ Includes core-only families (e.g., Anima) that are not diffusers repositories: t
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 key normalization to a canonical keymap module.
+SDXL VAE conversion now preflights canonical projection keys after keymap remap so projection-lane shape violations surface explicitly (instead of collapsing into generic missing-key noise).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -32,7 +33,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_diffusion_bundle` (function): Assembles a `DiffusionModelBundle` from a parsed checkpoint and loader options.
 - `_load_component_config` (function): Loads a component config dict from a diffusers component directory.
 - `_resolve_vae_class` (function): Picks the VAE class/loader path based on model signature and layout (`diffusers` vs legacy layouts).
-- `_maybe_convert_sdxl_vae_state_dict` (function): Applies SDXL-specific VAE key conversions when the checkpoint layout requires it.
+- `_maybe_convert_sdxl_vae_state_dict` (function): Applies SDXL-specific VAE key conversions and preflights canonical projection keys for explicit lane-shape failures.
+- `_detect_sdxl_vae_projection_lane` (function): Detects SDXL VAE canonical projection lane (`linear_2d` or `conv1x1_4d`) from remapped keys.
+- `_Conv1x1Projection` (class): Native 1x1-conv projection module compatible with diffusers attention 3D inputs.
+- `_apply_sdxl_vae_conv_projection_lane` (function): Replaces SDXL VAE mid-attention projection modules with native 1x1-conv projections.
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
 - `_safetensors_primary_dtype_hint` (function): Best-effort safetensors dtype hint reader (header-only, whole-file).
 - `_log_weights_dtype_hint` (function): Emits pipeline-debug logs for (role, selected dtype, weights dtype hint).
@@ -49,6 +53,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import importlib
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,6 +100,7 @@ from apps.backend.runtime.models.state_dict import load_state_dict, transformers
 from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_torch_file, read_arbitrary_config
 from apps.backend.runtime.state_dict.tools import beautiful_print_gguf_state_dict_statics
+from apps.backend.runtime.state_dict.key_mapping import KeyMappingError
 from apps.backend.runtime.state_dict.keymap_sdxl_clip import ClipLayoutMetadata
 from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
 from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
@@ -175,6 +181,63 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
 }
 
 _CLIP_LAYOUT_CACHE_PREFIX = "clip"
+
+_SDXL_VAE_CANONICAL_PROJECTION_KEYS = (
+    "encoder.mid_block.attentions.0.to_q.weight",
+    "encoder.mid_block.attentions.0.to_k.weight",
+    "encoder.mid_block.attentions.0.to_v.weight",
+    "encoder.mid_block.attentions.0.to_out.0.weight",
+    "decoder.mid_block.attentions.0.to_q.weight",
+    "decoder.mid_block.attentions.0.to_k.weight",
+    "decoder.mid_block.attentions.0.to_v.weight",
+    "decoder.mid_block.attentions.0.to_out.0.weight",
+)
+
+
+class _Conv1x1Projection(torch.nn.Module):
+    """Projection module that stores native 1x1-conv weights."""
+
+    def __init__(self, *, in_features: int, out_features: int, bias: bool) -> None:
+        super().__init__()
+        self.in_features = int(in_features)
+        self.out_features = int(out_features)
+        self.weight = torch.nn.Parameter(torch.empty(self.out_features, self.in_features, 1, 1))
+        if bias:
+            self.bias = torch.nn.Parameter(torch.empty(self.out_features))
+        else:
+            self.register_parameter("bias", None)
+        self.scale_weight = None
+        self.parameters_manual_cast = False
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        torch.nn.init.kaiming_uniform_(self.weight[:, :, 0, 0], a=math.sqrt(5))
+        if self.bias is not None:
+            bound = 1.0 / math.sqrt(max(self.in_features, 1))
+            torch.nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        if self.parameters_manual_cast:
+            from apps.backend.runtime.ops.operations import main_stream_worker, weights_manual_cast
+
+            weight, bias, signal = weights_manual_cast(self, hidden_states)
+            with main_stream_worker(weight, bias, signal):
+                if hidden_states.ndim == 3:
+                    return torch.nn.functional.linear(hidden_states, weight[:, :, 0, 0], bias)
+                if hidden_states.ndim == 4:
+                    return torch.nn.functional.conv2d(hidden_states, weight, bias)
+                raise RuntimeError(
+                    "SDXL VAE native 4D projection expected 3D or 4D hidden_states; "
+                    f"got_ndim={hidden_states.ndim}."
+                )
+        if hidden_states.ndim == 3:
+            return torch.nn.functional.linear(hidden_states, self.weight[:, :, 0, 0], self.bias)
+        if hidden_states.ndim == 4:
+            return torch.nn.functional.conv2d(hidden_states, self.weight, self.bias)
+        raise RuntimeError(
+            "SDXL VAE native 4D projection expected 3D or 4D hidden_states; "
+            f"got_ndim={hidden_states.ndim}."
+        )
 
 
 def _supported_inference_dtypes(family: ModelFamily) -> tuple[torch.dtype, ...]:
@@ -578,6 +641,79 @@ def _resolve_vae_class(signature: ModelSignature | None, *, layout: str = "diffu
     return AutoencoderKL
 
 
+def _detect_sdxl_vae_projection_lane(
+    state_dict: Mapping[str, Any],
+    signature: Optional[ModelSignature],
+) -> str:
+    family = getattr(signature, "family", None) if signature is not None else None
+    if family not in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+        return "linear_2d"
+
+    observed: set[str] = set()
+    for key in _SDXL_VAE_CANONICAL_PROJECTION_KEYS:
+        if key not in state_dict:
+            continue
+        tensor = state_dict[key]
+        ndim = getattr(tensor, "ndim", None)
+        shape = getattr(tensor, "shape", None)
+        if ndim == 2 and shape and len(shape) == 2:
+            observed.add("linear_2d")
+            continue
+        if ndim == 4 and shape and len(shape) == 4 and tuple(shape[-2:]) == (1, 1):
+            observed.add("conv1x1_4d")
+            continue
+        raise KeyMappingError(
+            "SDXL VAE projection lane mismatch after keymap remap. "
+            f"key={key!r} ndim={ndim} shape={tuple(shape) if shape is not None else None}"
+        )
+
+    if not observed:
+        return "linear_2d"
+    if len(observed) != 1:
+        raise KeyMappingError(
+            "SDXL VAE projection lane is mixed across canonical keys. "
+            f"lanes={sorted(observed)}"
+        )
+    return next(iter(observed))
+
+
+def _apply_sdxl_vae_conv_projection_lane(model: Any) -> None:
+    def _replace(module: Any, *, key: str) -> _Conv1x1Projection:
+        in_features = getattr(module, "in_features", None)
+        out_features = getattr(module, "out_features", None)
+        weight = getattr(module, "weight", None)
+        if not isinstance(in_features, int) or not isinstance(out_features, int) or weight is None or getattr(weight, "ndim", None) != 2:
+            raise RuntimeError(
+                "SDXL VAE native 4D lane expects linear-like projection modules before replacement. "
+                f"key={key} got={type(module).__name__}"
+            )
+        replacement = _Conv1x1Projection(
+            in_features=in_features,
+            out_features=out_features,
+            bias=getattr(module, "bias", None) is not None,
+        )
+        replacement = replacement.to(device=weight.device, dtype=weight.dtype)
+        replacement.parameters_manual_cast = bool(getattr(module, "parameters_manual_cast", False))
+        return replacement
+
+    for branch in ("encoder", "decoder"):
+        side = getattr(model, branch, None)
+        mid_block = getattr(side, "mid_block", None) if side is not None else None
+        attentions = getattr(mid_block, "attentions", None) if mid_block is not None else None
+        if attentions is None or len(attentions) == 0:
+            raise RuntimeError(f"SDXL VAE native 4D lane missing {branch}.mid_block.attentions[0].")
+        attn = attentions[0]
+
+        attn.to_q = _replace(attn.to_q, key=f"{branch}.mid_block.attentions.0.to_q")
+        attn.to_k = _replace(attn.to_k, key=f"{branch}.mid_block.attentions.0.to_k")
+        attn.to_v = _replace(attn.to_v, key=f"{branch}.mid_block.attentions.0.to_v")
+
+        to_out = getattr(attn, "to_out", None)
+        if to_out is None or len(to_out) == 0:
+            raise RuntimeError(f"SDXL VAE native 4D lane missing {branch}.mid_block.attentions.0.to_out[0].")
+        to_out[0] = _replace(to_out[0], key=f"{branch}.mid_block.attentions.0.to_out.0")
+
+
 def _maybe_convert_sdxl_vae_state_dict(
     state_dict: Mapping[str, Any],
     signature: Optional[ModelSignature],
@@ -588,8 +724,7 @@ def _maybe_convert_sdxl_vae_state_dict(
     `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`. It:
     - Strips wrapper prefixes (`first_stage_model.`, `vae.`, `model.`, `module.`).
     - Detects diffusers vs. LDM-style SDXL layouts and remaps LDM → diffusers keys.
-    - Flattens mid-block attention projection weights stored as 1×1 Conv2d
-      (`[C_out, C_in, 1, 1]`) into Linear weights (`[C_out, C_in]`) lazily on access.
+    - Validates canonical mid-attention projection lanes (`linear_2d` or `conv1x1_4d`).
     - Drops known non-weight training metadata (`model_ema.decay`, `model_ema.num_updates`).
 
     Unknown/ambiguous layouts raise (fail loud). Non-SDXL/Flow16 families are returned
@@ -605,6 +740,14 @@ def _maybe_convert_sdxl_vae_state_dict(
     from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
 
     _, remapped = remap_sdxl_vae_state_dict(state_dict)  # fail loud on unknown/ambiguous layouts
+
+    # Preflight the canonical mid-attention projections so lane/shape contract errors
+    # surface explicitly before safe-load accounting can collapse them into generic
+    # missing-key noise.
+    for key in _SDXL_VAE_CANONICAL_PROJECTION_KEYS:
+        if key not in remapped:
+            continue
+        _ = remapped[key]
     return remapped
 
 
@@ -821,6 +964,8 @@ def _load_huggingface_component(
         state_dict = _strip_prefixes(state_dict)
         # Convert LDM-style VAE keys to diffusers-style for SDXL/FLUX
         state_dict = _maybe_convert_sdxl_vae_state_dict(state_dict, getattr(parsed, "signature", None))
+        vae_projection_lane = _detect_sdxl_vae_projection_lane(state_dict, getattr(parsed, "signature", None))
+        LOGGER.debug("VAE projection lane=%s", vae_projection_lane)
 
         vae_cls = _resolve_vae_class(getattr(parsed, "signature", None), layout=vae_layout)
         try:
@@ -841,6 +986,8 @@ def _load_huggingface_component(
 
         with using_codex_operations(device=vae_device, dtype=vae_dtype, manual_cast_enabled=True):
             model = vae_cls.from_config(config_json)
+        if vae_projection_lane == "conv1x1_4d":
+            _apply_sdxl_vae_conv_projection_lane(model)
 
         _trace.event("load_state_dict", module="vae", tensors=len(state_dict))
         from .state_dict import safe_load_state_dict as _safe_load

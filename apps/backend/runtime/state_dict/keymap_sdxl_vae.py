@@ -7,10 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: SDXL VAE key-style detection + remapping (LDM-style + DIFFUSERS legacy aliases → canonical diffusers AutoencoderKL).
-Normalizes common LDM layouts into diffusers keyspace, strips wrapper prefixes, and flattens 1×1 Conv projection weights lazily.
+Normalizes common LDM layouts into diffusers keyspace and strips wrapper prefixes.
 Supports legacy mid-attention aliases under `mid.attn_1.*`, prefixed `mid.attn_1.to_*`, `mid.block_1.*`, and DIFFUSERS `mid_block.attentions.*.{query,key,value,proj_attn}.*`.
 Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
-Flattening conversion is globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
+Projection normalization is lane-based and explicit:
+- `linear_2d`: canonical pass-through (`[C_out, C_in]`);
+- `conv1x1_4d`: canonical pass-through (`[C_out, C_in, 1, 1]`);
+- any other shape fails loud.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_sdxl_vae_state_dict` (function): Returns (detected_style, remapped_view) for SDXL/Flow16 VAE keys.
@@ -21,10 +24,6 @@ from __future__ import annotations
 from collections.abc import MutableMapping, Sequence
 from typing import TypeVar
 
-from apps.backend.infra.config.weight_structural_conversion import (
-    ENV_WEIGHT_STRUCTURAL_CONVERSION,
-    is_structural_weight_conversion_enabled,
-)
 from apps.backend.runtime.state_dict.key_mapping import (
     KeyMappingError,
     KeySentinel,
@@ -88,27 +87,24 @@ _DETECTOR = KeyStyleDetector(
 
 
 class _SDXLVAERemapView(MutableMapping[str, _T]):
-    """Lazy remap view with SDXL VAE projection weight normalization.
+    """Lazy remap view with SDXL VAE projection-lane validation.
 
-    `diffusers.AutoencoderKL` expects attention projection weights in mid-block attentions as Linear weights
-    `[C_out, C_in]`, but some LDM exports store them as 1×1 Conv2d weights `[C_out, C_in, 1, 1]`.
-    This view flattens those tensors on access (and caches the flattened copy) to avoid eager materialization.
+    Canonical mid-attention projection keys accept either 2D linear weights
+    (`[C_out, C_in]`) or native 1x1 Conv2d weights (`[C_out, C_in, 1, 1]`).
+    Any other shape fails loud.
     """
 
     def __init__(
         self,
         base: MutableMapping[str, _T],
         mapping: dict[str, str],
-        *,
-        allow_structural_conversion: bool,
     ):
         self._base = base
         self._map = dict(mapping)
         self._cache: dict[str, _T] = {}
-        self._allow_structural_conversion = bool(allow_structural_conversion)
 
     @staticmethod
-    def _should_flatten(key: str) -> bool:
+    def _is_projection_weight(key: str) -> bool:
         if ".mid_block.attentions.0." not in key:
             return False
         return key.endswith(
@@ -121,29 +117,36 @@ class _SDXLVAERemapView(MutableMapping[str, _T]):
         )
 
     @staticmethod
-    def _flatten_conv_to_linear(value: _T) -> _T:
-        try:
-            ndim = getattr(value, "ndim", None)
-            shape = getattr(value, "shape", None)
-            if ndim != 4 or not shape:
-                return value
-            if tuple(shape[-2:]) != (1, 1):
-                return value
-            flattened = value[:, :, 0, 0]
-            contiguous = getattr(flattened, "contiguous", None)
-            if callable(contiguous):
-                flattened = contiguous()
-            return flattened
-        except Exception:
-            return value
-
-    @staticmethod
-    def _requires_flatten(value: _T) -> bool:
+    def _projection_lane(value: _T) -> str:
         ndim = getattr(value, "ndim", None)
         shape = getattr(value, "shape", None)
-        if ndim != 4 or not shape:
-            return False
-        return tuple(shape[-2:]) == (1, 1)
+        if ndim == 2 and shape and len(shape) == 2:
+            return "linear_2d"
+        if ndim == 4 and shape and len(shape) == 4 and tuple(shape[-2:]) == (1, 1):
+            return "conv1x1_4d"
+        return "unsupported"
+
+    @staticmethod
+    def _shape_tuple(value: _T) -> tuple[int, ...] | None:
+        shape = getattr(value, "shape", None)
+        if shape is None:
+            return None
+        try:
+            return tuple(int(x) for x in shape)
+        except Exception:
+            return None
+
+    def _validate_projection_weight(self, *, key: str, value: _T) -> _T:
+        lane = self._projection_lane(value)
+        if lane == "linear_2d":
+            return value
+        if lane == "conv1x1_4d":
+            return value
+        raise KeyMappingError(
+            "SDXL VAE mid-attention projection lane mismatch. "
+            "Expected 2D [C_out, C_in] or 4D [C_out, C_in, 1, 1]. "
+            f"key={key!r} ndim={getattr(value, 'ndim', None)} shape={self._shape_tuple(value)}"
+        )
 
     def __getitem__(self, k: str) -> _T:
         cached = self._cache.get(k)
@@ -151,14 +154,8 @@ class _SDXLVAERemapView(MutableMapping[str, _T]):
             return cached
 
         v = self._base[self._map[k]]
-        if self._should_flatten(k):
-            if not self._allow_structural_conversion and self._requires_flatten(v):
-                raise KeyMappingError(
-                    "SDXL VAE key remap requires structural conversion (flatten 1x1 conv -> linear), "
-                    f"but {ENV_WEIGHT_STRUCTURAL_CONVERSION}=auto forbids it. "
-                    f"Set {ENV_WEIGHT_STRUCTURAL_CONVERSION}=convert to allow."
-                )
-            v = self._flatten_conv_to_linear(v)
+        if self._is_projection_weight(k):
+            v = self._validate_projection_weight(key=k, value=v)
             self._cache[k] = v
         return v
 
@@ -236,7 +233,10 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
 
     Output:
     - Canonical diffusers AutoencoderKL keys (no wrapper prefixes).
-    - Mid-attention projection weights are flattened on access when stored as 1×1 conv weights.
+    - Mid-attention projection weights use explicit shape lanes:
+      - 2D linear weights pass through untouched;
+      - 1×1 conv weights pass through untouched;
+      - non-canonical projection shapes fail loud.
     """
 
     def _normalize(key: str) -> str:
@@ -481,18 +481,12 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
         KeyStyle.DIFFUSERS: _diffusers_to_canonical,
         KeyStyle.LDM: _ldm_to_diffusers,
     }
-    allow_structural_conversion = is_structural_weight_conversion_enabled()
-
     return remap_state_dict_view(
         filtered,
         detector=_DETECTOR,
         normalize=_normalize,
         mappers=mappers,
-        view_factory=lambda base, mapping: _SDXLVAERemapView(
-            base,
-            mapping,
-            allow_structural_conversion=allow_structural_conversion,
-        ),
+        view_factory=lambda base, mapping: _SDXLVAERemapView(base, mapping),
         output_validator=_validate_output,
     )
 

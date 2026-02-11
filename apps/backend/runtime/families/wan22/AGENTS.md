@@ -55,6 +55,7 @@ Status: Active
 - 2026-02-11: `vae_io.decode_latents_to_frames` now fails loud unless input latents match supported WAN VAE latent channels (`16`/`48`); implicit C-slicing remains removed to keep decode contracts explicit and traceable.
 - 2026-02-11: `vae_io` now accepts both tensor and wrapped VAE encode/decode outputs (`latent_dist`/`latents` and `sample`) with strict type checks and explicit 5D↔4D frame-batch adaptation for the native 2D VAE lane.
 - 2026-02-11: `vae_io.load_vae` now fails loud before strict load when state_dicts expose 3D kernel weights (unsupported by native 2D lane) or when inferred latent channels disagree with config latent channels.
+- 2026-02-11: `AutoencoderKL_LDM` now emits `shift_factor=None` by default (instead of `0.0`) while keeping runtime arithmetic neutral (`0.0` internal fallback), so SDXL no-shift families do not receive spurious shift emission.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

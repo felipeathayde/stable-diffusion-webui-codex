@@ -308,7 +308,7 @@ class AutoencoderKL_LDM(nn.Module, ConfigMixin):
     config_name = 'config.json'
 
     @register_to_config
-    def __init__(self, in_channels=3, out_channels=3, down_block_types=("DownEncoderBlock2D",), up_block_types=("UpDecoderBlock2D",), block_out_channels=(64,), layers_per_block=1, act_fn="silu", latent_channels=4, norm_num_groups=32, sample_size=32, scaling_factor=0.18215, shift_factor=0.0, latents_mean=None, latents_std=None, force_upcast=True, use_quant_conv=True, use_post_quant_conv=True):
+    def __init__(self, in_channels=3, out_channels=3, down_block_types=("DownEncoderBlock2D",), up_block_types=("UpDecoderBlock2D",), block_out_channels=(64,), layers_per_block=1, act_fn="silu", latent_channels=4, norm_num_groups=32, sample_size=32, scaling_factor=0.18215, shift_factor=None, latents_mean=None, latents_std=None, force_upcast=True, use_quant_conv=True, use_post_quant_conv=True):
         super().__init__()
         ch = block_out_channels[0]
         ch_mult = [x // ch for x in block_out_channels]
@@ -318,10 +318,16 @@ class AutoencoderKL_LDM(nn.Module, ConfigMixin):
         self.post_quant_conv = nn.Conv2d(latent_channels, latent_channels, 1) if use_post_quant_conv else None
         self.embed_dim = latent_channels
         self.scaling_factor = scaling_factor
-        self.shift_factor = shift_factor
-
-        if not isinstance(self.shift_factor, float):
-            self.shift_factor = 0.0
+        if shift_factor is None:
+            self.shift_factor = None
+        else:
+            try:
+                self.shift_factor = float(shift_factor)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f"Invalid VAE shift_factor: {shift_factor!r}.") from exc
+            if not np.isfinite(self.shift_factor):
+                raise RuntimeError(f"Invalid VAE shift_factor: {shift_factor!r} (must be finite).")
+        self._shift_factor_value = 0.0 if self.shift_factor is None else self.shift_factor
 
     def encode(self, x, regulation=None):
         z = self.encoder(x)
@@ -343,7 +349,7 @@ class AutoencoderKL_LDM(nn.Module, ConfigMixin):
         return x
 
     def process_in(self, latent):
-        return (latent - self.shift_factor) * self.scaling_factor
+        return (latent - self._shift_factor_value) * self.scaling_factor
 
     def process_out(self, latent):
-        return (latent / self.scaling_factor) + self.shift_factor
+        return (latent / self.scaling_factor) + self._shift_factor_value

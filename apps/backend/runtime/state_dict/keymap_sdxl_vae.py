@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: SDXL VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
+Purpose: SDXL VAE key-style detection + remapping (LDM-style + DIFFUSERS legacy aliases → canonical diffusers AutoencoderKL).
 Normalizes common LDM layouts into diffusers keyspace, strips wrapper prefixes, and flattens 1×1 Conv projection weights lazily.
-Supports legacy mid-attention aliases under `mid.attn_1.*`, prefixed `mid.attn_1.to_*`, and `mid.block_1.*` naming variants.
+Supports legacy mid-attention aliases under `mid.attn_1.*`, prefixed `mid.attn_1.to_*`, `mid.block_1.*`, and DIFFUSERS `mid_block.attentions.*.{query,key,value,proj_attn}.*`.
 Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
 Flattening conversion is globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION` (`auto`=forbid, `convert`=allow).
 
@@ -231,6 +231,7 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
 
     Accepted inputs:
     - Diffusers-style VAE keys (optionally wrapped): `encoder.down_blocks.*`, `decoder.up_blocks.*`, `*.mid_block.*`
+      (legacy mid-attention aliases `query/key/value/proj_attn` are canonicalized)
     - LDM-style SDXL VAE keys (optionally wrapped): `encoder.down.*`, `decoder.up.*`, `*.mid.attn_1.*`
 
     Output:
@@ -262,6 +263,42 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
         )
 
     filtered = _FilteredKeysView(state_dict, kept_raw_keys)
+
+    def _diffusers_to_canonical(key: str) -> str:
+        prefix = ""
+        if key.startswith("encoder.mid_block.attentions."):
+            prefix = "encoder.mid_block.attentions."
+        elif key.startswith("decoder.mid_block.attentions."):
+            prefix = "decoder.mid_block.attentions."
+        else:
+            return key
+
+        suffix = key[len(prefix) :]
+        parts = suffix.split(".")
+        if len(parts) < 3:
+            return key
+
+        attention_index = parts[0]
+        if not attention_index.isdigit():
+            return key
+
+        head = parts[1]
+        rest = ".".join(parts[2:])
+        if not rest:
+            return key
+
+        table = {
+            "query": "to_q",
+            "key": "to_k",
+            "value": "to_v",
+            "proj_attn": "to_out.0",
+        }
+        mapped = table.get(head)
+        if mapped is None:
+            return key
+        if head == "proj_attn" and rest.startswith("0."):
+            mapped = "to_out"
+        return f"{prefix}{attention_index}.{mapped}.{rest}"
 
     def _ldm_to_diffusers(key: str) -> str:
         new_key = key
@@ -415,6 +452,10 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
                 or k.startswith("encoder.norm_out.")
                 or k.startswith("decoder.norm_out.")
                 or ".nin_shortcut." in k
+                or (
+                    (k.startswith("encoder.mid_block.attentions.") or k.startswith("decoder.mid_block.attentions."))
+                    and (".query." in k or ".key." in k or ".value." in k or ".proj_attn." in k)
+                )
             )
 
         for k in keys:
@@ -437,7 +478,7 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
             )
 
     mappers = {
-        KeyStyle.DIFFUSERS: lambda k: k,
+        KeyStyle.DIFFUSERS: _diffusers_to_canonical,
         KeyStyle.LDM: _ldm_to_diffusers,
     }
     allow_structural_conversion = is_structural_weight_conversion_enabled()

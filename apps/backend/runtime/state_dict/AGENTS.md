@@ -26,5 +26,6 @@ Notes:
 - 2026-02-11: `keymap_sdxl_clip.py` now exposes generic CLIP layout detection/remap APIs (`detect_clip_layout_metadata`, `remap_clip_state_dict_with_layout`) and SDXL wrappers with cache-hint support (`*_with_layout`) to avoid repeated style detection on warm SHA layout cache hits.
 - 2026-02-11: SDXL CLIP projection handling is orientation-aware (`auto|linear|matmul`) instead of hard-coded transpose; AUTO keeps native orientation and only transposes when explicitly requested (and policy allows structural conversion).
 - 2026-02-11: `keymap_sdxl_vae.py` now maps mid-attention aliases under `encoder/decoder.mid.block_1.{q,k,v,proj_out,norm}.*`, `mid.block_1.attn_1.*`, and prefixed legacy `mid.attn_1.to_{q,k,v,out}.*` to canonical `mid_block.attentions.0.{to_q,to_k,to_v,to_out.0,group_norm}.*`, preventing SDXL VAE missing mid-attention keys on alias-style exports while preserving resnet-key remaps.
+- 2026-02-11: `keymap_sdxl_vae.py` now also canonicalizes DIFFUSERS mid-attention legacy aliases (`*.mid_block.attentions.*.{query,key,value,proj_attn}.*` → `*.mid_block.attentions.*.{to_q,to_k,to_v,to_out.0}.*`) and fail-loud rejects any leftover alias outputs in validation.
 
 Last Review: 2026-02-11

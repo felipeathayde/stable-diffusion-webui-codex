@@ -12,7 +12,7 @@ Includes strict finite checks and explicit dtype/device retry logic (no silent f
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22VAEContractError` (exception): Deterministic WAN VAE path/config contract failure (non-retryable by dtype fallback loops).
-- `load_vae` (function): Loads the WAN VAE component (from directory or single-file weights).
+- `load_vae` (function): Loads the WAN VAE component (from directory bundles or single-file weights with sibling/override config dir).
 - `_cuda_bf16_supported` (function): Best-effort BF16 support probe for CUDA (used for dtype fallbacks).
 - `_vae_dtype_candidates` (function): Ordered dtype candidates for VAE encode/decode attempts (requested dtype first).
 - `vae_encode_video_condition` (function): Encodes the Diffusers-style I2V conditioning video into latents (deterministic mode).
@@ -79,7 +79,13 @@ def _infer_latent_channels_from_state_dict(state_dict: dict[str, Any]) -> int | 
     return None
 
 
-def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling: bool = False):
+def load_vae(
+    vae_path: Optional[str],
+    *,
+    torch_dtype: torch.dtype,
+    enable_tiling: bool = False,
+    config_dir_override: Optional[str] = None,
+):
     if not vae_path:
         raise WAN22VAEContractError(
             "WAN22 GGUF: wan_vae_path is required when running the GGUF runtime "
@@ -144,14 +150,23 @@ def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling
                 pass
         return vae
     if os.path.isfile(path):
-        config_dir = os.path.dirname(path)
-        config_path = os.path.join(config_dir, "config.json")
-        if not os.path.isfile(config_path):
+        config_dirs: list[str] = []
+        if isinstance(config_dir_override, str) and str(config_dir_override).strip():
+            config_dirs.append(os.path.expanduser(str(config_dir_override).strip()))
+        config_dirs.append(os.path.dirname(path))
+        chosen_config_dir: str | None = None
+        for config_dir in config_dirs:
+            config_path = os.path.join(config_dir, "config.json")
+            if os.path.isfile(config_path):
+                chosen_config_dir = config_dir
+                break
+        if not chosen_config_dir:
             raise WAN22VAEContractError(
-                "WAN22 GGUF: single-file VAE load requires sibling config.json. "
-                f"Provide a directory VAE path instead of file: {path}"
+                "WAN22 GGUF: single-file VAE load requires config.json at sibling path "
+                "or provided metadata config directory. "
+                f"VAE file={path} checked_config_dirs={config_dirs}"
             )
-        vae = _instantiate_with_state_dict(path, config_dir).to(dtype=torch_dtype)
+        vae = _instantiate_with_state_dict(path, chosen_config_dir).to(dtype=torch_dtype)
         if enable_tiling and hasattr(vae, "enable_tiling"):
             try:
                 vae.enable_tiling()
@@ -329,6 +344,7 @@ def vae_encode_video_condition(
     device: str,
     dtype: str,
     vae_dir: str | None = None,
+    vae_config_dir: str | None = None,
     logger: Any = None,
     offload_after: bool = True,
 ) -> torch.Tensor:
@@ -353,7 +369,12 @@ def vae_encode_video_condition(
                     detail=f"retrying with dtype={torch_dtype} device={target}",
                     reason=str(last_exc) if last_exc is not None else "previous attempt failed",
                 )
-            vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
+            vae = load_vae(
+                vae_dir,
+                torch_dtype=torch_dtype,
+                enable_tiling=bool(memory_management.manager.vae_always_tiled),
+                config_dir_override=vae_config_dir,
+            )
             vae = vae.to(device=target, dtype=torch_dtype)
 
             image = _prepare_init_image_tensor(
@@ -447,6 +468,7 @@ def vae_decode_video(
     device: str,
     dtype: str,
     vae_dir: str | None = None,
+    vae_config_dir: str | None = None,
     logger: Any = None,
     offload_after: bool = True,
     expected_frames: int | None = None,
@@ -477,7 +499,12 @@ def vae_decode_video(
     last_exc: Exception | None = None
 
     def _decode_attempt(*, attempt_device: str, torch_dtype: torch.dtype) -> torch.Tensor:
-        vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
+        vae = load_vae(
+            vae_dir,
+            torch_dtype=torch_dtype,
+            enable_tiling=bool(memory_management.manager.vae_always_tiled),
+            config_dir_override=vae_config_dir,
+        )
         vae = vae.to(device=attempt_device, dtype=torch_dtype)
         lat_in = video_latents.to(device=attempt_device, dtype=torch_dtype)
         lat = norm.process_out(lat_in)
@@ -643,6 +670,7 @@ def decode_latents_to_frames(
         device=resolve_device_name(cfg.device),
         dtype=cfg.dtype,
         vae_dir=cfg.vae_dir,
+        vae_config_dir=cfg.vae_config_dir,
         logger=logger,
         expected_frames=expected_frames,
     )

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF run entrypoints (txt2vid/img2vid; batch + streaming).
-Orchestrates text context, per-stage sampling, and VAE encode/decode while keeping GGUF support anchored in the shared quantization/ops layer.
+Orchestrates text context, per-stage sampling, and VAE encode/decode (including file-VAE metadata config forwarding) while keeping GGUF support anchored in the shared quantization/ops layer.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager.
@@ -21,8 +21,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
-- `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames.
-- `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state).
+- `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
+- `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state, with explicit VAE config-dir forwarding).
 """
 
 from __future__ import annotations
@@ -857,6 +857,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         device=dev_name,
         dtype=cfg.dtype,
         vae_dir=cfg.vae_dir,
+        vae_config_dir=cfg.vae_config_dir,
         logger=log,
     )
     if latent_condition.ndim == 4:
@@ -1098,6 +1099,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         device=dev_name,
         dtype=cfg.dtype,
         vae_dir=cfg.vae_dir,
+        vae_config_dir=cfg.vae_config_dir,
         logger=log,
     )
     if latent_condition.ndim == 4:

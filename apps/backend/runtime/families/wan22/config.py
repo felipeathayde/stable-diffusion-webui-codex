@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
-geometry validation (e.g. `height/width % 16 == 0`) and strict WAN VAE bundle-directory contract checks.
+geometry validation (e.g. `height/width % 16 == 0`) and strict WAN VAE config-source contract checks (bundle dir or file+config).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolve_device_name` (function): Normalizes device names (`cuda`/`cpu`/etc) into runtime-compatible values.
 - `resolve_i2v_order` (function): Resolves the image-to-video conditioning channel order policy.
 - `resolve_wan_flow_multiplier` (function): Resolves WAN timestep multiplier from scheduler metadata (`num_train_timesteps`).
-- `build_wan22_gguf_run_config` (function): Builds a validated GGUF `RunConfig` from a request-like object and its extras mapping (including strict VAE bundle validation).
+- `build_wan22_gguf_run_config` (function): Builds a validated GGUF `RunConfig` from a request-like object and its extras mapping (including strict VAE path + config-source validation).
 """
 
 from __future__ import annotations
@@ -65,6 +65,7 @@ class RunConfig:
     negative_prompt: Optional[str] = None
     init_image: Optional[object] = None
     vae_dir: Optional[str] = None
+    vae_config_dir: Optional[str] = None
     text_encoder_dir: Optional[str] = None
     tokenizer_dir: Optional[str] = None
     metadata_dir: Optional[str] = None
@@ -236,28 +237,46 @@ def build_wan22_gguf_run_config(
         raise RuntimeError(f"WAN22 GGUF: text encoder weights not found: {te_path}")
 
     vae_path = os.path.expanduser(vae_path)
-    if os.path.isfile(vae_path):
-        raise RuntimeError(
-            "WAN22 GGUF: 'wan_vae_path' must be a VAE bundle directory (config.json + weights), "
-            f"got file path: {vae_path}"
+    vae_config_dir: str | None = None
+    if os.path.isdir(vae_path):
+        config_path = os.path.join(vae_path, "config.json")
+        if not os.path.isfile(config_path):
+            raise RuntimeError(f"WAN22 GGUF: VAE bundle is missing config.json: {vae_path}")
+        weights_candidates = (
+            "diffusion_pytorch_model.safetensors",
+            "diffusion_pytorch_model.bin",
+            "model.safetensors",
+            "model.bin",
+            "pytorch_model.bin",
         )
-    if not os.path.isdir(vae_path):
-        raise RuntimeError(f"WAN22 GGUF: VAE bundle directory not found: {vae_path}")
-    config_path = os.path.join(vae_path, "config.json")
-    if not os.path.isfile(config_path):
-        raise RuntimeError(f"WAN22 GGUF: VAE bundle is missing config.json: {vae_path}")
-    weights_candidates = (
-        "diffusion_pytorch_model.safetensors",
-        "diffusion_pytorch_model.bin",
-        "model.safetensors",
-        "model.bin",
-        "pytorch_model.bin",
-    )
-    if not any(os.path.isfile(os.path.join(vae_path, name)) for name in weights_candidates):
-        raise RuntimeError(
-            "WAN22 GGUF: VAE bundle is missing weights file "
-            f"(expected one of {weights_candidates}) under: {vae_path}"
+        if not any(os.path.isfile(os.path.join(vae_path, name)) for name in weights_candidates):
+            raise RuntimeError(
+                "WAN22 GGUF: VAE bundle is missing weights file "
+                f"(expected one of {weights_candidates}) under: {vae_path}"
+            )
+        vae_config_dir = vae_path
+    elif os.path.isfile(vae_path):
+        sibling_dir = os.path.dirname(vae_path)
+        sibling_config = os.path.join(sibling_dir, "config.json")
+        metadata_root = os.path.expanduser(str(meta_dir or ""))
+        metadata_candidates = (
+            os.path.join(metadata_root, "vae"),
+            os.path.join(os.path.dirname(metadata_root), "vae"),
         )
+        if os.path.isfile(sibling_config):
+            vae_config_dir = sibling_dir
+        else:
+            for candidate in metadata_candidates:
+                if os.path.isfile(os.path.join(candidate, "config.json")):
+                    vae_config_dir = candidate
+                    break
+            if not vae_config_dir:
+                raise RuntimeError(
+                    "WAN22 GGUF: file VAE path requires config.json at sibling path or metadata repo "
+                    f"(missing for VAE file: {vae_path}; checked metadata candidates: {metadata_candidates})."
+                )
+    else:
+        raise RuntimeError(f"WAN22 GGUF: VAE path not found: {vae_path}")
 
     wh_raw = extras.get("wan_high") if isinstance(extras.get("wan_high"), dict) else None
     wl_raw = extras.get("wan_low") if isinstance(extras.get("wan_low"), dict) else None
@@ -573,6 +592,7 @@ def build_wan22_gguf_run_config(
         negative_prompt=getattr(request, "negative_prompt", None),
         init_image=getattr(request, "init_image", None),
         vae_dir=vae_path,
+        vae_config_dir=vae_config_dir,
         text_encoder_dir=te_path,
         tokenizer_dir=tokenizer_dir,
         metadata_dir=meta_dir,

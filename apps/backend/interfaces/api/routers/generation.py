@@ -14,7 +14,7 @@ Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.
 Includes strict ER-SDE option parsing (`extras.er_sde` / `img2img_extras.er_sde`) plus release-scope enforcement for sampler fields and
 prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
-Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates the VAE bundle contract (`config.json` present) before runtime dispatch.
+Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
@@ -238,9 +238,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         raise HTTPException(status_code=400, detail="'wan_metadata_repo' (or 'wan_metadata_dir') is required for WAN GGUF")
 
-    def _resolve_wan_vae_bundle_dir_from_sha(
+    def _resolve_wan_vae_path_from_sha(
         *,
         wan_vae_sha: str,
+        metadata_dir: str,
         resolve_asset_by_sha,  # type: ignore[no-untyped-def]
         resolve_vae_path_by_sha,  # type: ignore[no-untyped-def]
     ) -> str:
@@ -258,15 +259,33 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
 
         resolved_path = os.path.expanduser(str(vae_path))
-        if os.path.isdir(resolved_path):
-            bundle_dir = resolved_path
-        elif os.path.isfile(resolved_path):
-            bundle_dir = os.path.dirname(resolved_path)
-        else:
+        if os.path.isfile(resolved_path):
+            sibling_dir = os.path.dirname(resolved_path)
+            sibling_config = os.path.join(sibling_dir, "config.json")
+            meta_root = os.path.expanduser(str(metadata_dir))
+            meta_candidates = (
+                os.path.join(meta_root, "vae"),
+                os.path.join(os.path.dirname(meta_root), "vae"),
+            )
+            if os.path.isfile(sibling_config):
+                return resolved_path
+            if any(os.path.isfile(os.path.join(candidate, "config.json")) for candidate in meta_candidates):
+                return resolved_path
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "WAN VAE sha resolved to an invalid file VAE config source (missing config.json): "
+                    f"{wan_vae_sha} -> {resolved_path}. "
+                    f"Expected sibling config.json or metadata config at '{meta_candidates[0]}/config.json' "
+                    f"(or '{meta_candidates[1]}/config.json')."
+                ),
+            )
+        if not os.path.isdir(resolved_path):
             raise HTTPException(
                 status_code=409,
                 detail=f"WAN VAE asset path not found on disk for sha: {wan_vae_sha} -> {resolved_path}",
             )
+        bundle_dir = resolved_path
         config_path = os.path.join(bundle_dir, "config.json")
         if not os.path.isfile(config_path):
             raise HTTPException(
@@ -1880,6 +1899,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
         extras["wan_low"] = _resolve_wan_stage("wan_low")
+        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
 
         # Resolve sha-selected WAN assets
         if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
@@ -1888,8 +1908,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_vae_sha = _require_sha_field("wan_vae_sha")
         wan_tenc_sha = _require_sha_field("wan_tenc_sha")
 
-        extras["wan_vae_path"] = _resolve_wan_vae_bundle_dir_from_sha(
+        extras["wan_vae_path"] = _resolve_wan_vae_path_from_sha(
             wan_vae_sha=wan_vae_sha,
+            metadata_dir=wan_metadata_dir,
             resolve_asset_by_sha=resolve_asset_by_sha,
             resolve_vae_path_by_sha=resolve_vae_path_by_sha,
         )
@@ -1905,7 +1926,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
         extras["wan_text_encoder_path"] = wan_tenc_path
 
-        extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
+        extras["wan_metadata_dir"] = wan_metadata_dir
 
         # Pass-through of runtime controls (non-model-part config)
         for key in (
@@ -2056,6 +2077,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
         extras["wan_low"] = _resolve_wan_stage("wan_low")
+        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
 
         # Resolve sha-selected WAN assets
         if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
@@ -2064,8 +2086,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_vae_sha = _require_sha_field("wan_vae_sha")
         wan_tenc_sha = _require_sha_field("wan_tenc_sha")
 
-        extras["wan_vae_path"] = _resolve_wan_vae_bundle_dir_from_sha(
+        extras["wan_vae_path"] = _resolve_wan_vae_path_from_sha(
             wan_vae_sha=wan_vae_sha,
+            metadata_dir=wan_metadata_dir,
             resolve_asset_by_sha=resolve_asset_by_sha,
             resolve_vae_path_by_sha=resolve_vae_path_by_sha,
         )
@@ -2081,7 +2104,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
         extras["wan_text_encoder_path"] = wan_tenc_path
 
-        extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
+        extras["wan_metadata_dir"] = wan_metadata_dir
 
         # Pass-through of runtime controls (non-model-part config)
         for key in (

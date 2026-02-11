@@ -58,6 +58,7 @@ Status: Active
 - 2026-02-11: `AutoencoderKL_LDM` now emits `shift_factor=None` by default (instead of `0.0`) while keeping runtime arithmetic neutral (`0.0` internal fallback), so SDXL no-shift families do not receive spurious shift emission.
 - 2026-02-11: WAN GGUF run-config now requires `wan_vae_path` to be a VAE bundle directory (`config.json` + supported weights file); file-path inputs are rejected as contract errors before runtime execution.
 - 2026-02-11: WAN VAE deterministic path/config contract failures now raise a dedicated non-retryable error (`WAN22VAEContractError`) so encode/decode dtype fallback loops do not mask root cause with retry noise.
+- 2026-02-11: WAN GGUF now supports file-based VAE paths when explicit config source exists (sibling `config.json` or metadata `vae/config.json`), propagated via `RunConfig.vae_config_dir` into VAE IO; missing config sources remain deterministic fail-loud contract errors (no dtype fallback retries).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

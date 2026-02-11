@@ -57,7 +57,7 @@ class CodexZImageFactory:
         codex_objects = CodexObjects(
             denoiser=runtime.denoiser,
             vae=runtime.vae,
-            text_encoders={"qwen3": runtime.text.qwen3_text},
+            text_encoders={"qwen3": runtime.qwen},
             clipvision=None,
         )
         return CodexZImageAssembly(runtime=runtime, codex_objects=codex_objects)

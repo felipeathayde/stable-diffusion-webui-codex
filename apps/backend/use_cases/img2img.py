@@ -263,10 +263,9 @@ def _generate_kontext_img2img(
 
     run_process_scripts(processing)
 
-    payload = _compute_conditioning_payload(processing, prompt_context, prompts, conditioning, unconditional_conditioning)
-
     bundle = prepare_init_bundle(processing)
     image_latents = bundle.latents
+    payload = _compute_conditioning_payload(processing, prompt_context, prompts, conditioning, unconditional_conditioning)
     if not isinstance(payload.conditioning, dict):
         raise TypeError(
             "kontext requires dict conditioning (crossattn/vector) to pass image_latents; "
@@ -557,14 +556,6 @@ def generate_img2img(
 
     run_process_scripts(processing)
 
-    payload = _compute_conditioning_payload(
-        processing,
-        prompt_context,
-        prompts,
-        conditioning,
-        unconditional_conditioning,
-    )
-
     post_step_hook = None
     post_sample_hook = None
     full_res_plan = None
@@ -605,6 +596,14 @@ def generate_img2img(
         )
         processing.image_conditioning = image_conditioning
         init_latent = bundle.latents
+
+    payload = _compute_conditioning_payload(
+        processing,
+        prompt_context,
+        prompts,
+        conditioning,
+        unconditional_conditioning,
+    )
 
     noise = rng.next().to(init_latent)
     start_step = start_at_step_from_denoise(

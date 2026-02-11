@@ -11,7 +11,7 @@ Builds a `ZImageEngineRuntime` from parsed components, loading external VAE/text
 Uses vendored diffusers scheduler metadata under `apps/backend/huggingface/Tongyi-MAI/**` for flow-shift parity when not overridden.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
+- `ZImageQwenPatcher` (class): Qwen text-encoder wrapper that exposes a `ModelPatcher` for memory management integration.
 - `_torch_dtype_label` (function): Converts a `torch.dtype` into a supported dtype label (`fp16|bf16|fp32`) for logs/metadata.
 - `_storage_dtype_label` (function): Converts a storage dtype (torch dtype or string label) into a runtime label.
 - `_native_weights_dtype_for_path` (function): Best-effort native dtype inference for a weights file/directory (SafeTensors header).
@@ -112,8 +112,8 @@ def _native_weights_dtype_for_path(path: str | None):
         mapping["fp8_e5m2"] = fp8_e5m2
     return mapping.get(hint)
 
-class ZImageCLIP:
-    """CLIP-like wrapper for Z Image text encoder with memory management support.
+class ZImageQwenPatcher:
+    """Qwen wrapper for Z Image text encoder with memory management support.
     
     This wrapper provides a `patcher` attribute that integrates with the
     memory management system, allowing automatic GPU loading/offloading.
@@ -123,7 +123,7 @@ class ZImageCLIP:
         """Initialize with a ZImageTextEncoder.
         
         Args:
-            text_encoder: A ZImageTextEncoder instance with a `model` attribute.
+        text_encoder: A ZImageTextEncoder instance with a `model` attribute.
         """
         self.text_encoder = text_encoder
         
@@ -151,7 +151,7 @@ class ZImageEngineRuntime:
     vae: VAE
     denoiser: DenoiserPatcher  # wraps ZImageTransformer2DModel
     text: ZImageTextPipelines
-    clip: ZImageCLIP  # wrapper with ModelPatcher for memory management
+    qwen: ZImageQwenPatcher  # wrapper with ModelPatcher for memory management
     device: str = "cuda"
     core_storage_dtype: str = "bf16"
     core_compute_dtype: str = "fp32"
@@ -374,9 +374,9 @@ def assemble_zimage_runtime(
     )
     _log_vram("AFTER DenoiserPatcher.from_model")
     
-    # Wrap text encoder with ZImageCLIP for memory management
-    clip = ZImageCLIP(text_encoder)
-    _log_vram("AFTER ZImageCLIP wrapper")
+    # Wrap text encoder with ZImageQwenPatcher for memory management
+    qwen = ZImageQwenPatcher(text_encoder)
+    _log_vram("AFTER ZImageQwenPatcher wrapper")
     
     # Create text processing engine
     from apps.backend.runtime.families.zimage.text_encoder import ZImageTextProcessingEngine
@@ -416,7 +416,7 @@ def assemble_zimage_runtime(
         vae=vae,
         denoiser=denoiser,
         text=ZImageTextPipelines(qwen3_text=text_engine),
-        clip=clip,
+        qwen=qwen,
         device=device,
         core_storage_dtype=_storage_dtype_label(core_storage_raw),
         core_compute_dtype=_torch_dtype_label(core_compute_raw),

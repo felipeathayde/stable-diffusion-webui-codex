@@ -238,8 +238,10 @@ class ZImageEngine(CodexDiffusionEngine):
             return move_to_device(cached, device=target_device, dtype=core_dtype)
 
         # Load text encoder to GPU using memory management (same pattern as Flux)
-        memory_management.manager.load_model(runtime.clip.patcher)
-        unload_clip = self.smart_offload_enabled
+        patcher = runtime.qwen.patcher
+        already_loaded = memory_management.manager.is_model_loaded(patcher)
+        memory_management.manager.load_model(patcher)
+        unload_qwen = self.smart_offload_enabled and not already_loaded
         
         # Per diffusers reference: pass prompts directly - the tokenizer's
         # apply_chat_template with enable_thinking=True handles formatting.
@@ -264,8 +266,8 @@ class ZImageEngine(CodexDiffusionEngine):
             if use_cache:
                 self._set_cached_cond(cache_key, detach_to_cpu(cond), enabled=use_cache)
         finally:
-            if unload_clip:
-                memory_management.manager.unload_model(runtime.clip.patcher)
+            if unload_qwen:
+                memory_management.manager.unload_model(patcher)
 
         raw_cfg = getattr(prompts, "cfg_scale", None)
         default_scale = 1.0

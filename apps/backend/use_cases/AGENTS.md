@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-03
+Last Review: 2026-02-11
 Status: Active
 
 ## Purpose
@@ -29,3 +29,4 @@ Status: Active
 - 2026-02-08: `txt2img_pipeline/refiner.py` now interprets refiner swap as a pointer (`switch_at_step`) and starts the refiner pass at that step while preserving total diffusion steps.
 - 2026-02-09: `_image_streaming._decode_generation_output(...)` now enforces post-decode smart-offload residency centrally for image wrappers; it consumes `GenerationResult.metadata["conditioning_cache_hit"]` (strict bool contract, fail-loud on malformed metadata), always executes cleanup in a `finally` path, and only prewarms denoiser when decode succeeds.
 - 2026-02-09: Image conditioning helpers (`txt2img`/`img2img`) now stage all registered text encoders (`codex_objects.text_encoders`, e.g. `clip`, `qwen3`) during conditioning and offload them after embeddings are produced. Smart Cache provides the embed-reuse signal (`conditioning_cache_hit`), while Smart Offload invariants execute the actual load/unload transitions (including cache-hit warm path vs cache-miss unload path).
+- 2026-02-11: `img2img.py` now enforces init-image VAE encode before TE conditioning across classic unmasked, classic masked, and Flux Kontext variants (smart-offload order contract for img2img/img2vid-style flows).

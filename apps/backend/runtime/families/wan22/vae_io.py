@@ -11,6 +11,7 @@ Loads the WAN VAE via native `AutoencoderKL_LDM`, applies latent normalization, 
 Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks).
 
 Symbols (top-level; keep in sync; no ghosts):
+- `WAN22VAEContractError` (exception): Deterministic WAN VAE path/config contract failure (non-retryable by dtype fallback loops).
 - `load_vae` (function): Loads the WAN VAE component (from directory or single-file weights).
 - `_cuda_bf16_supported` (function): Best-effort BF16 support probe for CUDA (used for dtype fallbacks).
 - `_vae_dtype_candidates` (function): Ordered dtype candidates for VAE encode/decode attempts (requested dtype first).
@@ -37,6 +38,10 @@ from .diagnostics import cuda_empty_cache, get_logger, log_numerics_enabled, sum
 from .wan_latent_norms import resolve_norm
 
 _SUPPORTED_WAN_VAE_LATENT_CHANNELS = (16, 48)
+
+
+class WAN22VAEContractError(RuntimeError):
+    """Deterministic WAN22 VAE path/config contract failure."""
 
 
 def _detect_temporal_kernel_weight(
@@ -76,7 +81,10 @@ def _infer_latent_channels_from_state_dict(state_dict: dict[str, Any]) -> int | 
 
 def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling: bool = False):
     if not vae_path:
-        raise RuntimeError("WAN22 GGUF: wan_vae_dir is required when running the GGUF runtime (VAE path missing).")
+        raise WAN22VAEContractError(
+            "WAN22 GGUF: wan_vae_path is required when running the GGUF runtime "
+            "(VAE bundle directory path missing)."
+        )
 
     path = os.path.expanduser(str(vae_path))
 
@@ -127,7 +135,7 @@ def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling
                 state_dict_path = candidate
                 break
         if state_dict_path is None:
-            raise RuntimeError(f"WAN22 GGUF: no VAE weights file found under directory: {path}")
+            raise WAN22VAEContractError(f"WAN22 GGUF: no VAE weights file found under directory: {path}")
         vae = _instantiate_with_state_dict(state_dict_path, path).to(dtype=torch_dtype)
         if enable_tiling and hasattr(vae, "enable_tiling"):
             try:
@@ -139,7 +147,7 @@ def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling
         config_dir = os.path.dirname(path)
         config_path = os.path.join(config_dir, "config.json")
         if not os.path.isfile(config_path):
-            raise RuntimeError(
+            raise WAN22VAEContractError(
                 "WAN22 GGUF: single-file VAE load requires sibling config.json. "
                 f"Provide a directory VAE path instead of file: {path}"
             )
@@ -150,7 +158,7 @@ def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling
             except Exception:
                 pass
         return vae
-    raise RuntimeError(f"WAN22 GGUF: VAE path not found: {path}")
+    raise WAN22VAEContractError(f"WAN22 GGUF: VAE path not found: {path}")
 
 
 def _retrieve_latents(encoder_output: Any, *, sample_mode: str) -> torch.Tensor:
@@ -416,6 +424,8 @@ def vae_encode_video_condition(
             target = "cpu"
             # CPU retry (single attempt).
             dtypes = [torch.float32]
+        except WAN22VAEContractError:
+            raise
         except Exception as exc:
             last_exc = exc
         finally:
@@ -537,6 +547,8 @@ def vae_decode_video(
                 )
                 cuda_empty_cache(logger, label="vae-decode-oom")
                 continue
+            raise
+        except WAN22VAEContractError:
             raise
         except Exception as exc:
             last_exc = exc

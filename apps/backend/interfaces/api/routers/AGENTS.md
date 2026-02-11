@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-10
+Last Review: 2026-02-11
 Status: Active
 
 ## Purpose
@@ -60,3 +60,4 @@ Status: Active
 - 2026-02-10: `generation.py` now extends parser DTO seams into active video modes (`_parse_txt2vid_core_dto`, `_parse_img2vid_core_dto`) while preserving WAN sha-only asset contracts and current request/task/SSE behavior (validated by video request-capture parity tests).
 - 2026-02-10: `tools.py` now enforces typed job lifecycle internals for GGUF/CodexPack jobs (`_ToolJobStatus`, `_ToolJobState`, typed controls + guarded transitions), while preserving status endpoint wire payload shape.
 - 2026-02-11: `generation.py` now resolves `extras.vae_sha` through a VAE-only inventory helper (`resolve_vae_path_by_sha`) and returns HTTP 409 when a SHA maps to a non-VAE asset path, preventing Flux core-only VAE misselection from leaking into loader missing-key noise.
+- 2026-02-11: WAN video routes (`txt2vid`/`img2vid`) now resolve `wan_vae_sha` through VAE-only ownership (`resolve_vae_path_by_sha`) and normalize to a validated VAE bundle directory (`config.json` + weights file required), rejecting non-VAE SHA resolution and invalid bundles with HTTP 409 before runtime fallback loops.

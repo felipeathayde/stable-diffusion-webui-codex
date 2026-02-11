@@ -56,6 +56,8 @@ Status: Active
 - 2026-02-11: `vae_io` now accepts both tensor and wrapped VAE encode/decode outputs (`latent_dist`/`latents` and `sample`) with strict type checks and explicit 5D↔4D frame-batch adaptation for the native 2D VAE lane.
 - 2026-02-11: `vae_io.load_vae` now fails loud before strict load when state_dicts expose 3D kernel weights (unsupported by native 2D lane) or when inferred latent channels disagree with config latent channels.
 - 2026-02-11: `AutoencoderKL_LDM` now emits `shift_factor=None` by default (instead of `0.0`) while keeping runtime arithmetic neutral (`0.0` internal fallback), so SDXL no-shift families do not receive spurious shift emission.
+- 2026-02-11: WAN GGUF run-config now requires `wan_vae_path` to be a VAE bundle directory (`config.json` + supported weights file); file-path inputs are rejected as contract errors before runtime execution.
+- 2026-02-11: WAN VAE deterministic path/config contract failures now raise a dedicated non-retryable error (`WAN22VAEContractError`) so encode/decode dtype fallback loops do not mask root cause with retry noise.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

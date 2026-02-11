@@ -14,6 +14,7 @@ Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.
 Includes strict ER-SDE option parsing (`extras.er_sde` / `img2img_extras.er_sde`) plus release-scope enforcement for sampler fields and
 prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
+Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates the VAE bundle contract (`config.json` present) before runtime dispatch.
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
@@ -236,6 +237,63 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             return _path_from_api(meta_dir)
 
         raise HTTPException(status_code=400, detail="'wan_metadata_repo' (or 'wan_metadata_dir') is required for WAN GGUF")
+
+    def _resolve_wan_vae_bundle_dir_from_sha(
+        *,
+        wan_vae_sha: str,
+        resolve_asset_by_sha,  # type: ignore[no-untyped-def]
+        resolve_vae_path_by_sha,  # type: ignore[no-untyped-def]
+    ) -> str:
+        vae_path = resolve_vae_path_by_sha(wan_vae_sha)
+        if not vae_path:
+            non_vae_path = resolve_asset_by_sha(wan_vae_sha)
+            if non_vae_path:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"'wan_vae_sha' resolved to a non-VAE asset path: {non_vae_path}. "
+                        "Select a SHA from inventory.vaes."
+                    ),
+                )
+            raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
+
+        resolved_path = os.path.expanduser(str(vae_path))
+        if os.path.isdir(resolved_path):
+            bundle_dir = resolved_path
+        elif os.path.isfile(resolved_path):
+            bundle_dir = os.path.dirname(resolved_path)
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"WAN VAE asset path not found on disk for sha: {wan_vae_sha} -> {resolved_path}",
+            )
+        config_path = os.path.join(bundle_dir, "config.json")
+        if not os.path.isfile(config_path):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "WAN VAE sha resolved to an invalid bundle (missing config.json): "
+                    f"{wan_vae_sha} -> {resolved_path}. "
+                    "Select a VAE bundle directory (or a file inside a directory that contains config.json)."
+                ),
+            )
+        weights_candidates = (
+            "diffusion_pytorch_model.safetensors",
+            "diffusion_pytorch_model.bin",
+            "model.safetensors",
+            "model.bin",
+            "pytorch_model.bin",
+        )
+        if not any(os.path.isfile(os.path.join(bundle_dir, name)) for name in weights_candidates):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "WAN VAE sha resolved to an invalid bundle (missing weights file): "
+                    f"{wan_vae_sha} -> {bundle_dir}. "
+                    f"Expected one of {weights_candidates}."
+                ),
+            )
+        return bundle_dir
 
 
     def _parse_styles(payload: Dict[str, Any]) -> List[str]:
@@ -1776,7 +1834,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
-        from apps.backend.inventory.cache import resolve_asset_by_sha
+        from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
         def _require_sha_field(key: str) -> str:
             val = payload.get(key)
@@ -1830,10 +1888,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_vae_sha = _require_sha_field("wan_vae_sha")
         wan_tenc_sha = _require_sha_field("wan_tenc_sha")
 
-        wan_vae_path = resolve_asset_by_sha(wan_vae_sha)
-        if not wan_vae_path:
-            raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
-        extras["wan_vae_path"] = wan_vae_path
+        extras["wan_vae_path"] = _resolve_wan_vae_bundle_dir_from_sha(
+            wan_vae_sha=wan_vae_sha,
+            resolve_asset_by_sha=resolve_asset_by_sha,
+            resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+        )
 
         wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
         if not wan_tenc_path:
@@ -1951,7 +2010,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
-        from apps.backend.inventory.cache import resolve_asset_by_sha
+        from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
         def _require_sha_field(key: str) -> str:
             val = payload.get(key)
@@ -2005,10 +2064,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_vae_sha = _require_sha_field("wan_vae_sha")
         wan_tenc_sha = _require_sha_field("wan_tenc_sha")
 
-        wan_vae_path = resolve_asset_by_sha(wan_vae_sha)
-        if not wan_vae_path:
-            raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
-        extras["wan_vae_path"] = wan_vae_path
+        extras["wan_vae_path"] = _resolve_wan_vae_bundle_dir_from_sha(
+            wan_vae_sha=wan_vae_sha,
+            resolve_asset_by_sha=resolve_asset_by_sha,
+            resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+        )
 
         wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
         if not wan_tenc_path:

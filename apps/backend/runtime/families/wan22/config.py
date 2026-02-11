@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
-geometry validation (e.g. `height/width % 16 == 0`).
+geometry validation (e.g. `height/width % 16 == 0`) and strict WAN VAE bundle-directory contract checks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolve_device_name` (function): Normalizes device names (`cuda`/`cpu`/etc) into runtime-compatible values.
 - `resolve_i2v_order` (function): Resolves the image-to-video conditioning channel order policy.
 - `resolve_wan_flow_multiplier` (function): Resolves WAN timestep multiplier from scheduler metadata (`num_train_timesteps`).
-- `build_wan22_gguf_run_config` (function): Builds a validated GGUF `RunConfig` from a request-like object and its extras mapping.
+- `build_wan22_gguf_run_config` (function): Builds a validated GGUF `RunConfig` from a request-like object and its extras mapping (including strict VAE bundle validation).
 """
 
 from __future__ import annotations
@@ -222,7 +222,9 @@ def build_wan22_gguf_run_config(
             "WAN22 GGUF requires a text encoder weights file; provide 'wan_text_encoder_path' (resolved from sha selection)."
         )
     if not vae_path:
-        raise RuntimeError("WAN22 GGUF requires a VAE weights file; provide 'wan_vae_path' (resolved from sha selection).")
+        raise RuntimeError(
+            "WAN22 GGUF requires a VAE bundle directory; provide 'wan_vae_path' (resolved from sha selection)."
+        )
     if not meta_dir:
         raise RuntimeError("WAN22 GGUF requires tokenizer metadata; provide 'wan_metadata_dir' or 'wan_tokenizer_dir'.")
 
@@ -234,8 +236,28 @@ def build_wan22_gguf_run_config(
         raise RuntimeError(f"WAN22 GGUF: text encoder weights not found: {te_path}")
 
     vae_path = os.path.expanduser(vae_path)
-    if not os.path.isfile(vae_path) and not os.path.isdir(vae_path):
-        raise RuntimeError(f"WAN22 GGUF: VAE weights not found: {vae_path}")
+    if os.path.isfile(vae_path):
+        raise RuntimeError(
+            "WAN22 GGUF: 'wan_vae_path' must be a VAE bundle directory (config.json + weights), "
+            f"got file path: {vae_path}"
+        )
+    if not os.path.isdir(vae_path):
+        raise RuntimeError(f"WAN22 GGUF: VAE bundle directory not found: {vae_path}")
+    config_path = os.path.join(vae_path, "config.json")
+    if not os.path.isfile(config_path):
+        raise RuntimeError(f"WAN22 GGUF: VAE bundle is missing config.json: {vae_path}")
+    weights_candidates = (
+        "diffusion_pytorch_model.safetensors",
+        "diffusion_pytorch_model.bin",
+        "model.safetensors",
+        "model.bin",
+        "pytorch_model.bin",
+    )
+    if not any(os.path.isfile(os.path.join(vae_path, name)) for name in weights_candidates):
+        raise RuntimeError(
+            "WAN22 GGUF: VAE bundle is missing weights file "
+            f"(expected one of {weights_candidates}) under: {vae_path}"
+        )
 
     wh_raw = extras.get("wan_high") if isinstance(extras.get("wan_high"), dict) else None
     wl_raw = extras.get("wan_low") if isinstance(extras.get("wan_low"), dict) else None

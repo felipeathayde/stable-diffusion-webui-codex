@@ -1045,6 +1045,12 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
         logger=log,
     )
+    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+    if latent_channels_lo <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+            f"(got {latent_channels_lo})."
+        )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
@@ -1285,6 +1291,12 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
         logger=log,
     )
+    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+    if latent_channels_lo <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+            f"(got {latent_channels_lo})."
+        )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
@@ -1319,6 +1331,11 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         stage_name="low",
         emit_logs=False,
     )
+    latents_lo_decode = _extract_i2v_decode_latents(
+        state=latents_lo,
+        latent_channels=latent_channels_lo,
+        logger=log,
+    )
 
     # Free the LOW stage weights before VAE decode.
     memory_management.manager.unload_model(lo_mm)
@@ -1330,7 +1347,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         cuda_empty_cache(log, label="after-low")
 
     frames = decode_latents_to_frames(
-        latents=latents_lo,
+        latents=latents_lo_decode,
         model_dir=os.path.dirname(lo_path),
         cfg=cfg,
         logger=log,

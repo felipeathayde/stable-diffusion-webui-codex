@@ -1386,7 +1386,3 @@ Correct command: `bash -lc "bash ./update-webui.sh --force >\"$BASE/untracked_fo
 Wrong command: repeated full-repo clones into `/tmp` for updater behavior matrix (e.g. `git clone -q "$CODEX_ROOT" "$work"`)
 Cause and fix: cloning this large repo repeatedly exhausted disk (`No space left on device`). Use a minimal local harness repo with only updater script + tiny tracked files to validate git-state matrix behavior.
 Correct command: initialize a tiny harness repo (`git init` + commit `update-webui.sh` + `README.md`) and clone that harness for each matrix case.
-
-Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "Wrong command: `bash -lc \\\"\\./update-webui.sh --force|full-repo clones into \\`/tmp\\`" COMMON_MISTAKES.md`
-Cause and fix: I embedded backticks inside a double-quoted regex, which broke shell parsing (`unexpected EOF while looking for matching ```). Avoid backticks in shell-quoted regex patterns or search with plain, stable substrings.
-Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "untracked_force.log|full-repo clones" COMMON_MISTAKES.md`

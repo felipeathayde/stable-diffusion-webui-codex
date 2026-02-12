@@ -8,13 +8,13 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
 Loads tokenizer metadata and text encoder weights from local paths only, applies strict embedding-key alias normalization for GGUF T5 variants,
-then builds prompt/negative embeddings for the WAN GGUF runtime.
+honors runtime GGUF dequant policy (`--gguf-exec`) for TE GGUF loads, and then builds prompt/negative embeddings for the WAN GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
 - `_prompt_clean` (function): Diffusers-style prompt cleaning (optional ftfy + HTML unescape + whitespace collapse).
 - `_resolve_max_sequence_length` (function): Chooses a safe tokenizer max length, clamped to `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH`.
-- `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation.
+- `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation and GGUF policy-aware TE loading.
 """
 
 from __future__ import annotations
@@ -260,31 +260,45 @@ def get_text_context(
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF: failed to read text encoder config from '{enc_dir}': {exc}") from exc
 
-    enc = _Enc(cfg)
+    te_compute_dtype = as_torch_dtype(dtype)
     try:
         if te_file.lower().endswith(".safetensors"):
             from safetensors.torch import load_file as _load_st
 
+            enc = _Enc(cfg)
             sd = _load_st(te_file)
+            missing, unexpected = enc.load_state_dict(sd, strict=False)
         else:
             from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
+            from apps.backend.runtime.ops.operations import using_codex_operations
 
-            sd = load_gguf_state_dict(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
-            shared_weight = sd.get("shared.weight")
-            encoder_embed_weight = sd.get("encoder.embed_tokens.weight")
-            if shared_weight is not None and encoder_embed_weight is None:
-                sd["encoder.embed_tokens.weight"] = shared_weight
-            elif encoder_embed_weight is not None and shared_weight is None:
-                sd["shared.weight"] = encoder_embed_weight
-            elif shared_weight is not None and encoder_embed_weight is not None:
-                shared_shape = tuple(int(dim) for dim in getattr(shared_weight, "shape", ()))
-                embed_shape = tuple(int(dim) for dim in getattr(encoder_embed_weight, "shape", ()))
-                if shared_shape != embed_shape:
-                    raise RuntimeError(
-                        "WAN22 GGUF: text encoder embedding alias shape mismatch "
-                        f"(shared.weight={shared_shape} encoder.embed_tokens.weight={embed_shape})."
-                    )
-        missing, unexpected = enc.load_state_dict(sd, strict=False)
+            with using_codex_operations(
+                device=torch.device("cpu"),
+                dtype=te_compute_dtype,
+                manual_cast_enabled=False,
+                weight_format="gguf",
+            ):
+                enc = _Enc(cfg)
+                sd = load_gguf_state_dict(
+                    te_file,
+                    dequantize=None,
+                    computation_dtype=te_compute_dtype,
+                )
+                shared_weight = sd.get("shared.weight")
+                encoder_embed_weight = sd.get("encoder.embed_tokens.weight")
+                if shared_weight is not None and encoder_embed_weight is None:
+                    sd["encoder.embed_tokens.weight"] = shared_weight
+                elif encoder_embed_weight is not None and shared_weight is None:
+                    sd["shared.weight"] = encoder_embed_weight
+                elif shared_weight is not None and encoder_embed_weight is not None:
+                    shared_shape = tuple(int(dim) for dim in getattr(shared_weight, "shape", ()))
+                    embed_shape = tuple(int(dim) for dim in getattr(encoder_embed_weight, "shape", ()))
+                    if shared_shape != embed_shape:
+                        raise RuntimeError(
+                            "WAN22 GGUF: text encoder embedding alias shape mismatch "
+                            f"(shared.weight={shared_shape} encoder.embed_tokens.weight={embed_shape})."
+                        )
+                missing, unexpected = enc.load_state_dict(sd, strict=False)
         if missing or unexpected:
             raise RuntimeError(
                 "WAN22 GGUF: text encoder strict load failed: "
@@ -300,6 +314,15 @@ def get_text_context(
         enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
     except Exception:
         enc = enc.to(device=dev)
+
+    # Keep GGUF dequant compute dtype aligned with the requested runtime dtype.
+    # This is required for CPU TE `fp32` contract: some GGUF module loaders may seed
+    # `CodexParameter.computation_dtype` with reduced precision during state-dict load.
+    requested_compute_dtype = as_torch_dtype(dtype)
+    if hasattr(enc, "parameters"):
+        for parameter in enc.parameters():
+            if hasattr(parameter, "computation_dtype"):
+                parameter.computation_dtype = requested_compute_dtype
 
     def _do(clean_txt: str) -> torch.Tensor:
         inputs = tok(

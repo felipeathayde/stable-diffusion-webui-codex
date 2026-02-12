@@ -1370,3 +1370,11 @@ Correct command: `./.uv/bin/uv tool run --from ffmpeg-downloader python -m ffmpe
 Wrong command: `./.uv/bin/uv pip download --no-deps --dest /tmp ccvfi==0.0.3 ffmpeg-downloader==0.4.2`
 Cause and fix: `uv pip` has no `download` subcommand, and `ffmpeg-downloader==0.4.2` does not exist. Use `uv tool run --from <pkg>` for inspection and pin available versions.
 Correct command: `UV_TOOL_DIR="$PWD/.uv/tools" UV_TOOL_BIN_DIR="$PWD/.uv/tools/bin" ./.uv/bin/uv tool run --from ffmpeg-downloader ffdl --help`
+
+Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "gguf-exec|gguf_cache|dequant_forward_cache|te_device|te_impl|te_kernel|required|clip_fp32|text_encoder" apps/backend/infra/config/args.py apps/backend/infra/config/extra_args.py apps/backend/infra/config/gguf_exec_mode.py`
+Cause and fix: I assumed `apps/backend/infra/config/extra_args.py` existed; in this repo it does not, so `rg` failed with `No such file or directory`. Confirm file inventory first and target real config modules only.
+Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "gguf-exec|gguf_cache|dequant_forward_cache|te_device|te_impl|te_kernel|required|clip_fp32|text_encoder" apps/backend/infra/config/args.py apps/backend/infra/config/gguf_exec_mode.py`
+
+Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "text_context.py` GGUF TE loading no longer" apps/backend/runtime/families/wan22/AGENTS.md`
+Cause and fix: I included an unescaped backtick inside a double-quoted regex, which broke shell parsing (`unexpected EOF while looking for matching ```). Use a pattern without backticks (or escape them) for shell-safe `rg`.
+Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "GGUF TE loading no longer hard-codes" apps/backend/runtime/families/wan22/AGENTS.md`

@@ -8,8 +8,8 @@ This repo ships:
 - Git
 - Internet access (first install: downloads `uv`, CPython 3.12.10, Node.js (via nodeenv), and wheels)
 
-Optional:
-- `ffmpeg` + `ffprobe` on `PATH` (video export / vid2vid workflows)
+Video runtime note:
+- `install-webui.(bat|sh)` provisions repo-local `ffmpeg` + `ffprobe` binaries and the default RIFE checkpoint automatically (no manual PATH/model setup required).
 
 ## Quick install (recommended)
 
@@ -27,6 +27,11 @@ For automation, pass `--no-menu`.
 run-webui.bat
 ```
 
+3) Safe update (fail-closed):
+```bat
+update-webui.bat
+```
+
 ### Linux / WSL
 1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
 ```bash
@@ -39,6 +44,19 @@ bash install-webui.sh
 # Advanced (forwarded to backend):
 ./run-webui.sh --gguf-exec=dequant_upfront
 ```
+
+3) Safe update (fail-closed):
+```bash
+bash update-webui.sh
+```
+
+## Safe updater contract (`update-webui.(bat|sh)`)
+- Update scope is repo root only (no submodule/extension update automation).
+- Dirty worktree check is fail-closed (tracked + untracked paths abort; ignored paths do not).
+- Abort diagnostics list explicit cause and offending files/directories when applicable.
+- Non-destructive update path only: `git fetch --prune` + `git pull --ff-only`.
+- Environment refresh runs only when pull actually changed `HEAD`.
+- Frontend refresh uses lock-preserving mode (`npm ci`), so `apps/interface/package-lock.json` is required.
 
 ## Node.js (frontend)
 The installers provision a repo-local Node.js into `.nodeenv` via `nodeenv` (no system Node required).
@@ -64,6 +82,7 @@ Override:
 - `CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64` (explicitly pick the PyTorch backend extra)
 - `CODEX_CUDA_VARIANT=12.6|12.8|13` (choose CUDA wheels when using `auto`/`cuda`; maps to `cu126|cu128|cu130`)
 - `CODEX_INSTALL_TRACE=1` (Linux/WSL installer: enable shell trace for debugging)
+- `CODEX_FFMPEG_VERSION=<version>` (pin ffmpeg-downloader runtime build; default: `7.0.2`)
 
 If CUDA install fails, try a different backend:
 - Example: `CODEX_TORCH_BACKEND=cu126 bash install-webui.sh`

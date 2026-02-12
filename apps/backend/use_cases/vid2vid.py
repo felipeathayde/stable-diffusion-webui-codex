@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Backend vid2vid use-case orchestration (WAN pipeline + optional flow guidance + interpolation/export).
 Takes an input video (or frames), runs a chosen vid2vid method (native WAN pipeline or WAN animate), optionally applies optical-flow-based
-warping/guidance and frame interpolation, and returns task events/results.
+warping/guidance and shared frame interpolation, and returns task events/results.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_blend` (function): Alpha-blends two PIL images (resizes `b` to `a` when needed).
@@ -35,14 +35,17 @@ from uuid import uuid4
 from typing import Any, Dict, Iterator, Optional, Sequence
 
 from apps.backend.core.engine_interface import TaskType
-from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent, Vid2VidRequest
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.infra.config.repo_root import repo_scratch_path
-from apps.backend.runtime.pipeline_stages.video import assemble_video_metadata, build_video_plan
+from apps.backend.runtime.pipeline_stages.video import (
+    apply_video_interpolation,
+    assemble_video_metadata,
+    build_video_plan,
+    read_video_interpolation_options,
+)
 from apps.backend.video.export.ffmpeg_exporter import export_video
 from apps.backend.video.flow.torchvision_raft import FlowGuidanceError, RaftFlowEstimator, warp_frame
-from apps.backend.video.interpolation import maybe_interpolate
 from apps.backend.video.io.ffmpeg import extract_frames, probe_video
 
 
@@ -581,25 +584,10 @@ def run_vid2vid(
             has_audio = bool(probe.has_audio)
             audio_source = video_path if probe.has_audio else None
 
-        vfi_opts = None
-        vfi_cfg = extras.get("video_interpolation") if isinstance(extras, dict) else None
-        if isinstance(vfi_cfg, dict):
-            vio = VideoInterpolationOptions(
-                enabled=bool(vfi_cfg.get("enabled", False)),
-                model=str(vfi_cfg.get("model")) if vfi_cfg.get("model") is not None else None,
-                times=int(vfi_cfg.get("times")) if vfi_cfg.get("times") is not None else None,
-            )
-            vfi_opts = vio.as_dict()
-            if vio.enabled and (vio.times or 0) > 1:
-                yield ProgressEvent(stage="interpolate", percent=0.95, message="Interpolating frames (VFI)")
-                frames_out, vfi_meta = maybe_interpolate(
-                    frames_out,
-                    enabled=vio.enabled,
-                    model=vio.model,
-                    times=vio.times or 2,
-                    logger=logger,
-                )
-                vfi_opts = {**vfi_opts, "result": vfi_meta}
+        vfi_options = read_video_interpolation_options(extras)
+        if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
+            yield ProgressEvent(stage="interpolate", percent=0.95, message="Interpolating frames (VFI)")
+        frames_out, vfi_opts = apply_video_interpolation(frames_out, options=vfi_options, logger_=logger)
 
         elapsed = time.perf_counter() - start
         if method == "wan_animate":

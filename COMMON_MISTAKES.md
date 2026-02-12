@@ -1362,3 +1362,11 @@ functions.apply_patch
 Wrong command: `CODEX_ROOT="/home/lucas/work/stable-diffusion-webui-codex" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`
 Cause and fix: `$CODEX_ROOT` in `PYTHONPATH` and interpreter path was expanded before that env assignment took effect, resolving to `/.venv/bin/python`. Set variables after `cd` using `$PWD` (or split assignment into two commands).
 Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$PWD" PYTHONPATH="$PWD" "$PWD/.venv/bin/python" - <<'PY' ...`
+
+Wrong command: `CODEX_ROOT="$PWD" ./.venv/bin/python -m pip download --no-deps --dest /tmp ccvfi==0.0.3 ffmpeg-downloader==0.4.2`
+Cause and fix: The repo venv intentionally does not ship `pip`; invoking `python -m pip` failed immediately (`No module named pip`). Use `uv` for package resolution/download operations.
+Correct command: `./.uv/bin/uv tool run --from ffmpeg-downloader python -m ffmpeg_downloader --help` (or `./.uv/bin/uv lock --python "$PWD/.venv/bin/python"` when updating project deps)
+
+Wrong command: `./.uv/bin/uv pip download --no-deps --dest /tmp ccvfi==0.0.3 ffmpeg-downloader==0.4.2`
+Cause and fix: `uv pip` has no `download` subcommand, and `ffmpeg-downloader==0.4.2` does not exist. Use `uv tool run --from <pkg>` for inspection and pin available versions.
+Correct command: `UV_TOOL_DIR="$PWD/.uv/tools" UV_TOOL_BIN_DIR="$PWD/.uv/tools/bin" ./.uv/bin/uv tool run --from ffmpeg-downloader ffdl --help`

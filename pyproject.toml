@@ -32,6 +32,10 @@ dependencies = [
   # Imaging / numerics
   "numpy==1.26.4",
   "Pillow==10.4.0",
+  "opencv-python==4.10.0.84",
+  # Video runtime provisioning + interpolation
+  "ffmpeg-downloader==0.4.1",
+  "ccvfi==0.0.3",
   # Upscalers / SR (Spandrel: unified loader/runner for ESRGAN/SwinIR/HAT/DAT/etc)
   "spandrel==0.4.1",
   # Small pins to keep resolver stable across platforms

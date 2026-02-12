@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-02-09
+Last Review: 2026-02-12
 Status: Active
 
 ## Purpose
@@ -17,7 +17,7 @@ Status: Active
 - `tiling.py` — VAE tiling apply/restore toggles.
 - `image_init.py` — Utilities for encoding img2img/img2vid init images into tensor+latent bundles.
 - `masked_img2img.py` — Masked img2img (“inpaint”) helpers: mask normalize/invert/blur + full-res crop plan + latent mask enforcement inputs.
-- `video.py` — Video plan builder, LoRA application, sampler configuration, and metadata assembly.
+- `video.py` — Video plan builder, LoRA/sampler configuration, shared interpolation stage helpers, and metadata assembly.
 - `__init__.py` — Package marker (intentionally no re-export facade; callers import modules directly).
 
 ## Notes
@@ -37,6 +37,7 @@ Status: Active
 - 2026-01-24: Live preview interval/method are applied per task via thread-local overrides (no process-global `os.environ` mutation); env vars remain as fallbacks only.
 - 2026-01-25: `clip_skip=0` is now supported as an explicit “use default” sentinel (merged from request metadata or `<clip_skip:0>` prompt tags) and is passed through `apply_prompt_context(...)` to reset clip skip per job.
 - 2026-01-27: `video.py:export_video(...)` now passes a task label into engine export so outputs land under `output/{txt2vid,img2vid}-videos/<date>/...` (stable dirs; UI serves via `/api/output/{rel_path}`).
+- 2026-02-12: `video.py` now owns shared parsing/execution of `extras.video_interpolation` for all WAN video use-cases (txt2vid/img2vid/vid2vid) to keep Option A mode pipelines aligned.
 - 2026-02-01: Added `hires_fix.py` to centralize hires pass prep and fix `denoise` semantics (no more inverted `start_at_step` mapping).
 - 2026-02-08: Sampling stages now carry typed ER-SDE options (`SamplingPlan.er_sde`) from plan build to execution; `execute_sampling(...)` forwards options into `CodexSampler.sample(...)` and latent diagnostics include effective ER-SDE metadata when sampler is `er sde`.
 - 2026-02-09: `sampling_execute` now gates LoRA apply/reset on `codex_objects_after_applying_lora` capability and fails loud only when LoRA selections are present without engine support, while still resetting stale LoRA state for no-selection runs.

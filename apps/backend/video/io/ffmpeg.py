@@ -8,11 +8,11 @@ Required Notice: see NOTICE
 
 Purpose: ffmpeg/ffprobe-backed video IO helpers (probe metadata + extract frames).
 Provides a small fail-fast wrapper around `ffprobe` to parse video metadata (fps/duration/codecs) and a frame-extraction helper using `ffmpeg`,
-intended for backend video tasks without pulling heavy dependencies (no cv2).
+intended for backend video tasks without pulling heavy dependencies (no cv2), with deterministic binary resolution from repo-local runtime paths.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `FFmpegUnavailableError` (class): Raised when `ffmpeg`/`ffprobe` are missing from PATH.
-- `_which` (function): Resolves a required binary from PATH (raises `FFmpegUnavailableError` when missing).
+- `FFmpegUnavailableError` (class): Raised when `ffmpeg`/`ffprobe` cannot be resolved by the shared runtime dependency resolver.
+- `_which` (function): Resolves a required binary via shared resolver precedence (env override → deterministic runtime path → downloader/PATH).
 - `_parse_ratio` (function): Parses ffprobe ratio strings (e.g. `30000/1001`) into floats.
 - `VideoProbe` (dataclass): Parsed video metadata returned by `probe_video`.
 - `probe_video` (function): Runs `ffprobe` and returns a parsed `VideoProbe`.
@@ -22,11 +22,12 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+from apps.backend.video.runtime_dependencies import VideoDependencyResolutionError, resolve_ffmpeg_binary
 
 
 class FFmpegUnavailableError(RuntimeError):
@@ -34,12 +35,10 @@ class FFmpegUnavailableError(RuntimeError):
 
 
 def _which(name: str) -> str:
-    path = shutil.which(name)
-    if not path:
-        raise FFmpegUnavailableError(
-            f"{name} not found on PATH. Install ffmpeg/ffprobe and try again."
-        )
-    return path
+    try:
+        return resolve_ffmpeg_binary(name)
+    except VideoDependencyResolutionError as exc:
+        raise FFmpegUnavailableError(str(exc)) from exc
 
 
 def _parse_ratio(raw: str) -> Optional[float]:

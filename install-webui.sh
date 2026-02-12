@@ -19,6 +19,7 @@ NODEENV_DIR="${ROOT_DIR}/.nodeenv"
 NODEENV_BIN_DIR="${NODEENV_DIR}/bin"
 NODEENV_NODE="${NODEENV_BIN_DIR}/node"
 NODEENV_NPM="${NODEENV_BIN_DIR}/npm"
+FFMPEG_VERSION="${CODEX_FFMPEG_VERSION:-7.0.2}"
 
 log() { echo "[install] $*"; }
 warn() { echo "[install] Warning: $*" >&2; }
@@ -33,9 +34,12 @@ UV_CACHE_DIR="${UV_CACHE_DIR:-${ROOT_DIR}/.uv/cache}"
 NPM_CACHE_DIR="${NPM_CONFIG_CACHE:-${ROOT_DIR}/.npm-cache}"
 XDG_DATA_HOME="${XDG_DATA_HOME:-${ROOT_DIR}/.uv/xdg-data}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-${ROOT_DIR}/.uv/xdg-cache}"
+CODEX_ROOT="${ROOT_DIR}"
+PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+CODEX_FFMPEG_VERSION="${FFMPEG_VERSION}"
 export UV_CACHE_DIR
 export NPM_CONFIG_CACHE="${NPM_CACHE_DIR}"
-export XDG_DATA_HOME XDG_CACHE_HOME
+export XDG_DATA_HOME XDG_CACHE_HOME CODEX_ROOT PYTHONPATH CODEX_FFMPEG_VERSION
 mkdir -p "${UV_CACHE_DIR}" "${NPM_CACHE_DIR}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}"
 
 log "Repo: ${ROOT_DIR}"
@@ -44,6 +48,7 @@ log "uv cache: ${UV_CACHE_DIR}"
 log "Python: ${PYTHON_VERSION} (managed by uv)"
 log "Venv: ${VENV_DIR} (created by uv; uses the managed Python)"
 log "Node.js: ${NODE_VERSION} (managed by nodeenv; installed into ${NODEENV_DIR})"
+log "FFmpeg runtime version: ${FFMPEG_VERSION} (managed by ffmpeg-downloader)"
 log "XDG data: ${XDG_DATA_HOME}"
 log "XDG cache: ${XDG_CACHE_HOME}"
 log "Torch mode: ${TORCH_MODE} (override via CODEX_TORCH_MODE=auto|cpu|cuda|rocm|skip)"
@@ -233,6 +238,43 @@ sync_python_deps() {
   "${UV_BIN}" sync --locked --extra "${extra}"
 }
 
+provision_video_runtime_deps() {
+  local py="${VENV_DIR}/bin/python"
+  if [[ ! -x "${py}" ]]; then
+    die "venv python not found at '${py}' after uv sync."
+  fi
+
+  log "Provisioning ffmpeg runtime (ffmpeg-downloader) ..."
+  "${py}" - <<'PY'
+import os
+from apps.backend.video.runtime_dependencies import ensure_ffmpeg_binaries
+
+resolved = ensure_ffmpeg_binaries(
+    version=os.environ.get("CODEX_FFMPEG_VERSION") or "7.0.2",
+    no_symlinks=True,
+)
+print(f"[install] ffmpeg: {resolved['ffmpeg']}")
+print(f"[install] ffprobe: {resolved['ffprobe']}")
+PY
+
+  log "Provisioning default RIFE model checkpoint ..."
+  "${py}" - <<'PY'
+from apps.backend.video.runtime_dependencies import ensure_rife_model_file
+
+path = ensure_rife_model_file()
+print(f"[install] RIFE model: {path}")
+PY
+
+  log "Validating video runtime imports (cv2 + ccvfi) ..."
+  "${py}" - <<'PY'
+import cv2
+import ccvfi
+
+print(f"[install] opencv-python: {cv2.__version__}")
+print(f"[install] ccvfi: {getattr(ccvfi, '__version__', 'unknown')}")
+PY
+}
+
 ensure_nodeenv() {
   if [[ -e "${NODEENV_DIR}" && ! -d "${NODEENV_DIR}" ]]; then
     die "expected '${NODEENV_DIR}' to be a directory (nodeenv), but found a non-directory path."
@@ -266,6 +308,7 @@ ensure_nodeenv() {
 bootstrap_uv
 install_python
 sync_python_deps
+provision_video_runtime_deps
 
 log "Installing frontend dependencies (npm) ..."
 ensure_nodeenv

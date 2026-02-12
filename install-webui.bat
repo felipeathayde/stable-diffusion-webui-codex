@@ -2,6 +2,12 @@
 setlocal EnableExtensions DisableDelayedExpansion
 
 set "ROOT=%~dp0"
+set "CODEX_ROOT=%ROOT%"
+if defined PYTHONPATH (
+  set "PYTHONPATH=%ROOT%;%PYTHONPATH%"
+) else (
+  set "PYTHONPATH=%ROOT%"
+)
 
 REM --------------------------------------------------
 REM Interactive menu (Windows)
@@ -64,13 +70,21 @@ if "%PYTHON_VERSION%"=="" set "PYTHON_VERSION=3.12.10"
 set "NODE_VERSION=%CODEX_NODE_VERSION%"
 if "%NODE_VERSION%"=="" set "NODE_VERSION=24.13.0"
 set "NODEENV=%ROOT%.nodeenv"
+set "FFMPEG_VERSION=%CODEX_FFMPEG_VERSION%"
+if "%FFMPEG_VERSION%"=="" set "FFMPEG_VERSION=7.0.2"
+set "CODEX_FFMPEG_VERSION=%FFMPEG_VERSION%"
 
 set "VENV=%ROOT%.venv"
+set "VENV_PYTHON=%VENV%\Scripts\python.exe"
 
 set "UV_CACHE_DIR=%ROOT%.uv\cache"
 set "NPM_CONFIG_CACHE=%ROOT%.npm-cache"
+set "XDG_DATA_HOME=%ROOT%.uv\xdg-data"
+set "XDG_CACHE_HOME=%ROOT%.uv\xdg-cache"
 if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%"
 if not exist "%NPM_CONFIG_CACHE%" mkdir "%NPM_CONFIG_CACHE%"
+if not exist "%XDG_DATA_HOME%" mkdir "%XDG_DATA_HOME%"
+if not exist "%XDG_CACHE_HOME%" mkdir "%XDG_CACHE_HOME%"
 
 set "TORCH_MODE=%CODEX_TORCH_MODE%"
 if "%TORCH_MODE%"=="" set "TORCH_MODE=auto"
@@ -83,6 +97,7 @@ echo [install] uv cache: %UV_CACHE_DIR%
 echo [install] Python: %PYTHON_VERSION%  managed by uv
 echo [install] Venv: %VENV%  created by uv; uses the managed Python
 echo [install] Node.js: %NODE_VERSION%  managed by nodeenv  (installs into %NODEENV%)
+echo [install] FFmpeg runtime version: %FFMPEG_VERSION%  managed by ffmpeg-downloader
 echo [install] Torch mode: %TORCH_MODE%  CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip
 if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND%  CODEX_TORCH_BACKEND
 if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT%  CODEX_CUDA_VARIANT
@@ -242,6 +257,10 @@ echo Error: uv sync failed.>&2
 exit /b 1
 :uv_sync_ok
 
+echo [install] Provisioning ffmpeg runtime dependencies ...
+call :provision_video_runtime
+if errorlevel 1 exit /b 1
+
 echo [install] Installing frontend dependencies ...
 call :ensure_nodeenv
 if errorlevel 1 exit /b 1
@@ -358,6 +377,35 @@ exit /b 1
 
 :ensure_nodeenv_missing_npm
 echo Error: nodeenv completed, but npm is missing under '%NODEENV%'.>&2
+exit /b 1
+
+:provision_video_runtime
+if not exist "%VENV_PYTHON%" goto :provision_video_runtime_missing_python
+
+"%VENV_PYTHON%" -c "import os; from apps.backend.video.runtime_dependencies import ensure_ffmpeg_binaries; p=ensure_ffmpeg_binaries(version=os.environ.get('CODEX_FFMPEG_VERSION')); print('[install] ffmpeg: ' + str(p['ffmpeg'])); print('[install] ffprobe: ' + str(p['ffprobe']))"
+if errorlevel 1 goto :provision_video_runtime_ffmpeg_failed
+
+"%VENV_PYTHON%" -c "from apps.backend.video.runtime_dependencies import ensure_rife_model_file; path=ensure_rife_model_file(); print('[install] RIFE model: ' + str(path))"
+if errorlevel 1 goto :provision_video_runtime_rife_failed
+
+"%VENV_PYTHON%" -c "import cv2, ccvfi; print('[install] opencv-python: ' + cv2.__version__); print('[install] ccvfi: ' + str(getattr(ccvfi, '__version__', 'unknown')))"
+if errorlevel 1 goto :provision_video_runtime_import_failed
+exit /b 0
+
+:provision_video_runtime_missing_python
+echo Error: venv python not found at '%VENV_PYTHON%' after uv sync.>&2
+exit /b 1
+
+:provision_video_runtime_ffmpeg_failed
+echo Error: failed to provision ffmpeg runtime dependencies.>&2
+exit /b 1
+
+:provision_video_runtime_rife_failed
+echo Error: failed to provision default RIFE model checkpoint.>&2
+exit /b 1
+
+:provision_video_runtime_import_failed
+echo Error: failed to import video runtime dependencies (opencv-python/ccvfi).>&2
 exit /b 1
 
 :ui_menu

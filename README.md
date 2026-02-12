@@ -30,18 +30,20 @@
 Prereqs:
 - Git
 - Internet access for first install (downloads `uv`, CPython, Node.js, and wheels)
-- Optional: `ffmpeg` + `ffprobe` on `PATH` (video export / vid2vid)
+- No manual ffmpeg setup required: installer provisions repo-local `ffmpeg`/`ffprobe` and default RIFE model assets for video interpolation.
 
 ### Windows
 ```bat
 install-webui.bat
 run-webui.bat
+update-webui.bat
 ```
 
 ### Linux / WSL
 ```bash
 bash install-webui.sh
 ./run-webui.sh
+bash update-webui.sh
 ```
 
 When the WebUI starts, it prints the URLs:
@@ -52,6 +54,12 @@ When the WebUI starts, it prints the URLs:
 Open the UI URL in your browser. Stop with `Ctrl+C`.
 
 More details (CUDA/ROCm selection, troubleshooting): see `INSTALL.md`.
+
+### Safe updater behavior
+- `update-webui.(bat|sh)` is fail-closed: it aborts on unsafe git state (dirty tree, detached HEAD, no upstream, ahead/diverged, merge/rebase/cherry-pick/bisect in progress).
+- Abort output includes explicit causes and offending file/folder paths when local changes exist.
+- Ignored paths (`.gitignore`) are excluded from the dirty-tree abort policy.
+- Update path is non-destructive: `git fetch --prune` + `git pull --ff-only`; no `git clean`/`reset --hard`.
 
 ## 📦 Models
 

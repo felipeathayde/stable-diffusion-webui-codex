@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Video frame interpolation orchestration helpers.
-Provides a single `maybe_interpolate(...)` wrapper that applies frame interpolation (currently RIFE) when requested and available, otherwise raising explicit errors for unsupported configurations.
+Provides a single `maybe_interpolate(...)` wrapper that applies frame interpolation (currently RIFE) when requested and available, and raises
+explicit errors when runtime dependencies/model assets are unavailable.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `maybe_interpolate` (function): Applies video frame interpolation when enabled and configured, returning `(frames_out, meta)`.
@@ -48,9 +49,8 @@ def maybe_interpolate(
         meta["reason"] = "times_le_1"
         return list(frames), meta
 
-    # RIFE is the only supported method; if unavailable or failing, raise.
     out = maybe_interpolate_rife(frames, model=model, times=int(times), logger=logger)
-    if out is None:
-        raise RuntimeError("video interpolation requested but RIFE is unavailable in this environment")
+    if out is None:  # pragma: no cover - defensive; adapter currently raises on unavailability
+        raise RIFEUnavailableError("video interpolation requested but RIFE is unavailable in this environment")
     meta.update({"applied": True, "method": "rife", "reason": None, "times": int(times), "model": model})
     return out, meta

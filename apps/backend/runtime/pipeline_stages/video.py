@@ -14,6 +14,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
+- `read_video_interpolation_options` (function): Parses `extras.video_interpolation` into typed interpolation options when present.
+- `apply_video_interpolation` (function): Applies the shared interpolation stage and returns `(frames_out, interpolation_metadata)`.
 - `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
 - `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
 - `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
@@ -25,9 +27,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping, Sequence
 
+from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.runtime.adapters.lora import selections as lora_selections
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
+from apps.backend.video.interpolation import maybe_interpolate
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,42 @@ def configure_sampler(component: Any, plan: VideoPlan, logger_: logging.Logger |
         else:  # pragma: no cover - fallback logging
             logger.warning("video sampler: %s", warning)
     return outcome
+
+
+def read_video_interpolation_options(extras: Mapping[str, Any] | None) -> VideoInterpolationOptions | None:
+    if not isinstance(extras, Mapping):
+        return None
+    cfg = extras.get("video_interpolation")
+    if not isinstance(cfg, Mapping):
+        return None
+    return VideoInterpolationOptions(
+        enabled=bool(cfg.get("enabled", False)),
+        model=str(cfg.get("model")) if cfg.get("model") is not None else None,
+        times=int(cfg.get("times")) if cfg.get("times") is not None else None,
+    )
+
+
+def apply_video_interpolation(
+    frames: Sequence[Any],
+    *,
+    options: VideoInterpolationOptions | None,
+    logger_: logging.Logger | None = None,
+) -> tuple[list[Any], dict[str, Any] | None]:
+    if options is None:
+        return list(frames), None
+
+    opts = options.as_dict()
+    if options.enabled and (options.times or 0) > 1:
+        out_frames, meta = maybe_interpolate(
+            frames,
+            enabled=options.enabled,
+            model=options.model,
+            times=options.times or 2,
+            logger=logger_ if logger_ is not None else logger,
+        )
+        return list(out_frames), {**opts, "result": meta}
+
+    return list(frames), opts
 
 
 def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_options: Any, *, task: str) -> Any:
@@ -165,6 +205,8 @@ __all__ = [
     "apply_engine_loras",
     "build_video_plan",
     "configure_sampler",
+    "read_video_interpolation_options",
+    "apply_video_interpolation",
     "export_video",
     "assemble_video_metadata",
     "build_video_result",

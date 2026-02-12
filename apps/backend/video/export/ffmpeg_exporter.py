@@ -8,11 +8,11 @@ Required Notice: see NOTICE
 
 Purpose: Encode frame sequences to a video container via ffmpeg (mp4/webm/gif).
 Writes frames to a workspace-local temp dir, runs ffmpeg (optional audio mux), and returns a structured export result suitable for
-serving under `/api/output/{rel_path}`.
+serving under `/api/output/{rel_path}` with deterministic ffmpeg binary resolution.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `VideoExportError` (class): Explicit export error surfaced when ffmpeg/Pillow or encoding fails.
-- `_which` (function): Resolves an executable path from PATH (raises `VideoExportError` if missing).
+- `_which` (function): Resolves ffmpeg executable paths via shared resolver precedence (env override → deterministic runtime path → downloader/PATH).
 - `_output_root` (function): Resolves the repo-local output root (`CODEX_ROOT/output`).
 - `_sanitize_filename_prefix` (function): Sanitizes a user/task-provided filename prefix for safe output paths.
 - `_normalize_video_options` (function): Normalizes legacy `video_*` option keys into exporter option keys.
@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from apps.backend.infra.config.repo_root import get_repo_root, repo_scratch_path
+from apps.backend.video.runtime_dependencies import VideoDependencyResolutionError, resolve_ffmpeg_binary
 
 
 class VideoExportError(RuntimeError):
@@ -43,10 +44,10 @@ class VideoExportError(RuntimeError):
 
 
 def _which(name: str) -> str:
-    path = shutil.which(name)
-    if not path:
-        raise VideoExportError(f"{name} not found on PATH. Install ffmpeg and try again.")
-    return path
+    try:
+        return resolve_ffmpeg_binary(name)
+    except VideoDependencyResolutionError as exc:
+        raise VideoExportError(str(exc)) from exc
 
 
 def _output_root() -> Path:

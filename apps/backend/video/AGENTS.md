@@ -1,6 +1,6 @@
 # apps/backend/video Overview
 Date: 2025-10-28
-Last Review: 2026-01-02
+Last Review: 2026-02-12
 Status: Active
 
 ## Purpose
@@ -14,5 +14,7 @@ Status: Active
 
 ## Notes
 - Keep video utilities generic so multiple engines/use cases can reuse them.
-- Video IO/export requires `ffmpeg` + `ffprobe` on PATH; flow guidance requires `torch` + `torchvision`.
+- Video IO/export resolves ffmpeg binaries via deterministic repo-local runtime paths first (`.uv/xdg-data/ffmpeg-downloader/ffmpeg`), then explicit env overrides/PATH.
+- Default RIFE checkpoint is provisioned under `.uv/xdg-data/rife/rife47.pth`; runtime resolution must fail loud when missing.
+- Flow guidance requires `torch` + `torchvision`.
 - 2026-01-02: Added standardized file header docstrings to video export modules (doc-only change; part of rollout).

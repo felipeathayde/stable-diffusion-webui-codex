@@ -1,6 +1,6 @@
 # apps/backend/video/export Overview
 Date: 2025-12-16
-Last Review: 2026-01-18
+Last Review: 2026-02-12
 Status: Active
 
 ## Purpose
@@ -12,6 +12,6 @@ Status: Active
 ## Notes
 - Output root is `CODEX_ROOT/output` (repo-local) and served via `/api/output/{rel_path}`.
 - Backend must serve outputs via a root-scoped file route (see `/api/output/{rel_path}`) rather than exposing arbitrary paths.
-- Export errors should be explicit (`VideoExportError`) so users can fix missing ffmpeg/codec issues.
+- Export errors should be explicit (`VideoExportError`) so users can fix missing ffmpeg/codec issues; ffmpeg resolution now uses shared deterministic runtime resolver (`apps/backend/video/runtime_dependencies.py`).
 - 2026-01-02: Added standardized file header docstrings to exporter modules (doc-only change; part of rollout).
 - 2026-01-18: `export/__init__.py` is now a package marker (no re-exports); import `export_video` from `apps/backend/video/export/ffmpeg_exporter.py`.

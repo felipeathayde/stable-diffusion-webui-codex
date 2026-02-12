@@ -6,64 +6,148 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Optional RIFE frame interpolation integration hook.
-Attempts to import an out-of-tree RIFE integration module and run interpolation when requested, raising `RIFEUnavailableError` on runtime failures.
+Purpose: In-repo RIFE frame interpolation adapter with deterministic model/runtime contracts.
+Loads a pinned RIFE runtime (ccvfi), resolves the model checkpoint from deterministic repo-local paths, and interpolates PIL frame sequences with
+explicit fail-loud diagnostics when dependencies or assets are unavailable.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RIFEUnavailableError` (class): Raised when a RIFE integration is present but fails at runtime.
-- `maybe_interpolate_rife` (function): Attempts RIFE interpolation via dynamic import; returns `None` when unavailable.
+- `RIFEUnavailableError` (class): Raised when RIFE interpolation cannot run due to missing/invalid runtime dependencies or assets.
+- `maybe_interpolate_rife` (function): Interpolates a frame sequence using the RIFE IFNet runtime and returns an expanded list of frames.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional, Sequence
+
+import numpy as np
+
+from apps.backend.video.runtime_dependencies import (
+    VideoDependencyResolutionError,
+    resolve_rife_model_path,
+)
 
 
 class RIFEUnavailableError(RuntimeError):
     pass
 
 
+def _resolve_runtime_model(model: Optional[str]) -> Path:
+    try:
+        return resolve_rife_model_path(model)
+    except VideoDependencyResolutionError as exc:
+        raise RIFEUnavailableError(str(exc)) from exc
+
+
+def _as_rgb_pil(frame: object, *, index: int):
+    try:
+        from PIL import Image  # type: ignore
+    except Exception as exc:
+        raise RIFEUnavailableError(f"Pillow is required for RIFE interpolation: {exc}") from exc
+
+    if isinstance(frame, Image.Image):
+        return frame.convert("RGB")
+    raise RIFEUnavailableError(
+        f"RIFE interpolation expects PIL.Image frames; frame {index} has type {type(frame)!r}."
+    )
+
+
+def _load_model(model_path: Path):
+    try:
+        import torch
+        from ccvfi import AutoConfig, AutoModel, ConfigType
+    except Exception as exc:
+        raise RIFEUnavailableError(
+            f"RIFE runtime dependencies are unavailable ({exc}). Re-run install-webui to provision them."
+        ) from exc
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    fp16 = device.type == "cuda"
+
+    try:
+        base_cfg = AutoConfig.from_pretrained(ConfigType.RIFE_IFNet_v426_heavy)
+        if hasattr(base_cfg, "model_copy"):
+            cfg = base_cfg.model_copy(update={"path": model_path, "url": None})
+        else:  # pragma: no cover - defensive for older pydantic objects
+            cfg = base_cfg.copy(update={"path": model_path, "url": None})
+
+        model = AutoModel.from_config(
+            cfg,
+            device=device,
+            fp16=fp16,
+            model_dir=str(model_path.parent),
+        )
+    except Exception as exc:
+        raise RIFEUnavailableError(
+            f"Failed to initialize RIFE model from '{model_path}': {exc}"
+        ) from exc
+    return model, device, fp16, torch
+
+
+def _to_tensor(image, *, device, fp16: bool, torch_mod):
+    array = np.asarray(image, dtype=np.float32) / 255.0
+    tensor = torch_mod.from_numpy(array).permute(2, 0, 1).unsqueeze(0).to(device=device)
+    return tensor.half() if fp16 else tensor.float()
+
+
+def _to_pil(tensor, *, torch_mod):
+    from PIL import Image  # type: ignore
+
+    pixels = (
+        tensor.detach()
+        .to(dtype=torch_mod.float32)
+        .clamp(0.0, 1.0)
+        .cpu()
+        .permute(1, 2, 0)
+        .numpy()
+    )
+    uint8 = np.rint(pixels * 255.0).astype(np.uint8)
+    return Image.fromarray(uint8, mode="RGB")
+
+
 def maybe_interpolate_rife(
     frames: Sequence[object], *, model: Optional[str], times: int, logger
 ) -> Optional[List[object]]:
-    """Attempt to interpolate frames using a RIFE implementation if available.
-
-    This is a pluggable hook. We do not vendor a RIFE implementation here.
-    If a compatible module is installed in the environment and provides a
-    simple `interpolate(frames, model_path, times, logger)` function, we will
-    use it. Otherwise return None to indicate unavailability.
-    """
     if times <= 1:
         return list(frames)
-    # Try a well-known local integration point first
-    try:
-        # Expected optional integration module maintained out-of-tree by users
-        # or extensions: `backend_ext.rife_vfi`
-        import importlib
+    if len(frames) < 2:
+        return list(frames)
 
-        mod = None
-        for candidate in (
-            "backend_ext.rife_vfi",
-            "rife_vfi",
-        ):
-            try:
-                mod = importlib.import_module(candidate)
-                break
-            except Exception:  # module not found
-                mod = None
-        if mod is None:
-            return None
-        if not hasattr(mod, "interpolate"):
-            logger.warning("rife_vfi module found but has no 'interpolate' function")
-            return None
-        out = mod.interpolate(frames, model_path=model, times=int(times), logger=logger)
-        # Expect a list of frames back
-        if out is None:
-            return None
-        return list(out)
-    except Exception as ex:  # noqa: BLE001
-        # Distinguish missing module from runtime error
-        msg = str(ex)
-        if "No module named" in msg:
-            return None
-        raise RIFEUnavailableError(msg)
+    model_path = _resolve_runtime_model(model)
+    runtime, device, fp16, torch_mod = _load_model(model_path)
+
+    pil_frames = [_as_rgb_pil(frame, index=index + 1) for index, frame in enumerate(frames)]
+    first_size = pil_frames[0].size
+    for idx, frame in enumerate(pil_frames[1:], start=2):
+        if frame.size != first_size:
+            raise RIFEUnavailableError(
+                f"RIFE interpolation requires same-size frames; frame 1 is {first_size}, frame {idx} is {frame.size}."
+            )
+
+    output: list[object] = [pil_frames[0]]
+    with torch_mod.inference_mode():
+        for left, right in zip(pil_frames[:-1], pil_frames[1:]):
+            pair = torch_mod.stack(
+                [
+                    _to_tensor(left, device=device, fp16=fp16, torch_mod=torch_mod),
+                    _to_tensor(right, device=device, fp16=fp16, torch_mod=torch_mod),
+                ],
+                dim=1,
+            )
+
+            for step in range(1, int(times)):
+                timestep = float(step) / float(times)
+                out_tensor = runtime.inference(pair, timestep=timestep, scale=1.0)
+                output.append(_to_pil(out_tensor[0], torch_mod=torch_mod))
+
+            output.append(right)
+
+    if logger is not None:
+        logger.info(
+            "RIFE interpolation applied (model=%s, times=%s, in_frames=%s, out_frames=%s)",
+            str(model_path),
+            int(times),
+            len(frames),
+            len(output),
+        )
+    return output

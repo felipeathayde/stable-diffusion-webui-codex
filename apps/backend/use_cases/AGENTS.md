@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-11
+Last Review: 2026-02-12
 Status: Active
 
 ## Purpose
@@ -26,6 +26,7 @@ Status: Active
 - 2026-01-31: `img2img.py` now includes a canonical event wrapper (`run_img2img`) and shared image streaming helpers live in `apps/backend/use_cases/_image_streaming.py` (Option A: mode streaming stays in use-cases; engines delegate).
 - 2026-02-03: Hires pass validation/errors now reference `hires.*` naming (contract cutover).
 - 2026-01-27: WAN video results now support video-first payloads: txt2vid/img2vid export via ffmpeg and return `result.video { rel_path, mime }`; a per-tab `Return frames` knob controls whether frames are included (fallback returns frames when `saveOutput` is off or export fails). Vid2vid now honors the same knob for preview frames.
+- 2026-02-12: txt2vid now runs the same shared interpolation stage used by img2vid/vid2vid (`runtime/pipeline_stages/video.py`) and records `video_interpolation` metadata consistently across all WAN video modes.
 - 2026-02-08: `txt2img_pipeline/refiner.py` now interprets refiner swap as a pointer (`switch_at_step`) and starts the refiner pass at that step while preserving total diffusion steps.
 - 2026-02-09: `_image_streaming._decode_generation_output(...)` now enforces post-decode smart-offload residency centrally for image wrappers; it consumes `GenerationResult.metadata["conditioning_cache_hit"]` (strict bool contract, fail-loud on malformed metadata), always executes cleanup in a `finally` path, and only prewarms denoiser when decode succeeds.
 - 2026-02-09: Image conditioning helpers (`txt2img`/`img2img`) now stage all registered text encoders (`codex_objects.text_encoders`, e.g. `clip`, `qwen3`) during conditioning and offload them after embeddings are produced. Smart Cache provides the embed-reuse signal (`conditioning_cache_hit`), while Smart Offload invariants execute the actual load/unload transitions (including cache-hit warm path vs cache-miss unload path).

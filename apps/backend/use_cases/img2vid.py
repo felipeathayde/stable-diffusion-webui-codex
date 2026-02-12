@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
-Runs high/low stages, configures sampler settings, applies LoRAs, optionally performs video frame interpolation, exports video, and yields progress/result events.
+Runs high/low stages, configures sampler settings, applies LoRAs, runs the shared video interpolation stage when requested, exports video, and yields
+progress/result events.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
@@ -23,18 +24,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
-from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.runtime.processing.datatypes import VideoPlan
 from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
+    apply_video_interpolation,
     build_video_plan,
     build_video_result,
     configure_sampler,
     export_video,
+    read_video_interpolation_options,
 )
-from apps.backend.video.interpolation import maybe_interpolate
 
 
 def _build_result_payload(
@@ -168,25 +169,10 @@ def run_img2vid(
         if not frames:
             raise RuntimeError("WAN22 GGUF: produced no frames")
 
-        vfi_opts = None
-        vfi_cfg = plan.extras.get("video_interpolation") if isinstance(plan.extras, dict) else None
-        if isinstance(vfi_cfg, dict):
-            vio = VideoInterpolationOptions(
-                enabled=bool(vfi_cfg.get("enabled", False)),
-                model=str(vfi_cfg.get("model")) if vfi_cfg.get("model") is not None else None,
-                times=int(vfi_cfg.get("times")) if vfi_cfg.get("times") is not None else None,
-            )
-            vfi_opts = vio.as_dict()
-            if vio.enabled and (vio.times or 0) > 1:
-                yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
-                frames, vfi_meta = maybe_interpolate(
-                    frames,
-                    enabled=vio.enabled,
-                    model=vio.model,
-                    times=vio.times or 2,
-                    logger=logger,
-                )
-                vfi_opts = {**vfi_opts, "result": vfi_meta}
+        vfi_options = read_video_interpolation_options(plan.extras)
+        if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
+            yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
+        frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
 
         video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
 
@@ -284,19 +270,10 @@ def run_img2vid(
             init_image=frames_hi[-1],
         )
 
-    vfi_opts = None
-    vfi_cfg = extras.get("video_interpolation") if isinstance(extras, dict) else None
-    if isinstance(vfi_cfg, dict):
-        vio = VideoInterpolationOptions(
-            enabled=bool(vfi_cfg.get("enabled", False)),
-            model=str(vfi_cfg.get("model")) if vfi_cfg.get("model") is not None else None,
-            times=int(vfi_cfg.get("times")) if vfi_cfg.get("times") is not None else None,
-        )
-        vfi_opts = vio.as_dict()
-        if vio.enabled and (vio.times or 0) > 1:
-            yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
-            frames, vfi_meta = maybe_interpolate(frames, enabled=vio.enabled, model=vio.model, times=vio.times or 2, logger=logger)
-            vfi_opts = {**vfi_opts, "result": vfi_meta}
+    vfi_options = read_video_interpolation_options(extras)
+    if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
+        yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
+    frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
 
     video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
 

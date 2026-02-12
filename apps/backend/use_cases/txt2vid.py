@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Txt2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
-Configures sampler settings, applies LoRAs, runs the selected execution path, exports the resulting video, and yields progress/result events.
+Configures sampler settings, applies LoRAs, runs the selected execution path, applies shared video interpolation when requested, exports the
+resulting video, and yields progress/result events.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
@@ -28,11 +29,14 @@ from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.runtime.processing.datatypes import VideoPlan
 from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
+    apply_video_interpolation,
     build_video_plan,
     build_video_result,
     configure_sampler,
     export_video,
+    read_video_interpolation_options,
 )
+
 
 def _build_result_payload(
     *,
@@ -151,6 +155,11 @@ def run_txt2vid(
         if not frames:
             raise RuntimeError("WAN22 GGUF: produced no frames")
 
+        vfi_options = read_video_interpolation_options(plan.extras)
+        if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
+            yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
+        frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
+
         video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="txt2vid")
 
         @dataclass(frozen=True)
@@ -162,6 +171,8 @@ def run_txt2vid(
             warnings: tuple[str, ...] = ()
 
         extra_meta: dict[str, Any] = dict(plan.extras)
+        if vfi_opts is not None:
+            extra_meta["video_interpolation"] = vfi_opts
         if cfg.low is not None:
             extra_meta["sampler_low"] = {
                 "sampler_in": cfg.low.sampler,
@@ -213,7 +224,16 @@ def run_txt2vid(
     yield ProgressEvent(stage="run", percent=5.0, message="Running pipeline")
     frames = _run_pipeline(pipe, plan, request)
 
+    vfi_options = read_video_interpolation_options(plan.extras)
+    if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
+        yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
+    frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
+
     video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="txt2vid")
+
+    extra_meta: dict[str, Any] = dict(plan.extras)
+    if vfi_opts is not None:
+        extra_meta["video_interpolation"] = vfi_opts
 
     elapsed = time.perf_counter() - start
     result = build_video_result(
@@ -223,7 +243,7 @@ def run_txt2vid(
         sampler_outcome,
         elapsed=elapsed,
         task="txt2vid",
-        extra=plan.extras,
+        extra=extra_meta,
         video_meta=video_meta,
     )
 

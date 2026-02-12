@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
-Loads tokenizer metadata and text encoder weights from local paths only, then builds prompt/negative embeddings for the WAN GGUF runtime.
+Loads tokenizer metadata and text encoder weights from local paths only, applies strict embedding-key alias normalization for GGUF T5 variants,
+then builds prompt/negative embeddings for the WAN GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
@@ -269,6 +270,20 @@ def get_text_context(
             from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
             sd = load_gguf_state_dict(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
+            shared_weight = sd.get("shared.weight")
+            encoder_embed_weight = sd.get("encoder.embed_tokens.weight")
+            if shared_weight is not None and encoder_embed_weight is None:
+                sd["encoder.embed_tokens.weight"] = shared_weight
+            elif encoder_embed_weight is not None and shared_weight is None:
+                sd["shared.weight"] = encoder_embed_weight
+            elif shared_weight is not None and encoder_embed_weight is not None:
+                shared_shape = tuple(int(dim) for dim in getattr(shared_weight, "shape", ()))
+                embed_shape = tuple(int(dim) for dim in getattr(encoder_embed_weight, "shape", ()))
+                if shared_shape != embed_shape:
+                    raise RuntimeError(
+                        "WAN22 GGUF: text encoder embedding alias shape mismatch "
+                        f"(shared.weight={shared_shape} encoder.embed_tokens.weight={embed_shape})."
+                    )
         missing, unexpected = enc.load_state_dict(sd, strict=False)
         if missing or unexpected:
             raise RuntimeError(

@@ -52,9 +52,11 @@ bash update-webui.sh
 
 ## Safe updater contract (`update-webui.(bat|sh)`)
 - Update scope is repo root only (no submodule/extension update automation).
-- Dirty worktree check is fail-closed (tracked + untracked paths abort; ignored paths do not).
+- Dirty worktree check is fail-closed for tracked changes and git-operation guards.
+- `--force` bypasses only untracked-only dirty state; tracked/mixed/conflict states still abort.
 - Abort diagnostics list explicit cause and offending files/directories when applicable.
 - Non-destructive update path only: `git fetch --prune` + `git pull --ff-only`.
+- `--force` is non-destructive: it does not delete files and does not invoke `git clean`/`reset --hard`.
 - Environment refresh runs only when pull actually changed `HEAD`.
 - Frontend refresh uses lock-preserving mode (`npm ci`), so `apps/interface/package-lock.json` is required.
 

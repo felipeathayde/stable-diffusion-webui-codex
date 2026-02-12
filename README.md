@@ -56,10 +56,12 @@ Open the UI URL in your browser. Stop with `Ctrl+C`.
 More details (CUDA/ROCm selection, troubleshooting): see `INSTALL.md`.
 
 ### Safe updater behavior
-- `update-webui.(bat|sh)` is fail-closed: it aborts on unsafe git state (dirty tree, detached HEAD, no upstream, ahead/diverged, merge/rebase/cherry-pick/bisect in progress).
+- `update-webui.(bat|sh)` is fail-closed: it aborts on unsafe git state (detached HEAD, no upstream, ahead/diverged, merge/rebase/cherry-pick/bisect in progress, and tracked worktree changes).
+- `--force` bypasses only the untracked-only dirty-tree blocker; tracked changes still abort even with `--force`.
 - Abort output includes explicit causes and offending file/folder paths when local changes exist.
 - Ignored paths (`.gitignore`) are excluded from the dirty-tree abort policy.
 - Update path is non-destructive: `git fetch --prune` + `git pull --ff-only`; no `git clean`/`reset --hard`.
+- `--force` does not delete files; it only allows updater preflight to continue when there are untracked files and no tracked changes.
 
 ## 📦 Models
 

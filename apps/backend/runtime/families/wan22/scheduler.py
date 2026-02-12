@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: WAN22 GGUF scheduler helpers (Diffusers-free).
 Provides a strict reader for `scheduler_config.json` (vendored HF mirror) and a WAN-only scheduler implementation that
 matches the flow-sigmas schedule used by WAN2.2 (source-of-truth: `scheduler_config.json`), without importing Diffusers.
+Includes explicit mixed-precision stability guards for UniPC corrector linear solves.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanSchedulerOutput` (dataclass): Minimal scheduler step output with `prev_sample` (Diffusers-compatible surface).
@@ -371,6 +372,10 @@ class WanUniPCFlowScheduler:
 
         Rm = torch.stack(R)
         bv = torch.stack(b)
+        if Rm.dtype in (torch.float16, torch.bfloat16):
+            solve_dtype = torch.float32
+            Rm = Rm.to(dtype=solve_dtype)
+            bv = bv.to(dtype=solve_dtype)
         rhos_c = torch.linalg.solve(Rm, bv).to(dtype=x.dtype)
 
         corr_res = torch.einsum("k,bkc...->bc...", rhos_c[:-1], D1s)

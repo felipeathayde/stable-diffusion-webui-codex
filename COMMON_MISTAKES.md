@@ -1390,3 +1390,11 @@ Correct command: initialize a tiny harness repo (`git init` + commit `update-web
 Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "Wrong command: `bash -lc \\\"\\./update-webui.sh --force|full-repo clones into \\`/tmp\\`" COMMON_MISTAKES.md`
 Cause and fix: I embedded backticks inside a double-quoted regex, which broke shell parsing (`unexpected EOF while looking for matching ```). Avoid backticks in shell-quoted regex patterns or search with plain, stable substrings.
 Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "untracked_force.log|full-repo clones" COMMON_MISTAKES.md`
+
+Wrong command: `CODEX_ROOT="$(git rev-parse --show-toplevel)"; PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/test_wan22_strict_load_contract.py .sangoi/dev/tests/backend/test_wan22_text_context_defaults.py .sangoi/dev/tests/backend/test_gguf_dequant_forward_cache.py`
+Cause and fix: `CODEX_ROOT`/`PYTHONPATH` were shell variables but not exported, so the test suite conftest could not see `CODEX_ROOT` from the environment and aborted. Export both variables before running pytest.
+Correct command: `CODEX_ROOT="$(git rev-parse --show-toplevel)"; export CODEX_ROOT PYTHONPATH="$CODEX_ROOT"; "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/test_wan22_strict_load_contract.py .sangoi/dev/tests/backend/test_wan22_text_context_defaults.py .sangoi/dev/tests/backend/test_gguf_dequant_forward_cache.py`
+
+Wrong command: `CODEX_ROOT="$(git rev-parse --show-toplevel)"; export CODEX_ROOT PYTHONPATH="$CODEX_ROOT"; "$CODEX_ROOT/.venv/bin/python" - <<'PY' ... monkeypatch wan_text_context.torch.cuda.is_available = lambda: True ... PY`
+Cause and fix: Forcing `torch.cuda.is_available()` to `True` in a CPU-only torch build triggered runtime memory-manager CUDA probes (`torch.cuda.current_device()`), causing `AssertionError: Torch not compiled with CUDA enabled`. Do not fake CUDA availability in this stack; keep CUDA checks truthful and test CUDA-only contracts conditionally.
+Correct command: `CODEX_ROOT="$(git rev-parse --show-toplevel)"; export CODEX_ROOT PYTHONPATH="$CODEX_ROOT"; "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/test_wan22_strict_load_contract.py`

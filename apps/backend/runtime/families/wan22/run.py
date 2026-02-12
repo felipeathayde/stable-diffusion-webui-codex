@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
 - `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
+- `_extract_i2v_decode_latents` (function): Extract pure latent channels from I2V model state before VAE decode (order-aware `lat_first`/`lat_last`).
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
@@ -40,6 +41,7 @@ from .config import (
     RunConfig,
     as_torch_dtype,
     resolve_device_name,
+    resolve_i2v_order,
     resolve_wan_flow_multiplier,
 )
 from .diagnostics import cuda_empty_cache, get_logger, log_cuda_mem
@@ -334,6 +336,42 @@ def _build_i2v_seed_state(
     return state
 
 
+def _extract_i2v_decode_latents(
+    *,
+    state: torch.Tensor,
+    latent_channels: int,
+    logger: Any,
+) -> torch.Tensor:
+    """Extract pure VAE latents from an I2V state tensor before decode."""
+    log = get_logger(logger)
+    if state.ndim != 5:
+        raise RuntimeError(
+            "WAN22 GGUF: expected 5D I2V state [B,C,T,H,W] before decode, "
+            f"got shape={tuple(state.shape)}."
+        )
+    c_state = int(state.shape[1])
+    c_lat = int(latent_channels)
+    if c_lat <= 0:
+        raise RuntimeError(f"WAN22 GGUF: invalid latent_channels for I2V decode extraction: {c_lat}.")
+    if c_state == c_lat:
+        return state
+    c_cond = c_state - c_lat
+    if c_cond != 20:
+        raise RuntimeError(
+            "WAN22 GGUF: cannot extract I2V decode latents from state with unexpected channel split "
+            f"(state_C={c_state} latent_C={c_lat} cond_C={c_cond}; expected cond_C=20 for mask4+img16)."
+        )
+    order = resolve_i2v_order()
+    lat = state[:, :c_lat, ...] if order == "lat_first" else state[:, -c_lat:, ...]
+    log.info(
+        "[wan22.gguf] i2v decode slice: order=%s state_C=%d -> latent_C=%d",
+        order,
+        c_state,
+        c_lat,
+    )
+    return lat
+
+
 def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
     log = get_logger(logger)
     hi_path = pick_stage_gguf(getattr(cfg.high, "model_dir", None) if cfg.high else None, stage="high")
@@ -518,6 +556,12 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
         logger=log,
     )
+    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+    if latent_channels_lo <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+            f"(got {latent_channels_lo})."
+        )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     log.info(
@@ -730,6 +774,12 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
         logger=log,
     )
+    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+    if latent_channels_lo <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+            f"(got {latent_channels_lo})."
+        )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
@@ -764,6 +814,11 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         stage_name="low",
         emit_logs=False,
     )
+    latents_lo_decode = _extract_i2v_decode_latents(
+        state=latents_lo,
+        latent_channels=latent_channels_lo,
+        logger=log,
+    )
 
     # Free the LOW stage weights before VAE decode.
     memory_management.manager.unload_model(lo_mm)
@@ -775,7 +830,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         cuda_empty_cache(log, label="after-low")
 
     frames = decode_latents_to_frames(
-        latents=latents_lo,
+        latents=latents_lo_decode,
         model_dir=os.path.dirname(lo_path),
         cfg=cfg,
         logger=log,
@@ -1024,6 +1079,11 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_multiplier=flow_multiplier,
         stage_name="low",
     )
+    latents_lo_decode = _extract_i2v_decode_latents(
+        state=latents_lo,
+        latent_channels=latent_channels_lo,
+        logger=log,
+    )
 
     # Free the LOW stage weights before VAE decode.
     memory_management.manager.unload_model(lo_mm)
@@ -1035,7 +1095,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         cuda_empty_cache(log, label="after-low")
 
     frames = decode_latents_to_frames(
-        latents=latents_lo,
+        latents=latents_lo_decode,
         model_dir=os.path.dirname(lo_path),
         cfg=cfg,
         logger=log,

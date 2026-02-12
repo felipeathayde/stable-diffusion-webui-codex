@@ -8,13 +8,13 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
 Loads tokenizer metadata and text encoder weights from local paths only, applies strict embedding-key alias normalization for GGUF T5 variants,
-then builds prompt/negative embeddings for the WAN GGUF runtime.
+honors global GGUF dequantization policy for TE GGUF loads, and then builds prompt/negative embeddings for the WAN GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
 - `_prompt_clean` (function): Diffusers-style prompt cleaning (optional ftfy + HTML unescape + whitespace collapse).
 - `_resolve_max_sequence_length` (function): Chooses a safe tokenizer max length, clamped to `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH`.
-- `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation.
+- `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation and global GGUF dequant policy alignment.
 """
 
 from __future__ import annotations
@@ -269,7 +269,7 @@ def get_text_context(
         else:
             from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
-            sd = load_gguf_state_dict(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
+            sd = load_gguf_state_dict(te_file, dequantize=None, computation_dtype=as_torch_dtype(dtype))
             shared_weight = sd.get("shared.weight")
             encoder_embed_weight = sd.get("encoder.embed_tokens.weight")
             if shared_weight is not None and encoder_embed_weight is None:

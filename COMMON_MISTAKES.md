@@ -68,6 +68,21 @@ Correct command:
 ls .sangoi/plans
 ```
 
+### Opening a task-log with the wrong filename slug
+
+Wrong command:
+```bash
+sed -n '1,260p' .sangoi/task-logs/2026-02-11-wan22-gguf-vae-bundle-contract-img2vid.md
+```
+
+Cause and fix:
+The file slug was incorrect (`bundle` vs the actual `bund`). Check exact filenames before opening task logs.
+
+Correct command:
+```bash
+sed -n '1,260p' .sangoi/task-logs/2026-02-11-wan22-gguf-vae-bund-contract-img2vid.md
+```
+
 ### Searching “legacy” sources in non-existent paths
 
 Wrong command:
@@ -108,6 +123,8 @@ rg -n "use_cases/restore\\.py|`restore\\.py`" .sangoi/plans/2026-02-01-supir-web
 rg -n "\\(Optional\\) Tile controls: expose `min_tile`" .sangoi/plans/2026-02-01-upscalers-and-hires-fix-global-modules-v1-plan.md
 rg -n "Implementing masking for the Flux Kontext|Phase 2 will implement Kontext masking|fail loud|single `/api/img2img`|no dedicated `/api/inpaint`" .sangoi/plans/2026-01-29-masked-img2img-inpaint-v1.md
 rg -n "Using outdated `EngineRegistry`|Assuming file paths that do not exist" COMMON_MISTAKES.md
+rg -n "Complements follow the engine asset contract|Task layer owns async lifecycle|vid2vid current state|Anima \(`engine_id: anima`\)|chunks` is accepted" SUBSYSTEM-MAP.md
+rg -n "Complements follow the engine asset contract|External-assets-first families|Task layer owns async lifecycle \+ SSE wiring|vid2vid current state|Anima \(`engine_id: anima`\)" SUBSYSTEM-MAP.md
 ```
 
 Cause and fix:
@@ -120,6 +137,8 @@ rg -n 'use_cases/restore\\.py|`restore\\.py`' .sangoi/plans/2026-02-01-supir-web
 rg -n "restore\\.py" .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
 rg -n '\\(Optional\\) Tile controls: expose `min_tile`' .sangoi/plans/2026-02-01-upscalers-and-hires-fix-global-modules-v1-plan.md
 rg -n 'Implementing masking for the Flux Kontext|Phase 2 will implement Kontext masking|fail loud|single `/api/img2img`|no dedicated `/api/inpaint`' .sangoi/plans/2026-01-29-masked-img2img-inpaint-v1.md
+rg -n 'Complements follow the engine asset contract|Task layer owns async lifecycle|vid2vid current state|Anima \(`engine_id: anima`\)|chunks\` is accepted' SUBSYSTEM-MAP.md
+rg -n 'Complements follow the engine asset contract|External-assets-first families|Task layer owns async lifecycle \+ SSE wiring|vid2vid current state|Anima \(`engine_id: anima`\)' SUBSYSTEM-MAP.md
 ```
 
 ### Putting `rg` flags after `--` (ripgrep stops parsing options)
@@ -974,6 +993,10 @@ sed -n '1,220p' apps/backend/core/engine_registry.py
 sed -n '1,240p' apps/backend/runtime/engine_surface.py
 sed -n '1,240p' apps/backend/runtime/semantic_engine.py
 nl -ba apps/backend/runtime/pipeline_stages/hires.py | sed -n '1,320p'
+nl -ba .sangoi/AGENTS.md | sed -n '1,220p'
+nl -ba apps/backend/runtime/state_dict/api.py | sed -n '1,240p'
+nl -ba apps/backend/runtime/state_dict/index.py | sed -n '1,260p'
+nl -ba apps/backend/runtime/state_dict/renames.py | sed -n '1,240p'
 rg -n "img2img|inpaint|mask" apps/interface/README.md apps/backend/README.md README.md .sangoi/CHANGELOG.md -g '*.md'
 ```
 
@@ -987,6 +1010,8 @@ rg --files apps/interface/src | rg 'QuickSettingsBar\\.vue$'
 rg --files apps/backend/core | rg 'registry\\.py$'
 rg --files apps/backend/runtime | rg 'model_registry/capabilities\\.py$'
 rg --files apps/backend/runtime/pipeline_stages | rg 'hires_fix\\.py$'
+rg --files .sangoi | rg '/AGENTS\\.md$'
+find apps/backend/runtime/state_dict -maxdepth 1 -type f -name '*.py' | sort
 rg -n "img2img|inpaint|mask" apps/interface/README.md README.md .sangoi/CHANGELOG.md -g '*.md'
 ```
 
@@ -1315,3 +1340,25 @@ Correct command:
 ```bash
 CODEX_ROOT="$(git rev-parse --show-toplevel)" && PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/model_registry/test_vae_selection.py
 ```
+
+### Trying to run `apply_patch` through `exec_command`
+
+Wrong command:
+```bash
+exec_command "... && apply_patch <<'PATCH' ... PATCH"
+```
+
+Cause and fix:
+`apply_patch` must be invoked with the dedicated `apply_patch` tool, not via a shell command. Running it through `exec_command` triggers harness warnings and can desynchronize edit tracking.
+
+Correct command:
+```bash
+# Use the dedicated tool call:
+functions.apply_patch
+```
+
+### Expanding `$CODEX_ROOT` before assignment (again) in env prefix
+
+Wrong command: `CODEX_ROOT="/home/lucas/work/stable-diffusion-webui-codex" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY' ...`
+Cause and fix: `$CODEX_ROOT` in `PYTHONPATH` and interpreter path was expanded before that env assignment took effect, resolving to `/.venv/bin/python`. Set variables after `cd` using `$PWD` (or split assignment into two commands).
+Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT="$PWD" PYTHONPATH="$PWD" "$PWD/.venv/bin/python" - <<'PY' ...`

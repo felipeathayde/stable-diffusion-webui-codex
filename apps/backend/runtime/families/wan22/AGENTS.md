@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-11
+Last Review: 2026-02-12
 Status: Active
 
 ## Purpose
@@ -62,6 +62,7 @@ Status: Active
 - 2026-02-11: `vae_io.load_vae` now resolves explicit native lanes (`2d_native` / `3d_native`) from core kernel ranks; 3D checkpoints load through shared `runtime/common/vae_codex3d.py::AutoencoderCodex3D` with strict key remap, and 3D encode/decode paths bypass frame flattening.
 - 2026-02-11: `scheduler.py` UniPC corrector now promotes low-precision linear-solve inputs (`fp16`/`bf16`) to `fp32` before `torch.linalg.solve` and casts back after solve, preventing CUDA `lu_factor_cusolver` half-precision backend errors.
 - 2026-02-11: `run.py` img2vid batch/stream paths now slice pure latent channels from I2V state before VAE decode (order-aware via `resolve_i2v_order`), preventing `C=36` conditioning-state tensors (`lat+mask+img`) from reaching VAE decode contracts that require latent-only channels.
+- 2026-02-12: `sampling.py` now enforces fail-loud per-step finite checks at loop-entry/model/CFG/scheduler boundaries and runs scheduler-state math in `fp32` when model execution dtype is `fp16`/`bf16` (preserving strict contracts while stabilizing low-stage I2V updates).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

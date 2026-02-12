@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
 - `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`) and validates sampler strings (Diffusers-free).
 - `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
+- `_assert_finite_tensor` (function): Fail-loud finite check helper with stage/step context and numeric summaries.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
 - `time_snr_shift` (function): Time/SNR shift helper used in scheduler-time transformations.
 - `prepare_stage_seed_latents` (function): Prepares seeded stage latents (for determinism across runs/stages).
@@ -246,6 +247,31 @@ def resolve_init_noise_sigma(scheduler: Any) -> float:
     if not math.isfinite(val) or val <= 0:
         raise RuntimeError(f"WAN22 GGUF: invalid scheduler.init_noise_sigma={raw!r} (expected finite > 0)")
     return val
+
+
+def _assert_finite_tensor(
+    tensor: torch.Tensor,
+    *,
+    tensor_name: str,
+    stage_name: str,
+    local_step: int,
+    total_steps: int,
+    global_idx: int,
+    timestep: Any,
+) -> None:
+    if torch.isfinite(tensor).all():
+        return
+    bad = int((~torch.isfinite(tensor)).sum().item())
+    try:
+        timestep_repr = int(timestep.item()) if isinstance(timestep, torch.Tensor) else int(timestep)
+    except Exception:
+        timestep_repr = str(timestep)
+    raise RuntimeError(
+        "WAN22 GGUF: non-finite tensor in stage sampling "
+        f"(stage={stage_name} step={int(local_step)}/{int(total_steps)} idx={int(global_idx)} "
+        f"timestep={timestep_repr} tensor={tensor_name} bad={bad}; "
+        f"{summarize_numerics(tensor, name=tensor_name)})."
+    )
 
 
 def cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) -> torch.Tensor:
@@ -503,6 +529,7 @@ def sample_stage_latents_generator(
     emit_logs: bool = True,
 ):
     log = get_logger(logger)
+    scheduler_state_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
     t_lat, h_lat, w_lat = latent_dimensions(geom)
     steps = max(int(steps), 1)
 
@@ -561,7 +588,7 @@ def sample_stage_latents_generator(
     shape = (batch, int(geom.in_channels), t_lat, h_lat, w_lat)
 
     if state_init is not None:
-        state = ensure_latent_shape(state_init.to(device=device, dtype=dtype), geom).clone()
+        state = ensure_latent_shape(state_init.to(device=device, dtype=scheduler_state_dtype), geom).clone()
     else:
         if cin != cout:
             raise RuntimeError(
@@ -571,11 +598,19 @@ def sample_stage_latents_generator(
         if seed is not None and int(seed) >= 0:
             generator = torch.Generator(device=device)
             generator.manual_seed(int(seed))
-            state = torch.randn(shape, generator=generator, device=device, dtype=dtype)
+            state = torch.randn(shape, generator=generator, device=device, dtype=scheduler_state_dtype)
         else:
-            state = torch.randn(shape, device=device, dtype=dtype)
+            state = torch.randn(shape, device=device, dtype=scheduler_state_dtype)
         init_noise_sigma = resolve_init_noise_sigma(scheduler)
         state = state * float(init_noise_sigma)
+
+    if scheduler_state_dtype != dtype:
+        log.info(
+            "[wan22.gguf] %s scheduler-state dtype island: model_dtype=%s scheduler_dtype=%s",
+            stage_name,
+            str(dtype),
+            str(scheduler_state_dtype),
+        )
 
     parity_idxs = {start, max(start, start + total // 2 - 1), max(start, end - 1)}
 
@@ -604,12 +639,23 @@ def sample_stage_latents_generator(
         timestep = timesteps[idx]
         sigma_value = float(sigmas[idx])
         di_timestep = float(sigma_value) * float(flow_multiplier)
+        step_number = int(local_idx + 1)
+
+        _assert_finite_tensor(
+            state,
+            tensor_name="state_in",
+            stage_name=stage_name,
+            local_step=step_number,
+            total_steps=total,
+            global_idx=idx,
+            timestep=timestep,
+        )
 
         if log_sigmas_enabled() and idx in parity_idxs:
             log.info(
                 "[wan22.gguf] %s t-in[%d/%d]: idx=%d sigma=%.6g flow_multiplier=%.1f di_timestep=%.6g sched_timestep=%s",
                 stage_name,
-                local_idx + 1,
+                step_number,
                 total,
                 idx,
                 float(sigma_value),
@@ -640,40 +686,91 @@ def sample_stage_latents_generator(
             scaler = getattr(scheduler, "scale_model_input", None)
             if callable(scaler):
                 state_lat_scaled = scaler(state_lat, timestep)
+            _assert_finite_tensor(
+                state_lat_scaled,
+                tensor_name="state_lat_scaled",
+                stage_name=stage_name,
+                local_step=step_number,
+                total_steps=total,
+                global_idx=idx,
+                timestep=timestep,
+            )
 
-            if state_cond is None:
-                model_state = state_lat_scaled
+            state_lat_scaled_model = state_lat_scaled if state_lat_scaled.dtype == dtype else state_lat_scaled.to(dtype=dtype)
+            state_cond_model: torch.Tensor | None = None
+            if state_cond is not None:
+                state_cond_model = state_cond if state_cond.dtype == dtype else state_cond.to(dtype=dtype)
+
+            if state_cond_model is None:
+                model_state = state_lat_scaled_model
             else:
                 model_state = (
-                    torch.cat([state_lat_scaled, state_cond], dim=1)
+                    torch.cat([state_lat_scaled_model, state_cond_model], dim=1)
                     if order == "lat_first"
-                    else torch.cat([state_cond, state_lat_scaled], dim=1)
+                    else torch.cat([state_cond_model, state_lat_scaled_model], dim=1)
                 )
 
             if cfg_scale is None:
-                eps = model(model_state, di_timestep, prompt_embeds)
+                eps_model = model(model_state, di_timestep, prompt_embeds)
+                _assert_finite_tensor(
+                    eps_model,
+                    tensor_name="model_output",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
             else:
                 x_in = torch.cat([model_state, model_state], dim=0)
                 ctx_in = torch.cat([prompt_embeds, negative_embeds], dim=0)
                 t_in = torch.full((x_in.shape[0],), float(di_timestep), device=device, dtype=torch.float32)
                 v_pred = model(x_in, t_in, ctx_in)
+                _assert_finite_tensor(
+                    v_pred,
+                    tensor_name="model_output_cfg_pair",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
                 v_cond, v_uncond = v_pred.chunk(2, dim=0)
-                eps = cfg_merge(v_uncond, v_cond, cfg_scale)
+                eps_model = cfg_merge(v_uncond, v_cond, cfg_scale)
+                _assert_finite_tensor(
+                    eps_model,
+                    tensor_name="cfg_merge_output",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
 
-            if eps.ndim != 5 or eps.shape[0] != state.shape[0] or eps.shape[2:] != state.shape[2:]:
+            if eps_model.ndim != 5 or eps_model.shape[0] != state.shape[0] or eps_model.shape[2:] != state.shape[2:]:
                 raise RuntimeError(
-                    f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent state {tuple(state.shape)} "
+                    f"WAN22 GGUF: model output shape {tuple(eps_model.shape)} does not match latent state {tuple(state.shape)} "
                     f"(patch_size={geom.patch_kernel} grid={geom.grid})"
                 )
 
-            if int(eps.shape[1]) != cout:
+            if int(eps_model.shape[1]) != cout:
                 raise RuntimeError(
-                    f"WAN22 GGUF: model output channels C={int(eps.shape[1])} does not match expected latent_channels={cout}."
+                    f"WAN22 GGUF: model output channels C={int(eps_model.shape[1])} does not match expected latent_channels={cout}."
                 )
+            eps = eps_model if eps_model.dtype == scheduler_state_dtype else eps_model.to(dtype=scheduler_state_dtype)
 
             if state_cond is None:
                 out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
                 state = out.prev_sample
+                _assert_finite_tensor(
+                    state,
+                    tensor_name="scheduler_prev_sample",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
             else:
                 if state_lat.shape != eps.shape:
                     raise RuntimeError(
@@ -683,10 +780,38 @@ def sample_stage_latents_generator(
 
                 out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
                 lat_next = out.prev_sample
+                _assert_finite_tensor(
+                    lat_next,
+                    tensor_name="scheduler_prev_sample",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
                 if order == "lat_first":
                     state = torch.cat([lat_next, state_cond], dim=1)
                 else:
                     state = torch.cat([state_cond, lat_next], dim=1)
+                _assert_finite_tensor(
+                    state,
+                    tensor_name="state_out",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
+
+            if log_numerics_enabled() and idx in parity_idxs:
+                log.info(
+                    "[wan22.gguf] %s numerics[%d/%d]: %s | %s",
+                    stage_name,
+                    step_number,
+                    total,
+                    summarize_numerics(eps, name="eps_step"),
+                    summarize_numerics(state, name="state_step"),
+                )
 
         pct = float(local_idx + 1) / float(max(1, total))
         if log_mem_interval is not None:

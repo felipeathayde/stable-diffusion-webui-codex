@@ -26,19 +26,16 @@ You name the pieces, map the edges, and knock them down one by one.
 
 Before you begin, you think. Strip the weak. Keep the strong.
 If parts fit better together than alone, merge them. The plan is not theater. It is the spine.
-Do not reinvent what already exists and works. Fix root causes. Leave the clever duct tape on the shelf.
+Do not reinvent what already exists and works. Leave the clever duct tape on the shelf.
 
 You do not rush. Speed kills quality.
-You fix root causes. You skip hacks. You skip shims.
 You break big rocks into small stones and you carry them in order.
 
 If your hands shake, keep typing.
 If your gut doubts, check the docs.
-If your code fails, let it fail loud enough to teach.
 You read `COMMON_MISTAKES.md` before you repeat history.
 
 If something breaks, it speaks.
-No fallbacks. No quiet catch that swallows the cause.
 Fail fast. Fail honest. Explain why.
 
 Everything you do is traceable.
@@ -50,24 +47,6 @@ Sandbox artifacts and temp paths are handled as if they could leak to production
 If you ever feel the urge to rename half the codebase because you are bored, lie down until it passes.
 Rename only when the old name is a lie.
 
-When you touch documentation, you do not talk to ghosts.
-
-If a module is dead, its name leaves your mouth.
-If a function was renamed, the old name vanishes from the page like it never had a birth certificate.
-Docs are not a memorial wall for what used to exist.
-They are a crystal-clear snapshot of what lives in the code right now.
-
-You do not write "we used to..." unless the past behavior actively matters to understanding a migration or a known limitation today.
-You do not sprinkle comments about endpoints that were deleted, flows that were ripped out, or flags that no longer ship.
-Every stale reference is a landmine for the next person, and you don't lace the beach with mines.
-
-If the code changed, the doc changes with it.
-If the code was removed, the doc stops mentioning it.
-No nostalgia, no archaeology, no "just in case someone remembers".
-The only truth allowed in the docs is the truth the code can back up today.
-
-If a behavior change will surprise a user, you write the surprise out of the system, or you write it into the documents where it cannot be missed.
-
 ---
 
 ### ACT II – WHERE THE TRUTH LIVES: `.sangoi` AND REUSE
@@ -75,7 +54,7 @@ If a behavior change will surprise a user, you write the surprise out of the sys
 Before you build, you prove what already exists.
 You search the house first.
 
-If there is no honest way to reuse, you create the new piece with restraint and write the reason in the task log so the next soul knows why another brick was laid.
+If there is no honest way to reuse, you create the new piece with restraint and write the reason so the next soul knows why another brick was laid.
 
 Before you do anything else, you read `SUBSYSTEM-MAP.md`.
 You use it to find the real seam before you touch a file.
@@ -97,7 +76,6 @@ You add what you learn so the next person does not have to hunt.
 
 You look in `.sangoi` first. The truth sits there now.
 
-* Task logs in `.sangoi/task-logs/`.
 * Runbooks in `.sangoi/runbooks/`.
 * Research and analysis in `.sangoi/{research,analysis}/`.
 * Reference and specs in `.sangoi/reference/` (features, API, e-Doc templates).
@@ -112,34 +90,21 @@ bash .sangoi/.tools/link-check.sh .sangoi
 
 Sub-agents (`AGENTS.md` across the project) tell the truth or they shut up.
 
-* If you touch a folder, you touch its `AGENTS.md`. Same day. Same commit.
-* If you touch an `apps/**` source file, you keep its **file header block** honest. Same day. Same commit. If the purpose or top-level symbols changed, you update them — no ghosts, no lies.
-  - What it is: the standardized top-of-file block containing `Repository:` + `SPDX-License-Identifier:` + `Purpose:` + `Symbols (top-level; keep in sync; no ghosts):`.
+* If you touch a folder, you touch its `AGENTS.md`.
+* If you touch an `apps/**` source file, you keep its **file header block** honest. If the purpose or top-level symbols changed, you update them.
+  - What it is: the standardized top-of-file block containing `Repository:` + `SPDX-License-Identifier:` + `Purpose:` + `Symbols (top-level; keep in sync):`.
   - Where it lives: `.py` = module docstring (first statement); `.ts` = top block comment (`/* ... */`); `.vue` = top HTML comment (before `<template>`).
   - Standard: `.sangoi/policies/file-header-block.md`. Helper: `python3 .sangoi/.tools/review_apps_header_updates.py`.
 * You add one when a folder earns moving parts.
 * Minimum you keep: Purpose. Key files with real paths. Notes/decisions that survived daylight. Last Review with a real date.
 * When a file moves, you fix the path and you run the link checker.
-* When a file dies, you remove the line — no ghosts, no lies.
-* After big moves, you refresh the index at `.sangoi/index/AGENTS-INDEX.md` and you make it obvious in `.sangoi/CHANGELOG.md`.
+* When a file dies, you remove the line.
 
-When you change a subfolder, you change its `AGENTS.md` in the same commit.
+When you change a subfolder, you change its `AGENTS.md`.
 You treat every directive, backlog note, and follow-up as if it was authored in this pairing.
 You do not invent other owners.
 
-Task logs are not optional.
-
-* Before you change anything, read the top entry under `.sangoi/task-logs/` for the task at hand.
-* If there is none, you create one.
 * In your responses, you state assumptions, risks, and validation. You do not defer essential checks.
-
-At completion, you write a brief task log under `.sangoi/task-logs/` with:
-* A summary.
-* Exact files and paths touched.
-* Next steps with open risks and TODOs.
-
-Keep it short and actionable. Prefer paths and commands over stories.
-Link user-facing changes in `.sangoi/CHANGELOG.md`.
 
 When a terminal command goes wrong, you record it in `COMMON_MISTAKES.md`.
 You write the exact wrong command, the cause with the fix, and the correct command that should have been used.
@@ -158,10 +123,8 @@ Git execution rules and commit mechanics are centralized in global instructions.
 In this repository section, keep project-specific handoff requirements below.
 
 When your turn is done:
-- You log the work in `.sangoi/task-logs/`.
-- You update `.sangoi/CHANGELOG.md` with what changed in the world that matters to users and to maintainers.
-- You verify the **file header block** (top-of-file `Repository/SPDX/Purpose/Symbols`) for **every touched file** under `apps/**` (even if the diff “seems small”), and update Purpose/Symbols if needed. Use `python3 .sangoi/.tools/review_apps_header_updates.py --show-body-diff` to review “changed body, unchanged header” cases. No stale headers. No lies.
-- You leave the tree ready for an atomic commit: changes are clear, grouped by intent, and described in the task log.
+- You verify the **file header block** (top-of-file `Repository/SPDX/Purpose/Symbols`) for **every touched file** under `apps/**` (even if the diff “seems small”), and update Purpose/Symbols if needed. Use `python3 .sangoi/.tools/review_apps_header_updates.py --show-body-diff` to review “changed body, unchanged header” cases.
+- You leave the tree ready for an atomic commit: changes are clear and grouped by intent.
 
 If you touch dependencies or configs, you update the proper manifest or lockfile and note the impact.
 * JS and TS live in `package.json` and the lockfile.
@@ -171,9 +134,7 @@ If you touch dependencies or configs, you update the proper manifest or lockfile
 
 ### ACT IV – ARCHITECTURE, LEGACY, MODELS, PYTHON
 
-You do not plan or write anything under the false god of "compat."
 * Legacy code is reference only.
-* **No code-level compat for renames.** If a symbol/field/parameter is renamed (e.g. `unet` → `denoiser`), do **not** add aliases, fallback kwargs, or translation layers to “keep old callers working”. Let the old name raise loudly (TypeError/AttributeError) and update call sites instead.
 * The default core for attention is PyTorch SDPA.
 * You read the archived upstream snapshots with a cold eye.
 * You list risks, side effects, globals.
@@ -322,7 +283,7 @@ That prompt must include:
 * The follow-up list (ordered) and the **single next step** you would execute first.
 * Files changed in the last relevant commit(s), and the **focus files** to open first (paths + why).
 * Validation commands (and what “green” looks like), plus known traps/gotchas.
-* Links to the relevant `.sangoi/**` docs (plans, reports, task-logs).
+* Links to the relevant `.sangoi/**` docs (plans, reports).
 
 Format rules:
 * Output the prompt in a new Markdown file graciously formatted.

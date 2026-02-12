@@ -1,8 +1,8 @@
 <!-- tags: webui, architecture, reference, map -->
 # WebUI Subsystem Map (single-file reference)
 Date: 2026-01-02
-Last Review: 2026-01-19
-Version: 2026-01-19
+Last Review: 2026-02-11
+Version: 2026-02-11
 Status: Draft
 
 This file is the **top-level map** of how the WebUI is assembled and how requests flow through the system.
@@ -27,10 +27,74 @@ For deeper specs, follow the links under “Canonical reference docs”.
 - **No free-form model paths in normal image generation.** UI sends stable IDs only:
   - Checkpoints: short hash (`10` hex) in `model` (or `extras.model_sha`)
   - External assets: full sha256 (`64` hex) in `extras.*_sha`
-- **GGUF engines need complements.** Flux/ZImage/WAN GGUF checkpoints are core-only, so TE/VAE (and WAN stage models) must be provided explicitly.
+- **Complements follow the engine asset contract.**
+  - External-assets-first families (Flux/Kontext/ZImage/Anima/WAN) require explicit complements by design.
+  - Monolithic-checkpoint families (SD/Chroma) require explicit complements only on core-only checkpoint selections.
 - **“Built-in” means “no override”.** Valid for monolithic checkpoints (SD15/SDXL). Engines that require external assets must error instead of guessing.
 - **Device is required.** Every generation request must include an explicit device (no options snapshot fallback).
 - **Task streams always end.** SSE `/api/tasks/{id}/events` must terminate with an `end` event.
+
+## Backend generation guardrails (code-first, 2026-02-11)
+### Ownership boundaries (no drift)
+- Router/API boundary validates payload contracts and resolves SHA → server path only; no pipeline-stage logic in routers.
+  - Source: `apps/backend/interfaces/api/routers/generation.py`
+- Task layer owns async lifecycle + SSE wiring, plus per-task engine-options assembly and result packaging side effects.
+  - Source: `apps/backend/interfaces/api/tasks/generation_tasks.py`
+- Orchestrator owns engine resolution/load-reload/cache/purge/dispatch only.
+  - Source: `apps/backend/core/orchestrator.py`
+- Use-case modules own mode pipelines (`txt2img|img2img|txt2vid|img2vid|vid2vid`).
+  - Source: `apps/backend/use_cases/*.py`
+- Runtime families own model-specific execution details.
+  - Source: `apps/backend/runtime/families/**`
+
+### Endpoint contract snapshot (generation surface)
+- `POST /api/txt2img`
+  - Contract path: `prepare_txt2img(...)` + `_apply_asset_contract_to_extras(...)`.
+  - Core-only checkpoints enforce `extras.vae_sha` + exact `extras.tenc_sha` slot count/kind from `asset_requirements`.
+  - Source: `apps/backend/interfaces/api/routers/generation.py`, `apps/backend/core/contracts/asset_requirements.py`
+- `POST /api/img2img`
+  - Same contract engine as txt2img (field prefix `img2img_extras`), raw `*_path` rejected.
+  - Source: `apps/backend/interfaces/api/routers/generation.py`
+- `POST /api/txt2vid` and `POST /api/img2vid` (WAN GGUF lane)
+  - Required SHAs: `wan_high.model_sha`, `wan_low.model_sha`, `wan_vae_sha`, `wan_tenc_sha`; metadata from `wan_metadata_repo` (preferred) or `wan_metadata_dir`.
+  - Raw `wan_*_path` inputs are rejected; backend resolves SHAs and injects paths.
+  - Source: `apps/backend/interfaces/api/routers/generation.py`
+- `POST /api/vid2vid`
+  - Method contract is explicit (`native|flow_chunks|wan_animate`; alias `chunks` is accepted for `flow_chunks`), unsupported method fails loud.
+  - Source: `apps/backend/use_cases/vid2vid.py`
+
+### Smart-offload stage order (canonical)
+- `txt2img` / `txt2vid` canonical order:
+  1) load TE on GPU → compute embeds, 2) offload TE to RAM, 3) load denoiser/core on GPU → sample, 4) offload denoiser to RAM, 5) load VAE on GPU → decode, 6) offload VAE to RAM.
+- `img2img` / `img2vid` canonical order:
+  1) load VAE first to encode conditioning image/video, 2) unload VAE to RAM, 3) load TE on GPU → embeds, 4) unload TE, 5) load denoiser/core → sample, 6) unload denoiser, 7) load VAE for decode, 8) unload VAE.
+- `vid2vid` current state:
+  - No unified smart-offload invariant lane is active today; current methods (`native|flow_chunks|chunks|wan_animate`) run method-specific video paths.
+  - Treat this as explicit non-port status; when adding a native consolidated lane, define and codify its offload order in use-case + invariant module first.
+- Enforced exceptions (documented in code, not ad-hoc):
+  - Sampling precheck can keep VAE resident for live-preview `FULL`.
+  - Post-decode can keep denoiser warm only on smart-cache hit.
+  - WAN img2vid encodes conditioning video before text encoder context to avoid allocator fragmentation.
+  - Source: `apps/backend/runtime/memory/smart_offload_invariants.py`, `apps/backend/runtime/sampling/driver.py`, `apps/backend/runtime/families/wan22/run.py`
+
+### Config ownership (vendored HF root)
+- Scheduler/tokenizer/config sources are vendored under `apps/backend/huggingface/**`.
+- Runtime loader hydrates minimal non-weight config files (`config`, `tokenizer`, `scheduler`) under that root before component assembly.
+- WAN flow-shift defaults resolve from vendored `scheduler_config.json` under `apps/backend/huggingface/Wan-AI/**`.
+- Source: `apps/backend/runtime/models/loader.py`, `apps/backend/engines/wan22/spec.py`, `apps/backend/interfaces/api/routers/generation.py`
+
+### Keymap/remap ownership (no ad-hoc remap in pipelines)
+- Key-style detection/remap lives in `apps/backend/runtime/state_dict/*` and must fail loud on unknown/ambiguous layouts.
+- Text-encoder slot mapping is order-independent and header-only (`clip_l|clip_g|t5xxl|qwen*`), wired at API contract boundary.
+- New pipelines must not introduce silent alias/remap shims in routers/use-cases; use canonical keymap modules or fail loud.
+- Source: `apps/backend/runtime/state_dict/key_mapping.py`, `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`, `apps/backend/core/contracts/text_encoder_slots.py`
+
+### New-pipeline guardrails (apply before coding)
+- Start from canonical mode use-case (`apps/backend/use_cases/{txt2img,img2img,txt2vid,img2vid,vid2vid}.py`); do not fork mode semantics inside engine adapters.
+- Reuse existing shared stages from `apps/backend/runtime/pipeline_stages/*` before creating new modules.
+- Keep runtime native-first for canonical mode pipelines (no Diffusers runtime semantics in new canonical paths unless explicitly marked as temporary non-ported lane).
+- Do not add flatten/slice/concat workaround chains as implicit contract adapters; fix shape/key contracts at source or fail loud.
+- Do not add compatibility remap/alias shims for renamed fields; remove stale names at producers and consumers directly.
 
 ## Anti-drift (common critical wrong assumptions from session reasoning)
 These are the recurring “dangerous assumptions” that showed up in session reasoning.
@@ -84,8 +148,9 @@ They are not theoretical — if you follow the drift, you end up debugging the w
 - Wrong assumption: WAN complements are sent as paths (e.g. `wan_vae_path`, `wan_text_encoder_path`) and stage selection uses `wan_high.model_dir` / `wan_low.model_dir`.
 - Correct contract (current backend): WAN video endpoints resolve model parts by SHA only:
   - Stage models: `wan_high.model_sha` / `wan_low.model_sha` (must resolve to `.gguf`)
-  - Complements: `wan_vae_sha` + `wan_tenc_sha` (VAE + `.safetensors`)
-  - Metadata/tokenizer dirs remain explicit paths (`wan_metadata_dir` or `wan_tokenizer_dir`), resolved relative to `CODEX_ROOT` when repo-relative.
+  - Complements: `wan_vae_sha` + `wan_tenc_sha` (VAE sha resolved to a directory bundle **or** file with config source validation; text encoder resolves to `.safetensors|.gguf`)
+  - Metadata/tokenizer source: `wan_metadata_repo` (preferred; vendored HF repo id) or `wan_metadata_dir` fallback path.
+  - Fail-loud behavior: raw `wan_*_path` payload fields are rejected for GGUF endpoints.
 
 ## API ROUTES (routers/*.py)
 Source of truth: `apps/backend/interfaces/api/routers/*` (router decorators).
@@ -187,6 +252,9 @@ Source of truth:
 - ZImage (`engine_id: zimage`)
   - External-assets-first: always requires complements.
   - Requires: `extras.vae_sha` + `extras.tenc_sha` (single; Qwen).
+- Anima (`engine_id: anima`)
+  - External-assets-first: always requires complements.
+  - Requires: `extras.vae_sha` + `extras.tenc_sha` (single; Qwen3-0.6B).
 - Chroma (`engine_id: flux1_chroma`)
   - Safetensors treated as monolithic; core-only checkpoints require external VAE + 1 T5.
 - WAN (video endpoints)
@@ -194,8 +262,10 @@ Source of truth:
     - Stage models: `wan_high.model_sha` + `wan_low.model_sha` (sha → `.gguf`)
     - Stage LoRAs (optional): `wan_high.lora_sha` / `wan_low.lora_sha` (sha → `.safetensors`) + optional `lora_weight`
       - Mode is global: `CODEX_LORA_APPLY_MODE=merge|online` (default `merge`; restart backend to change).
-    - Complements: `wan_vae_sha` + `wan_tenc_sha` (sha → VAE + `.safetensors|.gguf`)
-    - Metadata: `wan_metadata_repo` (preferred) or `wan_metadata_dir` (path)
+    - Complements: `wan_vae_sha` + `wan_tenc_sha`
+      - `wan_vae_sha` resolves to VAE bundle dir (`config.json` + weights) or file path with validated config source (sibling `config.json` or metadata `vae/config.json`).
+      - `wan_tenc_sha` resolves to `.safetensors|.gguf`.
+    - Metadata: `wan_metadata_repo` (preferred, vendored HF repo id) or `wan_metadata_dir` (path fallback)
   - `wan_animate` (Diffusers dir; path-based but repo-scoped):
     - Requires `vid2vid_model_dir` (directory under `CODEX_ROOT`)
     - Stage overrides (`wan_high/wan_low`) accept `model_dir` (file/dir) and optional `lora_sha` (sha → `.safetensors`) + optional `lora_weight`
@@ -363,8 +433,8 @@ The engine key and asset requirements are defined by backend capabilities + requ
   - `vid2vid` is multipart upload and saves files under `CODEX_ROOT/.tmp/uploads/vid2vid/` before running.
   - WAN (GGUF) selects model parts by SHA (no raw paths):
     - Stage models: `wan_high.model_sha` / `wan_low.model_sha` → must resolve to `.gguf`
-    - Complements: `wan_vae_sha` + `wan_tenc_sha` → must resolve to VAE + `.safetensors`
-    - Metadata/tokenizer dirs remain explicit paths (resolved relative to `CODEX_ROOT` when repo-relative).
+    - Complements: `wan_vae_sha` + `wan_tenc_sha` → VAE sha resolves with config-source validation; TEnc must resolve to `.safetensors|.gguf`
+    - Metadata/tokenizer source: `wan_metadata_repo` (preferred) or `wan_metadata_dir` fallback path.
 
 ### Engine assembly seams (spec + factory)
 - Engine families standardize assembly via `spec.py` + `factory.py` modules under `apps/backend/engines/<family>/`:
@@ -372,6 +442,24 @@ The engine key and asset requirements are defined by backend capabilities + requ
   - `factory.py` is the family assembly boundary (builds runtime + `CodexObjects` from a `DiffusionModelBundle`).
 - Factory plan: `.sangoi/plans/2026-01-03-engine-factory-standard-v1.md`.
 - Runtime layout: model-family runtimes live under `apps/backend/runtime/families/<family>/` (plan/rationale: `.sangoi/plans/2026-01-17-backend-runtime-families-layout.md`).
+
+## Contradiction ledger (docs vs code, 2026-02-11)
+- WAN VAE contract wording
+  - Previous map text implied only “VAE + `.safetensors`” semantics.
+  - Code reality (as of 2026-02-11): WAN GGUF accepts VAE bundle directories or file VAE with validated config source.
+  - Resolution in this map: documented the current code contract and marked metadata-repo ownership explicitly.
+- Smart-offload pipeline order
+  - Previous map did not codify per-mode order/exceptions.
+  - Code reality: invariants enforce TE/denoiser/VAE order with explicit exceptions (preview FULL, denoiser warm cache-hit, img2vid VAE-before-TE).
+  - Resolution in this map: added canonical stage-order matrix + exception bullets.
+- Video pipeline consolidation status
+  - Previous map could be read as fully consolidated.
+  - Code reality: txt2img/img2img are staged-native; video modes still include mixed lanes (GGUF native when no `comp.pipeline`, Diffusers paths otherwise; `vid2vid` native/wan_animate requires Diffusers pipeline today).
+  - Resolution in this map: explicit mixed-lane status and guardrail that new canonical paths stay native-first.
+- Config ownership path
+  - Previous map did not clearly anchor scheduler/tokenizer/config ownership.
+  - Code reality: config hydration and WAN scheduler defaults come from vendored `apps/backend/huggingface/**`.
+  - Resolution in this map: added dedicated config-ownership section under guardrails.
 
 ## Security / path hygiene (what is allowed)
 - API responses prefer repo-relative `path` values under `CODEX_ROOT` (avoid leaking host absolute paths).

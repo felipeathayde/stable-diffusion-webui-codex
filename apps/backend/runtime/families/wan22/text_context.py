@@ -10,14 +10,12 @@ Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
 Loads tokenizer metadata and text encoder weights from local paths only, applies strict embedding-key alias normalization for GGUF T5 variants,
 constructs GGUF UMT5 encoders under `transformers.modeling_utils.no_init_weights()` to avoid invalid init paths with GGUF op shims,
 honors runtime GGUF dequant policy (`--gguf-exec`) for TE GGUF loads, avoids whole-model GGUF encoder `.to(cuda)` residency,
-places non-quant GGUF TE tensors on execution device+dtype for mixed-device safety,
 and then builds prompt/negative embeddings for the WAN GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
 - `_prompt_clean` (function): Diffusers-style prompt cleaning (optional ftfy + HTML unescape + whitespace collapse).
 - `_resolve_max_sequence_length` (function): Chooses a safe tokenizer max length, clamped to `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH`.
-- `_place_gguf_non_quant_tensors` (function): Moves only non-quantized GGUF text-encoder parameters/buffers to execution device+dtype to prevent mixed-device forward errors.
 - `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation and GGUF policy-aware TE loading.
 """
 
@@ -62,47 +60,6 @@ def _resolve_max_sequence_length(tok: Any) -> int:
     if max_len <= 0:
         max_len = WAN22_DEFAULT_MAX_SEQUENCE_LENGTH
     return int(max_len)
-
-
-def _place_gguf_non_quant_tensors(
-    module: torch.nn.Module,
-    *,
-    device: torch.device,
-    dtype: torch.dtype,
-) -> tuple[int, int]:
-    """Move non-quantized GGUF module tensors to execution device/dtype.
-
-    Quantized `CodexParameter` weights stay on their packed storage device and are
-    handled by GGUF runtime ops during forward. Regular float/int parameters and
-    buffers (e.g. T5 LayerNorm weights) must match execution device to avoid
-    mixed-device failures.
-    """
-
-    moved_params = 0
-    moved_buffers = 0
-
-    for _, parameter in module.named_parameters(recurse=True):
-        if getattr(parameter, "qtype", None) is not None:
-            continue
-        target_dtype = dtype if parameter.is_floating_point() else parameter.dtype
-        if parameter.device == device and parameter.dtype == target_dtype:
-            continue
-        with torch.no_grad():
-            parameter.data = parameter.data.to(device=device, dtype=target_dtype, non_blocking=True)
-        moved_params += 1
-
-    for buffer_name, buffer in module.named_buffers(recurse=True):
-        if buffer is None:
-            continue
-        target_dtype = dtype if buffer.is_floating_point() else buffer.dtype
-        if buffer.device == device and buffer.dtype == target_dtype:
-            continue
-        module_path, _, local_name = buffer_name.rpartition(".")
-        owner = module.get_submodule(module_path) if module_path else module
-        owner._buffers[local_name] = buffer.to(device=device, dtype=target_dtype, non_blocking=True)
-        moved_buffers += 1
-
-    return moved_params, moved_buffers
 
 
 def get_text_context(
@@ -358,36 +315,16 @@ def get_text_context(
 
     use_dev_name = (te_dev_eff or device or "cpu").lower().strip()
     dev = torch.device(use_dev_name if use_dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu")
-    requested_compute_dtype = as_torch_dtype(dtype)
-    if is_gguf_te:
+    if not is_gguf_te:
         try:
-            moved_params, moved_buffers = _place_gguf_non_quant_tensors(
-                enc,
-                device=dev,
-                dtype=requested_compute_dtype,
-            )
-            if moved_params or moved_buffers:
-                log.info(
-                    "[wan22.gguf] TE runtime placement: moved_non_quant_params=%d moved_non_quant_buffers=%d device=%s dtype=%s",
-                    moved_params,
-                    moved_buffers,
-                    str(dev),
-                    str(requested_compute_dtype),
-                )
-        except Exception as exc:
-            raise RuntimeError(
-                "WAN22 GGUF: failed to place non-quant text-encoder tensors on "
-                f"device={dev} dtype={requested_compute_dtype}: {exc}"
-            ) from exc
-    else:
-        try:
-            enc = enc.to(device=dev, dtype=requested_compute_dtype)
+            enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
         except Exception:
             enc = enc.to(device=dev)
 
     # Keep GGUF dequant compute dtype aligned with the requested runtime dtype.
     # This is required for CPU TE `fp32` contract: some GGUF module loaders may seed
     # `CodexParameter.computation_dtype` with reduced precision during state-dict load.
+    requested_compute_dtype = as_torch_dtype(dtype)
     if hasattr(enc, "parameters"):
         for parameter in enc.parameters():
             if hasattr(parameter, "computation_dtype"):

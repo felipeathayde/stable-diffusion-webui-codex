@@ -1378,11 +1378,3 @@ Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "ggu
 Wrong command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "text_context.py` GGUF TE loading no longer" apps/backend/runtime/families/wan22/AGENTS.md`
 Cause and fix: I included an unescaped backtick inside a double-quoted regex, which broke shell parsing (`unexpected EOF while looking for matching ```). Use a pattern without backticks (or escape them) for shell-safe `rg`.
 Correct command: `cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "GGUF TE loading no longer hard-codes" apps/backend/runtime/families/wan22/AGENTS.md`
-
-Wrong command: `bash -lc "./update-webui.sh --force >\"$BASE/untracked_force.log\" 2>&1"` (inside functional matrix script)
-Cause and fix: `update-webui.sh` is not guaranteed to be executable in every checkout; direct invocation returned exit `126`. Invoke it explicitly with `bash`.
-Correct command: `bash -lc "bash ./update-webui.sh --force >\"$BASE/untracked_force.log\" 2>&1"`
-
-Wrong command: repeated full-repo clones into `/tmp` for updater behavior matrix (e.g. `git clone -q "$CODEX_ROOT" "$work"`)
-Cause and fix: cloning this large repo repeatedly exhausted disk (`No space left on device`). Use a minimal local harness repo with only updater script + tiny tracked files to validate git-state matrix behavior.
-Correct command: initialize a tiny harness repo (`git init` + commit `update-webui.sh` + `README.md`) and clone that harness for each matrix case.

@@ -10,7 +10,7 @@ CODEX_FFMPEG_VERSION="${CODEX_FFMPEG_VERSION:-7.0.2}"
 
 usage() {
   cat <<'EOF'
-Usage: update-webui.sh [--help] [--force]
+Usage: update-webui.sh [--help]
 
 Safe updater for stable-diffusion-webui-codex.
 
@@ -19,8 +19,6 @@ Behavior:
 - Never runs destructive commands (no git reset/clean/restore/delete operations).
 - Updates only via: git fetch --prune + git pull --ff-only.
 - Refreshes environment only when new commits were pulled.
-- `--force` bypasses dirty check only when the tree has untracked paths and no tracked changes.
-- `--force` never deletes files and never bypasses tracked/conflict protections.
 
 Policy:
 - Scope: repo root only (no submodule/extension updates).
@@ -68,23 +66,8 @@ print_paths_section() {
   done
 }
 
-print_warning_paths_section() {
-  local title="$1"
-  shift
-  printf '[update][WARN_FORCE_UNTRACKED] %s\n' "$title" >&2
-  if (($# == 0)); then
-    printf '  - (none)\n' >&2
-    return
-  fi
-  local entry
-  for entry in "$@"; do
-    printf "  - '%s'\n" "$entry" >&2
-  done
-}
-
 show_dirty_abort() {
   local status_output="$1"
-  local allow_untracked_only="${2:-0}"
   local tracked=()
   local untracked=()
   local line
@@ -99,26 +82,15 @@ show_dirty_abort() {
     fi
   done <<< "$status_output"
 
-  if [[ "$allow_untracked_only" == "1" && ${#tracked[@]} -eq 0 && ${#untracked[@]} -gt 0 ]]; then
-    printf '[update][WARN_FORCE_UNTRACKED] --force enabled: untracked-only paths detected; continuing without deleting files.\n' >&2
-    print_warning_paths_section "Untracked paths ignored under --force:" "${untracked[@]}"
-    printf '[update][WARN_FORCE_UNTRACKED] Tracked/conflict protections remain enforced.\n' >&2
-    return
-  fi
-
   printf '[update][E_WORKTREE_DIRTY] Local changes detected; update aborted to protect your files.\n' >&2
   print_paths_section "Tracked changes:" "${tracked[@]}"
   print_paths_section "Untracked paths:" "${untracked[@]}"
   printf '[update][E_WORKTREE_DIRTY] Ignored paths are excluded by policy (P2=B).\n' >&2
-  if [[ "$allow_untracked_only" == "1" ]]; then
-    printf '[update][E_WORKTREE_DIRTY] --force does not bypass tracked/conflict protections.\n' >&2
-  fi
-  printf '[update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and rerun. Untracked-only trees may use --force.\n' >&2
+  printf '[update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and move or remove untracked paths, then rerun.\n' >&2
   exit 1
 }
 
 validate_git_state() {
-  local allow_untracked_only="${1:-0}"
   require_command git
 
   local inside
@@ -153,7 +125,7 @@ validate_git_state() {
 
   local status_output
   status_output="$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=all)"
-  [[ -z "$status_output" ]] || show_dirty_abort "$status_output" "$allow_untracked_only"
+  [[ -z "$status_output" ]] || show_dirty_abort "$status_output"
 }
 
 resolve_torch_backend() {
@@ -257,24 +229,19 @@ PY
 }
 
 main() {
-  local allow_untracked_only=0
-  while (($# > 0)); do
-    case "$1" in
-      --help|-h)
-        usage
-        exit 0
-        ;;
-      --force)
-        allow_untracked_only=1
-        ;;
-      *)
-        abort "E_BAD_ARGS" "Unknown argument '$1'. Use --help."
-        ;;
-    esac
-    shift
-  done
+  case "${1:-}" in
+    "" )
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      abort "E_BAD_ARGS" "Unknown argument '$1'. Use --help."
+      ;;
+  esac
 
-  validate_git_state "$allow_untracked_only"
+  validate_git_state
 
   local head_before
   head_before="$(git -C "$ROOT_DIR" rev-parse HEAD)"

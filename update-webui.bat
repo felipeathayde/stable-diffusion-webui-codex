@@ -12,19 +12,9 @@ set "PACKAGE_LOCK=%INTERFACE_DIR%\package-lock.json"
 set "CODEX_FFMPEG_VERSION=%CODEX_FFMPEG_VERSION%"
 if "%CODEX_FFMPEG_VERSION%"=="" set "CODEX_FFMPEG_VERSION=7.0.2"
 
-set "FORCE_UNTRACKED_ONLY=0"
-:parse_args
-if "%~1"=="" goto :args_done
 if /I "%~1"=="--help" goto :usage
 if /I "%~1"=="-h" goto :usage
-if /I "%~1"=="--force" (
-  set "FORCE_UNTRACKED_ONLY=1"
-  shift
-  goto :parse_args
-)
-call :die E_BAD_ARGS "Unknown argument '%~1'. Use --help."
-exit /b 1
-:args_done
+if not "%~1"=="" call :die E_BAD_ARGS "Unknown argument '%~1'. Use --help."
 
 call :validate_git_state
 if errorlevel 1 exit /b 1
@@ -75,7 +65,7 @@ call :log "Update completed successfully."
 exit /b 0
 
 :usage
-echo Usage: update-webui.bat [--help] [--force]
+echo Usage: update-webui.bat [--help]
 echo.
 echo Safe updater for stable-diffusion-webui-codex.
 echo.
@@ -84,8 +74,6 @@ echo   - Fail-closed preflight ^(dirty tree, detached HEAD, no upstream, ahead/d
 echo   - No destructive commands ^(no reset/clean/restore/delete of user files^).
 echo   - Git update only via: fetch --prune ^+ pull --ff-only.
 echo   - Environment refresh runs only when new commits were pulled.
-echo   - --force bypasses dirty check only for untracked-only paths.
-echo   - --force never deletes files and never bypasses tracked/conflict protections.
 echo.
 echo Policy:
 echo   - Scope: repo root only ^(no submodule/extension updates^).
@@ -174,15 +162,11 @@ if %STATUS_SIZE% GTR 0 (
   findstr /B /C:"?? " "%TMP_STATUS%" > "%TMP_UNTRACKED%" 2>nul
   findstr /V /B /C:"?? " "%TMP_STATUS%" > "%TMP_TRACKED%" 2>nul
 
-  call :allow_untracked_only_force "%FORCE_UNTRACKED_ONLY%" "%TMP_STATUS%" "%TMP_TRACKED%" "%TMP_UNTRACKED%"
-  if errorlevel 10 exit /b 0
-
   echo [update][E_WORKTREE_DIRTY] Local changes detected; update aborted to protect your files. 1>&2
   call :print_status_section "Tracked changes:" "%TMP_TRACKED%"
   call :print_status_section "Untracked paths:" "%TMP_UNTRACKED%"
   echo [update][E_WORKTREE_DIRTY] Ignored paths are excluded by policy ^(P2=B^). 1>&2
-  if "%FORCE_UNTRACKED_ONLY%"=="1" echo [update][E_WORKTREE_DIRTY] --force does not bypass tracked/conflict protections. 1>&2
-  echo [update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and rerun. Untracked-only trees may use --force. 1>&2
+  echo [update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and move or remove untracked paths, then rerun. 1>&2
 
   call :delete_if_exists "%TMP_STATUS%"
   call :delete_if_exists "%TMP_TRACKED%"
@@ -197,39 +181,6 @@ exit /b 0
 
 :print_status_section
 echo [update][E_WORKTREE_DIRTY] %~1 1>&2
-for %%I in ("%~2") do set "SECTION_SIZE=%%~zI"
-if not defined SECTION_SIZE set "SECTION_SIZE=0"
-if %SECTION_SIZE% LEQ 0 (
-  echo   - ^(none^) 1>&2
-  exit /b 0
-)
-for /f "usebackq delims=" %%L in ("%~2") do echo   - %%L 1>&2
-exit /b 0
-
-:allow_untracked_only_force
-set "FORCE_FLAG=%~1"
-set "STATUS_FILE=%~2"
-set "TRACKED_FILE=%~3"
-set "UNTRACKED_FILE=%~4"
-set "TRACKED_ARG="
-set "UNTRACKED_ARG="
-for %%I in ("%TRACKED_FILE%") do set "TRACKED_ARG=%%~zI"
-for %%I in ("%UNTRACKED_FILE%") do set "UNTRACKED_ARG=%%~zI"
-if "%TRACKED_ARG%"=="" set "TRACKED_ARG=0"
-if "%UNTRACKED_ARG%"=="" set "UNTRACKED_ARG=0"
-if /I not "%FORCE_FLAG%"=="1" exit /b 0
-if not "%TRACKED_ARG%"=="0" exit /b 0
-if "%UNTRACKED_ARG%"=="0" exit /b 0
-echo [update][WARN_FORCE_UNTRACKED] --force enabled: untracked-only paths detected; continuing without deleting files. 1>&2
-call :print_warning_status_section "Untracked paths ignored under --force:" "%UNTRACKED_FILE%"
-echo [update][WARN_FORCE_UNTRACKED] Tracked/conflict protections remain enforced. 1>&2
-call :delete_if_exists "%STATUS_FILE%"
-call :delete_if_exists "%TRACKED_FILE%"
-call :delete_if_exists "%UNTRACKED_FILE%"
-exit /b 10
-
-:print_warning_status_section
-echo [update][WARN_FORCE_UNTRACKED] %~1 1>&2
 for %%I in ("%~2") do set "SECTION_SIZE=%%~zI"
 if not defined SECTION_SIZE set "SECTION_SIZE=0"
 if %SECTION_SIZE% LEQ 0 (

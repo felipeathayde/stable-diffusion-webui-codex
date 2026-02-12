@@ -8,9 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
 Loads tokenizer metadata and text encoder weights from local paths only, applies strict embedding-key alias normalization for GGUF T5 variants,
-constructs GGUF UMT5 encoders under `transformers.modeling_utils.no_init_weights()` to avoid invalid init paths with GGUF op shims,
-honors runtime GGUF dequant policy (`--gguf-exec`) for TE GGUF loads, avoids whole-model GGUF encoder `.to(cuda)` residency,
-and then builds prompt/negative embeddings for the WAN GGUF runtime.
+honors runtime GGUF dequant policy (`--gguf-exec`) for TE GGUF loads, and then builds prompt/negative embeddings for the WAN GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
@@ -263,9 +261,8 @@ def get_text_context(
         raise RuntimeError(f"WAN22 GGUF: failed to read text encoder config from '{enc_dir}': {exc}") from exc
 
     te_compute_dtype = as_torch_dtype(dtype)
-    is_gguf_te = not te_file.lower().endswith(".safetensors")
     try:
-        if not is_gguf_te:
+        if te_file.lower().endswith(".safetensors"):
             from safetensors.torch import load_file as _load_st
 
             enc = _Enc(cfg)
@@ -274,7 +271,6 @@ def get_text_context(
         else:
             from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
             from apps.backend.runtime.ops.operations import using_codex_operations
-            from transformers.modeling_utils import no_init_weights
 
             with using_codex_operations(
                 device=torch.device("cpu"),
@@ -282,8 +278,7 @@ def get_text_context(
                 manual_cast_enabled=False,
                 weight_format="gguf",
             ):
-                with no_init_weights():
-                    enc = _Enc(cfg)
+                enc = _Enc(cfg)
                 sd = load_gguf_state_dict(
                     te_file,
                     dequantize=None,
@@ -315,11 +310,10 @@ def get_text_context(
 
     use_dev_name = (te_dev_eff or device or "cpu").lower().strip()
     dev = torch.device(use_dev_name if use_dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu")
-    if not is_gguf_te:
-        try:
-            enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
-        except Exception:
-            enc = enc.to(device=dev)
+    try:
+        enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
+    except Exception:
+        enc = enc.to(device=dev)
 
     # Keep GGUF dequant compute dtype aligned with the requested runtime dtype.
     # This is required for CPU TE `fp32` contract: some GGUF module loaders may seed

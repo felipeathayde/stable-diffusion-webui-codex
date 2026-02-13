@@ -35,6 +35,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     configure_sampler,
     export_video,
     read_video_interpolation_options,
+    resolve_video_output_fps,
 )
 
 
@@ -173,6 +174,7 @@ def run_img2vid(
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
         frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
+        plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
 
         video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
 
@@ -274,6 +276,7 @@ def run_img2vid(
     if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
         yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
     frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
+    plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
 
     video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
 

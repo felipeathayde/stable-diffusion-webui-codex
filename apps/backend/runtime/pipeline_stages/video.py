@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
 - `read_video_interpolation_options` (function): Parses `extras.video_interpolation` into typed interpolation options when present.
 - `apply_video_interpolation` (function): Applies the shared interpolation stage and returns `(frames_out, interpolation_metadata)`.
+- `resolve_video_output_fps` (function): Computes output fps from request/base fps and interpolation metadata.
 - `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
 - `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
 - `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
@@ -137,10 +138,46 @@ def apply_video_interpolation(
     return list(frames), opts
 
 
+def resolve_video_output_fps(base_fps: int, interpolation_meta: Mapping[str, Any] | None) -> int:
+    fps_base = int(base_fps) if int(base_fps) > 0 else 1
+    if not isinstance(interpolation_meta, Mapping):
+        return fps_base
+
+    result = interpolation_meta.get("result")
+    if not isinstance(result, Mapping) or not bool(result.get("applied", False)):
+        return fps_base
+
+    raw_times = interpolation_meta.get("times")
+    try:
+        times = int(raw_times) if raw_times is not None else 1
+    except Exception:
+        times = 1
+    if times <= 1:
+        return fps_base
+    return fps_base * times
+
+
 def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_options: Any, *, task: str) -> Any:
+    save_output = bool(isinstance(video_options, Mapping) and bool(video_options.get("save_output", False)))
     if not hasattr(engine, "_maybe_export_video"):
+        if save_output:
+            raise RuntimeError(
+                f"{task}: video export requested (save_output=true), but engine does not implement _maybe_export_video."
+            )
         return None
-    return engine._maybe_export_video(frames, fps=plan.fps, options=video_options, task=task)  # type: ignore[attr-defined]
+
+    video_meta = engine._maybe_export_video(frames, fps=plan.fps, options=video_options, task=task)  # type: ignore[attr-defined]
+    if save_output:
+        saved = bool(isinstance(video_meta, Mapping) and bool(video_meta.get("saved", False)))
+        if not saved:
+            reason = ""
+            if isinstance(video_meta, Mapping):
+                reason = str(video_meta.get("reason") or "").strip()
+            raise RuntimeError(
+                f"{task}: video export failed with save_output=true"
+                + (f" ({reason})" if reason else "")
+            )
+    return video_meta
 
 
 def assemble_video_metadata(
@@ -207,6 +244,7 @@ __all__ = [
     "configure_sampler",
     "read_video_interpolation_options",
     "apply_video_interpolation",
+    "resolve_video_output_fps",
     "export_video",
     "assemble_video_metadata",
     "build_video_result",

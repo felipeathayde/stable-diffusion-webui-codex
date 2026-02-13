@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-02-12
+Last Review: 2026-02-13
 Status: Active
 
 ## Purpose
@@ -38,6 +38,7 @@ Status: Active
 - 2026-01-25: `clip_skip=0` is now supported as an explicit “use default” sentinel (merged from request metadata or `<clip_skip:0>` prompt tags) and is passed through `apply_prompt_context(...)` to reset clip skip per job.
 - 2026-01-27: `video.py:export_video(...)` now passes a task label into engine export so outputs land under `output/{txt2vid,img2vid}-videos/<date>/...` (stable dirs; UI serves via `/api/output/{rel_path}`).
 - 2026-02-12: `video.py` now owns shared parsing/execution of `extras.video_interpolation` for all WAN video use-cases (txt2vid/img2vid/vid2vid) to keep Option A mode pipelines aligned.
+- 2026-02-13: `video.py` now computes effective output FPS after interpolation (`resolve_video_output_fps`) and enforces fail-loud export semantics when `save_output=true` but the engine export does not return a saved artifact.
 - 2026-02-01: Added `hires_fix.py` to centralize hires pass prep and fix `denoise` semantics (no more inverted `start_at_step` mapping).
 - 2026-02-08: Sampling stages now carry typed ER-SDE options (`SamplingPlan.er_sde`) from plan build to execution; `execute_sampling(...)` forwards options into `CodexSampler.sample(...)` and latent diagnostics include effective ER-SDE metadata when sampler is `er sde`.
 - 2026-02-09: `sampling_execute` now gates LoRA apply/reset on `codex_objects_after_applying_lora` capability and fails loud only when LoRA selections are present without engine support, while still resetting stale LoRA state for no-selection runs.

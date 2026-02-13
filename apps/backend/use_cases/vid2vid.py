@@ -43,6 +43,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     assemble_video_metadata,
     build_video_plan,
     read_video_interpolation_options,
+    resolve_video_output_fps,
 )
 from apps.backend.video.export.ffmpeg_exporter import export_video
 from apps.backend.video.flow.torchvision_raft import FlowGuidanceError, RaftFlowEstimator, warp_frame
@@ -237,7 +238,7 @@ def _run_wan_animate(
     if mode == "replace" and (not bg_path or not mask_path):
         raise RuntimeError("vid2vid wan_animate mode 'replace' requires background_video_path and mask_video_path")
 
-    yield_fps = bool(cfg.get("use_source_fps", True))
+    yield_fps = bool(cfg.get("use_source_fps", False))
     fps_val = int(getattr(request, "fps", 24) or 24)
     pose_probe = probe_video(pose_path)
     if yield_fps:
@@ -519,7 +520,7 @@ def run_vid2vid(
             yield ProgressEvent(stage="probe", percent=0.0, message="Probing input video")
             probe = probe_video(video_path)
 
-            use_source_fps = bool(cfg.get("use_source_fps", True))
+            use_source_fps = bool(cfg.get("use_source_fps", False))
             use_source_frames = bool(cfg.get("use_source_frames", True))
 
             fps_val = int(getattr(request, "fps", 24) or 24)
@@ -588,10 +589,10 @@ def run_vid2vid(
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=0.95, message="Interpolating frames (VFI)")
         frames_out, vfi_opts = apply_video_interpolation(frames_out, options=vfi_options, logger_=logger)
+        fps_out = resolve_video_output_fps(fps_val, vfi_opts)
 
         elapsed = time.perf_counter() - start
-        if method == "wan_animate":
-            plan.fps = int(fps_val)
+        plan.fps = int(fps_out)
 
         @dataclass(frozen=True)
         class _SamplerOutcome:
@@ -632,19 +633,24 @@ def run_vid2vid(
         if vfi_opts is not None:
             info["video_interpolation"] = vfi_opts
 
-        video_meta = None
-        video_export_error: str | None = None
-        try:
-            video_meta = export_video(
-                frames_out,
-                fps=fps_val,
-                options=getattr(request, "video_options", None),
-                task="vid2vid",
-                audio_source_path=audio_source if has_audio else None,
-                extra_metadata=info if bool(getattr(request, "video_options", None)) else None,
+        video_meta = export_video(
+            frames_out,
+            fps=fps_out,
+            options=getattr(request, "video_options", None),
+            task="vid2vid",
+            audio_source_path=audio_source if has_audio else None,
+            extra_metadata=info if bool(getattr(request, "video_options", None)) else None,
+        )
+        save_output = bool(
+            isinstance(getattr(request, "video_options", None), Mapping)
+            and bool(getattr(request, "video_options", {}).get("save_output", False))
+        )
+        if save_output and not bool(getattr(video_meta, "saved", False)):
+            reason = str(getattr(video_meta, "reason", "") or "").strip()
+            raise RuntimeError(
+                "vid2vid: video export failed with save_output=true"
+                + (f" ({reason})" if reason else "")
             )
-        except Exception as exc:
-            video_export_error = str(exc)
 
         preview_n = int(cfg.get("preview_frames") or 48)
         preview = list(frames_out[: max(1, min(preview_n, len(frames_out)))])
@@ -655,7 +661,7 @@ def run_vid2vid(
             preview_frames=preview,
             request=request,
             video_meta=video_meta,
-            video_export_error=video_export_error,
+            video_export_error=None,
         )
 
         yield ResultEvent(payload=payload)

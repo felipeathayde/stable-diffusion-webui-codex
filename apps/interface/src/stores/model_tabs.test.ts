@@ -6,7 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Vitest coverage for model-tab normalization and params persistence serialization invariants.
+Purpose: Vitest coverage for model-tab normalization, params persistence serialization invariants,
+and localStorage persistence guardrails (light payload + quota handling) in the model-tabs store.
 Locks fail-loud behavior for unknown tab types, validates capability-driven Anima tab auto-inclusion, and ensures
 `updateParams` persistence handles nested reactive payload branches while still rejecting non-serializable payloads
 without hanging deferred promises.
@@ -41,6 +42,35 @@ function makeStorageStub(): Storage {
   return {
     getItem: (key: string) => storage.get(String(key)) ?? null,
     setItem: (key: string, value: string) => {
+      storage.set(String(key), String(value))
+    },
+    removeItem: (key: string) => {
+      storage.delete(String(key))
+    },
+    clear: () => {
+      storage.clear()
+    },
+    key: (index: number) => Array.from(storage.keys())[index] ?? null,
+    get length() {
+      return storage.size
+    },
+  }
+}
+
+function createQuotaExceededError(): DOMException {
+  return new DOMException('Setting the value exceeded the quota.', 'QuotaExceededError')
+}
+
+function makeStorageStubThatThrowsQuotaOnce(): Storage {
+  const storage = new Map<string, string>()
+  let shouldThrowOnNextSet = true
+  return {
+    getItem: (key: string) => storage.get(String(key)) ?? null,
+    setItem: (key: string, value: string) => {
+      if (shouldThrowOnNextSet) {
+        shouldThrowOnNextSet = false
+        throw createQuotaExceededError()
+      }
       storage.set(String(key), String(value))
     },
     removeItem: (key: string) => {
@@ -242,5 +272,38 @@ describe('useModelTabsStore params persistence serialization', () => {
       code: 'serialization_failure',
     })
     expect(mockedUpdateTabApi).not.toHaveBeenCalled()
+  })
+})
+
+describe('useModelTabsStore local storage payload guard', () => {
+  it('persists only light tab refs to localStorage (no params blob)', () => {
+    const store = createSeededStore()
+    ;(store.tabs[0] as any).params.initImageData = `data:image/png;base64,${'X'.repeat(1024)}`
+    ;(store.tabs[0] as any).params.maskImageData = `data:image/png;base64,${'Y'.repeat(1024)}`
+
+    store.save()
+
+    const raw = localStorage.getItem('codex:model-tabs:v2')
+    expect(raw).toBeTruthy()
+    const parsed = JSON.parse(String(raw)) as { tabs?: unknown; activeId?: unknown }
+    expect(parsed.activeId).toBe('tab-1')
+    expect(parsed.tabs).toEqual([{ id: 'tab-1', type: 'sdxl' }])
+    expect(String(raw)).not.toContain('initImageData')
+    expect(String(raw)).not.toContain('maskImageData')
+  })
+
+  it('handles quota errors without throwing and retries light payload after clearing key', () => {
+    vi.stubGlobal('localStorage', makeStorageStubThatThrowsQuotaOnce())
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const store = createSeededStore()
+
+    expect(() => store.save()).not.toThrow()
+    const raw = localStorage.getItem('codex:model-tabs:v2')
+    expect(raw).toBeTruthy()
+    expect(JSON.parse(String(raw))).toEqual({
+      tabs: [{ id: 'tab-1', type: 'sdxl' }],
+      activeId: 'tab-1',
+    })
+    expect(consoleWarn).toHaveBeenCalled()
   })
 })

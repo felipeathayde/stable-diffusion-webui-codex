@@ -25,7 +25,10 @@ Symbols (top-level; keep in sync; no ghosts):
   (includes optional family-specific fields like `zimageTurbo`).
 - `TabParamsByType` (type): Canonical params map by tab type.
 - `TabByType` (type): Typed tab shape (`type` + matching params payload).
+- `ModelTabsStorageState` (type): LocalStorage payload contract for light model-tabs state (`activeId` + tab refs).
 - `MODEL_TABS_STORAGE_KEY` (const): LocalStorage key used for persisted tabs state (bump when schema changes).
+- `buildStoragePayload` (function): Builds a small localStorage payload without heavy per-tab params blobs.
+- `isQuotaExceededStorageError` (function): Detects storage quota-exceeded failures across browser variants.
 - `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
 - `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
 - `defaultImageParamsForType` (function): Returns canonical image-tab defaults for a specific image tab type.
@@ -218,8 +221,33 @@ export type TabByType<T extends BaseTabType = BaseTabType> = Omit<BaseTab, 'type
   params: TabParamsByType[T]
 }
 
+type ModelTabsStorageTabRef = Pick<BaseTab, 'id' | 'type'>
+
+type ModelTabsStorageState = {
+  tabs: ModelTabsStorageTabRef[]
+  activeId: string
+}
+
 export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v2'
 const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
+
+function buildStoragePayload(tabList: BaseTab[], currentActiveId: string): ModelTabsStorageState {
+  const tabRefs: ModelTabsStorageTabRef[] = tabList.map((tab) => ({
+    id: tab.id,
+    type: tab.type,
+  }))
+  return {
+    tabs: tabRefs,
+    activeId: currentActiveId,
+  }
+}
+
+function isQuotaExceededStorageError(error: unknown): boolean {
+  if (!(error instanceof DOMException)) return false
+  if (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED') return true
+  const domError = error as DOMException & { code?: number }
+  return domError.code === 22 || domError.code === 1014
+}
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -557,8 +585,36 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   }
 
   function save(): void {
-    const payload = { tabs: tabs.value, activeId: activeId.value }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+    const payload = buildStoragePayload(tabs.value, activeId.value)
+    const serializedPayload = JSON.stringify(payload)
+    try {
+      localStorage.setItem(STORAGE_KEY, serializedPayload)
+      return
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!isQuotaExceededStorageError(error)) {
+        console.warn(`[model_tabs] Failed to persist local state '${STORAGE_KEY}': ${message}`)
+        return
+      }
+      console.warn(`[model_tabs] LocalStorage quota exceeded for '${STORAGE_KEY}'. Writing minimal fallback state.`)
+    }
+
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+      localStorage.setItem(STORAGE_KEY, serializedPayload)
+      return
+    } catch (fallbackError) {
+      const message = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      console.warn(`[model_tabs] Failed to persist lightweight state retry for '${STORAGE_KEY}': ${message}`)
+    }
+
+    try {
+      const fallbackPayload: ModelTabsStorageState = { tabs: [], activeId: activeId.value }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(fallbackPayload))
+    } catch (fallbackError) {
+      const message = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      console.warn(`[model_tabs] Failed to persist minimal fallback state for '${STORAGE_KEY}': ${message}`)
+    }
   }
 
   function ensureTabOrThrow(id: string): BaseTab {

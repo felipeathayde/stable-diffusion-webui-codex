@@ -63,6 +63,8 @@ def _is_oom_error(*, err: Any, lowered_message: str) -> bool:
         return True
     if any(marker in lowered_message for marker in _OOM_HINTS):
         return True
+    if _OOM_WORD_RE.fullmatch(lowered_message.strip()):
+        return True
     if _OOM_WORD_RE.search(lowered_message):
         if any(context in lowered_message for context in _OOM_CONTEXT_HINTS):
             return True

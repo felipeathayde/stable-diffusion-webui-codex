@@ -1,6 +1,6 @@
 # apps/backend/services Overview
 Date: 2025-10-28
-Last Review: 2026-01-24
+Last Review: 2026-02-15
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - 2026-01-03: Added standardized file header docstrings to `services/*` modules (doc-only change; part of rollout).
 - 2026-01-24: `options_store.py` now only exposes the minimal, registry-backed options surface (global defaults + smart flags + memory overrides); unknown keys are pruned from `apps/settings_values.json` at backend startup.
 - 2026-01-24: `live_preview_service.py` no longer mutates `os.environ` to apply per-task preview settings; API worker threads use `LivePreviewTaskConfig.runtime_overrides()` (thread-local) around sampling.
+- 2026-02-15: `options_store.py` now maintains `codex_options_revision` as persisted source-of-truth for generation contract checks; revision increments on option writes and is surfaced through options snapshots/API.

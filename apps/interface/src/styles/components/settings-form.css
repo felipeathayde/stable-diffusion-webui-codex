@@ -7,6 +7,28 @@
   .radio-group { display: flex; gap: .75rem; flex-wrap: wrap; }
   .radio-item { display: inline-flex; align-items: center; gap: .35rem; }
   .form-actions { margin-top: .75rem; display: flex; gap: .5rem; align-items: center; }
+  .settings-apply-alert {
+    margin-top: .5rem;
+    padding: .5rem .65rem;
+    border-radius: var(--radius);
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--panel));
+  }
+  .settings-apply-alert--warn {
+    border-color: hsla(0, 80%, 55%, 0.35);
+    color: hsl(var(--destructive));
+    background: hsla(0, 80%, 55%, 0.08);
+  }
+  .settings-apply-alert--ok {
+    border-color: hsla(140, 60%, 40%, 0.35);
+    color: hsl(var(--foreground));
+  }
+  .settings-apply-alert-list {
+    margin: .35rem 0 0 1rem;
+    padding: 0;
+    font-size: .8rem;
+    line-height: 1.35;
+  }
   .settings-form input[type='checkbox'],
   .settings-form input[type='radio'] { accent-color: hsl(var(--accent)); }
 }

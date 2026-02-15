@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Modal for quicksettings device/dtype overrides.
-Provides global device selection and per-component device/dtype overrides (core/TE/VAE) backed by the quicksettings store.
+Provides global device selection and per-component device/dtype overrides (core/TE/VAE) backed by the quicksettings store, and reflects backend
+apply metadata (`restart_required[]`) so restart warnings are shown only when required.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsOverridesModal` (component): Quicksettings overrides modal for device/dtype settings.
@@ -29,6 +30,15 @@ Symbols (top-level; keep in sync; no ghosts):
   <Modal v-model="open" title="Component overrides">
     <p class="subtitle">
       Configure global device and per-component overrides (device + storage/compute dtype). Leave values as <code>Default</code> to clear overrides.
+    </p>
+    <p v-if="store.lastRestartRequiredMessages.length > 0" class="cdx-qs-overrides-restart-note" role="note">
+      Some settings require API restart before they take effect.
+    </p>
+    <ul v-if="store.lastRestartRequiredMessages.length > 0" class="cdx-qs-overrides-restart-list">
+      <li v-for="message in store.lastRestartRequiredMessages" :key="message">{{ message }}</li>
+    </ul>
+    <p v-else class="cdx-qs-overrides-hot-note" role="note">
+      Overrides are hot-applied for the next generation request.
     </p>
 
     <div class="gen-card">

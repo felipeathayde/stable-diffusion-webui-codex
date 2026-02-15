@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Launcher service specs and process supervision (API + UI).
 Defines service specs/handles, spawns subprocesses with environment overrides, streams logs into a shared buffer, and performs strict port
 availability checks (IPv4/IPv6) before starting the API.
+Maps launcher env toggles to backend CLI flags, including trace/profiler bootstrap toggles for diagnostics.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ServiceStatus` (enum): Launcher service lifecycle status.
@@ -16,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `CodexServiceHandle` (dataclass): Runtime service handle; spawns/monitors subprocess and forwards stdout/stderr to a log buffer.
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
+- `_env_truthy` (function): Normalizes launcher env booleans (`1/true/yes/on`) for CLI flag forwarding.
 - `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings.
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
@@ -376,6 +378,11 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
     }
 
 
+def _env_truthy(value: object) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
 def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     args: List[str] = []
 
@@ -427,6 +434,11 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     raw_lora_math = str(env.get("CODEX_LORA_ONLINE_MATH", "") or "").strip().lower()
     if raw_lora_math:
         args.append(f"--lora-online-math={raw_lora_math}")
+
+    if _env_truthy(env.get("CODEX_TRACE_CONTRACT")):
+        args.append("--trace-contract")
+    if _env_truthy(env.get("CODEX_TRACE_PROFILER")):
+        args.append("--trace-profiler")
 
     return args
 

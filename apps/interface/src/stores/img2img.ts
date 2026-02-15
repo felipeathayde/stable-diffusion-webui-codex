@@ -156,6 +156,7 @@ export const useImg2ImgStore = defineStore('img2img', () => {
     return {
       model: selectedModel.value,
       device: qs.currentDevice,
+      settings_revision: qs.getSettingsRevision(),
       img2img_init_image: initImageData.value,
       img2img_prompt: prompt.value,
       img2img_neg_prompt: negativePrompt.value,

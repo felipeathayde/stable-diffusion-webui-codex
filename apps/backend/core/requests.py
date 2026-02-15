@@ -7,13 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Typed request and event objects for backend engines/orchestration.
-Defines progress/result events and request payload dataclasses for image and video tasks, used by the API, orchestrator, engines, and services.
+Defines progress/result events and request payload dataclasses for image and video tasks, including strict settings-revision propagation fields used by API contract validation and orchestration.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ProgressEvent` (dataclass): Progress update event (stage/percent/step + optional metadata).
 - `ResultEvent` (dataclass): Result event carrying an engine payload and optional metadata.
 - `InferenceEvent` (type alias): Union of `ProgressEvent` and `ResultEvent` produced by engines.
-- `BaseRequest` (dataclass): Shared request fields across tasks (prompt/sampler/seed/LoRA/etc).
+- `BaseRequest` (dataclass): Shared request fields across tasks (prompt/sampler/seed/LoRA/etc), plus `settings_revision` contract marker and runtime smart flags.
 - `Txt2ImgRequest` (dataclass): Text-to-image request.
 - `Img2ImgRequest` (dataclass): Image-to-image/inpaint request (init image + optional mask).
 - `Txt2VidRequest` (dataclass): Text-to-video request.
@@ -75,6 +75,7 @@ class BaseRequest:
     extra_networks: Sequence[str] = field(default_factory=tuple)
     clip_skip: Optional[int] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    settings_revision: int | None = None
     smart_offload: bool = False
     smart_fallback: bool = False
     smart_cache: bool = True

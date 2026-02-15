@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
-starts `/api/txt2img` and `/api/img2img` (with optional hires settings in txt2img only), and consumes task SSE events to update UI state.
+starts `/api/txt2img` and `/api/img2img` (with optional hires settings in txt2img only), includes `settings_revision` in payloads, handles
+stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -33,6 +34,7 @@ import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
 import { fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
+import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
 export interface ImageRunHistoryItem {
   taskId: string
@@ -298,6 +300,7 @@ export function useGeneration(tabId: string) {
 
     const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
     const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
+    const settingsRevision = quicksettings.getSettingsRevision()
 
     const tabType = String(engineType.value)
     const engineOverrideForRequest = resolveEngineForRequest(tabType, Boolean(p.useInitImage))
@@ -445,11 +448,9 @@ export function useGeneration(tabId: string) {
           img2img_seed: p.seed,
           img2img_clip_skip: p.clipSkip,
           device,
+          settings_revision: settingsRevision,
           engine: engineOverrideForRequest,
           model: modelOverride,
-          smart_offload: quicksettings.smartOffload,
-          smart_fallback: quicksettings.smartFallback,
-          smart_cache: quicksettings.smartCache,
           img2img_extras: img2imgExtras,
         }
         if (p.useMask) {
@@ -481,11 +482,9 @@ export function useGeneration(tabId: string) {
             batchCount,
             styles: [],
             device,
+            settingsRevision,
             engine: engineOverrideForRequest,
             model: modelOverride,
-            smartOffload: quicksettings.smartOffload,
-            smartFallback: quicksettings.smartFallback,
-            smartCache: quicksettings.smartCache,
             hires: p.hires,
             refiner: p.refiner,
             extras,
@@ -521,6 +520,17 @@ export function useGeneration(tabId: string) {
       })
       unsubscribers.set(tabId, unsub)
     } catch (error) {
+      const conflictRevision = resolveSettingsRevisionConflict(error)
+      if (conflictRevision !== null) {
+        try {
+          await quicksettings.refreshSettingsRevision(conflictRevision)
+        } catch {
+          // Ignore refresh failures; fallback revision is already applied.
+        }
+        state.value.status = 'error'
+        state.value.errorMessage = formatSettingsRevisionConflictMessage(quicksettings.getSettingsRevision())
+        return
+      }
       state.value.status = 'error'
       state.value.errorMessage = error instanceof Error ? error.message : String(error)
     }

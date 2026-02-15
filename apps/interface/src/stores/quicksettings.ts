@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: QuickSettings global store (models/options + asset SHA selection).
 Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
-resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options.
+resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options,
+and caches the current `/api/options` revision for generation payload contracts (`settings_revision`).
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
 sanitized so `tenc_sha` resolution remains deterministic across families (including Anima).
 
@@ -20,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ModelInfo } from '../api/types'
-import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInventory, fetchPaths } from '../api/client'
+import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInventory, fetchPaths, getCachedOptionsRevision } from '../api/client'
 
 const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_overrides'
 const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
@@ -36,6 +37,20 @@ const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
 ]
 
 const TEXT_ENCODER_PREFIXES = ['sd15', 'sdxl', 'flux1', 'anima', 'chroma', 'wan22', 'zimage']
+
+function normalizeRevision(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.trunc(value))
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    if (/^-?\d+$/.test(trimmed)) {
+      return Math.max(0, Math.trunc(Number(trimmed)))
+    }
+  }
+  return null
+}
 
 function normalizePath(raw: string): string {
   const normalized = String(raw || '').trim().replace(/\\+/g, '/')
@@ -113,6 +128,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const smartFallback = ref<boolean>(false)
   const smartCache = ref<boolean>(true)
   const coreStreaming = ref<boolean>(false)
+  const settingsRevision = ref<number>(Math.max(0, Math.trunc(getCachedOptionsRevision())))
+  const lastAppliedNowMessages = ref<string[]>([])
+  const lastRestartRequiredMessages = ref<string[]>([])
 
   function loadTextEncoderOverridesFromStorage(): void {
     try {
@@ -219,6 +237,54 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
   }
 
+  function syncSettingsRevisionFromCache(): void {
+    const cached = normalizeRevision(getCachedOptionsRevision())
+    if (cached !== null && cached > settingsRevision.value) {
+      settingsRevision.value = cached
+    }
+  }
+
+  function applySettingsRevision(value: unknown): void {
+    const normalized = normalizeRevision(value)
+    if (normalized !== null) settingsRevision.value = normalized
+  }
+
+  function getSettingsRevision(): number {
+    syncSettingsRevisionFromCache()
+    return settingsRevision.value
+  }
+
+  async function refreshSettingsRevision(fallbackRevision?: number): Promise<number> {
+    try {
+      const res = await fetchOptions()
+      applySettingsRevision((res as any).revision ?? (res.values as any)?.codex_options_revision)
+      syncSettingsRevisionFromCache()
+    } catch (error) {
+      const fallback = normalizeRevision(fallbackRevision)
+      if (fallback !== null) {
+        settingsRevision.value = fallback
+      } else {
+        throw error
+      }
+    }
+    return settingsRevision.value
+  }
+
+  async function applyOptionUpdate(payload: Record<string, unknown>): Promise<void> {
+    const response = await updateOptions(payload)
+    applySettingsRevision((response as any).revision)
+    const appliedNowRaw = (response as any).applied_now
+    const restartRequiredRaw = (response as any).restart_required
+    lastAppliedNowMessages.value = Array.isArray(appliedNowRaw) ? appliedNowRaw.map((item) => String(item)) : []
+    lastRestartRequiredMessages.value = Array.isArray(restartRequiredRaw) ? restartRequiredRaw.map((item) => String(item)) : []
+    syncSettingsRevisionFromCache()
+  }
+
+  function clearOptionApplyMessages(): void {
+    lastAppliedNowMessages.value = []
+    lastRestartRequiredMessages.value = []
+  }
+
   async function init(): Promise<void> {
     await Promise.all([
       loadModels(),
@@ -252,6 +318,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
     const res = await fetchOptions()
     const opts = res.values
+    applySettingsRevision((res as any).revision ?? (opts as any)?.codex_options_revision)
+    syncSettingsRevisionFromCache()
     if (typeof (opts as any).codex_attention_backend === 'string') {
       currentAttention.value = (opts as any).codex_attention_backend
     }
@@ -524,7 +592,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setAttentionBackend(value: string): Promise<void> {
     currentAttention.value = value
-    await updateOptions({ codex_attention_backend: value })
+    await applyOptionUpdate({ codex_attention_backend: value })
   }
 
   async function setDevice(value: string): Promise<void> {
@@ -538,67 +606,67 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       currentDevice.value = value
       saveDeviceToStorage(value)
     }
-    await updateOptions({ codex_core_device: value })
+    await applyOptionUpdate({ codex_core_device: value })
   }
 
   async function setTeDevice(value: string): Promise<void> {
     teDevice.value = value
-    await updateOptions({ codex_te_device: value })
+    await applyOptionUpdate({ codex_te_device: value })
   }
 
   async function setVaeDevice(value: string): Promise<void> {
     vaeDevice.value = value
-    await updateOptions({ codex_vae_device: value })
+    await applyOptionUpdate({ codex_vae_device: value })
   }
 
   async function setCoreDtype(value: string): Promise<void> {
     coreDtype.value = value
-    await updateOptions({ codex_core_dtype: value })
+    await applyOptionUpdate({ codex_core_dtype: value })
   }
 
   async function setCoreComputeDtype(value: string): Promise<void> {
     coreComputeDtype.value = value
-    await updateOptions({ codex_core_compute_dtype: value })
+    await applyOptionUpdate({ codex_core_compute_dtype: value })
   }
 
   async function setTeDtype(value: string): Promise<void> {
     teDtype.value = value
-    await updateOptions({ codex_te_dtype: value })
+    await applyOptionUpdate({ codex_te_dtype: value })
   }
 
   async function setTeComputeDtype(value: string): Promise<void> {
     teComputeDtype.value = value
-    await updateOptions({ codex_te_compute_dtype: value })
+    await applyOptionUpdate({ codex_te_compute_dtype: value })
   }
 
   async function setVaeDtype(value: string): Promise<void> {
     vaeDtype.value = value
-    await updateOptions({ codex_vae_dtype: value })
+    await applyOptionUpdate({ codex_vae_dtype: value })
   }
 
   async function setVaeComputeDtype(value: string): Promise<void> {
     vaeComputeDtype.value = value
-    await updateOptions({ codex_vae_compute_dtype: value })
+    await applyOptionUpdate({ codex_vae_compute_dtype: value })
   }
 
   async function setSmartOffload(value: boolean): Promise<void> {
     smartOffload.value = value
-    await updateOptions({ codex_smart_offload: value })
+    await applyOptionUpdate({ codex_smart_offload: value })
   }
 
   async function setSmartFallback(value: boolean): Promise<void> {
     smartFallback.value = value
-    await updateOptions({ codex_smart_fallback: value })
+    await applyOptionUpdate({ codex_smart_fallback: value })
   }
 
   async function setSmartCache(value: boolean): Promise<void> {
     smartCache.value = value
-    await updateOptions({ codex_smart_cache: value })
+    await applyOptionUpdate({ codex_smart_cache: value })
   }
 
   async function setCoreStreaming(value: boolean): Promise<void> {
     coreStreaming.value = value
-    await updateOptions({ codex_core_streaming: value })
+    await applyOptionUpdate({ codex_core_streaming: value })
   }
 
   return {
@@ -642,10 +710,16 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     smartFallback,
     smartCache,
     coreStreaming,
+    settingsRevision,
+    lastAppliedNowMessages,
+    lastRestartRequiredMessages,
     setSmartOffload,
     setSmartFallback,
     setSmartCache,
     setCoreStreaming,
+    getSettingsRevision,
+    refreshSettingsRevision,
+    clearOptionApplyMessages,
     // SHA maps for asset resolution
     textEncoderShaMap,
     resolveTextEncoderSha,

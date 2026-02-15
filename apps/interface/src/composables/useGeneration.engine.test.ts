@@ -6,16 +6,17 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Unit tests for canonical engine mapping used by generation preflight and request dispatch.
-Locks alias parity so UI disable-state and request engine selection remain consistent.
+Purpose: Unit tests for generation request helpers (engine mapping, payload sanitization, revision-conflict parsing).
+Locks alias parity so UI disable-state and request engine selection remain consistent, and verifies stale-revision conflict helper behavior.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `useGeneration.engine.test` (module): resolveEngineForRequest mapping + img2img payload sanitization tests.
+- `useGeneration.engine.test` (module): resolveEngineForRequest mapping + img2img payload sanitization + revision-conflict helper tests.
 */
 
 import { describe, expect, it } from 'vitest'
 
 import { resolveEngineForRequest, sanitizeImg2ImgPayload } from './useGeneration'
+import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
 describe('resolveEngineForRequest', () => {
   it('maps wan and chroma aliases', () => {
@@ -69,5 +70,33 @@ describe('sanitizeImg2ImgPayload', () => {
     expect(payload.img2img_hires_cfg).toBeUndefined()
     expect(payload.img2img_hires_distilled_cfg).toBeUndefined()
     expect(payload.img2img_hires_tile).toBeUndefined()
+  })
+})
+
+describe('settings revision conflict helpers', () => {
+  it('extracts current_revision from 409 conflict payloads', () => {
+    const error = Object.assign(new Error('conflict'), {
+      status: 409,
+      body: {
+        detail: {
+          current_revision: 19,
+        },
+      },
+    })
+
+    expect(resolveSettingsRevisionConflict(error)).toBe(19)
+  })
+
+  it('ignores non-conflict errors', () => {
+    const error = Object.assign(new Error('bad request'), {
+      status: 400,
+      body: { detail: { current_revision: 3 } },
+    })
+    expect(resolveSettingsRevisionConflict(error)).toBeNull()
+  })
+
+  it('formats an actionable retry message', () => {
+    expect(formatSettingsRevisionConflictMessage(23)).toContain('retry')
+    expect(formatSettingsRevisionConflictMessage(23)).toContain('23')
   })
 })

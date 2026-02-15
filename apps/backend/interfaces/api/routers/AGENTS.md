@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-11
+Last Review: 2026-02-15
 Status: Active
 
 ## Purpose
@@ -30,7 +30,7 @@ Status: Active
 - 2026-01-18: `generation.py` enforces image asset requirements via `apps/backend/core/contracts/asset_requirements.py` and keeps engine registration lazy (avoids torch-heavy startup for non-generation endpoints).
 - 2026-01-18: `generation.py` `vid2vid.method="wan_animate"` enforces repo-scoped paths under `CODEX_ROOT` (requires `vid2vid_model_dir`; stage `model_dir` must exist under the repo root).
 - 2026-01-21: WAN stage LoRA selection is sha-only via `lora_sha` (sha → `.safetensors`); stage `lora_path` is rejected.
-- 2026-01-21: Video tasks now honor Smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) by propagating them into requests and applying `smart_runtime_overrides(...)` inside the video worker thread.
+- 2026-01-21: Video tasks honor Smart flags via persisted options (`codex_smart_offload`/`codex_smart_fallback`/`codex_smart_cache`), propagating effective values into requests and applying `smart_runtime_overrides(...)` inside the video worker thread.
 - 2026-01-23: `generation.py` enforces WAN video `height/width % 16 == 0` (txt2vid/img2vid/vid2vid; Diffusers parity) to avoid silent patch-grid cropping in the WAN22 runtime.
 - 2026-01-23: WAN `%16` validation errors include an explicit `WIDTHxHEIGHT` + suggested rounded-up dimensions (for direct API callers; the UI snaps dims before POST).
 - 2026-01-24: `settings.py` serves schema from the generated registry (JSON fallback) with no legacy static fallback; `run_api.py` prunes `apps/settings_values.json` against the registry on startup.
@@ -62,3 +62,6 @@ Status: Active
 - 2026-02-11: `generation.py` now resolves `extras.vae_sha` through a VAE-only inventory helper (`resolve_vae_path_by_sha`) and returns HTTP 409 when a SHA maps to a non-VAE asset path, preventing Flux core-only VAE misselection from leaking into loader missing-key noise.
 - 2026-02-11: WAN video routes (`txt2vid`/`img2vid`) now resolve `wan_vae_sha` through VAE-only ownership (`resolve_vae_path_by_sha`) and normalize to a validated VAE bundle directory (`config.json` + weights file required), rejecting non-VAE SHA resolution and invalid bundles with HTTP 409 before runtime fallback loops.
 - 2026-02-11: WAN video routes (`txt2vid`/`img2vid`) now also accept file-based WAN VAE SHA resolution when config is available via sibling `config.json` or vendored metadata (`wan_metadata_dir/vae/config.json`), while keeping fail-loud 409 for missing config sources, missing bundle weights, and non-VAE SHA ownership violations.
+- 2026-02-15: `generation.py` enforces the strict generation settings contract: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted `codex_options_revision` (HTTP 409 includes `current_revision` + `provided_revision`).
+- 2026-02-15: `options.py` `POST /api/options` now returns apply metadata arrays (`applied_now[]`, `restart_required[]`) with per-key reason strings; runtime-memory keys are classified as hot-applied.
+- 2026-02-15: `generation.py` video task worker now emits contract-trace JSONL events (opt-in via `CODEX_TRACE_CONTRACT`) with stage/action/device + prompt hash only (no raw prompt fields).

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Frontend-driven XYZ sweep store for image tabs.
-Builds parameter grid combos, enqueues jobs, starts txt2img tasks, streams task events, and supports stop modes/cancellation while collecting
+Builds parameter grid combos, enqueues jobs, starts txt2img tasks (including required `settings_revision`), streams task events, and supports stop modes/cancellation while collecting
 per-cell results. Hires upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring; hires tile prefs (fallback/min_tile) are propagated from the shared upscalers store.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 
-import { cancelTask, startTxt2Img, subscribeTask, updateOptions } from '../api/client'
+import { cancelTask, startTxt2Img, subscribeTask } from '../api/client'
 import { buildTxt2ImgPayload } from '../api/payloads'
 import type { Txt2ImgRequest } from '../api/payloads'
 import type { GeneratedImage, TaskEvent } from '../api/types'
@@ -153,6 +153,7 @@ export const useXyzStore = defineStore('xyz', () => {
       batchCount: 1,
       styles: [],
       device: quick.currentDevice,
+      settingsRevision: quick.getSettingsRevision(),
       engine: engineKey,
       model: resolvedModelSha || modelLabel,
     }

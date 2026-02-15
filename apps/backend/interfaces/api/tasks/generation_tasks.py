@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Shared task orchestration helpers for generation endpoints.
 Centralizes image encoding, engine-options building, and the common task worker loop (status/progress/result/end/error) so routers stay thin.
 Uses the shared inference gate when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished` (stream termination + cleanup).
+When `CODEX_TRACE_CONTRACT=1`, emits prompt-redacted contract-trace JSONL events (`prompt_hash` only) for prepare/run/progress/result/error/end stages.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `encode_images` (function): Encode PIL images to base64 PNG payloads, optionally injecting PNG text metadata.
@@ -27,6 +28,9 @@ from typing import Any, Callable, Mapping, Optional
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, unregister_task
+from apps.backend.runtime.diagnostics.contract_trace import error_meta
+from apps.backend.runtime.diagnostics.contract_trace import emit_event as emit_contract_trace
+from apps.backend.runtime.diagnostics.contract_trace import hash_request_prompt
 
 logger = logging.getLogger("backend.api.tasks.generation")
 
@@ -138,10 +142,45 @@ def run_image_task(
         ensure_default_engines_registered()
         req, engine_key, model_ref = prepare(payload)
     except Exception as err:
+        emit_contract_trace(
+            task_id=task_id,
+            mode=str(getattr(task_type, "value", "unknown")),
+            stage="prepare",
+            action="error",
+            component="router",
+            device=device,
+            strict=True,
+            fallback_enabled=False,
+            fallback_used=False,
+            prompt_hash_value="",
+            meta=error_meta(err),
+        )
         entry.error = str(err)
         entry.mark_finished(success=False)
         unregister_task(task_id)
         raise
+
+    mode = str(getattr(task_type, "value", "unknown"))
+    prompt_hash_value = hash_request_prompt(req)
+    fallback_enabled = bool(getattr(req, "smart_fallback", False))
+    storage_dtype = getattr(req, "core_dtype", None)
+    compute_dtype = getattr(req, "core_compute_dtype", None)
+
+    emit_contract_trace(
+        task_id=task_id,
+        mode=mode,
+        stage="prepare",
+        action="ready",
+        component="router",
+        device=device,
+        storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+        compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+        strict=True,
+        fallback_enabled=fallback_enabled,
+        fallback_used=False,
+        prompt_hash_value=prompt_hash_value,
+        meta={"engine_key": engine_key},
+    )
 
     def worker() -> None:
         acquired = False
@@ -149,18 +188,60 @@ def run_image_task(
         try:
             if single_flight_enabled():
                 push({"type": "status", "stage": "waiting_for_inference"})
+                emit_contract_trace(
+                    task_id=task_id,
+                    mode=mode,
+                    stage="waiting_for_inference",
+                    action="wait",
+                    component="inference_gate",
+                    device=device,
+                    storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                    compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                    strict=True,
+                    fallback_enabled=fallback_enabled,
+                    fallback_used=False,
+                    prompt_hash_value=prompt_hash_value,
+                )
 
             acquired = acquire_inference_gate(
                 should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
             )
             if not acquired:
                 entry.error = "cancelled"
+                emit_contract_trace(
+                    task_id=task_id,
+                    mode=mode,
+                    stage="inference_gate",
+                    action="cancelled",
+                    component="inference_gate",
+                    device=device,
+                    storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                    compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                    strict=True,
+                    fallback_enabled=fallback_enabled,
+                    fallback_used=False,
+                    prompt_hash_value=prompt_hash_value,
+                )
                 return
 
             push({"type": "status", "stage": "running"})
             from apps.backend.interfaces.api.device_selection import apply_primary_device
 
             apply_primary_device(device)
+            emit_contract_trace(
+                task_id=task_id,
+                mode=mode,
+                stage="running",
+                action="start",
+                component="orchestrator",
+                device=device,
+                storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                strict=True,
+                fallback_enabled=fallback_enabled,
+                fallback_used=False,
+                prompt_hash_value=prompt_hash_value,
+            )
 
             preview_cfg = live_preview.build_task_config(opts_get)
             entry.last_preview_id_sent = 0
@@ -192,6 +273,25 @@ def run_image_task(
                         }
                         live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
                         push(evt)
+                        emit_contract_trace(
+                            task_id=task_id,
+                            mode=mode,
+                            stage=str(ev.stage or "progress"),
+                            action="progress",
+                            component="orchestrator",
+                            device=device,
+                            storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                            compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                            strict=True,
+                            fallback_enabled=fallback_enabled,
+                            fallback_used=False,
+                            prompt_hash_value=prompt_hash_value,
+                            meta={
+                                "step": ev.step,
+                                "total_steps": ev.total_steps,
+                                "percent": ev.percent,
+                            },
+                        )
                         continue
 
                     if not isinstance(ev, ResultEvent):
@@ -221,6 +321,21 @@ def run_image_task(
                         "info": info_obj,
                     }
                     entry.result = {"status": "completed", "result": result}
+                    emit_contract_trace(
+                        task_id=task_id,
+                        mode=mode,
+                        stage="result",
+                        action="emit",
+                        component="orchestrator",
+                        device=device,
+                        storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                        compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                        strict=True,
+                        fallback_enabled=fallback_enabled,
+                        fallback_used=False,
+                        prompt_hash_value=prompt_hash_value,
+                        meta={"image_count": len(payload_obj.get("images", []) or [])},
+                    )
 
             success = True
         except Exception as err:  # pragma: no cover - surfaces runtime errors
@@ -232,10 +347,41 @@ def run_image_task(
                 pass
 
             entry.error = str(err)
+            fallback_used = fallback_enabled and ("fallback" in str(err).lower())
+            emit_contract_trace(
+                task_id=task_id,
+                mode=mode,
+                stage="error",
+                action="error",
+                component="orchestrator",
+                device=device,
+                storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                strict=True,
+                fallback_enabled=fallback_enabled,
+                fallback_used=fallback_used,
+                prompt_hash_value=prompt_hash_value,
+                meta=error_meta(err),
+            )
             success = False
         finally:
             entry.mark_finished(success=success)
             entry.schedule_cleanup(task_id)
+            emit_contract_trace(
+                task_id=task_id,
+                mode=mode,
+                stage="end",
+                action="finish",
+                component="task",
+                device=device,
+                storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                strict=True,
+                fallback_enabled=fallback_enabled,
+                fallback_used=False,
+                prompt_hash_value=prompt_hash_value,
+                meta={"success": success},
+            )
             if acquired:
                 try:
                     release_inference_gate()

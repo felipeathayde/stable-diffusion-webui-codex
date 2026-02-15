@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Codex-native runtime memory management service (hardware probe + precision/budget policies + loaded model registry).
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
-Exposes per-role storage vs compute dtype selection (compute defaults to fp32 for core/TE/VAE unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
+Exposes per-role storage vs compute dtype selection (core/TE default to fp16 on accelerator devices, VAE defaults to fp32, CPU remains fp32 unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
@@ -586,7 +586,9 @@ class CodexMemoryManager:
         activation precision during forward passes when `allow_manual_cast` is enabled.
 
         Default policy:
-        - CORE/TEXT_ENCODER/VAE compute in fp32 by default for stability.
+        - CORE/TEXT_ENCODER compute in fp16 on accelerator devices.
+        - VAE compute stays fp32 by default.
+        - CPU execution uses fp32 (fail-loud guard against implicit reduced precision).
         - Other roles compute in the selected storage dtype unless overridden.
         """
 
@@ -610,7 +612,20 @@ class CodexMemoryManager:
                 )
             compute = forced
         else:
-            compute = torch.float32 if role in (DeviceRole.CORE, DeviceRole.TEXT_ENCODER, DeviceRole.VAE) else storage_dtype
+            if device.type == "cpu":
+                compute = torch.float32
+            elif role in (DeviceRole.CORE, DeviceRole.TEXT_ENCODER):
+                if torch.float16 in supported:
+                    compute = torch.float16
+                else:
+                    compute = storage_dtype
+            elif role == DeviceRole.VAE:
+                if torch.float32 in supported:
+                    compute = torch.float32
+                else:
+                    compute = storage_dtype
+            else:
+                compute = storage_dtype
 
         if compute != storage_dtype and not policy.allow_manual_cast:
             raise MemoryConfigurationError(

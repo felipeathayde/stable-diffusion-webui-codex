@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Options API routes for reading, updating, and validating settings.
-Exposes the JSON-backed options store and registry-driven validation helpers, and applies supported runtime memory overrides immediately
-(device backend + storage/compute dtype) via the memory manager.
+Exposes the JSON-backed options store and registry-driven validation helpers, applies supported runtime memory overrides immediately
+(device backend + storage/compute dtype) via the memory manager, and emits apply metadata on `POST /api/options`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for options endpoints.
@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -31,10 +31,32 @@ def build_router(
     setting_type,
 ) -> APIRouter:
     router = APIRouter()
+    hot_apply_reasons: Dict[str, str] = {
+        "codex_attention_backend": "hot-applied immediately (runtime attention backend reconfigured).",
+        "codex_core_device": "hot-applied immediately (runtime memory manager backend updated).",
+        "codex_te_device": "hot-applied immediately (runtime memory manager backend updated).",
+        "codex_vae_device": "hot-applied immediately (runtime memory manager backend updated).",
+        "codex_core_dtype": "hot-applied immediately (runtime memory manager storage dtype updated).",
+        "codex_te_dtype": "hot-applied immediately (runtime memory manager storage dtype updated).",
+        "codex_vae_dtype": "hot-applied immediately (runtime memory manager storage dtype updated).",
+        "codex_core_compute_dtype": "hot-applied immediately (runtime memory manager compute dtype updated).",
+        "codex_te_compute_dtype": "hot-applied immediately (runtime memory manager compute dtype updated).",
+        "codex_vae_compute_dtype": "hot-applied immediately (runtime memory manager compute dtype updated).",
+        "codex_smart_offload": "hot-applied immediately (effective for the next generation request).",
+        "codex_smart_fallback": "hot-applied immediately (effective for the next generation request).",
+        "codex_smart_cache": "hot-applied immediately (effective for the next generation request).",
+        "codex_core_streaming": "hot-applied immediately (effective for the next generation request).",
+        "codex_export_video": "hot-applied immediately (effective for the next generation request).",
+    }
 
     @router.get("/api/options")
     def get_options() -> Dict[str, Any]:
-        return {"values": opts_load_native()}
+        revision = 0
+        try:
+            revision = int(getattr(opts_snapshot(), "codex_options_revision", 0) or 0)
+        except Exception:
+            revision = 0
+        return {"values": opts_load_native(), "revision": max(0, revision)}
 
     @router.get("/api/options/keys")
     def get_options_keys() -> Dict[str, Any]:
@@ -126,6 +148,7 @@ def build_router(
     @router.post("/api/options")
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         updates = _validate_options(payload)
+        hot_applied_keys: set[str] = set()
 
         # Apply memory manager overrides when present
         from apps.backend.runtime import memory_management as mem_management
@@ -147,6 +170,7 @@ def build_router(
                     mem_management.set_attention_backend(str(value))
                 except Exception as exc:
                     raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
+                hot_applied_keys.add(key)
                 continue
             if key not in role_map:
                 continue
@@ -160,9 +184,31 @@ def build_router(
                     mem_management.set_component_compute_dtype(role, str(value))
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
+            hot_applied_keys.add(key)
 
         updated = opts_set_many(updates)
-        return {"updated": updated}
+        applied_now: List[str] = []
+        restart_required: List[str] = []
+        for key in updated:
+            if key == "codex_options_revision":
+                continue
+            reason = hot_apply_reasons.get(key)
+            if reason is None and key in hot_applied_keys:
+                reason = "hot-applied immediately."
+            if reason is not None:
+                applied_now.append(f"{key}: {reason}")
+                continue
+            restart_required.append(f"{key}: not hot-applied; restart required.")
+        try:
+            revision = int(getattr(opts_snapshot(), "codex_options_revision", 0) or 0)
+        except Exception:
+            revision = 0
+        return {
+            "updated": updated,
+            "revision": max(0, revision),
+            "applied_now": applied_now,
+            "restart_required": restart_required,
+        }
 
     @router.post("/api/options/validate")
     def validate_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

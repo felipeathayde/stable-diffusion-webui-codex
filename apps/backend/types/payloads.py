@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Payload validation key set definitions.
-Defines frozen key groups for SHA selection, txt2img, and extras payloads (including ER-SDE option envelopes) and exposes singleton instances used by request validators.
+Defines frozen key groups for SHA selection, txt2img, and extras payloads (including ER-SDE option envelopes and generation `settings_revision` contract key) and exposes singleton instances used by request validators.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ShaKeys` (dataclass): Frozen key groups for SHA256-based asset selection payload fields.
-- `Txt2ImgKeys` (dataclass): Frozen key groups for txt2img payload fields (CORE/DIFFUSION/FLOW/HIRES incl. hires tile config).
+- `Txt2ImgKeys` (dataclass): Frozen key groups for txt2img payload fields (CORE/DIFFUSION/FLOW/HIRES, SMART flags, and `settings_revision` contract key).
 - `ExtrasKeys` (dataclass): Frozen key groups for `payload.extras` fields (includes Z-Image Turbo/Base `zimage_variant` and optional `er_sde` options).
 - `SHA_KEYS` (constant): Singleton instance of `ShaKeys`.
 - `TXT2IMG_KEYS` (constant): Singleton instance of `Txt2ImgKeys`.
@@ -86,13 +86,14 @@ class Txt2ImgKeys:
     DEVICE: FrozenSet[str] = frozenset({"device"})
     MODEL: FrozenSet[str] = frozenset({"engine", "model"})
     SMART: FrozenSet[str] = frozenset({"smart_offload", "smart_fallback", "smart_cache"})
+    REVISION: FrozenSet[str] = frozenset({"settings_revision"})
     
     # Extras container (passed through to engine)
     EXTRAS: FrozenSet[str] = frozenset({"extras"})
     
     @property
     def ALL(self) -> FrozenSet[str]:
-        return self.CORE | self.DIFFUSION | self.FLOW | self.DEVICE | self.MODEL | self.SMART | self.EXTRAS
+        return self.CORE | self.DIFFUSION | self.FLOW | self.DEVICE | self.MODEL | self.SMART | self.REVISION | self.EXTRAS
     
     @property
     def HIRES_ALL(self) -> FrozenSet[str]:

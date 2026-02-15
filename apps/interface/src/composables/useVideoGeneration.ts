@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 	Purpose: Unified video generation composable for WAN (txt2vid/img2vid/vid2vid).
 	Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
-	to update UI state and fetch final results. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
+	to update UI state and fetch final results. Every start payload includes `settings_revision`, and stale-revision conflicts (`409` + `current_revision`)
+	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -51,6 +52,7 @@ import {
 import type { GeneratedImage, TaskEvent } from '../api/types'
 import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
+import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
 type VideoMode = 'txt2vid' | 'img2vid' | 'vid2vid'
@@ -524,6 +526,7 @@ export function useVideoGeneration(tabId: string) {
 
     return {
       device: quicksettings.currentDevice || 'cpu',
+      settingsRevision: quicksettings.getSettingsRevision(),
       prompt: v.prompt,
       negativePrompt: v.negativePrompt,
       width: v.width,
@@ -673,6 +676,16 @@ export function useVideoGeneration(tabId: string) {
       unsubscribers.set(tabId, unsub)
     } catch (err) {
       clearResumeState(resumeKey(tabId))
+      const conflictRevision = resolveSettingsRevisionConflict(err)
+      if (conflictRevision !== null) {
+        try {
+          await quicksettings.refreshSettingsRevision(conflictRevision)
+        } catch {
+          // Ignore refresh failures; fallback revision is already applied.
+        }
+        setError(formatSettingsRevisionConflictMessage(quicksettings.getSettingsRevision()))
+        return
+      }
       setError(formatZodError(err))
     }
   }

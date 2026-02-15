@@ -1,6 +1,6 @@
 # apps/backend/infra Overview
 Date: 2025-10-28
-Last Review: 2026-02-10
+Last Review: 2026-02-15
 Status: Active
 
 ## Purpose
@@ -25,6 +25,7 @@ Status: Active
 - 2026-01-24: Added `config/bootstrap_env.py` so backend bootstrap can publish resolved CLI/env values to env readers without mutating `os.environ`.
 - 2026-01-24: Removed silent CPU fallbacks for missing device defaults; `config/args.py` now prompts in foreground TTY sessions and fails loud in non-interactive startups (requires `--core-device/--te-device/--vae-device` or persisted defaults).
 - 2026-02-10: `config/args.py` strict runtime path now fails loud on unknown CLI arguments in `initialize(..., strict=True)` while keeping module-import defaults (`strict=False`) tolerant.
+- 2026-02-15: Added trace/runtime diagnostics bootstrap flags in `config/args.py` (`--trace-contract`, `--trace-profiler`) with env aliases (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) and `CODEX_PROFILE -> trace_profiler` mapping.
 - 2026-01-04: Added `config/env_flags.py` as the canonical env-flag parsing helper to keep debug/feature toggle semantics consistent across runtime subsystems.
 - 2026-02-05: `config/paths.py` model directory keyset now includes Anima roots (`anima_ckpt`, `anima_tenc`, `anima_vae`, `anima_loras`) so best-effort provisioning mirrors existing Flux/WAN/ZImage conventions.
 - 2026-01-20: Added `--lora-apply-mode` (and `CODEX_LORA_APPLY_MODE`) as a global LoRA application switch: `merge` (default; rewrites weights once) vs `online` (apply on-the-fly during forward). Requires restarting the backend process to take effect.

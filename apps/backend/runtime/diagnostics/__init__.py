@@ -11,6 +11,7 @@ Collects optional tracing, timeline, and exception-dump utilities used to diagno
 
 Symbols (top-level; keep in sync; no ghosts):
 - `call_trace` (module): Global `sys.setprofile` call tracer.
+- `contract_trace` (module): JSONL contract-trace sink with prompt hashing only.
 - `exception_hook` (module): Sys/thread/asyncio exception dump hooks.
 - `pipeline_debug` (module): Pipeline debug flag + decorator helpers.
 - `profiler` (module): Global opt-in torch profiler wrapper (trace export + transfer totals).
@@ -20,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 __all__ = [
     "call_trace",
+    "contract_trace",
     "exception_hook",
     "pipeline_debug",
     "profiler",

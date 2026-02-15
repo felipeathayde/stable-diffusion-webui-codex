@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional refiner).
-Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata.
+Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata, with fail-loud conditioning guards that avoid embedding raw prompt text in raised errors.
 The hires stage delegates init preparation and `denoise` semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
@@ -238,9 +238,10 @@ class Txt2ImgPipelineRunner:
                 if isinstance(uncond_cross, torch.Tensor):
                     norm_uncond = float(uncond_cross.abs().sum().item())
                     if norm_uncond < 1e-6:
+                        negative_count = sum(1 for item in negative_prompts if str(item or "").strip())
                         raise RuntimeError(
-                            f"Unconditional embedding returned all zeros for negative prompt(s) {negative_prompts}. "
-                            "Check CLIP encoders or prompt handling before sampling."
+                            "Unconditional embedding returned all zeros for a non-empty negative prompt batch "
+                            f"(count={negative_count}). Check CLIP encoders or prompt handling before sampling."
                         )
         finally:
             if smart_offload_enabled():

@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Settings form renderer from the backend schema.
-Renders settings fields from the `/api/settings/schema` model and applies changes via `/api/options`, tracking pending/dirty changes locally.
+Renders settings fields from the `/api/settings/schema` model and applies changes via `/api/options`, tracking pending/dirty changes locally and
+showing apply metadata feedback (`applied_now[]` vs `restart_required[]`) after each save.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SettingsForm` (component): Dynamic settings form used in the Settings view.
@@ -73,6 +74,18 @@ Symbols (top-level; keep in sync; no ghosts):
         <button class="btn btn-sm btn-primary" :disabled="pending || changedCount===0" @click="applyChanges">Apply</button>
         <span class="caption" v-if="changedCount>0">{{ changedCount }} change(s) pending</span>
       </div>
+      <div v-if="lastRestartRequired.length > 0" class="settings-apply-alert settings-apply-alert--warn" role="alert">
+        <div class="caption">Restart required for:</div>
+        <ul class="settings-apply-alert-list">
+          <li v-for="message in lastRestartRequired" :key="message">{{ message }}</li>
+        </ul>
+      </div>
+      <div v-else-if="lastAppliedNow.length > 0" class="settings-apply-alert settings-apply-alert--ok" role="status">
+        <div class="caption">Applied immediately:</div>
+        <ul class="settings-apply-alert-list">
+          <li v-for="message in lastAppliedNow" :key="message">{{ message }}</li>
+        </ul>
+      </div>
     </div>
   </div>
   
@@ -89,6 +102,8 @@ const props = defineProps<{ fields: SettingsField[]; values: Record<string, unkn
 const model = ref<Record<string, unknown>>({})
 const dirty = ref<Record<string, unknown>>({})
 const pending = ref(false)
+const lastAppliedNow = ref<string[]>([])
+const lastRestartRequired = ref<string[]>([])
 
 watch(
   () => props.values,
@@ -110,7 +125,11 @@ async function applyChanges() {
   if (pending.value || changedCount.value === 0) return
   pending.value = true
   try {
-    await updateOptions(dirty.value)
+    const response = await updateOptions(dirty.value)
+    const appliedNowRaw = (response as any).applied_now
+    const restartRequiredRaw = (response as any).restart_required
+    lastAppliedNow.value = Array.isArray(appliedNowRaw) ? appliedNowRaw.map((item) => String(item)) : []
+    lastRestartRequired.value = Array.isArray(restartRequiredRaw) ? restartRequiredRaw.map((item) => String(item)) : []
     dirty.value = {}
   } finally {
     pending.value = false

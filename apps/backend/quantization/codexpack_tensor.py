@@ -8,9 +8,10 @@ Required Notice: see NOTICE
 
 Purpose: Runtime packed-weight containers for CodexPack GGUF execution.
 Defines `torch.nn.Parameter` subclasses used by CodexPack loaders to attach kernel/layout metadata to packed tensors while preserving
-GGUF invariants (byte-packed storage; `computation_dtype` controls output dtype, not storage dtype).
+GGUF invariants (byte-packed storage; `computation_dtype` controls output dtype, not storage dtype), plus zero-copy NumPy tensor-view helpers used to avoid eager host copies.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_tensor_from_numpy_no_copy` (function): Builds a tensor view from NumPy storage without forcing a copy (with explicit readonly-warning suppression).
 - `CodexPackLinearQ4KTilepackV1Parameter` (class): Packed Q4_K tilepack_v1 linear-weight container (I8 blob + metadata).
 """
 
@@ -20,10 +21,19 @@ from typing import Any, Optional
 
 import numpy as np
 import torch
+import warnings
 
 __all__ = [
     "CodexPackLinearQ4KTilepackV1Parameter",
 ]
+
+
+def _tensor_from_numpy_no_copy(data: np.ndarray) -> torch.Tensor:
+    if not isinstance(data, np.ndarray):
+        raise TypeError(f"Expected numpy.ndarray, got {type(data)!r}")
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="The given NumPy array is not writable.*")
+        return torch.from_numpy(data)
 
 
 class CodexPackLinearQ4KTilepackV1Parameter(torch.nn.Parameter):
@@ -56,16 +66,12 @@ class CodexPackLinearQ4KTilepackV1Parameter(torch.nn.Parameter):
             raise ValueError(f"out_features/in_features must be positive; got: {out_features!r}/{in_features!r}")
 
         if isinstance(data, np.ndarray):
-            if not data.flags.writeable:
-                data = np.array(data, copy=True)
-            tensor = torch.from_numpy(data)
+            tensor = _tensor_from_numpy_no_copy(data)
         elif isinstance(data, torch.Tensor):
             tensor = data.detach()
         else:
             arr = np.asarray(data)
-            if not arr.flags.writeable:
-                arr = np.array(arr, copy=True)
-            tensor = torch.from_numpy(arr)
+            tensor = _tensor_from_numpy_no_copy(arr)
 
         if tensor.dtype not in (torch.int8, torch.uint8):
             raise TypeError(

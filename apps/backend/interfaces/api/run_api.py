@@ -10,6 +10,8 @@ Required Notice: see NOTICE
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
+Startup settings normalization preserves `codex_options_revision` while pruning unknown/invalid registry keys.
+Launcher/backend trace toggles (`--trace-contract`, `--trace-profiler`) are published via bootstrap env for runtime diagnostics modules.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
@@ -371,10 +373,14 @@ def build_app() -> FastAPI:
         if not isinstance(saved, dict) or not saved:
             return
         idx = _field_index()
+        revision_key = options_store.OPTIONS_REVISION_KEY
+        normalized_revision = options_store.get_revision(saved)
         # Validate and normalize persisted values against schema, then re-save
         changed = False
         dropped: list[str] = []
         for k in list(saved.keys()):
+            if k == revision_key:
+                continue
             f = idx.get(k)
             if not f:
                 dropped.append(k)
@@ -405,6 +411,10 @@ def build_app() -> FastAPI:
                 saved.pop(k, None)
                 changed = True
                 continue
+        previous_revision = saved.get(revision_key)
+        if previous_revision != normalized_revision:
+            saved[revision_key] = normalized_revision
+            changed = True
         if changed:
             if dropped:
                 print(color_red(f"[settings] dropped invalid/unknown keys from settings_values.json: {', '.join(sorted(set(dropped)))}"))
@@ -508,6 +518,11 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
 
         if getattr(ns, "debug_preview_factors", False):
             _set_bootstrap_env("CODEX_DEBUG_PREVIEW_FACTORS", "1")
+        if getattr(ns, "trace_contract", False):
+            _set_bootstrap_env("CODEX_TRACE_CONTRACT", "1")
+        if getattr(ns, "trace_profiler", False):
+            _set_bootstrap_env("CODEX_TRACE_PROFILER", "1")
+            _set_bootstrap_env("CODEX_PROFILE", "1")
         mode = getattr(ns, "lora_apply_mode", None)
         if mode is not None:
             # Only publish non-default values. Publishing defaults would pin global state

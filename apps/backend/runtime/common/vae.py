@@ -8,11 +8,11 @@ Required Notice: see NOTICE
 
 Purpose: Shared Flow16 VAE utilities (16-channel latent AutoencoderKL) for Flux/Z Image families.
 Defines the canonical Flow16 VAE config parity used by diffusers (no quant/post-quant conv), plus helpers to locate and load a Flow16 VAE
-from either a diffusers directory or a single weights file.
+from either a diffusers directory or a single weights file with device-aware checkpoint loading paths.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FLOW16_VAE_CONFIG` (constant): Canonical diffusers-like config dict for Flow16 VAEs (16 latent channels, scaling/shift factors).
-- `load_flow16_vae` (function): Loads a Flow16 VAE from a directory or weights file with strict latent-channel validation.
+- `load_flow16_vae` (function): Loads a Flow16 VAE from a directory or weights file with strict latent-channel validation and device-aware state-dict ingestion.
 - `find_flow16_vae` (function): Searches candidate directories for a valid Flow16 VAE path.
 """
 
@@ -114,12 +114,17 @@ def load_flow16_vae(
                 # requiring quantized Conv2d ops in the VAE graph.
                 from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
-                state_dict = load_gguf_state_dict(vae_path, dequantize=True, computation_dtype=dtype)
+                state_dict = load_gguf_state_dict(
+                    vae_path,
+                    dequantize=True,
+                    computation_dtype=dtype,
+                    device=device,
+                )
             else:
                 # Single-file weights (safetensors/ckpt/pt)
                 from apps.backend.runtime.checkpoint.io import load_torch_file
 
-                state_dict = load_torch_file(vae_path, device="cpu")
+                state_dict = load_torch_file(vae_path, device=device)
 
             state_dict = strip_known_vae_prefixes(state_dict)
             vae_layout = detect_vae_layout(state_dict)

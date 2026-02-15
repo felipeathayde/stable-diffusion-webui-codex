@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Vitest coverage for image payload builders (txt2img).
 Ensures engine-specific guidance fields (`cfg` vs `distilled_cfg`) and extras mapping (including Z-Image variant selection)
-are emitted as expected.
+are emitted as expected, including `settings_revision` contract wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `payloads.test` (module): Image payload builder tests.
@@ -34,6 +34,7 @@ describe('buildTxt2ImgPayload', () => {
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
+      settingsRevision: 12,
       hires: {
         enabled: true,
         denoise: 0.4,
@@ -83,6 +84,7 @@ describe('buildTxt2ImgPayload', () => {
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
+      settingsRevision: 7,
       hires: {
         enabled: true,
         denoise: 0.4,
@@ -114,6 +116,7 @@ describe('buildTxt2ImgPayload', () => {
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
+      settingsRevision: 9,
       hires: {
         enabled: true,
         denoise: 0.4,
@@ -144,6 +147,7 @@ describe('buildTxt2ImgPayload', () => {
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
+      settingsRevision: 3,
       hires: {
         enabled: true,
         denoise: 0.4,
@@ -162,6 +166,30 @@ describe('buildTxt2ImgPayload', () => {
     expect((payload.extras as any)?.hires?.negative_prompt).toBe('base negative')
   })
 
+  it('always emits settings_revision and never emits smart flags', () => {
+    const payload = buildTxt2ImgPayload({
+      prompt: 'test prompt',
+      negativePrompt: 'neg',
+      width: 512,
+      height: 512,
+      steps: 20,
+      guidanceScale: 7,
+      sampler: 'euler',
+      scheduler: 'karras',
+      seed: 42,
+      clipSkip: 0,
+      batchSize: 1,
+      batchCount: 1,
+      device: 'cuda',
+      settingsRevision: 33,
+    })
+
+    expect(payload.settings_revision).toBe(33)
+    expect((payload as any).smart_offload).toBeUndefined()
+    expect((payload as any).smart_fallback).toBeUndefined()
+    expect((payload as any).smart_cache).toBeUndefined()
+  })
+
   it('uses cfg (not distilled_cfg) for zimage', () => {
     const payload = buildTxt2ImgPayload({
       prompt: 'test prompt',
@@ -177,6 +205,7 @@ describe('buildTxt2ImgPayload', () => {
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
+      settingsRevision: 21,
       engine: 'zimage',
       model: 'dummy.safetensors',
       extras: { zimage_variant: 'turbo' },

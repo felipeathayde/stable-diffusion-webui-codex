@@ -12,10 +12,12 @@ source of truth without importing legacy/compat shims. Includes per-component st
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SETTINGS_PATH` (constant): Absolute path to `apps/settings_values.json` under the repo root.
+- `OPTIONS_REVISION_KEY` (constant): Internal settings revision key persisted in `settings_values.json`.
 - `load_values` (function): Reads the settings JSON from disk and returns a dict.
 - `save_values` (function): Writes the settings JSON to disk (atomic overwrite).
+- `get_revision` (function): Returns the normalized persisted options revision (non-negative int).
 - `get_value` (function): Reads a single option value with a fallback default.
-- `set_values` (function): Persists a mapping of option updates and returns the updated keys.
+- `set_values` (function): Persists option updates, bumps `OPTIONS_REVISION_KEY`, and returns updated keys.
 - `OptionsSnapshot` (class): Typed snapshot of option values used by runtime/engines/launchers.
 - `get_snapshot` (function): Builds an `OptionsSnapshot` from persisted values.
 """
@@ -30,6 +32,17 @@ from typing import Any, Dict, Mapping
 from apps.backend.infra.config.repo_root import get_repo_root
 
 SETTINGS_PATH = str(get_repo_root() / "apps" / "settings_values.json")
+OPTIONS_REVISION_KEY = "codex_options_revision"
+
+
+def _coerce_revision(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        revision = int(value)  # type: ignore[arg-type]
+    except Exception:
+        return 0
+    return max(0, revision)
 
 
 def load_values() -> Dict[str, Any]:
@@ -50,6 +63,11 @@ def save_values(values: Mapping[str, Any]) -> None:
         json.dump(dict(values), f, indent=2)
 
 
+def get_revision(values: Mapping[str, Any] | None = None) -> int:
+    source = values if values is not None else load_values()
+    return _coerce_revision(source.get(OPTIONS_REVISION_KEY))
+
+
 def get_value(key: str, default: Any = None) -> Any:
     return load_values().get(key, default)
 
@@ -63,12 +81,17 @@ def set_values(payload: Mapping[str, Any]) -> list[str]:
         key = str(k)
         data[key] = v
         updated.append(key)
+    if updated:
+        data[OPTIONS_REVISION_KEY] = get_revision(data) + 1
+        if OPTIONS_REVISION_KEY not in updated:
+            updated.append(OPTIONS_REVISION_KEY)
     save_values(data)
     return updated
 
 
 @dataclass
 class OptionsSnapshot:
+    codex_options_revision: int = 0
     codex_export_video: bool = False
     codex_core_device: str = "auto"
     codex_core_dtype: str = "auto"
@@ -86,6 +109,7 @@ class OptionsSnapshot:
 
     def as_dict(self) -> Dict[str, Any]:
         return {
+            OPTIONS_REVISION_KEY: self.codex_options_revision,
             "codex_export_video": self.codex_export_video,
             "codex_core_device": self.codex_core_device,
             "codex_core_dtype": self.codex_core_dtype,
@@ -114,6 +138,7 @@ def get_snapshot() -> OptionsSnapshot:
         return text or default
 
     return OptionsSnapshot(
+        codex_options_revision=get_revision(v),
         codex_export_video=bool(v.get("codex_export_video", False)),
         codex_core_device=_str_value("codex_core_device", "auto"),
         codex_core_dtype=_str_value("codex_core_dtype", "auto"),
@@ -133,7 +158,9 @@ def get_snapshot() -> OptionsSnapshot:
 
 __all__ = [
     "SETTINGS_PATH",
+    "OPTIONS_REVISION_KEY",
     "OptionsSnapshot",
+    "get_revision",
     "get_snapshot",
     "get_value",
     "load_values",

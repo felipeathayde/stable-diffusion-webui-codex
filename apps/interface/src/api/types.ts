@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Frontend API DTOs and response/payload types.
-Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows).
+Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows), including options revision/apply metadata fields used by strict generation contracts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`.
@@ -132,10 +132,14 @@ export interface SchedulersResponse {
 
 export interface OptionsResponse {
   values: Record<string, unknown>
+  revision?: number | null
 }
 
 export interface OptionsUpdateResponse {
   updated: string[]
+  revision?: number | null
+  applied_now?: string[] | null
+  restart_required?: string[] | null
 }
 
 export interface TaskStartResponse {

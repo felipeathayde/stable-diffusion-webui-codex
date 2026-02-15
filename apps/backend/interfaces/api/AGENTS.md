@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-10
+Last Review: 2026-02-15
 Status: Active
 
 ## Purpose
@@ -45,3 +45,7 @@ Status: Active
 - 2026-02-09: Task contracts are now typed in `task_registry.py` (`TaskEventType`, `TaskCancelMode`, `TaskStatusStage`) with strict non-terminal event normalization and fail-loud cancel-mode parsing (`immediate`/`after_current` only).
 - 2026-02-10: `/api/engines/capabilities` now emits `asset_contracts` keyed by semantic engine (owner-resolved from canonical engine ids) so frontend semantic gating cannot drift from alias-heavy `engine_id_to_semantic_engine` maps.
 - 2026-02-10: `dependency_checks.py` now resolves semantic asset contracts only via `contract_owner_for_semantic_engine(...)` (no local semantic-map duplication), so readiness rows fail loud if semantic/contract ownership drifts.
+- 2026-02-15: Generation payloads now require `settings_revision` to match persisted options revision; stale requests fail with HTTP 409 (`current_revision` + `provided_revision`) and top-level `smart_*` payload keys are rejected.
+- 2026-02-15: `run_api.py` startup settings normalization preserves `codex_options_revision` while pruning unknown/invalid persisted keys.
+- 2026-02-15: `POST /api/options` responses now include `applied_now[]` and `restart_required[]` arrays with per-key reason metadata.
+- 2026-02-15: `run_api.py` now publishes launcher trace toggles (`trace_contract`, `trace_profiler`) through bootstrap env keys (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) and maps profiler toggle to `CODEX_PROFILE=1` for runtime diagnostics.

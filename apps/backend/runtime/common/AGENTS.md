@@ -1,6 +1,6 @@
 # apps/backend/runtime/common Overview
 Date: 2025-10-28
-Last Review: 2026-02-11
+Last Review: 2026-02-15
 Status: Active
 
 ## Purpose
@@ -18,4 +18,5 @@ Status: Active
 - 2026-02-11: `vae_ldm.sanitize_ldm_vae_config` now maps WAN alias config fields (`z_dim`, `base_dim`, `dim_mult`, `num_res_blocks`) into native LDM constructor fields before instantiation, keeping config-to-constructor contracts explicit.
 - 2026-02-11: Added shared native temporal VAE lane module `vae_codex3d.py` (`AutoencoderCodex3D`) with strict diffusers→codex key remap (`remap_codex3d_vae_state_dict`) and config normalization (`sanitize_codex3d_vae_config`) for no-flatten 3D runtime paths.
 - 2026-01-06: `vae.load_flow16_vae(...)` now accepts `.gguf` weights (dequantized upfront) in addition to diffusers directories and `.safetensors` files.
+- 2026-02-15: `vae.load_flow16_vae(...)` now routes GGUF and torch-file state-dict loading through the requested `device` to keep checkpoint placement consistent with runtime target-device selection.
 - 2026-01-02: Added standardized file header docstrings to `nn/base.py`, `nn/clip.py`, and `nn/unet/{__init__,config,utils}.py` (doc-only change; part of rollout).

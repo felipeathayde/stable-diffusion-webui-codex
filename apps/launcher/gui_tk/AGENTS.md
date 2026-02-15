@@ -1,7 +1,7 @@
 # apps.launcher.gui_tk
 Date: 2026-01-25
 Status: Active
-Last Review: 2026-01-31
+Last Review: 2026-02-15
 
 ## Purpose
 - Modular Tk/ttk GUI implementation for the Codex launcher (services + settings + logs).
@@ -23,3 +23,4 @@ Last Review: 2026-01-31
 - Logs are structured (`CodexLogRecord`) and rendered incrementally to avoid UI freezes.
 - 2026-01-30: Removed the dev-only Z-Image Diffusers bypass toggle (`CODEX_ZIMAGE_DIFFUSERS_BYPASS`) from `tabs/diagnostics.py`.
 - 2026-01-31: `tabs/diagnostics.py` now exposes global profiling env flags (`CODEX_PROFILE*`) for backend torch-profiler runs.
+- 2026-02-15: `tabs/diagnostics.py` now exposes launcher trace toggles (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) alongside timeline/profile flags.

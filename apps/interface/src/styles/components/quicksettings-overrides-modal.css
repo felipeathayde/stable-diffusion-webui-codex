@@ -1,4 +1,34 @@
 @layer components {
+  .cdx-qs-overrides-restart-note {
+    margin: 0 0 var(--space-md) 0;
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid hsla(0, 80%, 55%, 0.35);
+    border-radius: var(--radius);
+    color: hsl(var(--destructive));
+    background: hsla(0, 80%, 55%, 0.08);
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+
+  .cdx-qs-overrides-restart-list {
+    margin: calc(var(--space-sm) * -1) 0 var(--space-md) 0;
+    padding-left: 1.1rem;
+    color: hsl(var(--destructive));
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+
+  .cdx-qs-overrides-hot-note {
+    margin: 0 0 var(--space-md) 0;
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--panel));
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+
   .cdx-qs-overrides-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
@@ -13,4 +43,3 @@
     min-width: 0;
   }
 }
-

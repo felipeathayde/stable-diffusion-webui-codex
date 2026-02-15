@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2vid/img2vid/vid2vid).
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
-handling unset sentinels and producing backend-ready payloads for `/api/*` requests.
+handling unset sentinels and producing backend-ready payloads for `/api/*` requests (including `settings_revision`).
 
 	Symbols (top-level; keep in sync; no ghosts):
 	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
@@ -85,6 +85,7 @@ const WanStageSchema = z
 const CommonWanVideoPayloadSchema = z
   .object({
     codex_device: DeviceEnum,
+    settings_revision: z.number().int().min(0),
 
     video_return_frames: z.boolean().optional(),
     video_filename_prefix: z.string().min(1).optional(),
@@ -214,6 +215,7 @@ export interface WanAssetsInput {
 
 export interface WanVideoCommonInput {
   device: string
+  settingsRevision: number
   prompt: string
   negativePrompt: string
   width: number
@@ -252,6 +254,15 @@ function normalizeDevice(device: string): WanTxt2VidPayload['codex_device'] {
     return normalized as WanTxt2VidPayload['codex_device']
   }
   throw new Error(`Unsupported device '${device}'`)
+}
+
+function normalizeSettingsRevision(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.trunc(value))
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (/^-?\d+$/.test(trimmed)) return Math.max(0, Math.trunc(Number(trimmed)))
+  }
+  return 0
 }
 
 function snapWanDim(value: number): number {
@@ -353,6 +364,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
   const height = snapWanDim(input.height)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
+    settings_revision: normalizeSettingsRevision(input.settingsRevision),
     txt2vid_prompt: input.prompt,
     txt2vid_neg_prompt: input.negativePrompt,
     txt2vid_width: width,
@@ -388,6 +400,7 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
   const height = snapWanDim(input.height)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
+    settings_revision: normalizeSettingsRevision(input.settingsRevision),
     img2vid_prompt: input.prompt,
     img2vid_neg_prompt: input.negativePrompt,
     img2vid_width: width,
@@ -424,6 +437,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
   const height = snapWanDim(input.height)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
+    settings_revision: normalizeSettingsRevision(input.settingsRevision),
     vid2vid_prompt: input.prompt,
     vid2vid_neg_prompt: input.negativePrompt,
     vid2vid_width: width,

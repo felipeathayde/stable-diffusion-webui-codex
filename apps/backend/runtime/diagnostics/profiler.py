@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Global, opt-in runtime profiler (CPU/CUDA + transfer attribution) with trace export.
 Provides an env-driven wrapper around `torch.profiler` that can be installed at shared runtime seams (sampling loop, ops, workflows) to
 produce Chrome-trace output (Perfetto) and a compact summary with totals for CPU↔GPU transfers (`Memcpy HtoD/DtoH`) and cast/move ops.
+Profiler activation accepts either `CODEX_PROFILE=1` (legacy) or `CODEX_TRACE_PROFILER=1` (launcher trace toggle).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ProfilerConfig` (dataclass): Env-driven config for the global profiler.
@@ -44,7 +45,7 @@ class ProfilerConfig:
 
     @classmethod
     def from_env(cls) -> "ProfilerConfig":
-        enabled = env_flag("CODEX_PROFILE", False)
+        enabled = env_flag("CODEX_TRACE_PROFILER", False) or env_flag("CODEX_PROFILE", False)
         trace = env_flag("CODEX_PROFILE_TRACE", True)
         record_shapes = env_flag("CODEX_PROFILE_RECORD_SHAPES", False)
         profile_memory = env_flag("CODEX_PROFILE_PROFILE_MEMORY", True)

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Zod request schemas + payload builders for image generation (txt2img/img2img).
 Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including hires/refiner) and to
-apply engine-agnostic request normalization/validation.
+apply engine-agnostic request normalization/validation (including required `settings_revision`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DISTILLED_CFG_ENGINES` (const): Engine ids treated as distilled-guidance engines (use `distilled_cfg`; CFG/negative prompt omitted).
@@ -100,6 +100,7 @@ const PromptSchema = z
 export const Txt2ImgRequestSchema = z
   .object({
     device: DeviceEnum,
+    settings_revision: z.number().int().min(0),
     prompt: PromptSchema,
     negative_prompt: z.string().optional().default(''),
     width: z.number().int().min(8).max(8192),
@@ -115,9 +116,6 @@ export const Txt2ImgRequestSchema = z
     metadata: z.record(z.any()).optional(),
     engine: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
-    smart_offload: z.boolean().optional(),
-    smart_fallback: z.boolean().optional(),
-    smart_cache: z.boolean().optional(),
     extras: z
       .object({
         hires: HiresOptionsSchema.optional(),
@@ -196,11 +194,9 @@ export interface Txt2ImgFormState {
   batchCount: number
   styles?: string[]
   device: Txt2ImgRequest['device']
+  settingsRevision: number
   engine?: string
   model?: string
-  smartOffload?: boolean
-  smartFallback?: boolean
-  smartCache?: boolean
   hires?: HiresFormState
   refiner?: RefinerFormState
   extras?: Record<string, unknown>
@@ -212,6 +208,15 @@ function normalizeDevice(device: string): Txt2ImgRequest['device'] {
     return normalized as Txt2ImgRequest['device']
   }
   throw new Error(`Unsupported device '${device}'`)
+}
+
+function normalizeSettingsRevision(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.trunc(value))
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (/^-?\d+$/.test(trimmed)) return Math.max(0, Math.trunc(Number(trimmed)))
+  }
+  return 0
 }
 
 export function buildTxt2ImgPayload(
@@ -227,6 +232,7 @@ export function buildTxt2ImgPayload(
   
   const payload: Record<string, unknown> = {
     device: normalizeDevice(state.device),
+    settings_revision: normalizeSettingsRevision(state.settingsRevision),
     prompt: state.prompt.trim(),
     width: state.width,
     height: state.height,
@@ -261,15 +267,6 @@ export function buildTxt2ImgPayload(
   }
   if (state.model) {
     payload.model = state.model
-  }
-  if (typeof state.smartOffload === 'boolean') {
-    payload.smart_offload = state.smartOffload
-  }
-  if (typeof state.smartFallback === 'boolean') {
-    payload.smart_fallback = state.smartFallback
-  }
-  if (typeof state.smartCache === 'boolean') {
-    payload.smart_cache = state.smartCache
   }
 
   const extras: Record<string, unknown> = {

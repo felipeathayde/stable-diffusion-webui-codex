@@ -11,10 +11,10 @@ Loads safetensors/GGUF/pickle checkpoints and reads lightweight model configs fr
 
 Symbols (top-level; keep in sync; no ghosts):
 - `read_arbitrary_config` (function): Reads a best-effort config from a directory (supports JSON/YAML-like inputs where present).
-- `load_torch_file` (function): Loads a torch checkpoint with safe-load options (prefers safe loaders, falls back to pickle loader when allowed).
+- `load_torch_file` (function): Loads a torch checkpoint with safe-load options and explicit device targeting (prefers safe loaders, falls back to pickle loader when allowed).
 - `read_gguf_metadata` (function): Reads GGUF key/value metadata from a `.gguf` file header (scoped here to keep quantization imports out of engines).
 - `_load_gguf_state_dict` (function): Loads a GGUF state dict from a `.gguf` file path (used by runtime helpers without importing heavy ops).
-- `load_gguf_state_dict` (function): Public GGUF state-dict loader that honors runtime flags for normal GGUFs and auto-detects CodexPack artifacts.
+- `load_gguf_state_dict` (function): Public GGUF state-dict loader that honors runtime flags for normal GGUFs, auto-detects CodexPack artifacts, and supports target-device tensor exposure.
 - `_load_pickled_checkpoint` (function): Loads a pickled checkpoint using the restricted/guarded unpickler (`checkpoint_pickle`).
 """
 
@@ -49,7 +49,7 @@ def read_arbitrary_config(directory):
 def load_torch_file(ckpt, safe_load=True, device=None):
     """Load a checkpoint (safetensors/gguf/pickle) honoring an explicit device.
 
-    - When ``device`` is None, use the current core initial load device from the
+    - When ``device`` is None, use the current core execution device from the
       memory manager to avoid accidental CPU pinning.
     - For safetensors, the returned mapping lazily loads tensors using
       ``safe_open(..., device=<device>)`` so values are produced directly on the
@@ -63,18 +63,15 @@ def load_torch_file(ckpt, safe_load=True, device=None):
     if device is None:
         from apps.backend.runtime.memory.config import DeviceRole
 
-        device = _mm.manager.get_offload_device(DeviceRole.CORE)
+        device = _mm.manager.get_device(DeviceRole.CORE)
 
     checkpoint_path = str(ckpt)
     suffix = os.path.splitext(checkpoint_path)[1].lower()
 
     if suffix == ".safetensors":
-        # Always load tensors on CPU during state-dict preprocessing to avoid CUDA OOMs
-        # and fragmentation when inspecting keys and remapping. Model weights will be
-        # moved to the target device later by the memory manager.
-        return LazySafetensorsDict(checkpoint_path, device="cpu")
+        return LazySafetensorsDict(checkpoint_path, device=str(device))
     if suffix == ".gguf":
-        return _load_gguf_state_dict(checkpoint_path)
+        return _load_gguf_state_dict(checkpoint_path, device=device)
 
     pl_sd = _load_pickled_checkpoint(checkpoint_path, device, safe_load)
 
@@ -91,6 +88,7 @@ def load_gguf_state_dict(
     *,
     dequantize: bool | None = None,
     computation_dtype: torch.dtype = torch.float16,
+    device: torch.device | str | None = None,
 ):
     """Load a GGUF state dict, with optional explicit dequantization policy.
 
@@ -118,7 +116,7 @@ def load_gguf_state_dict(
             except Exception:
                 is_codexpack = False
             dequantize = not is_codexpack
-    return _load(path, dequantize=bool(dequantize), computation_dtype=computation_dtype)
+    return _load(path, dequantize=bool(dequantize), computation_dtype=computation_dtype, device=device)
 
 
 def read_gguf_metadata(path: str) -> dict[str, Any]:
@@ -129,9 +127,9 @@ def read_gguf_metadata(path: str) -> dict[str, Any]:
     return dict(_get(path))
 
 
-def _load_gguf_state_dict(path: str):
+def _load_gguf_state_dict(path: str, *, device: torch.device | str | None = None):
     # Back-compat internal alias; prefer calling `load_gguf_state_dict(...)` directly.
-    return load_gguf_state_dict(path)
+    return load_gguf_state_dict(path, device=device)
 
 
 def _load_pickled_checkpoint(path, device, safe_load):

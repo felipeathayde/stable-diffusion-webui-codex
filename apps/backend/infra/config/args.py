@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Backend CLI argument parsing and runtime memory config bootstrap.
 Builds the argparse schema for runtime flags (devices/dtypes/attention/swap/smart offload) and turns argv/env into a `RuntimeMemoryConfig`.
 Supports separate storage vs compute dtype overrides for core/text encoder/VAE (e.g., `--core-dtype` vs `--core-compute-dtype`) for stability and tuning.
+Also parses diagnostics bootstrap toggles (`--trace-contract`, `--trace-profiler`) for runtime trace/profiler activation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_parser` (function): Defines the argparse schema for backend runtime flags (devices/dtypes/attention/swap/etc).
@@ -220,6 +221,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=TRACE_DEBUG_DEFAULT,
         metavar="N",
         help="Maximum call logs per function when trace debug is enabled (<=0 disables limit).",
+    )
+    parser.add_argument(
+        "--trace-contract",
+        action="store_true",
+        help="Enable contract-trace logging (JSONL events under logs/contract-trace).",
+    )
+    parser.add_argument(
+        "--trace-profiler",
+        action="store_true",
+        help="Enable runtime torch profiler tracing for generation runs.",
     )
 
     parser.add_argument(
@@ -745,6 +756,12 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
             ns.trace_debug_max_per_func = max(0, int(raw_trace_max))
         except Exception:
             ns.trace_debug_max_per_func = TRACE_DEBUG_DEFAULT
+
+    if _truthy(env.get("CODEX_TRACE_CONTRACT")):
+        ns.trace_contract = True
+
+    if _truthy(env.get("CODEX_TRACE_PROFILER")) or _truthy(env.get("CODEX_PROFILE")):
+        ns.trace_profiler = True
 
     # LoRA apply mode (global): honour env only when CLI arg is unset.
     raw_lora_mode = env.get(ENV_LORA_APPLY_MODE)

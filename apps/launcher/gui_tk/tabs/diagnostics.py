@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Diagnostics tab for the Tk launcher.
 Shows environment preflight checks and exposes debug/logging/profiling env flags used by the backend.
 Includes advanced performance toggles (e.g. CFG batch mode) intended for profiling and troubleshooting.
+Includes contract-trace/profiler launcher toggles (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) for runtime diagnostics bootstrap.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DiagnosticsTab` (class): Diagnostics tab (checks + debug flags + log levels).
@@ -91,6 +92,8 @@ class DiagnosticsTab:
             ("CODEX_PIPELINE_DEBUG", "Pipeline Debug"),
             ("CODEX_DUMP_LATENTS", "Dump Latents"),
             ("CODEX_TIMELINE", "Timeline Tracer (TVA-style execution timeline)"),
+            ("CODEX_TRACE_CONTRACT", "Contract Trace (JSONL in logs/contract-trace)"),
+            ("CODEX_TRACE_PROFILER", "Contract Profiler Toggle (maps to --trace-profiler)"),
             ("CODEX_PROFILE", "Global Profiler (torch.profiler)"),
             ("CODEX_PROFILE_TRACE", "Profiler: export Perfetto trace"),
             ("CODEX_PROFILE_RECORD_SHAPES", "Profiler: record shapes"),

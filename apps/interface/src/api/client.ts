@@ -8,14 +8,18 @@ Required Notice: see NOTICE
 
 Purpose: Frontend API client (typed fetch helpers + endpoint wrappers).
 Provides JSON/Form fetch helpers and exports functions for models/options/inventory/tasks, UI tabs/workflows persistence, and UI schema/preset
-endpoints under `VITE_API_BASE` (default `/api`).
+endpoints under `VITE_API_BASE` (default `/api`). Also caches `/api/options` revision and preserves structured HTTP error metadata (`status/detail/body`)
+for conflict-aware generation UX.
 Task SSE subscriptions support resume via `after=<event_id>` and expose the latest `lastEventId` for reconnect/replay persistence.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `API_BASE` (const): Base URL prefix for backend endpoints (from Vite env, default `/api`).
 - `requestJson` (function): JSON request helper with consistent error handling.
 - `requestForm` (function): Form POST helper for multipart endpoints.
-- `readErrorDetail` (function): Extracts a human-friendly error message from failed backend responses.
+- `readErrorDetail` (function): Extracts structured error detail (`message/detail/body`) from failed backend responses.
+- `getApiErrorStatus` (function): Reads an HTTP status code from request errors emitted by this client.
+- `getCurrentRevisionFromError` (function): Extracts `current_revision` from backend conflict errors (`409`) when present.
+- `getCachedOptionsRevision` (function): Returns the cached `/api/options` revision used by generation payload builders.
 - `fetchModels` (function): Fetches the model list (`/models`).
 - `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
 - `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
@@ -98,30 +102,117 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
 const _jsonCache = new Map<string, unknown>()
 const _jsonInflight = new Map<string, Promise<unknown>>()
+let _cachedOptionsRevision = 0
 
-async function readErrorDetail(res: Response): Promise<string> {
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeRevision(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.trunc(value))
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    if (/^-?\d+$/.test(trimmed)) {
+      return Math.max(0, Math.trunc(Number(trimmed)))
+    }
+  }
+  return null
+}
+
+function cacheOptionsRevisionFromPayload(payload: unknown): void {
+  if (!isRecordObject(payload)) return
+  const direct = normalizeRevision(payload.revision)
+  if (direct !== null) {
+    _cachedOptionsRevision = direct
+    return
+  }
+  const values = payload.values
+  if (!isRecordObject(values)) return
+  const fromValues = normalizeRevision(values.codex_options_revision)
+  if (fromValues !== null) _cachedOptionsRevision = fromValues
+}
+
+export function getCachedOptionsRevision(): number {
+  return _cachedOptionsRevision
+}
+
+function readCurrentRevision(value: unknown, depth = 0): number | null {
+  if (depth > 5) return null
+  if (value === null || value === undefined) return null
+
+  if (typeof value === 'string') {
+    const match = value.match(/current[_\s-]?revision[^0-9-]*(-?\d+)/i)
+    if (!match) return null
+    return normalizeRevision(match[1])
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = readCurrentRevision(item, depth + 1)
+      if (found !== null) return found
+    }
+    return null
+  }
+
+  if (!isRecordObject(value)) return null
+
+  for (const key of ['current_revision', 'currentRevision'] as const) {
+    const found = normalizeRevision(value[key])
+    if (found !== null) return found
+  }
+
+  for (const nested of Object.values(value)) {
+    const found = readCurrentRevision(nested, depth + 1)
+    if (found !== null) return found
+  }
+  return null
+}
+
+export function getApiErrorStatus(error: unknown): number | null {
+  if (!isRecordObject(error)) return null
+  return normalizeRevision(error.status)
+}
+
+export function getCurrentRevisionFromError(error: unknown): number | null {
+  if (error instanceof Error) {
+    const fromMessage = readCurrentRevision(error.message)
+    if (fromMessage !== null) return fromMessage
+  }
+  return readCurrentRevision(error)
+}
+
+function detailToMessage(detail: unknown): string {
+  if (typeof detail === 'string' && detail.trim()) return detail.trim()
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((item) => {
+        const msg = (item && typeof item === 'object') ? (item as any).msg : null
+        return typeof msg === 'string' ? msg : String(item)
+      })
+      .filter((s) => String(s || '').trim())
+    if (msgs.length) return msgs.join('\n')
+  }
+  if (detail !== undefined) return JSON.stringify(detail)
+  return ''
+}
+
+async function readErrorDetail(res: Response): Promise<{ message: string; detail: unknown; body: unknown }> {
   const text = await res.text()
-  if (!text) return ''
+  if (!text) return { message: '', detail: null, body: null }
   try {
     const data = JSON.parse(text) as unknown
-    if (data && typeof data === 'object') {
-      const detail = (data as any).detail
-      if (typeof detail === 'string' && detail.trim()) return detail.trim()
-      if (Array.isArray(detail)) {
-        const msgs = detail
-          .map((item) => {
-            const msg = (item && typeof item === 'object') ? (item as any).msg : null
-            return typeof msg === 'string' ? msg : String(item)
-          })
-          .filter((s) => String(s || '').trim())
-        if (msgs.length) return msgs.join('\n')
-      }
-      if (detail !== undefined) return JSON.stringify(detail)
+    if (isRecordObject(data)) {
+      const detail = data.detail
+      return { message: detailToMessage(detail), detail, body: data }
     }
+    return { message: text, detail: null, body: data }
   } catch {
     // not JSON; fall through
   }
-  return text
+  return { message: text, detail: null, body: null }
 }
 
 function invalidateJsonCache(prefixPath: string): void {
@@ -143,7 +234,15 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const detail = await readErrorDetail(res)
-    throw new Error(detail || `HTTP ${res.status} ${res.statusText}`)
+    const err = new Error(detail.message || `HTTP ${res.status} ${res.statusText}`) as Error & {
+      status?: number
+      detail?: unknown
+      body?: unknown
+    }
+    err.status = res.status
+    err.detail = detail.detail
+    err.body = detail.body
+    throw err
   }
   return (await res.json()) as T
 }
@@ -174,9 +273,24 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   })
   if (!res.ok) {
     const detail = await readErrorDetail(res)
-    throw new Error(detail || `HTTP ${res.status} ${res.statusText}`)
+    const err = new Error(detail.message || `HTTP ${res.status} ${res.statusText}`) as Error & {
+      status?: number
+      detail?: unknown
+      body?: unknown
+    }
+    err.status = res.status
+    err.detail = detail.detail
+    err.body = detail.body
+    throw err
   }
   return (await res.json()) as T
+}
+
+function withSettingsRevision(payload: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...payload }
+  const existing = normalizeRevision(out.settings_revision)
+  out.settings_revision = existing ?? getCachedOptionsRevision()
+  return out
 }
 
 export function fetchModels(): Promise<ModelsResponse> {
@@ -224,15 +338,19 @@ export function analyzePngInfo(file: File): Promise<PngInfoAnalyzeResponse> {
   return requestForm<PngInfoAnalyzeResponse>('/tools/pnginfo/analyze', form)
 }
 
-export function fetchOptions(): Promise<OptionsResponse> {
-  return requestJson<OptionsResponse>('/options')
+export async function fetchOptions(): Promise<OptionsResponse> {
+  const res = await requestJson<OptionsResponse>('/options')
+  cacheOptionsRevisionFromPayload(res)
+  return res
 }
 
-export function updateOptions(payload: Record<string, unknown>): Promise<OptionsUpdateResponse> {
-  return requestJson<OptionsUpdateResponse>('/options', {
+export async function updateOptions(payload: Record<string, unknown>): Promise<OptionsUpdateResponse> {
+  const res = await requestJson<OptionsUpdateResponse>('/options', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
+  cacheOptionsRevisionFromPayload(res)
+  return res
 }
 
 export function startTxt2Img(payload: Txt2ImgRequest): Promise<Txt2ImgStartResponse> {
@@ -245,21 +363,21 @@ export function startTxt2Img(payload: Txt2ImgRequest): Promise<Txt2ImgStartRespo
 export function startImg2Img(payload: Record<string, unknown>): Promise<Txt2ImgStartResponse> {
   return requestJson<Txt2ImgStartResponse>('/img2img', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withSettingsRevision(payload)),
   })
 }
 
 export function startTxt2Vid(payload: Record<string, unknown>): Promise<Txt2ImgStartResponse> {
   return requestJson<Txt2ImgStartResponse>('/txt2vid', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withSettingsRevision(payload)),
   })
 }
 
 export function startImg2Vid(payload: Record<string, unknown>): Promise<Txt2ImgStartResponse> {
   return requestJson<Txt2ImgStartResponse>('/img2vid', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withSettingsRevision(payload)),
   })
 }
 

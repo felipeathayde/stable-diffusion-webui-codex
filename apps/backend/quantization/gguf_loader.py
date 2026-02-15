@@ -11,14 +11,15 @@ Loads tensors+metadata via `GGUFReader`, returning float tensors, deferred `Code
 Fails loud if CodexPack files contain raw quant tensors outside `__codexpack__.*` (prevents silent per-forward dequant fallback).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_numpy_to_frozen_parameter` (function): Converts a NumPy tensor blob into a read-only `nn.Parameter` (copies when non-writable).
-- `load_gguf_state_dict` (function): Loads a GGUF file into a PyTorch-style state dict (optionally dequantizing tensors).
+- `_numpy_to_frozen_parameter` (function): Converts a NumPy tensor blob into a read-only `nn.Parameter` on the requested device.
+- `load_gguf_state_dict` (function): Loads a GGUF file into a PyTorch-style state dict (optionally dequantizing tensors) with optional target-device exposure.
 - `get_gguf_metadata` (function): Extracts GGUF metadata fields into a JSON-serializable dict.
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Dict, Any
 
 import numpy as np
@@ -26,12 +27,28 @@ import torch
 
 logger = logging.getLogger("backend.quantization.gguf_loader")
 
-def _numpy_to_frozen_parameter(data: np.ndarray) -> torch.nn.Parameter:
-    # GGUFReader uses memmap-backed arrays which are often non-writable (read-only).
-    # `torch.from_numpy` warns on non-writable arrays; copy to guarantee safe semantics.
-    if isinstance(data, np.ndarray) and not data.flags.writeable:
-        data = np.array(data, copy=True)
-    return torch.nn.Parameter(torch.from_numpy(data), requires_grad=False)
+def _resolve_target_device(device: torch.device | str | None) -> torch.device:
+    if device is None:
+        return torch.device("cpu")
+    resolved = torch.device(device)
+    if resolved.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(f"GGUF load requested CUDA target '{resolved}', but CUDA is not available.")
+    return resolved
+
+
+def _numpy_to_tensor_no_copy(data: np.ndarray) -> torch.Tensor:
+    if not isinstance(data, np.ndarray):
+        raise TypeError(f"Expected numpy.ndarray, got {type(data)!r}")
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="The given NumPy array is not writable.*")
+        return torch.from_numpy(data)
+
+
+def _numpy_to_frozen_parameter(data: np.ndarray, *, target_device: torch.device) -> torch.nn.Parameter:
+    tensor = _numpy_to_tensor_no_copy(data)
+    if target_device.type != "cpu":
+        tensor = tensor.to(device=target_device, non_blocking=True)
+    return torch.nn.Parameter(tensor, requires_grad=False)
 
 
 def load_gguf_state_dict(
@@ -39,6 +56,7 @@ def load_gguf_state_dict(
     dequantize: bool = False,
     *,
     computation_dtype: torch.dtype = torch.float16,
+    device: torch.device | str | None = None,
 ) -> Dict[str, torch.Tensor]:
     """Load a GGUF file and return tensors as a state dict.
     
@@ -62,7 +80,8 @@ def load_gguf_state_dict(
     from .api import dequantize as quant_dequantize
     from .tensor import CodexParameter
     
-    logger.info("Loading GGUF file: %s", gguf_path)
+    target_device = _resolve_target_device(device)
+    logger.info("Loading GGUF file: %s (target_device=%s)", gguf_path, target_device)
     reader = GGUFReader(gguf_path)
 
     if is_codexpack_gguf(reader):
@@ -138,10 +157,13 @@ def load_gguf_state_dict(
             packed_tensor = tensors_by_name[packed_name]
             dora_tensor = tensors_by_name[dora_norm_name]
 
-            # GGUFReader exposes memmap-backed arrays which may be non-writable; avoid `torch.from_numpy` warnings
-            # by letting the CodexPack parameter class handle the packed blob and explicitly copying float tensors.
-            packed_blob = packed_tensor.data.reshape(-1)
-            dora_norm_out = torch.from_numpy(np.array(dora_tensor.data, copy=True)).reshape(-1)
+            # GGUFReader exposes memmap-backed arrays which may be non-writable; keep no-copy tensor views while
+            # suppressing the expected non-writable warning, and only move to target device when requested.
+            packed_blob = _numpy_to_tensor_no_copy(packed_tensor.data.reshape(-1))
+            dora_norm_out = _numpy_to_tensor_no_copy(dora_tensor.data).reshape(-1)
+            if target_device.type != "cpu":
+                packed_blob = packed_blob.to(device=target_device, non_blocking=True)
+                dora_norm_out = dora_norm_out.to(device=target_device, non_blocking=True)
 
             packed_weights[param_key] = CodexPackLinearQ4KTilepackV1Parameter(
                 packed_blob,
@@ -181,7 +203,7 @@ def load_gguf_state_dict(
                 GGMLQuantizationType.I32,
                 GGMLQuantizationType.I64,
             }:
-                state_dict[name] = _numpy_to_frozen_parameter(tensor.data)
+                state_dict[name] = _numpy_to_frozen_parameter(tensor.data, target_device=target_device)
                 continue
 
             # CodexPack is an optimized artifact; leaving raw quant tensors would silently reintroduce
@@ -216,7 +238,12 @@ def load_gguf_state_dict(
             GGMLQuantizationType.I32,
             GGMLQuantizationType.I64,
         }:
-            state_dict[name] = _numpy_to_frozen_parameter(tensor.data)
+            try:
+                state_dict[name] = _numpy_to_frozen_parameter(tensor.data, target_device=target_device)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"GGUF tensor transfer failed for '{name}' to device={target_device}: {exc}"
+                ) from exc
             continue
 
         param = CodexParameter(
@@ -225,6 +252,13 @@ def load_gguf_state_dict(
             shape=real_shape,
             computation_dtype=computation_dtype,
         )
+        if target_device.type != "cpu":
+            try:
+                param = param.to(device=target_device, non_blocking=True)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"GGUF quant tensor transfer failed for '{name}' to device={target_device}: {exc}"
+                ) from exc
         if dequantize:
             state_dict[name] = quant_dequantize(param)
         else:

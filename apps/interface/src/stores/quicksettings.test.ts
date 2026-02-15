@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Vitest coverage for QuickSettings Anima path-family mapping and SHA resolution.
-Locks that `anima_tenc` paths are surfaced as UI labels and `anima/<path>` aliases resolve for text encoders/VAEs.
+Purpose: Vitest coverage for QuickSettings mappings (Anima path-family + options revision).
+Locks that `anima_tenc` paths are surfaced as UI labels, `anima/<path>` aliases resolve for text encoders/VAEs, and `/api/options` revision is cached.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `quicksettings.test` (module): Regression coverage for Anima-aware quicksettings mappings.
@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchModelInventory, fetchModels, fetchOptions, fetchPaths, refreshModels, updateOptions } from '../api/client'
+import { fetchModelInventory, fetchModels, fetchOptions, fetchPaths, getCachedOptionsRevision, refreshModels, updateOptions } from '../api/client'
 import { useQuicksettingsStore } from './quicksettings'
 
 vi.mock('../api/client', () => ({
@@ -26,6 +26,7 @@ vi.mock('../api/client', () => ({
   fetchPaths: vi.fn(),
   fetchOptions: vi.fn(),
   updateOptions: vi.fn(),
+  getCachedOptionsRevision: vi.fn(),
 }))
 
 const mockedFetchModels = vi.mocked(fetchModels)
@@ -34,6 +35,7 @@ const mockedFetchModelInventory = vi.mocked(fetchModelInventory)
 const mockedFetchPaths = vi.mocked(fetchPaths)
 const mockedFetchOptions = vi.mocked(fetchOptions)
 const mockedUpdateOptions = vi.mocked(updateOptions)
+const mockedGetCachedOptionsRevision = vi.mocked(getCachedOptionsRevision)
 
 describe('useQuicksettingsStore anima mappings', () => {
   let storage = new Map<string, string>()
@@ -63,6 +65,7 @@ describe('useQuicksettingsStore anima mappings', () => {
     mockedRefreshModels.mockResolvedValue({ models: [], current: '' } as any)
     mockedFetchOptions.mockResolvedValue({ values: {} } as any)
     mockedUpdateOptions.mockResolvedValue({ ok: true } as any)
+    mockedGetCachedOptionsRevision.mockReturnValue(0)
     mockedFetchPaths.mockResolvedValue({
       paths: {
         anima_tenc: ['models/anima-tenc'],
@@ -158,6 +161,16 @@ describe('useQuicksettingsStore anima mappings', () => {
     await store.init()
 
     expect(store.textEncoderChoices).toContain('anima/models/anima-tenc/qwen3_06b.safetensors')
+  })
+
+  it('reads and caches settings revision from /api/options responses', async () => {
+    mockedFetchOptions.mockResolvedValueOnce({ values: {}, revision: 17 } as any)
+
+    const store = useQuicksettingsStore()
+    await store.init()
+
+    expect(store.settingsRevision).toBe(17)
+    expect(store.getSettingsRevision()).toBe(17)
   })
 
   it('fails loud when text encoder inventory load fails', async () => {

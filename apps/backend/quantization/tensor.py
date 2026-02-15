@@ -10,14 +10,16 @@ Required Notice: see NOTICE
 
 Purpose: GGUF packed tensor parameter wrapper (`CodexParameter`).
 Implements the canonical `torch.nn.Parameter` subclass used for GGUF/GGML quantized tensors, tracking quantization type, logical shape,
-target computation dtype, and bake state.
+target computation dtype, and bake state, with zero-copy NumPy tensor-view helpers for packed weight ingestion.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_tensor_from_numpy_no_copy` (function): Builds a tensor view over NumPy storage without forcing a host copy.
 - `CodexParameter` (class): Packed-weights parameter wrapper for GGUF tensors (metadata + device/dtype moves + bake hooks).
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Optional, TYPE_CHECKING
 
 import numpy as np
@@ -27,6 +29,15 @@ if TYPE_CHECKING:
     from .core import QuantType
 
 __all__ = ["CodexParameter"]
+
+
+def _tensor_from_numpy_no_copy(data: np.ndarray) -> torch.Tensor:
+    """Build a tensor view over NumPy storage without forcing a host copy."""
+    if not isinstance(data, np.ndarray):
+        raise TypeError(f"Expected numpy.ndarray, got {type(data)!r}")
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="The given NumPy array is not writable.*")
+        return torch.from_numpy(data)
 
 
 class CodexParameter(torch.nn.Parameter):
@@ -70,9 +81,7 @@ class CodexParameter(torch.nn.Parameter):
         """
         # Handle numpy arrays
         if isinstance(data, np.ndarray):
-            if not data.flags.writeable:
-                data = np.array(data, copy=True)
-            tensor = torch.from_numpy(data)
+            tensor = _tensor_from_numpy_no_copy(data)
         elif isinstance(data, torch.Tensor):
             # Avoid eager clones here: `to()` already materializes a new tensor when needed,
             # and cloning on every call creates significant overhead for packed GGUF weights.
@@ -81,9 +90,7 @@ class CodexParameter(torch.nn.Parameter):
             # Try to convert via numpy
             try:
                 arr = np.asarray(data)
-                if not arr.flags.writeable:
-                    arr = np.array(arr, copy=True)
-                tensor = torch.from_numpy(arr)
+                tensor = _tensor_from_numpy_no_copy(arr)
             except Exception:
                 tensor = torch.tensor(data)
         

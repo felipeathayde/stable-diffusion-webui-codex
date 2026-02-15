@@ -7,14 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Lightweight mapping views for state_dict handling.
-Provides prefix/filter/remap/cast views plus a SafeTensors-backed lazy dict used to stream state_dict preprocessing.
+Provides prefix/filter/remap/cast views plus a SafeTensors-backed lazy dict used to stream state_dict preprocessing with configurable tensor device placement.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyPrefixView` (class): Mapping view that exposes `base` keys under a fixed prefix without materializing values.
 - `FilterPrefixView` (class): Mapping view that filters keys by prefix and optionally re-prefixes them lazily.
 - `RemapKeysView` (class): Mapping view that remaps keys through a mapping dict (useful for on-the-fly state_dict key conversion).
 - `CastOnGetView` (class): Mapping view that casts tensors/values on access (`__getitem__`) to a target dtype/device (no eager conversion).
-- `LazySafetensorsDict` (class): Lazy SafeTensors-backed state_dict; keeps a single handle and loads tensors on demand (Windows: materializes on first access to avoid repeated opens).
+- `LazySafetensorsDict` (class): Lazy SafeTensors-backed state_dict; keeps a single handle and loads tensors on demand to the configured device (Windows: materializes on first access to avoid repeated opens).
 """
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ class LazySafetensorsDict(MutableMapping):
 
     - Keys come from the file; values are loaded on demand with safe_open.get_tensor.
     - Supports overlay writes and deletions without touching the underlying file.
-    - Device: only CPU tensors are produced (parity with previous loader).
+    - Device: tensors are produced on the configured `device` (cpu/cuda/...).
 
     Windows crash prevention: Once any tensor is accessed, the entire file is
     materialized into memory to avoid reopening the file repeatedly (which causes

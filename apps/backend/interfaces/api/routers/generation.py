@@ -16,6 +16,8 @@ prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
+Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
+Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text).
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -78,7 +80,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         register_default_engines(replace=False)
 
     from apps.backend.types.payloads import TXT2IMG_KEYS, EXTRAS_KEYS
-    _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL)
+    _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL) - set(TXT2IMG_KEYS.SMART)
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
     _IMG2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
@@ -98,28 +100,75 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if unknown:
             raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
 
-    def _resolve_smart_flags(payload: Mapping[str, Any]) -> Tuple[bool, bool, bool]:
-        """Resolve per-request smart flags (offload/fallback/cache).
+    def _current_settings_revision() -> int:
+        snapshot = _opts_snapshot()
+        revision_raw = getattr(snapshot, "codex_options_revision", 0)
+        if isinstance(revision_raw, bool) or not isinstance(revision_raw, (int, float)):
+            raise RuntimeError(
+                "Invalid options snapshot: 'codex_options_revision' must be numeric "
+                f"(got {type(revision_raw).__name__})."
+            )
+        if isinstance(revision_raw, float):
+            if not revision_raw.is_integer():
+                raise RuntimeError(
+                    "Invalid options snapshot: 'codex_options_revision' must be an integer "
+                    f"(got {revision_raw!r})."
+                )
+            revision = int(revision_raw)
+        else:
+            revision = int(revision_raw)
+        return max(0, revision)
 
-        Precedence: payload value when present (not null) → options snapshot.
+    def _enforce_generation_settings_contract(payload: Mapping[str, Any]) -> int:
+        payload_obj = payload if isinstance(payload, dict) else dict(payload)
+        smart_keys = sorted(k for k in payload_obj if isinstance(k, str) and k.startswith("smart_"))
+        if smart_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unexpected generation key(s): {', '.join(smart_keys)}. "
+                    "Smart flags are configured only via /api/options."
+                ),
+            )
+
+        if "settings_revision" not in payload_obj:
+            raise HTTPException(status_code=400, detail="Missing 'settings_revision'")
+        provided_raw = payload_obj.get("settings_revision")
+        if isinstance(provided_raw, bool) or not isinstance(provided_raw, (int, float)):
+            raise HTTPException(status_code=400, detail="'settings_revision' must be an integer")
+        if isinstance(provided_raw, float):
+            if not provided_raw.is_integer():
+                raise HTTPException(status_code=400, detail="'settings_revision' must be an integer")
+            provided_revision = int(provided_raw)
+        else:
+            provided_revision = int(provided_raw)
+        if provided_revision < 0:
+            raise HTTPException(status_code=400, detail="'settings_revision' must be >= 0")
+
+        current_revision = _current_settings_revision()
+        if provided_revision != current_revision:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "settings_revision_conflict",
+                    "message": "Generation settings_revision does not match persisted options revision.",
+                    "current_revision": current_revision,
+                    "provided_revision": provided_revision,
+                },
+            )
+        return provided_revision
+
+    def _resolve_smart_flags() -> Tuple[bool, bool, bool]:
+        """Resolve effective smart flags from persisted options only.
+
+        Contract:
+        - Persisted options are the single source of truth.
+        - Generation payload must not include smart_* keys.
         """
         snap = _opts_snapshot()
-        payload_obj = payload if isinstance(payload, dict) else dict(payload)
-        smart_offload = (
-            _require_bool_field(payload_obj, "smart_offload")
-            if payload.get("smart_offload") is not None
-            else _require_options_bool(snap, "codex_smart_offload")
-        )
-        smart_fallback = (
-            _require_bool_field(payload_obj, "smart_fallback")
-            if payload.get("smart_fallback") is not None
-            else _require_options_bool(snap, "codex_smart_fallback")
-        )
-        smart_cache = (
-            _require_bool_field(payload_obj, "smart_cache")
-            if payload.get("smart_cache") is not None
-            else _require_options_bool(snap, "codex_smart_cache")
-        )
+        smart_offload = _require_options_bool(snap, "codex_smart_offload")
+        smart_fallback = _require_options_bool(snap, "codex_smart_fallback")
+        smart_cache = _require_options_bool(snap, "codex_smart_cache")
         return smart_offload, smart_fallback, smart_cache
 
 
@@ -1307,6 +1356,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
+        settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         model_override = payload.get('model')
         parsed = _parse_txt2img_payload_dto(payload)
         engine_key = parsed.engine_key
@@ -1375,7 +1425,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         metadata["hr"] = bool(hires_cfg)
         metadata["distilled_cfg_scale"] = distilled_cfg_scale
 
-        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
 
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
@@ -1416,6 +1466,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_offload=smart_offload,
             smart_fallback=smart_fallback,
             smart_cache=smart_cache,
+            settings_revision=settings_revision,
         )
 
         return req, engine_key, model_override
@@ -1454,6 +1505,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
+        settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         init_image_data = _p.require(payload, 'img2img_init_image')
         init_image = media.decode_image(init_image_data)
         init_w, init_h = 0, 0
@@ -1723,7 +1775,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if 'eta_noise_seed_delta' in extras:
             metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
 
-        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
         req = Img2ImgRequest(
             task=TaskType.IMG2IMG,
             prompt=prompt,
@@ -1755,6 +1807,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_offload=smart_offload,
             smart_fallback=smart_fallback,
             smart_cache=smart_cache,
+            settings_revision=settings_revision,
         )
 
         return req, engine_key, model_ref
@@ -1798,6 +1851,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
+        settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         parsed = _parse_txt2vid_core_dto(payload)
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
@@ -1944,7 +1998,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
 
-        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
         req = Txt2VidRequest(
             task=TaskType.TXT2VID,
             prompt=prompt,
@@ -1963,6 +2017,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_offload=smart_offload,
             smart_fallback=smart_fallback,
             smart_cache=smart_cache,
+            settings_revision=settings_revision,
             metadata={
                 "styles": payload.get('txt2vid_styles', []),
             },
@@ -1974,6 +2029,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
+        settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         parsed = _parse_img2vid_core_dto(payload)
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
@@ -2122,7 +2178,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
 
-        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
         req = Img2VidRequest(
             task=TaskType.IMG2VID,
             prompt=prompt,
@@ -2142,6 +2198,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_offload=smart_offload,
             smart_fallback=smart_fallback,
             smart_cache=smart_cache,
+            settings_revision=settings_revision,
             metadata={
                 "styles": payload.get('img2vid_styles', []),
             },
@@ -2255,6 +2312,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType, *, device: str) -> None:
+        from apps.backend.runtime.diagnostics.contract_trace import error_meta
+        from apps.backend.runtime.diagnostics.contract_trace import emit_event as emit_contract_trace
+        from apps.backend.runtime.diagnostics.contract_trace import hash_request_prompt
+
         def push(event: Dict[str, Any]) -> None:
             entry.push_event(event)
 
@@ -2272,10 +2333,45 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             else:
                 raise RuntimeError(f"Unsupported video task: {task_type}")
         except Exception as err:
+            emit_contract_trace(
+                task_id=task_id,
+                mode=str(getattr(task_type, "value", "unknown")),
+                stage="prepare",
+                action="error",
+                component="router",
+                device=device,
+                strict=True,
+                fallback_enabled=False,
+                fallback_used=False,
+                prompt_hash_value="",
+                meta=error_meta(err),
+            )
             entry.error = str(err)
             entry.mark_finished(success=False)
             unregister_task(task_id)
             raise
+
+        mode = str(getattr(task_type, "value", "unknown"))
+        prompt_hash_value = hash_request_prompt(req)
+        fallback_enabled = bool(getattr(req, "smart_fallback", False))
+        storage_dtype = getattr(req, "core_dtype", None)
+        compute_dtype = getattr(req, "core_compute_dtype", None)
+
+        emit_contract_trace(
+            task_id=task_id,
+            mode=mode,
+            stage="prepare",
+            action="ready",
+            component="router",
+            device=device,
+            storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+            compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+            strict=True,
+            fallback_enabled=fallback_enabled,
+            fallback_used=False,
+            prompt_hash_value=prompt_hash_value,
+            meta={"engine_key": engine_key},
+        )
 
         def worker() -> None:
             acquired = False
@@ -2283,18 +2379,60 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             try:
                 if single_flight_enabled():
                     push({"type": "status", "stage": "waiting_for_inference"})
+                    emit_contract_trace(
+                        task_id=task_id,
+                        mode=mode,
+                        stage="waiting_for_inference",
+                        action="wait",
+                        component="inference_gate",
+                        device=device,
+                        storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                        compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                        strict=True,
+                        fallback_enabled=fallback_enabled,
+                        fallback_used=False,
+                        prompt_hash_value=prompt_hash_value,
+                    )
 
                 acquired = acquire_inference_gate(
                     should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
                 )
                 if not acquired:
                     entry.error = "cancelled"
+                    emit_contract_trace(
+                        task_id=task_id,
+                        mode=mode,
+                        stage="inference_gate",
+                        action="cancelled",
+                        component="inference_gate",
+                        device=device,
+                        storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                        compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                        strict=True,
+                        fallback_enabled=fallback_enabled,
+                        fallback_used=False,
+                        prompt_hash_value=prompt_hash_value,
+                    )
                     return
 
                 push({"type": "status", "stage": "running"})
                 from apps.backend.interfaces.api.device_selection import apply_primary_device
 
                 apply_primary_device(device)
+                emit_contract_trace(
+                    task_id=task_id,
+                    mode=mode,
+                    stage="running",
+                    action="start",
+                    component="orchestrator",
+                    device=device,
+                    storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                    compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                    strict=True,
+                    fallback_enabled=fallback_enabled,
+                    fallback_used=False,
+                    prompt_hash_value=prompt_hash_value,
+                )
 
                 engine_opts = {"export_video": _require_options_bool(_opts_snapshot(), "codex_export_video")}
                 from apps.backend.interfaces.api.tasks.generation_tasks import encode_images as _encode_images
@@ -2333,6 +2471,25 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                                     "eta_seconds": ev.eta_seconds,
                                 }
                             )
+                            emit_contract_trace(
+                                task_id=task_id,
+                                mode=mode,
+                                stage=str(ev.stage or "progress"),
+                                action="progress",
+                                component="orchestrator",
+                                device=device,
+                                storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                                compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                                strict=True,
+                                fallback_enabled=fallback_enabled,
+                                fallback_used=False,
+                                prompt_hash_value=prompt_hash_value,
+                                meta={
+                                    "step": ev.step,
+                                    "total_steps": ev.total_steps,
+                                    "percent": ev.percent,
+                                },
+                            )
                         elif isinstance(ev, ResultEvent):
                             payload_obj = ev.payload or {}
                             info_raw = payload_obj.get("info", "{}")
@@ -2345,6 +2502,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             if isinstance(payload_obj.get("video"), dict):
                                 result["video"] = payload_obj.get("video")
                             entry.result = {"status": "completed", "result": result}
+                            emit_contract_trace(
+                                task_id=task_id,
+                                mode=mode,
+                                stage="result",
+                                action="emit",
+                                component="orchestrator",
+                                device=device,
+                                storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                                compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                                strict=True,
+                                fallback_enabled=fallback_enabled,
+                                fallback_used=False,
+                                prompt_hash_value=prompt_hash_value,
+                                meta={
+                                    "image_count": len(payload_obj.get("images", []) or []),
+                                    "has_video": isinstance(payload_obj.get("video"), dict),
+                                },
+                            )
                 success = True
             except Exception as err:
                 try:
@@ -2353,10 +2528,41 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 except Exception:
                     pass
                 entry.error = str(err)
+                fallback_used = fallback_enabled and ("fallback" in str(err).lower())
+                emit_contract_trace(
+                    task_id=task_id,
+                    mode=mode,
+                    stage="error",
+                    action="error",
+                    component="orchestrator",
+                    device=device,
+                    storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                    compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                    strict=True,
+                    fallback_enabled=fallback_enabled,
+                    fallback_used=fallback_used,
+                    prompt_hash_value=prompt_hash_value,
+                    meta=error_meta(err),
+                )
                 success = False
             finally:
                 entry.mark_finished(success=success)
                 entry.schedule_cleanup(task_id)
+                emit_contract_trace(
+                    task_id=task_id,
+                    mode=mode,
+                    stage="end",
+                    action="finish",
+                    component="task",
+                    device=device,
+                    storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                    compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                    strict=True,
+                    fallback_enabled=fallback_enabled,
+                    fallback_used=False,
+                    prompt_hash_value=prompt_hash_value,
+                    meta={"success": success},
+                )
                 if acquired:
                     try:
                         release_inference_gate()
@@ -2398,6 +2604,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     async def txt2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        _enforce_generation_settings_contract(payload)
 
         device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()
@@ -2411,6 +2618,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     async def img2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        _enforce_generation_settings_contract(payload)
 
         device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()
@@ -2424,6 +2632,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     async def txt2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        _enforce_generation_settings_contract(payload)
 
         device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()
@@ -2438,6 +2647,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        _enforce_generation_settings_contract(payload)
 
         device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()

@@ -22,7 +22,7 @@ Status: Active
 - `apps/backend/interfaces/api/path_utils.py` — repo-relative path normalization helpers.
 - `apps/backend/interfaces/api/json_store.py` — JSON load/save helpers for persistence files.
 - `apps/backend/interfaces/api/task_registry.py` — in-process task registry (SSE queue + cancel flags).
-- `apps/backend/interfaces/api/public_errors.py` — public-safe task error formatter used by task workers and task status/SSE sinks.
+- `apps/backend/interfaces/api/public_errors.py` — public-safe error formatters for task channels and synchronous HTTP details.
 - `apps/backend/interfaces/api/tasks/generation_tasks.py` — shared generation task worker helpers (image task runners + engine options + PNG encoding).
 - `apps/backend/interfaces/api/serializers.py` — checkpoint serialization helper.
 - `apps/backend/interfaces/api/upscalers_manifest.py` — `upscalers/manifest.json` schema validation/normalization (used by `/api/upscalers/remote`).
@@ -51,3 +51,4 @@ Status: Active
 - 2026-02-15: `POST /api/options` responses now include `applied_now[]` and `restart_required[]` arrays with per-key reason metadata.
 - 2026-02-15: `run_api.py` now publishes launcher trace toggles (`trace_contract`, `trace_profiler`) through bootstrap env keys (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) and maps profiler toggle to `CODEX_PROFILE=1` for runtime diagnostics.
 - 2026-02-15: Task error payloads now pass through `public_errors.py`; API task status/SSE channels expose public-safe terminal messages (`cancelled`/`out of memory`/stable error id) instead of raw exception text.
+- 2026-02-15: `public_errors.py` also sanitizes synchronous HTTP error details for generation/upscale/supir routes (`public_http_error_detail`), removing raw exception text from `HTTPException.detail` and `/api/upscalers/remote` manifest parse errors while preserving actionable OOM classification.

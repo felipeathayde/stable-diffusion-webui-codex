@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from uuid import uuid4
 from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
+from apps.backend.interfaces.api.public_errors import public_http_error_detail
 from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.interfaces.api.device_selection import parse_device_from_payload
@@ -37,6 +39,7 @@ from apps.backend.runtime.vision.upscalers.safeweights import allowed_upscaler_w
 
 _HF_UPSCALERS_REPO_ID = "sangoi-exe/sd-webui-codex"
 _HF_MANIFEST_PATH = "upscalers/manifest.json"
+_router_log = logging.getLogger("backend.api.routers.upscale")
 
 
 def _normalize_hf_repo_id(repo_id: str | None) -> str:
@@ -61,7 +64,11 @@ def _parse_explicit_device(payload: Dict[str, Any]) -> str:
     try:
         return parse_device_from_payload(payload)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+        _router_log.warning("upscale device selection validation failed: %s", exc)
+        raise HTTPException(
+            status_code=400,
+            detail=public_http_error_detail(exc, fallback="Invalid 'device' selection"),
+        ) from None
 
 
 def _safe_relpath(raw: str) -> str:
@@ -110,7 +117,11 @@ def build_router(
 
             files = HfApi().list_repo_files(repo_id=hf_repo_id, revision=hf_revision)
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"failed to query Hugging Face repo: {exc}") from None
+            _router_log.warning("failed to query Hugging Face repo '%s': %s", hf_repo_id, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="failed to query Hugging Face repo"),
+            ) from None
 
         manifest_found = any(isinstance(name, str) and name == _HF_MANIFEST_PATH for name in files)
         manifest: Any | None = None
@@ -137,7 +148,8 @@ def build_router(
                         else f"{manifest_errors[0]} (+{len(manifest_errors) - 1} more)"
                     )
             except Exception as exc:
-                manifest_error = str(exc)
+                _router_log.warning("failed to parse upscalers manifest from '%s': %s", hf_repo_id, exc)
+                manifest_error = public_http_error_detail(exc, fallback="failed to load upscalers manifest")
                 manifest_errors = [manifest_error]
                 manifest_weights_by_hf_path = {}
 
@@ -260,7 +272,11 @@ def build_router(
         try:
             data = json.loads(payload) if payload else {}
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"payload must be JSON: {exc}") from None
+            _router_log.warning("upscale payload JSON parse failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="payload must be valid JSON"),
+            ) from None
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="payload must be JSON object")
 
@@ -269,7 +285,11 @@ def build_router(
         try:
             image_bytes = await image.read()
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"failed to read upload: {exc}") from None
+            _router_log.warning("upscale upload read failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="failed to read upload"),
+            ) from None
         if not image_bytes:
             raise HTTPException(status_code=400, detail="empty image upload")
 

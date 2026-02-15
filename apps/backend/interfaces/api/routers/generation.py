@@ -42,8 +42,10 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from apps.backend.interfaces.api.path_utils import _path_from_api
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.public_errors import public_task_error_message
+from apps.backend.interfaces.api.public_errors import public_http_error_detail, public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, register_task, unregister_task
+
+_router_log = logging.getLogger("backend.api.routers.generation")
 
 
 def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapshot, generation_provenance, save_generated_images, param_utils) -> APIRouter:
@@ -576,7 +578,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 try:
                     tile_cfg = tile_config_from_payload(hires.get("tile"), context="extras.hires.tile")
                 except ValueError as exc:
-                    raise HTTPException(status_code=400, detail=str(exc)) from None
+                    _router_log.warning("txt2img extras.hires.tile validation failed: %s", exc)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=public_http_error_detail(exc, fallback="Invalid 'extras.hires.tile' configuration"),
+                    ) from None
                 tile = {
                     "tile": int(tile_cfg.tile),
                     "overlap": int(tile_cfg.overlap),
@@ -753,7 +759,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         try:
             _ensure_default_engines_registered()
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Engine registry init failed: {exc}") from exc
+            _router_log.exception("engine registry initialization failed")
+            raise HTTPException(
+                status_code=500,
+                detail=public_http_error_detail(exc, fallback="Engine registry init failed"),
+            ) from exc
         try:
             return _engine_registry.get_descriptor(key).key
         except Exception as exc:
@@ -910,9 +920,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         try:
             contract = contract_for_request(engine_id=engine_id, checkpoint_core_only=bool(is_core_only))
         except Exception as exc:
+            _router_log.exception("asset contract resolution failed for engine '%s'", engine_id)
             raise HTTPException(
                 status_code=500,
-                detail=f"Asset contract resolution failed for engine '{engine_id}': {exc}",
+                detail=public_http_error_detail(
+                    exc,
+                    fallback=f"Asset contract resolution failed for engine '{engine_id}'",
+                ),
             ) from exc
 
         vae_field = f"{field_prefix}.vae_sha"
@@ -987,7 +1001,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             f"Missing required text encoder slot(s) {missing} for slots={list(expected)} (classified={sorted(slot_to_path)})."
                         )
                 except TextEncoderSlotError as exc:
-                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                    _router_log.warning("text encoder slot validation failed for engine '%s': %s", engine_id, exc)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=public_http_error_detail(
+                            exc,
+                            fallback="Invalid text encoder slot mapping for requested assets",
+                        ),
+                    ) from exc
 
                 # Normalize order to the canonical slot list so downstream code never depends on user-provided ordering.
                 tenc_paths = [slot_to_path[slot] for slot in contract.tenc_slots]
@@ -1125,7 +1146,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            _router_log.warning("txt2img sampler/scheduler validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid sampler/scheduler configuration"),
+            ) from exc
         seed_val = _require_int_field(payload, 'seed')
         clip_skip = _require_int_field(payload, 'clip_skip', minimum=0, maximum=12) if 'clip_skip' in payload else None
 
@@ -1245,7 +1270,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            _router_log.warning("img2img sampler/scheduler validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid sampler/scheduler configuration"),
+            ) from exc
         seed_val = _p.as_int(payload, 'img2img_seed')
         clip_skip = _p.as_int(payload, 'img2img_clip_skip') if 'img2img_clip_skip' in payload else None
         if clip_skip is not None:
@@ -1308,7 +1337,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             SamplerKind.from_string(sampler_name)
             SchedulerName.from_string(scheduler_name)
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            _router_log.warning("%s sampler/scheduler validation failed: %s", task_prefix, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid video sampler/scheduler configuration"),
+            ) from exc
         seed_val = int(payload.get(f'{task_prefix}_seed', default_seed))
         guidance_scale = float(payload.get(f'{task_prefix}_cfg_scale', default_cfg_scale))
 
@@ -1481,7 +1514,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         try:
             return parse_device_from_payload(payload)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+            _router_log.warning("generation device selection validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid 'device' selection"),
+            ) from None
 
     _ORCH = InferenceOrchestrator()
 
@@ -1617,7 +1654,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             try:
                 hr_tile_cfg = tile_config_from_payload(payload.get("img2img_hires_tile"), context="img2img_hires_tile")
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from None
+                _router_log.warning("img2img_hires_tile validation failed: %s", exc)
+                raise HTTPException(
+                    status_code=400,
+                    detail=public_http_error_detail(exc, fallback="Invalid 'img2img_hires_tile' configuration"),
+                ) from None
             hr_tile = {
                 "tile": int(hr_tile_cfg.tile),
                 "overlap": int(hr_tile_cfg.overlap),
@@ -1892,7 +1933,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid video export options: {exc}") from exc
+            _router_log.warning("txt2vid video export options validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid video export options"),
+            ) from exc
         if video_options:
             extras["video"] = {
                 "video_filename_prefix": payload.get("video_filename_prefix"),
@@ -2072,7 +2117,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid video export options: {exc}") from exc
+            _router_log.warning("img2vid video export options validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid video export options"),
+            ) from exc
         if video_options:
             extras["video"] = {
                 "video_filename_prefix": payload.get("video_filename_prefix"),

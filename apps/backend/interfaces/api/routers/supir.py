@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict
 from uuid import uuid4
@@ -28,12 +29,15 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.interfaces.api.device_selection import parse_device_from_payload
+from apps.backend.interfaces.api.public_errors import public_http_error_detail
 from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
 from apps.backend.runtime.families.supir.config import parse_supir_enhance_config
 from apps.backend.runtime.families.supir.errors import SupirBaseModelError, SupirConfigError, SupirWeightsError
 from apps.backend.runtime.families.supir.loader import resolve_supir_assets
 from apps.backend.runtime.families.supir.samplers.registry import iter_supir_sampler_labels
 from apps.backend.runtime.families.supir.weights import SupirVariant, supir_weights_diagnostics
+
+_router_log = logging.getLogger("backend.api.routers.supir")
 
 
 def _parse_explicit_device(payload: Dict[str, Any]) -> str:
@@ -44,7 +48,11 @@ def _parse_explicit_device(payload: Dict[str, Any]) -> str:
     try:
         return parse_device_from_payload(payload)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+        _router_log.warning("supir device selection validation failed: %s", exc)
+        raise HTTPException(
+            status_code=400,
+            detail=public_http_error_detail(exc, fallback="Invalid 'device' selection"),
+        ) from None
 
 
 def build_router(
@@ -76,7 +84,11 @@ def build_router(
         try:
             data = json.loads(payload) if payload else {}
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"payload must be JSON: {exc}") from None
+            _router_log.warning("supir payload JSON parse failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="payload must be valid JSON"),
+            ) from None
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="payload must be JSON object")
 
@@ -86,7 +98,11 @@ def build_router(
         try:
             config = parse_supir_enhance_config(data)
         except SupirConfigError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+            _router_log.warning("supir config validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid SUPIR payload configuration"),
+            ) from None
 
         device = _parse_explicit_device(data)
 
@@ -97,12 +113,20 @@ def build_router(
                 supir_models_roots=[Path(p) for p in get_paths_for("supir_models")],
             )
         except (SupirBaseModelError, SupirWeightsError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+            _router_log.warning("supir assets resolution failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="SUPIR assets resolution failed"),
+            ) from None
 
         try:
             image_bytes = await image.read()
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"failed to read upload: {exc}") from None
+            _router_log.warning("supir upload read failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="failed to read upload"),
+            ) from None
         if not image_bytes:
             raise HTTPException(status_code=400, detail="empty image upload")
 

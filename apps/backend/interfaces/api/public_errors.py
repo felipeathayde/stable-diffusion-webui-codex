@@ -31,10 +31,22 @@ _OOM_HINTS = (
     "allocation failed",
     "cublas_status_alloc_failed",
     "cudnn_status_alloc_failed",
-    "oom while",
-    "oom during",
-    "oom on ",
-    "core construction oom",
+)
+_OOM_CONTEXT_HINTS = (
+    "cuda",
+    "vram",
+    "memory",
+    "alloc",
+    "allocation",
+    "load",
+    "loading",
+    "model",
+    "construction",
+    "tiled",
+    "upscal",
+    "gguf",
+    "wan",
+    "spandrel",
 )
 _INTEGRITY_HINTS = ("sha256 mismatch",)
 
@@ -52,7 +64,8 @@ def _is_oom_error(*, err: Any, lowered_message: str) -> bool:
     if any(marker in lowered_message for marker in _OOM_HINTS):
         return True
     if _OOM_WORD_RE.search(lowered_message):
-        return True
+        if any(context in lowered_message for context in _OOM_CONTEXT_HINTS):
+            return True
     return False
 
 

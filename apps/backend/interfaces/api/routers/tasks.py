@@ -23,6 +23,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
+from apps.backend.interfaces.api.public_errors import public_task_error_message
 from apps.backend.interfaces.api.task_registry import (
     TaskCancelMode,
     TaskEventType,
@@ -57,7 +58,11 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
         if entry.done.done():
             if entry.error:
                 entry.schedule_cleanup(task_id)
-                return {"status": "error", "error": entry.error, "last_event_id": entry.last_event_id()}
+                return {
+                    "status": "error",
+                    "error": public_task_error_message(entry.error),
+                    "last_event_id": entry.last_event_id(),
+                }
             entry.schedule_cleanup(task_id)
             out = entry.result or {"status": "completed", "result": {}}
             if not isinstance(out, dict):
@@ -123,7 +128,10 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
                     primary_id, end_id = terminal_ids
                     if int(last_id) < int(primary_id):
                         if entry.error:
-                            err_payload = {"type": TaskEventType.ERROR.value, "message": entry.error}
+                            err_payload = {
+                                "type": TaskEventType.ERROR.value,
+                                "message": public_task_error_message(entry.error),
+                            }
                             yield _sse(event_id=int(primary_id), json_payload=json.dumps(err_payload))
                         else:
                             result_payload: dict[str, Any] = {"type": TaskEventType.RESULT.value, "images": [], "info": {}}

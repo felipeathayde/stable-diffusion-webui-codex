@@ -27,6 +27,7 @@ import threading
 from typing import Any, Callable, Mapping, Optional
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
+from apps.backend.interfaces.api.public_errors import public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, unregister_task
 from apps.backend.runtime.diagnostics.contract_trace import error_meta
 from apps.backend.runtime.diagnostics.contract_trace import emit_event as emit_contract_trace
@@ -155,7 +156,7 @@ def run_image_task(
             prompt_hash_value="",
             meta=error_meta(err),
         )
-        entry.error = str(err)
+        entry.error = public_task_error_message(err)
         entry.mark_finished(success=False)
         unregister_task(task_id)
         raise
@@ -346,7 +347,7 @@ def run_image_task(
             except Exception:
                 pass
 
-            entry.error = str(err)
+            entry.error = public_task_error_message(err)
             fallback_used = fallback_enabled and ("fallback" in str(err).lower())
             emit_contract_trace(
                 task_id=task_id,

@@ -11,9 +11,11 @@ Status: Active
 ## Key Files
 - `apps/backend/interfaces/api/tasks/generation_tasks.py` — common task runner helpers for generation endpoints (event streaming, engine options build, image encoding).
 - `apps/backend/interfaces/api/tasks/upscale_tasks.py` — task workers for standalone `/api/upscale` and HF upscaler downloads (`/api/upscalers/download`) with explicit integrity verification (manifest sha256 when available).
+- `apps/backend/interfaces/api/tasks/supir_tasks.py` — task worker for `/api/supir/enhance` orchestration and cancellation handling.
 
 ## Notes
 - This package must remain import-light (avoid importing torch-heavy modules at import time). Prefer local imports inside functions.
 - Cancellation semantics are owned by `apps/backend/interfaces/api/task_registry.py` and must be preserved (always emit `end`).
 - 2026-02-09: Task workers now compare cancellation policy using `TaskCancelMode.IMMEDIATE` (enumized contract from `task_registry.py`) instead of raw string literals.
 - 2026-02-15: `generation_tasks.py` now emits contract-trace JSONL events (opt-in via `CODEX_TRACE_CONTRACT`) with prompt hashing only (`prompt_hash`, never raw prompt text).
+- 2026-02-15: task workers sanitize terminal errors through `apps/backend/interfaces/api/public_errors.py` before persisting `entry.error`, preventing raw exception leakage through task status/SSE.

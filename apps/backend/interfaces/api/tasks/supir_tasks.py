@@ -22,6 +22,7 @@ import threading
 from typing import Any, Callable, Mapping
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
+from apps.backend.interfaces.api.public_errors import public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
 
@@ -83,7 +84,7 @@ def run_supir_enhance_task(
             )
             raise RuntimeError("SUPIR enhance returned no result")
         except Exception as err:
-            entry.error = str(err)
+            entry.error = public_task_error_message(err)
             success = False
         finally:
             entry.mark_finished(success=success)

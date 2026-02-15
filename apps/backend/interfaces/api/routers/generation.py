@@ -42,6 +42,7 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from apps.backend.interfaces.api.path_utils import _path_from_api
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
+from apps.backend.interfaces.api.public_errors import public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, register_task, unregister_task
 
 
@@ -2346,7 +2347,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 prompt_hash_value="",
                 meta=error_meta(err),
             )
-            entry.error = str(err)
+            entry.error = public_task_error_message(err)
             entry.mark_finished(success=False)
             unregister_task(task_id)
             raise
@@ -2527,7 +2528,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
                 except Exception:
                     pass
-                entry.error = str(err)
+                entry.error = public_task_error_message(err)
                 fallback_used = fallback_enabled and ("fallback" in str(err).lower())
                 emit_contract_trace(
                     task_id=task_id,

@@ -65,3 +65,4 @@ Status: Active
 - 2026-02-15: `generation.py` enforces the strict generation settings contract: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted `codex_options_revision` (HTTP 409 includes `current_revision` + `provided_revision`).
 - 2026-02-15: `options.py` `POST /api/options` now returns apply metadata arrays (`applied_now[]`, `restart_required[]`) with per-key reason strings; runtime-memory keys are classified as hot-applied.
 - 2026-02-15: `generation.py` video task worker now emits contract-trace JSONL events (opt-in via `CODEX_TRACE_CONTRACT`) with stage/action/device + prompt hash only (no raw prompt fields).
+- 2026-02-15: `tasks.py` now sanitizes terminal `entry.error` before returning `/api/tasks/{task_id}` and SSE `error` events, preventing raw exception text leaks to clients.

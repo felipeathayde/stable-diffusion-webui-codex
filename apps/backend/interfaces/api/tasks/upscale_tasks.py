@@ -32,6 +32,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
+from apps.backend.interfaces.api.public_errors import public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
 logger = logging.getLogger("backend.api.tasks.upscale")
@@ -170,7 +171,7 @@ def run_upscale_task(
             entry.result = {"status": "completed", "result": result}
             success = True
         except Exception as err:  # pragma: no cover - surfaces runtime errors
-            entry.error = str(err)
+            entry.error = public_task_error_message(err)
             success = False
         finally:
             entry.mark_finished(success=success)
@@ -287,7 +288,7 @@ def run_upscaler_download_task(
                     path.unlink(missing_ok=True)
                 except Exception:
                     pass
-            entry.error = str(err)
+            entry.error = public_task_error_message(err)
             success = False
         finally:
             entry.mark_finished(success=success)

@@ -767,13 +767,20 @@ class CodexOperationsGGUF(CodexOperations):
     class Embedding(torch.nn.Embedding):
         def __init__(self, *args, **kwargs):
             ctx = get_operation_context()
-            if ctx.device is not None:
-                kwargs["device"] = ctx.device
+            supplied_weight = kwargs.get("_weight", None)
+            if supplied_weight is None and len(args) > 7:
+                supplied_weight = args[7]
+            # Keep GGUF Embedding construction lazy: build placeholder metadata on
+            # `meta` so we avoid allocating a full real tensor before state_dict load.
+            placeholder_mode = supplied_weight is None
+            if placeholder_mode:
+                kwargs["device"] = torch.device("meta")
             super().__init__(*args, **kwargs)
             self.parameters_manual_cast = ctx.manual_cast_enabled
-            dtype = ctx.dtype or torch.float32
-            device = ctx.device
-            self.dummy = torch.nn.Parameter(torch.empty(1, device=device, dtype=dtype))
+            if placeholder_mode:
+                dtype = ctx.dtype or torch.float32
+                device = ctx.device
+                self.dummy = torch.nn.Parameter(torch.empty(1, device=device, dtype=dtype))
             self.bias = None
 
         def reset_parameters(self):
@@ -791,17 +798,23 @@ class CodexOperationsGGUF(CodexOperations):
             error_msgs,
         ):
             if hasattr(self, "dummy"):
+                key = prefix + "weight"
                 computation_dtype = self.dummy.dtype
                 if computation_dtype not in (torch.float16, torch.bfloat16):
                     computation_dtype = torch.float16
-                if prefix + "weight" in state_dict:
-                    self.weight = utils.tensor2parameter(state_dict[prefix + "weight"].to(device=self.dummy.device))
+                if key in state_dict:
+                    self.weight = utils.tensor2parameter(state_dict[key].to(device=self.dummy.device))
                     if hasattr(self.weight, "computation_dtype"):
                         self.weight.computation_dtype = computation_dtype
+                elif strict:
+                    missing_keys.append(key)
                 del self.dummy
             else:
-                if prefix + "weight" in state_dict:
-                    self.weight = state_dict[prefix + "weight"]
+                key = prefix + "weight"
+                if key in state_dict:
+                    self.weight = state_dict[key]
+                elif strict:
+                    missing_keys.append(key)
 
         def _apply(self, fn, recurse=True):
             for name, param in self.named_parameters(recurse=False, remove_duplicate=True):
@@ -809,6 +822,16 @@ class CodexOperationsGGUF(CodexOperations):
             return self
 
         def forward(self, x):
+            if hasattr(self, "dummy"):
+                raise RuntimeError(
+                    "GGUF Embedding forward called before weight load. "
+                    "Call load_state_dict(...) before forward."
+                )
+            if self.weight is None or getattr(self.weight, "is_meta", False):
+                raise RuntimeError(
+                    "GGUF Embedding weight is missing after load. "
+                    "Ensure state_dict contains 'weight'."
+                )
             weight, bias, signal = weights_manual_cast(
                 self,
                 x,

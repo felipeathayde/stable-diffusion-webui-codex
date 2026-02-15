@@ -15,3 +15,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to ops facades and GGUF runtime helpers (doc-only change; part of rollout).
 - 2026-01-29: Added `ops/codexpack_cuda.py` to best-effort load the `codexpack_cuda` extension (prebuilt or in-place build) for CodexPack packed GGUF execution.
 - 2026-02-09: Removed inference-tensor materialization mitigations for the version-counter crash; fixes are scoped to correct request entrypoints (`get_learned_conditioning` uses `torch.no_grad()` instead of `torch.inference_mode()`).
+- 2026-02-15: `CodexOperationsGGUF.Embedding` constructor is now lazy for standard GGUF paths (`_weight` absent): it builds metadata on `meta` device and defers real weight materialization to `_load_from_state_dict`, preventing large eager embedding allocations before GGUF state-dict load. Explicit `_weight` constructor path remains eager/usable (no dummy placeholder), and strict missing-key loads now report `weight` as missing.

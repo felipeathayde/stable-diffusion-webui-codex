@@ -63,7 +63,7 @@ Status: Active
 - 2026-02-11: `scheduler.py` UniPC corrector now promotes low-precision linear-solve inputs (`fp16`/`bf16`) to `fp32` before `torch.linalg.solve` and casts back after solve, preventing CUDA `lu_factor_cusolver` half-precision backend errors.
 - 2026-02-11: `run.py` img2vid batch/stream paths now slice pure latent channels from I2V state before VAE decode (order-aware via `resolve_i2v_order`), preventing `C=36` conditioning-state tensors (`lat+mask+img`) from reaching VAE decode contracts that require latent-only channels.
 - 2026-02-12: `sampling.py` now enforces fail-loud per-step finite checks at loop-entry/model/CFG/scheduler boundaries and runs scheduler-state math in `fp32` when model execution dtype is `fp16`/`bf16` (preserving strict contracts while stabilizing low-stage I2V updates).
-- 2026-02-12: `text_context.py` TE GGUF load path now calls `load_gguf_state_dict(..., dequantize=None, ...)` so dequantization follows global `gguf_exec` policy instead of forcing upfront dequantization.
+- 2026-02-12: `text_context.py` TE GGUF load path now calls `load_gguf_state_dict(..., dequantize=False, ...)` so text-encoder GGUF weights stay on forward-only dequant semantics (no load-time upfront dequant from global `gguf_exec`).
 - 2026-02-15: WAN22 GGUF stage/text loaders now pass explicit target device into `load_gguf_state_dict(...)`, and safetensors TE loading uses device-aware `load_file(..., device=...)` for consistent placement.
 
 ## Invariants & Logging (Fase 5)

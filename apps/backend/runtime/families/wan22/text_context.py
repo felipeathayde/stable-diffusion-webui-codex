@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
 Loads tokenizer metadata and text encoder weights from local paths only, applies strict embedding-key alias normalization for GGUF T5 variants,
-honors global GGUF dequantization policy for TE GGUF loads with explicit target-device routing, and then builds prompt/negative embeddings for the WAN GGUF runtime.
+forces forward-only GGUF dequantization for TE loads with explicit target-device routing, and then builds prompt/negative embeddings for the WAN GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
@@ -262,7 +262,21 @@ def get_text_context(
 
     use_dev_name = (te_dev_eff or device or "cpu").lower().strip()
     target_device = use_dev_name if use_dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
-    enc = _Enc(cfg)
+    te_is_gguf = te_file.lower().endswith(".gguf")
+    if te_is_gguf:
+        from transformers import modeling_utils as hf_modeling_utils
+        from apps.backend.runtime.ops.operations import using_codex_operations
+
+        with using_codex_operations(
+            device=torch.device(target_device),
+            dtype=as_torch_dtype(dtype),
+            manual_cast_enabled=True,
+            weight_format="gguf",
+        ):
+            with hf_modeling_utils.no_init_weights():
+                enc = _Enc(cfg)
+    else:
+        enc = _Enc(cfg)
     try:
         if te_file.lower().endswith(".safetensors"):
             from safetensors.torch import load_file as _load_st
@@ -273,7 +287,7 @@ def get_text_context(
 
             sd = load_gguf_state_dict(
                 te_file,
-                dequantize=None,
+                dequantize=False,
                 computation_dtype=as_torch_dtype(dtype),
                 device=target_device,
             )
@@ -302,10 +316,27 @@ def get_text_context(
         raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {exc}") from exc
 
     dev = torch.device(use_dev_name if use_dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu")
-    try:
-        enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
-    except Exception:
-        enc = enc.to(device=dev)
+    if not te_is_gguf:
+        try:
+            enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
+        except Exception:
+            enc = enc.to(device=dev)
+
+    if te_is_gguf:
+        requested_compute_dtype = as_torch_dtype(dtype)
+
+        def _apply_compute_dtype(module_obj: Any) -> None:
+            weight = getattr(module_obj, "weight", None)
+            if weight is None or not hasattr(weight, "computation_dtype"):
+                return
+            try:
+                setattr(weight, "computation_dtype", requested_compute_dtype)
+            except Exception:
+                return
+
+        _apply_compute_dtype(getattr(enc, "shared", None))
+        encoder_obj = getattr(enc, "encoder", None)
+        _apply_compute_dtype(getattr(encoder_obj, "embed_tokens", None))
 
     def _do(clean_txt: str) -> torch.Tensor:
         inputs = tok(

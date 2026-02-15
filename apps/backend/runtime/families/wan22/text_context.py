@@ -372,12 +372,13 @@ def get_text_context(
     )
 
     if offload_after:
-        try:
-            enc.to("cpu")
-        except Exception:
-            pass
-        if dev.type == "cuda":
-            log.info("[wan22.gguf] text-encoder offloaded to CPU (smart_offload)")
+        if not te_is_gguf:
+            try:
+                enc.to("cpu")
+            except Exception:
+                pass
+            if dev.type == "cuda":
+                log.info("[wan22.gguf] text-encoder offloaded to CPU (smart_offload)")
         del enc
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

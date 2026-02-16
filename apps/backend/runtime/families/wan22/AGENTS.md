@@ -65,6 +65,7 @@ Status: Active
 - 2026-02-12: `sampling.py` now enforces fail-loud per-step finite checks at loop-entry/model/CFG/scheduler boundaries and runs scheduler-state math in `fp32` when model execution dtype is `fp16`/`bf16` (preserving strict contracts while stabilizing low-stage I2V updates).
 - 2026-02-12: `text_context.py` TE GGUF load path now calls `load_gguf_state_dict(..., dequantize=False, ...)` so text-encoder GGUF weights stay on forward-only dequant semantics (no load-time upfront dequant from global `gguf_exec`).
 - 2026-02-15: WAN22 GGUF stage/text loaders now pass explicit target device into `load_gguf_state_dict(...)`, and safetensors TE loading uses device-aware `load_file(..., device=...)` for consistent placement.
+- 2026-02-15: `text_context.py` now performs a GGUF-only selective placement pass after TE load: non-quantized parameters/buffers are moved to the resolved execution device while quantized wrappers (`CodexParameter`/CodexPack) are skipped, preventing mixed-device forward (`cuda` hidden states + CPU norm weights) without module-level `.to()` on quantized tensors.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

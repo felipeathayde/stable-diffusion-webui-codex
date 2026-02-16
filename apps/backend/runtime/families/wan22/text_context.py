@@ -323,6 +323,41 @@ def get_text_context(
             enc = enc.to(device=dev)
 
     if te_is_gguf:
+        from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
+
+        def _is_quantized_tensor(tensor_obj: Any) -> bool:
+            return bool(getattr(tensor_obj, "qtype", None) is not None) or isinstance(
+                tensor_obj, CodexPackLinearQ4KTilepackV1Parameter
+            )
+
+        def _place_non_quant_tensors_on_device(module_obj: torch.nn.Module) -> None:
+            with torch.no_grad():
+                for submodule_name, submodule_obj in module_obj.named_modules():
+                    for param_name, parameter in submodule_obj.named_parameters(recurse=False):
+                        if parameter is None or _is_quantized_tensor(parameter):
+                            continue
+                        if getattr(parameter, "is_meta", False):
+                            raise RuntimeError(
+                                "WAN22 GGUF: unresolved meta parameter in text encoder after load: "
+                                f"module={submodule_name or '<root>'} name={param_name}"
+                            )
+                        if parameter.device != dev:
+                            parameter.data = parameter.data.to(device=dev)
+                    for buffer_name, buffer in submodule_obj.named_buffers(recurse=False):
+                        if buffer is None:
+                            continue
+                        if _is_quantized_tensor(buffer):
+                            continue
+                        if getattr(buffer, "is_meta", False):
+                            raise RuntimeError(
+                                "WAN22 GGUF: unresolved meta buffer in text encoder after load: "
+                                f"module={submodule_name or '<root>'} name={buffer_name}"
+                            )
+                        if buffer.device != dev:
+                            submodule_obj._buffers[buffer_name] = buffer.to(device=dev)
+
+        _place_non_quant_tensors_on_device(enc)
+
         requested_compute_dtype = as_torch_dtype(dtype)
 
         def _apply_compute_dtype(module_obj: Any) -> None:

@@ -4,7 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 UV_BIN="${ROOT_DIR}/.uv/bin/uv"
 PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
-NPM_BIN="${ROOT_DIR}/.nodeenv/bin/npm"
+NODE_VERSION="${CODEX_NODE_VERSION:-24.13.0}"
+NODEENV_DIR="${ROOT_DIR}/.nodeenv"
+NODE_BIN="${NODEENV_DIR}/bin/node"
+NPM_BIN="${NODEENV_DIR}/bin/npm"
 INTERFACE_DIR="${ROOT_DIR}/apps/interface"
 CODEX_FFMPEG_VERSION="${CODEX_FFMPEG_VERSION:-7.0.2}"
 ALLOW_UNTRACKED=0
@@ -21,6 +24,7 @@ Behavior:
 - Updates only via: git fetch --prune + git pull --ff-only.
 - Verifies dependency prerequisites on every run after git safety checks.
 - Refreshes environment on every run after dependency verification.
+- Auto-provisions repo-local Node.js/npm when missing via nodeenv.
 
 Policy:
 - Scope: repo root only (no submodule/extension updates).
@@ -30,7 +34,8 @@ Policy:
 
 Environment overrides:
 - CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64
-- CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130 (used when auto-selecting torch backend)
+- CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130 (validated whenever set; used for backend selection when CODEX_TORCH_BACKEND is not set)
+- CODEX_NODE_VERSION=<version> (default: 24.13.0; used for nodeenv auto-provisioning)
 - CODEX_FFMPEG_VERSION=<version> (default: 7.0.2)
 EOF
 }
@@ -142,7 +147,72 @@ validate_git_state() {
   [[ -z "$status_output" ]] || show_dirty_abort "$status_output" "$ALLOW_UNTRACKED"
 }
 
+ensure_nodeenv() {
+  local nodeenv_args=()
+  if [[ -e "$NODEENV_DIR" && ! -d "$NODEENV_DIR" ]]; then
+    abort "E_NODEENV_PATH_INVALID" "Expected '$NODEENV_DIR' to be a directory."
+  fi
+
+  if [[ -x "$NODE_BIN" && -x "$NPM_BIN" ]]; then
+    local existing
+    existing="$("$NODE_BIN" -v 2>/dev/null | tr -d '\r\n')"
+    existing="${existing#v}"
+    [[ -n "$existing" ]] || abort "E_NODEENV_CORRUPT" "Found '$NODEENV_DIR', but node version could not be determined."
+    if [[ "$existing" != "$NODE_VERSION" ]]; then
+      abort "E_NODE_VERSION_MISMATCH" "'$NODEENV_DIR' contains Node.js $existing, but CODEX_NODE_VERSION=$NODE_VERSION. Set CODEX_NODE_VERSION=$existing or recreate '$NODEENV_DIR'."
+    fi
+    return 0
+  fi
+
+  if [[ -d "$NODEENV_DIR" ]]; then
+    log "nodeenv appears incomplete under ${NODEENV_DIR}; attempting repair with Node.js ${NODE_VERSION} ..."
+    nodeenv_args+=(--force)
+  else
+    log "npm missing; provisioning Node.js ${NODE_VERSION} into ${NODEENV_DIR} ..."
+  fi
+
+  "$UV_BIN" tool run --from nodeenv nodeenv "${nodeenv_args[@]}" -n "$NODE_VERSION" "$NODEENV_DIR" || abort "E_NODEENV_INSTALL_FAILED" "nodeenv install failed while preparing updater prerequisites."
+  [[ -x "$NODE_BIN" ]] || abort "E_NODEENV_INCOMPLETE" "nodeenv completed, but node is missing at '$NODE_BIN'."
+  [[ -x "$NPM_BIN" ]] || abort "E_NODEENV_INCOMPLETE" "nodeenv completed, but npm is missing at '$NPM_BIN'."
+
+  local repaired
+  repaired="$("$NODE_BIN" -v 2>/dev/null | tr -d '\r\n')"
+  repaired="${repaired#v}"
+  [[ -n "$repaired" ]] || abort "E_NODEENV_CORRUPT" "Found '$NODEENV_DIR', but node version could not be determined after repair."
+  if [[ "$repaired" != "$NODE_VERSION" ]]; then
+    abort "E_NODE_VERSION_MISMATCH" "'$NODEENV_DIR' contains Node.js $repaired, but CODEX_NODE_VERSION=$NODE_VERSION. Set CODEX_NODE_VERSION=$repaired or recreate '$NODEENV_DIR'."
+  fi
+}
+
+resolve_cuda_variant_override() {
+  local requested_variant="${CODEX_CUDA_VARIANT:-}"
+  local requested_variant_lc
+  requested_variant_lc="$(printf '%s' "$requested_variant" | tr '[:upper:]' '[:lower:]')"
+  case "$requested_variant_lc" in
+    "")
+      ;;
+    12.6|cu126)
+      printf 'cu126\n'
+      return 0
+      ;;
+    12.8|cu128)
+      printf 'cu128\n'
+      return 0
+      ;;
+    13|cu130)
+      printf 'cu130\n'
+      return 0
+      ;;
+    *)
+      abort "E_INVALID_CUDA_VARIANT" "Invalid CODEX_CUDA_VARIANT='${requested_variant}'. Expected 12.6|12.8|13|cu126|cu128|cu130."
+      ;;
+  esac
+}
+
 resolve_torch_backend() {
+  local variant_backend
+  variant_backend="$(resolve_cuda_variant_override)"
+
   local requested="${CODEX_TORCH_BACKEND:-}"
   if [[ -n "$requested" ]]; then
     case "$requested" in
@@ -154,6 +224,11 @@ resolve_torch_backend() {
         abort "E_INVALID_TORCH_BACKEND" "Invalid CODEX_TORCH_BACKEND='$requested'. Expected cpu|cu126|cu128|cu130|rocm64."
         ;;
     esac
+  fi
+
+  if [[ -n "$variant_backend" ]]; then
+    printf '%s\n' "$variant_backend"
+    return 0
   fi
 
   [[ -x "$PYTHON_BIN" ]] || abort "E_PYTHON_MISSING" "Python runtime missing at '$PYTHON_BIN'. Run install-webui.sh first."
@@ -227,29 +302,6 @@ PY
 }
 
 resolve_torch_backend_from_system() {
-  local requested_variant="${CODEX_CUDA_VARIANT:-}"
-  local requested_variant_lc
-  requested_variant_lc="$(printf '%s' "$requested_variant" | tr '[:upper:]' '[:lower:]')"
-  case "$requested_variant_lc" in
-    "")
-      ;;
-    12.6|cu126)
-      printf 'cu126\n'
-      return 0
-      ;;
-    12.8|cu128)
-      printf 'cu128\n'
-      return 0
-      ;;
-    13|cu130)
-      printf 'cu130\n'
-      return 0
-      ;;
-    *)
-      abort "E_INVALID_CUDA_VARIANT" "Invalid CODEX_CUDA_VARIANT='${requested_variant}'. Expected 12.6|12.8|13|cu126|cu128|cu130."
-      ;;
-  esac
-
   if [[ -e /dev/kfd ]] && { command -v rocminfo >/dev/null 2>&1 || command -v rocm-smi >/dev/null 2>&1; }; then
     printf 'rocm64\n'
     return 0
@@ -299,7 +351,8 @@ resolve_torch_backend_from_system() {
 prepare_refresh_requirements() {
   [[ -x "$UV_BIN" ]] || abort "E_UV_MISSING" "uv not found at '$UV_BIN'. Run install-webui.sh first."
   [[ -x "$PYTHON_BIN" ]] || abort "E_PYTHON_MISSING" "Python runtime missing at '$PYTHON_BIN'. Run install-webui.sh first."
-  [[ -x "$NPM_BIN" ]] || abort "E_NPM_MISSING" "npm not found at '$NPM_BIN'. Run install-webui.sh first."
+  ensure_nodeenv
+  [[ -x "$NPM_BIN" ]] || abort "E_NPM_MISSING" "npm not found at '$NPM_BIN'."
   [[ -f "${INTERFACE_DIR}/package-lock.json" ]] || abort "E_NPM_LOCK_MISSING" "Lock-preserving update requires '${INTERFACE_DIR}/package-lock.json'."
 }
 

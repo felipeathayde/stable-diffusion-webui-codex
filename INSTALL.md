@@ -59,11 +59,13 @@ bash update-webui.sh --force
 - Abort diagnostics list explicit cause and offending files/directories when applicable.
 - Non-destructive update path only: `git fetch --prune` + `git pull --ff-only`.
 - Dependency verification (toolchain + torch backend resolution) runs on every update attempt after git safety checks.
+- If repo-local npm is missing, updater auto-provisions `.nodeenv` via nodeenv (using `CODEX_NODE_VERSION`, default `24.13.0`).
 - Environment refresh runs on every update attempt after dependency verification.
 - Frontend refresh uses lock-preserving mode (`npm ci`), so `apps/interface/package-lock.json` is required.
 
 ## Node.js (frontend)
 The installers provision a repo-local Node.js into `.nodeenv` via `nodeenv` (no system Node required).
+The updater also provisions `.nodeenv` automatically if npm is missing.
 On Windows, updater/install scripts probe npm in both `.nodeenv\\Scripts\\npm.cmd` and `.nodeenv\\bin\\npm.cmd`.
 Installer/updater frontend sync uses lock-preserving `npm ci` (requires `apps/interface/package-lock.json`).
 
@@ -86,7 +88,7 @@ Override:
 - `CODEX_TORCH_MODE=rocm` (Linux only: force ROCm 6.4 wheels: `--extra rocm64`)
 - `CODEX_TORCH_MODE=skip` (skip torch/torchvision entirely; the WebUI will not run without PyTorch)
 - `CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64` (explicitly pick the PyTorch backend extra)
-- `CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130` (choose CUDA wheels when using `auto`/`cuda`; aliases map to `cu126|cu128|cu130`)
+- `CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130` (aliases map to `cu126|cu128|cu130`; validated whenever set and used for backend selection when `CODEX_TORCH_BACKEND` is not set)
 - `CODEX_INSTALL_TRACE=1` (Linux/WSL installer: enable shell trace for debugging)
 - `CODEX_FFMPEG_VERSION=<version>` (pin ffmpeg-downloader runtime build; default: `7.0.2`)
 

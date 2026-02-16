@@ -6,9 +6,15 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 set "UV_BIN=%ROOT%\.uv\bin\uv.exe"
 set "PYTHON_BIN=%ROOT%\.venv\Scripts\python.exe"
-set "NPM_BIN_PRIMARY=%ROOT%\.nodeenv\Scripts\npm.cmd"
-set "NPM_BIN_FALLBACK=%ROOT%\.nodeenv\bin\npm.cmd"
-set "NPM_BIN=%NPM_BIN_PRIMARY%"
+set "NODE_VERSION=%CODEX_NODE_VERSION%"
+if "%NODE_VERSION%"=="" set "NODE_VERSION=24.13.0"
+set "NODEENV_DIR=%ROOT%\.nodeenv"
+set "NODE_BIN_PRIMARY=%NODEENV_DIR%\Scripts\node.exe"
+set "NODE_BIN_FALLBACK=%NODEENV_DIR%\bin\node.exe"
+set "NPM_BIN_PRIMARY=%NODEENV_DIR%\Scripts\npm.cmd"
+set "NPM_BIN_FALLBACK=%NODEENV_DIR%\bin\npm.cmd"
+set "NODE_BIN="
+set "NPM_BIN="
 set "INTERFACE_DIR=%ROOT%\apps\interface"
 set "PACKAGE_LOCK=%INTERFACE_DIR%\package-lock.json"
 set "CODEX_FFMPEG_VERSION=%CODEX_FFMPEG_VERSION%"
@@ -103,6 +109,7 @@ echo   - No destructive commands ^(no reset/clean/restore/delete of user files^)
 echo   - Git update only via: fetch --prune ^+ pull --ff-only.
 echo   - Dependency verification runs on every update attempt after git safety checks.
 echo   - Environment refresh runs on every update attempt after dependency verification.
+echo   - Auto-provisions repo-local Node.js/npm when missing via nodeenv.
 echo.
 echo Policy:
 echo   - Scope: repo root only ^(no submodule/extension updates^).
@@ -112,7 +119,8 @@ echo   - Frontend refresh uses lock-preserving mode: npm ci.
 echo.
 echo Optional env:
 echo   CODEX_TORCH_BACKEND=cpu^|cu126^|cu128^|cu130^|rocm64
-echo   CODEX_CUDA_VARIANT=12.6^|12.8^|13^|cu126^|cu128^|cu130  ^(used when auto-selecting torch backend^)
+echo   CODEX_CUDA_VARIANT=12.6^|12.8^|13^|cu126^|cu128^|cu130  ^(validated whenever set; used when CODEX_TORCH_BACKEND is not set^)
+echo   CODEX_NODE_VERSION=^<version^>  ^(default 24.13.0; used for nodeenv auto-provisioning^)
 echo   CODEX_FFMPEG_VERSION=^<version^>  ^(default 7.0.2^)
 exit /b 0
 
@@ -249,16 +257,64 @@ if not exist "%UV_BIN%" call :die E_UV_MISSING "uv not found at '%UV_BIN%'. Run 
 if errorlevel 1 exit /b 1
 if not exist "%PYTHON_BIN%" call :die E_PYTHON_MISSING "Python runtime missing at '%PYTHON_BIN%'. Run install-webui.bat first."
 if errorlevel 1 exit /b 1
-set "NPM_BIN=%NPM_BIN_PRIMARY%"
-if not exist "%NPM_BIN%" if exist "%NPM_BIN_FALLBACK%" set "NPM_BIN=%NPM_BIN_FALLBACK%"
-if not exist "%NPM_BIN%" call :die E_NPM_MISSING "npm not found at '%NPM_BIN_PRIMARY%' or '%NPM_BIN_FALLBACK%'. Run install-webui.bat first."
+call :ensure_nodeenv
+if errorlevel 1 exit /b 1
+if not exist "%NPM_BIN%" call :die E_NPM_MISSING "npm not found after nodeenv provisioning. Checked '%NPM_BIN_PRIMARY%' and '%NPM_BIN_FALLBACK%'."
 if errorlevel 1 exit /b 1
 if not exist "%PACKAGE_LOCK%" call :die E_NPM_LOCK_MISSING "Lock-preserving update requires '%PACKAGE_LOCK%'."
 if errorlevel 1 exit /b 1
 exit /b 0
 
+:ensure_nodeenv
+set "NODE_BIN="
+set "NPM_BIN="
+if exist "%NODE_BIN_PRIMARY%" set "NODE_BIN=%NODE_BIN_PRIMARY%"
+if exist "%NPM_BIN_PRIMARY%" set "NPM_BIN=%NPM_BIN_PRIMARY%"
+if "%NODE_BIN%"=="" if exist "%NODE_BIN_FALLBACK%" set "NODE_BIN=%NODE_BIN_FALLBACK%"
+if "%NPM_BIN%"=="" if exist "%NPM_BIN_FALLBACK%" set "NPM_BIN=%NPM_BIN_FALLBACK%"
+if not "%NODE_BIN%"=="" if not "%NPM_BIN%"=="" goto :ensure_nodeenv_validate
+
+set "NODEENV_FORCE="
+if exist "%NODEENV_DIR%\NUL" (
+  call :log "nodeenv appears incomplete under %NODEENV_DIR%; attempting repair with Node.js %NODE_VERSION% ..."
+  set "NODEENV_FORCE=--force"
+) else (
+  call :log "npm missing; installing Node.js %NODE_VERSION% into %NODEENV_DIR% ..."
+)
+"%UV_BIN%" tool run --from nodeenv nodeenv %NODEENV_FORCE% -n "%NODE_VERSION%" "%NODEENV_DIR%"
+if errorlevel 1 call :die E_NODEENV_INSTALL_FAILED "nodeenv install failed while preparing updater prerequisites."
+if errorlevel 1 exit /b 1
+
+set "NODE_BIN="
+set "NPM_BIN="
+if exist "%NODE_BIN_PRIMARY%" set "NODE_BIN=%NODE_BIN_PRIMARY%"
+if exist "%NPM_BIN_PRIMARY%" set "NPM_BIN=%NPM_BIN_PRIMARY%"
+if "%NODE_BIN%"=="" if exist "%NODE_BIN_FALLBACK%" set "NODE_BIN=%NODE_BIN_FALLBACK%"
+if "%NPM_BIN%"=="" if exist "%NPM_BIN_FALLBACK%" set "NPM_BIN=%NPM_BIN_FALLBACK%"
+if not "%NODE_BIN%"=="" if not "%NPM_BIN%"=="" goto :ensure_nodeenv_validate
+
+call :die E_NODEENV_INCOMPLETE "nodeenv completed, but node/npm are missing under '%NODEENV_DIR%'."
+exit /b 1
+
+:ensure_nodeenv_validate
+set "NODE_EXISTING="
+for /f "delims=" %%I in ('"%NODE_BIN%" -v 2^>nul') do if not defined NODE_EXISTING set "NODE_EXISTING=%%I"
+if not defined NODE_EXISTING goto :ensure_nodeenv_corrupt
+set "NODE_EXISTING=%NODE_EXISTING:v=%"
+if /I "%NODE_EXISTING%"=="%NODE_VERSION%" exit /b 0
+
+call :die E_NODE_VERSION_MISMATCH "'%NODEENV_DIR%' already contains Node.js %NODE_EXISTING%, but CODEX_NODE_VERSION=%NODE_VERSION%. Set CODEX_NODE_VERSION=%NODE_EXISTING% or recreate '%NODEENV_DIR%'."
+exit /b 1
+
+:ensure_nodeenv_corrupt
+call :die E_NODEENV_CORRUPT "Found '%NODEENV_DIR%', but node/npm are missing or invalid. Recreate '%NODEENV_DIR%' or run install-webui.bat."
+exit /b 1
+
 :resolve_torch_backend
 set "TORCH_BACKEND="
+call :resolve_cuda_variant_override
+if errorlevel 1 exit /b 1
+
 if defined CODEX_TORCH_BACKEND (
   if /I "%CODEX_TORCH_BACKEND%"=="cpu" set "TORCH_BACKEND=cpu"
   if /I "%CODEX_TORCH_BACKEND%"=="cu126" set "TORCH_BACKEND=cu126"
@@ -267,6 +323,11 @@ if defined CODEX_TORCH_BACKEND (
   if /I "%CODEX_TORCH_BACKEND%"=="rocm64" set "TORCH_BACKEND=rocm64"
   if not defined TORCH_BACKEND call :die E_INVALID_TORCH_BACKEND "Invalid CODEX_TORCH_BACKEND='%CODEX_TORCH_BACKEND%'."
   if errorlevel 1 exit /b 1
+  exit /b 0
+)
+
+if defined VARIANT_BACKEND (
+  set "TORCH_BACKEND=%VARIANT_BACKEND%"
   exit /b 0
 )
 
@@ -281,18 +342,21 @@ if not defined TORCH_BACKEND call :die E_TORCH_BACKEND_UNRESOLVED "Could not det
 if errorlevel 1 exit /b 1
 exit /b 0
 
+:resolve_cuda_variant_override
+set "VARIANT_BACKEND="
+if "%CODEX_CUDA_VARIANT%"=="" exit /b 0
+if /I "%CODEX_CUDA_VARIANT%"=="12.6" set "VARIANT_BACKEND=cu126"
+if /I "%CODEX_CUDA_VARIANT%"=="cu126" set "VARIANT_BACKEND=cu126"
+if /I "%CODEX_CUDA_VARIANT%"=="12.8" set "VARIANT_BACKEND=cu128"
+if /I "%CODEX_CUDA_VARIANT%"=="cu128" set "VARIANT_BACKEND=cu128"
+if /I "%CODEX_CUDA_VARIANT%"=="13" set "VARIANT_BACKEND=cu130"
+if /I "%CODEX_CUDA_VARIANT%"=="cu130" set "VARIANT_BACKEND=cu130"
+if not defined VARIANT_BACKEND call :die E_INVALID_CUDA_VARIANT "Invalid CODEX_CUDA_VARIANT='%CODEX_CUDA_VARIANT%'. Expected 12.6|12.8|13|cu126|cu128|cu130."
+if errorlevel 1 exit /b 1
+exit /b 0
+
 :resolve_torch_backend_from_system
 set "TORCH_BACKEND="
-if /I "%CODEX_CUDA_VARIANT%"=="12.6" set "TORCH_BACKEND=cu126"
-if /I "%CODEX_CUDA_VARIANT%"=="cu126" set "TORCH_BACKEND=cu126"
-if /I "%CODEX_CUDA_VARIANT%"=="12.8" set "TORCH_BACKEND=cu128"
-if /I "%CODEX_CUDA_VARIANT%"=="cu128" set "TORCH_BACKEND=cu128"
-if /I "%CODEX_CUDA_VARIANT%"=="13" set "TORCH_BACKEND=cu130"
-if /I "%CODEX_CUDA_VARIANT%"=="cu130" set "TORCH_BACKEND=cu130"
-if not "%CODEX_CUDA_VARIANT%"=="" if not defined TORCH_BACKEND call :die E_INVALID_CUDA_VARIANT "Invalid CODEX_CUDA_VARIANT='%CODEX_CUDA_VARIANT%'. Expected 12.6|12.8|13|cu126|cu128|cu130."
-if errorlevel 1 exit /b 1
-if defined TORCH_BACKEND exit /b 0
-
 where nvidia-smi >nul 2>nul
 if errorlevel 1 (
   set "TORCH_BACKEND=cpu"
@@ -313,11 +377,13 @@ for /f "tokens=1 delims=." %%a in ("%DRIVER_VER%") do set "DRIVER_MAJOR=%%a"
 set "DRIVER_MAJOR_NUM="
 if not "%DRIVER_MAJOR%"=="" set /a DRIVER_MAJOR_NUM=%DRIVER_MAJOR% 2>nul
 if errorlevel 1 set "DRIVER_MAJOR_NUM="
-set "DRIVER_TOO_OLD="
-if "%DRIVER_MAJOR_NUM%"=="" goto :resolve_torch_backend_system_driver_done
-if %DRIVER_MAJOR_NUM% LSS 525 set "DRIVER_TOO_OLD=1"
-:resolve_torch_backend_system_driver_done
-if defined DRIVER_TOO_OLD (
+set "DRIVER_MAJOR_SAFE=0"
+set "DRIVER_MAJOR_KNOWN=0"
+if not "%DRIVER_MAJOR_NUM%"=="" (
+  set /a DRIVER_MAJOR_SAFE=%DRIVER_MAJOR_NUM% 2>nul
+  if not errorlevel 1 set "DRIVER_MAJOR_KNOWN=1"
+)
+if "%DRIVER_MAJOR_KNOWN%"=="1" if %DRIVER_MAJOR_SAFE% LSS 525 (
   set "TORCH_BACKEND=cpu"
   exit /b 0
 )
@@ -332,11 +398,7 @@ if errorlevel 1 set "CUDA_MINOR=0"
 
 if "%CUDA_MAJOR%"=="13" (
   set "TORCH_BACKEND=cu128"
-  set "CAN_USE_CU130="
-  if "%DRIVER_MAJOR_NUM%"=="" goto :resolve_torch_backend_system_cuda13_done
-  if %DRIVER_MAJOR_NUM% GEQ 580 set "CAN_USE_CU130=1"
-  :resolve_torch_backend_system_cuda13_done
-  if defined CAN_USE_CU130 set "TORCH_BACKEND=cu130"
+  if %DRIVER_MAJOR_SAFE% GEQ 580 set "TORCH_BACKEND=cu130"
 ) else if "%CUDA_MAJOR%"=="12" (
   if %CUDA_MINOR% LEQ 6 (
     set "TORCH_BACKEND=cu126"

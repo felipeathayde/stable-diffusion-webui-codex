@@ -10,7 +10,8 @@ Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
 Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
 renders progress/results via task events (frames and/or exported video).
 Passes explicit `token-engine="wan"` context to `PromptCard` so prompt token counting uses the WAN tokenizer contract.
-Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot) and surfaces a one-shot “Reconnected” toast.
+Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
+and surfaces a one-shot “Reconnected” toast.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
@@ -562,7 +563,7 @@ function fileInRoots(file: string, roots: string[]): boolean {
 }
 
 function defaultStage(): WanStageParams {
-  return { modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraSha: '', loraWeight: 1.0 }
+  return { modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraSha: '', loraWeight: 1.0, flowShift: undefined }
 }
 function defaultVideo(): WanVideoParams {
   return {
@@ -640,6 +641,7 @@ function syncLowFromHighIfNeeded(): void {
     seed: high.value.seed,
     loraSha: high.value.loraSha,
     loraWeight: high.value.loraWeight,
+    flowShift: high.value.flowShift,
   }
   const keys = Object.keys(patch) as Array<keyof WanStageParams>
   const needsUpdate = keys.some((key) => low.value[key] !== patch[key])
@@ -662,6 +664,7 @@ function onLowFollowsHighChange(enabled: boolean): void {
     seed: high.value.seed,
     loraSha: high.value.loraSha,
     loraWeight: high.value.loraWeight,
+    flowShift: high.value.flowShift,
   }
   store.updateParams(props.tabId, { lowFollowsHigh: true, low: { ...low.value, ...nextLow } }).catch(reportTabMutationError)
 }
@@ -680,6 +683,7 @@ watch(
     high.value.seed,
     high.value.loraSha,
     high.value.loraWeight,
+    high.value.flowShift,
   ] as const),
   ([enabled]) => {
     if (!enabled) return
@@ -697,6 +701,7 @@ watch(
     low.value.seed,
     low.value.loraSha,
     low.value.loraWeight,
+    low.value.flowShift,
   ] as const),
   ([enabled]) => {
     if (!enabled) return
@@ -1132,6 +1137,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       seed: high.value.seed,
       loraSha: lightx2v.value ? high.value.loraSha : '',
       loraWeight: high.value.loraWeight,
+      flowShift: high.value.flowShift,
     },
     low: {
       modelDir: low.value.modelDir,
@@ -1142,6 +1148,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       seed: low.value.seed,
       loraSha: lightx2v.value ? low.value.loraSha : '',
       loraWeight: low.value.loraWeight,
+      flowShift: low.value.flowShift,
     },
     output: {
       filenamePrefix: video.value.filenamePrefix,
@@ -1251,6 +1258,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     seed: typeof hi.seed === 'number' && Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
     loraSha: snapLightx2v ? String(hi.loraSha || '') : '',
     loraWeight: typeof hi.loraWeight === 'number' && Number.isFinite(hi.loraWeight) ? Number(hi.loraWeight) : high.value.loraWeight,
+    flowShift: typeof hi.flowShift === 'number' && Number.isFinite(hi.flowShift) ? Number(hi.flowShift) : high.value.flowShift,
   })
 
   setLow({
@@ -1262,6 +1270,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     seed: typeof lo.seed === 'number' && Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
     loraSha: snapLightx2v ? String(lo.loraSha || '') : '',
     loraWeight: typeof lo.loraWeight === 'number' && Number.isFinite(lo.loraWeight) ? Number(lo.loraWeight) : low.value.loraWeight,
+    flowShift: typeof lo.flowShift === 'number' && Number.isFinite(lo.flowShift) ? Number(lo.flowShift) : low.value.flowShift,
   })
 
   toast('Applied params from history.')

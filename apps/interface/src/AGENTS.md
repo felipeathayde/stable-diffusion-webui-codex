@@ -32,6 +32,7 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to `App.vue`, `main.ts`, and `router.ts` (doc-only change; part of rollout).
 - 2026-01-21: WAN video tabs now use sha-only stage LoRA inputs (`loraSha` → payload `lora_sha`), aligning with backend validation.
 - 2026-01-23: WAN video width/height now snap to multiples of 16 (rounded up; Diffusers parity) to avoid backend validation errors and patch-grid drift.
+- 2026-02-16: WAN LightX2V I2V 14B now keeps stage `flowShift` in tab state and auto-manages `flowShift=5.0` from QuickSettings mode/toggle wiring for distill parity.
 - 2026-02-06: Added `src/env.d.ts` and enabled Vue SFC typechecking via `vue-tsc` (ensures `.vue` imports are typechecked; prevents silent TS drift).
 - 2026-02-06: Added hard-fatal bootstrap orchestration (`stores/bootstrap.ts`) with root App loader/fatal retry gating; App now blocks partial UI until required startup dependencies load.
 - 2026-02-08: SDXL swap-model UX now uses explicit step-pointer semantics across src (`swapAtStep` in stores/UI, serialized as `switch_at_step` in API payloads) to avoid confusion with literal SDXL refiner “step count”.

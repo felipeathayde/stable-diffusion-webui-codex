@@ -41,3 +41,4 @@ Status: Active
 - 2026-02-06: `useVideoGeneration(tabId)` now consumes typed WAN tab params (`TabByType<'wan'>`) and shared `WanAssetsParams` from `model_tabs.ts` instead of local `tab.params as any` casting for core WAN param reads.
 - 2026-02-06: `useVideoGeneration(tabId)` now imports shared `WanAssetsParams` from `model_tabs.ts` (no local duplicate interface), keeping WAN asset typing aligned across store/view/composable layers.
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates `output.returnFrames` into common WAN payload input for all modes, fixing dropped `video_return_frames` requests from the composable path.
+- 2026-02-16: `useVideoGeneration(tabId)` now propagates WAN stage `flowShift` (`high/low.flowShift` → `wan_high/wan_low.flow_shift`) so distill runs can enforce non-default scheduler shifts explicitly.

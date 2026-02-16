@@ -38,6 +38,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onSmartFallbackChange` (function): Updates Smart Fallback toggle (best-effort OOM fallback behavior).
 - `onSmartCacheChange` (function): Updates Smart Cache toggle (conditioning caching behavior).
 - `onCoreStreamingChange` (function): Updates core streaming toggle (runtime streaming behavior).
+- `resolveWanFlowShiftForMode` (function): Resolves automatic WAN stage `flowShift` policy for the selected WAN mode + LightX2V toggle.
+- `patchWanStageFlowShift` (function): Applies/removes managed WAN stage `flowShift` values without clobbering unrelated manual overrides.
+- `finiteStageFlowShift` (function): Normalizes a stage `flowShift` into a finite number or `undefined` for stable policy comparisons.
+- `ensureWanFlowShiftPolicy` (function): Enforces managed WAN `flowShift` policy on the active tab (including initial load) without update loops.
 - `onWanModeChange` (function): Updates WAN mode selection and derived controls.
 - `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
@@ -386,7 +390,7 @@ import { useRoute } from 'vue-router'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
-import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams } from '../stores/model_tabs'
+import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams, type WanStageParams } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
 import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
@@ -1154,6 +1158,58 @@ const wanLowDirChoices = computed(() => {
 })
 
 type WanModelMode = 'i2v_14b' | 't2v_14b' | 'i2v_5b' | 't2v_5b' | 'v2v_14b'
+const WAN_LIGHTX2V_I2V_14B_FLOW_SHIFT = 5.0
+
+function resolveWanFlowShiftForMode(mode: WanModelMode, lightx2v: boolean): number | null {
+  if (!lightx2v) return null
+  if (mode === 'i2v_14b') return WAN_LIGHTX2V_I2V_14B_FLOW_SHIFT
+  return null
+}
+
+function patchWanStageFlowShift(stage: WanStageParams, flowShift: number | null): WanStageParams {
+  const next: WanStageParams = { ...stage }
+  if (flowShift === null) {
+    if (
+      typeof next.flowShift === 'number'
+      && Number.isFinite(next.flowShift)
+      && Math.abs(next.flowShift - WAN_LIGHTX2V_I2V_14B_FLOW_SHIFT) < 1e-9
+    ) {
+      delete next.flowShift
+    }
+    return next
+  }
+  next.flowShift = flowShift
+  return next
+}
+
+function finiteStageFlowShift(stage: WanStageParams): number | undefined {
+  if (typeof stage.flowShift !== 'number') return undefined
+  if (!Number.isFinite(stage.flowShift)) return undefined
+  return stage.flowShift
+}
+
+let syncingWanFlowShiftPolicy = false
+
+async function ensureWanFlowShiftPolicy(): Promise<void> {
+  if (syncingWanFlowShiftPolicy) return
+  const tab = activeWanTab.value
+  if (!tab) return
+  const flowShift = resolveWanFlowShiftForMode(wanModelMode.value, Boolean(tab.params.lightx2v))
+  const nextHigh = patchWanStageFlowShift(tab.params.high, flowShift)
+  const nextLow = patchWanStageFlowShift(tab.params.low, flowShift)
+  if (
+    finiteStageFlowShift(tab.params.high) === finiteStageFlowShift(nextHigh)
+    && finiteStageFlowShift(tab.params.low) === finiteStageFlowShift(nextLow)
+  ) {
+    return
+  }
+  syncingWanFlowShiftPolicy = true
+  try {
+    await tabsStore.updateParams(tab.id, { high: nextHigh, low: nextLow })
+  } finally {
+    syncingWanFlowShiftPolicy = false
+  }
+}
 
 function _wanRepoForMode(mode: WanModelMode): string {
   if (mode === 't2v_14b') return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
@@ -1424,12 +1480,17 @@ async function onWanModeChange(value: string): Promise<void> {
 
     const currentAssets = currentWanAssets()
     const nextAssets = { ...currentAssets, metadata: _wanRepoForMode(nextMode) }
+    const flowShift = resolveWanFlowShiftForMode(nextMode, Boolean(tab.params.lightx2v))
+    const nextHigh = patchWanStageFlowShift(tab.params.high, flowShift)
+    const nextLow = patchWanStageFlowShift(tab.params.low, flowShift)
 
     await tabsStore.updateParams(
       tab.id,
       {
         video: { ...currentVideo, ...videoPatch },
         assets: nextAssets,
+        high: nextHigh,
+        low: nextLow,
       },
     )
   } catch (error) {
@@ -1441,11 +1502,33 @@ async function onWanLightx2vChange(value: boolean): Promise<void> {
   try {
     const tab = activeWanTab.value
     if (!tab) return
-    await tabsStore.updateParams(tab.id, { lightx2v: Boolean(value) })
+    const nextLightx2v = Boolean(value)
+    const flowShift = resolveWanFlowShiftForMode(wanModelMode.value, nextLightx2v)
+    const nextHigh = patchWanStageFlowShift(tab.params.high, flowShift)
+    const nextLow = patchWanStageFlowShift(tab.params.low, flowShift)
+    await tabsStore.updateParams(tab.id, { lightx2v: nextLightx2v, high: nextHigh, low: nextLow })
   } catch (error) {
     toastQuicksettingsError(error)
   }
 }
+
+watch(
+  () => {
+    const tab = activeWanTab.value
+    if (!tab) return null
+    return {
+      tabId: tab.id,
+      mode: wanModelMode.value,
+      lightx2v: Boolean(tab.params.lightx2v),
+      highFlowShift: finiteStageFlowShift(tab.params.high),
+      lowFlowShift: finiteStageFlowShift(tab.params.low),
+    }
+  },
+  () => {
+    void ensureWanFlowShiftPolicy()
+  },
+  { immediate: true },
+)
 
 async function onZImageTurboChange(value: boolean): Promise<void> {
   try {

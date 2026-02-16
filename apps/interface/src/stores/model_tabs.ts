@@ -17,7 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
-- `WanStageParams` (interface): UI WAN stage params (high/low) used by video tabs and payload builders.
+- `WanStageParams` (interface): UI WAN stage params (high/low), including optional explicit `flowShift`, used by video tabs and payload builders.
 - `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
@@ -103,6 +103,7 @@ export interface WanStageParams {
   seed: number
   loraSha: string
   loraWeight: number
+  flowShift?: number
 }
 
 export interface WanVideoParams {

@@ -100,6 +100,50 @@ class InferenceOrchestrator:
         }
         return InferenceOrchestrator._freeze_engine_options(relevant)
 
+    @staticmethod
+    def _component_device(component: object) -> object | None:
+        if component is None:
+            return None
+
+        load_device = getattr(component, "load_device", None)
+        if load_device is not None:
+            return load_device
+
+        device = getattr(component, "device", None)
+        if device is not None:
+            return device
+
+        if hasattr(component, "parameters"):
+            try:
+                first_param = next(component.parameters())
+                param_device = getattr(first_param, "device", None)
+                if param_device is not None:
+                    return param_device
+            except Exception:
+                pass
+
+        nested_model = getattr(component, "model", None)
+        if nested_model is not None and nested_model is not component:
+            nested_device = InferenceOrchestrator._component_device(nested_model)
+            if nested_device is not None:
+                return nested_device
+
+        return None
+
+    @staticmethod
+    def _engine_primary_component_device(engine: BaseInferenceEngine) -> object | None:
+        codex_objects = getattr(engine, "codex_objects", None)
+        if codex_objects is None:
+            return None
+
+        denoiser = getattr(codex_objects, "denoiser", None)
+        legacy_unet = getattr(codex_objects, "unet", None)
+        for component in (denoiser, legacy_unet):
+            resolved = InferenceOrchestrator._component_device(component)
+            if resolved is not None:
+                return resolved
+        return None
+
     def _generation_signature(
         self,
         engine_key: str,
@@ -227,18 +271,15 @@ class InferenceOrchestrator:
                 # Reload if the primary device changed since last load
                 try:
                     from apps.backend.runtime.memory import memory_management as _mem
-                    desired = _mem.get_torch_device()
-                    unet = getattr(engine, 'codex_objects', None)
-                    dcur = None
-                    if unet is not None:
-                        u = getattr(unet, 'unet', None)
-                        if hasattr(u, 'parameters'):
-                            try:
-                                p = next(u.parameters())
-                                dcur = p.device
-                            except Exception:
-                                dcur = getattr(u, 'device', None)
-                    device_mismatch = (dcur is not None and getattr(dcur, 'type', None) != getattr(desired, 'type', None))
+                    desired = _mem.manager.primary_device()
+                    dcur = self._engine_primary_component_device(engine)
+                    if dcur is not None:
+                        desired_type = getattr(desired, "type", None)
+                        current_type = getattr(dcur, "type", None)
+                        if desired_type is None or current_type is None:
+                            device_mismatch = str(dcur) != str(desired)
+                        else:
+                            device_mismatch = current_type != desired_type
                 except Exception:
                     device_mismatch = False
 

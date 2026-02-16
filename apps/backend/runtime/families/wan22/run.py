@@ -13,6 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager.
 - `_try_set_cache_policy` (function): Configure GGUF dequant cache policy + limit when supported.
 - `_try_clear_cache` (function): Clear GGUF dequant cache when supported.
+- `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
 - `_parse_sampler` (function): Parse canonical WAN sampler strings (e.g. 'uni-pc bh2').
@@ -86,6 +87,15 @@ class _MemoryManagedModule:
             self.model.to(target_device)
         return self.model
 
+    def codex_unpatch_model(self, target_device: torch.device | None = None):  # noqa: ANN001 - protocol
+        if target_device is None:
+            return self.model
+        try:
+            self.model.to(target_device, non_blocking=True)
+        except TypeError:
+            self.model.to(target_device)
+        return self.model
+
 
 def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
     if policy is None:
@@ -110,11 +120,33 @@ def _try_clear_cache() -> None:
         from apps.backend.runtime.ops.operations_gguf import clear_cache
     except Exception:
         return
-
     try:
         clear_cache()
     except Exception:
         return
+
+
+def _teardown_stage(
+    *,
+    stage: str,
+    mm: _MemoryManagedModule | None,
+    model: torch.nn.Module | None,
+    offload_level: int,
+    logger: Any,
+) -> tuple[None, None]:
+    """Finalize a stage deterministically, even when sampling raises/cancels."""
+
+    try:
+        if mm is not None:
+            memory_management.manager.unload_model(mm)
+    finally:
+        del mm
+        del model
+        gc.collect()
+        if offload_level >= 2:
+            _try_clear_cache()
+            cuda_empty_cache(logger, label=f"after-{stage}")
+    return None, None
 
 
 def _resolve_offload_level(cfg: RunConfig) -> int:
@@ -397,228 +429,233 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     lvl = _resolve_offload_level(cfg)
 
     # Load GGUF weights on CPU first; the memory manager will move to GPU right before sampling.
-    hi_model = load_stage_model_from_gguf(
-        hi_path,
-        stage="high",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
-        logger=log,
-    )
-    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
-    if on_progress:
-        try:
-            on_progress(stage="prepare", step=0, total=1, percent=0.05)
-        except Exception:
-            pass
-
-    variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
-    model_key = f"wan_t2v_{variant}"
-
-    te_dev_eff = getattr(cfg, "te_device", None) or dev_name
-    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    te_kernel_required = getattr(cfg, "te_kernel_required", False)
-    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
-        raise RuntimeError(
-            "WAN22 GGUF: te_kernel_required must be boolean when provided "
-            f"(got {type(te_kernel_required).__name__})."
+    hi_model: torch.nn.Module | None = None
+    hi_mm: _MemoryManagedModule | None = None
+    try:
+        hi_model = load_stage_model_from_gguf(
+            hi_path,
+            stage="high",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            logger=log,
         )
-    if bool(te_kernel_required):
-        te_impl_val = "cuda_fp8"
-    te_required = te_impl_val == "cuda_fp8"
-    if te_required:
-        te_dev_eff = "cuda"
-    log.info(
-        "[wan22.gguf] offload profile: level=%s te_device=%s te_impl=%s te_required=%s",
-        lvl,
-        te_dev_eff,
-        te_impl_val,
-        str(bool(te_required)).lower(),
-    )
+        hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
+        if on_progress:
+            try:
+                on_progress(stage="prepare", step=0, total=1, percent=0.05)
+            except Exception:
+                pass
 
-    t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
-    log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
+        variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
+        model_key = f"wan_t2v_{variant}"
 
-    h_lat = max(8, int(cfg.height) // 8)
-    w_lat = max(8, int(cfg.width) // 8)
-    t = int(t_lat)
-
-    prompt_embeds, negative_embeds = get_text_context(
-        model_dir=os.path.dirname(hi_path),
-        prompt=cfg.prompt or "",
-        negative=cfg.negative_prompt,
-        device=dev_name,
-        dtype=cfg.dtype,
-        text_encoder_dir=cfg.text_encoder_dir,
-        tokenizer_dir=cfg.tokenizer_dir,
-        vae_dir=cfg.vae_dir,
-        model_key=model_key,
-        metadata_dir=cfg.metadata_dir,
-        logger=log,
-        offload_after=smart_offload_enabled(),
-        te_device=(cfg.te_device or te_dev_eff),
-        te_impl=getattr(cfg, "te_impl", None),
-        te_kernel_required=getattr(cfg, "te_kernel_required", None),
-    )
-    prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-    negative_embeds = negative_embeds.to(device=dev, dtype=dt)
-
-    geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    log.info(
-        "[wan22.gguf] HIGH geom: grid=%s kernel=%s cin=%d",
-        geom_hi.grid,
-        geom_hi.patch_kernel,
-        geom_hi.in_channels,
-    )
-    log_cuda_mem(log, label="after-high-setup")
-    if lvl >= 3:
-        cuda_empty_cache(log, label="pre-high")
-    if on_progress:
-        try:
-            on_progress(stage="prepare", step=1, total=1, percent=0.15)
-        except Exception:
-            pass
-
-    steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
-    sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
-    sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
-    flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
-    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
-
-    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
-    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
-    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
-
-    scheduler, total_steps = _build_shared_scheduler(
-        cfg,
-        steps_hi=steps_hi,
-        steps_lo=steps_lo,
-        sampler_hi=sampler_hi,
-        sampler_lo=sampler_lo,
-        scheduler_hi=sched_hi,
-        scheduler_lo=sched_lo,
-        flow_shift_hi=flow_shift_hi_value,
-        flow_shift_lo=flow_shift_lo_value,
-    )
-    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
-    log.info(
-        "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
-        steps_hi,
-        sampler_hi,
-        sched_hi,
-        (getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-        cfg.seed,
-    )
-
-    memory_management.manager.load_model(hi_mm)
-    latents_hi = sample_stage_latents(
-        model=hi_model,
-        geom=geom_hi,
-        steps=steps_hi,
-        cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_hi,
-        scheduler_name=sched_hi,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=0,
-        timestep_end=steps_hi,
-        seed=cfg.seed,
-        state_init=None,
-        on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_hi_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="high",
-    )
-
-    memory_management.manager.unload_model(hi_mm)
-    del hi_mm
-    del hi_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(log, label="after-high")
-
-    lo_model = load_stage_model_from_gguf(
-        lo_path,
-        stage="low",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
-        logger=log,
-    )
-    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
-    if latent_channels_lo <= 0:
-        raise RuntimeError(
-            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
-            f"(got {latent_channels_lo})."
+        te_dev_eff = getattr(cfg, "te_device", None) or dev_name
+        te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
+        te_kernel_required = getattr(cfg, "te_kernel_required", False)
+        if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
+            raise RuntimeError(
+                "WAN22 GGUF: te_kernel_required must be boolean when provided "
+                f"(got {type(te_kernel_required).__name__})."
+            )
+        if bool(te_kernel_required):
+            te_impl_val = "cuda_fp8"
+        te_required = te_impl_val == "cuda_fp8"
+        if te_required:
+            te_dev_eff = "cuda"
+        log.info(
+            "[wan22.gguf] offload profile: level=%s te_device=%s te_impl=%s te_required=%s",
+            lvl,
+            te_dev_eff,
+            te_impl_val,
+            str(bool(te_required)).lower(),
         )
-    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
-    geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    log.info(
-        "[wan22.gguf] LOW geom: grid=%s kernel=%s cin=%d",
-        geom_lo.grid,
-        geom_lo.patch_kernel,
-        geom_lo.in_channels,
-    )
 
-    seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-    if tuple(seed_latents.shape) != tuple(latents_hi.shape):
-        raise RuntimeError(
-            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
-            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
+        t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
+        log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
+
+        h_lat = max(8, int(cfg.height) // 8)
+        w_lat = max(8, int(cfg.width) // 8)
+        t = int(t_lat)
+
+        prompt_embeds, negative_embeds = get_text_context(
+            model_dir=os.path.dirname(hi_path),
+            prompt=cfg.prompt or "",
+            negative=cfg.negative_prompt,
+            device=dev_name,
+            dtype=cfg.dtype,
+            text_encoder_dir=cfg.text_encoder_dir,
+            tokenizer_dir=cfg.tokenizer_dir,
+            vae_dir=cfg.vae_dir,
+            model_key=model_key,
+            metadata_dir=cfg.metadata_dir,
+            logger=log,
+            offload_after=smart_offload_enabled(),
+            te_device=(cfg.te_device or te_dev_eff),
+            te_impl=getattr(cfg, "te_impl", None),
+            te_kernel_required=getattr(cfg, "te_kernel_required", None),
         )
-    log.info(
-        "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s",
-        steps_lo,
-        sampler_lo,
-        sched_lo,
-        (getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-    )
+        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
-    memory_management.manager.load_model(lo_mm)
-    latents_lo = sample_stage_latents(
-        model=lo_model,
-        geom=geom_lo,
-        steps=steps_lo,
-        cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_lo,
-        scheduler_name=sched_lo,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=steps_hi,
-        timestep_end=total_steps,
-        seed=None,
-        state_init=seed_latents,
-        on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_lo_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="low",
-    )
+        geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
+        log.info(
+            "[wan22.gguf] HIGH geom: grid=%s kernel=%s cin=%d",
+            geom_hi.grid,
+            geom_hi.patch_kernel,
+            geom_hi.in_channels,
+        )
+        log_cuda_mem(log, label="after-high-setup")
+        if lvl >= 3:
+            cuda_empty_cache(log, label="pre-high")
+        if on_progress:
+            try:
+                on_progress(stage="prepare", step=1, total=1, percent=0.15)
+            except Exception:
+                pass
 
-    # Free the LOW stage weights before VAE decode (decode can be very VRAM-hungry).
-    memory_management.manager.unload_model(lo_mm)
-    del lo_mm
-    del lo_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(log, label="after-low")
+        steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
+        sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
+        sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
+        flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+        flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
+
+        steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+        sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+        sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+        flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+        flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+        scheduler, total_steps = _build_shared_scheduler(
+            cfg,
+            steps_hi=steps_hi,
+            steps_lo=steps_lo,
+            sampler_hi=sampler_hi,
+            sampler_lo=sampler_lo,
+            scheduler_hi=sched_hi,
+            scheduler_lo=sched_lo,
+            flow_shift_hi=flow_shift_hi_value,
+            flow_shift_lo=flow_shift_lo_value,
+        )
+        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+        log.info(
+            "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
+            steps_hi,
+            sampler_hi,
+            sched_hi,
+            (getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+            cfg.seed,
+        )
+
+        memory_management.manager.load_model(hi_mm)
+        latents_hi = sample_stage_latents(
+            model=hi_model,
+            geom=geom_hi,
+            steps=steps_hi,
+            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_hi,
+            scheduler_name=sched_hi,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=0,
+            timestep_end=steps_hi,
+            seed=cfg.seed,
+            state_init=None,
+            on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_hi_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="high",
+        )
+    finally:
+        hi_mm, hi_model = _teardown_stage(
+            stage="high",
+            mm=hi_mm,
+            model=hi_model,
+            offload_level=lvl,
+            logger=log,
+        )
+
+    lo_model: torch.nn.Module | None = None
+    lo_mm: _MemoryManagedModule | None = None
+    try:
+        lo_model = load_stage_model_from_gguf(
+            lo_path,
+            stage="low",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            logger=log,
+        )
+        latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+        if latent_channels_lo <= 0:
+            raise RuntimeError(
+                "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+                f"(got {latent_channels_lo})."
+            )
+        lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
+        geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
+        log.info(
+            "[wan22.gguf] LOW geom: grid=%s kernel=%s cin=%d",
+            geom_lo.grid,
+            geom_lo.patch_kernel,
+            geom_lo.in_channels,
+        )
+
+        seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+        if tuple(seed_latents.shape) != tuple(latents_hi.shape):
+            raise RuntimeError(
+                "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+                f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
+            )
+        log.info(
+            "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s",
+            steps_lo,
+            sampler_lo,
+            sched_lo,
+            (getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+        )
+
+        memory_management.manager.load_model(lo_mm)
+        latents_lo = sample_stage_latents(
+            model=lo_model,
+            geom=geom_lo,
+            steps=steps_lo,
+            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_lo,
+            scheduler_name=sched_lo,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=steps_hi,
+            timestep_end=total_steps,
+            seed=None,
+            state_init=seed_latents,
+            on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_lo_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="low",
+        )
+    finally:
+        lo_mm, lo_model = _teardown_stage(
+            stage="low",
+            mm=lo_mm,
+            model=lo_model,
+            offload_level=lvl,
+            logger=log,
+        )
 
     frames = decode_latents_to_frames(
         latents=latents_lo,
@@ -652,182 +689,187 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
 
-    hi_model = load_stage_model_from_gguf(
-        hi_path,
-        stage="high",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
-        logger=log,
-    )
-    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
-    variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
-    model_key = f"wan_t2v_{variant}"
-
-    te_dev_eff = getattr(cfg, "te_device", None) or dev_name
-    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    te_kernel_required = getattr(cfg, "te_kernel_required", False)
-    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
-        raise RuntimeError(
-            "WAN22 GGUF: te_kernel_required must be boolean when provided "
-            f"(got {type(te_kernel_required).__name__})."
+    hi_model: torch.nn.Module | None = None
+    hi_mm: _MemoryManagedModule | None = None
+    try:
+        hi_model = load_stage_model_from_gguf(
+            hi_path,
+            stage="high",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            logger=log,
         )
-    if bool(te_kernel_required):
-        te_impl_val = "cuda_fp8"
-    te_required = te_impl_val == "cuda_fp8"
-    if te_required:
-        te_dev_eff = "cuda"
+        hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
+        variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
+        model_key = f"wan_t2v_{variant}"
 
-    prompt_embeds, negative_embeds = get_text_context(
-        model_dir=os.path.dirname(hi_path),
-        prompt=cfg.prompt or "",
-        negative=cfg.negative_prompt,
-        device=dev_name,
-        dtype=cfg.dtype,
-        text_encoder_dir=cfg.text_encoder_dir,
-        tokenizer_dir=cfg.tokenizer_dir,
-        vae_dir=cfg.vae_dir,
-        model_key=model_key,
-        metadata_dir=cfg.metadata_dir,
-        logger=log,
-        offload_after=smart_offload_enabled(),
-        te_device=(cfg.te_device or te_dev_eff),
-        te_impl=te_impl_val,
-        te_kernel_required=te_required,
-    )
-    prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-    negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+        te_dev_eff = getattr(cfg, "te_device", None) or dev_name
+        te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
+        te_kernel_required = getattr(cfg, "te_kernel_required", False)
+        if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
+            raise RuntimeError(
+                "WAN22 GGUF: te_kernel_required must be boolean when provided "
+                f"(got {type(te_kernel_required).__name__})."
+            )
+        if bool(te_kernel_required):
+            te_impl_val = "cuda_fp8"
+        te_required = te_impl_val == "cuda_fp8"
+        if te_required:
+            te_dev_eff = "cuda"
 
-    t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
-    log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
-
-    h_lat = max(8, int(cfg.height) // 8)
-    w_lat = max(8, int(cfg.width) // 8)
-    t = int(t_lat)
-    geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
-    sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
-    sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
-    flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
-    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
-
-    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
-    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
-    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
-
-    scheduler, total_steps = _build_shared_scheduler(
-        cfg,
-        steps_hi=steps_hi,
-        steps_lo=steps_lo,
-        sampler_hi=sampler_hi,
-        sampler_lo=sampler_lo,
-        scheduler_hi=sched_hi,
-        scheduler_lo=sched_lo,
-        flow_shift_hi=flow_shift_hi_value,
-        flow_shift_lo=flow_shift_lo_value,
-    )
-    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
-
-    memory_management.manager.load_model(hi_mm)
-    latents_hi = yield from sample_stage_latents_generator(
-        model=hi_model,
-        geom=geom_hi,
-        steps=steps_hi,
-        cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_hi,
-        scheduler_name=sched_hi,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=0,
-        timestep_end=steps_hi,
-        seed=cfg.seed,
-        state_init=None,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_hi_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="high",
-        emit_logs=False,
-    )
-
-    memory_management.manager.unload_model(hi_mm)
-    del hi_mm
-    del hi_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(log, label="after-high")
-
-    lo_model = load_stage_model_from_gguf(
-        lo_path,
-        stage="low",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
-        logger=log,
-    )
-    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
-    if latent_channels_lo <= 0:
-        raise RuntimeError(
-            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
-            f"(got {latent_channels_lo})."
+        prompt_embeds, negative_embeds = get_text_context(
+            model_dir=os.path.dirname(hi_path),
+            prompt=cfg.prompt or "",
+            negative=cfg.negative_prompt,
+            device=dev_name,
+            dtype=cfg.dtype,
+            text_encoder_dir=cfg.text_encoder_dir,
+            tokenizer_dir=cfg.tokenizer_dir,
+            vae_dir=cfg.vae_dir,
+            model_key=model_key,
+            metadata_dir=cfg.metadata_dir,
+            logger=log,
+            offload_after=smart_offload_enabled(),
+            te_device=(cfg.te_device or te_dev_eff),
+            te_impl=te_impl_val,
+            te_kernel_required=te_required,
         )
-    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
-    geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-    if tuple(seed_latents.shape) != tuple(latents_hi.shape):
-        raise RuntimeError(
-            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
-            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
+        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+
+        t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
+        log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
+
+        h_lat = max(8, int(cfg.height) // 8)
+        w_lat = max(8, int(cfg.width) // 8)
+        t = int(t_lat)
+        geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
+        steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
+        sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
+        sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
+        flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+        flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
+
+        steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+        sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+        sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+        flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+        flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+        scheduler, total_steps = _build_shared_scheduler(
+            cfg,
+            steps_hi=steps_hi,
+            steps_lo=steps_lo,
+            sampler_hi=sampler_hi,
+            sampler_lo=sampler_lo,
+            scheduler_hi=sched_hi,
+            scheduler_lo=sched_lo,
+            flow_shift_hi=flow_shift_hi_value,
+            flow_shift_lo=flow_shift_lo_value,
+        )
+        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+
+        memory_management.manager.load_model(hi_mm)
+        latents_hi = yield from sample_stage_latents_generator(
+            model=hi_model,
+            geom=geom_hi,
+            steps=steps_hi,
+            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_hi,
+            scheduler_name=sched_hi,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=0,
+            timestep_end=steps_hi,
+            seed=cfg.seed,
+            state_init=None,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_hi_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="high",
+            emit_logs=False,
+        )
+    finally:
+        hi_mm, hi_model = _teardown_stage(
+            stage="high",
+            mm=hi_mm,
+            model=hi_model,
+            offload_level=lvl,
+            logger=log,
         )
 
-    memory_management.manager.load_model(lo_mm)
-    latents_lo = yield from sample_stage_latents_generator(
-        model=lo_model,
-        geom=geom_lo,
-        steps=steps_lo,
-        cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_lo,
-        scheduler_name=sched_lo,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=steps_hi,
-        timestep_end=total_steps,
-        seed=None,
-        state_init=seed_latents,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_lo_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="low",
-        emit_logs=False,
-    )
-    latents_lo_decode = _extract_i2v_decode_latents(
-        state=latents_lo,
-        latent_channels=latent_channels_lo,
-        logger=log,
-    )
+    lo_model: torch.nn.Module | None = None
+    lo_mm: _MemoryManagedModule | None = None
+    try:
+        lo_model = load_stage_model_from_gguf(
+            lo_path,
+            stage="low",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            logger=log,
+        )
+        latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+        if latent_channels_lo <= 0:
+            raise RuntimeError(
+                "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+                f"(got {latent_channels_lo})."
+            )
+        lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
+        geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
+        seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+        if tuple(seed_latents.shape) != tuple(latents_hi.shape):
+            raise RuntimeError(
+                "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+                f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
+            )
 
-    # Free the LOW stage weights before VAE decode.
-    memory_management.manager.unload_model(lo_mm)
-    del lo_mm
-    del lo_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(log, label="after-low")
+        memory_management.manager.load_model(lo_mm)
+        latents_lo = yield from sample_stage_latents_generator(
+            model=lo_model,
+            geom=geom_lo,
+            steps=steps_lo,
+            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_lo,
+            scheduler_name=sched_lo,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=steps_hi,
+            timestep_end=total_steps,
+            seed=None,
+            state_init=seed_latents,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_lo_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="low",
+            emit_logs=False,
+        )
+        latents_lo_decode = _extract_i2v_decode_latents(
+            state=latents_lo,
+            latent_channels=latent_channels_lo,
+            logger=log,
+        )
+    finally:
+        lo_mm, lo_model = _teardown_stage(
+            stage="low",
+            mm=lo_mm,
+            model=lo_model,
+            offload_level=lvl,
+            logger=log,
+        )
 
     frames = decode_latents_to_frames(
         latents=latents_lo_decode,
@@ -944,161 +986,166 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
-    hi_model = load_stage_model_from_gguf(
-        hi_path,
-        stage="high",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
-        logger=log,
-    )
-    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
-    if on_progress:
-        try:
-            on_progress(stage="prepare", step=0, total=1, percent=0.05)
-        except Exception:
-            pass
-
-    geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
-
-    steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
-    sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
-    sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
-    flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
-    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
-
-    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
-    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
-    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
-
-    scheduler, total_steps = _build_shared_scheduler(
-        cfg,
-        steps_hi=steps_hi,
-        steps_lo=steps_lo,
-        sampler_hi=sampler_hi,
-        sampler_lo=sampler_lo,
-        scheduler_hi=sched_hi,
-        scheduler_lo=sched_lo,
-        flow_shift_hi=flow_shift_hi_value,
-        flow_shift_lo=flow_shift_lo_value,
-    )
-    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
-
-    seed_hi = _build_i2v_seed_state(
-        cfg=cfg,
-        scheduler=scheduler,
-        geom_hi=geom_hi,
-        latent_condition=latent_condition,
-        num_frames=t_out,
-        latent_frames=t,
-        h_lat=h_lat,
-        w_lat=w_lat,
-        flow_multiplier=flow_multiplier,
-        device=dev,
-        dtype=dt,
-        logger=log,
-    )
-
-    memory_management.manager.load_model(hi_mm)
-    latents_hi = sample_stage_latents(
-        model=hi_model,
-        geom=geom_hi,
-        steps=steps_hi,
-        cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_hi,
-        scheduler_name=sched_hi,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=0,
-        timestep_end=steps_hi,
-        seed=None,
-        state_init=seed_hi,
-        on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_hi_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="high",
-    )
-
-    memory_management.manager.unload_model(hi_mm)
-    del hi_mm
-    del hi_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(logger=log, label="after-high")
-
-    lo_model = load_stage_model_from_gguf(
-        lo_path,
-        stage="low",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
-        logger=log,
-    )
-    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
-    if latent_channels_lo <= 0:
-        raise RuntimeError(
-            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
-            f"(got {latent_channels_lo})."
+    hi_model: torch.nn.Module | None = None
+    hi_mm: _MemoryManagedModule | None = None
+    try:
+        hi_model = load_stage_model_from_gguf(
+            hi_path,
+            stage="high",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            logger=log,
         )
-    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
-    geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-    if tuple(seed_lo.shape) != tuple(latents_hi.shape):
-        raise RuntimeError(
-            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
-            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
+        hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
+        if on_progress:
+            try:
+                on_progress(stage="prepare", step=0, total=1, percent=0.05)
+            except Exception:
+                pass
+
+        geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
+
+        steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
+        sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
+        sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
+        flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+        flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
+
+        steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+        sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+        sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+        flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+        flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+        scheduler, total_steps = _build_shared_scheduler(
+            cfg,
+            steps_hi=steps_hi,
+            steps_lo=steps_lo,
+            sampler_hi=sampler_hi,
+            sampler_lo=sampler_lo,
+            scheduler_hi=sched_hi,
+            scheduler_lo=sched_lo,
+            flow_shift_hi=flow_shift_hi_value,
+            flow_shift_lo=flow_shift_lo_value,
+        )
+        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+
+        seed_hi = _build_i2v_seed_state(
+            cfg=cfg,
+            scheduler=scheduler,
+            geom_hi=geom_hi,
+            latent_condition=latent_condition,
+            num_frames=t_out,
+            latent_frames=t,
+            h_lat=h_lat,
+            w_lat=w_lat,
+            flow_multiplier=flow_multiplier,
+            device=dev,
+            dtype=dt,
+            logger=log,
         )
 
-    memory_management.manager.load_model(lo_mm)
-    latents_lo = sample_stage_latents(
-        model=lo_model,
-        geom=geom_lo,
-        steps=steps_lo,
-        cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_lo,
-        scheduler_name=sched_lo,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=steps_hi,
-        timestep_end=total_steps,
-        seed=None,
-        state_init=seed_lo,
-        on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_lo_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="low",
-    )
-    latents_lo_decode = _extract_i2v_decode_latents(
-        state=latents_lo,
-        latent_channels=latent_channels_lo,
-        logger=log,
-    )
+        memory_management.manager.load_model(hi_mm)
+        latents_hi = sample_stage_latents(
+            model=hi_model,
+            geom=geom_hi,
+            steps=steps_hi,
+            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_hi,
+            scheduler_name=sched_hi,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=0,
+            timestep_end=steps_hi,
+            seed=None,
+            state_init=seed_hi,
+            on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_hi_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="high",
+        )
+    finally:
+        hi_mm, hi_model = _teardown_stage(
+            stage="high",
+            mm=hi_mm,
+            model=hi_model,
+            offload_level=lvl,
+            logger=log,
+        )
 
-    # Free the LOW stage weights before VAE decode.
-    memory_management.manager.unload_model(lo_mm)
-    del lo_mm
-    del lo_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(log, label="after-low")
+    lo_model: torch.nn.Module | None = None
+    lo_mm: _MemoryManagedModule | None = None
+    try:
+        lo_model = load_stage_model_from_gguf(
+            lo_path,
+            stage="low",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            logger=log,
+        )
+        latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+        if latent_channels_lo <= 0:
+            raise RuntimeError(
+                "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+                f"(got {latent_channels_lo})."
+            )
+        lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
+        geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
+        seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+        if tuple(seed_lo.shape) != tuple(latents_hi.shape):
+            raise RuntimeError(
+                "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+                f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
+            )
+
+        memory_management.manager.load_model(lo_mm)
+        latents_lo = sample_stage_latents(
+            model=lo_model,
+            geom=geom_lo,
+            steps=steps_lo,
+            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_lo,
+            scheduler_name=sched_lo,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=steps_hi,
+            timestep_end=total_steps,
+            seed=None,
+            state_init=seed_lo,
+            on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_lo_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="low",
+        )
+        latents_lo_decode = _extract_i2v_decode_latents(
+            state=latents_lo,
+            latent_channels=latent_channels_lo,
+            logger=log,
+        )
+    finally:
+        lo_mm, lo_model = _teardown_stage(
+            stage="low",
+            mm=lo_mm,
+            model=lo_model,
+            offload_level=lvl,
+            logger=log,
+        )
 
     frames = decode_latents_to_frames(
         latents=latents_lo_decode,
@@ -1197,154 +1244,159 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
-    hi_model = load_stage_model_from_gguf(
-        hi_path,
-        stage="high",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
-        logger=log,
-    )
-    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
-    geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
-    sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
-    sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
-    flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
-    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
-
-    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
-    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
-    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
-
-    scheduler, total_steps = _build_shared_scheduler(
-        cfg,
-        steps_hi=steps_hi,
-        steps_lo=steps_lo,
-        sampler_hi=sampler_hi,
-        sampler_lo=sampler_lo,
-        scheduler_hi=sched_hi,
-        scheduler_lo=sched_lo,
-        flow_shift_hi=flow_shift_hi_value,
-        flow_shift_lo=flow_shift_lo_value,
-    )
-    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
-
-    seed_hi = _build_i2v_seed_state(
-        cfg=cfg,
-        scheduler=scheduler,
-        geom_hi=geom_hi,
-        latent_condition=latent_condition,
-        num_frames=t_out,
-        latent_frames=t,
-        h_lat=h_lat,
-        w_lat=w_lat,
-        flow_multiplier=flow_multiplier,
-        device=dev,
-        dtype=dt,
-        logger=log,
-    )
-
-    memory_management.manager.load_model(hi_mm)
-    latents_hi = yield from sample_stage_latents_generator(
-        model=hi_model,
-        geom=geom_hi,
-        steps=steps_hi,
-        cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_hi,
-        scheduler_name=sched_hi,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=0,
-        timestep_end=steps_hi,
-        seed=None,
-        state_init=seed_hi,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_hi_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="high",
-        emit_logs=False,
-    )
-
-    memory_management.manager.unload_model(hi_mm)
-    del hi_mm
-    del hi_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(logger=log, label="after-high")
-
-    lo_model = load_stage_model_from_gguf(
-        lo_path,
-        stage="low",
-        device=torch.device("cpu"),
-        dtype=dt,
-        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
-        logger=log,
-    )
-    latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
-    if latent_channels_lo <= 0:
-        raise RuntimeError(
-            "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
-            f"(got {latent_channels_lo})."
+    hi_model: torch.nn.Module | None = None
+    hi_mm: _MemoryManagedModule | None = None
+    try:
+        hi_model = load_stage_model_from_gguf(
+            hi_path,
+            stage="high",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            logger=log,
         )
-    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
-    geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-    if tuple(seed_lo.shape) != tuple(latents_hi.shape):
-        raise RuntimeError(
-            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
-            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
+        hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
+        geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
+        steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
+        sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
+        sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
+        flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+        flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
+
+        steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+        sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+        sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+        flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+        flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+        scheduler, total_steps = _build_shared_scheduler(
+            cfg,
+            steps_hi=steps_hi,
+            steps_lo=steps_lo,
+            sampler_hi=sampler_hi,
+            sampler_lo=sampler_lo,
+            scheduler_hi=sched_hi,
+            scheduler_lo=sched_lo,
+            flow_shift_hi=flow_shift_hi_value,
+            flow_shift_lo=flow_shift_lo_value,
+        )
+        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+
+        seed_hi = _build_i2v_seed_state(
+            cfg=cfg,
+            scheduler=scheduler,
+            geom_hi=geom_hi,
+            latent_condition=latent_condition,
+            num_frames=t_out,
+            latent_frames=t,
+            h_lat=h_lat,
+            w_lat=w_lat,
+            flow_multiplier=flow_multiplier,
+            device=dev,
+            dtype=dt,
+            logger=log,
         )
 
-    memory_management.manager.load_model(lo_mm)
-    latents_lo = yield from sample_stage_latents_generator(
-        model=lo_model,
-        geom=geom_lo,
-        steps=steps_lo,
-        cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds,
-        negative_embeds=negative_embeds,
-        device=dev,
-        dtype=dt,
-        logger=log,
-        sampler_name=sampler_lo,
-        scheduler_name=sched_lo,
-        metadata_dir=cfg.metadata_dir,
-        scheduler_obj=scheduler,
-        timestep_start=steps_hi,
-        timestep_end=total_steps,
-        seed=None,
-        state_init=seed_lo,
-        log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=flow_shift_lo_value,
-        flow_multiplier=flow_multiplier,
-        stage_name="low",
-        emit_logs=False,
-    )
-    latents_lo_decode = _extract_i2v_decode_latents(
-        state=latents_lo,
-        latent_channels=latent_channels_lo,
-        logger=log,
-    )
+        memory_management.manager.load_model(hi_mm)
+        latents_hi = yield from sample_stage_latents_generator(
+            model=hi_model,
+            geom=geom_hi,
+            steps=steps_hi,
+            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_hi,
+            scheduler_name=sched_hi,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=0,
+            timestep_end=steps_hi,
+            seed=None,
+            state_init=seed_hi,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_hi_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="high",
+            emit_logs=False,
+        )
+    finally:
+        hi_mm, hi_model = _teardown_stage(
+            stage="high",
+            mm=hi_mm,
+            model=hi_model,
+            offload_level=lvl,
+            logger=log,
+        )
 
-    # Free the LOW stage weights before VAE decode.
-    memory_management.manager.unload_model(lo_mm)
-    del lo_mm
-    del lo_model
-    gc.collect()
-    if lvl >= 2:
-        _try_clear_cache()
-        cuda_empty_cache(log, label="after-low")
+    lo_model: torch.nn.Module | None = None
+    lo_mm: _MemoryManagedModule | None = None
+    try:
+        lo_model = load_stage_model_from_gguf(
+            lo_path,
+            stage="low",
+            device=torch.device("cpu"),
+            dtype=dt,
+            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            logger=log,
+        )
+        latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+        if latent_channels_lo <= 0:
+            raise RuntimeError(
+                "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+                f"(got {latent_channels_lo})."
+            )
+        lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
+        geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
+        seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+        if tuple(seed_lo.shape) != tuple(latents_hi.shape):
+            raise RuntimeError(
+                "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+                f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
+            )
+
+        memory_management.manager.load_model(lo_mm)
+        latents_lo = yield from sample_stage_latents_generator(
+            model=lo_model,
+            geom=geom_lo,
+            steps=steps_lo,
+            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+            prompt_embeds=prompt_embeds,
+            negative_embeds=negative_embeds,
+            device=dev,
+            dtype=dt,
+            logger=log,
+            sampler_name=sampler_lo,
+            scheduler_name=sched_lo,
+            metadata_dir=cfg.metadata_dir,
+            scheduler_obj=scheduler,
+            timestep_start=steps_hi,
+            timestep_end=total_steps,
+            seed=None,
+            state_init=seed_lo,
+            log_mem_interval=getattr(cfg, "log_mem_interval", None),
+            flow_shift=flow_shift_lo_value,
+            flow_multiplier=flow_multiplier,
+            stage_name="low",
+            emit_logs=False,
+        )
+        latents_lo_decode = _extract_i2v_decode_latents(
+            state=latents_lo,
+            latent_channels=latent_channels_lo,
+            logger=log,
+        )
+    finally:
+        lo_mm, lo_model = _teardown_stage(
+            stage="low",
+            mm=lo_mm,
+            model=lo_model,
+            offload_level=lvl,
+            logger=log,
+        )
 
     frames = decode_latents_to_frames(
         latents=latents_lo_decode,

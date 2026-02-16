@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-02-08
+Last Review: 2026-02-16
 Status: Active
 
 ## Purpose
@@ -66,6 +66,7 @@ Status: Active
 - 2026-02-08: Added Comfy SIMPLE parity branch for discrete flow predictors (`simple_schedule_mode="comfy_downsample_sigmas"`) with strict fail-loud guards (`steps>=1`, 1D finite monotone `predictor.sigmas`) and kept FlowMatch SIMPLE path unchanged by default.
 - 2026-02-08: Applied low-risk inner-loop vectorization pass (P1/P2/P4): tensorized `compute_cond_mark`/`compute_cond_indices`, reduced Python-side batch assembly overhead, replaced repeated sigma cat with repeat-shape equivalent, and vectorized edge feathering with explicit tiny-area legacy fallback to preserve behavior.
 - 2026-02-08: `driver.py` now includes native `SamplerKind.ER_SDE` execution with strict option normalization (`solver_type`, `max_stage`, `eta`, `s_noise`), finite/positivity guards on ER-SDE stage math, and fail-loud runtime errors for invalid integration states.
+- 2026-02-16: `inner_loop.sampling_prepare(...)` is now self-cleaning on failure: if post-load setup fails (e.g., GGUF dequant cache/config/control-prepare), it immediately calls `sampling_cleanup(...)`; if cleanup also fails, the function raises a combined fail-loud error with both prepare and cleanup causes.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

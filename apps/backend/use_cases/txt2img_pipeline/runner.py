@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional refiner).
 Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata, with fail-loud conditioning guards that avoid embedding raw prompt text in raised errors.
+Conditioning smart-cache entries are keyed by model/load identity plus wrapped prompt metadata and stored detached on CPU to avoid stale hits and cross-request GPU pinning.
 The hires stage delegates init preparation and `denoise` semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
@@ -24,9 +25,9 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, is_dataclass, replace
 import time
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -35,7 +36,9 @@ from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.diagnostics.pipeline_debug import log as pipeline_log, pipeline_trace
+from apps.backend.engines.common.tensor_tree import detach_to_cpu, move_to_device
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import (
     smart_cache_enabled,
     smart_offload_enabled,
@@ -110,7 +113,163 @@ class Txt2ImgPipelineRunner:
         self._logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
         # SDXL conditioning cache (prompt + dims → (cond, uncond))
         # shared across runs for this runner instance.
-        self._conditioning_cache: dict[tuple, tuple[object, object]] = {}
+        self._conditioning_cache: dict[tuple, tuple[object, object | None]] = {}
+
+    @classmethod
+    def _freeze_cache_value(cls, value: Any, *, _depth: int = 0) -> object:
+        """Convert arbitrary values to a deterministic, hashable cache token."""
+        if _depth > 6:
+            return ("depth_limit", type(value).__name__)
+        if value is None or isinstance(value, (int, float, bool)):
+            return value
+        if isinstance(value, str):
+            if type(value) is str:
+                return value
+            attrs = cls._freeze_known_attrs(value, _depth=_depth + 1)
+            if attrs:
+                return (
+                    "string_subclass",
+                    f"{type(value).__module__}.{type(value).__qualname__}",
+                    str(value),
+                    attrs,
+                )
+            return ("string_subclass", f"{type(value).__module__}.{type(value).__qualname__}", str(value))
+        if isinstance(value, torch.Tensor):
+            return (
+                "tensor",
+                tuple(int(dim) for dim in value.shape),
+                str(value.dtype),
+                str(value.device),
+            )
+        if isinstance(value, Mapping):
+            items: list[tuple[str, object]] = []
+            for key in sorted(value.keys(), key=lambda item: str(item)):
+                items.append((str(key), cls._freeze_cache_value(value[key], _depth=_depth + 1)))
+            return ("mapping", tuple(items))
+        if isinstance(value, tuple):
+            return ("tuple", tuple(cls._freeze_cache_value(item, _depth=_depth + 1) for item in value))
+        if isinstance(value, list):
+            attrs = cls._freeze_known_attrs(value, _depth=_depth + 1)
+            return (
+                "list",
+                tuple(cls._freeze_cache_value(item, _depth=_depth + 1) for item in value),
+                attrs,
+            )
+        if isinstance(value, set):
+            return (
+                "set",
+                tuple(
+                    sorted(
+                        (cls._freeze_cache_value(item, _depth=_depth + 1) for item in value),
+                        key=repr,
+                    )
+                ),
+            )
+        if is_dataclass(value):
+            try:
+                return (
+                    "dataclass",
+                    f"{type(value).__module__}.{type(value).__qualname__}",
+                    cls._freeze_cache_value(asdict(value), _depth=_depth + 1),
+                )
+            except Exception:
+                return ("dataclass_repr", f"{type(value).__module__}.{type(value).__qualname__}", repr(value))
+
+        attrs = cls._freeze_known_attrs(value, _depth=_depth + 1)
+        if attrs:
+            return (
+                "object",
+                f"{type(value).__module__}.{type(value).__qualname__}",
+                attrs,
+                str(value),
+            )
+        return ("repr", f"{type(value).__module__}.{type(value).__qualname__}", repr(value))
+
+    @classmethod
+    def _freeze_known_attrs(cls, value: Any, *, _depth: int) -> tuple[tuple[str, object], ...]:
+        attr_names = (
+            "is_negative_prompt",
+            "smart_cache",
+            "distilled_cfg_scale",
+            "cfg_scale",
+            "width",
+            "height",
+            "target_width",
+            "target_height",
+            "crop_left",
+            "crop_top",
+            "tenc_source",
+            "tenc_path",
+            "vae_source",
+            "vae_path",
+            "core_streaming_enabled",
+            "extras",
+            "label",
+            "family",
+        )
+        attrs: list[tuple[str, object]] = []
+        for attr_name in attr_names:
+            if not hasattr(value, attr_name):
+                continue
+            try:
+                attr_value = getattr(value, attr_name)
+            except Exception:
+                continue
+            if callable(attr_value):
+                continue
+            attrs.append((attr_name, cls._freeze_cache_value(attr_value, _depth=_depth + 1)))
+        return tuple(sorted(attrs))
+
+    @classmethod
+    def _conditioning_model_identity(cls, sd_model: Any) -> tuple[object, ...]:
+        model_ref = getattr(sd_model, "model_ref", None)
+        if model_ref in (None, ""):
+            model_ref = getattr(sd_model, "_current_model_ref", None)
+        load_options = getattr(sd_model, "_load_options", None)
+        lora_hash = getattr(sd_model, "current_lora_hash", None)
+
+        codex_objects = None
+        try:
+            codex_objects = getattr(sd_model, "codex_objects", None)
+        except Exception:
+            codex_objects = None
+
+        denoiser_obj = getattr(codex_objects, "denoiser", None) if codex_objects is not None else None
+        vae_obj = getattr(codex_objects, "vae", None) if codex_objects is not None else None
+        vae_patcher = getattr(vae_obj, "patcher", vae_obj) if vae_obj is not None else None
+
+        text_encoder_ids: tuple[tuple[str, int], ...] = ()
+        if codex_objects is not None:
+            text_encoders = getattr(codex_objects, "text_encoders", None)
+            if isinstance(text_encoders, dict):
+                pairs: list[tuple[str, int]] = []
+                for name, entry in text_encoders.items():
+                    if entry is None:
+                        continue
+                    patcher = getattr(entry, "patcher", entry)
+                    pairs.append((str(name), int(id(patcher))))
+                text_encoder_ids = tuple(sorted(pairs))
+
+        return (
+            f"{type(sd_model).__module__}.{type(sd_model).__qualname__}",
+            str(getattr(sd_model, "engine_id", "") or ""),
+            cls._freeze_cache_value(model_ref),
+            cls._freeze_cache_value(load_options),
+            cls._freeze_cache_value(lora_hash),
+            int(id(denoiser_obj)),
+            int(id(vae_patcher)),
+            text_encoder_ids,
+        )
+
+    @staticmethod
+    def _conditioning_target_device() -> torch.device | str:
+        get_device = getattr(memory_management.manager, "get_device", None)
+        if callable(get_device):
+            try:
+                return get_device(DeviceRole.TEXT_ENCODER)
+            except Exception:
+                pass
+        return "cpu"
 
     @staticmethod
     def _log_tensor_stats(label: str, tensor: torch.Tensor | None) -> None:
@@ -155,29 +314,28 @@ class Txt2ImgPipelineRunner:
 
         prompts = list(context.prompts or [getattr(processing, "prompt", "")])
         negative_prompts = list(context.negative_prompts or [getattr(processing, "negative_prompt", "")])
+        uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
+        if hasattr(sd_model, "_prepare_prompt_wrappers"):
+            prompts_payload = sd_model._prepare_prompt_wrappers(prompts, processing, is_negative=False)
+            negative_payload = (
+                None
+                if uses_distilled_cfg
+                else sd_model._prepare_prompt_wrappers(negative_prompts, processing, is_negative=True)
+            )
+        else:
+            prompts_payload = prompts
+            negative_payload = None if uses_distilled_cfg else negative_prompts
+
         smart_flag = getattr(processing, "smart_cache", None)
         cache_enabled = bool(smart_flag) if smart_flag is not None else smart_cache_enabled()
         key = None
         if cache_enabled:
             try:
-                engine_id = getattr(sd_model, "engine_id", None)
-                width = int(getattr(processing, "width", 0) or 0)
-                height = int(getattr(processing, "height", 0) or 0)
-                target_width = int(getattr(processing, "hr_upscale_to_x", width) or width)
-                target_height = int(getattr(processing, "hr_upscale_to_y", height) or height)
-                crop_left = int(getattr(processing, "sdxl_crop_left", 0) or 0)
-                crop_top = int(getattr(processing, "sdxl_crop_top", 0) or 0)
                 clip_skip = int(context.controls.get("clip_skip")) if "clip_skip" in context.controls else None
                 key = (
-                    engine_id,
-                    tuple(str(p or "") for p in prompts),
-                    tuple(str(p or "") for p in negative_prompts),
-                    width,
-                    height,
-                    target_width,
-                    target_height,
-                    crop_left,
-                    crop_top,
+                    self._conditioning_model_identity(sd_model),
+                    self._freeze_cache_value(prompts_payload),
+                    self._freeze_cache_value(negative_payload),
                     clip_skip,
                 )
             except Exception:
@@ -189,7 +347,8 @@ class Txt2ImgPipelineRunner:
                 record_smart_cache_hit("sdxl.runner.conditioning")
                 setattr(processing, "_codex_conditioning_cache_hit", True)
                 enforce_smart_offload_text_encoders_off(sd_model, stage="txt2img.conditioning(cache-hit)")
-                return cached
+                target_device = self._conditioning_target_device()
+                return move_to_device(cached, device=target_device)
             record_smart_cache_miss("sdxl.runner.conditioning")
 
         enforce_smart_offload_pre_conditioning_residency(sd_model, stage="txt2img.conditioning")
@@ -212,24 +371,12 @@ class Txt2ImgPipelineRunner:
                     memory_management.manager.load_model(patcher)
 
         try:
-            # Distilled CFG models (Flux) don't use uncond - skip generating it entirely
-            uses_distilled_cfg = getattr(sd_model, "use_distilled_cfg_scale", False)
-
             # Preserve spatial metadata via engine helper when available
-            if hasattr(sd_model, "_prepare_prompt_wrappers"):
-                prompts_wrapped = sd_model._prepare_prompt_wrappers(prompts, processing, is_negative=False)
-                cond = sd_model.get_learned_conditioning(prompts_wrapped)
-                if uses_distilled_cfg:
-                    uncond = None
-                else:
-                    negative_wrapped = sd_model._prepare_prompt_wrappers(negative_prompts, processing, is_negative=True)
-                    uncond = sd_model.get_learned_conditioning(negative_wrapped)
+            cond = sd_model.get_learned_conditioning(prompts_payload)
+            if uses_distilled_cfg:
+                uncond = None
             else:
-                cond = sd_model.get_learned_conditioning(prompts)
-                if uses_distilled_cfg:
-                    uncond = None
-                else:
-                    uncond = sd_model.get_learned_conditioning(negative_prompts)
+                uncond = sd_model.get_learned_conditioning(negative_payload)
 
             # If uncond comes back zero for a non-empty negative prompt, fail fast instead of sampling with CFG degenerate
             non_empty_negative = any(str(p or "").strip() for p in negative_prompts)
@@ -253,7 +400,7 @@ class Txt2ImgPipelineRunner:
         if cache_enabled and key is not None:
             # Always keep only the most recent entry; older cache is discarded.
             self._conditioning_cache.clear()
-            self._conditioning_cache[key] = pair
+            self._conditioning_cache[key] = detach_to_cpu(pair)
         return pair
 
     def _log_conditioning(self, cond: object, uncond: object) -> None:
@@ -600,95 +747,95 @@ class Txt2ImgPipelineRunner:
         )
         state.hires_prompt_context = hires_prompt_context
 
-        processing.prompts = hires_prompt_context.prompts
-        processing.negative_prompts = hires_prompt_context.negative_prompts
-        processing.width = target_width
-        processing.height = target_height
-        processing.guidance_scale = float(hires_cfg.cfg or processing.guidance_scale)
-        processing.cfg_scale = processing.guidance_scale
-        processing.steps = int(steps)
-        hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
-            base_sampler=str(state.sampling_plan.sampler_name or ""),
-            base_scheduler=str(state.sampling_plan.scheduler_name or ""),
-            sampler_override=getattr(hires_cfg, "sampler_name", None),
-            scheduler_override=getattr(hires_cfg, "scheduler", None),
-        )
-        processing.sampler_name = hires_sampler
-        processing.scheduler = hires_scheduler
-        processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
-        processing.prepare_prompt_data()
+        try:
+            processing.prompts = hires_prompt_context.prompts
+            processing.negative_prompts = hires_prompt_context.negative_prompts
+            processing.width = target_width
+            processing.height = target_height
+            processing.guidance_scale = float(hires_cfg.cfg or processing.guidance_scale)
+            processing.cfg_scale = processing.guidance_scale
+            processing.steps = int(steps)
+            hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
+                base_sampler=str(state.sampling_plan.sampler_name or ""),
+                base_scheduler=str(state.sampling_plan.scheduler_name or ""),
+                sampler_override=getattr(hires_cfg, "sampler_name", None),
+                scheduler_override=getattr(hires_cfg, "scheduler", None),
+            )
+            processing.sampler_name = hires_sampler
+            processing.scheduler = hires_scheduler
+            processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
+            processing.prepare_prompt_data()
 
-        latents, image_conditioning = prepare_hires_latents_and_conditioning(
-            processing,
-            base_samples=base_result.samples,
-            base_decoded=base_result.decoded,
-            hires_plan=hires_plan_cfg,
-            tile=getattr(hires_cfg, "tile", None),
-        )
-
-        hires_settings = state.sampling_plan.noise_settings
-        rng_hr = ImageRNG(
-            (latents.shape[1], latents.shape[2], latents.shape[3]),
-            state.sampling_plan.seeds,
-            subseeds=state.sampling_plan.subseeds,
-            subseed_strength=state.sampling_plan.subseed_strength,
-            seed_resize_from_h=getattr(processing, "seed_resize_from_h", 0),
-            seed_resize_from_w=getattr(processing, "seed_resize_from_w", 0),
-            settings=hires_settings,
-        )
-        noise = rng_hr.next().to(latents)
-        start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
-
-        hires_plan = replace(
-            state.sampling_plan,
-            sampler_name=hires_sampler,
-            scheduler_name=hires_scheduler,
-            steps=int(processing.steps),
-            guidance_scale=float(processing.guidance_scale),
-        )
-
-        # Recompute conditioning for hires pass with updated width/height/targets (SDXL parity).
-        cond_hr, uncond_hr = self._compute_conditioning(processing, hires_prompt_context)
-        if cond_hr is not None and uncond_hr is not None:
-            state.payload = ConditioningPayload(conditioning=cond_hr, unconditional=uncond_hr)
-            self._log_conditioning(cond_hr, uncond_hr)
-
-        samples = execute_sampling(
-            processing,
-            hires_plan,
-            state.payload,
-            hires_prompt_context,
-            hires_prompt_context.loras,
-            hires_prompt_context.controls,
-            rng=rng_hr,
-            noise=noise,
-            image_conditioning=image_conditioning,
-            init_latent=latents,
-            start_at_step=start_index,
-        )
-
-        if processing.hires_refiner is not None:
-            samples = self._apply_refiner_stage(
-                HiresRefinerStage(processing.hires_refiner),
+            latents, image_conditioning = prepare_hires_latents_and_conditioning(
                 processing,
-                hires_prompt_context,
-                hires_settings,
-                samples,
+                base_samples=base_result.samples,
+                base_decoded=base_result.decoded,
+                hires_plan=hires_plan_cfg,
+                tile=getattr(hires_cfg, "tile", None),
             )
 
-        processing.prompts = original_attrs["prompts"]
-        processing.negative_prompts = original_attrs["negative_prompts"]
-        processing.width = original_attrs["width"]
-        processing.height = original_attrs["height"]
-        processing.guidance_scale = original_attrs["guidance_scale"]
-        processing.cfg_scale = processing.guidance_scale
-        processing.steps = original_attrs["steps"]
-        processing.sampler_name = original_attrs["sampler_name"]
-        processing.scheduler = original_attrs["scheduler"]
-        processing.sampler = original_attrs["sampler"]
-        processing.prepare_prompt_data()
+            hires_settings = state.sampling_plan.noise_settings
+            rng_hr = ImageRNG(
+                (latents.shape[1], latents.shape[2], latents.shape[3]),
+                state.sampling_plan.seeds,
+                subseeds=state.sampling_plan.subseeds,
+                subseed_strength=state.sampling_plan.subseed_strength,
+                seed_resize_from_h=getattr(processing, "seed_resize_from_h", 0),
+                seed_resize_from_w=getattr(processing, "seed_resize_from_w", 0),
+                settings=hires_settings,
+            )
+            noise = rng_hr.next().to(latents)
+            start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
 
-        return samples
+            hires_plan = replace(
+                state.sampling_plan,
+                sampler_name=hires_sampler,
+                scheduler_name=hires_scheduler,
+                steps=int(processing.steps),
+                guidance_scale=float(processing.guidance_scale),
+            )
+
+            # Recompute conditioning for hires pass with updated width/height/targets (SDXL parity).
+            cond_hr, uncond_hr = self._compute_conditioning(processing, hires_prompt_context)
+            if cond_hr is not None:
+                state.payload = ConditioningPayload(conditioning=cond_hr, unconditional=uncond_hr)
+                self._log_conditioning(cond_hr, uncond_hr)
+
+            samples = execute_sampling(
+                processing,
+                hires_plan,
+                state.payload,
+                hires_prompt_context,
+                hires_prompt_context.loras,
+                hires_prompt_context.controls,
+                rng=rng_hr,
+                noise=noise,
+                image_conditioning=image_conditioning,
+                init_latent=latents,
+                start_at_step=start_index,
+            )
+
+            if processing.hires_refiner is not None:
+                samples = self._apply_refiner_stage(
+                    HiresRefinerStage(processing.hires_refiner),
+                    processing,
+                    hires_prompt_context,
+                    hires_settings,
+                    samples,
+                )
+            return samples
+        finally:
+            processing.prompts = original_attrs["prompts"]
+            processing.negative_prompts = original_attrs["negative_prompts"]
+            processing.width = original_attrs["width"]
+            processing.height = original_attrs["height"]
+            processing.guidance_scale = original_attrs["guidance_scale"]
+            processing.cfg_scale = processing.guidance_scale
+            processing.steps = original_attrs["steps"]
+            processing.sampler_name = original_attrs["sampler_name"]
+            processing.scheduler = original_attrs["scheduler"]
+            processing.sampler = original_attrs["sampler"]
+            processing.prepare_prompt_data()
 
     @pipeline_trace
     def _maybe_run_refiner_pass(

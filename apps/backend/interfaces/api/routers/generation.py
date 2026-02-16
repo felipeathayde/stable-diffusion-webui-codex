@@ -2485,22 +2485,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
 
                 engine_opts = {"export_video": _require_options_bool(_opts_snapshot(), "codex_export_video")}
-                from apps.backend.interfaces.api.tasks.generation_tasks import encode_images as _encode_images
+                from apps.backend.interfaces.api.tasks.generation_tasks import (
+                    encode_images as _encode_images,
+                    resolve_request_smart_flags as _resolve_request_smart_flags,
+                )
                 from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
 
-                smart_offload = getattr(req, "smart_offload", False)
-                smart_fallback = getattr(req, "smart_fallback", False)
-                smart_cache = getattr(req, "smart_cache", False)
-                for field_name, field_value in (
-                    ("smart_offload", smart_offload),
-                    ("smart_fallback", smart_fallback),
-                    ("smart_cache", smart_cache),
-                ):
-                    if not isinstance(field_value, bool):
-                        raise RuntimeError(
-                            f"Invalid request field '{field_name}': expected boolean, got {type(field_value).__name__}."
-                        )
+                smart_offload, smart_fallback, smart_cache = _resolve_request_smart_flags(req)
 
+                cancelled_immediate = False
                 with smart_runtime_overrides(
                     smart_offload=smart_offload,
                     smart_fallback=smart_fallback,
@@ -2508,8 +2501,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 ):
                     for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
                         if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
-                            entry.error = "cancelled"
-                            return
+                            if not cancelled_immediate:
+                                entry.error = "cancelled"
+                            cancelled_immediate = True
+                            # Keep draining orchestrator events so teardown/finalizers complete
+                            # before this worker marks done + releases inference gate.
+                            continue
                         if isinstance(ev, ProgressEvent):
                             push(
                                 {
@@ -2570,7 +2567,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                                     "has_video": isinstance(payload_obj.get("video"), dict),
                                 },
                             )
-                success = True
+                success = not cancelled_immediate
             except Exception as err:
                 try:
                     from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc

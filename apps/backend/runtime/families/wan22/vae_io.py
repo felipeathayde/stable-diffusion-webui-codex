@@ -410,7 +410,9 @@ def _assert_supported_wan_vae_latent_channels(channels: int, *, context: str) ->
 
 
 def _resolve_loaded_vae_lane(vae: Any) -> str:
-    lane = str(getattr(vae, "_codex_vae_lane", "2d_native")).strip().lower()
+    # Runtime-loaded WAN VAEs are always stamped with `_codex_vae_lane`.
+    # Keep a deterministic default for stubs/fixtures that do not set it.
+    lane = str(getattr(vae, "_codex_vae_lane", "3d_native")).strip().lower()
     if lane not in _SUPPORTED_WAN_VAE_LANES:
         raise RuntimeError(
             "WAN22 GGUF: loaded VAE exposes unsupported lane marker "

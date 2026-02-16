@@ -14,6 +14,7 @@ When `CODEX_TRACE_CONTRACT=1`, emits prompt-redacted contract-trace JSONL events
 Symbols (top-level; keep in sync; no ghosts):
 - `encode_images` (function): Encode PIL images to base64 PNG payloads, optionally injecting PNG text metadata.
 - `build_engine_options` (function): Build `engine_options` dict from request extras + options snapshot (TE/VAE overrides, Z-Image variant, core streaming).
+- `resolve_request_smart_flags` (function): Parse/validate per-request smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) as strict booleans.
 - `run_image_task` (function): Run a generic image task worker (txt2img/img2img) using a `prepare(payload)` callback and orchestrator event stream.
 """
 
@@ -119,6 +120,18 @@ def build_engine_options(*, req: Any, opts_snapshot: Callable[[], Any]) -> dict[
     return engine_options
 
 
+def resolve_request_smart_flags(req: Any) -> tuple[bool, bool, bool]:
+    values: dict[str, bool] = {}
+    for field_name in ("smart_offload", "smart_fallback", "smart_cache"):
+        field_value = getattr(req, field_name, False)
+        if not isinstance(field_value, bool):
+            raise RuntimeError(
+                f"Invalid request field '{field_name}': expected boolean, got {type(field_value).__name__}."
+            )
+        values[field_name] = field_value
+    return values["smart_offload"], values["smart_fallback"], values["smart_cache"]
+
+
 def run_image_task(
     *,
     task_id: str,
@@ -163,7 +176,8 @@ def run_image_task(
 
     mode = str(getattr(task_type, "value", "unknown"))
     prompt_hash_value = hash_request_prompt(req)
-    fallback_enabled = bool(getattr(req, "smart_fallback", False))
+    smart_offload, smart_fallback, smart_cache = resolve_request_smart_flags(req)
+    fallback_enabled = smart_fallback
     storage_dtype = getattr(req, "core_dtype", None)
     compute_dtype = getattr(req, "core_compute_dtype", None)
 
@@ -250,8 +264,14 @@ def run_image_task(
             engine_options = build_engine_options(req=req, opts_snapshot=opts_snapshot)
 
             from apps.backend.core.requests import ProgressEvent, ResultEvent
+            from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
 
-            with preview_cfg.runtime_overrides():
+            cancelled_immediate = False
+            with preview_cfg.runtime_overrides(), smart_runtime_overrides(
+                smart_offload=smart_offload,
+                smart_fallback=smart_fallback,
+                smart_cache=smart_cache,
+            ):
                 for ev in orch.run(
                     task_type,
                     engine_key,
@@ -260,8 +280,12 @@ def run_image_task(
                     engine_options=engine_options,
                 ):
                     if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
-                        entry.error = "cancelled"
-                        return
+                        if not cancelled_immediate:
+                            entry.error = "cancelled"
+                        cancelled_immediate = True
+                        # Keep draining orchestrator events so generator/use-case finalizers run
+                        # before this worker marks the task done and releases the inference gate.
+                        continue
 
                     if isinstance(ev, ProgressEvent):
                         evt: dict[str, Any] = {
@@ -338,7 +362,7 @@ def run_image_task(
                         meta={"image_count": len(payload_obj.get("images", []) or [])},
                     )
 
-            success = True
+            success = not cancelled_immediate
         except Exception as err:  # pragma: no cover - surfaces runtime errors
             try:
                 from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc

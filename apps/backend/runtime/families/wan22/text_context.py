@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
 - `_prompt_clean` (function): Diffusers-style prompt cleaning (optional ftfy + HTML unescape + whitespace collapse).
 - `_resolve_max_sequence_length` (function): Chooses a safe tokenizer max length, clamped to `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH`.
+- `_place_gguf_non_quant_tensors` (function): Moves non-quantized TE params/buffers to target device and applies floating dtype casts while preserving integer buffers.
 - `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation, device-aware TE weight loading, and global GGUF dequant policy alignment.
 """
 
@@ -58,6 +59,54 @@ def _resolve_max_sequence_length(tok: Any) -> int:
     if max_len <= 0:
         max_len = WAN22_DEFAULT_MAX_SEQUENCE_LENGTH
     return int(max_len)
+
+
+def _is_gguf_quantized_tensor(tensor_obj: Any) -> bool:
+    if getattr(tensor_obj, "qtype", None) is not None:
+        return True
+    try:
+        from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
+
+        return isinstance(tensor_obj, CodexPackLinearQ4KTilepackV1Parameter)
+    except Exception:
+        return False
+
+
+def _place_gguf_non_quant_tensors(
+    module: torch.nn.Module,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> tuple[int, int]:
+    moved_params = 0
+    moved_buffers = 0
+    with torch.no_grad():
+        for submodule_name, submodule_obj in module.named_modules():
+            for param_name, parameter in submodule_obj.named_parameters(recurse=False):
+                if parameter is None or _is_gguf_quantized_tensor(parameter):
+                    continue
+                if getattr(parameter, "is_meta", False):
+                    raise RuntimeError(
+                        "WAN22 GGUF: unresolved meta parameter in text encoder after load: "
+                        f"module={submodule_name or '<root>'} name={param_name}"
+                    )
+                target_dtype = dtype if torch.is_floating_point(parameter) else parameter.dtype
+                if parameter.device != device or parameter.dtype != target_dtype:
+                    parameter.data = parameter.data.to(device=device, dtype=target_dtype)
+                    moved_params += 1
+            for buffer_name, buffer in submodule_obj.named_buffers(recurse=False):
+                if buffer is None or _is_gguf_quantized_tensor(buffer):
+                    continue
+                if getattr(buffer, "is_meta", False):
+                    raise RuntimeError(
+                        "WAN22 GGUF: unresolved meta buffer in text encoder after load: "
+                        f"module={submodule_name or '<root>'} name={buffer_name}"
+                    )
+                target_dtype = dtype if torch.is_floating_point(buffer) else buffer.dtype
+                if buffer.device != device or buffer.dtype != target_dtype:
+                    submodule_obj._buffers[buffer_name] = buffer.to(device=device, dtype=target_dtype)
+                    moved_buffers += 1
+    return moved_params, moved_buffers
 
 
 def get_text_context(
@@ -323,40 +372,7 @@ def get_text_context(
             enc = enc.to(device=dev)
 
     if te_is_gguf:
-        from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
-
-        def _is_quantized_tensor(tensor_obj: Any) -> bool:
-            return bool(getattr(tensor_obj, "qtype", None) is not None) or isinstance(
-                tensor_obj, CodexPackLinearQ4KTilepackV1Parameter
-            )
-
-        def _place_non_quant_tensors_on_device(module_obj: torch.nn.Module) -> None:
-            with torch.no_grad():
-                for submodule_name, submodule_obj in module_obj.named_modules():
-                    for param_name, parameter in submodule_obj.named_parameters(recurse=False):
-                        if parameter is None or _is_quantized_tensor(parameter):
-                            continue
-                        if getattr(parameter, "is_meta", False):
-                            raise RuntimeError(
-                                "WAN22 GGUF: unresolved meta parameter in text encoder after load: "
-                                f"module={submodule_name or '<root>'} name={param_name}"
-                            )
-                        if parameter.device != dev:
-                            parameter.data = parameter.data.to(device=dev)
-                    for buffer_name, buffer in submodule_obj.named_buffers(recurse=False):
-                        if buffer is None:
-                            continue
-                        if _is_quantized_tensor(buffer):
-                            continue
-                        if getattr(buffer, "is_meta", False):
-                            raise RuntimeError(
-                                "WAN22 GGUF: unresolved meta buffer in text encoder after load: "
-                                f"module={submodule_name or '<root>'} name={buffer_name}"
-                            )
-                        if buffer.device != dev:
-                            submodule_obj._buffers[buffer_name] = buffer.to(device=dev)
-
-        _place_non_quant_tensors_on_device(enc)
+        _place_gguf_non_quant_tensors(enc, device=dev, dtype=as_torch_dtype(dtype))
 
         requested_compute_dtype = as_torch_dtype(dtype)
 

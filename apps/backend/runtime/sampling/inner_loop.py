@@ -534,34 +534,43 @@ def sampling_prepare(denoiser, x):
         additional_inference_memory += lora_memory
 
     models_to_load = [denoiser] + additional_model_patchers
-    memory_management.manager.load_models(
-        models=models_to_load,
-        memory_required=denoiser_inference_memory,
-        hard_memory_preservation=additional_inference_memory
-    )
-
-    if smart_offload_enabled():
-        setattr(denoiser, "_codex_smart_offload_models", models_to_load)
-    else:
-        setattr(denoiser, "_codex_smart_offload_models", [])
-
-    if denoiser.has_online_lora():
-        utils.nested_move_to_device(
-            denoiser.lora_patches,
-            device=denoiser.current_device,
-            dtype=denoiser.model.computation_dtype,
+    setattr(denoiser, "_codex_smart_offload_models", [])
+    try:
+        memory_management.manager.load_models(
+            models=models_to_load,
+            memory_required=denoiser_inference_memory,
+            hard_memory_preservation=additional_inference_memory
         )
 
-    _try_enable_gguf_dequant_forward_cache(x)
+        if smart_offload_enabled():
+            setattr(denoiser, "_codex_smart_offload_models", models_to_load)
 
-    real_model = denoiser.model
+        if denoiser.has_online_lora():
+            utils.nested_move_to_device(
+                denoiser.lora_patches,
+                device=denoiser.current_device,
+                dtype=denoiser.model.computation_dtype,
+            )
 
-    def percent_to_timestep_function(p):  # type: ignore[no-untyped-def]
-        return real_model.predictor.percent_to_sigma(p)
+        _try_enable_gguf_dequant_forward_cache(x)
 
-    if control_runtime:
-        control_runtime.prepare(real_model, percent_to_timestep_function)
-        logger.debug("Control runtime prepared with model %s", type(real_model).__name__)
+        real_model = denoiser.model
+
+        def percent_to_timestep_function(p):  # type: ignore[no-untyped-def]
+            return real_model.predictor.percent_to_sigma(p)
+
+        if control_runtime:
+            control_runtime.prepare(real_model, percent_to_timestep_function)
+            logger.debug("Control runtime prepared with model %s", type(real_model).__name__)
+    except Exception as exc:
+        try:
+            sampling_cleanup(denoiser)
+        except Exception as cleanup_exc:
+            raise RuntimeError(
+                "sampling_prepare failed and cleanup failed; runtime residency may be inconsistent "
+                f"(prepare_error={exc}, cleanup_error={cleanup_exc})"
+            ) from cleanup_exc
+        raise
 
     return
 

@@ -1,6 +1,6 @@
 # apps/backend/core Overview
 Date: 2025-10-28
-Last Review: 2026-02-15
+Last Review: 2026-02-16
 Status: Active
 
 ## Purpose
@@ -36,3 +36,4 @@ Status: Active
 - 2026-02-03: Image request dataclasses now carry hires config via `hires` (renamed field; no alias).
 - 2026-02-09: `InferenceOrchestrator` no longer scrubs traceback chains before wrapping load/execution failures; wrapped `EngineLoadError`/`EngineExecutionError` now preserve source-frame causality for diagnostics.
 - 2026-02-15: `BaseRequest` now carries `settings_revision` for strict generation contract propagation (routers validate revision against persisted options revision before dispatch).
+- 2026-02-16: `InferenceOrchestrator` primary-device drift checks now probe canonical `codex_objects.denoiser` residency (`load_device`/`device`/parameter-device seams) with legacy `codex_objects.unet` fallback, fixing contract drift where device reload checks could silently skip reloading.

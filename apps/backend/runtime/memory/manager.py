@@ -943,9 +943,24 @@ class CodexMemoryManager:
             self._signal_empty_cache = False
 
     def unload_all_models(self) -> None:
+        failures: List[Tuple[_LoadedModelRecord, Exception]] = []
         for record in list(self._loaded_models):
-            self._unload_record(record, avoid_model_moving=True)
-        self._loaded_models.clear()
+            try:
+                self._unload_record(record, avoid_model_moving=True)
+            except Exception as exc:
+                failures.append((record, exc))
+                continue
+            try:
+                self._loaded_models.remove(record)
+            except ValueError:  # pragma: no cover
+                pass
+
+        if failures:
+            details = self._format_record_failures(failures)
+            raise MemoryLoadError(
+                f"Failed to unload {len(failures)} model(s) during unload_all_models: {details}"
+            ) from failures[0][1]
+
         logger.info("Unloaded all models, cache cleared.")
 
     def loaded_models(self) -> Tuple[_LoadedModelRecord, ...]:
@@ -1028,9 +1043,27 @@ class CodexMemoryManager:
 
         if models_to_load:
             self._allocate_memory(models_to_load, memory_budget, already_loaded)
-            for record in models_to_load:
-                self._load_record(record)
-                self._loaded_models.insert(0, record)
+            loaded_this_call: List[_LoadedModelRecord] = []
+            current: _LoadedModelRecord | None = None
+            try:
+                for current in models_to_load:
+                    self._load_record(current)
+                    self._loaded_models.insert(0, current)
+                    loaded_this_call.append(current)
+            except Exception as exc:
+                rollback_targets: List[_LoadedModelRecord] = []
+                if current is not None:
+                    rollback_targets.append(current)
+                rollback_targets.extend(reversed(loaded_this_call))
+
+                rollback_failures = self._rollback_partially_loaded_records(rollback_targets)
+                if rollback_failures:
+                    details = self._format_record_failures(rollback_failures)
+                    raise MemoryLoadError(
+                        "Failed to rollback partially loaded models "
+                        f"after load failure ({exc}): {details}"
+                    ) from exc
+                raise
         else:
             self._cleanup_for_loaded_models(already_loaded, memory_budget)
 
@@ -1070,6 +1103,40 @@ class CodexMemoryManager:
             if record.matches(model):
                 return record
         return None
+
+    @staticmethod
+    def _record_label(record: _LoadedModelRecord) -> str:
+        module = record.base_module
+        if module is not None:
+            return module.__class__.__name__
+        return type(record.model).__name__
+
+    def _format_record_failures(self, failures: Sequence[Tuple[_LoadedModelRecord, Exception]]) -> str:
+        return "; ".join(f"{self._record_label(record)}: {exc}" for record, exc in failures)
+
+    def _rollback_partially_loaded_records(
+        self,
+        records: Sequence[_LoadedModelRecord],
+    ) -> List[Tuple[_LoadedModelRecord, Exception]]:
+        failures: List[Tuple[_LoadedModelRecord, Exception]] = []
+        seen: Set[int] = set()
+
+        for record in records:
+            ident = id(record)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            try:
+                self._unload_record(record)
+            except Exception as exc:
+                failures.append((record, exc))
+                continue
+            try:
+                self._loaded_models.remove(record)
+            except ValueError:  # pragma: no cover
+                pass
+
+        return failures
 
     # ------------------------------------------------------------------ load target helpers
     def _extract_module(self, obj: object, *, visited: Optional[Set[int]] = None) -> torch.nn.Module | None:
@@ -1245,8 +1312,8 @@ class CodexMemoryManager:
             raise MemoryLoadError(f"Failed to load model {record.model}: {exc}") from exc
 
     def _unload_record(self, record: _LoadedModelRecord, *, avoid_model_moving: bool = False) -> None:
+        loader = record.loader or record.model
         try:
-            loader = record.loader or record.model
             if hasattr(loader, "codex_unpatch_model"):
                 offload_device = record.offload_device if not avoid_model_moving else self._cpu_device
                 loader.codex_unpatch_model(offload_device)
@@ -1254,8 +1321,11 @@ class CodexMemoryManager:
                 loader.to(self._cpu_device)
             record.model_accelerated = False
             logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
-        except Exception as exc:  # pragma: no cover
-            logger.warning("Failed to unload model %s: %s", record.model, exc, exc_info=True)
+        except Exception as exc:
+            raise MemoryLoadError(
+                f"Failed to unload model {self._record_label(record)} "
+                f"(avoid_model_moving={avoid_model_moving}): {exc}"
+            ) from exc
 
     def _cleanup_for_loaded_models(self, records: Sequence[_LoadedModelRecord], memory_budget: int) -> None:
         devices = {record.load_device for record in records if record.load_device.type != "cpu"}

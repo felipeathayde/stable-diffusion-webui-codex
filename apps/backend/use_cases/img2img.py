@@ -14,6 +14,10 @@ When smart offload is enabled, keeps required text-encoder patchers loaded acros
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
+- `_conditioning_cache_hit_metadata` (function): Build standardized `GenerationResult.metadata` cache-hit payload for img2img wrappers.
+- `_smart_cache_buckets_for_engine` (function): Resolve Smart Cache metric buckets used by each engine family.
+- `_smart_cache_bucket_snapshot` (function): Snapshot hit/miss counters for selected Smart Cache buckets.
+- `_smart_cache_call_hit` (function): Compute whether a conditioning call was a pure cache hit from bucket deltas.
 - `_build_hires_plan` (function): Builds a `HiResPlan` from the processing config (or returns `None` when disabled).
 - `_build_hr_prompt_context` (function): Builds the prompt context used for the hires second pass (supports prompt overrides).
 - `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples (init prepared via global hires-fix stage).
@@ -27,7 +31,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 import logging
 import torch
@@ -35,7 +39,11 @@ import torch
 from apps.backend.core.rng import ImageRNG
 from apps.backend.runtime.diagnostics.pipeline_debug import log as pipeline_log
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+from apps.backend.runtime.memory.smart_offload import (
+    get_smart_cache_stats,
+    smart_cache_enabled,
+    smart_offload_enabled,
+)
 from apps.backend.runtime.memory.smart_offload_invariants import (
     enforce_smart_offload_pre_conditioning_residency,
     enforce_smart_offload_text_encoders_off,
@@ -133,6 +141,50 @@ def _pick_preferred_kontext_resolution(image: Image.Image) -> tuple[int, int]:
     return int(best_w), int(best_h)
 
 
+def _conditioning_cache_hit_metadata(processing: CodexProcessingImg2Img) -> dict[str, object]:
+    return {"conditioning_cache_hit": bool(getattr(processing, "_codex_conditioning_cache_hit", False))}
+
+
+def _smart_cache_buckets_for_engine(sd_model: Any) -> tuple[str, ...]:
+    engine_id = str(getattr(sd_model, "engine_id", "") or "")
+    if engine_id == "sdxl":
+        return ("sdxl.base.text", "sdxl.base.embed")
+    if engine_id == "sdxl_refiner":
+        return ("sdxl.refiner.text", "sdxl.refiner.embed")
+    if engine_id in {"flux1", "flux1_kontext"}:
+        return ("flux.conditioning",)
+    if engine_id == "zimage":
+        return ("zimage.conditioning",)
+    if engine_id == "anima":
+        return ("anima.conditioning",)
+    return ()
+
+
+def _smart_cache_bucket_snapshot(bucket_names: Sequence[str]) -> dict[str, tuple[int, int]]:
+    stats = get_smart_cache_stats()
+    snapshot: dict[str, tuple[int, int]] = {}
+    for name in bucket_names:
+        bucket = stats.get(str(name), {})
+        hits = int(bucket.get("hits", 0) or 0)
+        misses = int(bucket.get("misses", 0) or 0)
+        snapshot[str(name)] = (hits, misses)
+    return snapshot
+
+
+def _smart_cache_call_hit(bucket_names: Sequence[str], before: Mapping[str, tuple[int, int]]) -> bool:
+    if not bucket_names:
+        return False
+    after = _smart_cache_bucket_snapshot(bucket_names)
+    hit_delta = 0
+    miss_delta = 0
+    for name in bucket_names:
+        before_hits, before_misses = before.get(str(name), (0, 0))
+        after_hits, after_misses = after.get(str(name), (0, 0))
+        hit_delta += max(0, int(after_hits) - int(before_hits))
+        miss_delta += max(0, int(after_misses) - int(before_misses))
+    return miss_delta == 0 and hit_delta > 0
+
+
 def _compute_conditioning_payload(
     processing: CodexProcessingImg2Img,
     prompt_context: PromptContext,
@@ -150,6 +202,11 @@ def _compute_conditioning_payload(
     enforce_smart_offload_pre_conditioning_residency(sd_model, stage="img2img.conditioning")
 
     uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
+    smart_flag = getattr(processing, "smart_cache", None)
+    cache_enabled = bool(smart_flag) if smart_flag is not None else smart_cache_enabled()
+    bucket_names = _smart_cache_buckets_for_engine(sd_model) if cache_enabled else ()
+    cache_observations: list[bool] = []
+    setattr(processing, "_codex_conditioning_cache_hit", False)
 
     text_encoder_patchers: list[tuple[str, object]] = []
     needs_conditioning = cond is None or (uncond is None and not uses_distilled_cfg)
@@ -172,26 +229,40 @@ def _compute_conditioning_payload(
     try:
         if cond is None:
             texts = list(prompt_context.prompts or [getattr(processing, "prompt", "")])
+            before_stats = _smart_cache_bucket_snapshot(bucket_names) if cache_enabled else None
             if hasattr(sd_model, "_prepare_prompt_wrappers"):
                 wrapped = sd_model._prepare_prompt_wrappers(texts, processing, is_negative=False)
                 cond = sd_model.get_learned_conditioning(wrapped)
             else:
                 cond = sd_model.get_learned_conditioning(texts)
+            if cache_enabled and before_stats is not None:
+                cache_observations.append(_smart_cache_call_hit(bucket_names, before_stats))
             if cond is None:
                 raise RuntimeError("Failed to build conditioning for img2img; get_learned_conditioning returned None.")
 
         if uncond is None and not uses_distilled_cfg:
             negatives = list(prompt_context.negative_prompts or [getattr(processing, "negative_prompt", "")])
+            before_stats = _smart_cache_bucket_snapshot(bucket_names) if cache_enabled else None
             if hasattr(sd_model, "_prepare_prompt_wrappers"):
                 wrapped = sd_model._prepare_prompt_wrappers(negatives, processing, is_negative=True)
                 uncond = sd_model.get_learned_conditioning(wrapped)
             else:
                 uncond = sd_model.get_learned_conditioning(negatives)
+            if cache_enabled and before_stats is not None:
+                cache_observations.append(_smart_cache_call_hit(bucket_names, before_stats))
     finally:
         if smart_offload_enabled():
             if text_encoder_patchers:
                 pipeline_log("[img2img.conditioning] smart_offload: unloading text encoders after stage")
             enforce_smart_offload_text_encoders_off(sd_model, stage="img2img.conditioning(post)")
+
+    if not needs_conditioning:
+        stage_cache_hit = True
+    elif cache_enabled and cache_observations:
+        stage_cache_hit = all(cache_observations)
+    else:
+        stage_cache_hit = False
+    setattr(processing, "_codex_conditioning_cache_hit", bool(stage_cache_hit))
 
     return ConditioningPayload(conditioning=cond, unconditional=uncond)
 
@@ -387,7 +458,6 @@ def _run_hires_pass(
     processing: CodexProcessingImg2Img,
     hires_plan: HiResPlan,
     plan: SamplingPlan,
-    payload: ConditioningPayload,
     base_samples: torch.Tensor,
     base_context: PromptContext,
 ) -> torch.Tensor:
@@ -412,83 +482,89 @@ def _run_hires_pass(
 
     hi_prompt_context = _build_hr_prompt_context(processing, base_context)
 
-    processing.prompts = hi_prompt_context.prompts
-    processing.negative_prompts = hi_prompt_context.negative_prompts
-    processing.width = target_width
-    processing.height = target_height
-    processing.guidance_scale = float(hi_cfg.cfg or processing.guidance_scale)
-    processing.cfg_scale = processing.guidance_scale
-    processing.steps = int(steps)
-    processing.denoising_strength = denoise
-    hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
-        base_sampler=str(plan.sampler_name or ""),
-        base_scheduler=str(plan.scheduler_name or ""),
-        sampler_override=getattr(hi_cfg, "sampler_name", None),
-        scheduler_override=getattr(hi_cfg, "scheduler", None),
-    )
-    processing.sampler_name = hires_sampler
-    processing.scheduler = hires_scheduler
-    processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
-    processing.prepare_prompt_data()
+    try:
+        processing.prompts = hi_prompt_context.prompts
+        processing.negative_prompts = hi_prompt_context.negative_prompts
+        processing.width = target_width
+        processing.height = target_height
+        processing.guidance_scale = float(hi_cfg.cfg or processing.guidance_scale)
+        processing.cfg_scale = processing.guidance_scale
+        processing.steps = int(steps)
+        processing.denoising_strength = denoise
+        hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
+            base_sampler=str(plan.sampler_name or ""),
+            base_scheduler=str(plan.scheduler_name or ""),
+            sampler_override=getattr(hi_cfg, "sampler_name", None),
+            scheduler_override=getattr(hi_cfg, "scheduler", None),
+        )
+        processing.sampler_name = hires_sampler
+        processing.scheduler = hires_scheduler
+        processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
+        processing.prepare_prompt_data()
 
-    latents, image_conditioning = prepare_hires_latents_and_conditioning(
-        processing,
-        base_samples=base_samples,
-        base_decoded=None,
-        hires_plan=hires_plan,
-        tile=getattr(hi_cfg, "tile", None),
-    )
+        latents, image_conditioning = prepare_hires_latents_and_conditioning(
+            processing,
+            base_samples=base_samples,
+            base_decoded=None,
+            hires_plan=hires_plan,
+            tile=getattr(hi_cfg, "tile", None),
+        )
 
-    hires_settings = plan.noise_settings
-    rng = ImageRNG(
-        (latents.shape[1], latents.shape[2], latents.shape[3]),
-        plan.seeds,
-        subseeds=plan.subseeds,
-        subseed_strength=plan.subseed_strength,
-        seed_resize_from_h=getattr(processing, "seed_resize_from_h", 0),
-        seed_resize_from_w=getattr(processing, "seed_resize_from_w", 0),
-        settings=hires_settings,
-    )
-    noise = rng.next().to(latents)
+        hires_settings = plan.noise_settings
+        rng = ImageRNG(
+            (latents.shape[1], latents.shape[2], latents.shape[3]),
+            plan.seeds,
+            subseeds=plan.subseeds,
+            subseed_strength=plan.subseed_strength,
+            seed_resize_from_h=getattr(processing, "seed_resize_from_h", 0),
+            seed_resize_from_w=getattr(processing, "seed_resize_from_w", 0),
+            settings=hires_settings,
+        )
+        noise = rng.next().to(latents)
 
-    start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
+        start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
 
-    hr_plan = replace(
-        plan,
-        sampler_name=hires_sampler,
-        scheduler_name=hires_scheduler,
-        steps=int(processing.steps),
-        guidance_scale=float(processing.guidance_scale),
-    )
+        hr_plan = replace(
+            plan,
+            sampler_name=hires_sampler,
+            scheduler_name=hires_scheduler,
+            steps=int(processing.steps),
+            guidance_scale=float(processing.guidance_scale),
+        )
+        hires_payload = _compute_conditioning_payload(
+            processing,
+            hi_prompt_context,
+            hi_prompt_context.prompts,
+            conditioning=None,
+            unconditional_conditioning=None,
+        )
 
-    samples = execute_sampling(
-        processing,
-        hr_plan,
-        payload,
-        hi_prompt_context,
-        hi_prompt_context.loras,
-        hi_prompt_context.controls,
-        rng=rng,
-        noise=noise,
-        image_conditioning=image_conditioning,
-        init_latent=latents,
-        start_at_step=start_index,
-    )
-
-    processing.prompts = original["prompts"]
-    processing.negative_prompts = original["negative_prompts"]
-    processing.width = original["width"]
-    processing.height = original["height"]
-    processing.guidance_scale = original["guidance_scale"]
-    processing.cfg_scale = processing.guidance_scale
-    processing.steps = original["steps"]
-    processing.denoising_strength = original["denoising_strength"]
-    processing.sampler_name = original["sampler_name"]
-    processing.scheduler = original["scheduler"]
-    processing.sampler = original["sampler"]
-    processing.prepare_prompt_data()
-
-    return samples
+        return execute_sampling(
+            processing,
+            hr_plan,
+            hires_payload,
+            hi_prompt_context,
+            hi_prompt_context.loras,
+            hi_prompt_context.controls,
+            rng=rng,
+            noise=noise,
+            image_conditioning=image_conditioning,
+            init_latent=latents,
+            start_at_step=start_index,
+        )
+    finally:
+        processing.prompts = original["prompts"]
+        processing.negative_prompts = original["negative_prompts"]
+        processing.width = original["width"]
+        processing.height = original["height"]
+        processing.guidance_scale = original["guidance_scale"]
+        processing.cfg_scale = processing.guidance_scale
+        processing.steps = original["steps"]
+        processing.denoising_strength = original["denoising_strength"]
+        processing.sampler_name = original["sampler_name"]
+        processing.scheduler = original["scheduler"]
+        processing.sampler = original["sampler"]
+        processing.prepare_prompt_data()
 
 
 def _derive_seeds(processing: CodexProcessingImg2Img) -> tuple[list[int], list[int], float]:
@@ -512,6 +588,7 @@ def generate_img2img(
 ) -> GenerationResult:
     if not isinstance(processing, CodexProcessingImg2Img):
         raise TypeError("generate_img2img expects CodexProcessingImg2Img")
+    setattr(processing, "_codex_conditioning_cache_hit", False)
 
     if _resolve_img2img_variant(processing) == "kontext":
         if processing.has_mask():
@@ -525,7 +602,7 @@ def generate_img2img(
             subseeds=subseeds,
             subseed_strength=subseed_strength,
         )
-        return GenerationResult(samples=samples, decoded=None)
+        return GenerationResult(samples=samples, decoded=None, metadata=_conditioning_cache_hit_metadata(processing))
 
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
@@ -635,22 +712,29 @@ def generate_img2img(
         decoded = decode_latent_batch(processing.sd_model, samples)
         images = latents_to_pil(decoded)
         composited = apply_inpaint_full_res_composite(images, plan=full_res_plan)
-        return GenerationResult(samples=samples, decoded=composited)
+        return GenerationResult(
+            samples=samples,
+            decoded=composited,
+            metadata=_conditioning_cache_hit_metadata(processing),
+        )
 
     hires_plan = _build_hires_plan(processing)
     if hires_plan is None:
-        return GenerationResult(samples=samples, decoded=None)
+        return GenerationResult(samples=samples, decoded=None, metadata=_conditioning_cache_hit_metadata(processing))
 
     hires_samples = _run_hires_pass(
         processing,
         hires_plan,
         plan,
-        payload,
         samples,
         prompt_context,
     )
 
-    return GenerationResult(samples=hires_samples, decoded=None)
+    return GenerationResult(
+        samples=hires_samples,
+        decoded=None,
+        metadata=_conditioning_cache_hit_metadata(processing),
+    )
 
 
 def run_img2img(

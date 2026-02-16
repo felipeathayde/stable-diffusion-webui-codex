@@ -1,6 +1,6 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
-Last Review: 2026-02-15
+Last Review: 2026-02-16
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 - 2026-01-26: Added smart-offload stage invariants (`smart_offload_invariants.py`) used by use-cases and the sampling driver to auto-unload forbidden accelerator residents (TE must be off before sampling; denoiser/VAE cleared before conditioning).
 - 2026-02-09: Added post-decode smart-offload invariant (`enforce_smart_offload_post_decode_residency`) that enforces VAE-off after decode and applies cache-aware denoiser residency (`warm on cache hit`, `unload on miss`) for image wrappers.
 - 2026-02-15: Smart runtime behavior is now strictly option-driven for API generation contracts (no per-request `smart_*` compatibility path); request-side smart overrides are rejected at API boundary.
+- 2026-02-16: `CodexMemoryManager` unload paths are now fail-loud and transactional: unload failures raise `MemoryLoadError` and no longer silently drop residency records; `load_models(...)` now rolls back partially loaded records when `_load_record(...)` fails.

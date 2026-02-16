@@ -4,12 +4,14 @@ Purpose: Lightweight state-dict mapping views + small state-dict utilities used 
 
 Key files:
 - `apps/backend/runtime/state_dict/key_mapping.py`: Strict key-style detection + remapping core (fail loud; collision/ambiguity checks).
-- `apps/backend/runtime/state_dict/keymap_anima.py`: Anima strict key-style detectors + canonical remaps for core transformer/WAN VAE/Qwen3-0.6B text encoder.
+- `apps/backend/runtime/state_dict/keymap_anima.py`: Anima strict key-style detectors + canonical remaps for core transformer/Qwen3-0.6B text encoder.
 - `apps/backend/runtime/state_dict/keymap_llama_gguf.py`: llama.cpp-style GGUF tensor-name remaps for text models (HF key layout).
 - `apps/backend/runtime/state_dict/keymap_sdxl_clip.py`: SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
 - `apps/backend/runtime/state_dict/keymap_sdxl_checkpoint.py`: SDXL checkpoint wrapper/prefix key normalization (Comfy/original SDXL layout).
 - `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`: SDXL/Flow16 VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
 - `apps/backend/runtime/state_dict/keymap_t5_text_encoder.py`: T5 text-encoder key-style detection + remap (HF `encoder.*`/`shared.weight` → IntegratedT5 `transformer.*`).
+- `apps/backend/runtime/state_dict/keymap_wan21_vae.py`: WAN2.1 VAE key-style detector + strict canonical remap (wrapper-strip + required-key fail-loud).
+- `apps/backend/runtime/state_dict/keymap_wan22_vae.py`: WAN22 VAE key-style detector/remaps for 2D native and 3D diffusers/codex lanes (mixed-style/collision fail-loud).
 - `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`: WAN22 transformer key-style detector + remap (Diffusers/WAN-export/Codex).
 - `apps/backend/runtime/state_dict/tools.py`: Small state-dict utilities and diagnostics helpers.
 - `apps/backend/runtime/state_dict/views.py`: Mapping views (prefix/filter/remap/cast) + `LazySafetensorsDict`.
@@ -30,5 +32,6 @@ Notes:
 - 2026-02-11: `keymap_sdxl_vae.py` now uses explicit projection lanes for SDXL VAE mid-attention weights independent of global structural-conversion policy: canonical 2D linear weights pass through, native 1x1 conv 4D weights pass through unchanged, and any non-canonical shape fails loud with key+shape context.
 - 2026-02-11: Supersedes the SDXL VAE portion of the 2026-02-10 structural-policy note: SDXL VAE mid-attention projection lanes are now native (`linear_2d`/`conv1x1_4d`) and no longer use keymap flatten gating by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`.
 - 2026-02-15: `views.LazySafetensorsDict` now explicitly documents device-targeted lazy loads (`device` controls produced tensor placement; no CPU-only assumption).
+- 2026-02-16: Split WAN VAE ownership into model-specific modules (`keymap_wan21_vae.py`, `keymap_wan22_vae.py`), removed WAN VAE remap ownership from `keymap_anima.py`, and wired WAN22 VAE lanes to model keymap modules only.
 
-Last Review: 2026-02-15
+Last Review: 2026-02-16

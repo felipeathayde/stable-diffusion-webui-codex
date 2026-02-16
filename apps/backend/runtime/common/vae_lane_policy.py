@@ -9,9 +9,11 @@ Required Notice: see NOTICE
 Purpose: Shared VAE layout/lane policy helpers for loader and engine VAE paths.
 Provides prefix-stripping, robust layout detection (`ldm` vs `diffusers`), and strict lane resolution from global policy
 (`CODEX_VAE_LAYOUT_LANE=auto|ldm_native|diffusers_native`) with family-aware fail-loud checks.
+WAN22 variant families (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) are always constrained to native LDM VAE lane.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LDM_NATIVE_VAE_FAMILIES` (constant): Families that support native LDM VAE lane.
+- `_WAN22_FAMILIES` (constant): WAN22 variant families that are hard-pinned to native LDM VAE lane.
 - `strip_known_vae_prefixes` (function): Returns a lazy key-remapped view with known wrapper prefixes stripped.
 - `detect_vae_layout` (function): Detects VAE keyspace layout (`ldm` or `diffusers`) with ambiguity checks.
 - `resolve_vae_layout_lane` (function): Resolves effective lane (`ldm_native`/`diffusers_native`) from global policy + family + layout.
@@ -33,7 +35,15 @@ LDM_NATIVE_VAE_FAMILIES = {
     ModelFamily.SDXL,
     ModelFamily.SDXL_REFINER,
     ModelFamily.ZIMAGE,
-    ModelFamily.WAN22,
+    ModelFamily.WAN22_5B,
+    ModelFamily.WAN22_14B,
+    ModelFamily.WAN22_ANIMATE,
+}
+
+_WAN22_FAMILIES = {
+    ModelFamily.WAN22_5B,
+    ModelFamily.WAN22_14B,
+    ModelFamily.WAN22_ANIMATE,
 }
 
 
@@ -112,7 +122,7 @@ def resolve_vae_layout_lane(
     family_label = getattr(family, "value", str(family)) if family is not None else "<unknown>"
     supports_ldm_native = family in LDM_NATIVE_VAE_FAMILIES
 
-    if family is ModelFamily.WAN22:
+    if family in _WAN22_FAMILIES:
         if layout != "ldm":
             raise RuntimeError(
                 "WAN22 VAE lane requires LDM VAE keyspace layout; detected layout=%s." % layout
@@ -120,7 +130,7 @@ def resolve_vae_layout_lane(
         if requested is VaeLayoutLane.DIFFUSERS_NATIVE:
             raise RuntimeError(
                 "CODEX_VAE_LAYOUT_LANE=diffusers_native is not supported for family %s; "
-                "WAN22 requires ldm_native."
+                "WAN22 variants require ldm_native."
                 % family_label
             )
         return VaeLayoutLane.LDM_NATIVE

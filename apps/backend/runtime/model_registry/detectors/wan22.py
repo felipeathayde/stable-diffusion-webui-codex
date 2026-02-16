@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_last_dim` (function): Returns the last dimension of a tensor/shape (used for TE expected dims).
 - `_find_key` (function): Finds the shortest matching key by suffix (optional prefix filtering).
 - `_detect_model_type` (function): Heuristically classifies WAN variant (t2v/i2v/ti2v/vace/s2v/animate).
+- `_family_for_model_type` (function): Resolves explicit WAN22 model family (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) from detected model type.
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ class Wan22Detector(ModelDetector):
         repo_hint = _WAN22_REPO_HINT_BY_MODEL_TYPE.get(model_type, "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
 
         return ModelSignature(
-            family=ModelFamily.WAN22,
+            family=_family_for_model_type(model_type),
             repo_hint=repo_hint,
             prediction=PredictionKind.FLOW,
             latent_format=LatentFormat.WAN22,
@@ -186,6 +187,15 @@ def _detect_model_type(bundle: SignalBundle, prefix: str, in_channels: int) -> s
     if f"{prefix}img_emb.proj.0.bias" in bundle.state_dict:
         return "i2v"
     return "t2v"
+
+
+def _family_for_model_type(model_type: str) -> ModelFamily:
+    normalized = str(model_type or "").strip().lower()
+    if normalized == "ti2v":
+        return ModelFamily.WAN22_5B
+    if normalized == "animate":
+        return ModelFamily.WAN22_ANIMATE
+    return ModelFamily.WAN22_14B
 
 
 REGISTRY.register(Wan22Detector())

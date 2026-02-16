@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Shared native 3D VAE runtime lane for temporal video autoencoders.
 Defines `AutoencoderCodex3D` with causal 3D convolutions, explicit temporal
 down/upsampling, and strict diffusers->codex key remap helpers for WAN-like
-checkpoints without importing diffusers model classes.
+checkpoints without importing diffusers model classes. WAN22 keymap ownership
+for remap logic lives in `runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AutoencoderCodex3D` (class): Native causal-3D KL VAE with codex keyspace (`encoder.downsamples.*`, `decoder.upsamples.*`, `conv1/conv2`).
@@ -21,7 +22,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -33,223 +33,13 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from torch import nn
 
 from apps.backend.runtime.families.wan22.vae import DiagonalGaussianDistribution
-from apps.backend.runtime.state_dict.keymap_anima import remap_anima_wan_vae_state_dict
-
-_WRAPPER_PREFIXES = (
-    "module.",
-    "vae.",
-    "first_stage_model.",
-)
-
-_FIXED_DIFFUSERS_TO_CODEX_KEYS: dict[str, str] = {
-    "encoder.conv_in.weight": "encoder.conv1.weight",
-    "encoder.conv_in.bias": "encoder.conv1.bias",
-    "decoder.conv_in.weight": "decoder.conv1.weight",
-    "decoder.conv_in.bias": "decoder.conv1.bias",
-    "encoder.mid_block.resnets.0.norm1.gamma": "encoder.middle.0.residual.0.gamma",
-    "encoder.mid_block.resnets.0.conv1.weight": "encoder.middle.0.residual.2.weight",
-    "encoder.mid_block.resnets.0.conv1.bias": "encoder.middle.0.residual.2.bias",
-    "encoder.mid_block.resnets.0.norm2.gamma": "encoder.middle.0.residual.3.gamma",
-    "encoder.mid_block.resnets.0.conv2.weight": "encoder.middle.0.residual.6.weight",
-    "encoder.mid_block.resnets.0.conv2.bias": "encoder.middle.0.residual.6.bias",
-    "encoder.mid_block.resnets.1.norm1.gamma": "encoder.middle.2.residual.0.gamma",
-    "encoder.mid_block.resnets.1.conv1.weight": "encoder.middle.2.residual.2.weight",
-    "encoder.mid_block.resnets.1.conv1.bias": "encoder.middle.2.residual.2.bias",
-    "encoder.mid_block.resnets.1.norm2.gamma": "encoder.middle.2.residual.3.gamma",
-    "encoder.mid_block.resnets.1.conv2.weight": "encoder.middle.2.residual.6.weight",
-    "encoder.mid_block.resnets.1.conv2.bias": "encoder.middle.2.residual.6.bias",
-    "decoder.mid_block.resnets.0.norm1.gamma": "decoder.middle.0.residual.0.gamma",
-    "decoder.mid_block.resnets.0.conv1.weight": "decoder.middle.0.residual.2.weight",
-    "decoder.mid_block.resnets.0.conv1.bias": "decoder.middle.0.residual.2.bias",
-    "decoder.mid_block.resnets.0.norm2.gamma": "decoder.middle.0.residual.3.gamma",
-    "decoder.mid_block.resnets.0.conv2.weight": "decoder.middle.0.residual.6.weight",
-    "decoder.mid_block.resnets.0.conv2.bias": "decoder.middle.0.residual.6.bias",
-    "decoder.mid_block.resnets.1.norm1.gamma": "decoder.middle.2.residual.0.gamma",
-    "decoder.mid_block.resnets.1.conv1.weight": "decoder.middle.2.residual.2.weight",
-    "decoder.mid_block.resnets.1.conv1.bias": "decoder.middle.2.residual.2.bias",
-    "decoder.mid_block.resnets.1.norm2.gamma": "decoder.middle.2.residual.3.gamma",
-    "decoder.mid_block.resnets.1.conv2.weight": "decoder.middle.2.residual.6.weight",
-    "decoder.mid_block.resnets.1.conv2.bias": "decoder.middle.2.residual.6.bias",
-    "encoder.mid_block.attentions.0.norm.gamma": "encoder.middle.1.norm.gamma",
-    "encoder.mid_block.attentions.0.to_qkv.weight": "encoder.middle.1.to_qkv.weight",
-    "encoder.mid_block.attentions.0.to_qkv.bias": "encoder.middle.1.to_qkv.bias",
-    "encoder.mid_block.attentions.0.proj.weight": "encoder.middle.1.proj.weight",
-    "encoder.mid_block.attentions.0.proj.bias": "encoder.middle.1.proj.bias",
-    "decoder.mid_block.attentions.0.norm.gamma": "decoder.middle.1.norm.gamma",
-    "decoder.mid_block.attentions.0.to_qkv.weight": "decoder.middle.1.to_qkv.weight",
-    "decoder.mid_block.attentions.0.to_qkv.bias": "decoder.middle.1.to_qkv.bias",
-    "decoder.mid_block.attentions.0.proj.weight": "decoder.middle.1.proj.weight",
-    "decoder.mid_block.attentions.0.proj.bias": "decoder.middle.1.proj.bias",
-    "encoder.norm_out.gamma": "encoder.head.0.gamma",
-    "encoder.conv_out.weight": "encoder.head.2.weight",
-    "encoder.conv_out.bias": "encoder.head.2.bias",
-    "decoder.norm_out.gamma": "decoder.head.0.gamma",
-    "decoder.conv_out.weight": "decoder.head.2.weight",
-    "decoder.conv_out.bias": "decoder.head.2.bias",
-    "quant_conv.weight": "conv1.weight",
-    "quant_conv.bias": "conv1.bias",
-    "post_quant_conv.weight": "conv2.weight",
-    "post_quant_conv.bias": "conv2.bias",
-}
-
-_DECODER_RESNET_TO_UPSAMPLE_INDEX: dict[tuple[int, int], int] = {
-    (0, 0): 0,
-    (0, 1): 1,
-    (0, 2): 2,
-    (1, 0): 4,
-    (1, 1): 5,
-    (1, 2): 6,
-    (2, 0): 8,
-    (2, 1): 9,
-    (2, 2): 10,
-    (3, 0): 12,
-    (3, 1): 13,
-    (3, 2): 14,
-}
-
-_DECODER_UPSAMPLER_TO_UPSAMPLE_INDEX: dict[int, int] = {
-    0: 3,
-    1: 7,
-    2: 11,
-}
-
-
-def _strip_wrapper_prefixes(key: str) -> str:
-    normalized = str(key)
-    while True:
-        matched = False
-        for prefix in _WRAPPER_PREFIXES:
-            if normalized.startswith(prefix):
-                normalized = normalized[len(prefix) :]
-                matched = True
-        if not matched:
-            return normalized
-
-
-def _map_encoder_down_block_key(key: str) -> str:
-    if ".resnets." in key:
-        raise RuntimeError(
-            "AutoencoderCodex3D key remap: unsupported encoder down_block layout "
-            f"for key={key!r} (expected WAN diffusers canonical encoder.down_blocks.<idx>.<field>)."
-        )
-    mapped = key.replace("encoder.down_blocks.", "encoder.downsamples.", 1)
-    mapped = mapped.replace(".norm1.gamma", ".residual.0.gamma")
-    mapped = mapped.replace(".conv1.weight", ".residual.2.weight")
-    mapped = mapped.replace(".conv1.bias", ".residual.2.bias")
-    mapped = mapped.replace(".norm2.gamma", ".residual.3.gamma")
-    mapped = mapped.replace(".conv2.weight", ".residual.6.weight")
-    mapped = mapped.replace(".conv2.bias", ".residual.6.bias")
-    mapped = mapped.replace(".conv_shortcut.weight", ".shortcut.weight")
-    mapped = mapped.replace(".conv_shortcut.bias", ".shortcut.bias")
-    return mapped
-
-
-def _map_decoder_up_block_key(key: str) -> str:
-    resnet_match = re.match(r"^decoder\.up_blocks\.(\d+)\.resnets\.(\d+)\.(.+)$", key)
-    if resnet_match is not None:
-        block_idx = int(resnet_match.group(1))
-        resnet_idx = int(resnet_match.group(2))
-        tail = str(resnet_match.group(3))
-        if (block_idx, resnet_idx) not in _DECODER_RESNET_TO_UPSAMPLE_INDEX:
-            raise RuntimeError(
-                "AutoencoderCodex3D key remap: unsupported decoder up_block residual index "
-                f"(block={block_idx} resnet={resnet_idx}) for key={key!r}."
-            )
-        upsample_index = _DECODER_RESNET_TO_UPSAMPLE_INDEX[(block_idx, resnet_idx)]
-        if tail == "norm1.gamma":
-            mapped_tail = "residual.0.gamma"
-        elif tail == "conv1.weight":
-            mapped_tail = "residual.2.weight"
-        elif tail == "conv1.bias":
-            mapped_tail = "residual.2.bias"
-        elif tail == "norm2.gamma":
-            mapped_tail = "residual.3.gamma"
-        elif tail == "conv2.weight":
-            mapped_tail = "residual.6.weight"
-        elif tail == "conv2.bias":
-            mapped_tail = "residual.6.bias"
-        elif tail.startswith("conv_shortcut."):
-            mapped_tail = "shortcut." + tail[len("conv_shortcut.") :]
-        else:
-            raise RuntimeError(
-                "AutoencoderCodex3D key remap: unsupported decoder up_block residual field "
-                f"tail={tail!r} key={key!r}."
-            )
-        return f"decoder.upsamples.{upsample_index}.{mapped_tail}"
-
-    upsample_match = re.match(r"^decoder\.up_blocks\.(\d+)\.upsamplers\.0\.(.+)$", key)
-    if upsample_match is not None:
-        block_idx = int(upsample_match.group(1))
-        tail = str(upsample_match.group(2))
-        if block_idx not in _DECODER_UPSAMPLER_TO_UPSAMPLE_INDEX:
-            raise RuntimeError(
-                "AutoencoderCodex3D key remap: unsupported decoder up_block upsampler index "
-                f"(block={block_idx}) for key={key!r}."
-            )
-        upsample_index = _DECODER_UPSAMPLER_TO_UPSAMPLE_INDEX[block_idx]
-        return f"decoder.upsamples.{upsample_index}.{tail}"
-
-    raise RuntimeError(
-        "AutoencoderCodex3D key remap: unsupported decoder up_block key layout "
-        f"for key={key!r}."
-    )
+from apps.backend.runtime.state_dict.keymap_wan22_vae import remap_wan22_vae_3d_state_dict
 
 
 def remap_codex3d_vae_state_dict(
     state_dict: MutableMapping[str, Any],
 ) -> tuple[str, MutableMapping[str, Any]]:
-    normalized: dict[str, Any] = {}
-    for key, value in state_dict.items():
-        normalized_key = _strip_wrapper_prefixes(str(key))
-        if normalized_key in normalized:
-            raise RuntimeError(
-                "AutoencoderCodex3D key remap: normalized key collision "
-                f"for key={normalized_key!r}."
-            )
-        normalized[normalized_key] = value
-
-    has_codex = any(
-        key.startswith("encoder.downsamples.")
-        or key.startswith("decoder.upsamples.")
-        or key in {"conv1.weight", "conv2.weight"}
-        for key in normalized.keys()
-    )
-    has_diffusers = any(
-        key.startswith("encoder.down_blocks.")
-        or key.startswith("decoder.up_blocks.")
-        or key.startswith("quant_conv.")
-        or key.startswith("post_quant_conv.")
-        for key in normalized.keys()
-    )
-
-    if has_codex and has_diffusers:
-        raise RuntimeError(
-            "AutoencoderCodex3D key remap: mixed codex/diffusers VAE keyspace detected "
-            "(cannot resolve a single canonical lane)."
-        )
-
-    if has_diffusers:
-        mapped: dict[str, Any] = {}
-        for key, value in normalized.items():
-            if key in _FIXED_DIFFUSERS_TO_CODEX_KEYS:
-                mapped_key = _FIXED_DIFFUSERS_TO_CODEX_KEYS[key]
-            elif key.startswith("encoder.down_blocks."):
-                mapped_key = _map_encoder_down_block_key(key)
-            elif key.startswith("decoder.up_blocks."):
-                mapped_key = _map_decoder_up_block_key(key)
-            else:
-                mapped_key = key
-            if mapped_key in mapped:
-                raise RuntimeError(
-                    "AutoencoderCodex3D key remap: output collision "
-                    f"for mapped key={mapped_key!r} (source key={key!r})."
-                )
-            mapped[mapped_key] = value
-        _, validated = remap_anima_wan_vae_state_dict(mapped)
-        return "diffusers", validated
-
-    _, validated = remap_anima_wan_vae_state_dict(normalized)
-    return "codex", validated
+    return remap_wan22_vae_3d_state_dict(state_dict)
 
 
 class Codex3DCausalConv(nn.Conv3d):

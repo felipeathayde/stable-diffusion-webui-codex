@@ -17,6 +17,7 @@ Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) 
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
+Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap).
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text).
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
@@ -82,11 +83,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         register_default_engines(replace=False)
 
-    from apps.backend.types.payloads import TXT2IMG_KEYS, EXTRAS_KEYS
+    from apps.backend.types.payloads import EXTRAS_KEYS, TXT2IMG_KEYS
+    from apps.backend.runtime.state_dict.keymap_wan22_transformer import WAN22_REQUEST_KEYS
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL) - set(TXT2IMG_KEYS.SMART)
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
     _IMG2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
+    _TXT2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.TXT2VID_ALL)
+    _IMG2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.IMG2VID_ALL)
+    _WAN_STAGE_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
     _PROMPT_SAMPLER_CONTROL_RE = re.compile(
         r"<\s*sampler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
@@ -220,6 +225,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if maximum is not None and result > maximum:
             raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
         return result
+
+
+    def _require_sha256_field(payload: Mapping[str, Any], key: str) -> str:
+        value = payload.get(key)
+        if isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a string sha256, got object")
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(status_code=400, detail=f"'{key}' is required and must be a non-empty sha256 string")
+        normalized = value.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", normalized):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be sha256 (64 lowercase hex)")
+        return normalized
 
 
     def _require_bool_field(payload: Dict[str, Any], key: str) -> bool:
@@ -1320,6 +1337,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         default_seed: int,
         default_cfg_scale: float,
     ) -> _VideoCoreDTO:
+        scheduler_key = f"{task_prefix}_scheduler"
+        if scheduler_key in payload and str(payload.get(scheduler_key) or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{scheduler_key}' is not supported for WAN22 GGUF requests. "
+                    "Scheduler is runtime-managed and must not be overridden."
+                ),
+            )
         prompt = payload.get(f'{task_prefix}_prompt', '')
         negative_prompt = payload.get(f'{task_prefix}_neg_prompt', '')
         width_val = int(payload.get(f'{task_prefix}_width', default_width))
@@ -1329,7 +1355,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         fps_val = int(payload.get(f'{task_prefix}_fps', default_fps))
         frames_val = int(payload.get(f'{task_prefix}_num_frames', default_frames))
         sampler_name = str(payload.get(f'{task_prefix}_sampler', payload.get(f'{task_prefix}_sampling', default_sampler)))
-        scheduler_name = str(payload.get(f'{task_prefix}_scheduler', default_scheduler))
+        scheduler_name = str(default_scheduler)
         try:
             from apps.backend.types.samplers import SamplerKind
             from apps.backend.runtime.sampling.context import SchedulerName
@@ -1360,6 +1386,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def _parse_txt2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+        _reject_unknown_keys(payload, _TXT2VID_ALLOWED_KEYS, "txt2vid")
         return _parse_video_core_dto(
             payload,
             task_prefix='txt2vid',
@@ -1375,6 +1402,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def _parse_img2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+        _reject_unknown_keys(payload, _IMG2VID_ALLOWED_KEYS, "img2vid")
         return _parse_video_core_dto(
             payload,
             task_prefix='img2vid',
@@ -1956,25 +1984,26 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
         def _require_sha_field(key: str) -> str:
-            val = payload.get(key)
-            if isinstance(val, dict):
-                raise HTTPException(status_code=400, detail=f"'{key}' must be a string sha256, got object")
-            if not isinstance(val, str) or not val.strip():
-                raise HTTPException(status_code=400, detail=f"'{key}' is required and must be a non-empty sha256 string")
-            return val.strip().lower()
+            return _require_sha256_field(payload, key)
 
         def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
             raw = payload.get(stage_key)
             if not isinstance(raw, dict):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
+            _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
             if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
-            sha_raw = raw.get("model_sha")
-            if not isinstance(sha_raw, str) or not sha_raw.strip():
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
-            sha = sha_raw.strip().lower()
+            if str(raw.get("scheduler") or "").strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{stage_key}.scheduler' is not supported for WAN22 GGUF requests. "
+                        "Scheduler is runtime-managed and must not be overridden."
+                    ),
+                )
+            sha = _require_sha256_field(raw, "model_sha")
             model_path = resolve_asset_by_sha(sha)
             if not model_path:
                 raise HTTPException(status_code=409, detail=f"WAN stage model not found for sha: {sha}")
@@ -1986,9 +2015,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
             if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
-                lora_sha = str(out.get("lora_sha")).strip().lower()
-                if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
-                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_sha' must be sha256 (64 lowercase hex)")
+                lora_sha = _require_sha256_field(out, "lora_sha")
                 lora_path = resolve_asset_by_sha(lora_sha)
                 if not lora_path:
                     raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
@@ -2140,25 +2167,26 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
         def _require_sha_field(key: str) -> str:
-            val = payload.get(key)
-            if isinstance(val, dict):
-                raise HTTPException(status_code=400, detail=f"'{key}' must be a string sha256, got object")
-            if not isinstance(val, str) or not val.strip():
-                raise HTTPException(status_code=400, detail=f"'{key}' is required and must be a non-empty sha256 string")
-            return val.strip().lower()
+            return _require_sha256_field(payload, key)
 
         def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
             raw = payload.get(stage_key)
             if not isinstance(raw, dict):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
+            _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
             if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
-            sha_raw = raw.get("model_sha")
-            if not isinstance(sha_raw, str) or not sha_raw.strip():
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
-            sha = sha_raw.strip().lower()
+            if str(raw.get("scheduler") or "").strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{stage_key}.scheduler' is not supported for WAN22 GGUF requests. "
+                        "Scheduler is runtime-managed and must not be overridden."
+                    ),
+                )
+            sha = _require_sha256_field(raw, "model_sha")
             model_path = resolve_asset_by_sha(sha)
             if not model_path:
                 raise HTTPException(status_code=409, detail=f"WAN stage model not found for sha: {sha}")
@@ -2170,9 +2198,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
             if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
-                lora_sha = str(out.get("lora_sha")).strip().lower()
-                if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
-                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_sha' must be sha256 (64 lowercase hex)")
+                lora_sha = _require_sha256_field(out, "lora_sha")
                 lora_path = resolve_asset_by_sha(lora_sha)
                 if not lora_path:
                     raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")

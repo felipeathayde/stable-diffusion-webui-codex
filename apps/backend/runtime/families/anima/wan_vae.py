@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WanVAE-style (3D conv) VAE used by Anima (`qwen_image_vae.safetensors`).
-Implements the WAN 2.1 VAE architecture used by ComfyUI for image inference, with strict keymap normalization, explicit Wan21 latent stats exposure, and strict loader diagnostics.
+Implements the WAN 2.1 VAE architecture used by ComfyUI for image inference, with strict keymap normalization from `runtime/state_dict/keymap_wan21_vae.py`, explicit Wan21 latent stats exposure, and strict loader diagnostics.
 This implementation is scoped to **images**: inputs are treated as `T=1` (no video caching or temporal chunking).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -36,7 +36,7 @@ from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_
 from apps.backend.runtime.families.wan22.wan_latent_norms import WAN21_LATENTS_MEAN, WAN21_LATENTS_STD
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
-from apps.backend.runtime.state_dict.keymap_anima import remap_anima_wan_vae_state_dict
+from apps.backend.runtime.state_dict.keymap_wan21_vae import remap_wan21_vae_state_dict
 
 logger = logging.getLogger("backend.runtime.anima.wan_vae")
 WAN_VAE_BASE_MARKER_KEY = "decoder.middle.0.residual.0.gamma"
@@ -514,7 +514,7 @@ def load_wan_vae_from_safetensors(
         raise RuntimeError(f"WAN VAE checkpoint loader returned non-mapping state_dict: {type(sd).__name__}")
     sd = {str(k): v for k, v in sd.items()}
     try:
-        _, sd = remap_anima_wan_vae_state_dict(sd)
+        _, sd = remap_wan21_vae_state_dict(sd)
     except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
         raise RuntimeError(f"WAN VAE key remap failed: {exc}") from exc
 

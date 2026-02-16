@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
-`er sde` in the sampler allowlist.
+`er sde` in the sampler allowlist. WAN semantic capabilities are bound to explicit WAN22 variant families via primary-family mapping.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
@@ -228,7 +228,7 @@ _SEMANTIC_ENGINE_PRIMARY_FAMILY: Dict[SemanticEngine, ModelFamily] = {
     SemanticEngine.CHROMA: ModelFamily.CHROMA,
     SemanticEngine.ZIMAGE: ModelFamily.ZIMAGE,
     SemanticEngine.ANIMA: ModelFamily.ANIMA,
-    SemanticEngine.WAN22: ModelFamily.WAN22,
+    SemanticEngine.WAN22: ModelFamily.WAN22_5B,
     SemanticEngine.HUNYUAN_VIDEO: ModelFamily.HUNYUAN,
     SemanticEngine.SVD: ModelFamily.SVD,
 }

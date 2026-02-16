@@ -10,12 +10,14 @@ Purpose: Runtime state-dict views and helpers.
 Provides mapping views and small utilities used during checkpoint loading/normalization.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `keymap_anima` (module): Anima key-style detection + strict remaps for core transformer, WAN VAE, and Qwen3-0.6B text encoder.
+- `keymap_anima` (module): Anima key-style detection + strict remaps for core transformer and Qwen3-0.6B text encoder.
 - `keymap_llama_gguf` (module): Key remapping helpers for llama.cpp-style GGUF tensor names.
 - `keymap_sdxl_checkpoint` (module): SDXL checkpoint wrapper/prefix key normalization (Comfy/original SDXL layout).
 - `keymap_sdxl_clip` (module): SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
 - `keymap_sdxl_vae` (module): SDXL/Flow16 VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
 - `keymap_t5_text_encoder` (module): T5 text-encoder key-style remap (HF `encoder.*`/`shared.weight` → IntegratedT5 `transformer.*`).
+- `keymap_wan21_vae` (module): WAN2.1 VAE key-style detection + strict canonical remap.
+- `keymap_wan22_vae` (module): WAN22 VAE key-style detection + strict remaps for 2D/3D lanes.
 - `keymap_wan22_transformer` (module): WAN22 transformer key-style detection + remapping (Diffusers/WAN-export/Codex).
 - `key_mapping` (module): Strict key-style detection + declarative key-remapping helpers.
 - `tools` (module): State-dict diagnostics and helper utilities.
@@ -29,6 +31,8 @@ __all__ = [
     "keymap_sdxl_clip",
     "keymap_sdxl_vae",
     "keymap_t5_text_encoder",
+    "keymap_wan21_vae",
+    "keymap_wan22_vae",
     "keymap_wan22_transformer",
     "key_mapping",
     "tools",

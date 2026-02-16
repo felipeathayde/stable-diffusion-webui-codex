@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Text encoder override definitions and resolution helpers.
 Holds the override config dataclass, strict validation rules, and filesystem resolution for encoder weights.
+Supports explicit WAN22 variant families in override labels (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TextEncoderOverrideError` (class): Raised when a text encoder override configuration cannot be applied.
@@ -38,7 +39,7 @@ class TextEncoderOverrideConfig:
     """Explicit selection of a text encoder root for a given model family.
 
     family:
-        Concrete model family (`ModelFamily.SD15`, `ModelFamily.SDXL`, `ModelFamily.FLUX`, `ModelFamily.WAN22`, ...)
+        Concrete model family (`ModelFamily.SD15`, `ModelFamily.SDXL`, `ModelFamily.FLUX`, `ModelFamily.WAN22_5B`, ...)
         that this override is valid for.
     root_label:
         A stable label in the form `<family>/<path>` where `<path>` is either repo-relative or absolute and

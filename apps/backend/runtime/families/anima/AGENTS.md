@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/anima Overview
 <!-- tags: backend, runtime, families, anima, cosmos, predict2 -->
 Date: 2026-02-05
-Last Review: 2026-02-08
+Last Review: 2026-02-16
 Status: Draft
 
 ## Purpose
@@ -28,3 +28,4 @@ Status: Draft
 - 2026-02-08: `loader.py`, `wan_vae.py`, and `text_encoder.py` now run strict family keymaps from `apps.backend.runtime.state_dict.keymap_anima` before strict model load; parser `net.` stripping invariant for core remains enforced.
 - 2026-02-08: `wan_vae.py` now populates Wan21 per-channel latent stats on `WanVaeConfig` (`latents_mean`/`latents_std`) for decode/encode normalization parity with Comfy; constructor enforces `z_dim=16` fail-loud for Anima image-mode scope.
 - 2026-02-08: `wan_vae.py` now emits `shift_factor=None` (not numeric `0.0`) for Anima Wan21 parity; shared VAE no-shift policy remains strict and continues to reject explicit numeric shift values for Anima.
+- 2026-02-16: WAN2.1 VAE keymap ownership moved to `apps/backend/runtime/state_dict/keymap_wan21_vae.py`; `wan_vae.py` now consumes model-owned keymap directly (no Anima mixed-ownership).

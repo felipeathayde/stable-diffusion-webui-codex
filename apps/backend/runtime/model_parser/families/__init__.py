@@ -10,6 +10,7 @@ Purpose: Model-family → parser-plan dispatch for the Codex model parser.
 Maps `ModelFamily` values to the appropriate `build_plan(...)` implementation and provides a single `resolve_plan(...)` entrypoint used by
 `parse_state_dict(...)`.
 Includes core-only families such as Anima (Cosmos Predict2) that rely on sha-selected external assets.
+WAN22 family variants are dispatched explicitly (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_BUILDERS` (constant): Mapping of supported `ModelFamily` values to plan-builder callables.
@@ -38,7 +39,9 @@ _BUILDERS: Dict[ModelFamily, Callable[[ModelSignature], ParserPlanBundle]] = {
     ModelFamily.FLUX_KONTEXT: flux.build_plan,
     ModelFamily.CHROMA: chroma.build_plan,
     ModelFamily.ANIMA: anima.build_plan,
-    ModelFamily.WAN22: wan22.build_plan,
+    ModelFamily.WAN22_5B: wan22.build_plan,
+    ModelFamily.WAN22_14B: wan22.build_plan,
+    ModelFamily.WAN22_ANIMATE: wan22.build_plan,
     ModelFamily.ZIMAGE: zimage.build_plan,
 }
 

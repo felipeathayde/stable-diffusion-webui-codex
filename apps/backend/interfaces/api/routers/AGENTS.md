@@ -69,3 +69,6 @@ Status: Active
 - 2026-02-15: `generation.py`/`upscale.py`/`supir.py` now sanitize synchronous `HTTPException.detail` paths (and `upscale.py` manifest parse error fields) through `public_http_error_detail(...)`, so API callers do not receive raw exception strings.
 - 2026-02-16: `generation.py` video worker now logs typed `EngineExecutionError` explicitly to API console logs before writing sanitized task error payloads (keeps local debugging signal while preserving public error contract).
 - 2026-02-16: `generation.py` video worker immediate-cancel path now drains orchestrator iterators instead of returning early, so teardown/finalizers complete before `release_inference_gate()`; video smart-flag parsing now reuses the shared strict helper from `tasks/generation_tasks.py`.
+- 2026-02-16: WAN22 video request allowlists are now owned by model keymap module `apps/backend/runtime/state_dict/keymap_wan22_transformer.py` (`WAN22_REQUEST_KEYS`), not by payload type definitions.
+- 2026-02-16: `tasks.py` cancellation endpoint now rejects `mode="after_current"` with HTTP 400 until worker-level deferred-cancel semantics are implemented (fail-loud contract).
+- 2026-02-16: `models.py` prompt-token endpoint now recognizes `wan22_animate_14b`; `ui.py` tab-type normalization accepts `wan22_animate_14b` and normalizes all WAN aliases to `wan`.

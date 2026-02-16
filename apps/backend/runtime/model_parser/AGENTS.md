@@ -35,3 +35,4 @@ Status: Draft
 - 2026-02-10: SDXL nested UNet label-embedding key normalization moved out of parser converters into canonical checkpoint keymap (`apps/backend/runtime/state_dict/keymap_sdxl_checkpoint.py`); SDXL parser plan no longer runs UNet key normalization converters.
 - 2026-02-10: CLIP converter structural conversions (projection transpose paths in `converters/clip.py`) are now globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`: `auto` fails loud, `convert` opt-in allows conversion.
 - 2026-02-11: CLIP parser converter now delegates to canonical CLIP keymap normalization (`normalize_codex_clip_state_dict_with_layout`) and keeps native layout in AUTO (`qkv_impl=auto`, `projection_orientation=auto`) instead of forcing projection transpose.
+- 2026-02-16: WAN parser dispatch/config normalization now handles explicit WAN22 families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) instead of a single `WAN22` family bucket.

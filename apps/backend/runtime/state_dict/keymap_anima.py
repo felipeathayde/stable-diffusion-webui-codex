@@ -6,13 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Strict key-style detection + remapping for Anima core transformer, WAN VAE, and Qwen3-0.6B text encoder.
+Purpose: Strict key-style detection + remapping for Anima core transformer and Qwen3-0.6B text encoder.
 Normalizes explicit wrapper prefixes only, preserves canonical keyspaces, and fails loud on unsupported/collision output.
 Current detectors are intentionally single-style per component; ambiguous-style errors become reachable only if additional styles are added later.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_anima_transformer_state_dict` (function): Returns (detected_style, remapped_view) for Anima core transformer keys.
-- `remap_anima_wan_vae_state_dict` (function): Returns (detected_style, remapped_view) for Anima WAN VAE keys.
 - `remap_anima_qwen3_06b_state_dict` (function): Returns (detected_style, remapped_view) for Anima Qwen3-0.6B text-encoder keys.
 """
 
@@ -50,24 +49,6 @@ _TRANSFORMER_FORBIDDEN_PREFIXES = (
     "module.",
 )
 
-_WAN_VAE_PREFIXES = (
-    "module.",
-    "vae.",
-    "first_stage_model.",
-)
-_WAN_VAE_REQUIRED = (
-    "decoder.head.0.gamma",
-    "encoder.conv1.weight",
-    "decoder.conv1.weight",
-    "conv1.weight",
-    "conv2.weight",
-)
-_WAN_VAE_FORBIDDEN_PREFIXES = (
-    "module.",
-    "vae.",
-    "first_stage_model.",
-)
-
 _QWEN_PREFIXES = (
     "module.",
     "text_encoder.",
@@ -90,23 +71,6 @@ _TRANSFORMER_DETECTOR = KeyStyleDetector(
                 KeySentinel(SentinelKind.PREFIX, "blocks."),
                 KeySentinel(SentinelKind.PREFIX, "final_layer."),
                 KeySentinel(SentinelKind.PREFIX, "llm_adapter."),
-            ),
-            min_sentinel_hits=2,
-        ),
-    ),
-)
-
-_WAN_VAE_DETECTOR = KeyStyleDetector(
-    name="anima_wan_vae_key_style",
-    styles=(
-        KeyStyleSpec(
-            style=KeyStyle.CODEX,
-            sentinels=(
-                KeySentinel(SentinelKind.PREFIX, "encoder."),
-                KeySentinel(SentinelKind.PREFIX, "decoder."),
-                KeySentinel(SentinelKind.EXACT, "decoder.head.0.gamma"),
-                KeySentinel(SentinelKind.EXACT, "conv1.weight"),
-                KeySentinel(SentinelKind.EXACT, "conv2.weight"),
             ),
             min_sentinel_hits=2,
         ),
@@ -174,32 +138,6 @@ def remap_anima_transformer_state_dict(state_dict: MutableMapping[str, _T]) -> t
     )
 
 
-def remap_anima_wan_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
-    def _normalize(key: str) -> str:
-        return strip_repeated_prefixes(str(key), _WAN_VAE_PREFIXES)
-
-    def _validate_output(keys: Sequence[str]) -> None:
-        _validate_forbidden_prefixes(
-            keys=keys,
-            prefixes=_WAN_VAE_FORBIDDEN_PREFIXES,
-            detector_name=_WAN_VAE_DETECTOR.name,
-        )
-        _validate_required_keys(
-            keys=keys,
-            required=_WAN_VAE_REQUIRED,
-            detector_name=_WAN_VAE_DETECTOR.name,
-        )
-
-    mappers = {KeyStyle.CODEX: lambda key: key}
-    return remap_state_dict_view(
-        state_dict,
-        detector=_WAN_VAE_DETECTOR,
-        normalize=_normalize,
-        mappers=mappers,
-        output_validator=_validate_output,
-    )
-
-
 def remap_anima_qwen3_06b_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
     def _normalize(key: str) -> str:
         return strip_repeated_prefixes(str(key), _QWEN_PREFIXES)
@@ -230,5 +168,4 @@ def remap_anima_qwen3_06b_state_dict(state_dict: MutableMapping[str, _T]) -> tup
 __all__ = [
     "remap_anima_qwen3_06b_state_dict",
     "remap_anima_transformer_state_dict",
-    "remap_anima_wan_vae_state_dict",
 ]

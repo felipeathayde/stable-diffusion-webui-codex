@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Canonical per-engine asset requirements (VAE/text encoders) for generation requests.
 Centralizes “what is required” so UI ↔ API ↔ loader can stay in sync and drift cannot reappear via duplicated `engine_id in (...)` logic.
 Includes sha-selected external-asset engines (e.g., Z-Image and Anima) where VAE/text-encoder weights must be provided explicitly.
+WAN22 engine variants (`wan22_5b`, `wan22_14b`, `wan22_animate_14b`) are modeled as explicit engine contracts (no owner alias fallback).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TextEncoderKind` (enum): UI-friendly label for the expected text encoder selection kind.
@@ -190,6 +191,22 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
         sha_only=True,
         notes="External-assets-first: requires WAN VAE + 1 T5 text encoder via sha selection.",
     ),
+    "wan22_14b": EngineAssetContract(
+        requires_vae=True,
+        tenc_slots=("t5xxl",),
+        tenc_slot_labels=("T5-XXL",),
+        tenc_kind=TextEncoderKind.T5,
+        sha_only=True,
+        notes="External-assets-first: requires WAN VAE + 1 T5 text encoder via sha selection.",
+    ),
+    "wan22_animate_14b": EngineAssetContract(
+        requires_vae=True,
+        tenc_slots=("t5xxl",),
+        tenc_slot_labels=("T5-XXL",),
+        tenc_kind=TextEncoderKind.T5,
+        sha_only=True,
+        notes="External-assets-first: requires WAN VAE + 1 T5 text encoder via sha selection.",
+    ),
     "svd": EngineAssetContract(
         requires_vae=False,
         tenc_slots=(),
@@ -227,8 +244,8 @@ _CONTRACT_OWNER_BY_ENGINE_ID: dict[str, str] = {
     "zimage": "zimage",
     "anima": "anima",
     "wan22_5b": "wan22_5b",
-    "wan22_14b": "wan22_5b",
-    "wan22_animate_14b": "wan22_5b",
+    "wan22_14b": "wan22_14b",
+    "wan22_animate_14b": "wan22_animate_14b",
     "svd": "svd",
     "hunyuan_video": "hunyuan_video",
 }
@@ -284,7 +301,17 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
 
     owner = contract_owner_for_engine(engine_id)
 
-    if owner in ("flux1", "flux1_kontext", "zimage", "anima", "wan22_5b", "svd", "hunyuan_video"):
+    if owner in (
+        "flux1",
+        "flux1_kontext",
+        "zimage",
+        "anima",
+        "wan22_5b",
+        "wan22_14b",
+        "wan22_animate_14b",
+        "svd",
+        "hunyuan_video",
+    ):
         return contract_for_engine(owner)
 
     if owner == "flux1_chroma":

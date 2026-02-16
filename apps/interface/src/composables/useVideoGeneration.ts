@@ -10,7 +10,7 @@ Required Notice: see NOTICE
 	Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
 	to update UI state and fetch final results. Every start payload includes `settings_revision`, and stale-revision conflicts (`409` + `current_revision`)
 	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
-	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`.
+	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Includes `output.returnFrames` in common WAN payload input.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -569,6 +569,7 @@ export function useVideoGeneration(tabId: string) {
         trimToAudio: v.trimToAudio,
         saveMetadata: v.saveMetadata,
         saveOutput: v.saveOutput,
+        returnFrames: v.returnFrames,
       },
       interpolation: {
         enabled: v.rifeEnabled,

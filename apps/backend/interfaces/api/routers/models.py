@@ -10,7 +10,7 @@ Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
-(`/api/models/prompt-token-count`) using vendored offline tokenizers.
+(`/api/models/prompt-token-count`) using vendored offline tokenizers, including WAN22 animate engine ids.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -60,6 +60,7 @@ _ENGINE_TOKENIZER_KEY: Dict[str, str] = {
     "wan22": "wan",
     "wan22_5b": "wan",
     "wan22_14b": "wan",
+    "wan22_animate_14b": "wan",
 }
 
 

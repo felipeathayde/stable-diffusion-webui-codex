@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN 2.2 engine runtime specification (analogous to Flux `spec.py`).
 Defines the engine-facing `WanEngineSpec`/`WanEngineRuntime` containers and centralized runtime assembly used by WAN engines, delegating
-defaults to `FamilyRuntimeSpec` and wiring the T5 text pipeline + denoiser/VAE patchers.
+defaults to variant-specific `FamilyRuntimeSpec` (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) and wiring the T5 text pipeline + denoiser/VAE patchers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanTextPipelines` (dataclass): Text processing pipelines for WAN (T5 only; no CLIP).
@@ -62,7 +62,7 @@ class WanEngineSpec:
     with optional per-variant overrides.
     """
     name: str
-    family: ModelFamily = ModelFamily.WAN22
+    family: ModelFamily = ModelFamily.WAN22_14B
     
     # Optional overrides (if None, delegates to FamilyRuntimeSpec)
     _flow_shift_override: Optional[float] = field(default=None, repr=False)
@@ -169,7 +169,7 @@ def assemble_wan_runtime(
     vae_model = codex_components.get("vae")
     if vae_model is None:
         raise ValueError("WAN runtime requires 'vae' component")
-    vae = VAE(model=vae_model, family=ModelFamily.WAN22)
+    vae = VAE(model=vae_model, family=spec.family)
     
     # Transformer -> DenoiserPatcher
     transformer = codex_components.get("transformer")
@@ -214,11 +214,13 @@ def assemble_wan_runtime(
 # Pre-defined specs (using overrides only when different from FamilyRuntimeSpec)
 WAN_14B_SPEC = WanEngineSpec(
     name="wan22_14b",
+    family=ModelFamily.WAN22_14B,
     # Uses defaults from FamilyRuntimeSpec for steps/cfg and resolves flow_shift from the vendored scheduler_config.json.
 )
 
 WAN_5B_SPEC = WanEngineSpec(
     name="wan22_5b",
+    family=ModelFamily.WAN22_5B,
     # 5B uses different defaults for steps/cfg; flow_shift is still resolved from scheduler_config.json.
     _default_steps_override=16,
     _default_cfg_override=6.0,

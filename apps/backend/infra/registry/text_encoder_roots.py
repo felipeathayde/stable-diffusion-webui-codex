@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Engine/model-family text encoder roots registry (`apps/paths.json`-backed).
 Exposes configured text encoder root directories for each `ModelFamily` (e.g. `sd15_tenc`, `flux1_tenc`, `anima_tenc`, `wan22_tenc`) without loading models,
-so inventory/diagnostics layers can list available roots safely.
+so inventory/diagnostics layers can list available roots safely (including WAN22 variant families sharing `wan22_tenc` roots).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_FAMILY_KEYS` (constant): Mapping from `ModelFamily` to the corresponding `apps/paths.json` key.
@@ -39,7 +39,9 @@ _FAMILY_KEYS: Dict[ModelFamily, str] = {
     ModelFamily.FLUX_KONTEXT: "flux1_tenc",
     ModelFamily.ANIMA: "anima_tenc",
     ModelFamily.ZIMAGE: "zimage_tenc",
-    ModelFamily.WAN22: "wan22_tenc",
+    ModelFamily.WAN22_5B: "wan22_tenc",
+    ModelFamily.WAN22_14B: "wan22_tenc",
+    ModelFamily.WAN22_ANIMATE: "wan22_tenc",
 }
 
 

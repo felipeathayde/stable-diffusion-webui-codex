@@ -10,6 +10,7 @@ Purpose: Per-model-family runtime specification (capabilities + latent/normaliza
 Defines UI-facing capability flags and runtime defaults per `ModelFamily` (latent channels, prediction kind, normalization hints),
 acting as the single source of truth for both backend assembly and frontend conditional UI (flow-shift is left unset when variant-specific).
 Includes Anima (`ModelFamily.ANIMA`) as a flow-based image family with fixed flow shift defaults (ComfyUI parity).
+Includes explicit WAN22 family variants (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) with independent defaults.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FamilyCapabilities` (dataclass): UI-facing capability flags (what controls should be shown/hidden; supported/excluded samplers/schedulers).
@@ -374,8 +375,8 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         scheduler_default="karras",
         patch_size=2,
     ),
-    ModelFamily.WAN22: FamilyRuntimeSpec(
-        family=ModelFamily.WAN22,
+    ModelFamily.WAN22_14B: FamilyRuntimeSpec(
+        family=ModelFamily.WAN22_14B,
         latent_channels=16,
         latent_scale_factor=8,
         vae_scaling_factor=1.0,
@@ -392,6 +393,42 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         flow_shift=None,
         scheduler_default="simple",
         t5_min_length=512,  # UMT5-XXL
+        uses_t5=True,
+        capabilities=CAPABILITIES_FLOW_WITH_CFG,
+    ),
+    ModelFamily.WAN22_5B: FamilyRuntimeSpec(
+        family=ModelFamily.WAN22_5B,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=1.0,
+        vae_shift_factor=0.0,
+        context_dim=4096,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=6.0,
+        prediction=PredictionKind.FLOW,
+        default_steps=16,
+        flow_shift=None,
+        scheduler_default="simple",
+        t5_min_length=512,
+        uses_t5=True,
+        capabilities=CAPABILITIES_FLOW_WITH_CFG,
+    ),
+    ModelFamily.WAN22_ANIMATE: FamilyRuntimeSpec(
+        family=ModelFamily.WAN22_ANIMATE,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=1.0,
+        vae_shift_factor=0.0,
+        context_dim=4096,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=5.0,
+        prediction=PredictionKind.FLOW,
+        default_steps=20,
+        flow_shift=None,
+        scheduler_default="simple",
+        t5_min_length=512,
         uses_t5=True,
         capabilities=CAPABILITIES_FLOW_WITH_CFG,
     ),

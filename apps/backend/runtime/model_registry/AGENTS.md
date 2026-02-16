@@ -24,6 +24,7 @@ Status: Draft
 - 2026-02-06: `SemanticEngine.ANIMA` capability surface now exposes `supports_txt2img=true` and `supports_img2img=true` after conditioning payload port (`crossattn` + pooled `vector` + `t5xxl_ids/t5xxl_weights`) and compile/sampler pass-through validation.
 - 2026-02-07: `SemanticEngine.ANIMA` sampler surface narrowed to native-supported entries (`euler`, `euler a`, `dpm++ 2m`) with default `euler`.
 - 2026-02-08: `SemanticEngine.ANIMA` re-enabled native `er sde` rollout (Anima-only release scope) while keeping default sampler `euler`.
+- 2026-02-16: WAN22 family bucket was split into explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`); detector family assignment now follows model type (`ti2v` -> 5B, `animate` -> WAN22_ANIMATE, others -> 14B).
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

@@ -10,14 +10,17 @@ Purpose: WAN22 transformer key-style detection + remapping (Diffusers/WAN-export
 Normalizes multiple upstream key layouts into the canonical Codex WAN22 runtime layout and fails loud on unknown/ambiguous inputs.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls.
+- `WAN22_REQUEST_KEYS` (constant): Singleton request-key map used by WAN22 request validators.
 - `remap_wan22_transformer_state_dict` (function): Returns (detected_style, remapped_view) for WAN22 transformer keys.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from collections.abc import MutableMapping, Sequence
-from typing import TypeVar
+from typing import FrozenSet, TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
     KeyMappingError,
@@ -100,6 +103,131 @@ _DETECTOR = KeyStyleDetector(
         ),
     ),
 )
+
+
+@dataclass(frozen=True)
+class Wan22RequestKeys:
+    """Canonical WAN22 request-key allowlists used by generation routers."""
+
+    DEVICE: FrozenSet[str] = frozenset({"codex_device", "device", "codex_diffusion_device"})
+    REVISION: FrozenSet[str] = frozenset({"settings_revision"})
+    VIDEO_EXPORT: FrozenSet[str] = frozenset(
+        {
+            "video_return_frames",
+            "video_filename_prefix",
+            "video_format",
+            "video_pix_fmt",
+            "video_crf",
+            "video_loop_count",
+            "video_pingpong",
+            "video_save_metadata",
+            "video_save_output",
+            "video_trim_to_audio",
+        }
+    )
+    VIDEO_INTERPOLATION: FrozenSet[str] = frozenset({"video_interpolation"})
+    WAN_STAGE_CONTAINERS: FrozenSet[str] = frozenset({"wan_high", "wan_low"})
+    WAN_STAGE_ALLOWED: FrozenSet[str] = frozenset(
+        {
+            "model_sha",
+            "model_dir",
+            "sampler",
+            "scheduler",
+            "steps",
+            "cfg_scale",
+            "seed",
+            "lightning",
+            "lora_sha",
+            "lora_path",
+            "lora_weight",
+            "flow_shift",
+        }
+    )
+    WAN_ASSETS: FrozenSet[str] = frozenset(
+        {
+            "wan_format",
+            "wan_metadata_repo",
+            "wan_metadata_dir",
+            "wan_tokenizer_dir",
+            "wan_vae_sha",
+            "wan_tenc_sha",
+            "wan_vae_path",
+            "wan_text_encoder_path",
+            "wan_text_encoder_dir",
+        }
+    )
+    GGUF_RUNTIME: FrozenSet[str] = frozenset(
+        {
+            "gguf_offload",
+            "gguf_offload_level",
+            "gguf_sdpa_policy",
+            "gguf_attn_chunk",
+            "gguf_cache_policy",
+            "gguf_cache_limit_mb",
+            "gguf_log_mem_interval",
+            "gguf_te_device",
+            "gguf_te_impl",
+            "gguf_te_kernel_required",
+        }
+    )
+    TXT2VID: FrozenSet[str] = frozenset(
+        {
+            "txt2vid_prompt",
+            "txt2vid_neg_prompt",
+            "txt2vid_width",
+            "txt2vid_height",
+            "txt2vid_steps",
+            "txt2vid_fps",
+            "txt2vid_num_frames",
+            "txt2vid_sampler",
+            "txt2vid_sampling",
+            "txt2vid_scheduler",
+            "txt2vid_seed",
+            "txt2vid_cfg_scale",
+            "txt2vid_styles",
+        }
+    )
+    IMG2VID: FrozenSet[str] = frozenset(
+        {
+            "img2vid_prompt",
+            "img2vid_neg_prompt",
+            "img2vid_width",
+            "img2vid_height",
+            "img2vid_steps",
+            "img2vid_fps",
+            "img2vid_num_frames",
+            "img2vid_sampler",
+            "img2vid_sampling",
+            "img2vid_scheduler",
+            "img2vid_seed",
+            "img2vid_cfg_scale",
+            "img2vid_styles",
+            "img2vid_init_image",
+        }
+    )
+
+    @property
+    def COMMON(self) -> FrozenSet[str]:
+        return (
+            self.DEVICE
+            | self.REVISION
+            | self.VIDEO_EXPORT
+            | self.VIDEO_INTERPOLATION
+            | self.WAN_STAGE_CONTAINERS
+            | self.WAN_ASSETS
+            | self.GGUF_RUNTIME
+        )
+
+    @property
+    def TXT2VID_ALL(self) -> FrozenSet[str]:
+        return self.COMMON | self.TXT2VID
+
+    @property
+    def IMG2VID_ALL(self) -> FrozenSet[str]:
+        return self.COMMON | self.IMG2VID
+
+
+WAN22_REQUEST_KEYS = Wan22RequestKeys()
 
 
 def remap_wan22_transformer_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
@@ -241,3 +369,9 @@ def remap_wan22_transformer_state_dict(state_dict: MutableMapping[str, _T]) -> t
         output_validator=_validate_output,
     )
 
+
+__all__ = [
+    "Wan22RequestKeys",
+    "WAN22_REQUEST_KEYS",
+    "remap_wan22_transformer_state_dict",
+]

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Vitest coverage for WAN video payload builders (txt2vid/img2vid/vid2vid).
 Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields, including
-WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity) and `settings_revision` propagation.
+WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity), `settings_revision` propagation, and scheduler-override omission.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `payloads_video.test` (module): WAN video payload builder tests (field mapping + defaults).
@@ -90,6 +90,9 @@ describe('WAN video payload builders', () => {
     expect(payload.wan_vae_sha).toBe(vaeSha)
     expect(payload.wan_metadata_repo).toBe(metaRepo)
     expect(payload.video_return_frames).toBe(true)
+    expect(payload).not.toHaveProperty('txt2vid_scheduler')
+    expect(payload.wan_high).not.toHaveProperty('scheduler')
+    expect(payload.wan_low).not.toHaveProperty('scheduler')
   })
 
   it('builds an img2vid payload with sha-selected assets', () => {
@@ -152,6 +155,7 @@ describe('WAN video payload builders', () => {
     expect(payload.wan_tenc_sha).toBe(sha)
     expect(payload.wan_vae_sha).toBe(sha)
     expect(payload.wan_metadata_repo).toBe(metaRepo)
+    expect(payload).not.toHaveProperty('img2vid_scheduler')
   })
 
   it('builds a vid2vid payload (multipart upload path optional) with flow settings', () => {
@@ -201,6 +205,7 @@ describe('WAN video payload builders', () => {
     expect(payload.wan_tenc_sha).toBe(sha)
     expect(payload.wan_vae_sha).toBe(sha)
     expect(payload.wan_metadata_repo).toBe(metaRepo)
+    expect(payload).not.toHaveProperty('vid2vid_scheduler')
   })
 
   it('rounds WAN video dimensions up to a multiple of 16', () => {

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2vid/img2vid/vid2vid).
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
 handling unset sentinels and producing backend-ready payloads for `/api/*` requests (including `settings_revision`).
+WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler contract on backend).
 
 	Symbols (top-level; keep in sync; no ghosts):
 	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
@@ -71,7 +72,6 @@ const WanStageSchema = z
   .object({
     model_sha: Sha256Schema,
     sampler: z.string().min(1).optional(),
-    scheduler: z.string().min(1).optional(),
     steps: z.number().int().min(1),
     cfg_scale: z.number(),
     seed: z.number().int().optional(),
@@ -119,7 +119,6 @@ export const WanTxt2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   txt2vid_fps: z.number().int().min(1).max(240),
   txt2vid_num_frames: z.number().int().min(1).max(4096),
   txt2vid_sampler: z.string().min(1).optional(),
-  txt2vid_scheduler: z.string().min(1).optional(),
   txt2vid_seed: z.number().int().optional(),
   txt2vid_cfg_scale: z.number().optional(),
 }).strict()
@@ -135,7 +134,6 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   img2vid_fps: z.number().int().min(1).max(240),
   img2vid_num_frames: z.number().int().min(1).max(4096),
   img2vid_sampler: z.string().min(1).optional(),
-  img2vid_scheduler: z.string().min(1).optional(),
   img2vid_seed: z.number().int().optional(),
   img2vid_cfg_scale: z.number().optional(),
   img2vid_init_image: z.string().min(1),
@@ -152,7 +150,6 @@ export const WanVid2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   vid2vid_fps: z.number().int().min(1).max(240),
   vid2vid_num_frames: z.number().int().min(1).max(4096),
   vid2vid_sampler: z.string().min(1).optional(),
-  vid2vid_scheduler: z.string().min(1).optional(),
   vid2vid_seed: z.number().int().optional(),
   vid2vid_cfg_scale: z.number().optional(),
   vid2vid_strength: z.number().min(0).max(1).optional(),
@@ -292,13 +289,6 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
     }
     payload.sampler = sampler
   }
-  const scheduler = String(stage.scheduler || '').trim()
-  if (scheduler) {
-    if (scheduler !== scheduler.toLowerCase()) {
-      throw new Error(`WAN scheduler must be canonical lowercase, got '${scheduler}'`)
-    }
-    payload.scheduler = scheduler
-  }
   const loraSha = String(stage.loraSha || '').trim().toLowerCase()
   if (loraSha) {
     if (!/^[0-9a-f]{64}$/.test(loraSha)) {
@@ -380,9 +370,6 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.txt2vid_sampler = sampler
-  const scheduler = String(input.high.scheduler || '').trim()
-  if (scheduler) payload.txt2vid_scheduler = scheduler
-
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation)
 
@@ -417,9 +404,6 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.img2vid_sampler = sampler
-  const scheduler = String(input.high.scheduler || '').trim()
-  if (scheduler) payload.img2vid_scheduler = scheduler
-
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation)
 
@@ -460,9 +444,6 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.vid2vid_sampler = sampler
-  const scheduler = String(input.high.scheduler || '').trim()
-  if (scheduler) payload.vid2vid_scheduler = scheduler
-
   if (typeof input.startSeconds === 'number') payload.vid2vid_start_seconds = input.startSeconds
   if (typeof input.endSeconds === 'number') payload.vid2vid_end_seconds = input.endSeconds
   if (typeof input.maxFrames === 'number') payload.vid2vid_max_frames = input.maxFrames

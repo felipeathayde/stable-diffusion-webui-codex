@@ -1,7 +1,7 @@
 <!-- tags: backend, infra-registry, assets, text-encoders -->
 # apps/backend/infra/registry Overview
 Date: 2025-12-05
-Last Review: 2026-02-05
+Last Review: 2026-02-16
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 - 2025-12-29: Text encoder root labels (`TextEncoderRoot.name`) now prefer repo-relative paths when roots live under `CODEX_ROOT` (keeps override labels stable and avoids leaking absolute host paths).
 - 2026-01-02: Added standardized file header docstrings to `base.py`, `embeddings.py`, `lora.py`, `text_encoder_roots.py`, and package `__init__.py` (doc-only change; part of rollout).
 - 2026-02-05: `text_encoder_roots.py` now maps `ModelFamily.ANIMA` to `apps/paths.json["anima_tenc"]` so registry listings cover Anima text-encoder roots.
+- 2026-02-16: `text_encoder_roots.py` now exposes explicit WAN22 variant families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) mapped to `wan22_tenc` roots.

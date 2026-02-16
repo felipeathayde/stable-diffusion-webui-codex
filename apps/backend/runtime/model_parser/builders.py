@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Build `CodexEstimatedConfig` from parser context + model signature.
 Provides family presets for legacy UNet-like core config defaults, resolves a canonical Hugging Face repo id for external assets, and
 normalizes quantization metadata by comparing detector hints with parser-detected tensor types.
+WAN22 repo normalization applies to explicit WAN22 family variants (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_CORE_CONFIG_PRESETS` (constant): Default core config presets per `ModelFamily` for compatibility loaders (UNet-like models).
@@ -151,7 +152,7 @@ def build_estimated_config(
     extra_metadata: Dict[str, object] | None = None,
 ) -> CodexEstimatedConfig:
     repo_id = repo_override or signature.repo_hint or ""
-    if signature.family == ModelFamily.WAN22 and not repo_override:
+    if signature.family in (ModelFamily.WAN22_5B, ModelFamily.WAN22_14B, ModelFamily.WAN22_ANIMATE) and not repo_override:
         # Legacy signatures used a placeholder repo id; normalize to a concrete
         # diffusers repo so downstream asset resolution can locate vendored HF files.
         if not repo_id or repo_id.strip() in {"Wan-AI/Wan2.2"}:

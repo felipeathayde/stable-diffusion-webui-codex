@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
 Loads WAN VAE weights via explicit native lanes (`2d_native` or `3d_native`), applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
-Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks).
+Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks). Model key remap ownership is delegated to `runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22VAEContractError` (exception): Deterministic WAN VAE path/config contract failure (non-retryable by dtype fallback loops).
@@ -36,8 +36,11 @@ from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
 from apps.backend.runtime.common.vae_codex3d import (
     AutoencoderCodex3D,
-    remap_codex3d_vae_state_dict,
     sanitize_codex3d_vae_config,
+)
+from apps.backend.runtime.state_dict.keymap_wan22_vae import (
+    remap_wan22_vae_2d_state_dict,
+    remap_wan22_vae_3d_state_dict,
 )
 
 from .config import RunConfig, as_torch_dtype, resolve_device_name
@@ -170,7 +173,7 @@ def load_vae(
                 )
 
             if lane == "2d_native":
-                state_dict = dict(raw_state_dict)
+                remap_style, state_dict = remap_wan22_vae_2d_state_dict(dict(raw_state_dict))
                 config = AutoencoderKL_LDM.load_config(config_dir)
                 native_config = sanitize_ldm_vae_config(config)
                 inferred_latent_channels = _infer_latent_channels_from_state_dict(state_dict)
@@ -181,7 +184,7 @@ def load_vae(
                     elif int(configured_channels) != int(inferred_latent_channels):
                         raise WAN22VAEContractError(
                             "WAN22 GGUF: VAE config/state_dict latent channel mismatch "
-                            f"(lane=2d_native config latent_channels={int(configured_channels)} "
+                            f"(lane=2d_native style={remap_style} config latent_channels={int(configured_channels)} "
                             f"inferred={int(inferred_latent_channels)})."
                         )
                 vae = AutoencoderKL_LDM.from_config(native_config)
@@ -195,7 +198,7 @@ def load_vae(
                 setattr(vae, "_codex_vae_lane", "2d_native")
                 return vae
 
-            remap_style, state_dict = remap_codex3d_vae_state_dict(dict(raw_state_dict))
+            remap_style, state_dict = remap_wan22_vae_3d_state_dict(dict(raw_state_dict))
             config = AutoencoderCodex3D.load_config(config_dir)
             native_config = sanitize_codex3d_vae_config(config)
             inferred_latent_channels = _infer_latent_channels_from_state_dict(state_dict)

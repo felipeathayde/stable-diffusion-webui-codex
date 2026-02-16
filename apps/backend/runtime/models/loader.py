@@ -10,6 +10,7 @@ Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsin
 Resolves TE/VAE overrides (`tenc_path` shorthand), normalizes state_dict layouts, and selects storage/compute dtypes (storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
 Includes core-only families (e.g., Anima) that are not diffusers repositories: the loader returns a minimal bundle and leaves external asset loading to engines.
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
+WAN22 variants use explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) with no shared family alias bucket.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 key normalization to a canonical keymap module.
 SDXL VAE conversion now preflights canonical projection keys after keymap remap so projection-lane shape violations surface explicitly (instead of collapsing into generic missing-key noise).
@@ -171,8 +172,9 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "sd20": ModelFamily.SD20,
     "sd15": ModelFamily.SD15,
     "anima": ModelFamily.ANIMA,
-    "wan22_14b": ModelFamily.WAN22,
-    "wan22_5b": ModelFamily.WAN22,
+    "wan22_5b": ModelFamily.WAN22_5B,
+    "wan22_14b": ModelFamily.WAN22_14B,
+    "wan22_animate_14b": ModelFamily.WAN22_ANIMATE,
 }
 
 FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
@@ -186,8 +188,16 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.SD20: "sd20",
     ModelFamily.SD15: "sd15",
     ModelFamily.ANIMA: "anima",
-    ModelFamily.WAN22: "wan22_14b",
+    ModelFamily.WAN22_5B: "wan22_5b",
+    ModelFamily.WAN22_14B: "wan22_14b",
+    ModelFamily.WAN22_ANIMATE: "wan22_animate_14b",
 }
+
+_WAN22_FAMILIES: tuple[ModelFamily, ...] = (
+    ModelFamily.WAN22_5B,
+    ModelFamily.WAN22_14B,
+    ModelFamily.WAN22_ANIMATE,
+)
 
 _CLIP_LAYOUT_CACHE_PREFIX = "clip"
 
@@ -643,17 +653,17 @@ def _resolve_vae_class(
 ):
     """Select the appropriate VAE class.
 
-    - WAN22 family uses the shared native LDM `AutoencoderKL_LDM` lane.
+    - WAN22 families use the shared native LDM `AutoencoderKL_LDM` lane.
     - Other families choose the runtime lane class:
       - LDM lane: `AutoencoderKL_LDM`
       - Diffusers lane: `diffusers.AutoencoderKL`
     """
 
     family = getattr(signature, "family", None)
-    if family is ModelFamily.WAN22:
+    if family in _WAN22_FAMILIES:
         if lane is not None and lane is not VaeLayoutLane.LDM_NATIVE:
             raise RuntimeError(
-                "WAN22 supports only native LDM VAE lane; "
+                "WAN22 variants support only native LDM VAE lane; "
                 f"resolved lane={getattr(lane, 'value', lane)!r}."
             )
         if layout != "ldm":

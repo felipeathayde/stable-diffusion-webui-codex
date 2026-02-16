@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Task status and output file API routes.
 Exposes SSE task events (with bounded replay/resume via `after` / `Last-Event-ID` + monotonic `id:`), cancellation, and output file access under
 CODEX_ROOT/output.
+Cancellation endpoint is strict fail-loud for unsupported modes (`after_current` is rejected until worker semantics are implemented).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for task endpoints.
@@ -161,6 +162,11 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
             mode = parse_task_cancel_mode(payload.get("mode", TaskCancelMode.IMMEDIATE.value))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if mode is TaskCancelMode.AFTER_CURRENT:
+            raise HTTPException(
+                status_code=400,
+                detail="Cancel mode 'after_current' is not supported yet; use 'immediate'.",
+            )
 
         entry = get_task(task_id)
         if entry is None:

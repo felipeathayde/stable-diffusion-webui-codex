@@ -2,7 +2,7 @@
 
 # apps/backend/types Overview
 Date: 2026-01-03
-Last Review: 2026-02-15
+Last Review: 2026-02-16
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 - 2026-02-03: `payloads.ExtrasKeys` now uses `hires` (legacy key removed).
 - 2026-02-08: `payloads.Txt2ImgKeys.HIRES` now explicitly includes `refiner` and `distilled_cfg` to stay consistent with `extras.hires.*` parsing in API router validation.
 - 2026-02-15: `payloads.Txt2ImgKeys` now includes explicit `settings_revision` contract key group so generation payload validation can enforce revision parity.
+- 2026-02-16: WAN22 video/model key ownership is outside `payloads.py`; model-specific keymaps now live in `apps/backend/runtime/state_dict/*`.

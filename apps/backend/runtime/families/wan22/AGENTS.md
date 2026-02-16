@@ -67,6 +67,7 @@ Status: Active
 - 2026-02-15: WAN22 GGUF stage/text loaders now pass explicit target device into `load_gguf_state_dict(...)`, and safetensors TE loading uses device-aware `load_file(..., device=...)` for consistent placement.
 - 2026-02-15: `text_context.py` now performs a GGUF-only selective placement pass after TE load: non-quantized parameters/buffers are moved to the resolved execution device while quantized wrappers (`CodexParameter`/CodexPack) are skipped, preventing mixed-device forward (`cuda` hidden states + CPU norm weights) without module-level `.to()` on quantized tensors.
 - 2026-02-16: `run.py` now enforces deterministic stage finalization for WAN22 GGUF txt2vid/img2vid (batch + streaming): each stage lifecycle is wrapped in `try/finally` teardown, `_MemoryManagedModule` exposes explicit `codex_unpatch_model(...)` offload semantics for memory-manager unload, and teardown ordering remains guaranteed on cancel/error/OOM paths.
+- 2026-02-16: `vae_io.py` now resolves WAN22 VAE keyspaces through model-owned state_dict keymaps (`keymap_wan22_vae.py` for 2D/3D lanes), including strict mixed-style and collision fail-loud behavior before strict load.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

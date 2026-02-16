@@ -18,7 +18,8 @@ Behavior:
 - Fail-closed: aborts on unsafe git state (dirty tree, detached HEAD, no upstream, ahead/diverged, in-progress merge/rebase/cherry-pick/bisect).
 - Never runs destructive commands (no git reset/clean/restore/delete operations).
 - Updates only via: git fetch --prune + git pull --ff-only.
-- Refreshes environment only when new commits were pulled.
+- Verifies dependency prerequisites on every run after git safety checks.
+- Refreshes environment on every run after dependency verification.
 
 Policy:
 - Scope: repo root only (no submodule/extension updates).
@@ -253,6 +254,7 @@ main() {
   counts="$(git -C "$ROOT_DIR" rev-list --left-right --count HEAD...@{u} 2>/dev/null || true)"
   [[ -n "$counts" ]] || abort "E_UPSTREAM_COUNT_FAILED" "Failed to compute ahead/behind status against upstream."
   read -r ahead behind <<< "$counts"
+  [[ "$ahead" =~ ^[0-9]+$ && "$behind" =~ ^[0-9]+$ ]] || abort "E_UPSTREAM_COUNT_FAILED" "Invalid ahead/behind status from upstream: '$counts'."
 
   if (( ahead > 0 && behind > 0 )); then
     abort "E_DIVERGED" "Branch is diverged from upstream (ahead=${ahead}, behind=${behind}). Reconcile history manually first."
@@ -260,24 +262,25 @@ main() {
   if (( ahead > 0 )); then
     abort "E_AHEAD_OF_UPSTREAM" "Local branch is ahead of upstream by ${ahead} commit(s). Push/rebase before running updater."
   fi
-  if (( behind == 0 )); then
-    log "Already up to date. No commits pulled; skipping environment refresh by policy (P4=B)."
-    exit 0
-  fi
 
   prepare_refresh_requirements
   local torch_backend
   torch_backend="$(resolve_torch_backend)"
   log "Resolved torch backend extra: ${torch_backend}"
 
-  log "Pulling updates (ff-only) ..."
-  git -C "$ROOT_DIR" pull --ff-only || abort "E_PULL_FAILED" "git pull --ff-only failed."
+  if (( behind == 0 )); then
+    log "Already up to date. No commits pulled; running environment refresh."
+  else
+    log "Pulling updates (ff-only) ..."
+    git -C "$ROOT_DIR" pull --ff-only || abort "E_PULL_FAILED" "git pull --ff-only failed."
 
-  local head_after
-  head_after="$(git -C "$ROOT_DIR" rev-parse HEAD)"
-  if [[ "$head_after" == "$head_before" ]]; then
-    log "No commit change after pull; skipping environment refresh by policy (P4=B)."
-    exit 0
+    local head_after
+    head_after="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+    if [[ "$head_after" == "$head_before" ]]; then
+      log "No commit change after pull. Running environment refresh anyway."
+    else
+      log "Pulled new commits from upstream."
+    fi
   fi
 
   refresh_environment "$torch_backend"

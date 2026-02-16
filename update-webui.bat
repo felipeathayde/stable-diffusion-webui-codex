@@ -21,10 +21,12 @@ if errorlevel 1 exit /b 1
 
 for /f "usebackq delims=" %%I in (`git -C "%ROOT%" rev-parse HEAD 2^>nul`) do set "HEAD_BEFORE=%%I"
 if not defined HEAD_BEFORE call :die E_HEAD_UNRESOLVED "Failed to resolve current HEAD."
+if errorlevel 1 exit /b 1
 
 call :log "Fetching upstream refs ..."
 git -C "%ROOT%" fetch --prune
 if errorlevel 1 call :die E_FETCH_FAILED "git fetch --prune failed."
+if errorlevel 1 exit /b 1
 
 set "AHEAD="
 set "BEHIND="
@@ -33,29 +35,36 @@ for /f "tokens=1,2" %%A in ('git -C "%ROOT%" rev-list --left-right --count HEAD.
   set "BEHIND=%%B"
 )
 if not defined AHEAD call :die E_UPSTREAM_COUNT_FAILED "Failed to compute ahead/behind status."
+if errorlevel 1 exit /b 1
+if not defined BEHIND call :die E_UPSTREAM_COUNT_FAILED "Failed to compute ahead/behind status."
+if errorlevel 1 exit /b 1
 
 if %AHEAD% GTR 0 if %BEHIND% GTR 0 call :die E_DIVERGED "Branch diverged from upstream (ahead=%AHEAD%, behind=%BEHIND%). Reconcile manually first."
+if errorlevel 1 exit /b 1
 if %AHEAD% GTR 0 call :die E_AHEAD_OF_UPSTREAM "Local branch is ahead by %AHEAD% commit(s). Push/rebase before update."
-if %BEHIND% EQU 0 (
-  call :log "Already up to date. No commits pulled; skipping environment refresh by policy (P4=B)."
-  exit /b 0
-)
-
+if errorlevel 1 exit /b 1
 call :prepare_refresh_requirements
 if errorlevel 1 exit /b 1
 call :resolve_torch_backend
 if errorlevel 1 exit /b 1
 
 call :log "Resolved torch backend extra: %TORCH_BACKEND%"
-call :log "Pulling updates (ff-only) ..."
-git -C "%ROOT%" pull --ff-only
-if errorlevel 1 call :die E_PULL_FAILED "git pull --ff-only failed."
+if %BEHIND% EQU 0 (
+  call :log "Already up to date. No commits pulled; running environment refresh."
+) else (
+  call :log "Pulling updates (ff-only) ..."
+  git -C "%ROOT%" pull --ff-only
+  if errorlevel 1 call :die E_PULL_FAILED "git pull --ff-only failed."
+  if errorlevel 1 exit /b 1
 
-for /f "usebackq delims=" %%I in (`git -C "%ROOT%" rev-parse HEAD 2^>nul`) do set "HEAD_AFTER=%%I"
-if not defined HEAD_AFTER call :die E_HEAD_UNRESOLVED "Failed to resolve HEAD after pull."
-if /I "%HEAD_AFTER%"=="%HEAD_BEFORE%" (
-  call :log "No commit change after pull; skipping environment refresh by policy (P4=B)."
-  exit /b 0
+  for /f "usebackq delims=" %%I in (`git -C "%ROOT%" rev-parse HEAD 2^>nul`) do set "HEAD_AFTER=%%I"
+  if not defined HEAD_AFTER call :die E_HEAD_UNRESOLVED "Failed to resolve HEAD after pull."
+  if errorlevel 1 exit /b 1
+  if /I "%HEAD_AFTER%"=="%HEAD_BEFORE%" (
+    call :log "No commit change after pull. Running environment refresh anyway."
+  ) else (
+    call :log "Pulled new commits from upstream."
+  )
 )
 
 call :refresh_environment
@@ -73,7 +82,8 @@ echo Behavior:
 echo   - Fail-closed preflight ^(dirty tree, detached HEAD, no upstream, ahead/diverged, git operation in progress^).
 echo   - No destructive commands ^(no reset/clean/restore/delete of user files^).
 echo   - Git update only via: fetch --prune ^+ pull --ff-only.
-echo   - Environment refresh runs only when new commits were pulled.
+echo   - Dependency verification runs on every update attempt after git safety checks.
+echo   - Environment refresh runs on every update attempt after dependency verification.
 echo.
 echo Policy:
 echo   - Scope: repo root only ^(no submodule/extension updates^).

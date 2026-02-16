@@ -55,7 +55,8 @@ bash update-webui.sh
 - Dirty worktree check is fail-closed (tracked + untracked paths abort; ignored paths do not).
 - Abort diagnostics list explicit cause and offending files/directories when applicable.
 - Non-destructive update path only: `git fetch --prune` + `git pull --ff-only`.
-- Environment refresh runs only when pull actually changed `HEAD`.
+- Dependency verification (toolchain + torch backend resolution) runs on every update attempt after git safety checks.
+- Environment refresh runs on every update attempt after dependency verification.
 - Frontend refresh uses lock-preserving mode (`npm ci`), so `apps/interface/package-lock.json` is required.
 
 ## Node.js (frontend)

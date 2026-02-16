@@ -741,6 +741,11 @@ class CodexOperationsGGUF(CodexOperations):
             return self
 
         def forward(self, x):
+            if not torch.is_floating_point(x):
+                raise RuntimeError(
+                    "GGUF Linear received non-floating activations "
+                    f"(dtype={x.dtype}). Expected dequantized floating activations before dense matmul."
+                )
             if isinstance(self.weight, CodexPackLinearQ4KTilepackV1Parameter):
                 if self.bias is not None:
                     self.bias = utils.tensor2parameter(dequantize_tensor(self.bias).to(device=x.device, dtype=x.dtype))
@@ -832,12 +837,16 @@ class CodexOperationsGGUF(CodexOperations):
                     "GGUF Embedding weight is missing after load. "
                     "Ensure state_dict contains 'weight'."
                 )
+            target_compute_dtype = getattr(self.weight, "computation_dtype", None)
+            if not isinstance(target_compute_dtype, torch.dtype) or not torch.empty((), dtype=target_compute_dtype).is_floating_point():
+                target_compute_dtype = torch.float16 if x.device.type == "cuda" else torch.float32
             weight, bias, signal = weights_manual_cast(
                 self,
                 x,
                 weight_fn=dequantize_tensor,
-                skip_weight_dtype=True,
+                skip_weight_dtype=False,
                 skip_bias_dtype=True,
+                target_dtype=target_compute_dtype,
             )
             with main_stream_worker(weight, bias, signal):
                 return torch.nn.functional.embedding(

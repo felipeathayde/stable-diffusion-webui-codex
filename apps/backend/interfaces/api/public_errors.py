@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 _INTERNAL_ERROR_ID_RE = re.compile(r"^internal error \(error_id=[0-9a-f]{12}\)$")
+_ENGINE_ERROR_RE = re.compile(r"^engine error:\s*", flags=re.IGNORECASE)
 _OOM_WORD_RE = re.compile(r"\boom\b", flags=re.IGNORECASE)
 _OOM_HINTS = (
     "out of memory",
@@ -79,10 +80,21 @@ def public_task_error_message(err: Any) -> str:
         return "cancelled"
     if _INTERNAL_ERROR_ID_RE.fullmatch(raw):
         return raw
+    if isinstance(err, str) and _ENGINE_ERROR_RE.match(raw):
+        return raw
     if any(marker in lowered for marker in _INTEGRITY_HINTS):
         return "sha256 mismatch"
     if _is_oom_error(err=err, lowered_message=lowered):
         return "out of memory"
+    try:
+        from apps.backend.core.exceptions import EngineExecutionError
+
+        if isinstance(err, EngineExecutionError):
+            if _ENGINE_ERROR_RE.match(raw):
+                return raw
+            return f"engine error: {raw}"
+    except Exception:
+        pass
 
     error_id = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
     return f"internal error (error_id={error_id})"

@@ -377,33 +377,68 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             ),
         )
 
-    def _resolve_wan22_engine_key(payload: Dict[str, Any], *, metadata_dir: str) -> str:
-        repo_hint = payload.get("wan_metadata_repo")
-        if isinstance(repo_hint, str) and repo_hint.strip():
-            candidate = _engine_key_from_wan_hint(repo_hint)
-            if candidate:
-                return candidate
+    def _resolve_wan22_engine_key(payload: Dict[str, Any], *, metadata_dir: str, task_type: TaskType) -> str:
+        from apps.backend.core.exceptions import EngineNotFoundError
+        from apps.backend.core.registry import registry as _engine_registry
 
-        candidate = _engine_key_from_wan_hint(metadata_dir)
-        if candidate:
-            return candidate
+        repo_hint = payload.get("wan_metadata_repo")
+        candidate = "wan22_5b"
+        has_hint = False
+        if isinstance(repo_hint, str) and repo_hint.strip():
+            hint_candidate = _engine_key_from_wan_hint(repo_hint)
+            if hint_candidate:
+                candidate = hint_candidate
+                has_hint = True
+
+        dir_candidate = _engine_key_from_wan_hint(metadata_dir)
+        if (not has_hint) and dir_candidate:
+            candidate = dir_candidate
+            has_hint = True
 
         model_index_path = Path(os.path.expanduser(str(metadata_dir))) / "model_index.json"
-        if model_index_path.is_file():
+        if (not has_hint) and model_index_path.is_file():
             try:
                 model_index = json.loads(model_index_path.read_text(encoding="utf-8"))
             except Exception:
-                return "wan22_5b"
+                model_index = None
             if isinstance(model_index, dict):
                 if model_index.get("expand_timesteps") is not None:
-                    return "wan22_5b"
-                if "animate" in str(model_index_path).lower():
-                    return "wan22_animate_14b"
-                if model_index.get("image_encoder") is not None and model_index.get("transformer_2") is None:
-                    return "wan22_animate_14b"
-                if model_index.get("image_encoder") is not None or model_index.get("transformer_2") is not None:
-                    return "wan22_14b"
-        return "wan22_5b"
+                    candidate = "wan22_5b"
+                elif "animate" in str(model_index_path).lower():
+                    candidate = "wan22_animate_14b"
+                elif model_index.get("image_encoder") is not None and model_index.get("transformer_2") is None:
+                    candidate = "wan22_animate_14b"
+                elif model_index.get("image_encoder") is not None or model_index.get("transformer_2") is not None:
+                    candidate = "wan22_14b"
+
+        # Guardrail: 14B engine does not implement IMG2VID; route IMG2VID to the
+        # WAN22 5B runtime lane even when metadata points to A14B.
+        if task_type is TaskType.IMG2VID and candidate in {"wan22_14b", "wan22_animate_14b"}:
+            candidate = "wan22_5b"
+
+        try:
+            _ensure_default_engines_registered()
+        except Exception as exc:
+            _router_log.exception("engine registry initialization failed")
+            raise HTTPException(
+                status_code=500,
+                detail=public_http_error_detail(exc, fallback="Engine registry init failed"),
+            ) from exc
+        try:
+            return _engine_registry.get_descriptor(candidate).key
+        except EngineNotFoundError as exc:
+            if candidate == "wan22_14b":
+                try:
+                    return _engine_registry.get_descriptor("wan22_5b").key
+                except EngineNotFoundError as fallback_exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="WAN engine resolution failed: neither 'wan22_14b' nor fallback 'wan22_5b' is registered.",
+                    ) from fallback_exc
+            raise HTTPException(
+                status_code=409,
+                detail=f"WAN engine '{candidate}' is not registered. Verify engine registration for WAN22.",
+            ) from exc
 
     def _resolve_wan_vae_path_from_sha(
         *,
@@ -2192,7 +2227,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             },
         )
 
-        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir)
+        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir, task_type=TaskType.TXT2VID)
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         return req, engine_key, model_ref
 
@@ -2373,7 +2408,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             },
         )
 
-        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir)
+        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir, task_type=TaskType.IMG2VID)
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, engine_key, model_ref

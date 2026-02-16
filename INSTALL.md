@@ -64,6 +64,7 @@ bash update-webui.sh --force
 
 ## Node.js (frontend)
 The installers provision a repo-local Node.js into `.nodeenv` via `nodeenv` (no system Node required).
+On Windows, updater/install scripts probe npm in both `.nodeenv\\Scripts\\npm.cmd` and `.nodeenv\\bin\\npm.cmd`.
 
 Override:
 - `CODEX_NODE_VERSION` (Node.js version pin for nodeenv; default: 24.13.0)

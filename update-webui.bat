@@ -6,7 +6,9 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 set "UV_BIN=%ROOT%\.uv\bin\uv.exe"
 set "PYTHON_BIN=%ROOT%\.venv\Scripts\python.exe"
-set "NPM_BIN=%ROOT%\.nodeenv\Scripts\npm.cmd"
+set "NPM_BIN_PRIMARY=%ROOT%\.nodeenv\Scripts\npm.cmd"
+set "NPM_BIN_FALLBACK=%ROOT%\.nodeenv\bin\npm.cmd"
+set "NPM_BIN=%NPM_BIN_PRIMARY%"
 set "INTERFACE_DIR=%ROOT%\apps\interface"
 set "PACKAGE_LOCK=%INTERFACE_DIR%\package-lock.json"
 set "CODEX_FFMPEG_VERSION=%CODEX_FFMPEG_VERSION%"
@@ -246,7 +248,9 @@ if not exist "%UV_BIN%" call :die E_UV_MISSING "uv not found at '%UV_BIN%'. Run 
 if errorlevel 1 exit /b 1
 if not exist "%PYTHON_BIN%" call :die E_PYTHON_MISSING "Python runtime missing at '%PYTHON_BIN%'. Run install-webui.bat first."
 if errorlevel 1 exit /b 1
-if not exist "%NPM_BIN%" call :die E_NPM_MISSING "npm not found at '%NPM_BIN%'. Run install-webui.bat first."
+set "NPM_BIN=%NPM_BIN_PRIMARY%"
+if not exist "%NPM_BIN%" if exist "%NPM_BIN_FALLBACK%" set "NPM_BIN=%NPM_BIN_FALLBACK%"
+if not exist "%NPM_BIN%" call :die E_NPM_MISSING "npm not found at '%NPM_BIN_PRIMARY%' or '%NPM_BIN_FALLBACK%'. Run install-webui.bat first."
 if errorlevel 1 exit /b 1
 if not exist "%PACKAGE_LOCK%" call :die E_NPM_LOCK_MISSING "Lock-preserving update requires '%PACKAGE_LOCK%'."
 if errorlevel 1 exit /b 1

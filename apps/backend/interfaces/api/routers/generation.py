@@ -17,7 +17,9 @@ Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) 
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
-Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap).
+Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
+resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_animate_14b`),
+and derives WAN sampler/scheduler defaults from metadata scheduler assets.
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text).
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
@@ -306,6 +308,102 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             return _path_from_api(meta_dir)
 
         raise HTTPException(status_code=400, detail="'wan_metadata_repo' (or 'wan_metadata_dir') is required for WAN GGUF")
+
+    _WAN22_ENGINE_HINTS: tuple[tuple[str, str], ...] = (
+        ("wan2.2-ti2v-5b-diffusers", "wan22_5b"),
+        ("wan2.2-animate-14b-diffusers", "wan22_animate_14b"),
+        ("wan2.2-i2v-a14b-diffusers", "wan22_14b"),
+        ("wan2.2-t2v-a14b-diffusers", "wan22_14b"),
+    )
+
+    def _engine_key_from_wan_hint(hint: str) -> Optional[str]:
+        raw = str(hint or "").strip().lower()
+        if not raw:
+            return None
+        for token, engine_key in _WAN22_ENGINE_HINTS:
+            if token in raw:
+                return engine_key
+        return None
+
+    def _resolve_wan_sampler_scheduler_defaults_from_assets(metadata_dir: str) -> Tuple[str, str]:
+        """Resolve WAN sampler/scheduler defaults from metadata assets.
+
+        Back-compat: if metadata scheduler files are missing, keep legacy defaults.
+        """
+        vendor_dir = os.path.expanduser(str(metadata_dir or "").strip())
+        if not vendor_dir:
+            return ("uni-pc", "simple")
+
+        scheduler_dir = Path(vendor_dir) / "scheduler"
+        if not scheduler_dir.is_dir():
+            parent_scheduler = Path(vendor_dir).parent / "scheduler"
+            if parent_scheduler.is_dir():
+                scheduler_dir = parent_scheduler
+            else:
+                return ("uni-pc", "simple")
+
+        config_path = scheduler_dir / "scheduler_config.json"
+        if not config_path.is_file():
+            config_path = scheduler_dir / "config.json"
+        if not config_path.is_file():
+            return ("uni-pc", "simple")
+
+        try:
+            config_raw = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"WAN metadata scheduler config is invalid: {config_path}: {exc}",
+            ) from exc
+        if not isinstance(config_raw, dict):
+            raise HTTPException(
+                status_code=409,
+                detail=f"WAN metadata scheduler config must be a JSON object: {config_path}",
+            )
+
+        class_name = str(config_raw.get("_class_name") or "").strip()
+        if class_name == "UniPCMultistepScheduler":
+            return ("uni-pc", "simple")
+        if not class_name:
+            raise HTTPException(
+                status_code=409,
+                detail=f"WAN metadata scheduler config missing _class_name: {config_path}",
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"WAN metadata scheduler {class_name!r} is not supported for WAN22 GGUF requests. "
+                "Use metadata with UniPCMultistepScheduler."
+            ),
+        )
+
+    def _resolve_wan22_engine_key(payload: Dict[str, Any], *, metadata_dir: str) -> str:
+        repo_hint = payload.get("wan_metadata_repo")
+        if isinstance(repo_hint, str) and repo_hint.strip():
+            candidate = _engine_key_from_wan_hint(repo_hint)
+            if candidate:
+                return candidate
+
+        candidate = _engine_key_from_wan_hint(metadata_dir)
+        if candidate:
+            return candidate
+
+        model_index_path = Path(os.path.expanduser(str(metadata_dir))) / "model_index.json"
+        if model_index_path.is_file():
+            try:
+                model_index = json.loads(model_index_path.read_text(encoding="utf-8"))
+            except Exception:
+                return "wan22_5b"
+            if isinstance(model_index, dict):
+                if model_index.get("expand_timesteps") is not None:
+                    return "wan22_5b"
+                if "animate" in str(model_index_path).lower():
+                    return "wan22_animate_14b"
+                if model_index.get("image_encoder") is not None and model_index.get("transformer_2") is None:
+                    return "wan22_animate_14b"
+                if model_index.get("image_encoder") is not None or model_index.get("transformer_2") is not None:
+                    return "wan22_14b"
+        return "wan22_5b"
 
     def _resolve_wan_vae_path_from_sha(
         *,
@@ -1337,15 +1435,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         default_seed: int,
         default_cfg_scale: float,
     ) -> _VideoCoreDTO:
-        scheduler_key = f"{task_prefix}_scheduler"
-        if scheduler_key in payload and str(payload.get(scheduler_key) or "").strip():
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{scheduler_key}' is not supported for WAN22 GGUF requests. "
-                    "Scheduler is runtime-managed and must not be overridden."
-                ),
-            )
         prompt = payload.get(f'{task_prefix}_prompt', '')
         negative_prompt = payload.get(f'{task_prefix}_neg_prompt', '')
         width_val = int(payload.get(f'{task_prefix}_width', default_width))
@@ -1355,7 +1444,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         fps_val = int(payload.get(f'{task_prefix}_fps', default_fps))
         frames_val = int(payload.get(f'{task_prefix}_num_frames', default_frames))
         sampler_name = str(payload.get(f'{task_prefix}_sampler', payload.get(f'{task_prefix}_sampling', default_sampler)))
-        scheduler_name = str(default_scheduler)
+        scheduler_name = str(payload.get(f'{task_prefix}_scheduler', default_scheduler))
         try:
             from apps.backend.types.samplers import SamplerKind
             from apps.backend.runtime.sampling.context import SchedulerName
@@ -1385,7 +1474,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             guidance_scale=guidance_scale,
         )
 
-    def _parse_txt2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+    def _parse_txt2vid_core_dto(
+        payload: Dict[str, Any],
+        *,
+        default_sampler: str = "uni-pc",
+        default_scheduler: str = "simple",
+    ) -> _VideoCoreDTO:
         _reject_unknown_keys(payload, _TXT2VID_ALLOWED_KEYS, "txt2vid")
         return _parse_video_core_dto(
             payload,
@@ -1395,13 +1489,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_steps=30,
             default_fps=24,
             default_frames=16,
-            default_sampler='uni-pc',
-            default_scheduler='simple',
+            default_sampler=default_sampler,
+            default_scheduler=default_scheduler,
             default_seed=-1,
             default_cfg_scale=7.0,
         )
 
-    def _parse_img2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+    def _parse_img2vid_core_dto(
+        payload: Dict[str, Any],
+        *,
+        default_sampler: str = "uni-pc",
+        default_scheduler: str = "simple",
+    ) -> _VideoCoreDTO:
         _reject_unknown_keys(payload, _IMG2VID_ALLOWED_KEYS, "img2vid")
         return _parse_video_core_dto(
             payload,
@@ -1411,8 +1510,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_steps=30,
             default_fps=24,
             default_frames=16,
-            default_sampler='uni-pc',
-            default_scheduler='simple',
+            default_sampler=default_sampler,
+            default_scheduler=default_scheduler,
             default_seed=-1,
             default_cfg_scale=7.0,
         )
@@ -1922,7 +2021,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
-        parsed = _parse_txt2vid_core_dto(payload)
+        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
+        default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
+        parsed = _parse_txt2vid_core_dto(
+            payload,
+            default_sampler=default_sampler,
+            default_scheduler=default_scheduler,
+        )
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
         width_val = parsed.width
@@ -1995,14 +2100,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
             if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
-            if str(raw.get("scheduler") or "").strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"'{stage_key}.scheduler' is not supported for WAN22 GGUF requests. "
-                        "Scheduler is runtime-managed and must not be overridden."
-                    ),
-                )
             sha = _require_sha256_field(raw, "model_sha")
             model_path = resolve_asset_by_sha(sha)
             if not model_path:
@@ -2026,7 +2123,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
         extras["wan_low"] = _resolve_wan_stage("wan_low")
-        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
 
         # Resolve sha-selected WAN assets
         if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
@@ -2096,14 +2192,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             },
         )
 
-        engine_key = "wan22_5b"
+        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir)
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         return req, engine_key, model_ref
 
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
-        parsed = _parse_img2vid_core_dto(payload)
+        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
+        default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
+        parsed = _parse_img2vid_core_dto(
+            payload,
+            default_sampler=default_sampler,
+            default_scheduler=default_scheduler,
+        )
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
         width_val = parsed.width
@@ -2178,14 +2280,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
             if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
-            if str(raw.get("scheduler") or "").strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"'{stage_key}.scheduler' is not supported for WAN22 GGUF requests. "
-                        "Scheduler is runtime-managed and must not be overridden."
-                    ),
-                )
             sha = _require_sha256_field(raw, "model_sha")
             model_path = resolve_asset_by_sha(sha)
             if not model_path:
@@ -2209,7 +2303,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
         extras["wan_low"] = _resolve_wan_stage("wan_low")
-        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
 
         # Resolve sha-selected WAN assets
         if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
@@ -2280,7 +2373,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             },
         )
 
-        engine_key = "wan22_5b"
+        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir)
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, engine_key, model_ref

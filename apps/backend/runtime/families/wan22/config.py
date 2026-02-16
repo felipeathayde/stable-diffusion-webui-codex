@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
-geometry validation (e.g. `height/width % 16 == 0`) and strict WAN VAE config-source contract checks (bundle dir or file+config).
+geometry validation (e.g. `height/width % 16 == 0`), metadata-derived sampler/scheduler defaults, and strict WAN VAE
+config-source contract checks (bundle dir or file+config).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -513,18 +514,46 @@ def build_wan22_gguf_run_config(
     if hi_seed is not None:
         seed = hi_seed
 
+    def _metadata_sampler_scheduler_defaults() -> tuple[str, str]:
+        scheduler_dir = os.path.join(vendor_dir, "scheduler")
+        config_path = None
+        for filename in ("scheduler_config.json", "config.json"):
+            candidate = os.path.join(scheduler_dir, filename)
+            if os.path.isfile(candidate):
+                config_path = candidate
+                break
+        if not config_path:
+            return ("uni-pc", "simple")
+        try:
+            scheduler_config = json.loads(open(config_path, encoding="utf-8").read())
+        except Exception as exc:  # noqa: BLE001 - strict decode
+            raise RuntimeError(f"WAN22 GGUF: invalid scheduler config JSON: {config_path}: {exc}") from exc
+        if not isinstance(scheduler_config, dict):
+            raise RuntimeError(f"WAN22 GGUF: scheduler config must be a JSON object: {config_path}")
+        class_name = str(scheduler_config.get("_class_name") or "").strip()
+        if class_name == "UniPCMultistepScheduler":
+            return ("uni-pc", "simple")
+        if not class_name:
+            raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
+        raise RuntimeError(
+            f"WAN22 GGUF: unsupported metadata scheduler {class_name!r} in {config_path}; "
+            "expected UniPCMultistepScheduler."
+        )
+
+    metadata_sampler_default, metadata_scheduler_default = _metadata_sampler_scheduler_defaults()
+
     request_sampler = getattr(request, "sampler", None)
     if request_sampler in (None, ""):
-        sampler_fallback = "uni-pc"
+        sampler_fallback = metadata_sampler_default
     elif isinstance(request_sampler, str):
-        sampler_fallback = request_sampler.strip() or "uni-pc"
+        sampler_fallback = request_sampler.strip() or metadata_sampler_default
     else:
         raise RuntimeError(f"WAN22 GGUF: request.sampler must be a string when provided, got: {request_sampler!r}")
     request_scheduler = getattr(request, "scheduler", None)
     if request_scheduler in (None, ""):
-        scheduler_fallback = "simple"
+        scheduler_fallback = metadata_scheduler_default
     elif isinstance(request_scheduler, str):
-        scheduler_fallback = request_scheduler.strip() or "simple"
+        scheduler_fallback = request_scheduler.strip() or metadata_scheduler_default
     else:
         raise RuntimeError(
             f"WAN22 GGUF: request.scheduler must be a string when provided, got: {request_scheduler!r}"

@@ -11,13 +11,30 @@ set "INTERFACE_DIR=%ROOT%\apps\interface"
 set "PACKAGE_LOCK=%INTERFACE_DIR%\package-lock.json"
 set "CODEX_FFMPEG_VERSION=%CODEX_FFMPEG_VERSION%"
 if "%CODEX_FFMPEG_VERSION%"=="" set "CODEX_FFMPEG_VERSION=7.0.2"
+set "ALLOW_UNTRACKED=0"
 
+:parse_args
+if "%~1"=="" goto :args_done
 if /I "%~1"=="--help" goto :usage
 if /I "%~1"=="-h" goto :usage
-if not "%~1"=="" call :die E_BAD_ARGS "Unknown argument '%~1'. Use --help."
+if /I "%~1"=="--force" (
+  set "ALLOW_UNTRACKED=1"
+  shift
+  goto :parse_args
+)
+if /I "%~1"=="-f" (
+  set "ALLOW_UNTRACKED=1"
+  shift
+  goto :parse_args
+)
+call :die E_BAD_ARGS "Unknown argument '%~1'. Use --help."
+exit /b 1
+
+:args_done
 
 call :validate_git_state
 if errorlevel 1 exit /b 1
+if /I "%ALLOW_UNTRACKED%"=="1" call :log "Force mode enabled: untracked paths are ignored in dirty check."
 
 for /f "usebackq delims=" %%I in (`git -C "%ROOT%" rev-parse HEAD 2^>nul`) do set "HEAD_BEFORE=%%I"
 if not defined HEAD_BEFORE call :die E_HEAD_UNRESOLVED "Failed to resolve current HEAD."
@@ -74,7 +91,7 @@ call :log "Update completed successfully."
 exit /b 0
 
 :usage
-echo Usage: update-webui.bat [--help]
+echo Usage: update-webui.bat [--force] [--help]
 echo.
 echo Safe updater for stable-diffusion-webui-codex.
 echo.
@@ -87,6 +104,7 @@ echo   - Environment refresh runs on every update attempt after dependency verif
 echo.
 echo Policy:
 echo   - Scope: repo root only ^(no submodule/extension updates^).
+echo   - --force disables untracked-path preflight checks only; tracked changes still abort and git pull safety still applies.
 echo   - Ignored paths do not block update ^(P2=B^).
 echo   - Frontend refresh uses lock-preserving mode: npm ci.
 echo.
@@ -156,7 +174,9 @@ set "TMP_STATUS=%TEMP%\codex-update-status-%RANDOM%-%RANDOM%.txt"
 set "TMP_TRACKED=%TEMP%\codex-update-tracked-%RANDOM%-%RANDOM%.txt"
 set "TMP_UNTRACKED=%TEMP%\codex-update-untracked-%RANDOM%-%RANDOM%.txt"
 
-git -C "%ROOT%" status --porcelain=v1 --untracked-files=all > "%TMP_STATUS%"
+set "STATUS_UNTRACKED_MODE=all"
+if /I "%ALLOW_UNTRACKED%"=="1" set "STATUS_UNTRACKED_MODE=no"
+git -C "%ROOT%" status --porcelain=v1 --untracked-files=%STATUS_UNTRACKED_MODE% > "%TMP_STATUS%"
 if errorlevel 1 (
   call :delete_if_exists "%TMP_STATUS%"
   call :die E_STATUS_FAILED "Failed to inspect git status."
@@ -174,9 +194,14 @@ if %STATUS_SIZE% GTR 0 (
 
   echo [update][E_WORKTREE_DIRTY] Local changes detected; update aborted to protect your files. 1>&2
   call :print_status_section "Tracked changes:" "%TMP_TRACKED%"
-  call :print_status_section "Untracked paths:" "%TMP_UNTRACKED%"
-  echo [update][E_WORKTREE_DIRTY] Ignored paths are excluded by policy ^(P2=B^). 1>&2
-  echo [update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and move or remove untracked paths, then rerun. 1>&2
+  if /I "%ALLOW_UNTRACKED%"=="1" (
+    echo [update][E_WORKTREE_DIRTY] Untracked-path preflight checks were disabled by --force. 1>&2
+    echo [update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes, then rerun. 1>&2
+  ) else (
+    call :print_status_section "Untracked paths:" "%TMP_UNTRACKED%"
+    echo [update][E_WORKTREE_DIRTY] Ignored paths are excluded by policy ^(P2=B^). 1>&2
+    echo [update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and move or remove untracked paths, then rerun. 1>&2
+  )
 
   call :delete_if_exists "%TMP_STATUS%"
   call :delete_if_exists "%TMP_TRACKED%"

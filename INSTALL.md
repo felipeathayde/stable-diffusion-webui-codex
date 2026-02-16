@@ -48,11 +48,14 @@ bash install-webui.sh
 3) Safe update (fail-closed):
 ```bash
 bash update-webui.sh
+# Optional: ignore untracked-path preflight checks (tracked changes still abort)
+bash update-webui.sh --force
 ```
 
 ## Safe updater contract (`update-webui.(bat|sh)`)
 - Update scope is repo root only (no submodule/extension update automation).
-- Dirty worktree check is fail-closed (tracked + untracked paths abort; ignored paths do not).
+- Dirty worktree check is fail-closed: tracked paths abort always; untracked paths abort unless `--force` is set (ignored paths do not).
+- `--force` affects only the preflight dirty check; `git pull --ff-only` safety checks still apply.
 - Abort diagnostics list explicit cause and offending files/directories when applicable.
 - Non-destructive update path only: `git fetch --prune` + `git pull --ff-only`.
 - Dependency verification (toolchain + torch backend resolution) runs on every update attempt after git safety checks.

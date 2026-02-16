@@ -7,10 +7,11 @@ PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 NPM_BIN="${ROOT_DIR}/.nodeenv/bin/npm"
 INTERFACE_DIR="${ROOT_DIR}/apps/interface"
 CODEX_FFMPEG_VERSION="${CODEX_FFMPEG_VERSION:-7.0.2}"
+ALLOW_UNTRACKED=0
 
 usage() {
   cat <<'EOF'
-Usage: update-webui.sh [--help]
+Usage: update-webui.sh [--force] [--help]
 
 Safe updater for stable-diffusion-webui-codex.
 
@@ -23,6 +24,7 @@ Behavior:
 
 Policy:
 - Scope: repo root only (no submodule/extension updates).
+- --force disables untracked-path preflight checks only; tracked changes still abort and git pull safety still applies.
 - Ignored paths do not block update (gitignore entries are excluded from dirty checks).
 - Frontend refresh uses lock-preserving mode: npm ci.
 
@@ -69,6 +71,7 @@ print_paths_section() {
 
 show_dirty_abort() {
   local status_output="$1"
+  local ignore_untracked="${2:-0}"
   local tracked=()
   local untracked=()
   local line
@@ -85,9 +88,14 @@ show_dirty_abort() {
 
   printf '[update][E_WORKTREE_DIRTY] Local changes detected; update aborted to protect your files.\n' >&2
   print_paths_section "Tracked changes:" "${tracked[@]}"
-  print_paths_section "Untracked paths:" "${untracked[@]}"
-  printf '[update][E_WORKTREE_DIRTY] Ignored paths are excluded by policy (P2=B).\n' >&2
-  printf '[update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and move or remove untracked paths, then rerun.\n' >&2
+  if (( ignore_untracked == 1 )); then
+    printf '[update][E_WORKTREE_DIRTY] Untracked-path preflight checks were disabled by --force.\n' >&2
+    printf '[update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes, then rerun.\n' >&2
+  else
+    print_paths_section "Untracked paths:" "${untracked[@]}"
+    printf '[update][E_WORKTREE_DIRTY] Ignored paths are excluded by policy (P2=B).\n' >&2
+    printf '[update][E_WORKTREE_DIRTY] Remediation: commit/stash tracked changes and move or remove untracked paths, then rerun.\n' >&2
+  fi
   exit 1
 }
 
@@ -124,9 +132,13 @@ validate_git_state() {
   [[ -d "$git_dir/rebase-apply" || -d "$git_dir/rebase-merge" ]] && abort "E_GIT_REBASE_IN_PROGRESS" "Rebase in progress. Complete or abort rebase before updating."
   [[ -f "$git_dir/BISECT_LOG" ]] && abort "E_GIT_BISECT_IN_PROGRESS" "Bisect in progress. Finish bisect before updating."
 
-  local status_output
-  status_output="$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=all)"
-  [[ -z "$status_output" ]] || show_dirty_abort "$status_output"
+  local status_output untracked_mode
+  untracked_mode="all"
+  if (( ALLOW_UNTRACKED == 1 )); then
+    untracked_mode="no"
+  fi
+  status_output="$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files="$untracked_mode")"
+  [[ -z "$status_output" ]] || show_dirty_abort "$status_output" "$ALLOW_UNTRACKED"
 }
 
 resolve_torch_backend() {
@@ -230,19 +242,26 @@ PY
 }
 
 main() {
-  case "${1:-}" in
-    "" )
-      ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      abort "E_BAD_ARGS" "Unknown argument '$1'. Use --help."
-      ;;
-  esac
+  while (($# > 0)); do
+    case "$1" in
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      --force|-f)
+        ALLOW_UNTRACKED=1
+        ;;
+      *)
+        abort "E_BAD_ARGS" "Unknown argument '$1'. Use --help."
+        ;;
+    esac
+    shift
+  done
 
   validate_git_state
+  if (( ALLOW_UNTRACKED == 1 )); then
+    log "Force mode enabled: untracked paths are ignored in dirty check."
+  fi
 
   local head_before
   head_before="$(git -C "$ROOT_DIR" rev-parse HEAD)"

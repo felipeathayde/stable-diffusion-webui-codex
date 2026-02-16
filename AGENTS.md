@@ -38,6 +38,20 @@ If there is no honest way to reuse, you create the new piece with restraint and 
 
 Before you do anything else, you read `SUBSYSTEM-MAP.md`. You use it to find the real seam before you touch a file.
 If you don't know what to change, you don't guess — you search the map first.
+`SUBSYSTEM-MAP.md` is discovery and navigation only: concept-to-location, seam finding, and fast lookup.
+Contract authority lives here in root `AGENTS.md` (policy) and in `.sangoi/reference/**` (detailed contracts). Keep those roles split. Do not dump contract matrices back into `SUBSYSTEM-MAP.md`.
+When touching `SUBSYSTEM-MAP.md`, run this operational checklist before handoff:
+- Keep it discovery-only (no contract matrices / drift ledgers).
+- Ensure hotspot discoverability is explicit (`keymaps`, `vae_codex3d.py`, `hires_fix.py`).
+- Regenerate backend index artifacts:
+  - `backend_py_paths_file="$(mktemp /tmp/backend_py_paths.XXXXXX.txt)"`
+  - `git ls-files apps/backend | rg "\\.py$" | LC_ALL=C sort > "$backend_py_paths_file"`
+  - `python3 .sangoi/.tools/dump_apps_file_headers.py --out .sangoi/reports/tooling/apps-backend-file-header-blocks.md --root apps/backend --fail-on-missing`
+  - `python3 .sangoi/.tools/build_backend_py_book_index.py --paths "$backend_py_paths_file" --headers .sangoi/reports/tooling/apps-backend-file-header-blocks.md --out .sangoi/reports/tooling/backend-py-book-index.md`
+- Validate parity/checks:
+  - `python3 .sangoi/.tools/build_backend_py_book_index.py --paths "$backend_py_paths_file" --headers .sangoi/reports/tooling/apps-backend-file-header-blocks.md --out .sangoi/reports/tooling/backend-py-book-index.md --check`
+  - `bash .sangoi/.tools/link-check.sh .sangoi`
+  - `bash .sangoi/.tools/link-check.sh .`
 
 Code references live in `.refs/`. It contains valuable vendored snapshots of:
 - Diffusers 

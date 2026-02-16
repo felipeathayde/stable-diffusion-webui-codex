@@ -30,6 +30,7 @@ Policy:
 
 Environment overrides:
 - CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64
+- CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130 (used when auto-selecting torch backend)
 - CODEX_FFMPEG_VERSION=<version> (default: 7.0.2)
 EOF
 }
@@ -172,33 +173,127 @@ import torch  # type: ignore
 version = str(getattr(torch, "__version__", "")).lower()
 if "+cu126" in version:
     print("cu126")
-elif "+cu128" in version:
+    raise SystemExit(0)
+if "+cu128" in version:
     print("cu128")
-elif "+cu130" in version:
+    raise SystemExit(0)
+if "+cu130" in version:
     print("cu130")
-elif "+rocm" in version:
+    raise SystemExit(0)
+if "+rocm" in version:
     print("rocm64")
-elif "+cpu" in version:
+    raise SystemExit(0)
+if "+cpu" in version:
     print("cpu")
-else:
-    raise SystemExit(3)
+    raise SystemExit(0)
+
+torch_version = getattr(torch, "version", None)
+cuda_version = getattr(torch_version, "cuda", None)
+hip_version = getattr(torch_version, "hip", None)
+
+if hip_version:
+    print("rocm64")
+    raise SystemExit(0)
+
+if cuda_version:
+    parts = [segment for segment in str(cuda_version).split(".") if segment.isdigit()]
+    major = int(parts[0]) if parts else 0
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    if major >= 13:
+        print("cu130")
+    elif major == 12 and minor <= 6:
+        print("cu126")
+    elif major == 12:
+        print("cu128")
+    else:
+        print("cu128")
+    raise SystemExit(0)
+
+print("cpu")
 PY
 )"
   local detect_status=$?
   set -e
 
-  case "$detect_status" in
-    0)
-      [[ -n "$detected" ]] || abort "E_TORCH_BACKEND_UNRESOLVED" "Failed to detect installed torch backend."
-      printf '%s\n' "$detected"
+  if [[ "$detect_status" -eq 0 && -n "$detected" ]]; then
+    printf '%s\n' "$detected"
+    return 0
+  fi
+
+  local fallback_backend
+  fallback_backend="$(resolve_torch_backend_from_system)"
+  [[ -n "$fallback_backend" ]] || abort "E_TORCH_BACKEND_UNRESOLVED" "Could not determine torch backend extra. Set CODEX_TORCH_BACKEND explicitly."
+  printf '%s\n' "$fallback_backend"
+}
+
+resolve_torch_backend_from_system() {
+  local requested_variant="${CODEX_CUDA_VARIANT:-}"
+  local requested_variant_lc
+  requested_variant_lc="$(printf '%s' "$requested_variant" | tr '[:upper:]' '[:lower:]')"
+  case "$requested_variant_lc" in
+    "")
       ;;
-    2)
-      abort "E_TORCH_BACKEND_UNRESOLVED" "Torch is not installed in .venv. Set CODEX_TORCH_BACKEND or run install-webui.sh."
+    12.6|cu126)
+      printf 'cu126\n'
+      return 0
+      ;;
+    12.8|cu128)
+      printf 'cu128\n'
+      return 0
+      ;;
+    13|cu130)
+      printf 'cu130\n'
+      return 0
       ;;
     *)
-      abort "E_TORCH_BACKEND_UNRESOLVED" "Could not map installed torch version to a supported backend extra. Set CODEX_TORCH_BACKEND explicitly."
+      abort "E_INVALID_CUDA_VARIANT" "Invalid CODEX_CUDA_VARIANT='${requested_variant}'. Expected 12.6|12.8|13|cu126|cu128|cu130."
       ;;
   esac
+
+  if [[ -e /dev/kfd ]] && { command -v rocminfo >/dev/null 2>&1 || command -v rocm-smi >/dev/null 2>&1; }; then
+    printf 'rocm64\n'
+    return 0
+  fi
+
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    printf 'cpu\n'
+    return 0
+  fi
+
+  local cuda_version
+  cuda_version="$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  if [[ -z "$cuda_version" ]]; then
+    printf 'cu128\n'
+    return 0
+  fi
+
+  local driver_version driver_major
+  driver_version="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  driver_major="${driver_version%%.*}"
+  if [[ "$driver_major" =~ ^[0-9]+$ ]] && (( driver_major < 525 )); then
+    printf 'cpu\n'
+    return 0
+  fi
+
+  local cuda_major cuda_minor
+  IFS='.' read -r cuda_major cuda_minor <<< "$cuda_version"
+  if [[ ! "$cuda_major" =~ ^[0-9]+$ ]]; then
+    printf 'cu128\n'
+    return 0
+  fi
+  [[ "$cuda_minor" =~ ^[0-9]+$ ]] || cuda_minor=0
+
+  if (( cuda_major >= 13 )); then
+    if [[ "$driver_major" =~ ^[0-9]+$ ]] && (( driver_major >= 580 )); then
+      printf 'cu130\n'
+    else
+      printf 'cu128\n'
+    fi
+  elif (( cuda_major == 12 && cuda_minor <= 6 )); then
+    printf 'cu126\n'
+  else
+    printf 'cu128\n'
+  fi
 }
 
 prepare_refresh_requirements() {
@@ -228,10 +323,9 @@ ffmpeg_version = os.environ.get("CODEX_FFMPEG_VERSION") or "7.0.2"
 try:
     binaries = ensure_ffmpeg_binaries(version=ffmpeg_version, no_symlinks=True)
     model = ensure_rife_model_file()
-except Exception as exc:  # pragma: no cover
-    print(f"[update][E_RUNTIME_PROVISION_FAILED] {exc}", file=sys.stderr)
+except Exception as error:  # pragma: no cover
+    print(f"[update][E_RUNTIME_PROVISION_FAILED] {error}", file=sys.stderr)
     raise SystemExit(1)
-
 print(f"[update] ffmpeg: {binaries['ffmpeg']}")
 print(f"[update] ffprobe: {binaries['ffprobe']}")
 print(f"[update] RIFE model: {model}")

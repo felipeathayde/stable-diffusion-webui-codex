@@ -14,7 +14,7 @@ Video runtime note:
 ## Quick install (recommended)
 
 ### Windows (PowerShell or CMD)
-1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs lock-preserving `npm ci`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
 ```bat
 install-webui.bat
 ```
@@ -33,7 +33,7 @@ update-webui.bat
 ```
 
 ### Linux / WSL
-1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs lock-preserving `npm ci`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
 ```bash
 bash install-webui.sh
 ```
@@ -65,6 +65,7 @@ bash update-webui.sh --force
 ## Node.js (frontend)
 The installers provision a repo-local Node.js into `.nodeenv` via `nodeenv` (no system Node required).
 On Windows, updater/install scripts probe npm in both `.nodeenv\\Scripts\\npm.cmd` and `.nodeenv\\bin\\npm.cmd`.
+Installer/updater frontend sync uses lock-preserving `npm ci` (requires `apps/interface/package-lock.json`).
 
 Override:
 - `CODEX_NODE_VERSION` (Node.js version pin for nodeenv; default: 24.13.0)
@@ -85,7 +86,7 @@ Override:
 - `CODEX_TORCH_MODE=rocm` (Linux only: force ROCm 6.4 wheels: `--extra rocm64`)
 - `CODEX_TORCH_MODE=skip` (skip torch/torchvision entirely; the WebUI will not run without PyTorch)
 - `CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64` (explicitly pick the PyTorch backend extra)
-- `CODEX_CUDA_VARIANT=12.6|12.8|13` (choose CUDA wheels when using `auto`/`cuda`; maps to `cu126|cu128|cu130`)
+- `CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130` (choose CUDA wheels when using `auto`/`cuda`; aliases map to `cu126|cu128|cu130`)
 - `CODEX_INSTALL_TRACE=1` (Linux/WSL installer: enable shell trace for debugging)
 - `CODEX_FFMPEG_VERSION=<version>` (pin ffmpeg-downloader runtime build; default: `7.0.2`)
 

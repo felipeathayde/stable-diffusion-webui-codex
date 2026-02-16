@@ -16,12 +16,15 @@ REM By default, show a Simple vs Advanced menu so users don't need to set env va
 REM For automation / CI, pass --no-menu (or pre-set CODEX_* env vars).
 
 :restart
+set "MENU_RERUN_REQUEST=%CODEX_MENU_RERUN%"
 set "CODEX_MENU_USED="
 set "CODEX_MENU_CANCEL="
 set "CODEX_MENU_RERUN="
 
 set "SHOW_MENU=1"
 set "FORCE_MENU="
+if defined MENU_RERUN_REQUEST set "FORCE_MENU=1"
+set "MENU_RERUN_REQUEST="
 
 REM Args:
 REM   --no-menu   Skip prompts
@@ -265,28 +268,33 @@ echo [install] Installing frontend dependencies ...
 call :ensure_nodeenv
 if errorlevel 1 exit /b 1
 
+if not exist "%ROOT%apps\\interface\\package-lock.json" (
+  echo Error: lock-preserving frontend install requires '%ROOT%apps\\interface\\package-lock.json'.>&2
+  exit /b 1
+)
+
 echo [install] node: 
 node -v
 echo [install] npm:
 call npm -v
 pushd "%ROOT%apps\\interface"
-call npm install --cache "%NPM_CONFIG_CACHE%"
+call npm ci --cache "%NPM_CONFIG_CACHE%" --no-audit --no-fund
 if errorlevel 1 goto :frontend_install_failed
 if not exist "node_modules\\vite\\package.json" goto :frontend_install_missing_vite
 goto :frontend_install_ok
 
 :frontend_install_failed
 popd
-echo Error: npm install failed.>&2
+echo Error: npm ci failed.>&2
 exit /b 1
 
 :frontend_install_missing_vite
 popd
-echo Error: npm install completed, but frontend deps are missing.>&2
+echo Error: npm ci completed, but frontend deps are missing.>&2
 echo [install] Expected: apps\\interface\\node_modules\\vite\\package.json.>&2
 echo [install] Try running:>&2
 echo [install]   cd apps\\interface>&2
-echo [install]   "%NODEENV_NPM%" install>&2
+echo [install]   "%NODEENV_NPM%" ci>&2
 exit /b 1
 
 :frontend_install_ok

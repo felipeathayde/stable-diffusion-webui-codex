@@ -112,6 +112,7 @@ echo   - Frontend refresh uses lock-preserving mode: npm ci.
 echo.
 echo Optional env:
 echo   CODEX_TORCH_BACKEND=cpu^|cu126^|cu128^|cu130^|rocm64
+echo   CODEX_CUDA_VARIANT=12.6^|12.8^|13^|cu126^|cu128^|cu130  ^(used when auto-selecting torch backend^)
 echo   CODEX_FFMPEG_VERSION=^<version^>  ^(default 7.0.2^)
 exit /b 0
 
@@ -269,10 +270,82 @@ if defined CODEX_TORCH_BACKEND (
   exit /b 0
 )
 
-for /f "usebackq delims=" %%I in (`"%PYTHON_BIN%" -c "import sys,importlib.util; spec=importlib.util.find_spec('torch'); spec or sys.exit(2); import torch; v=str(getattr(torch,'__version__','')).lower(); m=[('+cu126','cu126'),('+cu128','cu128'),('+cu130','cu130'),('+rocm','rocm64'),('+cpu','cpu')]; r=next((name for token,name in m if token in v),None); r and print(r) or sys.exit(3)" 2^>nul`) do set "TORCH_BACKEND=%%I"
+for /f "usebackq delims=" %%I in (`"%PYTHON_BIN%" -c "import importlib.util,sys; spec=importlib.util.find_spec('torch'); spec or sys.exit(2); import torch; v=str(getattr(torch,'__version__','')).lower(); m=[('+cu126','cu126'),('+cu128','cu128'),('+cu130','cu130'),('+rocm','rocm64'),('+cpu','cpu')]; r=next((name for token,name in m if token in v),None); tv=getattr(torch,'version',None); cuda=getattr(tv,'cuda',None); hip=getattr(tv,'hip',None); c=str(cuda or ''); p=[x for x in c.split('.') if x.isdigit()]; major=int(p[0]) if p else 0; minor=int(p[1]) if len(p)>1 else 0; r=r or ('rocm64' if hip else None) or ('cu130' if major>=13 else ('cu126' if major==12 and minor<=6 else ('cu128' if major==12 else None))) or 'cpu'; print(r)" 2^>nul`) do set "TORCH_BACKEND=%%I"
 
-if not defined TORCH_BACKEND call :die E_TORCH_BACKEND_UNRESOLVED "Could not detect installed torch backend extra. Set CODEX_TORCH_BACKEND explicitly."
+if not defined TORCH_BACKEND (
+  call :resolve_torch_backend_from_system
+  if errorlevel 1 exit /b 1
+)
+
+if not defined TORCH_BACKEND call :die E_TORCH_BACKEND_UNRESOLVED "Could not determine torch backend extra. Set CODEX_TORCH_BACKEND explicitly."
 if errorlevel 1 exit /b 1
+exit /b 0
+
+:resolve_torch_backend_from_system
+set "TORCH_BACKEND="
+if /I "%CODEX_CUDA_VARIANT%"=="12.6" set "TORCH_BACKEND=cu126"
+if /I "%CODEX_CUDA_VARIANT%"=="cu126" set "TORCH_BACKEND=cu126"
+if /I "%CODEX_CUDA_VARIANT%"=="12.8" set "TORCH_BACKEND=cu128"
+if /I "%CODEX_CUDA_VARIANT%"=="cu128" set "TORCH_BACKEND=cu128"
+if /I "%CODEX_CUDA_VARIANT%"=="13" set "TORCH_BACKEND=cu130"
+if /I "%CODEX_CUDA_VARIANT%"=="cu130" set "TORCH_BACKEND=cu130"
+if not "%CODEX_CUDA_VARIANT%"=="" if not defined TORCH_BACKEND call :die E_INVALID_CUDA_VARIANT "Invalid CODEX_CUDA_VARIANT='%CODEX_CUDA_VARIANT%'. Expected 12.6|12.8|13|cu126|cu128|cu130."
+if errorlevel 1 exit /b 1
+if defined TORCH_BACKEND exit /b 0
+
+where nvidia-smi >nul 2>nul
+if errorlevel 1 (
+  set "TORCH_BACKEND=cpu"
+  exit /b 0
+)
+
+set "CUDA_VER="
+for /f "delims=" %%I in ('nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2^>nul') do if not defined CUDA_VER set "CUDA_VER=%%I"
+if not defined CUDA_VER (
+  set "TORCH_BACKEND=cu128"
+  exit /b 0
+)
+
+set "DRIVER_VER="
+for /f "delims=" %%I in ('nvidia-smi --query-gpu=driver_version --format=csv,noheader 2^>nul') do if not defined DRIVER_VER set "DRIVER_VER=%%I"
+set "DRIVER_MAJOR="
+for /f "tokens=1 delims=." %%a in ("%DRIVER_VER%") do set "DRIVER_MAJOR=%%a"
+set "DRIVER_MAJOR_NUM="
+if not "%DRIVER_MAJOR%"=="" set /a DRIVER_MAJOR_NUM=%DRIVER_MAJOR% 2>nul
+if errorlevel 1 set "DRIVER_MAJOR_NUM="
+set "DRIVER_TOO_OLD="
+if "%DRIVER_MAJOR_NUM%"=="" goto :resolve_torch_backend_system_driver_done
+if %DRIVER_MAJOR_NUM% LSS 525 set "DRIVER_TOO_OLD=1"
+:resolve_torch_backend_system_driver_done
+if defined DRIVER_TOO_OLD (
+  set "TORCH_BACKEND=cpu"
+  exit /b 0
+)
+
+set "CUDA_MAJOR="
+set "CUDA_MINOR=0"
+for /f "tokens=1 delims=." %%a in ("%CUDA_VER%") do set "CUDA_MAJOR=%%a"
+for /f "tokens=2 delims=." %%a in ("%CUDA_VER%") do set "CUDA_MINOR=%%a"
+if "%CUDA_MINOR%"=="" set "CUDA_MINOR=0"
+set /a __cuda_minor_num=%CUDA_MINOR% 2>nul
+if errorlevel 1 set "CUDA_MINOR=0"
+
+if "%CUDA_MAJOR%"=="13" (
+  set "TORCH_BACKEND=cu128"
+  set "CAN_USE_CU130="
+  if "%DRIVER_MAJOR_NUM%"=="" goto :resolve_torch_backend_system_cuda13_done
+  if %DRIVER_MAJOR_NUM% GEQ 580 set "CAN_USE_CU130=1"
+  :resolve_torch_backend_system_cuda13_done
+  if defined CAN_USE_CU130 set "TORCH_BACKEND=cu130"
+) else if "%CUDA_MAJOR%"=="12" (
+  if %CUDA_MINOR% LEQ 6 (
+    set "TORCH_BACKEND=cu126"
+  ) else (
+    set "TORCH_BACKEND=cu128"
+  )
+) else (
+  set "TORCH_BACKEND=cu128"
+)
 exit /b 0
 
 :refresh_environment

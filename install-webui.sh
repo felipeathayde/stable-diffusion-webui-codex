@@ -310,12 +310,13 @@ install_python
 sync_python_deps
 provision_video_runtime_deps
 
-log "Installing frontend dependencies (npm) ..."
+log "Installing frontend dependencies (npm ci) ..."
 ensure_nodeenv
+[[ -f "${ROOT_DIR}/apps/interface/package-lock.json" ]] || die "lock-preserving frontend install requires ${ROOT_DIR}/apps/interface/package-lock.json"
 log "node: $("${NODEENV_NODE}" -v)  npm: $("${NODEENV_NPM}" -v)"
-(cd "${ROOT_DIR}/apps/interface" && "${NODEENV_NPM}" install --cache "${NPM_CACHE_DIR}")
+(cd "${ROOT_DIR}/apps/interface" && "${NODEENV_NPM}" ci --cache "${NPM_CACHE_DIR}" --no-audit --no-fund)
 if [[ ! -f "${ROOT_DIR}/apps/interface/node_modules/vite/package.json" ]]; then
-  die "npm install completed, but apps/interface/node_modules/vite/package.json is missing. Run: (cd apps/interface && \"${NODEENV_NPM}\" install)"
+  die "npm ci completed, but apps/interface/node_modules/vite/package.json is missing. Run: (cd apps/interface && \"${NODEENV_NPM}\" ci)"
 fi
 
 echo ""

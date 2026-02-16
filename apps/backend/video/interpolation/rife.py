@@ -12,12 +12,14 @@ explicit fail-loud diagnostics when dependencies or assets are unavailable.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RIFEUnavailableError` (class): Raised when RIFE interpolation cannot run due to missing/invalid runtime dependencies or assets.
+- `_should_auto_provision_default_model` (function): Returns whether runtime may auto-provision the default `rife47.pth` checkpoint for this request.
 - `_release_runtime` (function): Best-effort runtime/tensor cleanup hook used after interpolation to avoid stale residency.
 - `maybe_interpolate_rife` (function): Interpolates a frame sequence using the RIFE IFNet runtime and returns an expanded list of frames.
 """
 
 from __future__ import annotations
 
+import os
 import gc
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
@@ -25,7 +27,9 @@ from typing import Any, List, Optional, Sequence
 import numpy as np
 
 from apps.backend.video.runtime_dependencies import (
+    VIDEO_RUNTIME_RIFE_MODEL_RELATIVE,
     VideoDependencyResolutionError,
+    ensure_rife_model_file,
     resolve_rife_model_path,
 )
 
@@ -34,11 +38,31 @@ class RIFEUnavailableError(RuntimeError):
     pass
 
 
+def _should_auto_provision_default_model(model: Optional[str]) -> bool:
+    raw = str(model or "").strip()
+    if raw:
+        normalized = raw.replace("\\", "/").strip().lower()
+        default_relative = str(VIDEO_RUNTIME_RIFE_MODEL_RELATIVE).replace("\\", "/").lower()
+        return normalized in {"rife47.pth", default_relative}
+
+    env_override = str(os.environ.get("CODEX_RIFE_MODEL_PATH") or "").strip()
+    return not env_override
+
+
 def _resolve_runtime_model(model: Optional[str]) -> Path:
     try:
         return resolve_rife_model_path(model)
     except VideoDependencyResolutionError as exc:
-        raise RIFEUnavailableError(str(exc)) from exc
+        if not _should_auto_provision_default_model(model):
+            raise RIFEUnavailableError(str(exc)) from exc
+
+        try:
+            provisioned = ensure_rife_model_file()
+            return resolve_rife_model_path(str(provisioned))
+        except Exception as provision_exc:
+            raise RIFEUnavailableError(
+                f"{exc} Automatic provisioning attempt for default RIFE model failed: {provision_exc}"
+            ) from provision_exc
 
 
 def _as_rgb_pil(frame: object, *, index: int):

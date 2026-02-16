@@ -179,7 +179,9 @@ def make_scheduler(
     if not class_name:
         raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
 
-    # Validate user-provided sampler strings against metadata (fail-fast, no silent fallbacks).
+    # Parse sampler hints from payload. WAN22 scheduler semantics are metadata-driven; when
+    # users pass a non-UniPC sampler name (e.g., "euler"), treat it as a legacy no-op and
+    # keep scheduler behavior defined by `scheduler_config.json`.
     if raw_sampler:
         parts = raw_sampler.split()
         if len(parts) > 2:
@@ -190,23 +192,19 @@ def make_scheduler(
         sampler_solver = parts[1] if len(parts) == 2 else None
 
         if class_name == "UniPCMultistepScheduler":
-            if sampler_name != "uni-pc":
-                raise RuntimeError(
-                    f"WAN22 GGUF: sampler={sampler!r} is incompatible with metadata scheduler {class_name!r}. "
-                    "Use 'uni-pc' for WAN2.2."
-                )
-            config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
-            if sampler_solver is not None:
-                if config_solver is None:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: sampler={sampler!r} specifies solver_type={sampler_solver!r}, "
-                        f"but scheduler_config has no solver_type: {config_path}"
-                    )
-                if sampler_solver != config_solver:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: sampler={sampler!r} solver_type mismatch "
-                        f"(requested={sampler_solver!r} config={config_solver!r})."
-                    )
+            if sampler_name == "uni-pc":
+                config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
+                if sampler_solver is not None:
+                    if config_solver is None:
+                        raise RuntimeError(
+                            f"WAN22 GGUF: sampler={sampler!r} specifies solver_type={sampler_solver!r}, "
+                            f"but scheduler_config has no solver_type: {config_path}"
+                        )
+                    if sampler_solver != config_solver:
+                        raise RuntimeError(
+                            f"WAN22 GGUF: sampler={sampler!r} solver_type mismatch "
+                            f"(requested={sampler_solver!r} config={config_solver!r})."
+                        )
         else:
             raise RuntimeError(
                 f"WAN22 GGUF: sampler override is not supported for metadata scheduler {class_name!r}. "

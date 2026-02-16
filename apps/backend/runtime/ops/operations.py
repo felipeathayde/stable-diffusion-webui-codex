@@ -706,6 +706,29 @@ class CodexOperationsGGUF(CodexOperations):
             self.bias = None
             self.parameters_manual_cast = ctx.manual_cast_enabled
 
+        @staticmethod
+        def _normalize_loaded_linear_tensor(
+            tensor_obj: torch.Tensor,
+            *,
+            target_device: torch.device,
+            computation_dtype: torch.dtype,
+            is_weight: bool,
+        ) -> torch.Tensor:
+            loaded = tensor_obj.to(device=target_device)
+            if isinstance(loaded, CodexPackLinearQ4KTilepackV1Parameter):
+                return loaded
+            if isinstance(loaded, CodexParameter):
+                loaded.computation_dtype = computation_dtype
+                # Transformers UMT5 casts FFN activations to `wo.weight.dtype` unless it is int8.
+                # Keep packed GGUF bytes but expose int8 storage so activations stay floating.
+                if is_weight and loaded.dtype == torch.uint8:
+                    loaded = loaded.copy_with_data(loaded.data.view(torch.int8))
+                    loaded.computation_dtype = computation_dtype
+                return loaded
+            if not loaded.is_floating_point():
+                loaded = loaded.to(dtype=computation_dtype)
+            return loaded
+
         def _load_from_state_dict(
             self,
             state_dict,
@@ -721,19 +744,51 @@ class CodexOperationsGGUF(CodexOperations):
                 if computation_dtype not in (torch.float16, torch.bfloat16):
                     computation_dtype = torch.float16
                 if prefix + "weight" in state_dict:
-                    self.weight = utils.tensor2parameter(state_dict[prefix + "weight"].to(device=self.dummy.device))
+                    self.weight = utils.tensor2parameter(
+                        self._normalize_loaded_linear_tensor(
+                            state_dict[prefix + "weight"],
+                            target_device=self.dummy.device,
+                            computation_dtype=computation_dtype,
+                            is_weight=True,
+                        )
+                    )
                     if hasattr(self.weight, "computation_dtype"):
                         self.weight.computation_dtype = computation_dtype
                 if prefix + "bias" in state_dict:
-                    self.bias = utils.tensor2parameter(state_dict[prefix + "bias"].to(device=self.dummy.device))
+                    self.bias = utils.tensor2parameter(
+                        self._normalize_loaded_linear_tensor(
+                            state_dict[prefix + "bias"],
+                            target_device=self.dummy.device,
+                            computation_dtype=computation_dtype,
+                            is_weight=False,
+                        )
+                    )
                     if hasattr(self.bias, "computation_dtype"):
                         self.bias.computation_dtype = computation_dtype
                 del self.dummy
             else:
                 if prefix + "weight" in state_dict:
-                    self.weight = state_dict[prefix + "weight"]
+                    target_device = state_dict[prefix + "weight"].device
+                    computation_dtype = getattr(self.weight, "computation_dtype", torch.float16)
+                    if computation_dtype not in (torch.float16, torch.bfloat16):
+                        computation_dtype = torch.float16
+                    self.weight = self._normalize_loaded_linear_tensor(
+                        state_dict[prefix + "weight"],
+                        target_device=target_device,
+                        computation_dtype=computation_dtype,
+                        is_weight=True,
+                    )
                 if prefix + "bias" in state_dict:
-                    self.bias = state_dict[prefix + "bias"]
+                    target_device = state_dict[prefix + "bias"].device
+                    computation_dtype = getattr(self.weight, "computation_dtype", torch.float16)
+                    if computation_dtype not in (torch.float16, torch.bfloat16):
+                        computation_dtype = torch.float16
+                    self.bias = self._normalize_loaded_linear_tensor(
+                        state_dict[prefix + "bias"],
+                        target_device=target_device,
+                        computation_dtype=computation_dtype,
+                        is_weight=False,
+                    )
 
         def _apply(self, fn, recurse=True):
             for name, param in self.named_parameters(recurse=False, remove_duplicate=True):

@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-15
+Last Review: 2026-02-16
 Status: Active
 
 ## Purpose
@@ -67,3 +67,4 @@ Status: Active
 - 2026-02-15: `generation.py` video task worker now emits contract-trace JSONL events (opt-in via `CODEX_TRACE_CONTRACT`) with stage/action/device + prompt hash only (no raw prompt fields).
 - 2026-02-15: `tasks.py` now sanitizes terminal `entry.error` before returning `/api/tasks/{task_id}` and SSE `error` events, preventing raw exception text leaks to clients.
 - 2026-02-15: `generation.py`/`upscale.py`/`supir.py` now sanitize synchronous `HTTPException.detail` paths (and `upscale.py` manifest parse error fields) through `public_http_error_detail(...)`, so API callers do not receive raw exception strings.
+- 2026-02-16: `generation.py` video worker now logs typed `EngineExecutionError` explicitly to API console logs before writing sanitized task error payloads (keeps local debugging signal while preserving public error contract).

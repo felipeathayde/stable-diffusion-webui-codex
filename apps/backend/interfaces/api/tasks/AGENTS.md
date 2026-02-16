@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/tasks Overview
 <!-- tags: backend, api, tasks, orchestration -->
 Date: 2026-01-30
-Last Review: 2026-02-15
+Last Review: 2026-02-16
 Status: Active
 
 ## Purpose
@@ -19,3 +19,4 @@ Status: Active
 - 2026-02-09: Task workers now compare cancellation policy using `TaskCancelMode.IMMEDIATE` (enumized contract from `task_registry.py`) instead of raw string literals.
 - 2026-02-15: `generation_tasks.py` now emits contract-trace JSONL events (opt-in via `CODEX_TRACE_CONTRACT`) with prompt hashing only (`prompt_hash`, never raw prompt text).
 - 2026-02-15: task workers sanitize terminal errors through `apps/backend/interfaces/api/public_errors.py` before persisting `entry.error`, preventing raw exception leakage through task status/SSE.
+- 2026-02-16: `generation_tasks.py` logs typed `EngineExecutionError` explicitly to API console logs (`task_id`, `mode`, `engine`) before persisting sanitized `entry.error`; wire payload contract remains unchanged.

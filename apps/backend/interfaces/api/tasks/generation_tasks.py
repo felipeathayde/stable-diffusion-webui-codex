@@ -346,6 +346,20 @@ def run_image_task(
                 _dump_exc(type(err), err, err.__traceback__, where="generation_image_worker", context={"task_id": task_id})
             except Exception:
                 pass
+            try:
+                from apps.backend.core.exceptions import EngineExecutionError
+
+                if isinstance(err, EngineExecutionError):
+                    logger.error(
+                        "EngineExecutionError in generation_image_worker "
+                        "(task_id=%s mode=%s engine=%s): %s",
+                        task_id,
+                        mode,
+                        engine_key,
+                        err,
+                    )
+            except Exception:
+                pass
 
             entry.error = public_task_error_message(err)
             fallback_used = fallback_enabled and ("fallback" in str(err).lower())

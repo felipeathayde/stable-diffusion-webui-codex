@@ -2577,6 +2577,21 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
                 except Exception:
                     pass
+                try:
+                    from apps.backend.core.exceptions import EngineExecutionError
+
+                    if isinstance(err, EngineExecutionError):
+                        _router_log.error(
+                            "EngineExecutionError in %s_worker "
+                            "(task_id=%s mode=%s engine=%s): %s",
+                            label,
+                            task_id,
+                            mode,
+                            engine_key,
+                            err,
+                        )
+                except Exception:
+                    pass
                 entry.error = public_task_error_message(err)
                 fallback_used = fallback_enabled and ("fallback" in str(err).lower())
                 emit_contract_trace(

@@ -285,15 +285,30 @@ def _resolve_frame_counts(num_frames: int, *, logger: Any) -> tuple[int, int]:
 
 def _infer_stage_variant(stage_path: str, *, stage: str, mode: str) -> str | None:
     base = os.path.basename(str(stage_path or "")).lower()
-    markers = set(re.findall(r"(?<![a-z0-9])(\d+)b(?![a-z0-9])", base))
-    if not markers:
-        return None
-    unsupported_markers = sorted(marker for marker in markers if marker not in {"5", "14"})
+    tokens = re.findall(r"[a-z0-9]+", base)
+    markers: set[str] = set()
+    unsupported_markers: set[str] = set()
+    for token in tokens:
+        if token in {"5b", "a5b"}:
+            markers.add("5")
+            continue
+        if token in {"14b", "a14b"}:
+            markers.add("14")
+            continue
+        if token.endswith("b") and token[:-1].isdigit():
+            marker = token[:-1]
+            if marker in {"5", "14"}:
+                markers.add(marker)
+            else:
+                unsupported_markers.add(marker)
     if unsupported_markers:
+        unsupported_sorted = sorted(unsupported_markers)
         raise RuntimeError(
             f"WAN22 GGUF ({mode}) has unsupported variant marker(s) in {stage} stage filename: "
-            f"{', '.join(unsupported_markers)}b ({stage_path!r})"
+            f"{', '.join(unsupported_sorted)}b ({stage_path!r})"
         )
+    if not markers:
+        return None
     if len(markers) > 1:
         resolved_markers = ", ".join(f"{marker}b" for marker in sorted(markers))
         raise RuntimeError(

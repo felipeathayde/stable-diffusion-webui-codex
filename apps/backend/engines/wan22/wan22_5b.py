@@ -89,10 +89,19 @@ class Wan225BEngine(BaseVideoEngine):
         # GGUF path: assets are payload-driven (sha-only); avoid any local/online HF metadata probing here.
         comp.pipeline = None
         ref_base = os.path.basename(str(model_ref or "")).lower()
+        if "animate" in ref_base and "14b" in ref_base:
+            variant_hint = "wan22_animate_14b"
+        elif "14b" in ref_base:
+            variant_hint = "wan22_14b"
+        elif "5b" in ref_base:
+            variant_hint = "wan22_5b"
+        else:
+            variant_hint = "unknown"
         weights_hint = "14b" if "14b" in ref_base else ("5b" if "5b" in ref_base else "unknown")
         self._logger.info(
-            "WAN22 GGUF runtime selected (engine=%s weights_hint=%s) for %s (device=%s dtype=%s)",
+            "WAN22 GGUF runtime selected (dispatch=%s variant=%s weights_hint=%s) for %s (device=%s dtype=%s)",
             self.engine_id,
+            variant_hint,
             weights_hint,
             p,
             comp.device,

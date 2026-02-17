@@ -191,8 +191,15 @@ def assemble_video_metadata(
     extra: Mapping[str, Any] | None = None,
     video_meta: Any = None,
 ) -> dict[str, Any]:
+    engine_dispatch = str(getattr(engine, "engine_id", "unknown"))
+    engine_label = engine_dispatch
+    if isinstance(extra, Mapping):
+        raw_variant = extra.get("wan_engine_variant")
+        if isinstance(raw_variant, str) and raw_variant.strip():
+            engine_label = raw_variant.strip()
+
     metadata: dict[str, Any] = {
-        "engine": getattr(engine, "engine_id", "unknown"),
+        "engine": engine_label,
         "task": task,
         "elapsed": round(elapsed, 3),
         "frames": frame_count,
@@ -209,6 +216,8 @@ def assemble_video_metadata(
         metadata["guidance_scale"] = float(plan.guidance_scale)
     if extra:
         metadata.update(dict(extra))
+    if engine_label != engine_dispatch:
+        metadata["engine_dispatch"] = engine_dispatch
     if video_meta is not None:
         metadata["video_export"] = video_meta
     return metadata

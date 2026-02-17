@@ -377,7 +377,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             ),
         )
 
-    def _resolve_wan22_engine_key(payload: Dict[str, Any], *, metadata_dir: str, task_type: TaskType) -> str:
+    def _resolve_wan22_engine_key(
+        payload: Dict[str, Any], *, metadata_dir: str, task_type: TaskType
+    ) -> Tuple[str, str]:
         from apps.backend.core.exceptions import EngineNotFoundError
         from apps.backend.core.registry import registry as _engine_registry
 
@@ -411,8 +413,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 elif model_index.get("image_encoder") is not None or model_index.get("transformer_2") is not None:
                     candidate = "wan22_14b"
 
-        # Guardrail: 14B engine does not implement IMG2VID; route IMG2VID to the
-        # WAN22 5B runtime lane even when metadata points to A14B.
+        requested_variant = candidate
+
+        # Guardrail: keep WAN dispatch on task-capable lanes.
+        # - IMG2VID: route 14B-family hints to WAN22 5B runtime lane.
+        # - TXT2VID: animate lane is vid2vid-only; route through WAN22 14B lane
+        #   (and existing registration fallback may still map to WAN22 5B).
+        if task_type is TaskType.TXT2VID and candidate == "wan22_animate_14b":
+            candidate = "wan22_14b"
         if task_type is TaskType.IMG2VID and candidate in {"wan22_14b", "wan22_animate_14b"}:
             candidate = "wan22_5b"
 
@@ -425,11 +433,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 detail=public_http_error_detail(exc, fallback="Engine registry init failed"),
             ) from exc
         try:
-            return _engine_registry.get_descriptor(candidate).key
+            return _engine_registry.get_descriptor(candidate).key, requested_variant
         except EngineNotFoundError as exc:
             if candidate == "wan22_14b":
                 try:
-                    return _engine_registry.get_descriptor("wan22_5b").key
+                    return _engine_registry.get_descriptor("wan22_5b").key, requested_variant
                 except EngineNotFoundError as fallback_exc:
                     raise HTTPException(
                         status_code=409,
@@ -2202,6 +2210,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
 
+        engine_key, wan_engine_variant = _resolve_wan22_engine_key(
+            payload,
+            metadata_dir=wan_metadata_dir,
+            task_type=TaskType.TXT2VID,
+        )
+        extras["wan_engine_variant"] = wan_engine_variant
+        extras["wan_engine_dispatch"] = engine_key
         smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
         req = Txt2VidRequest(
             task=TaskType.TXT2VID,
@@ -2227,7 +2242,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             },
         )
 
-        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir, task_type=TaskType.TXT2VID)
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         return req, engine_key, model_ref
 
@@ -2382,6 +2396,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
 
+        engine_key, wan_engine_variant = _resolve_wan22_engine_key(
+            payload,
+            metadata_dir=wan_metadata_dir,
+            task_type=TaskType.IMG2VID,
+        )
+        extras["wan_engine_variant"] = wan_engine_variant
+        extras["wan_engine_dispatch"] = engine_key
         smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
         req = Img2VidRequest(
             task=TaskType.IMG2VID,
@@ -2408,7 +2429,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             },
         )
 
-        engine_key = _resolve_wan22_engine_key(payload, metadata_dir=wan_metadata_dir, task_type=TaskType.IMG2VID)
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, engine_key, model_ref

@@ -6,35 +6,34 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN 2.2 video engine implementation for the GGUF runtime (5B lane by default).
-Implements txt2vid/img2vid/vid2vid by dispatching to the canonical WAN22 use-cases; GGUF execution is owned by
-`apps/backend/runtime/families/wan22/**` and is configured via request extras (sha-only assets + stage overrides).
+Purpose: WAN 2.2 14B video engine implementation for the GGUF runtime.
+Implements txt2vid/img2vid/vid2vid by dispatching to the canonical WAN22 use-cases using explicit 14B engine identity,
+without inheriting the 5B engine class.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Wan225BEngine` (class): `BaseVideoEngine` implementation for WAN22 GGUF 5B lane; runs txt2vid/img2vid/vid2vid via
-  progress-streamed use-cases and exposes class-level variant metadata for subclassed lanes.
+- `Wan2214BGgufEngine` (class): `BaseVideoEngine` implementation for WAN22 GGUF 14B lane; runs txt2vid/img2vid/vid2vid
+  via progress-streamed use-cases with strict GGUF asset validation.
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any, Iterator, Optional
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
+from apps.backend.core.exceptions import EngineLoadError
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, Txt2VidRequest, Vid2VidRequest
 from apps.backend.engines.common.base_video import BaseVideoEngine
-from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
-from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
-from apps.backend.use_cases.vid2vid import run_vid2vid as _run_v2v
-from apps.backend.core.exceptions import EngineLoadError
-
-import os
-
 from apps.backend.engines.wan22.wan22_common import WanComponents
+from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
+from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
+from apps.backend.use_cases.vid2vid import run_vid2vid as _run_v2v
 
-class Wan225BEngine(BaseVideoEngine):
-    engine_id = "wan22_5b"
-    model_types: tuple[str, ...] = ("wan-2.2-5b",)
-    runtime_note: str = "WAN 2.2 5B via GGUF runtime"
+
+class Wan2214BGgufEngine(BaseVideoEngine):
+    engine_id = "wan22_14b"
+    model_types: tuple[str, ...] = ("wan-2.2-14b",)
+    runtime_note: str = "WAN 2.2 14B via GGUF runtime"
 
     def __init__(self) -> None:
         super().__init__()
@@ -49,7 +48,6 @@ class Wan225BEngine(BaseVideoEngine):
             extras={"notes": self.runtime_note},
         )
 
-    # ------------------------------ lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         self._logger.debug("[%s] before load()", self.engine_id)
         dev = str(options.get("device", "auto"))
@@ -57,29 +55,34 @@ class Wan225BEngine(BaseVideoEngine):
         comp = WanComponents()
         engine_label = self.engine_id
 
-        p = os.path.expanduser(str(model_ref or "")).strip()
-        if not p:
+        path = os.path.expanduser(str(model_ref or "")).strip()
+        if not path:
             raise EngineLoadError(f"WAN22 {engine_label}: empty model_ref")
-        if not os.path.isabs(p):
-            p = os.path.abspath(p)
-        if os.path.isdir(p):
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        if os.path.isdir(path):
             raise EngineLoadError(
                 f"WAN22 {engine_label} is GGUF-only (expected a .gguf file resolved from model_sha); "
                 f"got a directory: {model_ref}"
             )
-        if not str(p).lower().endswith(".gguf"):
+        if not str(path).lower().endswith(".gguf"):
             raise EngineLoadError(
                 f"WAN22 {engine_label} is GGUF-only (expected a .gguf file resolved from model_sha); "
                 f"got: {model_ref}"
             )
-        if not os.path.isfile(p):
-            alt = os.path.abspath(os.path.join("models", "Wan", model_ref))
-            if os.path.isfile(alt) and str(alt).lower().endswith(".gguf"):
-                p = alt
+        if not os.path.isfile(path):
+            alt_path = os.path.abspath(os.path.join("models", "Wan", model_ref))
+            if os.path.isfile(alt_path) and str(alt_path).lower().endswith(".gguf"):
+                path = alt_path
             else:
                 raise EngineLoadError(f"WAN22 {engine_label} GGUF model not found: {model_ref}")
+        path_base = os.path.basename(path).lower()
+        if "5b" in path_base and "14b" not in path_base:
+            raise EngineLoadError(
+                f"WAN22 {engine_label} requires 14B GGUF weights; got a 5B-labeled file: {model_ref}"
+            )
 
-        comp.model_dir = p
+        comp.model_dir = path
         comp.dtype = dty
         try:
             from apps.backend.runtime.families.wan22.config import resolve_device_name
@@ -89,7 +92,6 @@ class Wan225BEngine(BaseVideoEngine):
         except Exception as exc:
             raise EngineLoadError(str(exc)) from exc
 
-        # GGUF path: assets are payload-driven (sha-only); avoid any local/online HF metadata probing here.
         comp.pipeline = None
         ref_base = os.path.basename(str(model_ref or "")).lower()
         if "animate" in ref_base and "14b" in ref_base:
@@ -106,7 +108,7 @@ class Wan225BEngine(BaseVideoEngine):
             self.engine_id,
             variant_hint,
             weights_hint,
-            p,
+            path,
             comp.device,
             dty,
         )
@@ -121,7 +123,6 @@ class Wan225BEngine(BaseVideoEngine):
         self._logger.debug("[%s] after unload()", self.engine_id)
         self.mark_unloaded()
 
-    # ------------------------------ tasks
     def txt2vid(self, request: Txt2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
         self._logger.debug("[%s] before txt2vid()", self.engine_id)
         self.ensure_loaded()

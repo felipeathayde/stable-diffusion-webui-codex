@@ -1,7 +1,7 @@
 # apps/backend/engines Overview
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
-Last Review: 2026-02-05
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -34,3 +34,4 @@ Status: Active
   - Runtime guard helper (`require_runtime`) for consistent “call load() first” errors across engines.
 - 2026-02-05: Added the `anima` engine key and a stub `AnimaEngine` facade (fail-loud until runtime is ported).
 - 2026-02-08: Engine adapters now map swap-model pointer semantics using `switch_at_step` (`RefinerConfig.swap_at_step`) for both global and hires nested refiner config.
+- 2026-02-17: WAN22 canonical registration now maps `wan22_14b` to a dedicated GGUF 14B lane (`Wan2214BGgufEngine`) with no inheritance from `wan22_5b`, preventing 14B dispatch from collapsing into 5B behavior.

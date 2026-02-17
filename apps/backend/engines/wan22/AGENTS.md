@@ -2,7 +2,7 @@
 
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-11
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -13,6 +13,7 @@ Status: Active
 - `apps/backend/engines/wan22/spec.py` — Codex runtime containers + assembly (`WanEngineSpec`/`WanEngineRuntime`, `assemble_wan_runtime`).
 - `apps/backend/engines/wan22/factory.py` — Factory seam returning `(runtime, CodexObjects)` for consistent Codex runtime assembly.
 - `apps/backend/engines/wan22/wan22_14b.py` — `Wan2214BEngine` (txt2vid; `img2vid` not yet ported and fails loud).
+- `apps/backend/engines/wan22/wan22_14b_gguf.py` — `Wan2214BGgufEngine` (GGUF 14B lane for txt2vid/img2vid/vid2vid without inheriting from `wan22_5b`).
 - `apps/backend/engines/wan22/wan22_5b.py` — `Wan225BEngine` (GGUF-only wrapper; strict stage overrides; fails loud on Diffusers directory inputs).
 
 ## Notes
@@ -32,14 +33,15 @@ Status: Active
 - 2026-01-06: GGUF stage overrides now fall back to canonical sampler/scheduler (`uni-pc`/`simple`) when unset (no `"Automatic"` placeholder).
 - 2026-01-08: Flow-match `flow_shift` is sourced from diffusers `scheduler_config.json` (vendored HF mirror); WAN22 GGUF stages require an explicit `flow_shift` value (auto-resolved from the vendor config when not provided in `extras.wan_high/wan_low`).
 - 2026-01-21: Stage LoRA selection is sha-only via `extras.wan_high/wan_low.lora_sha` (sha → `.safetensors`) + optional `lora_weight`; stage `lora_path` is rejected.
-- 2026-01-22: `wan22_14b` no longer advertises `TaskType.IMG2VID`; `img2vid` raises `NotImplementedError` to avoid “success with empty frames”. The practical A14B I2V path remains the WAN22 GGUF runtime (invoked via the `wan22_5b` engine wrapper).
+- 2026-01-22: `wan22_14b` no longer advertises `TaskType.IMG2VID`; `img2vid` raises `NotImplementedError` to avoid “success with empty frames”.
 - 2026-01-31: WAN22 14B core streaming enablement now fails loud when explicitly requested (`core_streaming_enabled=True`) and setup fails (no silent fallback to non-streaming).
 - 2026-02-01: `wan22_5b` is now GGUF-only (Diffusers directory-loading branch removed). WAN22 GGUF scheduler is Diffusers-free in the runtime; WAN22 VAE IO and `vid2vid.method=\"wan_animate\"` remain Diffusers-based until their dedicated port plans are executed.
-- 2026-02-03: `wan22_14b` is no longer registered by default (kept unreachable) until it is ported to the canonical Option A use-cases.
+- 2026-02-03: `wan22_14b` registration stayed gated while the variant-decoupling work was in progress.
 - 2026-02-09: WAN22 prompt conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-10: `diffusers_loader.py` no longer swallows attention/accelerator hook or logger emit exceptions; hook import/apply and log emit failures now surface as contextual `RuntimeError`.
 - 2026-02-11: `diffusers_loader.py` now wraps native WAN VAE instances with a strict diffusers-compat adapter (`encode/decode` contract), including 5D video batch adaptation and explicit `dtype` exposure, so pipeline calls consume `latents`/`sample` outputs without fallback shims.
 - 2026-02-16: `WanEngineSpec.family` now uses explicit WAN22 variant families (`WAN22_14B`/`WAN22_5B`) and runtime VAE wrapper ownership follows `spec.family` (no shared WAN family alias).
+- 2026-02-17: `wan22_14b` canonical registration now points to a dedicated GGUF 14B lane (`Wan2214BGgufEngine`) with no inheritance from `wan22_5b`; 14B/5B routing remains explicit per engine id.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

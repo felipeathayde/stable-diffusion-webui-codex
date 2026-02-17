@@ -311,9 +311,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     _WAN22_ENGINE_HINTS: tuple[tuple[str, str], ...] = (
         ("wan2.2-ti2v-5b-diffusers", "wan22_5b"),
+        ("wan2.2-ti2v-5b", "wan22_5b"),
         ("wan2.2-animate-14b-diffusers", "wan22_animate_14b"),
+        ("wan2.2-animate-14b", "wan22_animate_14b"),
         ("wan2.2-i2v-a14b-diffusers", "wan22_14b"),
+        ("wan2.2-i2v-a14b", "wan22_14b"),
         ("wan2.2-t2v-a14b-diffusers", "wan22_14b"),
+        ("wan2.2-t2v-a14b", "wan22_14b"),
     )
 
     def _engine_key_from_wan_hint(hint: str) -> Optional[str]:
@@ -323,6 +327,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         for token, engine_key in _WAN22_ENGINE_HINTS:
             if token in raw:
                 return engine_key
+        # Fallback heuristics are variant-preserving and must never collapse 14B hints into 5B.
+        if "animate" in raw and "14b" in raw:
+            return "wan22_animate_14b"
+        if "14b" in raw:
+            return "wan22_14b"
+        if "ti2v" in raw or "5b" in raw:
+            return "wan22_5b"
         return None
 
     def _resolve_wan_sampler_scheduler_defaults_from_assets(metadata_dir: str) -> Tuple[str, str]:
@@ -404,25 +415,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             except Exception:
                 model_index = None
             if isinstance(model_index, dict):
-                if model_index.get("expand_timesteps") is not None:
-                    candidate = "wan22_5b"
-                elif "animate" in str(model_index_path).lower():
+                def _has_component(value: Any) -> bool:
+                    if value is None:
+                        return False
+                    if isinstance(value, (list, tuple)):
+                        return any(item is not None for item in value)
+                    return True
+
+                class_name = str(model_index.get("_class_name") or "").strip().lower()
+                has_transformer_2 = _has_component(model_index.get("transformer_2"))
+                has_image_encoder = _has_component(model_index.get("image_encoder"))
+
+                if "wananimatepipeline" in class_name or "animate" in str(model_index_path).lower():
                     candidate = "wan22_animate_14b"
-                elif model_index.get("image_encoder") is not None and model_index.get("transformer_2") is None:
+                elif has_image_encoder and not has_transformer_2:
                     candidate = "wan22_animate_14b"
-                elif model_index.get("image_encoder") is not None or model_index.get("transformer_2") is not None:
+                elif has_transformer_2:
                     candidate = "wan22_14b"
+                elif model_index.get("expand_timesteps") is not None:
+                    candidate = "wan22_5b"
 
         requested_variant = candidate
 
-        # Guardrail: keep WAN dispatch on task-capable lanes.
-        # - IMG2VID: route 14B-family hints to WAN22 5B runtime lane.
-        # - TXT2VID: animate lane is vid2vid-only; route through WAN22 14B lane
-        #   (and existing registration fallback may still map to WAN22 5B).
+        # Guardrail: keep WAN dispatch on task-capable lanes without collapsing
+        # model identities across variants.
+        # - TXT2VID: animate lane is vid2vid-only; route through WAN22 14B.
+        # - IMG2VID: animate lane routes through WAN22 14B.
         if task_type is TaskType.TXT2VID and candidate == "wan22_animate_14b":
             candidate = "wan22_14b"
-        if task_type is TaskType.IMG2VID and candidate in {"wan22_14b", "wan22_animate_14b"}:
-            candidate = "wan22_5b"
+        if task_type is TaskType.IMG2VID and candidate == "wan22_animate_14b":
+            candidate = "wan22_14b"
 
         try:
             _ensure_default_engines_registered()
@@ -435,14 +457,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         try:
             return _engine_registry.get_descriptor(candidate).key, requested_variant
         except EngineNotFoundError as exc:
-            if candidate == "wan22_14b":
-                try:
-                    return _engine_registry.get_descriptor("wan22_5b").key, requested_variant
-                except EngineNotFoundError as fallback_exc:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="WAN engine resolution failed: neither 'wan22_14b' nor fallback 'wan22_5b' is registered.",
-                    ) from fallback_exc
             raise HTTPException(
                 status_code=409,
                 detail=f"WAN engine '{candidate}' is not registered. Verify engine registration for WAN22.",

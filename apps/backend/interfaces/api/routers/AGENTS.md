@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-16
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -72,3 +72,5 @@ Status: Active
 - 2026-02-16: WAN22 video request allowlists are now owned by model keymap module `apps/backend/runtime/state_dict/keymap_wan22_transformer.py` (`WAN22_REQUEST_KEYS`), not by payload type definitions.
 - 2026-02-16: `tasks.py` cancellation endpoint now rejects `mode="after_current"` with HTTP 400 until worker-level deferred-cancel semantics are implemented (fail-loud contract).
 - 2026-02-16: `models.py` prompt-token endpoint now recognizes `wan22_animate_14b`; `ui.py` tab-type normalization accepts `wan22_animate_14b` and normalizes all WAN aliases to `wan`.
+- 2026-02-17: `generation.py` WAN variant resolution now preserves 14B identity across repo/path hints (expanded token set + 14B-first heuristics) and avoids silent 14B→5B collapse during engine-key resolution.
+- 2026-02-17: `generation.py` keeps animate metadata hints remapped to the task-capable `wan22_14b` lane for txt2vid/img2vid while preserving the requested variant metadata (`wan_engine_variant`).

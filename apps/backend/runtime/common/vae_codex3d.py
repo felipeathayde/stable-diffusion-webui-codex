@@ -7,12 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared native 3D VAE runtime lane for temporal video autoencoders.
-Defines `AutoencoderCodex3D` with causal 3D convolutions, explicit temporal
-down/upsampling, and strict diffusers->codex key remap helpers for WAN-like
-checkpoints without importing diffusers model classes. WAN22 keymap ownership
-for remap logic lives in `runtime/state_dict/keymap_wan22_vae.py`.
+Defines `AutoencoderCodex3D` with causal 3D convolutions, temporal cache-aware
+encode/decode chunk execution, explicit temporal down/upsampling, and strict
+diffusers->codex key remap helpers for WAN-like checkpoints without importing
+diffusers model classes. WAN22 keymap ownership for remap logic lives in
+`runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_CACHE_T` (constant): Temporal cache window used by causal-conv cache plumbing in chunked encode/decode passes.
 - `AutoencoderCodex3D` (class): Native causal-3D KL VAE with codex keyspace (`encoder.downsamples.*`, `decoder.upsamples.*`, `conv1/conv2`).
 - `sanitize_codex3d_vae_config` (function): Normalizes alias config fields into `AutoencoderCodex3D` constructor arguments.
 - `remap_codex3d_vae_state_dict` (function): Normalizes wrapper prefixes and remaps diffusers WAN3D VAE keyspace to codex keyspace (strict/fail-loud).
@@ -34,6 +36,8 @@ from torch import nn
 
 from apps.backend.runtime.families.wan22.vae import DiagonalGaussianDistribution
 from apps.backend.runtime.state_dict.keymap_wan22_vae import remap_wan22_vae_3d_state_dict
+
+_CACHE_T = 2
 
 
 def remap_codex3d_vae_state_dict(
@@ -70,13 +74,18 @@ class Codex3DCausalConv(nn.Conv3d):
         )
         self.padding = (0, 0, 0)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cache_x: torch.Tensor | None = None) -> torch.Tensor:
         if x.ndim != 5:
             raise RuntimeError(
                 "AutoencoderCodex3D causal conv expects 5D input [B,C,T,H,W], "
                 f"got shape={tuple(x.shape)}."
             )
-        x = F.pad(x, self._padding)
+        padding = list(self._padding)
+        if cache_x is not None and self._padding[4] > 0:
+            cache_x = cache_x.to(x.device)
+            x = torch.cat([cache_x, x], dim=2)
+            padding[4] -= int(cache_x.shape[2])
+        x = F.pad(x, padding)
         return super().forward(x)
 
 
@@ -105,6 +114,11 @@ class Codex3DRMSNorm(nn.Module):
         return out
 
 
+class Codex3DUpsample(nn.Upsample):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return super().forward(x.float()).type_as(x)
+
+
 class Codex3DResidualBlock(nn.Module):
     def __init__(self, in_dim: int, out_dim: int, *, dropout: float = 0.0) -> None:
         super().__init__()
@@ -121,8 +135,50 @@ class Codex3DResidualBlock(nn.Module):
         )
         self.shortcut = Codex3DCausalConv(self.in_dim, self.out_dim, 1) if self.in_dim != self.out_dim else nn.Identity()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.residual(x) + self.shortcut(x)
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        feat_cache: list[torch.Tensor | str | None] | None = None,
+        feat_idx: list[int] | None = None,
+    ) -> torch.Tensor:
+        if feat_cache is not None and feat_idx is None:
+            raise RuntimeError("AutoencoderCodex3D residual block cache requires feat_idx.")
+
+        identity = self.shortcut(x)
+
+        x = self.residual[0](x)
+        x = self.residual[1](x)
+
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -_CACHE_T:, :, :].clone()
+            cached = feat_cache[idx]
+            if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
+                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+            x = self.residual[2](x, cached if torch.is_tensor(cached) else None)
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.residual[2](x)
+
+        x = self.residual[3](x)
+        x = self.residual[4](x)
+        x = self.residual[5](x)
+
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -_CACHE_T:, :, :].clone()
+            cached = feat_cache[idx]
+            if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
+                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+            x = self.residual[6](x, cached if torch.is_tensor(cached) else None)
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.residual[6](x)
+
+        return x + identity
 
 
 class Codex3DAttentionBlock(nn.Module):
@@ -164,33 +220,58 @@ class Codex3DResample(nn.Module):
         self.mode = str(mode)
 
         if self.mode == "upsample2d":
-            self.resample = nn.Sequential(nn.Upsample(scale_factor=(2.0, 2.0), mode="nearest"), nn.Conv2d(dim, dim // 2, 3, padding=1))
+            self.resample = nn.Sequential(Codex3DUpsample(scale_factor=(2.0, 2.0), mode="nearest-exact"), nn.Conv2d(dim, dim // 2, 3, padding=1))
         elif self.mode == "downsample2d":
             self.resample = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2)))
         elif self.mode == "upsample3d":
-            self.resample = nn.Sequential(nn.Upsample(scale_factor=(2.0, 2.0), mode="nearest"), nn.Conv2d(dim, dim // 2, 3, padding=1))
+            self.resample = nn.Sequential(Codex3DUpsample(scale_factor=(2.0, 2.0), mode="nearest-exact"), nn.Conv2d(dim, dim // 2, 3, padding=1))
             self.time_conv = Codex3DCausalConv(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0))
         elif self.mode == "downsample3d":
             self.resample = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2)))
-            self.time_conv = Codex3DCausalConv(dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(1, 0, 0))
+            self.time_conv = Codex3DCausalConv(dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0))
         elif self.mode == "none":
             self.resample = nn.Identity()
         else:
             raise RuntimeError(f"AutoencoderCodex3D unsupported resample mode={self.mode!r}.")
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        feat_cache: list[torch.Tensor | str | None] | None = None,
+        feat_idx: list[int] | None = None,
+    ) -> torch.Tensor:
         if x.ndim != 5:
             raise RuntimeError(
                 "AutoencoderCodex3D resample expects 5D input [B,C,T,H,W], "
                 f"got shape={tuple(x.shape)}."
             )
+        if feat_cache is not None and feat_idx is None:
+            raise RuntimeError("AutoencoderCodex3D resample cache requires feat_idx.")
+
         batch, channels, frames, height, width = x.shape
         work = x
         if self.mode == "upsample3d":
-            mixed = self.time_conv(work).reshape(batch, 2, channels, frames, height, width)
-            work = torch.stack((mixed[:, 0], mixed[:, 1]), dim=3).reshape(batch, channels, frames * 2, height, width)
-            if int(work.shape[2]) > 1:
-                work = work[:, :, 1:, :, :]
+            if feat_cache is not None:
+                idx = feat_idx[0]
+                cached = feat_cache[idx]
+                if cached is None:
+                    feat_cache[idx] = "Rep"
+                    feat_idx[0] += 1
+                else:
+                    cache_x = work[:, :, -_CACHE_T:, :, :].clone()
+                    if cache_x.shape[2] < _CACHE_T and cached != "Rep" and torch.is_tensor(cached):
+                        cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                    if cache_x.shape[2] < _CACHE_T and cached == "Rep":
+                        cache_x = torch.cat([torch.zeros_like(cache_x).to(cache_x.device), cache_x], dim=2)
+                    if cached == "Rep":
+                        work = self.time_conv(work)
+                    else:
+                        work = self.time_conv(work, cached if torch.is_tensor(cached) else None)
+                    feat_cache[idx] = cache_x
+                    feat_idx[0] += 1
+                    mixed = work.reshape(batch, 2, channels, frames, height, width)
+                    work = torch.stack((mixed[:, 0], mixed[:, 1]), dim=3).reshape(batch, channels, frames * 2, height, width)
 
         flat = work.permute(0, 2, 1, 3, 4).reshape(batch * int(work.shape[2]), channels, int(work.shape[3]), int(work.shape[4]))
         flat = self.resample(flat)
@@ -200,7 +281,21 @@ class Codex3DResample(nn.Module):
         work = flat.reshape(batch, int(work.shape[2]), out_channels, out_height, out_width).permute(0, 2, 1, 3, 4).contiguous()
 
         if self.mode == "downsample3d":
-            work = self.time_conv(work)
+            if feat_cache is not None:
+                idx = feat_idx[0]
+                cached = feat_cache[idx]
+                if cached is None:
+                    feat_cache[idx] = work.clone()
+                    feat_idx[0] += 1
+                else:
+                    cache_x = work[:, :, -1:, :, :].clone()
+                    if not torch.is_tensor(cached):
+                        raise RuntimeError("AutoencoderCodex3D downsample cache is corrupted.")
+                    work = self.time_conv(torch.cat([cached[:, :, -1:, :, :], work], dim=2))
+                    feat_cache[idx] = cache_x
+                    feat_idx[0] += 1
+            else:
+                work = self.time_conv(work)
         return work
 
 
@@ -246,8 +341,54 @@ class Codex3DEncoder(nn.Module):
             Codex3DCausalConv(out_dim, int(z_dim), 3, padding=1),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.head(self.middle(self.downsamples(self.conv1(x))))
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        feat_cache: list[torch.Tensor | str | None] | None = None,
+        feat_idx: list[int] | None = None,
+    ) -> torch.Tensor:
+        if feat_cache is not None and feat_idx is None:
+            raise RuntimeError("AutoencoderCodex3D encoder cache requires feat_idx.")
+
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -_CACHE_T:, :, :].clone()
+            cached = feat_cache[idx]
+            if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
+                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+            x = self.conv1(x, cached if torch.is_tensor(cached) else None)
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv1(x)
+
+        for layer in self.downsamples:
+            if isinstance(layer, (Codex3DResidualBlock, Codex3DResample)):
+                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+            else:
+                x = layer(x)
+
+        for layer in self.middle:
+            if isinstance(layer, Codex3DResidualBlock):
+                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+            else:
+                x = layer(x)
+
+        x = self.head[0](x)
+        x = self.head[1](x)
+        conv_out = self.head[2]
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -_CACHE_T:, :, :].clone()
+            cached = feat_cache[idx]
+            if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
+                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+            x = conv_out(x, cached if torch.is_tensor(cached) else None)
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+            return x
+        return conv_out(x)
 
 
 class Codex3DDecoder(nn.Module):
@@ -294,8 +435,56 @@ class Codex3DDecoder(nn.Module):
             Codex3DCausalConv(int(out_dim), int(output_channels), 3, padding=1),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.head(self.upsamples(self.middle(self.conv1(x))))
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        feat_cache: list[torch.Tensor | str | None] | None = None,
+        feat_idx: list[int] | None = None,
+        first_chunk: bool = False,
+    ) -> torch.Tensor:
+        _ = first_chunk
+        if feat_cache is not None and feat_idx is None:
+            raise RuntimeError("AutoencoderCodex3D decoder cache requires feat_idx.")
+
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -_CACHE_T:, :, :].clone()
+            cached = feat_cache[idx]
+            if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
+                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+            x = self.conv1(x, cached if torch.is_tensor(cached) else None)
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv1(x)
+
+        for layer in self.middle:
+            if isinstance(layer, Codex3DResidualBlock):
+                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+            else:
+                x = layer(x)
+
+        for layer in self.upsamples:
+            if isinstance(layer, (Codex3DResidualBlock, Codex3DResample)):
+                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+            else:
+                x = layer(x)
+
+        x = self.head[0](x)
+        x = self.head[1](x)
+        conv_out = self.head[2]
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -_CACHE_T:, :, :].clone()
+            cached = feat_cache[idx]
+            if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
+                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+            x = conv_out(x, cached if torch.is_tensor(cached) else None)
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+            return x
+        return conv_out(x)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,9 +557,27 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
         self.latents_mean = None if latents_mean is None else tuple(float(v) for v in latents_mean)
         self.latents_std = None if latents_std is None else tuple(float(v) for v in latents_std)
         self.use_tiling = False
+        self._cached_conv_counts = {
+            "decoder": sum(isinstance(module, Codex3DCausalConv) for module in self.decoder.modules()) if self.decoder is not None else 0,
+            "encoder": sum(isinstance(module, Codex3DCausalConv) for module in self.encoder.modules()) if self.encoder is not None else 0,
+        }
+        self._conv_num = 0
+        self._conv_idx: list[int] = [0]
+        self._feat_map: list[torch.Tensor | str | None] = []
+        self._enc_conv_num = 0
+        self._enc_conv_idx: list[int] = [0]
+        self._enc_feat_map: list[torch.Tensor | str | None] = []
 
     def enable_tiling(self, *_args: Any, **_kwargs: Any) -> None:
         self.use_tiling = True
+
+    def clear_cache(self) -> None:
+        self._conv_num = int(self._cached_conv_counts["decoder"])
+        self._conv_idx = [0]
+        self._feat_map = [None] * self._conv_num
+        self._enc_conv_num = int(self._cached_conv_counts["encoder"])
+        self._enc_conv_idx = [0]
+        self._enc_feat_map = [None] * self._enc_conv_num
 
     def encode(self, x: torch.Tensor, return_dict: bool = True, regulation: Any = None) -> Any:
         squeeze_t = False
@@ -382,7 +589,21 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                 "AutoencoderCodex3D encode expects 4D or 5D input ([B,C,H,W] or [B,C,T,H,W]), "
                 f"got shape={tuple(x.shape)}."
             )
-        moments = self.conv1(self.encoder(x))
+        _, _, num_frame, _, _ = x.shape
+        self.clear_cache()
+        for index in range(1 + (int(num_frame) - 1) // 4):
+            self._enc_conv_idx = [0]
+            if index == 0:
+                encoded = self.encoder(x[:, :, :1, :, :], feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
+            else:
+                encoded_chunk = self.encoder(
+                    x[:, :, 1 + 4 * (index - 1) : 1 + 4 * index, :, :],
+                    feat_cache=self._enc_feat_map,
+                    feat_idx=self._enc_conv_idx,
+                )
+                encoded = torch.cat([encoded, encoded_chunk], dim=2)
+        moments = self.conv1(encoded)
+        self.clear_cache()
         posterior = DiagonalGaussianDistribution(moments)
         latents = regulation(posterior) if regulation is not None else posterior.sample()
         if squeeze_t and latents.ndim == 5 and int(latents.shape[2]) == 1:
@@ -401,8 +622,18 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                 "AutoencoderCodex3D decode expects 4D or 5D latents ([B,C,H,W] or [B,C,T,H,W]), "
                 f"got shape={tuple(z.shape)}."
             )
-        out = self.decoder(self.conv2(z))
+        _, _, num_frame, _, _ = z.shape
+        x = self.conv2(z)
+        self.clear_cache()
+        for index in range(int(num_frame)):
+            self._conv_idx = [0]
+            if index == 0:
+                out = self.decoder(x[:, :, index : index + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx, first_chunk=True)
+            else:
+                out_chunk = self.decoder(x[:, :, index : index + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx)
+                out = torch.cat([out, out_chunk], dim=2)
         out = torch.clamp(out, min=-1.0, max=1.0)
+        self.clear_cache()
         if squeeze_t and out.ndim == 5 and int(out.shape[2]) == 1:
             out = out.squeeze(2)
         if not return_dict:

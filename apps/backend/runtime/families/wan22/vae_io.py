@@ -13,6 +13,7 @@ Includes strict finite checks and explicit dtype/device retry logic (no silent f
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22VAEContractError` (exception): Deterministic WAN VAE path/config contract failure (non-retryable by dtype fallback loops).
 - `_detect_wan_vae_lane` (function): Resolves canonical WAN VAE lane (`2d_native`/`3d_native`) from core convolution weights.
+- `_normalize_vae_state_dict_keys` (function): Normalizes wrapper prefixes in VAE checkpoints before style-specific load paths.
 - `load_vae` (function): Loads the WAN VAE component (from directory bundles or single-file weights with sibling/override config dir).
 - `_cuda_bf16_supported` (function): Best-effort BF16 support probe for CUDA (used for dtype fallbacks).
 - `_vae_dtype_candidates` (function): Ordered dtype candidates for VAE encode/decode attempts (requested dtype first).
@@ -42,6 +43,7 @@ from apps.backend.runtime.state_dict.keymap_wan22_vae import (
     remap_wan22_vae_2d_state_dict,
     remap_wan22_vae_3d_state_dict,
 )
+from apps.backend.runtime.state_dict.key_mapping import strip_repeated_prefixes
 
 from .config import RunConfig, as_torch_dtype, resolve_device_name
 from .diagnostics import cuda_empty_cache, get_logger, log_numerics_enabled, summarize_numerics, warn_fallback
@@ -49,6 +51,7 @@ from .wan_latent_norms import resolve_norm
 
 _SUPPORTED_WAN_VAE_LATENT_CHANNELS = (16, 48)
 _SUPPORTED_WAN_VAE_LANES = ("2d_native", "3d_native")
+_VAE_WRAPPER_PREFIXES = ("module.", "vae.", "first_stage_model.")
 
 
 class WAN22VAEContractError(RuntimeError):
@@ -142,6 +145,19 @@ def _infer_latent_channels_from_state_dict(state_dict: Mapping[str, Any]) -> int
     return None
 
 
+def _normalize_vae_state_dict_keys(state_dict: Mapping[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in state_dict.items():
+        normalized_key = strip_repeated_prefixes(str(key), _VAE_WRAPPER_PREFIXES)
+        if normalized_key in normalized:
+            raise WAN22VAEContractError(
+                "WAN22 GGUF: normalized VAE state_dict contains duplicate keys after prefix stripping "
+                f"(key={normalized_key!r})."
+            )
+        normalized[normalized_key] = value
+    return normalized
+
+
 def load_vae(
     vae_path: Optional[str],
     *,
@@ -165,7 +181,8 @@ def load_vae(
                     "WAN22 GGUF: VAE checkpoint loader returned non-mapping state_dict "
                     f"(type={type(raw_state_dict).__name__})."
                 )
-            lane = _detect_wan_vae_lane(raw_state_dict)
+            normalized_state_dict = _normalize_vae_state_dict_keys(raw_state_dict)
+            lane = _detect_wan_vae_lane(normalized_state_dict)
             if lane not in _SUPPORTED_WAN_VAE_LANES:
                 raise WAN22VAEContractError(
                     "WAN22 GGUF: unsupported VAE lane "
@@ -173,7 +190,7 @@ def load_vae(
                 )
 
             if lane == "2d_native":
-                remap_style, state_dict = remap_wan22_vae_2d_state_dict(dict(raw_state_dict))
+                remap_style, state_dict = remap_wan22_vae_2d_state_dict(dict(normalized_state_dict))
                 config = AutoencoderKL_LDM.load_config(config_dir)
                 native_config = sanitize_ldm_vae_config(config)
                 inferred_latent_channels = _infer_latent_channels_from_state_dict(state_dict)
@@ -194,14 +211,16 @@ def load_vae(
                         "WAN22 GGUF: native VAE load failed strict validation "
                         f"(lane=2d_native missing={len(missing)} unexpected={len(unexpected)} "
                         f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]})."
-                    )
+                )
                 setattr(vae, "_codex_vae_lane", "2d_native")
+                setattr(vae, "_codex_vae_style", remap_style)
                 return vae
 
-            remap_style, state_dict = remap_wan22_vae_3d_state_dict(dict(raw_state_dict))
+            remap_style, remapped_state_dict = remap_wan22_vae_3d_state_dict(dict(normalized_state_dict))
             config = AutoencoderCodex3D.load_config(config_dir)
+
             native_config = sanitize_codex3d_vae_config(config)
-            inferred_latent_channels = _infer_latent_channels_from_state_dict(state_dict)
+            inferred_latent_channels = _infer_latent_channels_from_state_dict(remapped_state_dict)
             if inferred_latent_channels is not None:
                 configured_channels = native_config.get("z_dim")
                 if configured_channels is None:
@@ -213,14 +232,15 @@ def load_vae(
                         f"inferred={int(inferred_latent_channels)})."
                     )
             vae = AutoencoderCodex3D.from_config(native_config)
-            missing, unexpected = safe_load_state_dict(vae, state_dict, log_name="WAN22 VAE (3d_native)")
+            missing, unexpected = safe_load_state_dict(vae, remapped_state_dict, log_name="WAN22 VAE (3d_native)")
             if missing or unexpected:
                 raise WAN22VAEContractError(
                     "WAN22 GGUF: native VAE load failed strict validation "
-                    f"(lane=3d_native missing={len(missing)} unexpected={len(unexpected)} "
+                    f"(lane=3d_native style={remap_style} missing={len(missing)} unexpected={len(unexpected)} "
                     f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]})."
                 )
             setattr(vae, "_codex_vae_lane", "3d_native")
+            setattr(vae, "_codex_vae_style", remap_style)
             return vae
         except WAN22VAEContractError:
             raise
@@ -492,6 +512,9 @@ def vae_encode_video_condition(
                 config_dir_override=vae_config_dir,
             )
             vae = vae.to(device=target, dtype=torch_dtype)
+            lane = _resolve_loaded_vae_lane(vae)
+            style = str(getattr(vae, "_codex_vae_style", "unknown")).strip().lower() or "unknown"
+            log.info("[wan22.gguf] VAE lane=%s style=%s", lane, style)
 
             image = _prepare_init_image_tensor(
                 init_image,
@@ -512,11 +535,15 @@ def vae_encode_video_condition(
                 [image, image.new_zeros((image.shape[0], image.shape[1], int(num_frames) - 1, int(height), int(width)))],
                 dim=2,
             )
-            lane = _resolve_loaded_vae_lane(vae)
+            regulation = lambda posterior: posterior.mode()
             with torch.no_grad():
                 if lane == "2d_native":
                     video_batched, batch_size, frame_count = _to_frame_batch_4d(video_condition)
-                    encoded_raw = _retrieve_latents(vae.encode(video_batched), sample_mode="mode")
+                    try:
+                        encoded_out = vae.encode(video_batched, regulation=regulation)
+                    except TypeError:
+                        encoded_out = vae.encode(video_batched)
+                    encoded_raw = _retrieve_latents(encoded_out, sample_mode="mode")
                     if encoded_raw.ndim == 4:
                         encoded = _from_frame_batch_4d(encoded_raw, batch=batch_size, frames=frame_count)
                     elif encoded_raw.ndim == 5:
@@ -527,7 +554,11 @@ def vae_encode_video_condition(
                             f"(lane=2d_native shape={tuple(encoded_raw.shape)})."
                         )
                 else:
-                    encoded_raw = _retrieve_latents(vae.encode(video_condition), sample_mode="mode")
+                    try:
+                        encoded_out = vae.encode(video_condition, regulation=regulation)
+                    except TypeError:
+                        encoded_out = vae.encode(video_condition)
+                    encoded_raw = _retrieve_latents(encoded_out, sample_mode="mode")
                     if encoded_raw.ndim == 5:
                         encoded = encoded_raw
                     elif encoded_raw.ndim == 4:

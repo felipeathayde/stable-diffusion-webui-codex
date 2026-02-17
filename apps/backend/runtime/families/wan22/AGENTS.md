@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-16
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -68,6 +68,9 @@ Status: Active
 - 2026-02-15: `text_context.py` now performs a GGUF-only selective placement pass after TE load: non-quantized parameters/buffers are moved to the resolved execution device while quantized wrappers (`CodexParameter`/CodexPack) are skipped, preventing mixed-device forward (`cuda` hidden states + CPU norm weights) without module-level `.to()` on quantized tensors.
 - 2026-02-16: `run.py` now enforces deterministic stage finalization for WAN22 GGUF txt2vid/img2vid (batch + streaming): each stage lifecycle is wrapped in `try/finally` teardown, `_MemoryManagedModule` exposes explicit `codex_unpatch_model(...)` offload semantics for memory-manager unload, and teardown ordering remains guaranteed on cancel/error/OOM paths.
 - 2026-02-16: `vae_io.py` now resolves WAN22 VAE keyspaces through model-owned state_dict keymaps (`keymap_wan22_vae.py` for 2D/3D lanes), including strict mixed-style and collision fail-loud behavior before strict load.
+- 2026-02-17: `run.py` now resolves WAN variant identity from both stage filenames (`wan_high` + `wan_low`) and fails loud on explicit high/low 5B↔14B mismatches for txt2vid/img2vid (batch + streaming), preventing silent mixed-lane execution.
+- 2026-02-17: WAN22 3D VAE loading remains native-only (`AutoencoderCodex3D`) for both codex/diffusers key styles; wrapper-prefix normalization happens before lane detection, and style-specific remap still feeds strict native load.
+- 2026-02-17: `runtime/common/vae_codex3d.py` now mirrors upstream temporal cache/chunk semantics for encode/decode (causal-conv cache, 3D upsample cache handling, nearest-exact upsample), restoring native decode parity for WAN2.2 14B I2V VAE outputs.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

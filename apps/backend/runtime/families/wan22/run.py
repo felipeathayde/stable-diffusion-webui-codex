@@ -19,6 +19,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_parse_sampler` (function): Parse canonical WAN sampler strings (e.g. 'uni-pc bh2').
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
+- `_infer_stage_variant` (function): Infer WAN model variant (`5b`/`14b`) from a stage GGUF filename.
+- `_resolve_stage_pair_variant` (function): Resolve a single variant for high/low stages and fail loud on explicit mismatch.
 - `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
 - `_extract_i2v_decode_latents` (function): Extract pure latent channels from I2V model state before VAE decode (order-aware `lat_first`/`lat_last`).
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import gc
 import os
+import re
 from typing import Any, Optional
 
 import torch
@@ -280,6 +283,52 @@ def _resolve_frame_counts(num_frames: int, *, logger: Any) -> tuple[int, int]:
     return effective, latent_frames
 
 
+def _infer_stage_variant(stage_path: str, *, stage: str, mode: str) -> str | None:
+    base = os.path.basename(str(stage_path or "")).lower()
+    markers = set(re.findall(r"(?<![a-z0-9])(\d+)b(?![a-z0-9])", base))
+    if not markers:
+        return None
+    unsupported_markers = sorted(marker for marker in markers if marker not in {"5", "14"})
+    if unsupported_markers:
+        raise RuntimeError(
+            f"WAN22 GGUF ({mode}) has unsupported variant marker(s) in {stage} stage filename: "
+            f"{', '.join(unsupported_markers)}b ({stage_path!r})"
+        )
+    if len(markers) > 1:
+        resolved_markers = ", ".join(f"{marker}b" for marker in sorted(markers))
+        raise RuntimeError(
+            f"WAN22 GGUF ({mode}) has conflicting variant markers in {stage} stage filename: "
+            f"{resolved_markers} ({stage_path!r})"
+        )
+    marker = next(iter(markers))
+    if marker == "5":
+        return "5b"
+    return "14b"
+
+
+def _resolve_stage_pair_variant(hi_path: str, lo_path: str, *, mode: str, logger: Any) -> str:
+    log = get_logger(logger)
+    hi_variant = _infer_stage_variant(hi_path, stage="high", mode=mode)
+    lo_variant = _infer_stage_variant(lo_path, stage="low", mode=mode)
+    if hi_variant is not None and lo_variant is not None and hi_variant != lo_variant:
+        raise RuntimeError(
+            f"WAN22 GGUF ({mode}) high/low variant mismatch: high={hi_variant} low={lo_variant} "
+            f"(high={hi_path!r} low={lo_path!r})"
+        )
+    resolved = hi_variant or lo_variant
+    if resolved is None:
+        # Preserve historical behavior when filenames do not encode variant markers.
+        log.warning(
+            "[wan22.gguf] could not infer 5b/14b from stage filenames for %s; defaulting variant=14b "
+            "(high=%s low=%s).",
+            mode,
+            os.path.basename(hi_path),
+            os.path.basename(lo_path),
+        )
+        return "14b"
+    return resolved
+
+
 def _build_i2v_seed_state(
     *,
     cfg: RunConfig,
@@ -425,6 +474,8 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
+    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="txt2vid", logger=log)
+    model_key = f"wan_t2v_{variant}"
 
     lvl = _resolve_offload_level(cfg)
 
@@ -447,9 +498,6 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 on_progress(stage="prepare", step=0, total=1, percent=0.05)
             except Exception:
                 pass
-
-        variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
-        model_key = f"wan_t2v_{variant}"
 
         te_dev_eff = getattr(cfg, "te_device", None) or dev_name
         te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
@@ -687,6 +735,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
+    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="txt2vid", logger=log)
+    model_key = f"wan_t2v_{variant}"
     lvl = _resolve_offload_level(cfg)
 
     hi_model: torch.nn.Module | None = None
@@ -702,9 +752,6 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             logger=log,
         )
         hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
-        variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
-        model_key = f"wan_t2v_{variant}"
-
         te_dev_eff = getattr(cfg, "te_device", None) or dev_name
         te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
         te_kernel_required = getattr(cfg, "te_kernel_required", False)
@@ -909,7 +956,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
 
-    variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
+    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="img2vid", logger=log)
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
@@ -1178,7 +1225,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
-    variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
+    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="img2vid", logger=log)
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name

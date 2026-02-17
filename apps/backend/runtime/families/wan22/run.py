@@ -494,14 +494,14 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
 
     lvl = _resolve_offload_level(cfg)
 
-    # Load GGUF weights on CPU first; the memory manager will move to GPU right before sampling.
+    # Load stage weights directly on the execution device; offload policy handles standby/unload.
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
         hi_model = load_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -651,7 +651,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         lo_model = load_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -760,7 +760,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         hi_model = load_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -873,7 +873,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         lo_model = load_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -1054,7 +1054,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         hi_model = load_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -1149,7 +1149,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         lo_model = load_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -1312,7 +1312,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         hi_model = load_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -1400,7 +1400,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         lo_model = load_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=torch.device("cpu"),
+            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),

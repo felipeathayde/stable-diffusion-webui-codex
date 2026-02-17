@@ -20,7 +20,8 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_animate_14b`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets.
-Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text).
+Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
+resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -264,6 +265,28 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(value, bool):
             raise RuntimeError(f"Invalid options value: '{key}' must be a boolean (got {type(value).__name__}).")
         return value
+
+    _ALLOWED_CORE_DTYPE_CHOICES = {"fp16", "bf16", "fp32"}
+
+    def _normalize_options_dtype_choice(options_snapshot: Any, key: str) -> Optional[str]:
+        value = getattr(options_snapshot, key, None)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise RuntimeError(f"Invalid options value: '{key}' must be a string (got {type(value).__name__}).")
+        normalized = value.strip().lower()
+        if normalized in {"", "auto"}:
+            return None
+        if normalized not in _ALLOWED_CORE_DTYPE_CHOICES:
+            raise RuntimeError(
+                f"Invalid options value: '{key}' must be one of auto/fp16/bf16/fp32 (got {value!r})."
+            )
+        return normalized
+
+    def _resolve_core_dtype_overrides(options_snapshot: Any) -> Tuple[Optional[str], Optional[str]]:
+        storage_dtype = _normalize_options_dtype_choice(options_snapshot, "codex_core_dtype")
+        compute_dtype = _normalize_options_dtype_choice(options_snapshot, "codex_core_compute_dtype")
+        return storage_dtype, (compute_dtype if compute_dtype is not None else storage_dtype)
 
 
     def _reject_not_implemented_engine(engine_key: str, *, field_name: str) -> None:
@@ -2631,6 +2654,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
             else:
                 raise RuntimeError(f"Unsupported video task: {task_type}")
+            options_snapshot = _opts_snapshot()
+            storage_dtype, compute_dtype = _resolve_core_dtype_overrides(options_snapshot)
         except Exception as err:
             emit_contract_trace(
                 task_id=task_id,
@@ -2653,8 +2678,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         mode = str(getattr(task_type, "value", "unknown"))
         prompt_hash_value = hash_request_prompt(req)
         fallback_enabled = bool(getattr(req, "smart_fallback", False))
-        storage_dtype = getattr(req, "core_dtype", None)
-        compute_dtype = getattr(req, "core_compute_dtype", None)
 
         emit_contract_trace(
             task_id=task_id,
@@ -2733,7 +2756,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     prompt_hash_value=prompt_hash_value,
                 )
 
-                engine_opts = {"export_video": _require_options_bool(_opts_snapshot(), "codex_export_video")}
+                engine_opts: dict[str, object] = {
+                    "export_video": _require_options_bool(options_snapshot, "codex_export_video")
+                }
+                if compute_dtype is not None:
+                    engine_opts["dtype"] = compute_dtype
                 from apps.backend.interfaces.api.tasks.generation_tasks import (
                     encode_images as _encode_images,
                     resolve_request_smart_flags as _resolve_request_smart_flags,

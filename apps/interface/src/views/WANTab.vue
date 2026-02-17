@@ -35,6 +35,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `toInt` (function): Parses an integer from an `<input>` event with fallback.
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
 - `clearInit` (function): Clears init image fields.
+- `normalizeVideoBeforeSubmit` (function): Normalizes width/height/frames before Generate/Queue dispatch.
 - `onGenerateClick` (function): Starts a generation run for the current input mode (builds payload, submits, and wires streaming) (async).
 - `onInitVideoFile` (function): Handles vid2vid init-video selection and preview state.
 - `clearInitVideo` (function): Clears init video selection/preview state.
@@ -61,7 +62,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `isRecord` (function): Type guard for `Record<string, unknown>`.
 - `formatDiffValue` (function): Formats values for the “params diff” UI.
 - `diffObjects` (function): Recursively diffs two objects into `{path, before, after}` entries (used for history diff).
-- `snapDim` (function): Snaps a dimension to WAN constraints (multiple-of-16, rounding up; Diffusers parity).
+- `snapDim` (function): Snaps a dimension to WAN constraints (default 16-grid; 64-grid for img2vid Image aspect lock).
+- `snapDimForAspect` (function): Snaps dimensions using the active aspect-mode grid policy.
 - `ratioForMode` (function): Returns the target aspect ratio for a given `AspectMode` preset.
 - `onAspectModeChange` (function): Applies aspect-mode changes and updates width/height accordingly.
 - `applyWidth` (function): Applies width updates (snapping + aspect-mode handling).
@@ -138,8 +140,8 @@ Symbols (top-level; keep in sync; no ghosts):
                 :min="64"
                 :max="2048"
                 :step="64"
-                :inputStep="16"
-                :nudgeStep="16"
+                :inputStep="dimensionInputStep"
+                :nudgeStep="dimensionInputStep"
                 :disabled="isRunning"
                 inputClass="cdx-input-w-md"
                 @update:modelValue="applyWidth"
@@ -149,8 +151,8 @@ Symbols (top-level; keep in sync; no ghosts):
                     :modelValue="video.width"
                     :min="64"
                     :max="2048"
-                    :step="16"
-                    :nudgeStep="16"
+                    :step="dimensionInputStep"
+                    :nudgeStep="dimensionInputStep"
                     inputClass="cdx-input-w-md"
                     :disabled="isRunning"
                     @update:modelValue="applyWidth"
@@ -184,8 +186,8 @@ Symbols (top-level; keep in sync; no ghosts):
                 :min="64"
                 :max="2048"
                 :step="64"
-                :inputStep="16"
-                :nudgeStep="16"
+                :inputStep="dimensionInputStep"
+                :nudgeStep="dimensionInputStep"
                 :disabled="isRunning"
                 inputClass="cdx-input-w-md"
                 @update:modelValue="applyHeight"
@@ -705,6 +707,10 @@ const assets = computed<WanAssetsParams>(() => wanParams.value?.assets || defaul
 
 const WAN_FRAMES_MIN = 9
 const WAN_FRAMES_MAX = 401
+const WAN_DIM_MIN = 64
+const WAN_DIM_MAX = 2048
+const WAN_DIM_STEP_DEFAULT = 16
+const WAN_DIM_STEP_IMAGE_LOCK = 64
 
 function normalizeFrameCount(rawValue: number): number {
   const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : WAN_FRAMES_MIN
@@ -929,6 +935,15 @@ const generateTitle = computed(() => {
   return ''
 })
 
+function normalizeVideoBeforeSubmit(): void {
+  const snappedW = snapDimForAspect(video.value.width)
+  const snappedH = snapDimForAspect(video.value.height)
+  const snappedFrames = normalizeFrameCount(video.value.frames)
+  if (snappedW !== video.value.width || snappedH !== video.value.height || snappedFrames !== video.value.frames) {
+    setVideo({ width: snappedW, height: snappedH, frames: snappedFrames })
+  }
+}
+
 async function onGenerateClick(): Promise<void> {
   if (isRunning.value) return
   const activeElement = document.activeElement
@@ -945,12 +960,7 @@ async function onGenerateClick(): Promise<void> {
     return
   }
   stopGuided()
-  const snappedW = snapDim(video.value.width)
-  const snappedH = snapDim(video.value.height)
-  const snappedFrames = normalizeFrameCount(video.value.frames)
-  if (snappedW !== video.value.width || snappedH !== video.value.height || snappedFrames !== video.value.frames) {
-    setVideo({ width: snappedW, height: snappedH, frames: snappedFrames })
-  }
+  normalizeVideoBeforeSubmit()
   await generate()
 }
 
@@ -1358,6 +1368,12 @@ async function copyHistoryParams(item: VideoRunHistoryItem): Promise<void> {
 
 async function queueNext(): Promise<void> {
   try {
+    const activeElement = document.activeElement
+    if (activeElement instanceof HTMLElement) {
+      activeElement.blur()
+      await nextTick()
+    }
+    normalizeVideoBeforeSubmit()
     await enqueue()
     toast('Queued next run.')
   } catch (err) {
@@ -1546,12 +1562,21 @@ const aspectRatio = ref<number | null>(null)
 const initImageAspectRatio = ref<number | null>(null)
 let initImageAspectTicket = 0
 
-function snapDim(value: number): number {
-  const step = 16
-  const min = 64
-  const max = 2048
-  const v = Number.isFinite(value) ? value : min
-  return Math.min(max, Math.max(min, Math.ceil(v / step) * step))
+const enforceImageAspect64 = computed(() => mode.value === 'img2vid' && aspectMode.value === 'image')
+const dimensionInputStep = computed(() => (enforceImageAspect64.value ? WAN_DIM_STEP_IMAGE_LOCK : WAN_DIM_STEP_DEFAULT))
+
+function currentAspectSnapStep(): number {
+  return enforceImageAspect64.value ? WAN_DIM_STEP_IMAGE_LOCK : WAN_DIM_STEP_DEFAULT
+}
+
+function snapDim(value: number, step: number = WAN_DIM_STEP_DEFAULT): number {
+  const safeStep = Math.max(1, Math.trunc(step))
+  const v = Number.isFinite(value) ? value : WAN_DIM_MIN
+  return Math.min(WAN_DIM_MAX, Math.max(WAN_DIM_MIN, Math.ceil(v / safeStep) * safeStep))
+}
+
+function snapDimForAspect(value: number): number {
+  return snapDim(value, currentAspectSnapStep())
 }
 
 function ratioForMode(mode: AspectMode): number | null {
@@ -1582,17 +1607,17 @@ function onAspectModeChange(e: Event): void {
 
   // For fixed presets, snap the current size into the chosen ratio (preserve width).
   if (mode !== 'current') {
-    const w = snapDim(Number(video.value.width) || 64)
-    const h = snapDim(w / ratio)
+    const w = snapDimForAspect(Number(video.value.width) || WAN_DIM_MIN)
+    const h = snapDimForAspect(w / ratio)
     setVideo({ width: w, height: h })
   }
 }
 
 function applyWidth(value: number): void {
-  const nextW = snapDim(value)
+  const nextW = snapDimForAspect(value)
   const r = aspectRatio.value
   if (r && r > 0) {
-    const nextH = snapDim(nextW / r)
+    const nextH = snapDimForAspect(nextW / r)
     setVideo({ width: nextW, height: nextH })
     return
   }
@@ -1600,10 +1625,10 @@ function applyWidth(value: number): void {
 }
 
 function applyHeight(value: number): void {
-  const nextH = snapDim(value)
+  const nextH = snapDimForAspect(value)
   const r = aspectRatio.value
   if (r && r > 0) {
-    const nextW = snapDim(nextH * r)
+    const nextW = snapDimForAspect(nextH * r)
     setVideo({ width: nextW, height: nextH })
     return
   }
@@ -1641,8 +1666,8 @@ watch(
         return
       }
       aspectRatio.value = ratio
-      const w = snapDim(Number(video.value.width) || 64)
-      const h = snapDim(w / ratio)
+      const w = snapDimForAspect(Number(video.value.width) || WAN_DIM_MIN)
+      const h = snapDimForAspect(w / ratio)
       setVideo({ width: w, height: h })
     } catch {
       if (ticket !== initImageAspectTicket) return

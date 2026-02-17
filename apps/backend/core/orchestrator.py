@@ -12,7 +12,7 @@ On load/execution failures, performs a best-effort purge to release VRAM/RAM so 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InferenceOrchestrator` (class): Routes typed requests to engines; caches loaded engines with option fingerprinting, reloads when overrides
-  change (incl. `vae_source`/`tenc_source`/`zimage_variant`), and manages VRAM hygiene across generations (contains nested helpers for option freezing and cache purges).
+  change (incl. `vae_source`/`tenc_source`/`zimage_variant`/`dtype`), and manages VRAM hygiene across generations (contains nested helpers for option freezing and cache purges).
 """
 
 from __future__ import annotations
@@ -80,6 +80,12 @@ class InferenceOrchestrator:
         tenc_path = engine_options.get("tenc_path")
         tenc_source = engine_options.get("tenc_source")
         zimage_variant = engine_options.get("zimage_variant")
+        dtype_raw = engine_options.get("dtype")
+        if dtype_raw is None:
+            dtype_value = None
+        else:
+            dtype_normalized = str(dtype_raw).strip().lower()
+            dtype_value = None if dtype_normalized in {"", "auto"} else dtype_normalized
 
         # Normalize streaming option key to a single boolean or None.
         streaming_val: object | None
@@ -97,6 +103,7 @@ class InferenceOrchestrator:
             "tenc_source": tenc_source,
             "zimage_variant": zimage_variant,
             "core_streaming_enabled": streaming_val,
+            "dtype": dtype_value,
         }
         return InferenceOrchestrator._freeze_engine_options(relevant)
 

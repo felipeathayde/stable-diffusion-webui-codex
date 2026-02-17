@@ -263,10 +263,15 @@ function defaultVideo(): WanVideoParams {
     width: 768,
     height: 432,
     fps: 24,
-    frames: 16,
+    frames: 17,
+    attentionMode: 'global',
     useInitImage: false,
     initImageData: '',
     initImageName: '',
+    img2vidChunkFrames: 0,
+    img2vidOverlapFrames: 4,
+    img2vidAnchorAlpha: 0.2,
+    img2vidChunkSeedMode: 'increment',
     useInitVideo: false,
     initVideoPath: '',
     initVideoName: '',
@@ -451,6 +456,13 @@ export function useVideoGeneration(tabId: string) {
       height: v.height,
       frames: v.frames,
       fps: v.fps,
+      attentionMode: v.attentionMode,
+      img2vid: {
+        chunkFrames: v.img2vidChunkFrames,
+        overlapFrames: v.img2vidOverlapFrames,
+        anchorAlpha: v.img2vidAnchorAlpha,
+        chunkSeedMode: v.img2vidChunkSeedMode,
+      },
       vid2vid: {
         strength: v.vid2vidStrength,
         method: v.vid2vidMethod,
@@ -535,6 +547,7 @@ export function useVideoGeneration(tabId: string) {
       height: v.height,
       fps: v.fps,
       frames: v.frames,
+      attentionMode: v.attentionMode,
       high: {
         modelSha: hiSha,
         sampler: hi.sampler,
@@ -610,7 +623,19 @@ export function useVideoGeneration(tabId: string) {
     }
 
     if (v.useInitImage) {
-      const payload = buildWanImg2VidPayload({ ...common, initImageData: v.initImageData })
+      const img2vidChunkInput = v.img2vidChunkFrames > 0
+        ? {
+            chunkFrames: v.img2vidChunkFrames,
+            overlapFrames: v.img2vidOverlapFrames,
+            anchorAlpha: v.img2vidAnchorAlpha,
+            chunkSeedMode: v.img2vidChunkSeedMode,
+          }
+        : {}
+      const payload = buildWanImg2VidPayload({
+        ...common,
+        initImageData: v.initImageData,
+        ...img2vidChunkInput,
+      })
       return { mode: 'img2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
     }
 

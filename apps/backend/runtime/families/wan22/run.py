@@ -476,7 +476,11 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         raise RuntimeError("WAN22 GGUF (txt2vid) requires .gguf for both stages")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
 
-    set_sdpa_settings(getattr(cfg, "sdpa_policy", None), getattr(cfg, "attn_chunk_size", None))
+    set_sdpa_settings(
+        getattr(cfg, "sdpa_policy", None),
+        getattr(cfg, "attn_chunk_size", None),
+        getattr(cfg, "attention_mode", None),
+    )
     _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
 
     if on_progress:
@@ -743,7 +747,11 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         raise RuntimeError("WAN22 GGUF (txt2vid) requires .gguf for both stages")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
 
-    set_sdpa_settings(getattr(cfg, "sdpa_policy", None), getattr(cfg, "attn_chunk_size", None))
+    set_sdpa_settings(
+        getattr(cfg, "sdpa_policy", None),
+        getattr(cfg, "attn_chunk_size", None),
+        getattr(cfg, "attention_mode", None),
+    )
     _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
 
     dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
@@ -956,7 +964,11 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         raise RuntimeError("img2vid requires init_image for GGUF path")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
 
-    set_sdpa_settings(getattr(cfg, "sdpa_policy", None), getattr(cfg, "attn_chunk_size", None))
+    set_sdpa_settings(
+        getattr(cfg, "sdpa_policy", None),
+        getattr(cfg, "attn_chunk_size", None),
+        getattr(cfg, "attention_mode", None),
+    )
     _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
 
     if on_progress:
@@ -1232,7 +1244,11 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
 
-    set_sdpa_settings(getattr(cfg, "sdpa_policy", None), getattr(cfg, "attn_chunk_size", None))
+    set_sdpa_settings(
+        getattr(cfg, "sdpa_policy", None),
+        getattr(cfg, "attn_chunk_size", None),
+        getattr(cfg, "attention_mode", None),
+    )
     _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
 
     dev_name = resolve_device_name(getattr(cfg, "device", "auto"))

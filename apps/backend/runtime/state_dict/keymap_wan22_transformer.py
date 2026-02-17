@@ -161,6 +161,7 @@ class Wan22RequestKeys:
             "gguf_offload",
             "gguf_offload_level",
             "gguf_sdpa_policy",
+            "gguf_attention_mode",
             "gguf_attn_chunk",
             "gguf_cache_policy",
             "gguf_cache_limit_mb",
@@ -203,6 +204,10 @@ class Wan22RequestKeys:
             "img2vid_cfg_scale",
             "img2vid_styles",
             "img2vid_init_image",
+            "img2vid_chunk_frames",
+            "img2vid_overlap_frames",
+            "img2vid_anchor_alpha",
+            "img2vid_chunk_seed_mode",
         }
     )
 

@@ -33,5 +33,6 @@ Notes:
 - 2026-02-11: Supersedes the SDXL VAE portion of the 2026-02-10 structural-policy note: SDXL VAE mid-attention projection lanes are now native (`linear_2d`/`conv1x1_4d`) and no longer use keymap flatten gating by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`.
 - 2026-02-15: `views.LazySafetensorsDict` now explicitly documents device-targeted lazy loads (`device` controls produced tensor placement; no CPU-only assumption).
 - 2026-02-16: Split WAN VAE ownership into model-specific modules (`keymap_wan21_vae.py`, `keymap_wan22_vae.py`), removed WAN VAE remap ownership from `keymap_anima.py`, and wired WAN22 VAE lanes to model keymap modules only.
+- 2026-02-17: `keymap_wan22_transformer.py` WAN22 request allowlists now include `gguf_attention_mode` and img2vid chunk-control keys (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`) for strict router passthrough ownership.
 
-Last Review: 2026-02-16
+Last Review: 2026-02-17

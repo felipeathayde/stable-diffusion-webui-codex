@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-16
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -36,3 +36,4 @@ Status: Active
 - 2026-02-11: `img2img.py` now enforces init-image VAE encode before TE conditioning across classic unmasked, classic masked, and Flux Kontext variants (smart-offload order contract for img2img/img2vid-style flows).
 - 2026-02-15: `txt2img_pipeline/runner.py` no longer embeds raw negative prompt text in zero-uncond fail-loud errors; message now keeps only technical context (`count`) to avoid prompt leakage through downstream task/log surfaces.
 - 2026-02-16: img2img now emits truthful `GenerationResult.metadata["conditioning_cache_hit"]` across classic + Flux Kontext paths (derived from per-call Smart Cache bucket deltas when conditioning is computed, or `True` when conditioning is fully pre-supplied), so shared decode cleanup applies the same warm-vs-unload policy parity already used by txt2img.
+- 2026-02-17: `img2vid.py` GGUF path now supports optional chunked generation with overlap stitching, anchor blending (`img2vid_anchor_alpha`), and deterministic/per-chunk seed policies (`img2vid_chunk_seed_mode=fixed|increment|random`) while preserving the legacy non-chunk execution path.

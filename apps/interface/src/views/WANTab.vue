@@ -22,6 +22,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
 - `defaultVideo` (function): Returns default video params (prompt/dims/init media fields) for new tabs/resets.
 - `defaultAssets` (function): Returns default (empty) assets selection.
+- `normalizeFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
+- `normalizeAttentionMode` (function): Normalizes UI attention mode values (`global|sliding`).
+- `normalizeChunkSeedMode` (function): Normalizes UI img2vid chunk-seed mode values.
+- `normalizeVideoPatch` (function): Sanitizes WAN video patch updates before persisting tab params.
 - `setVideo` (function): Applies partial updates to the video params in state (triggers dependent sync where needed).
 - `setHigh` (function): Applies partial updates to the high stage (and can drive low-stage sync when enabled).
 - `setLow` (function): Applies partial updates to the low stage.
@@ -191,9 +195,88 @@ Symbols (top-level; keep in sync; no ghosts):
               embedded
               :frames="video.frames"
               :fps="video.fps"
+              :minFrames="9"
+              :maxFrames="401"
               @update:frames="(v:number)=>setVideo({ frames: v })"
               @update:fps="(v:number)=>setVideo({ fps: v })"
             />
+            <div class="gc-row mt-2">
+              <div class="gc-col">
+                <label class="label-muted">Attention mode</label>
+                <select
+                  class="select-md"
+                  :disabled="isRunning"
+                  :value="video.attentionMode"
+                  @change="setVideo({ attentionMode: normalizeAttentionMode(($event.target as HTMLSelectElement).value) })"
+                >
+                  <option value="global">Global</option>
+                  <option value="sliding">Sliding</option>
+                </select>
+                <p class="caption mt-1">Global uses full temporal context. Sliding limits attention context to reduce memory/cost.</p>
+              </div>
+            </div>
+            <div v-if="mode === 'img2vid'" class="gc-row mt-2">
+              <div class="gc-col">
+                <label class="label-muted">Chunk Frames</label>
+                <input
+                  class="ui-input"
+                  type="number"
+                  min="0"
+                  max="401"
+                  step="1"
+                  :disabled="isRunning"
+                  :value="video.img2vidChunkFrames"
+                  @change="setVideo({ img2vidChunkFrames: toInt($event, video.img2vidChunkFrames) })"
+                />
+                <p class="caption mt-1">0 disables chunking. Positive values use overlapping img2vid segments.</p>
+              </div>
+              <div class="gc-col">
+                <label class="label-muted">Overlap</label>
+                <input
+                  class="ui-input"
+                  type="number"
+                  min="0"
+                  max="400"
+                  step="1"
+                  :disabled="isRunning"
+                  :value="video.img2vidOverlapFrames"
+                  @change="setVideo({ img2vidOverlapFrames: toInt($event, video.img2vidOverlapFrames) })"
+                />
+                <p class="caption mt-1">Crossfades chunk seams. Must stay smaller than Chunk Frames.</p>
+              </div>
+              <div class="gc-col">
+                <label class="label-muted" title="How much of the original init image is re-injected at each chunk boundary. 0 = continue from previous output only; 1 = force stronger re-anchor to init image.">
+                  Anchor Alpha
+                </label>
+                <input
+                  class="ui-input"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  :disabled="isRunning"
+                  :value="video.img2vidAnchorAlpha"
+                  @change="setVideo({ img2vidAnchorAlpha: Number(($event.target as HTMLInputElement).value) })"
+                />
+                <p class="caption mt-1">Controls re-anchoring strength to the init image between chunks.</p>
+              </div>
+              <div class="gc-col">
+                <label class="label-muted" title="How seeds evolve across chunks. Fixed keeps one seed for all chunks. Increment adds the chunk index. Random ignores fixed progression for chunk-level variation.">
+                  Chunk Seed Mode
+                </label>
+                <select
+                  class="select-md"
+                  :disabled="isRunning"
+                  :value="video.img2vidChunkSeedMode"
+                  @change="setVideo({ img2vidChunkSeedMode: normalizeChunkSeedMode(($event.target as HTMLSelectElement).value) })"
+                >
+                  <option value="increment">Increment</option>
+                  <option value="fixed">Fixed</option>
+                  <option value="random">Random</option>
+                </select>
+                <p class="caption mt-1">Defines deterministic seed progression for chunk stitching.</p>
+              </div>
+            </div>
           </div>
 
           <div class="gen-card">
@@ -574,10 +657,15 @@ function defaultVideo(): WanVideoParams {
     width: 768,
     height: 432,
     fps: 24,
-    frames: 16,
+    frames: 17,
+    attentionMode: 'global',
     useInitImage: false,
     initImageData: '',
     initImageName: '',
+    img2vidChunkFrames: 0,
+    img2vidOverlapFrames: 4,
+    img2vidAnchorAlpha: 0.2,
+    img2vidChunkSeedMode: 'increment',
     useInitVideo: false,
     initVideoPath: '',
     initVideoName: '',
@@ -615,10 +703,82 @@ function defaultAssets(): WanAssetsParams { return { metadata: '', textEncoder: 
 
 const assets = computed<WanAssetsParams>(() => wanParams.value?.assets || defaultAssets())
 
+const WAN_FRAMES_MIN = 9
+const WAN_FRAMES_MAX = 401
+
+function normalizeFrameCount(rawValue: number): number {
+  const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : WAN_FRAMES_MIN
+  const clamped = Math.min(WAN_FRAMES_MAX, Math.max(WAN_FRAMES_MIN, numeric))
+  if ((clamped - 1) % 4 === 0) return clamped
+
+  const down = clamped - (((clamped - 1) % 4 + 4) % 4)
+  const up = down + 4
+  const downInRange = down >= WAN_FRAMES_MIN
+  const upInRange = up <= WAN_FRAMES_MAX
+  if (downInRange && upInRange) {
+    const downDistance = Math.abs(clamped - down)
+    const upDistance = Math.abs(up - clamped)
+    return downDistance <= upDistance ? down : up
+  }
+  if (downInRange) return down
+  if (upInRange) return up
+  return WAN_FRAMES_MIN
+}
+
+function normalizeAttentionMode(rawValue: unknown): 'global' | 'sliding' {
+  return String(rawValue || '').trim().toLowerCase() === 'sliding' ? 'sliding' : 'global'
+}
+
+function normalizeChunkSeedMode(rawValue: unknown): 'fixed' | 'increment' | 'random' {
+  const v = String(rawValue || '').trim().toLowerCase()
+  if (v === 'fixed' || v === 'random') return v
+  return 'increment'
+}
+
+function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoParams): Partial<WanVideoParams> {
+  const nextPatch: Partial<WanVideoParams> = { ...patch }
+
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'frames')) {
+    nextPatch.frames = normalizeFrameCount(Number(nextPatch.frames))
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'attentionMode')) {
+    nextPatch.attentionMode = normalizeAttentionMode(nextPatch.attentionMode)
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkSeedMode')) {
+    nextPatch.img2vidChunkSeedMode = normalizeChunkSeedMode(nextPatch.img2vidChunkSeedMode)
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkFrames')) {
+    const rawChunk = Number(nextPatch.img2vidChunkFrames)
+    if (!Number.isFinite(rawChunk) || rawChunk <= 0) {
+      nextPatch.img2vidChunkFrames = 0
+    } else {
+      nextPatch.img2vidChunkFrames = normalizeFrameCount(rawChunk)
+    }
+  }
+  const effectiveChunkFrames = Number(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkFrames')
+      ? nextPatch.img2vidChunkFrames
+      : current.img2vidChunkFrames,
+  )
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidOverlapFrames')) {
+    const rawOverlap = Number(nextPatch.img2vidOverlapFrames)
+    const overlapInt = Number.isFinite(rawOverlap) ? Math.trunc(rawOverlap) : current.img2vidOverlapFrames
+    const overlapMax = effectiveChunkFrames > 0 ? Math.max(0, effectiveChunkFrames - 1) : WAN_FRAMES_MAX - 1
+    nextPatch.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidAnchorAlpha')) {
+    const rawAnchor = Number(nextPatch.img2vidAnchorAlpha)
+    const fallback = Number(current.img2vidAnchorAlpha)
+    nextPatch.img2vidAnchorAlpha = Number.isFinite(rawAnchor) ? Math.min(1, Math.max(0, rawAnchor)) : fallback
+  }
+  return nextPatch
+}
+
 function setVideo(patch: Partial<WanVideoParams>): void {
   if (!tab.value) return
   const current = tab.value.params.video
-  store.updateParams(props.tabId, { video: { ...current, ...patch } }).catch(reportTabMutationError)
+  const normalizedPatch = normalizeVideoPatch(patch, current)
+  store.updateParams(props.tabId, { video: { ...current, ...normalizedPatch } }).catch(reportTabMutationError)
 }
 function setHigh(patch: Partial<WanStageParams>): void {
   if (!tab.value) return
@@ -771,6 +931,11 @@ const generateTitle = computed(() => {
 
 async function onGenerateClick(): Promise<void> {
   if (isRunning.value) return
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement) {
+    activeElement.blur()
+    await nextTick()
+  }
   if (!wanDependencyReady.value) {
     toast(wanDependencyError.value || 'WAN dependencies are not ready.')
     return
@@ -782,8 +947,9 @@ async function onGenerateClick(): Promise<void> {
   stopGuided()
   const snappedW = snapDim(video.value.width)
   const snappedH = snapDim(video.value.height)
-  if (snappedW !== video.value.width || snappedH !== video.value.height) {
-    setVideo({ width: snappedW, height: snappedH })
+  const snappedFrames = normalizeFrameCount(video.value.frames)
+  if (snappedW !== video.value.width || snappedH !== video.value.height || snappedFrames !== video.value.frames) {
+    setVideo({ width: snappedW, height: snappedH, frames: snappedFrames })
   }
   await generate()
 }
@@ -1106,6 +1272,13 @@ function buildCurrentSnapshot(): Record<string, unknown> {
     initImageName: video.value.initImageName || '',
     initVideoName: video.value.initVideoName || '',
     initVideoPath: video.value.initVideoPath || '',
+    attentionMode: video.value.attentionMode,
+    img2vid: {
+      chunkFrames: video.value.img2vidChunkFrames,
+      overlapFrames: video.value.img2vidOverlapFrames,
+      anchorAlpha: video.value.img2vidAnchorAlpha,
+      chunkSeedMode: video.value.img2vidChunkSeedMode,
+    },
     vid2vid: {
       strength: video.value.vid2vidStrength,
       method: video.value.vid2vidMethod,
@@ -1201,6 +1374,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
 
   const output = isRecord(snap.output) ? snap.output : {}
   const interpolation = isRecord(snap.interpolation) ? snap.interpolation : {}
+  const i2v = isRecord(snap.img2vid) ? snap.img2vid : {}
   const v2v = isRecord(snap.vid2vid) ? snap.vid2vid : {}
 
   setVideo({
@@ -1210,8 +1384,13 @@ function applyHistory(item: VideoRunHistoryItem): void {
     height: Number(snap.height) || video.value.height,
     frames: Number(snap.frames) || video.value.frames,
     fps: Number(snap.fps) || video.value.fps,
+    attentionMode: normalizeAttentionMode(snap.attentionMode),
     initVideoName: String(snap.initVideoName || video.value.initVideoName),
     initVideoPath: String(snap.initVideoPath || video.value.initVideoPath),
+    img2vidChunkFrames: typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) ? Number(i2v.chunkFrames) : video.value.img2vidChunkFrames,
+    img2vidOverlapFrames: typeof i2v.overlapFrames === 'number' && Number.isFinite(i2v.overlapFrames) ? Number(i2v.overlapFrames) : video.value.img2vidOverlapFrames,
+    img2vidAnchorAlpha: typeof i2v.anchorAlpha === 'number' && Number.isFinite(i2v.anchorAlpha) ? Number(i2v.anchorAlpha) : video.value.img2vidAnchorAlpha,
+    img2vidChunkSeedMode: normalizeChunkSeedMode(i2v.chunkSeedMode),
     vid2vidStrength: typeof v2v.strength === 'number' && Number.isFinite(v2v.strength) ? Number(v2v.strength) : video.value.vid2vidStrength,
     vid2vidMethod: (String(v2v.method || '').toLowerCase() === 'native' ? 'native' : 'flow_chunks'),
     vid2vidUseSourceFps: typeof v2v.useSourceFps === 'boolean' ? Boolean(v2v.useSourceFps) : video.value.vid2vidUseSourceFps,

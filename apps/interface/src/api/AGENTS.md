@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-02-16
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -28,6 +28,7 @@ Status: Active
 - 2026-02-15: Image/video payload contracts now always include `settings_revision`; per-request `smart_offload`/`smart_fallback`/`smart_cache` fields were removed (runtime flags remain `/api/options`-owned).
 - 2026-02-15: `client.ts` now caches `/api/options` revision and preserves structured HTTP error payloads (`status/detail/body`) so composables can handle stale-revision `409` conflicts.
 - 2026-02-16: `payloads_video.ts` no longer emits WAN scheduler overrides (`txt2vid_scheduler`/`img2vid_scheduler`/`vid2vid_scheduler` nor stage `scheduler`), aligning frontend payloads with WAN22 backend policy (scheduler is runtime-managed).
+- 2026-02-17: `payloads_video.ts` now normalizes WAN frame counts to the `4n+1` domain within `[9,401]`, emits `gguf_attention_mode` (`global|sliding`), and supports img2vid chunk controls (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`).
 - Inventory helpers (`InventoryResponse`) are served by `/api/models/inventory`; the client exposes both a cached fetch (`fetchModelInventory`) and a rescan path (`refreshModelInventory`) that posts to `/api/models/inventory/refresh` (assets like VAEs/Text Encoders/metadata roots).
 - `ModelsResponse` is served by `/api/models`; the client exposes a rescan path (`refreshModels`) that calls `/api/models?refresh=1` so the UI can pick up newly copied checkpoints without restarting the backend.
 - 2026-01-13: Added `fetchCheckpointMetadata()` for `/api/models/checkpoint-metadata` so the metadata modal payload can be fetched without constructing `file.*` keys client-side.

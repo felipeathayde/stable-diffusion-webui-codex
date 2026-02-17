@@ -23,9 +23,12 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 	- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (prompt, dims, steps, seed, stage params, assets).
+- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with chunking controls.
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
+- `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts into the `4n+1` domain.
+- `normalizeAttentionMode` (function): Normalizes attention mode input to `global|sliding`.
 - `stageToPayload` (function): Converts a `WanStageInput` into the backend stage override object (drops unset fields).
 - `isUnsetSentinel` (function): Detects UI sentinel values (e.g., “Automatic”/“Built-in”) that must not be sent as real asset paths.
 - `addWanAssets` (function): Injects selected WAN assets into the payload (skips unset/empty values).
@@ -47,8 +50,19 @@ const PromptSchema = z
   .refine((value) => value.length > 0, { message: 'Prompt must not be empty' })
 
 const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
+const WanAttentionModeEnum = z.enum(['global', 'sliding'])
+const Img2VidChunkSeedModeEnum = z.enum(['fixed', 'increment', 'random'])
 
 const WAN_DIM_STEP = 16
+const WAN_FRAMES_MIN = 9
+const WAN_FRAMES_MAX = 401
+
+const WanFrameCountSchema = z
+  .number()
+  .int()
+  .min(WAN_FRAMES_MIN)
+  .max(WAN_FRAMES_MAX)
+  .refine((value) => (value - 1) % 4 === 0, { message: `Expected 4n+1 frame count in [${WAN_FRAMES_MIN}, ${WAN_FRAMES_MAX}]` })
 
 const Sha256Schema = z
   .string()
@@ -107,6 +121,7 @@ const CommonWanVideoPayloadSchema = z
     wan_vae_sha: Sha256Schema,
     wan_tenc_sha: Sha256Schema,
     wan_tokenizer_dir: z.string().min(1).optional(),
+    gguf_attention_mode: WanAttentionModeEnum.optional(),
   })
   .strict()
 
@@ -117,7 +132,7 @@ export const WanTxt2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   txt2vid_height: z.number().int().min(8).max(8192),
   txt2vid_steps: z.number().int().min(1),
   txt2vid_fps: z.number().int().min(1).max(240),
-  txt2vid_num_frames: z.number().int().min(1).max(4096),
+  txt2vid_num_frames: WanFrameCountSchema,
   txt2vid_sampler: z.string().min(1).optional(),
   txt2vid_seed: z.number().int().optional(),
   txt2vid_cfg_scale: z.number().optional(),
@@ -132,12 +147,36 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   img2vid_height: z.number().int().min(8).max(8192),
   img2vid_steps: z.number().int().min(1),
   img2vid_fps: z.number().int().min(1).max(240),
-  img2vid_num_frames: z.number().int().min(1).max(4096),
+  img2vid_num_frames: WanFrameCountSchema,
   img2vid_sampler: z.string().min(1).optional(),
   img2vid_seed: z.number().int().optional(),
   img2vid_cfg_scale: z.number().optional(),
   img2vid_init_image: z.string().min(1),
-}).strict()
+  img2vid_chunk_frames: WanFrameCountSchema.optional(),
+  img2vid_overlap_frames: z.number().int().min(0).max(WAN_FRAMES_MAX - 1).optional(),
+  img2vid_anchor_alpha: z.number().min(0).max(1).optional(),
+  img2vid_chunk_seed_mode: Img2VidChunkSeedModeEnum.optional(),
+})
+  .strict()
+  .superRefine((payload, ctx) => {
+    const chunkFrames = payload.img2vid_chunk_frames
+    const overlapFrames = payload.img2vid_overlap_frames
+    if (overlapFrames !== undefined && chunkFrames === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "img2vid_overlap_frames requires img2vid_chunk_frames",
+        path: ['img2vid_overlap_frames'],
+      })
+      return
+    }
+    if (chunkFrames !== undefined && overlapFrames !== undefined && overlapFrames >= chunkFrames) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'img2vid_overlap_frames must be smaller than img2vid_chunk_frames',
+        path: ['img2vid_overlap_frames'],
+      })
+    }
+  })
 
 export type WanImg2VidPayload = z.infer<typeof WanImg2VidPayloadSchema>
 
@@ -148,7 +187,7 @@ export const WanVid2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   vid2vid_height: z.number().int().min(8).max(8192),
   vid2vid_steps: z.number().int().min(1),
   vid2vid_fps: z.number().int().min(1).max(240),
-  vid2vid_num_frames: z.number().int().min(1).max(4096),
+  vid2vid_num_frames: WanFrameCountSchema,
   vid2vid_sampler: z.string().min(1).optional(),
   vid2vid_seed: z.number().int().optional(),
   vid2vid_cfg_scale: z.number().optional(),
@@ -221,10 +260,19 @@ export interface WanVideoCommonInput {
   frames: number
   high: WanStageInput
   low: WanStageInput
+  attentionMode: 'global' | 'sliding'
   format: 'auto' | 'diffusers' | 'gguf'
   assets: WanAssetsInput
   output: WanVideoOutputInput
   interpolation: WanInterpolationInput
+}
+
+export interface WanImg2VidInput extends WanVideoCommonInput {
+  initImageData: string
+  chunkFrames?: number
+  overlapFrames?: number
+  anchorAlpha?: number
+  chunkSeedMode?: 'fixed' | 'increment' | 'random'
 }
 
 export interface WanVid2VidInput extends WanVideoCommonInput {
@@ -266,6 +314,29 @@ function snapWanDim(value: number): number {
   if (!Number.isFinite(value)) return value
   const v = Math.trunc(value)
   return Math.ceil(v / WAN_DIM_STEP) * WAN_DIM_STEP
+}
+
+function normalizeWanFrameCount(rawValue: number): number {
+  const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : WAN_FRAMES_MIN
+  const clamped = Math.min(WAN_FRAMES_MAX, Math.max(WAN_FRAMES_MIN, numeric))
+  if ((clamped - 1) % 4 === 0) return clamped
+
+  const down = clamped - (((clamped - 1) % 4 + 4) % 4)
+  const up = down + 4
+  const downInRange = down >= WAN_FRAMES_MIN
+  const upInRange = up <= WAN_FRAMES_MAX
+  if (downInRange && upInRange) {
+    const downDistance = Math.abs(clamped - down)
+    const upDistance = Math.abs(up - clamped)
+    return downDistance <= upDistance ? down : up
+  }
+  if (downInRange) return down
+  if (upInRange) return up
+  return WAN_FRAMES_MIN
+}
+
+function normalizeAttentionMode(value: 'global' | 'sliding' | string): 'global' | 'sliding' {
+  return String(value || '').trim().toLowerCase() === 'sliding' ? 'sliding' : 'global'
 }
 
 function stageToPayload(stage: WanStageInput): Record<string, unknown> {
@@ -352,6 +423,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
   const totalSteps = input.high.steps + input.low.steps
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
+  const frames = normalizeWanFrameCount(input.frames)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
@@ -360,7 +432,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
     txt2vid_width: width,
     txt2vid_height: height,
     txt2vid_fps: input.fps,
-    txt2vid_num_frames: input.frames,
+    txt2vid_num_frames: frames,
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
     // high/low stage steps differ.
     txt2vid_steps: totalSteps,
@@ -375,16 +447,18 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
+  payload.gguf_attention_mode = normalizeAttentionMode(input.attentionMode)
   if (input.format !== 'auto') payload.wan_format = input.format
   addWanAssets(payload, input.assets)
 
   return WanTxt2VidPayloadSchema.parse(payload)
 }
 
-export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageData: string }): WanImg2VidPayload {
+export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayload {
   const totalSteps = input.high.steps + input.low.steps
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
+  const frames = normalizeWanFrameCount(input.frames)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
@@ -393,7 +467,7 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
     img2vid_width: width,
     img2vid_height: height,
     img2vid_fps: input.fps,
-    img2vid_num_frames: input.frames,
+    img2vid_num_frames: frames,
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
     // high/low stage steps differ.
     img2vid_steps: totalSteps,
@@ -404,11 +478,30 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.img2vid_sampler = sampler
+  const rawChunkFrames = Number(input.chunkFrames)
+  const normalizedChunkFrames =
+    Number.isFinite(rawChunkFrames) && rawChunkFrames > 0 ? normalizeWanFrameCount(rawChunkFrames) : undefined
+  if (normalizedChunkFrames !== undefined) {
+    payload.img2vid_chunk_frames = normalizedChunkFrames
+    if (typeof input.overlapFrames === 'number' && Number.isFinite(input.overlapFrames)) {
+      payload.img2vid_overlap_frames = Math.max(0, Math.trunc(input.overlapFrames))
+    }
+    if (typeof input.anchorAlpha === 'number' && Number.isFinite(input.anchorAlpha)) {
+      payload.img2vid_anchor_alpha = Math.min(1, Math.max(0, input.anchorAlpha))
+    }
+    if (typeof input.chunkSeedMode === 'string') {
+      const chunkSeedMode = String(input.chunkSeedMode || '').trim().toLowerCase()
+      if (chunkSeedMode === 'fixed' || chunkSeedMode === 'increment' || chunkSeedMode === 'random') {
+        payload.img2vid_chunk_seed_mode = chunkSeedMode
+      }
+    }
+  }
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation)
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
+  payload.gguf_attention_mode = normalizeAttentionMode(input.attentionMode)
   if (input.format !== 'auto') payload.wan_format = input.format
   addWanAssets(payload, input.assets)
 
@@ -419,6 +512,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
   const totalSteps = input.high.steps + input.low.steps
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
+  const frames = normalizeWanFrameCount(input.frames)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
@@ -427,7 +521,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
     vid2vid_width: width,
     vid2vid_height: height,
     vid2vid_fps: input.fps,
-    vid2vid_num_frames: input.frames,
+    vid2vid_num_frames: frames,
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
     // high/low stage steps differ.
     vid2vid_steps: totalSteps,
@@ -460,6 +554,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
+  payload.gguf_attention_mode = normalizeAttentionMode(input.attentionMode)
   if (input.format !== 'auto') payload.wan_format = input.format
   addWanAssets(payload, input.assets)
 

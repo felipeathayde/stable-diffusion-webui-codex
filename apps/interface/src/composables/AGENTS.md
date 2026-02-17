@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-16
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -42,3 +42,4 @@ Status: Active
 - 2026-02-06: `useVideoGeneration(tabId)` now imports shared `WanAssetsParams` from `model_tabs.ts` (no local duplicate interface), keeping WAN asset typing aligned across store/view/composable layers.
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates `output.returnFrames` into common WAN payload input for all modes, fixing dropped `video_return_frames` requests from the composable path.
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates WAN stage `flowShift` (`high/low.flowShift` → `wan_high/wan_low.flow_shift`) so distill runs can enforce non-default scheduler shifts explicitly.
+- 2026-02-17: `useVideoGeneration(tabId)` now propagates WAN attention mode (`global|sliding`) and img2vid chunk controls (chunk/overlap/anchor/seed mode) into payload builders and run-history snapshots.

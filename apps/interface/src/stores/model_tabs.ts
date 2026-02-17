@@ -41,6 +41,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `serializationFailure` (function): Factory for typed fail-loud params serialization errors with contextual details.
 - `normalizeSerializableForPersist` (function): Recursively unwraps reactive/proxy branches into plain clone-safe structures for persistence.
 - `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
+- `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
+- `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/chunk/attention controls).
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
@@ -114,10 +116,15 @@ export interface WanVideoParams {
   height: number
   fps: number
   frames: number
+  attentionMode: 'global' | 'sliding'
   // Optional initial image (img2vid)
   useInitImage: boolean
   initImageData: string
   initImageName: string
+  img2vidChunkFrames: number
+  img2vidOverlapFrames: number
+  img2vidAnchorAlpha: number
+  img2vidChunkSeedMode: 'fixed' | 'increment' | 'random'
   // Optional initial video (vid2vid)
   useInitVideo: boolean
   initVideoPath: string
@@ -287,10 +294,15 @@ function defaultParams<T extends BaseTabType>(
       width: 768,
       height: 432,
       fps: 24,
-      frames: 16,
+      frames: 17,
+      attentionMode: 'global',
       useInitImage: false,
       initImageData: '',
       initImageName: '',
+      img2vidChunkFrames: 0,
+      img2vidOverlapFrames: 4,
+      img2vidAnchorAlpha: 0.2,
+      img2vidChunkSeedMode: 'increment',
       useInitVideo: false,
       initVideoPath: '',
       initVideoName: '',
@@ -447,18 +459,70 @@ function asParamsRecord(params: TabParamsByType[BaseTabType]): Record<string, un
   return params as unknown as Record<string, unknown>
 }
 
+function normalizeWanFrameCount(rawValue: number, min = 9, max = 401): number {
+  const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : min
+  const clamped = Math.min(max, Math.max(min, numeric))
+  if ((clamped - 1) % 4 === 0) return clamped
+
+  const down = clamped - (((clamped - 1) % 4 + 4) % 4)
+  const up = down + 4
+  const downInRange = down >= min
+  const upInRange = up <= max
+  if (downInRange && upInRange) {
+    const downDistance = Math.abs(clamped - down)
+    const upDistance = Math.abs(up - clamped)
+    return downDistance <= upDistance ? down : up
+  }
+  if (downInRange) return down
+  if (upInRange) return up
+  return min
+}
+
+function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVideoParams): WanVideoParams {
+  const merged: WanVideoParams = { ...defaults, ...raw }
+  merged.frames = normalizeWanFrameCount(Number(merged.frames))
+
+  const attnMode = String(merged.attentionMode || '').trim().toLowerCase()
+  merged.attentionMode = attnMode === 'sliding' ? 'sliding' : 'global'
+
+  const chunkRaw = Number(merged.img2vidChunkFrames)
+  if (!Number.isFinite(chunkRaw) || chunkRaw <= 0) {
+    merged.img2vidChunkFrames = 0
+  } else {
+    merged.img2vidChunkFrames = normalizeWanFrameCount(chunkRaw, 9, 401)
+  }
+
+  const overlapRaw = Number(merged.img2vidOverlapFrames)
+  const overlapInt = Number.isFinite(overlapRaw) ? Math.trunc(overlapRaw) : defaults.img2vidOverlapFrames
+  const overlapMax = merged.img2vidChunkFrames > 0 ? Math.max(0, merged.img2vidChunkFrames - 1) : 400
+  merged.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
+
+  const anchorRaw = Number(merged.img2vidAnchorAlpha)
+  merged.img2vidAnchorAlpha = Number.isFinite(anchorRaw) ? Math.min(1, Math.max(0, anchorRaw)) : defaults.img2vidAnchorAlpha
+
+  const seedMode = String(merged.img2vidChunkSeedMode || '').trim().toLowerCase()
+  if (seedMode !== 'fixed' && seedMode !== 'increment' && seedMode !== 'random') {
+    merged.img2vidChunkSeedMode = defaults.img2vidChunkSeedMode
+  } else {
+    merged.img2vidChunkSeedMode = seedMode
+  }
+
+  return merged
+}
+
 function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): TabParamsByType['wan'] {
   const patch = asRecordObject(raw) as Partial<TabParamsByType['wan']>
   const highPatch = asRecordObject(patch.high)
   const lowPatch = asRecordObject(patch.low)
   const videoPatch = asRecordObject(patch.video)
   const assetsPatch = asRecordObject(patch.assets)
+  const normalizedVideo = normalizeWanVideoParams(videoPatch as Partial<WanVideoParams>, defaults.video)
   return {
     ...defaults,
     ...patch,
     high: { ...defaults.high, ...(highPatch as Partial<WanStageParams>) },
     low: { ...defaults.low, ...(lowPatch as Partial<WanStageParams>) },
-    video: { ...defaults.video, ...(videoPatch as Partial<WanVideoParams>) },
+    video: normalizedVideo,
     assets: { ...defaults.assets, ...(assetsPatch as Partial<WanAssetsParams>) },
   }
 }

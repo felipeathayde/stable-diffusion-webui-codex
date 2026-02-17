@@ -34,7 +34,8 @@ describe('WAN video payload builders', () => {
       width: 768,
       height: 432,
       fps: 24,
-      frames: 16,
+      frames: 17,
+      attentionMode: 'global',
       high: {
         modelSha: hiSha,
         sampler: 'euler a',
@@ -106,8 +107,13 @@ describe('WAN video payload builders', () => {
       width: 768,
       height: 432,
       fps: 24,
-      frames: 16,
+      frames: 17,
+      attentionMode: 'sliding',
       initImageData: 'data:image/png;base64,AAAA',
+      chunkFrames: 37,
+      overlapFrames: 8,
+      anchorAlpha: 0.35,
+      chunkSeedMode: 'increment',
       high: {
         modelSha: sha,
         sampler: '',
@@ -155,7 +161,76 @@ describe('WAN video payload builders', () => {
     expect(payload.wan_tenc_sha).toBe(sha)
     expect(payload.wan_vae_sha).toBe(sha)
     expect(payload.wan_metadata_repo).toBe(metaRepo)
+    expect(payload.gguf_attention_mode).toBe('sliding')
+    expect(payload.img2vid_chunk_frames).toBe(37)
+    expect(payload.img2vid_overlap_frames).toBe(8)
+    expect(payload.img2vid_anchor_alpha).toBe(0.35)
+    expect(payload.img2vid_chunk_seed_mode).toBe('increment')
     expect(payload).not.toHaveProperty('img2vid_scheduler')
+  })
+
+  it('omits img2vid chunk-only fields when chunkFrames is disabled', () => {
+    const sha = '9'.repeat(64)
+    const metaRepo = 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
+    const payload = buildWanImg2VidPayload({
+      device: 'cpu',
+      settingsRevision: 17,
+      prompt: 'p',
+      negativePrompt: '',
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 17,
+      attentionMode: 'global',
+      initImageData: 'data:image/png;base64,AAAA',
+      chunkFrames: 0,
+      overlapFrames: 6,
+      anchorAlpha: 0.6,
+      chunkSeedMode: 'random',
+      high: {
+        modelSha: sha,
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      low: {
+        modelSha: sha,
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      format: 'auto',
+      assets: {
+        metadataRepo: metaRepo,
+        textEncoderSha: sha,
+        vaeSha: sha,
+      },
+      output: {
+        filenamePrefix: '',
+        format: '',
+        pixFmt: '',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+        trimToAudio: false,
+        saveMetadata: true,
+        saveOutput: true,
+      },
+      interpolation: {
+        enabled: false,
+        model: '',
+        times: 2,
+      },
+    })
+
+    expect(payload).not.toHaveProperty('img2vid_chunk_frames')
+    expect(payload).not.toHaveProperty('img2vid_overlap_frames')
+    expect(payload).not.toHaveProperty('img2vid_anchor_alpha')
+    expect(payload).not.toHaveProperty('img2vid_chunk_seed_mode')
   })
 
   it('builds a vid2vid payload (multipart upload path optional) with flow settings', () => {
@@ -169,7 +244,8 @@ describe('WAN video payload builders', () => {
       width: 768,
       height: 432,
       fps: 24,
-      frames: 96,
+      frames: 97,
+      attentionMode: 'global',
       strength: 0.75,
       method: 'flow_chunks',
       useSourceFps: true,
@@ -219,7 +295,8 @@ describe('WAN video payload builders', () => {
       width: 480,
       height: 360,
       fps: 24,
-      frames: 16,
+      frames: 17,
+      attentionMode: 'global',
       high: { modelSha: sha, sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
       low: { modelSha: sha, sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
       format: 'auto',

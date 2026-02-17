@@ -74,3 +74,4 @@ Status: Active
 - 2026-02-16: `models.py` prompt-token endpoint now recognizes `wan22_animate_14b`; `ui.py` tab-type normalization accepts `wan22_animate_14b` and normalizes all WAN aliases to `wan`.
 - 2026-02-17: `generation.py` WAN variant resolution now preserves 14B identity across repo/path hints (expanded token set + 14B-first heuristics) and avoids silent 14B→5B collapse during engine-key resolution.
 - 2026-02-17: `generation.py` keeps animate metadata hints remapped to the task-capable `wan22_14b` lane for txt2vid/img2vid while preserving the requested variant metadata (`wan_engine_variant`).
+- 2026-02-17: `generation.py` WAN video core validation now enforces frame domain `4n+1` in `[9,401]`, accepts strict `gguf_attention_mode` (`global|sliding`), and validates/forwards img2vid chunk controls (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`) fail-loud.

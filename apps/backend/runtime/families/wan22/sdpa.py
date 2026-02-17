@@ -29,21 +29,27 @@ _SDPA_LOG_COUNT = 0
 
 _SDPA_SETTINGS = {
     "policy": "mem_efficient",
+    "mode": "global",
     "chunk": 0,
 }
 
 
-def set_sdpa_settings(policy: Optional[str], chunk: Optional[int]) -> None:
-    pol = (policy or _SDPA_SETTINGS["policy"]).strip().lower()
+def set_sdpa_settings(policy: Optional[str], chunk: Optional[int], attention_mode: Optional[str] = None) -> None:
+    pol = str(policy if policy is not None else "mem_efficient").strip().lower()
     if pol not in ("mem_efficient", "flash", "math"):
-        pol = _SDPA_SETTINGS["policy"]
+        pol = "mem_efficient"
+    mode = str(attention_mode if attention_mode is not None else "global").strip().lower()
+    if mode not in ("global", "sliding"):
+        raise RuntimeError(f"WAN22 SDPA: unsupported attention mode {attention_mode!r} (expected 'global' or 'sliding').")
     ch = int(chunk) if (chunk is not None and int(chunk) > 0) else 0
     _SDPA_SETTINGS["policy"] = pol
+    _SDPA_SETTINGS["mode"] = mode
     _SDPA_SETTINGS["chunk"] = ch
 
 
 def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = False) -> torch.Tensor:
     pol = str(_SDPA_SETTINGS["policy"]).strip().lower()
+    mode = str(_SDPA_SETTINGS["mode"]).strip().lower()
     ch = int(_SDPA_SETTINGS["chunk"])
 
     ctx = nullcontext()
@@ -96,9 +102,10 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
             import logging
 
             logging.getLogger("backend.runtime.wan22.sdpa").info(
-                "sdpa[n=%d]: policy=%s effective=%s chunk=%d device=%s dtype=%s qkv=%s",
+                "sdpa[n=%d]: policy=%s mode=%s effective=%s chunk=%d device=%s dtype=%s qkv=%s",
                 _SDPA_LOG_COUNT,
                 pol,
+                mode,
                 eff,
                 ch,
                 str(q.device),
@@ -108,14 +115,34 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
         except Exception:
             pass
 
-    if ch and ch > 0:
+    if mode == "sliding":
+        if ch <= 0:
+            raise RuntimeError("WAN22 SDPA: sliding attention mode requires gguf_attn_chunk > 0.")
         with ctx:
-            B, H, L, D = q.shape
+            _, _, length, _ = q.shape
             out_chunks = []
-            for s in range(0, L, ch):
-                e = min(L, s + ch)
+            for start in range(0, length, ch):
+                end = min(length, start + ch)
+                window_start = max(0, start - ch)
+                window_end = min(length, end + ch)
                 out_chunks.append(
-                    torch.nn.functional.scaled_dot_product_attention(q[:, :, s:e], k, v, is_causal=causal)
+                    torch.nn.functional.scaled_dot_product_attention(
+                        q[:, :, start:end],
+                        k[:, :, window_start:window_end],
+                        v[:, :, window_start:window_end],
+                        is_causal=causal,
+                    )
+                )
+            return torch.cat(out_chunks, dim=2)
+
+    if mode == "global" and ch > 0:
+        with ctx:
+            _, _, length, _ = q.shape
+            out_chunks = []
+            for start in range(0, length, ch):
+                end = min(length, start + ch)
+                out_chunks.append(
+                    torch.nn.functional.scaled_dot_product_attention(q[:, :, start:end], k, v, is_causal=causal)
                 )
             return torch.cat(out_chunks, dim=2)
     with ctx:

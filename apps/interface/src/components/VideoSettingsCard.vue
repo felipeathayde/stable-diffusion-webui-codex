@@ -12,6 +12,8 @@ Renders sliders for video frame count and FPS and derives an approximate duratio
 Symbols (top-level; keep in sync; no ghosts):
 - `VideoSettingsCard` (component): Video settings card for video generation parameters.
 - `durationLabel` (const): Computed duration label derived from frames/fps.
+- `normalizeFrames` (function): Clamps/snap-normalizes frame count into the `4n+1` domain.
+- `onFramesUpdate` (function): Emits normalized frame values for slider/input updates.
 -->
 
 <template>
@@ -22,14 +24,25 @@ Symbols (top-level; keep in sync; no ghosts):
         :modelValue="frames"
         :min="minFrames"
         :max="maxFrames"
-        :step="1"
+        :step="4"
         :inputStep="1"
-        :nudgeStep="1"
+        :nudgeStep="4"
         inputClass="cdx-input-w-sm"
-        @update:modelValue="(v) => emit('update:frames', v)"
+        @update:modelValue="onFramesUpdate"
       >
+        <template #right>
+          <NumberStepperInput
+            :modelValue="frames"
+            :min="minFrames"
+            :max="maxFrames"
+            :step="1"
+            :nudgeStep="4"
+            :inputClass="'cdx-input-w-sm'"
+            @update:modelValue="onFramesUpdate"
+          />
+        </template>
         <template #below>
-          <span class="caption">min {{ minFrames }} · max {{ maxFrames }}</span>
+          <span class="caption">4n+1 · min {{ minFrames }} · max {{ maxFrames }}</span>
         </template>
       </SliderField>
       <SliderField
@@ -54,6 +67,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed } from 'vue'
 import SliderField from './ui/SliderField.vue'
+import NumberStepperInput from './ui/NumberStepperInput.vue'
 
 const props = withDefaults(defineProps<{
   frames: number
@@ -65,8 +79,8 @@ const props = withDefaults(defineProps<{
   maxFps?: number
 }>(), {
   embedded: false,
-  minFrames: 8,
-  maxFrames: 64,
+  minFrames: 9,
+  maxFrames: 401,
   minFps: 8,
   maxFps: 60,
 })
@@ -87,6 +101,32 @@ const minFrames = computed(() => props.minFrames)
 const maxFrames = computed(() => props.maxFrames)
 const minFps = computed(() => props.minFps)
 const maxFps = computed(() => props.maxFps)
+
+function normalizeFrames(rawValue: number): number {
+  const min = Number(minFrames.value) || 1
+  const max = Number(maxFrames.value) || min
+  const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : min
+  const clamped = Math.min(max, Math.max(min, numeric))
+
+  if ((clamped - 1) % 4 === 0) return clamped
+
+  const down = clamped - (((clamped - 1) % 4 + 4) % 4)
+  const up = down + 4
+  const downInRange = down >= min
+  const upInRange = up <= max
+  if (downInRange && upInRange) {
+    const downDistance = Math.abs(clamped - down)
+    const upDistance = Math.abs(up - clamped)
+    return downDistance <= upDistance ? down : up
+  }
+  if (downInRange) return down
+  if (upInRange) return up
+  return min
+}
+
+function onFramesUpdate(value: number): void {
+  emit('update:frames', normalizeFrames(value))
+}
 </script>
 
 <!-- Uses shared styles (gen-card layout avoided to keep focus on video-only params) -->

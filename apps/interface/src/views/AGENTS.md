@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-08
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -38,6 +38,7 @@ Status: Active
 - 2026-01-21: WAN stage LoRA selection is sha-based (`loraSha` in params → payload `lora_sha`).
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.
 - 2026-02-17: `WANTab.vue` Video Aspect selector now includes `Image` mode; when selected, width/height lock to the current init-image aspect ratio (auto-falls back to `Free` if no init image is available).
+- 2026-02-17: `WANTab.vue` now exposes WAN attention mode (`global|sliding`) and img2vid chunk controls with explicit tooltips for `anchor_alpha` and `chunk_seed_mode`; frame values normalize to nearest `4n+1` on blur and immediately before Generate (including direct click on Generate).
 - 2026-01-23: `WANTab.vue` snaps WAN video width/height to multiples of 16 (rounded up; Diffusers parity) so invalid sizes never reach the backend.
 - 2026-01-25: `ImageModelTab.vue` CLIP Skip now allows `0` as “use default” (sends `clip_skip=0` so clip-skip state does not leak across jobs).
 - 2026-01-27: `WANTab.vue` supports video-first WAN results (exported video shown even when frames are omitted); when `Return frames` is disabled and a video exists, the frames viewer empty state shows “Frames not returned” with a hint.

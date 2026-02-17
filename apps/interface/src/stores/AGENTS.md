@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-02-15
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -62,3 +62,4 @@ Status: Active
 - 2026-02-06: `model_tabs.ts` and `xyz.ts` now use centralized taxonomy/default helpers (`utils/engine_taxonomy.ts`) and prefer backend sampler/scheduler defaults (with shared fallback policy).
 - 2026-02-06: `model_tabs.ts` now exports typed tab-param contracts (`TabParamsByType`, `TabByType`, `WanAssetsParams`) as the Phase 5 baseline for removing `any` usage across WAN/Image consumers.
 - 2026-02-06: `model_tabs.reorder(...)` now rejects duplicate ids explicitly, and `model_tabs.updateParams(...)` rollback snapshots only touched keys (avoids full deep-clone cost for large tab params like init-image payloads).
+- 2026-02-17: `model_tabs.ts` WAN video params now include `attentionMode` + img2vid chunk controls, and normalization clamps/snap-normalizes WAN frame/chunk counts to the `4n+1` domain within `[9,401]` during hydration/persistence.

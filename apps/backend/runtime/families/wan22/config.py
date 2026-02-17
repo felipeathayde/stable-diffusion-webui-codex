@@ -74,6 +74,7 @@ class RunConfig:
     low: Optional[StageConfig] = None
     # Memory/attention controls (optional)
     sdpa_policy: Optional[str] = None  # 'mem_efficient' | 'flash' | 'math'
+    attention_mode: str = "global"  # 'global' | 'sliding'
     attn_chunk_size: Optional[int] = None  # split attention along sequence if set (>0)
     gguf_cache_policy: Optional[str] = None  # 'none' | 'cpu_lru'
     gguf_cache_limit_mb: Optional[int] = None  # MB limit for cpu_lru cache
@@ -608,11 +609,29 @@ def build_wan22_gguf_run_config(
             f"got {te_kernel_required_raw!r}."
         )
 
+    attention_mode_raw = extras.get("gguf_attention_mode")
+    attention_mode: str = "global"
+    if attention_mode_raw is not None:
+        attention_mode = str(attention_mode_raw).strip().lower()
+        if attention_mode not in {"global", "sliding"}:
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_attention_mode' must be 'global' or 'sliding' when provided, "
+                f"got {attention_mode_raw!r}."
+            )
+
+    attn_chunk_size = (
+        int(extras.get("gguf_attn_chunk", 0))
+        if extras.get("gguf_attn_chunk") not in (None, "", 0)
+        else None
+    )
+    if attention_mode == "sliding" and attn_chunk_size is None:
+        attn_chunk_size = 1024
+
     return RunConfig(
         width=width,
         height=height,
         fps=int(getattr(request, "fps", 24) or 24),
-        num_frames=int(getattr(request, "num_frames", 16) or 16),
+        num_frames=int(getattr(request, "num_frames", 17) or 17),
         guidance_scale=getattr(request, "guidance_scale", None),
         dtype=str(dtype or "fp16"),
         device=str(device or "cuda"),
@@ -626,7 +645,8 @@ def build_wan22_gguf_run_config(
         tokenizer_dir=tokenizer_dir,
         metadata_dir=meta_dir,
         sdpa_policy=(extras.get("gguf_sdpa_policy") if extras.get("gguf_sdpa_policy") is not None else None),
-        attn_chunk_size=(int(extras.get("gguf_attn_chunk", 0)) if extras.get("gguf_attn_chunk") not in (None, "", 0) else None),
+        attention_mode=attention_mode,
+        attn_chunk_size=attn_chunk_size,
         gguf_cache_policy=(extras.get("gguf_cache_policy") if extras.get("gguf_cache_policy") is not None else None),
         gguf_cache_limit_mb=(
             int(extras.get("gguf_cache_limit_mb", 0)) if extras.get("gguf_cache_limit_mb") not in (None, "", 0) else None

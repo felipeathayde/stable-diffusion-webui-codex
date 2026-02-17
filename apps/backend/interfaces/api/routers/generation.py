@@ -1500,6 +1500,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         steps_val = int(payload.get(f'{task_prefix}_steps', default_steps))
         fps_val = int(payload.get(f'{task_prefix}_fps', default_fps))
         frames_val = int(payload.get(f'{task_prefix}_num_frames', default_frames))
+        if frames_val < 9 or frames_val > 401:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{task_prefix}_num_frames' must be within [9, 401] (4n+1 domain), got {frames_val}.",
+            )
+        if (frames_val - 1) % 4 != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{task_prefix}_num_frames' must satisfy 4n+1, got {frames_val}.",
+            )
         sampler_name = str(payload.get(f'{task_prefix}_sampler', payload.get(f'{task_prefix}_sampling', default_sampler)))
         scheduler_name = str(payload.get(f'{task_prefix}_scheduler', default_scheduler))
         try:
@@ -1545,7 +1555,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_height=432,
             default_steps=30,
             default_fps=24,
-            default_frames=16,
+            default_frames=17,
             default_sampler=default_sampler,
             default_scheduler=default_scheduler,
             default_seed=-1,
@@ -1566,7 +1576,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_height=432,
             default_steps=30,
             default_fps=24,
-            default_frames=16,
+            default_frames=17,
             default_sampler=default_sampler,
             default_scheduler=default_scheduler,
             default_seed=-1,
@@ -2213,6 +2223,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             'gguf_offload',
             'gguf_offload_level',
             'gguf_sdpa_policy',
+            'gguf_attention_mode',
             'gguf_attn_chunk',
             'gguf_cache_policy',
             'gguf_cache_limit_mb',
@@ -2223,6 +2234,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         ):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
+        if 'gguf_attention_mode' in extras:
+            attn_mode = str(extras.get('gguf_attention_mode') or '').strip().lower()
+            if attn_mode not in {'global', 'sliding'}:
+                raise HTTPException(status_code=400, detail=f"Invalid gguf_attention_mode: {extras.get('gguf_attention_mode')!r}")
+            extras['gguf_attention_mode'] = attn_mode
 
         engine_key, wan_engine_variant = _resolve_wan22_engine_key(
             payload,
@@ -2399,6 +2415,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             'gguf_offload',
             'gguf_offload_level',
             'gguf_sdpa_policy',
+            'gguf_attention_mode',
             'gguf_attn_chunk',
             'gguf_cache_policy',
             'gguf_cache_limit_mb',
@@ -2409,6 +2426,50 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         ):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
+        if 'gguf_attention_mode' in extras:
+            attn_mode = str(extras.get('gguf_attention_mode') or '').strip().lower()
+            if attn_mode not in {'global', 'sliding'}:
+                raise HTTPException(status_code=400, detail=f"Invalid gguf_attention_mode: {extras.get('gguf_attention_mode')!r}")
+            extras['gguf_attention_mode'] = attn_mode
+        raw_chunk_frames = payload.get('img2vid_chunk_frames')
+        if isinstance(raw_chunk_frames, str):
+            raw_chunk_frames = raw_chunk_frames.strip()
+        has_chunk_frames = raw_chunk_frames not in (None, '', 0, '0')
+        has_overlap_frames = payload.get('img2vid_overlap_frames') not in (None, '')
+        has_anchor_alpha = payload.get('img2vid_anchor_alpha') not in (None, '')
+        has_chunk_seed_mode = payload.get('img2vid_chunk_seed_mode') not in (None, '')
+        if not has_chunk_frames and (has_overlap_frames or has_anchor_alpha or has_chunk_seed_mode):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "'img2vid_overlap_frames', 'img2vid_anchor_alpha', and 'img2vid_chunk_seed_mode' "
+                    "require 'img2vid_chunk_frames'."
+                ),
+            )
+        if has_chunk_frames:
+            chunk_frames = _require_int_field(payload, 'img2vid_chunk_frames', minimum=9, maximum=401)
+            if (chunk_frames - 1) % 4 != 0:
+                raise HTTPException(status_code=400, detail=f"'img2vid_chunk_frames' must satisfy 4n+1, got {chunk_frames}.")
+            extras['img2vid_chunk_frames'] = chunk_frames
+        if has_overlap_frames:
+            overlap_frames = _require_int_field(payload, 'img2vid_overlap_frames', minimum=0, maximum=400)
+            extras['img2vid_overlap_frames'] = overlap_frames
+        if (
+            extras.get('img2vid_chunk_frames') is not None
+            and extras.get('img2vid_overlap_frames') is not None
+            and int(extras['img2vid_overlap_frames']) >= int(extras['img2vid_chunk_frames'])
+        ):
+            raise HTTPException(status_code=400, detail="'img2vid_overlap_frames' must be smaller than 'img2vid_chunk_frames'.")
+        if has_anchor_alpha:
+            anchor_alpha = _require_float_field(payload, 'img2vid_anchor_alpha')
+            if anchor_alpha < 0.0 or anchor_alpha > 1.0:
+                raise HTTPException(status_code=400, detail="'img2vid_anchor_alpha' must be within [0, 1].")
+            extras['img2vid_anchor_alpha'] = anchor_alpha
+        if has_chunk_seed_mode:
+            seed_mode = str(payload.get('img2vid_chunk_seed_mode') or '').strip().lower()
+            if seed_mode not in {'fixed', 'increment', 'random'}:
+                raise HTTPException(status_code=400, detail=f"Invalid img2vid_chunk_seed_mode: {payload.get('img2vid_chunk_seed_mode')!r}")
+            extras['img2vid_chunk_seed_mode'] = seed_mode
 
         engine_key, wan_engine_variant = _resolve_wan22_engine_key(
             payload,

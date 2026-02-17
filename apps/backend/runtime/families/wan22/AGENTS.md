@@ -71,6 +71,7 @@ Status: Active
 - 2026-02-17: `run.py` now resolves WAN variant identity from both stage filenames (`wan_high` + `wan_low`) and fails loud on explicit high/low 5B↔14B mismatches for txt2vid/img2vid (batch + streaming), preventing silent mixed-lane execution.
 - 2026-02-17: WAN22 3D VAE loading remains native-only (`AutoencoderCodex3D`) for both codex/diffusers key styles; wrapper-prefix normalization happens before lane detection, and style-specific remap still feeds strict native load.
 - 2026-02-17: `runtime/common/vae_codex3d.py` now mirrors upstream temporal cache/chunk semantics for encode/decode (causal-conv cache, 3D upsample cache handling, nearest-exact upsample), restoring native decode parity for WAN2.2 14B I2V VAE outputs.
+- 2026-02-17: WAN22 GGUF attention path now supports explicit `gguf_attention_mode` (`global|sliding`) with fail-loud parsing in `config.py`; sliding mode auto-uses `gguf_attn_chunk=1024` when omitted, `sdpa.py` applies local K/V windows per chunk, and `run.py` propagates mode into txt2vid/img2vid batch+stream entrypoints.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

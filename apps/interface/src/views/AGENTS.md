@@ -37,6 +37,7 @@ Status: Active
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.
 - 2026-01-21: WAN stage LoRA selection is sha-based (`loraSha` in params → payload `lora_sha`).
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.
+- 2026-02-17: `WANTab.vue` Video Aspect selector now includes `Image` mode; when selected, width/height lock to the current init-image aspect ratio (auto-falls back to `Free` if no init image is available).
 - 2026-01-23: `WANTab.vue` snaps WAN video width/height to multiples of 16 (rounded up; Diffusers parity) so invalid sizes never reach the backend.
 - 2026-01-25: `ImageModelTab.vue` CLIP Skip now allows `0` as “use default” (sends `clip_skip=0` so clip-skip state does not leak across jobs).
 - 2026-01-27: `WANTab.vue` supports video-first WAN results (exported video shown even when frames are omitted); when `Return frames` is disabled and a video exists, the frames viewer empty state shows “Frames not returned” with a hint.

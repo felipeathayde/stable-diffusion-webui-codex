@@ -66,6 +66,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
 - `readFileAsDataURL` (function): Reads a File into a data URL (used by init-image handling).
+- `readImageDimensions` (function): Reads image width/height from an image source URL (used for init-image aspect locking).
 -->
 
 <template>
@@ -160,6 +161,7 @@ Symbols (top-level; keep in sync; no ghosts):
                   >
                     <option value="free">Free</option>
                     <option value="current">Lock</option>
+                    <option value="image" :disabled="initImageAspectRatio === null">Image</option>
                     <option value="16:9">16:9</option>
                     <option value="1:1">1:1</option>
                     <option value="9:16">9:16</option>
@@ -1359,9 +1361,11 @@ const diffText = computed(() => {
     .join('\n')
 })
 
-type AspectMode = 'free' | 'current' | '16:9' | '1:1' | '9:16' | '4:3' | '3:4'
+type AspectMode = 'free' | 'current' | 'image' | '16:9' | '1:1' | '9:16' | '4:3' | '3:4'
 const aspectMode = ref<AspectMode>('free')
 const aspectRatio = ref<number | null>(null)
+const initImageAspectRatio = ref<number | null>(null)
+let initImageAspectTicket = 0
 
 function snapDim(value: number): number {
   const step = 16
@@ -1377,6 +1381,7 @@ function ratioForMode(mode: AspectMode): number | null {
     const h = Number(video.value.height) || 0
     return h > 0 ? w / h : null
   }
+  if (mode === 'image') return initImageAspectRatio.value
   if (mode === '16:9') return 16 / 9
   if (mode === '1:1') return 1
   if (mode === '9:16') return 9 / 16
@@ -1394,7 +1399,7 @@ function onAspectModeChange(e: Event): void {
   }
   const ratio = ratioForMode(mode)
   aspectRatio.value = ratio
-  if (!ratio) return
+  if (!ratio || ratio <= 0) return
 
   // For fixed presets, snap the current size into the chosen ratio (preserve width).
   if (mode !== 'current') {
@@ -1425,6 +1430,53 @@ function applyHeight(value: number): void {
   }
   setVideo({ height: nextH })
 }
+
+watch(
+  () => video.value.initImageData,
+  async (src) => {
+    const ticket = ++initImageAspectTicket
+    const imageSrc = String(src || '').trim()
+    if (!imageSrc) {
+      initImageAspectRatio.value = null
+      if (aspectMode.value === 'image') {
+        aspectMode.value = 'free'
+        aspectRatio.value = null
+      }
+      return
+    }
+
+    initImageAspectRatio.value = null
+    if (aspectMode.value === 'image') {
+      aspectRatio.value = null
+    }
+
+    try {
+      const { width, height } = await readImageDimensions(imageSrc)
+      if (ticket !== initImageAspectTicket) return
+      const ratio = width > 0 && height > 0 ? width / height : null
+      initImageAspectRatio.value = ratio
+      if (aspectMode.value !== 'image') return
+      if (!ratio || ratio <= 0) {
+        aspectMode.value = 'free'
+        aspectRatio.value = null
+        return
+      }
+      aspectRatio.value = ratio
+      const w = snapDim(Number(video.value.width) || 64)
+      const h = snapDim(w / ratio)
+      setVideo({ width: w, height: h })
+    } catch {
+      if (ticket !== initImageAspectTicket) return
+      console.warn('[WANTab] Failed to read init image dimensions for Image aspect mode.')
+      initImageAspectRatio.value = null
+      if (aspectMode.value === 'image') {
+        aspectMode.value = 'free'
+        aspectRatio.value = null
+      }
+    }
+  },
+  { immediate: true },
+)
 
 const workflowBusy = ref(false)
 
@@ -1464,6 +1516,15 @@ function readFileAsDataURL(file: File): Promise<string> {
     reader.onload = () => resolve(String(reader.result))
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(file)
+  })
+}
+
+function readImageDimensions(src: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve({ width: image.naturalWidth || image.width, height: image.naturalHeight || image.height })
+    image.onerror = () => reject(new Error('Failed to load image'))
+    image.src = src
   })
 }
 

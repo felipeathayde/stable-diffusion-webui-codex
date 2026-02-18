@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Native LoRA application pipeline (no legacy modules).
 Converts LoRA files into patch dictionaries and applies them to the engine's denoiser and text encoders via the `ModelPatcher` system, then materializes LoRA application by refreshing LoRAs on the patchers (merge default; optional on-the-fly via `CODEX_LORA_APPLY_MODE=online`).
+Fails loud when selected LoRAs do not match any runtime parameters (unsupported/incompatible key layout).
 Patch dictionary keys may be plain parameter names or `(parameter, offset)` tuples for slice patches (e.g. fused-QKV text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -170,22 +171,34 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
         # Build per-model patch dictionaries
         unet_patch, _ = load_lora(tensor_map, to_load=unet_map)
         clip_patch, _ = load_lora(tensor_map, to_load=clip_map)
+        if not unet_patch and not clip_patch:
+            raise RuntimeError(
+                "LoRA key layout mismatch: no compatible layers were found for "
+                f"'{path}' on the active model keymap."
+            )
 
         # Apply to patchers (record how many keys matched)
-        stats.params_touched += _apply_patches(
+        unet_touched = _apply_patches(
             unet_patcher,
             filename=path,
             patch_dict=unet_patch,
             strength=weight,
             online_mode=online_mode,
         )
-        stats.params_touched += _apply_patches(
+        clip_touched = _apply_patches(
             clip_patcher,
             filename=path,
             patch_dict=clip_patch,
             strength=weight,
             online_mode=online_mode,
         )
+        touched_total = unet_touched + clip_touched
+        if touched_total <= 0:
+            raise RuntimeError(
+                "LoRA apply mismatch: zero parameters were touched for "
+                f"'{path}'. Verify LoRA/base-model compatibility and key layout."
+            )
+        stats.params_touched += touched_total
         stats.files += 1
 
     # Materialize merges onto actual model parameters

@@ -13,6 +13,7 @@ including architecture-aware UNet mapping using diffusers key conversion.
 Symbols (top-level; keep in sync; no ghosts):
 - `LORA_CLIP_MAP` (constant): CLIP attention/MLP suffix mapping used for legacy LoRA key compatibility.
 - `_register_generic_weights` (function): Adds generic `{prefix: weight}` mappings for raw state dict keys.
+- `_build_unet_state_lookup` (function): Builds a canonical+runtime UNet key lookup using the SDXL keymap and runtime state keys.
 - `model_lora_keys_clip` (function): Builds the LoRA-key → CLIP/text-encoder patch-target map (supports slice targets for fused-QKV encoders).
 - `model_lora_keys_unet` (function): Builds the LoRA-key → UNet parameter map (includes diffusers mapping for UNet architectures).
 """
@@ -24,6 +25,9 @@ from typing import Dict
 from apps.backend.runtime.misc.diffusers_state_dict import unet_to_diffusers
 from apps.backend.runtime.model_registry.specs import CodexCoreArchitecture
 from apps.backend.runtime.adapters.base import PatchTarget
+from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import (
+    remap_sdxl_checkpoint_state_dict,
+)
 
 
 LORA_CLIP_MAP = {
@@ -41,6 +45,30 @@ def _register_generic_weights(state_dict_keys, key_map):
         if key.endswith(".weight"):
             key_map[f"text_encoders.{key[:-7]}"] = key
             key_map[key[:-7]] = key
+
+
+def _build_unet_state_lookup(state_dict_keys) -> Dict[str, str]:
+    lookup: Dict[str, str] = {}
+    for raw_key in state_dict_keys:
+        key = str(raw_key)
+        lookup.setdefault(key, key)
+        if key.startswith("model."):
+            lookup.setdefault(key[len("model.") :], key)
+
+    canonical_source = {str(raw_key): str(raw_key) for raw_key in state_dict_keys}
+    try:
+        _style, remapped = remap_sdxl_checkpoint_state_dict(canonical_source)
+        for canonical_key, original_key in remapped.items():
+            canonical = str(canonical_key)
+            original = str(original_key)
+            lookup.setdefault(canonical, original)
+            if canonical.startswith("model."):
+                lookup.setdefault(canonical[len("model.") :], original)
+    except Exception:
+        # Non-SDXL keys are still covered by direct runtime lookup.
+        pass
+
+    return lookup
 
 
 def model_lora_keys_clip(model, key_map: Dict[str, PatchTarget] | None = None) -> Dict[str, PatchTarget]:
@@ -139,16 +167,26 @@ def model_lora_keys_clip(model, key_map: Dict[str, PatchTarget] | None = None) -
 def model_lora_keys_unet(model, key_map: Dict[str, str] | None = None) -> Dict[str, str]:
     sd = model.state_dict()
     out = dict(key_map or {})
+    state_lookup = _build_unet_state_lookup(sd.keys())
 
-    for key in sd.keys():
-        if key.startswith("diffusion_model."):
-            core = key[len("diffusion_model.") :]
-            if key.endswith(".weight"):
-                clean = core[:-len(".weight")].replace(".", "_")
-                out[f"lora_unet_{clean}"] = key
-                out[key[:-len(".weight")]] = key
-            else:
-                out[key] = key
+    for logical_key, target_key in state_lookup.items():
+        if logical_key.endswith(".weight"):
+            clean = logical_key[:-len(".weight")].replace(".", "_")
+            out[f"lora_unet_{clean}"] = target_key
+            out[f"lycoris_{clean}"] = target_key
+            out[logical_key[:-len(".weight")]] = target_key
+            if logical_key.startswith("diffusion_model."):
+                core_logical = logical_key[len("diffusion_model.") :]
+                core_clean = core_logical[:-len(".weight")].replace(".", "_")
+                out[f"lora_unet_{core_clean}"] = target_key
+                out[f"lycoris_{core_clean}"] = target_key
+            if logical_key.startswith("model.diffusion_model."):
+                core_logical = logical_key[len("model.diffusion_model.") :]
+                core_clean = core_logical[:-len(".weight")].replace(".", "_")
+                out[f"lora_unet_{core_clean}"] = target_key
+                out[f"lycoris_{core_clean}"] = target_key
+        else:
+            out[logical_key] = target_key
 
     model_config = getattr(model, "model_config", None)
     core_config = getattr(model_config, "core_config", None)
@@ -161,7 +199,9 @@ def model_lora_keys_unet(model, key_map: Dict[str, str] | None = None) -> Dict[s
         for diff_key, mapped in diffusers_keys.items():
             if not diff_key.endswith(".weight"):
                 continue
-            unet_param = f"diffusion_model.{mapped}"
+            unet_param = state_lookup.get(f"diffusion_model.{mapped}")
+            if not unet_param:
+                continue
             clean = diff_key[:-len(".weight")].replace(".", "_")
             out[f"lora_unet_{clean}"] = unet_param
             out[f"lycoris_{clean}"] = unet_param

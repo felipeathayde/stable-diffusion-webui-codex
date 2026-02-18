@@ -10,6 +10,7 @@ Purpose: Codex-native runtime memory management service (hardware probe + precis
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
 Exposes per-role storage vs compute dtype selection (core/TE default to fp16 on accelerator devices, VAE defaults to fp32, CPU remains fp32 unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
 Also emits canonical smart-offload INFO audit events for model load/unload transitions and unload no-op requests when smart offload is active.
+`unload_model(...)` performs explicit CPU-target unload for both patcher-backed and plain module loaders, avoiding bookkeeping-only unloads and swap-policy-dependent stale GPU residency.
 Generic smart-offload action emission (`load`/`unload`/`unload_noop`) is centralized here, with optional caller context fields (`source`/`stage`/`component_hint`/`event_reason`).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -1015,7 +1016,8 @@ class CodexMemoryManager:
             return
         self._unload_record(
             record,
-            avoid_model_moving=True,
+            avoid_model_moving=False,
+            force_cpu_target=True,
             reason="unload_model",
             event_source=source,
             event_stage=stage,
@@ -1387,6 +1389,7 @@ class CodexMemoryManager:
         record: _LoadedModelRecord,
         *,
         avoid_model_moving: bool = False,
+        force_cpu_target: bool = False,
         reason: str = "unknown",
         event_source: str | None = None,
         event_stage: str | None = None,
@@ -1397,7 +1400,10 @@ class CodexMemoryManager:
         target_device: torch.device | None = None
         try:
             if hasattr(loader, "codex_unpatch_model"):
-                target_device = record.offload_device if not avoid_model_moving else self._cpu_device
+                if force_cpu_target:
+                    target_device = self._cpu_device
+                else:
+                    target_device = record.offload_device if not avoid_model_moving else self._cpu_device
                 loader.codex_unpatch_model(target_device)
             elif hasattr(loader, "to") and not avoid_model_moving:
                 target_device = self._cpu_device
@@ -1415,11 +1421,12 @@ class CodexMemoryManager:
                     offload_device=str(record.offload_device),
                     target_device=str(target_device) if target_device is not None else "unknown",
                     avoid_model_moving=avoid_model_moving,
+                    force_cpu_target=force_cpu_target,
                 )
         except Exception as exc:
             raise MemoryLoadError(
                 f"Failed to unload model {self._record_label(record)} "
-                f"(avoid_model_moving={avoid_model_moving}): {exc}"
+                f"(avoid_model_moving={avoid_model_moving}, force_cpu_target={force_cpu_target}): {exc}"
             ) from exc
 
     def _cleanup_for_loaded_models(self, records: Sequence[_LoadedModelRecord], memory_budget: int) -> None:

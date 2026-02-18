@@ -11,6 +11,7 @@ Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, 
 Conditioning smart-cache entries are keyed by model/load identity plus wrapped prompt metadata and stored detached on CPU to avoid stale hits and cross-request GPU pinning.
 The hires stage delegates init preparation and `denoise` semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
+First-pass base decode before hires is now upscaler-aware (`latent:*` skips decode; pixel upscalers decode).
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -667,7 +668,11 @@ class Txt2ImgPipelineRunner:
                     state.prompt_context.controls,
                     rng=state.rng,
                 )
-                decoded_samples = maybe_decode_for_hr(processing, base_samples)
+                decoded_samples = maybe_decode_for_hr(
+                    processing,
+                    base_samples,
+                    hires_upscaler_id=state.hires_plan.upscaler_id if state.hires_plan is not None else None,
+                )
             finally:
                 finalize_tiling(tiling_applied, previous_tiling)
         elif base_samples is None and decoded_samples is not None:

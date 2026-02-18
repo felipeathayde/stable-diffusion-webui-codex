@@ -7,12 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Image/latent conversion helpers used by pipeline orchestrators.
-Provides small utilities to convert between decoded latent tensors and PIL images, and to decode samples for hi-res stages.
+Provides small utilities to convert between decoded latent tensors and PIL images, and to decode samples for hi-res stages with
+upscaler-aware gating (latent hires skips redundant base decode).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `latents_to_pil` (function): Convert decoded latent tensors into RGB PIL images.
 - `pil_to_tensor` (function): Convert PIL images into a normalized tensor suitable for img2img/conditioning.
-- `maybe_decode_for_hr` (function): Decode samples to RGB when the hires pass requires pixel-space input.
+- `maybe_decode_for_hr` (function): Decode samples to RGB only when the resolved hires upscaler requires pixel-space input.
 """
 
 from __future__ import annotations
@@ -49,18 +50,29 @@ def pil_to_tensor(images: Sequence[Image.Image]) -> torch.Tensor:
     return tensor.to(devices.default_device(), dtype=torch.float32)
 
 
-def maybe_decode_for_hr(processing: Any, samples: torch.Tensor) -> torch.Tensor | None:
-    """Decode samples to RGB when the hires pass requires pixel-space input."""
+def maybe_decode_for_hr(
+    processing: Any,
+    samples: torch.Tensor,
+    *,
+    hires_upscaler_id: str | None = None,
+) -> torch.Tensor | None:
+    """Decode samples to RGB only when hires preparation needs pixel-space input."""
     if not getattr(processing, "enable_hr", False):
         return None
 
-    devices.torch_gc()
+    upscaler_id = hires_upscaler_id
+    if not isinstance(upscaler_id, str) or not upscaler_id.strip():
+        hires_cfg = getattr(processing, "hires", None)
+        candidate = getattr(hires_cfg, "upscaler", None) if hires_cfg is not None else None
+        upscaler_id = str(candidate).strip() if isinstance(candidate, str) else ""
 
-    if getattr(processing, "latent_scale_mode", None) is None:
-        decoded = decode_latent_batch(
-            processing.sd_model,
-            samples,
-            stage="hires.prepare.base_decode",
-        )
-        return decoded.to(dtype=torch.float32)
-    return None
+    if upscaler_id.startswith("latent:"):
+        return None
+
+    devices.torch_gc()
+    decoded = decode_latent_batch(
+        processing.sd_model,
+        samples,
+        stage="hires.prepare.base_decode",
+    )
+    return decoded.to(dtype=torch.float32)

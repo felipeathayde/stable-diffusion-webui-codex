@@ -1,6 +1,6 @@
 # apps/backend/runtime/ops Overview
 Date: 2025-10-30
-Last Review: 2026-02-16
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
   - packed `CodexParameter` weights with `uint8` storage are reinterpreted to `int8` storage (bytes preserved) so HF FFN gates do not cast activations to `uint8`,
   - non-quantized integer dense weights are cast to computation dtype at load time.
   This fixes root-cause `addmm_cuda ... Byte` failures in WAN22 GGUF TE paths (instead of only guard-level fail-loud behavior).
+- 2026-02-18: `operations_gguf.disable_dequant_forward_cache()` now logs `cache disabled` only when an active dequant cache level (`lvl1`/`lvl2`) was enabled, removing INFO noise on non-GGUF and `level=off` runs where sampling teardown still calls disable defensively.

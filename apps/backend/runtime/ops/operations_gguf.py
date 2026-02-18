@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: GGUF runtime operations backed by `apps.backend.quantization` (CodexQuantization).
 Provides `dequantize_tensor(...)`, an optional CPU LRU cache for dequantized weights, and a run-scoped `dequant_forward` cache that can reuse
-GGUF bake/dequant work across sampling steps (enabled explicitly; cleared at sampling cleanup).
+GGUF bake/dequant work across sampling steps (enabled explicitly; cleared at sampling cleanup, with disable INFO log emitted only when an active cache level was enabled).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexParameter` (class): Packed GGUF tensor wrapper (imported from `apps.backend.quantization.tensor`).
@@ -132,6 +132,7 @@ def enable_dequant_forward_cache(*, level: str, limit_mb: int) -> None:
 
 def disable_dequant_forward_cache() -> None:
     cache: _ForwardDequantCache | None = getattr(_FORWARD_CACHE_LOCAL, "cache", None)
+    was_enabled = cache is not None and getattr(cache, "level", "off") in {"lvl1", "lvl2"}
     if cache is not None:
         if _LOG.isEnabledFor(logging.DEBUG):
             accounted_mb = int(max(0, cache.used_bytes) // (1024 * 1024))
@@ -186,7 +187,8 @@ def disable_dequant_forward_cache() -> None:
                     reserved_mb,
                 )
     setattr(_FORWARD_CACHE_LOCAL, "cache", None)
-    _LOG.info("GGUF dequant_forward cache disabled")
+    if was_enabled:
+        _LOG.info("GGUF dequant_forward cache disabled")
 
 
 def is_dequant_forward_cache_enabled() -> bool:

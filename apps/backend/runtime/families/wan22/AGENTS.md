@@ -75,6 +75,7 @@ Status: Active
 - 2026-02-18: `stage_lora.py` now enforces optional logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO` (`[0,1]`, strict parser); mismatched coverage below threshold fails loud during stage LoRA apply.
 - 2026-02-18: `text_context.py` direct smart-offload TE CPU transition now emits canonical INFO audit events via `log_smart_offload_action("direct_cpu_offload", ...)` to `backend.smart_offload`.
 - 2026-02-18: `text_context.py` now tags that event with `SmartOffloadAction.DIRECT_CPU_OFFLOAD`; generic smart-offload `load/unload` emission remains manager-owned.
+- 2026-02-18: shared native `AutoencoderKL_LDM` logger namespace was renamed from `backend.runtime.wan22.vae` to `backend.runtime.vae.ldm` to reflect cross-family usage (SDXL/Flux/ZImage/WAN) and avoid misleading WAN-only telemetry in SDXL runs.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

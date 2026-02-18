@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Native LDM 2D VAE implementation (`AutoencoderKL_LDM`) for latent encode/decode.
 Defines the shared LDM VAE blocks (ResNet/Attention/Encoder/Decoder) and the final `AutoencoderKL_LDM` module used by image/video engines to
-encode frames to latents and decode latents back to RGB, including distribution sampling utilities.
+encode frames to latents and decode latents back to RGB, including distribution sampling utilities. Logging uses a shared lane namespace
+(`backend.runtime.vae.ldm`) because this implementation is reused by multiple families (not WAN-only).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `nonlinearity` (function): Activation helper (SiLU-like: `x * sigmoid(x)`) used across blocks.
@@ -31,7 +32,7 @@ from apps.backend.runtime.attention import attention_function_single_head_spatia
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from torch import nn
 
-_log = logging.getLogger("backend.runtime.wan22.vae")
+_log = logging.getLogger("backend.runtime.vae.ldm")
 
 
 def nonlinearity(x):

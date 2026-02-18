@@ -24,3 +24,4 @@ Last Review: 2026-02-15
 - 2026-01-30: Removed the dev-only Z-Image Diffusers bypass toggle (`CODEX_ZIMAGE_DIFFUSERS_BYPASS`) from `tabs/diagnostics.py`.
 - 2026-01-31: `tabs/diagnostics.py` now exposes global profiling env flags (`CODEX_PROFILE*`) for backend torch-profiler runs.
 - 2026-02-15: `tabs/diagnostics.py` now exposes launcher trace toggles (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) alongside timeline/profile flags.
+- 2026-02-18: `tabs/runtime.py` now exposes task cancel default mode (`CODEX_TASK_CANCEL_DEFAULT_MODE`) with strict choices (`immediate`, `after_current`) alongside existing task/safety knobs.

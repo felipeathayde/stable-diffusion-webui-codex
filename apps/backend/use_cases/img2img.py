@@ -11,7 +11,7 @@ Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image 
 The hires pass init is prepared via the global hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
-The wrapper reapplies request smart runtime overrides on final decode/post-cleanup paths that execute outside the worker-thread sampler.
+The wrapper executes sampling + decode + post-cleanup inside the same worker-thread envelope so model residency/offload policies remain single-owner per job.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
@@ -794,9 +794,13 @@ def run_img2img(
         "smart_cache": bool(getattr(proc, "smart_cache", False)),
     }
 
-    def _generate() -> GenerationResult:
+    def _generate() -> dict[str, object]:
+        import json
+        import time
+
         with smart_runtime_overrides(**smart_flags):
-            return generate_img2img(
+            sampling_start = time.perf_counter()
+            output = generate_img2img(
                 proc,
                 conditioning=None,
                 unconditional_conditioning=None,
@@ -805,6 +809,50 @@ def run_img2img(
                 subseeds=subseeds,
                 subseed_strength=subseed_strength,
             )
+            sampling_end = time.perf_counter()
+
+            images, decode_ms = _decode_generation_output(engine=engine, output=output, task_label="img2img")
+
+            all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
+            seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
+
+            extra_params: dict[str, object] = {}
+            try:
+                extra_params.update(last_extra_generation_params)
+                extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
+            except Exception:  # noqa: BLE001
+                extra_params = getattr(proc, "extra_generation_params", {}) or {}
+
+            timings: dict[str, float] = {
+                "sampling_ms": max(0.0, (sampling_end - sampling_start) * 1000.0),
+                "decode_ms": float(decode_ms),
+            }
+
+            mode_info: dict[str, object] = {
+                "denoise_strength": float(getattr(proc, "denoising_strength", 0.0) or 0.0),
+            }
+            if bool(getattr(getattr(proc, "hires", None), "enabled", False)):
+                try:
+                    mode_info["hires"] = getattr(proc, "hires", None).as_dict()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            info = _build_common_info(
+                engine_id=engine.engine_id,
+                task="img2img",
+                proc=proc,
+                seed=seed_value,
+                all_seeds=all_seeds,
+                extra_params=extra_params,
+                timings_ms=timings,
+                mode_info=mode_info,
+            )
+
+            post_cleanup = getattr(engine, "_post_txt2img_cleanup", None)
+            if callable(post_cleanup):
+                post_cleanup()
+
+            return {"images": images, "info": json.dumps(info)}
 
     done, outcome = _run_inference_worker(name=f"{engine.engine_id}-img2img-worker", fn=_generate)
 
@@ -815,49 +863,16 @@ def run_img2img(
     if outcome.error is not None:
         raise outcome.error
 
-    with smart_runtime_overrides(**smart_flags):
-        images, decode_ms = _decode_generation_output(engine=engine, output=outcome.output, task_label="img2img")
-
-    all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
-    seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
-
-    extra_params: dict[str, object] = {}
-    try:
-        extra_params.update(last_extra_generation_params)
-        extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
-    except Exception:  # noqa: BLE001
-        extra_params = getattr(proc, "extra_generation_params", {}) or {}
-
-    timings: dict[str, float] = {"decode_ms": float(decode_ms)}
-    try:
-        if outcome.sampling_start is not None and outcome.sampling_end is not None:
-            timings["sampling_ms"] = max(0.0, (outcome.sampling_end - outcome.sampling_start) * 1000.0)
-    except Exception:  # noqa: BLE001
-        pass
-
-    mode_info: dict[str, object] = {
-        "denoise_strength": float(getattr(proc, "denoising_strength", 0.0) or 0.0),
-    }
-    if bool(getattr(getattr(proc, "hires", None), "enabled", False)):
-        try:
-            mode_info["hires"] = getattr(proc, "hires", None).as_dict()
-        except Exception:  # noqa: BLE001
-            pass
-
-    info = _build_common_info(
-        engine_id=engine.engine_id,
-        task="img2img",
-        proc=proc,
-        seed=seed_value,
-        all_seeds=all_seeds,
-        extra_params=extra_params,
-        timings_ms=timings,
-        mode_info=mode_info,
-    )
-
-    post_cleanup = getattr(engine, "_post_txt2img_cleanup", None)
-    with smart_runtime_overrides(**smart_flags):
-        if callable(post_cleanup):
-            post_cleanup()
-
-    yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
+    payload = outcome.output
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "img2img worker returned invalid payload type; expected dict with 'images' and 'info'. "
+            f"Got {type(payload).__name__}."
+        )
+    images = payload.get("images")
+    info = payload.get("info")
+    if not isinstance(images, list):
+        raise RuntimeError("img2img worker payload field 'images' must be list.")
+    if not isinstance(info, str):
+        raise RuntimeError("img2img worker payload field 'info' must be JSON string.")
+    yield ResultEvent(payload={"images": images, "info": info})

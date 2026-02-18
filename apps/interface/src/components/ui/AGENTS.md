@@ -10,6 +10,7 @@ Status: Active
 ## Key Files
 - `apps/interface/src/components/ui/Modal.vue` — Generic modal shell used by views (file browser, overrides, etc).
 - `apps/interface/src/components/ui/SliderField.vue` — Shared slider layout (label left, input right, slider below).
+- `apps/interface/src/components/ui/HoverTooltip.vue` — Reusable hover/focus tooltip primitive (title + multiline body) used by slider labels.
 - `apps/interface/src/components/ui/NumberStepperInput.vue` — Numeric input with optional +/- stepper controls.
 - `apps/interface/src/components/ui/DimensionPresetsGrid.vue` — Resolution preset buttons (2×2 grid), used by `BasicParametersCard.vue`.
 - `apps/interface/src/components/ui/UpscalerTileControls.vue` — Tile presets + overlap + min tile + explicit OOM fallback toggle (shared by hires-fix + `/upscale`).
@@ -26,3 +27,4 @@ Status: Active
 - 2026-02-04: `UpscalerTileControls.vue` now exposes `min_tile` as an Advanced control (keeps backend tile fallback behavior visible and configurable).
 - 2026-02-08: `UpscalerTileControls.vue` now supports `presetVariant='resolution'` so hires tile preset buttons can match the Basic Parameters resolution-button pattern while keeping legacy toggle styling as default.
 - 2026-02-17: Added `ImageZoomOverlay.vue`; `ResultViewer.vue` and init-image previews now reuse the same zoom behavior and close path (`Esc` and outside-click call the same close handler).
+- 2026-02-18: `SliderField.vue` now supports optional rich label tooltips (hover/focus trigger with `?` badge) via shared `HoverTooltip.vue`.

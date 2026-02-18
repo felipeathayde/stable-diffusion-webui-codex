@@ -1,0 +1,73 @@
+@layer components {
+  .cdx-hover-tooltip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    outline: none;
+  }
+
+  .cdx-hover-tooltip:focus-visible {
+    border-radius: 0.45rem;
+    outline: 0.125rem solid hsla(210, 78%, 70%, 0.9);
+    outline-offset: 0.1rem;
+  }
+
+  .cdx-hover-tooltip__panel {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 0.55rem);
+    z-index: 30;
+    width: min(24rem, calc(100vw - 2rem));
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+    padding: 0.65rem 0.7rem;
+    border-radius: 0.625rem;
+    border: 0.0625rem solid hsla(210, 70%, 65%, 0.35);
+    background:
+      radial-gradient(circle at top right, hsla(210, 72%, 62%, 0.2), transparent 52%),
+      linear-gradient(180deg, hsla(224, 22%, 16%, 0.98), hsla(224, 24%, 12%, 0.98));
+    box-shadow:
+      0 0.75rem 2rem hsla(0, 0%, 0%, 0.45),
+      inset 0 0.0625rem 0 hsla(0, 0%, 100%, 0.1);
+    opacity: 0;
+    transform: translateY(0.25rem) scale(0.985);
+    transform-origin: bottom left;
+    pointer-events: none;
+    transition:
+      opacity 0.16s ease,
+      transform 0.16s ease;
+  }
+
+  .cdx-hover-tooltip__panel::after {
+    content: "";
+    position: absolute;
+    left: 0.85rem;
+    top: 100%;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-right: 0.0625rem solid hsla(210, 70%, 65%, 0.35);
+    border-bottom: 0.0625rem solid hsla(210, 70%, 65%, 0.35);
+    background: hsla(224, 24%, 12%, 0.98);
+    transform: translateY(-0.28rem) rotate(45deg);
+  }
+
+  .cdx-hover-tooltip__title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: hsla(210, 88%, 86%, 1);
+  }
+
+  .cdx-hover-tooltip__line {
+    font-size: 0.76rem;
+    line-height: 1.3;
+    color: hsla(210, 22%, 90%, 0.95);
+  }
+
+  .cdx-hover-tooltip:is(:hover, :focus-within) .cdx-hover-tooltip__panel {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

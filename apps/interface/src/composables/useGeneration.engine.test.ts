@@ -224,9 +224,10 @@ describe('buildGuidancePayload', () => {
       apg_momentum: 0.999999,
       apg_norm_threshold: 0,
       guidance_rescale: 0,
+      cfg_trunc_ratio: 1,
       renorm_cfg: 0,
     })
-    expect(payload?.cfg_trunc_ratio).toBeUndefined()
+    expect(payload?.cfg_trunc_ratio).toBe(1)
     expect(payload?.apg_eta).toBeUndefined()
     expect(payload?.apg_rescale).toBeUndefined()
   })

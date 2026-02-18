@@ -74,6 +74,7 @@ Status: Active
 - 2026-02-17: WAN22 GGUF attention path now supports explicit `gguf_attention_mode` (`global|sliding`) with fail-loud parsing in `config.py`; sliding mode auto-uses `gguf_attn_chunk=1024` when omitted, `sdpa.py` applies local K/V windows per chunk, and `run.py` propagates mode into txt2vid/img2vid batch+stream entrypoints.
 - 2026-02-18: `stage_lora.py` now enforces optional logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO` (`[0,1]`, strict parser); mismatched coverage below threshold fails loud during stage LoRA apply.
 - 2026-02-18: `text_context.py` direct smart-offload TE CPU transition now emits canonical INFO audit events via `log_smart_offload_action("direct_cpu_offload", ...)` to `backend.smart_offload`.
+- 2026-02-18: `text_context.py` now tags that event with `SmartOffloadAction.DIRECT_CPU_OFFLOAD`; generic smart-offload `load/unload` emission remains manager-owned.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

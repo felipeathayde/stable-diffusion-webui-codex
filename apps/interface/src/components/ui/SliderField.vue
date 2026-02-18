@@ -6,18 +6,30 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Slider field with label and numeric input.
-Composes a range slider with a numeric input (default `NumberStepperInput`) and emits updates for reactive settings and generation parameters.
+Purpose: Slider field with label, optional hover tooltip, and numeric input.
+Composes a range slider with a numeric input (default `NumberStepperInput`) and can render an elegant hover/focus tooltip near the label.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SliderField` (component): Slider + numeric input field that emits `update:modelValue`.
+- `hasTooltip` (computed): Indicates whether tooltip content was provided for the label.
 - `onRangeInput` (function): Range slider input handler that emits a numeric value.
 -->
 
 <template>
   <div class="cdx-slider-field">
     <div class="cdx-slider-field__head">
-      <label class="cdx-slider-field__label">{{ label }}</label>
+      <HoverTooltip
+        v-if="hasTooltip"
+        class="cdx-slider-field__label-tooltip"
+        :title="tooltipTitle"
+        :content="tooltip ?? ''"
+      >
+        <span class="cdx-slider-field__label-trigger">
+          <span class="cdx-slider-field__label">{{ label }}</span>
+          <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+        </span>
+      </HoverTooltip>
+      <span v-else class="cdx-slider-field__label">{{ label }}</span>
       <div class="cdx-slider-field__right">
         <slot name="right">
           <NumberStepperInput
@@ -55,6 +67,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed } from 'vue'
 import NumberStepperInput from './NumberStepperInput.vue'
+import HoverTooltip from './HoverTooltip.vue'
 
 const props = withDefaults(defineProps<{
   label: string
@@ -69,6 +82,8 @@ const props = withDefaults(defineProps<{
   numberUpdateOnInput?: boolean
   numberSize?: 'sm' | 'md'
   inputClass?: string
+  tooltip?: string | readonly string[]
+  tooltipTitle?: string
 }>(), {
   step: 1,
   disabled: false,
@@ -76,6 +91,7 @@ const props = withDefaults(defineProps<{
   numberUpdateOnInput: false,
   numberSize: 'sm',
   inputClass: '',
+  tooltipTitle: '',
 })
 
 const emit = defineEmits<{
@@ -86,6 +102,10 @@ const minAttr = computed(() => props.min ?? 0)
 const maxAttr = computed(() => props.max ?? 100)
 const stepAttr = computed(() => props.step ?? 1)
 const numberStep = computed(() => props.inputStep ?? props.step ?? 1)
+const hasTooltip = computed(() => {
+  if (Array.isArray(props.tooltip)) return props.tooltip.some((line) => line.trim().length > 0)
+  return typeof props.tooltip === 'string' && props.tooltip.trim().length > 0
+})
 
 function onRangeInput(event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value)

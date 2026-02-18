@@ -10,6 +10,7 @@ Purpose: Task orchestration helpers for SUPIR endpoints.
 Keeps `/api/supir/*` routers thin by centralizing the worker boilerplate:
 status/progress/result/end/error + cancellation checks.
 Uses the shared inference gate when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished`.
+Any cancel mode may abort while waiting on the inference gate; once running, only `immediate` interrupts the active SUPIR job.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `run_supir_enhance_task` (function): Runs a SUPIR enhance task worker (single-image v1).
@@ -54,7 +55,7 @@ def run_supir_enhance_task(
                 push({"type": "status", "stage": "waiting_for_inference"})
 
             acquired = acquire_inference_gate(
-                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
+                should_cancel=lambda: bool(entry.cancel_requested),
             )
             if not acquired:
                 entry.error = "cancelled"

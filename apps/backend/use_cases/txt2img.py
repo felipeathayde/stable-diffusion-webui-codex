@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Txt2img entry point using the staged pipeline runner.
 Delegates latent generation to `Txt2ImgPipelineRunner` and provides a canonical event-emitting wrapper used by engines/orchestrator.
-The wrapper reapplies request smart runtime overrides on final decode/post-cleanup paths that execute outside the worker-thread sampler.
+The wrapper executes sampling + decode + post-cleanup inside the same worker-thread envelope so model residency/offload policies remain single-owner per job.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_logger` (constant): Module logger for the txt2img use case.
@@ -102,9 +102,12 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
         "smart_cache": bool(getattr(proc, "smart_cache", False)),
     }
 
-    def _generate() -> GenerationResult:
+    def _generate() -> dict[str, object]:
+        import time
+
         with smart_runtime_overrides(**smart_flags):
-            return generate_txt2img(
+            sampling_start = time.perf_counter()
+            output = generate_txt2img(
                 processing=proc,
                 conditioning=None,
                 unconditional_conditioning=None,
@@ -113,6 +116,65 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
                 subseed_strength=subseed_strength,
                 prompts=prompts,
             )
+            sampling_end = time.perf_counter()
+
+            output_decode_engine = getattr(output, "decode_engine", None)
+            active_decode_engine = output_decode_engine if output_decode_engine is not None else getattr(proc, "sd_model", None)
+            if active_decode_engine is None:
+                active_decode_engine = engine
+            elif active_decode_engine is not engine:
+                _logger.info("txt2img decode will use active pipeline model instance (swap/refiner path).")
+
+            images, decode_ms = _decode_generation_output(
+                engine=active_decode_engine,
+                output=output,
+                task_label="txt2img",
+            )
+
+            all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
+            seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
+
+            extra_params: dict[str, object] = {}
+            try:
+                extra_params.update(last_extra_generation_params)
+                extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
+            except Exception:  # noqa: BLE001
+                extra_params = getattr(proc, "extra_generation_params", {}) or {}
+
+            timings: dict[str, float] = {
+                "sampling_ms": max(0.0, (sampling_end - sampling_start) * 1000.0),
+                "decode_ms": float(decode_ms),
+            }
+
+            mode_info: dict[str, object] = {}
+            if bool(getattr(proc, "enable_hr", False)):
+                try:
+                    mode_info["hires"] = getattr(proc, "hires", None).as_dict()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            info = _build_common_info(
+                engine_id=engine.engine_id,
+                task="txt2img",
+                proc=proc,
+                seed=seed_value,
+                all_seeds=all_seeds,
+                extra_params=extra_params,
+                timings_ms=timings,
+                mode_info=mode_info,
+            )
+
+            cleanup_targets: list[Any] = []
+            if active_decode_engine is not None:
+                cleanup_targets.append(active_decode_engine)
+            if engine is not None and engine is not active_decode_engine:
+                cleanup_targets.append(engine)
+            for target in cleanup_targets:
+                post_cleanup = getattr(target, "_post_txt2img_cleanup", None)
+                if callable(post_cleanup):
+                    post_cleanup()
+
+            return {"images": images, "info": json.dumps(info)}
 
     done, outcome = _run_inference_worker(name=f"{engine.engine_id}-txt2img-worker", fn=_generate)
 
@@ -123,64 +185,16 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     if outcome.error is not None:
         raise outcome.error
 
-    output_decode_engine = getattr(outcome.output, "decode_engine", None)
-    active_decode_engine = output_decode_engine if output_decode_engine is not None else getattr(proc, "sd_model", None)
-    if active_decode_engine is None:
-        active_decode_engine = engine
-    elif active_decode_engine is not engine:
-        _logger.info("txt2img decode will use active pipeline model instance (swap/refiner path).")
-
-    with smart_runtime_overrides(**smart_flags):
-        images, decode_ms = _decode_generation_output(
-            engine=active_decode_engine,
-            output=outcome.output,
-            task_label="txt2img",
+    payload = outcome.output
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "txt2img worker returned invalid payload type; expected dict with 'images' and 'info'. "
+            f"Got {type(payload).__name__}."
         )
-
-    all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
-    seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
-
-    extra_params: dict[str, object] = {}
-    try:
-        extra_params.update(last_extra_generation_params)
-        extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
-    except Exception:  # noqa: BLE001
-        extra_params = getattr(proc, "extra_generation_params", {}) or {}
-
-    timings: dict[str, float] = {"decode_ms": float(decode_ms)}
-    try:
-        if outcome.sampling_start is not None and outcome.sampling_end is not None:
-            timings["sampling_ms"] = max(0.0, (outcome.sampling_end - outcome.sampling_start) * 1000.0)
-    except Exception:  # noqa: BLE001
-        pass
-
-    mode_info: dict[str, object] = {}
-    if bool(getattr(proc, "enable_hr", False)):
-        try:
-            mode_info["hires"] = getattr(proc, "hires", None).as_dict()
-        except Exception:  # noqa: BLE001
-            pass
-
-    info = _build_common_info(
-        engine_id=engine.engine_id,
-        task="txt2img",
-        proc=proc,
-        seed=seed_value,
-        all_seeds=all_seeds,
-        extra_params=extra_params,
-        timings_ms=timings,
-        mode_info=mode_info,
-    )
-
-    cleanup_targets: list[Any] = []
-    if active_decode_engine is not None:
-        cleanup_targets.append(active_decode_engine)
-    if engine is not None and engine is not active_decode_engine:
-        cleanup_targets.append(engine)
-    with smart_runtime_overrides(**smart_flags):
-        for target in cleanup_targets:
-            post_cleanup = getattr(target, "_post_txt2img_cleanup", None)
-            if callable(post_cleanup):
-                post_cleanup()
-
-    yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
+    images = payload.get("images")
+    info = payload.get("info")
+    if not isinstance(images, list):
+        raise RuntimeError("txt2img worker payload field 'images' must be list.")
+    if not isinstance(info, str):
+        raise RuntimeError("txt2img worker payload field 'info' must be JSON string.")
+    yield ResultEvent(payload={"images": images, "info": info})

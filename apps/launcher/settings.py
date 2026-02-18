@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Typed launcher settings and validation helpers.
 Provides typed env-backed wrappers (no Tk dependency) so UI/service code avoids stringly-typed lookups and scattered
 normalization rules, and so this module is unit-testable.
+Includes strict normalization for task cancel default mode (`CODEX_TASK_CANCEL_DEFAULT_MODE`) alongside task buffer/safety knobs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SettingValidationError` (exception): Raised when a launcher setting value is invalid.
@@ -19,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `CFG_BATCH_MODE_CHOICES` (constant): Allowed values for `CODEX_CFG_BATCH_MODE`.
 - `TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT` (constant): Default max SSE events buffered per task.
 - `TASK_EVENT_BUFFER_MAX_MB_DEFAULT` (constant): Default max SSE MB buffered per task.
+- `TASK_CANCEL_DEFAULT_MODE_CHOICES` (constant): Allowed values for `CODEX_TASK_CANCEL_DEFAULT_MODE`.
 - `GGUF_EXEC_CHOICES` (constant): Allowed values for `CODEX_GGUF_EXEC`.
 - `GGUF_DEQUANT_CACHE_CHOICES` (constant): Allowed values for `CODEX_GGUF_DEQUANT_CACHE`.
 - `LORA_APPLY_CHOICES` (constant): Allowed values for `CODEX_LORA_APPLY_MODE`.
@@ -41,6 +43,7 @@ DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda", "cpu", "mps", "xpu", "directm
 CFG_BATCH_MODE_CHOICES: tuple[str, ...] = ("fused", "split")
 TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT = 5000
 TASK_EVENT_BUFFER_MAX_MB_DEFAULT = 64
+TASK_CANCEL_DEFAULT_MODE_CHOICES: tuple[str, ...] = ("immediate", "after_current")
 GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
 GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off", "lvl1", "lvl2")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")
@@ -187,10 +190,10 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
     return gguf, gguf_dequant_cache, lora_apply, lora_math
 
 
-def normalize_task_runtime_env(env: MutableMapping[str, str]) -> tuple[bool, bool, int, int]:
+def normalize_task_runtime_env(env: MutableMapping[str, str]) -> tuple[bool, bool, int, int, str]:
     """Normalize task/runtime env keys and enforce invariants.
 
-    Returns (single_flight, safe_weights, buffer_max_events, buffer_max_mb).
+    Returns (single_flight, safe_weights, buffer_max_events, buffer_max_mb, cancel_default_mode).
     """
 
     single_flight_setting = BoolSetting("CODEX_SINGLE_FLIGHT", default=True)
@@ -205,15 +208,22 @@ def normalize_task_runtime_env(env: MutableMapping[str, str]) -> tuple[bool, boo
         default=TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
         minimum=1,
     )
+    cancel_default_mode_setting = ChoiceSetting(
+        "CODEX_TASK_CANCEL_DEFAULT_MODE",
+        default="immediate",
+        choices=TASK_CANCEL_DEFAULT_MODE_CHOICES,
+    )
 
     single_flight = single_flight_setting.get(env)
     safeweights = safeweights_setting.get(env)
     max_events = max_events_setting.get(env)
     max_mb = max_mb_setting.get(env)
+    cancel_default_mode = cancel_default_mode_setting.get(env)
 
     single_flight_setting.set(env, single_flight)
     safeweights_setting.set(env, safeweights)
     max_events_setting.set(env, max_events)
     max_mb_setting.set(env, max_mb)
+    cancel_default_mode_setting.set(env, cancel_default_mode)
 
-    return single_flight, safeweights, max_events, max_mb
+    return single_flight, safeweights, max_events, max_mb, cancel_default_mode

@@ -237,14 +237,14 @@ export function buildGuidancePayload(
 
   const payload: Record<string, unknown> = {}
 
-  if (support.apg_enabled) payload.apg_enabled = Boolean(guidanceAdvanced.apgEnabled)
+  if (support.apg_enabled) payload.apg_enabled = true
   if (support.apg_start_step) payload.apg_start_step = clampInt(guidanceAdvanced.apgStartStep, 0, 0)
   if (support.apg_eta) payload.apg_eta = toFinite(guidanceAdvanced.apgEta, 0)
   if (support.apg_momentum) payload.apg_momentum = clamp(guidanceAdvanced.apgMomentum, 0, 0, 0.999999)
   if (support.apg_norm_threshold) payload.apg_norm_threshold = clamp(guidanceAdvanced.apgNormThreshold, 15, 0)
   if (support.apg_rescale) payload.apg_rescale = clamp(guidanceAdvanced.apgRescale, 0, 0, 1)
   if (support.guidance_rescale) payload.guidance_rescale = clamp(guidanceAdvanced.guidanceRescale, 0, 0, 1)
-  if (support.cfg_trunc_ratio && guidanceAdvanced.cfgTruncEnabled) {
+  if (support.cfg_trunc_ratio) {
     payload.cfg_trunc_ratio = clamp(guidanceAdvanced.cfgTruncRatio, 0.8, 0, 1)
   }
   if (support.renorm_cfg) payload.renorm_cfg = clamp(guidanceAdvanced.renormCfg, 0, 0)

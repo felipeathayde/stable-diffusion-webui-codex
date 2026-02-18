@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_parse_level` (function): Parses level names (including TRACE=5) and returns a logging level.
 - `format_log_message` (function): Builds a consistent event-style log message with optional key/value context.
 - `get_backend_logger` (function): Returns a normalized backend logger (`backend.*`) from module or relative names.
+- `emit_backend_event` (function): Canonical global backend event emitter (single source of truth for event emission path).
 - `LevelFilter` (class): Env-driven log-level filter (CODEX_LOG_DEBUG/INFO/WARNING/ERROR).
 - `setup_logging` (function): Idempotent root logger setup using env vars (level/format/file, optional Rich handler).
 """
@@ -161,6 +162,23 @@ def get_backend_logger(name: Optional[str] = None) -> logging.Logger:
         normalized = "backend"
 
     return logging.getLogger(normalized)
+
+
+def emit_backend_event(
+    event: str,
+    /,
+    *,
+    logger: Optional[str] = None,
+    level: int = logging.INFO,
+    **fields: object,
+) -> None:
+    """Emit a backend event through the single canonical emission path.
+
+    This function is the global source of truth for backend event emission.
+    """
+
+    target = get_backend_logger(logger)
+    target.log(level, format_log_message(event, **fields))
 
 
 class LevelFilter(logging.Filter):

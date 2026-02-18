@@ -40,6 +40,7 @@ Status: Active
 - 2026-02-18: Phase-1 logging cleanup removed residual stdout prints in patcher runtime paths (`controlnet/architectures/sd/t2i_adapter.py` state-dict mismatch notices and `vae.py` regular OOM retry notices), replacing them with structured backend logger warnings/debug entries.
 - 2026-02-18: `lora_loader.py` now supports strict runtime toggles for merge/signature behavior: `CODEX_LORA_MERGE_MODE` (`fast=float32`, `precise=float64`) and `CODEX_LORA_REFRESH_SIGNATURE` (`structural` vs `content_sha256`) for deterministic refresh invalidation policy.
 - 2026-02-18: `ModelPatcher.codex_unpatch_model` now emits canonical smart-offload INFO audit events (`pin_host_memory`) via `log_smart_offload_action(...)` when host pinning actually happens on CPU offload.
+- 2026-02-18: `ModelPatcher.codex_unpatch_model` now tags that event with `SmartOffloadAction.PIN_HOST_MEMORY`; generic smart-offload `load/unload` emission remains centralized in `runtime/memory/manager.py`.
 - 2026-02-08: `_NormalizingFirstStage` now supports optional per-channel latent stats (`latents_mean`/`latents_std`) in addition to scalar `scaling_factor`/`shift_factor`; 4D/5D rank, channel count, and non-finite/invalid stats are fail-loud.
 - 2026-02-08: VAE normalization now resolves scale/shift via `vae_normalization_policy.py` with explicit family shift contracts: no-shift families reject explicit numeric shifts; shift-required families fail loud on missing/`None` shift.
 

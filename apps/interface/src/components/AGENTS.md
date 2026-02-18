@@ -69,6 +69,7 @@ Status: Active
 - 2026-02-18: Added `Img2ImgBasicParametersCard.vue` for init-image mode (hires-like structure without swap-model/prompt overrides): sampler/scheduler/steps, scale+dimensions, resize-type/upscaler gating, and seed+CFG+denoise.
 - 2026-02-18: `HiresSettingsCard.vue` row order now renders dimensions (`scale/width/height`) before the upscaler row (`upscaler/cfg/denoise`) for parity with the img2img basic-parameters layout.
 - 2026-02-18: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now expose a CFG-side `Advanced` toggle and a conditional row below CFG for advanced guidance controls (APG/rescale/trunc/renorm), with per-control visibility gated by capability flags.
+- 2026-02-18: In both basic parameter cards, enabling `Advanced` now auto-activates APG + CFG trunc payload paths (when supported), removes per-feature On/Off toggles, and surfaces ELI5-style slider tooltips (hover/focus on label `?`).
 - 2026-02-17: `VideoSettingsCard.vue` WAN frame controls now snap to `4n+1`, use slider/input step `4`, and default to the expanded frame range `[9,401]`.
 - 2026-02-17: `InitialImageCard.vue` now supports Dropzone-backed selection, thumbnail preview mode, click-to-zoom full-size preview, and rejected-file emits for parent-side toasts.
 - 2026-02-17: `ResultViewer.vue` now delegates zoom interactions to shared `ui/ImageZoomOverlay.vue` (no overlay legends; outside-click uses the same close path as `Esc`).

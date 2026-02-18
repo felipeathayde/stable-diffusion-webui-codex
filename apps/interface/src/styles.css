@@ -286,6 +286,7 @@
   @import "./styles/components/views-shared.css";
   @import "./styles/components/cdx-stepper-input.css";
   @import "./styles/components/cdx-slider-field.css";
+  @import "./styles/components/cdx-hover-tooltip.css";
   @import "./styles/components/cdx-dropzone.css";
   @import "./styles/components/guided-gen.css";
   @import "./styles/components/prompt-box.css";

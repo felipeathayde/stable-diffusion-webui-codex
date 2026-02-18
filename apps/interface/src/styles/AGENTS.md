@@ -99,6 +99,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-18: Added `styles/components/img2img-basic-parameters-card.css` for the new init-image basic-parameters card and imported it in `styles.css`.
 - 2026-02-18: Hires card row order parity update (dimensions row before upscaler row) keeps selectors scoped under `.hires-card` / `.img2img-basic-card` to avoid global `.gc-row` regressions.
 - 2026-02-18: `generation-settings-card.css` now includes scoped CFG-advanced row styles (`.cfg-advanced-row`) and CFG header toggle spacing to support the new Advanced guidance controls without affecting non-generation panels.
+- 2026-02-18: Added `styles/components/cdx-hover-tooltip.css` and imported it in `styles.css`; slider labels can now render a polished hover/focus tooltip panel via `HoverTooltip.vue`.
 - 2026-02-17: Added `styles/components/xyz-sweep-card.css` and removed `styles/views/xyz.css`; XYZ styling now lives with the shared embeddable card.
 - 2026-02-17: Added shared `run-progress-status*` rules in `styles/components/views-shared.css` and removed duplicated WAN-only progress styles from `styles/views/wan.css`.
 - 2026-02-17: `quicksettings.css` flex sizing was adjusted for wide monitors (reduced right-side dead space in the top row).

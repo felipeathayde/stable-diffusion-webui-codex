@@ -10,6 +10,7 @@ Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
 Loads tokenizer metadata and text encoder weights from local paths only, applies strict embedding-key alias normalization for GGUF T5 variants,
 forces forward-only GGUF dequantization for TE loads with explicit target-device routing, and then builds prompt/negative embeddings for the WAN GGUF runtime.
 When smart offload requests a direct text-encoder CPU transition, emits canonical INFO audit events via `backend.smart_offload`.
+That transition event is tagged via the canonical `SmartOffloadAction.DIRECT_CPU_OFFLOAD` enum action.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
@@ -28,7 +29,7 @@ from typing import Any, Optional, Tuple
 
 import torch
 
-from apps.backend.runtime.memory.smart_offload import log_smart_offload_action
+from apps.backend.runtime.memory.smart_offload import SmartOffloadAction, log_smart_offload_action
 from .config import as_torch_dtype, resolve_device_name
 from .diagnostics import get_logger
 
@@ -435,7 +436,7 @@ def get_text_context(
             if moved_to_cpu and dev.type == "cuda":
                 log.info("[wan22.gguf] text-encoder offloaded to CPU (smart_offload)")
                 log_smart_offload_action(
-                    "direct_cpu_offload",
+                    SmartOffloadAction.DIRECT_CPU_OFFLOAD,
                     source="runtime.families.wan22.text_context",
                     component="text_encoder",
                     from_device=str(dev),

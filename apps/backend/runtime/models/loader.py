@@ -15,6 +15,7 @@ SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 key normalization to a canonical keymap module.
 SDXL VAE conversion now preflights canonical projection keys after keymap remap so projection-lane shape violations surface explicitly (instead of collapsing into generic missing-key noise).
 GGUF smart-offload CPU staging for large transformer classes now emits canonical INFO audit events via `backend.smart_offload`.
+Those CPU-staging events are tagged via the canonical `SmartOffloadAction.CPU_STAGE_LOAD` enum action.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -84,7 +85,11 @@ from apps.backend.runtime.common.vae_lane_policy import (
 from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
-from apps.backend.runtime.memory.smart_offload import log_smart_offload_action, smart_offload_enabled
+from apps.backend.runtime.memory.smart_offload import (
+    SmartOffloadAction,
+    log_smart_offload_action,
+    smart_offload_enabled,
+)
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.quantization import detect_state_dict_dtype
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
@@ -1561,7 +1566,7 @@ def _load_huggingface_component(
                 initial_device = torch.device("cpu")
                 LOGGER.info("[loader] Smart offload: loading %s to CPU (will stream to GPU)", cls_name)
                 log_smart_offload_action(
-                    "cpu_stage_load",
+                    SmartOffloadAction.CPU_STAGE_LOAD,
                     source="runtime.models.loader",
                     component=cls_name,
                     from_device=str(load_device),

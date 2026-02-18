@@ -25,6 +25,7 @@ and derives WAN sampler/scheduler defaults from metadata scheduler assets.
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
 resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
+Any cancel mode may abort while waiting on the inference gate; in-flight interruption remains `immediate`-only.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for generation endpoints.
@@ -2839,7 +2840,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     )
 
                 acquired = acquire_inference_gate(
-                    should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
+                    should_cancel=lambda: bool(entry.cancel_requested),
                 )
                 if not acquired:
                     entry.error = "cancelled"

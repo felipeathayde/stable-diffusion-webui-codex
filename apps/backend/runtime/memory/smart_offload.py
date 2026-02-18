@@ -13,7 +13,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `smart_offload_enabled` (function): True when smart offload is enabled (options + thread overrides).
 - `smart_fallback_enabled` (function): True when smart CPU fallback on OOM is enabled (options + thread overrides).
 - `smart_cache_enabled` (function): True when Smart Cache is enabled (options + thread overrides).
-- `log_smart_offload_action` (function): Emits canonical INFO events for smart-offload actions.
+- `SmartOffloadAction` (enum): Canonical smart-offload action catalog for structured event emission.
+- `log_smart_offload_action` (function): Emits canonical smart-offload INFO events via the global event emitter.
 - `record_smart_cache_hit` (function): Increment Smart Cache hit counter for a named bucket.
 - `record_smart_cache_miss` (function): Increment Smart Cache miss counter for a named bucket.
 - `get_smart_cache_stats` (function): Return hit/miss counters for all Smart Cache buckets.
@@ -22,13 +23,11 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from contextlib import contextmanager
+from enum import Enum
 import threading
 from typing import Dict, Iterator
 
-from apps.backend.runtime.logging import format_log_message, get_backend_logger
-
-
-_SMART_OFFLOAD_LOG = get_backend_logger("smart_offload")
+from apps.backend.runtime.logging import emit_backend_event
 
 
 def _snapshot():
@@ -38,6 +37,15 @@ def _snapshot():
 
 
 _THREAD_OVERRIDES = threading.local()
+
+
+class SmartOffloadAction(str, Enum):
+    LOAD = "load"
+    UNLOAD = "unload"
+    UNLOAD_NOOP = "unload_noop"
+    CPU_STAGE_LOAD = "cpu_stage_load"
+    DIRECT_CPU_OFFLOAD = "direct_cpu_offload"
+    PIN_HOST_MEMORY = "pin_host_memory"
 
 
 def _get_override(name: str) -> bool | None:
@@ -107,13 +115,22 @@ def smart_cache_enabled() -> bool:
         return False
 
 
-def log_smart_offload_action(action: str, /, **fields: object) -> None:
+def log_smart_offload_action(action: SmartOffloadAction, /, **fields: object) -> None:
     """Emit the canonical INFO log event for a smart-offload action."""
 
-    action_name = str(action).strip().replace(" ", "_")
+    if not isinstance(action, SmartOffloadAction):
+        raise TypeError(
+            "smart_offload action must be SmartOffloadAction "
+            f"(received {type(action).__name__})."
+        )
+    action_name = action.value.strip().replace(" ", "_")
     if not action_name:
         action_name = "unknown"
-    _SMART_OFFLOAD_LOG.info(format_log_message(f"smart_offload.{action_name}", **fields))
+    emit_backend_event(
+        f"smart_offload.{action_name}",
+        logger="smart_offload",
+        **fields,
+    )
 
 
 _SMART_CACHE_COUNTERS: Dict[str, Dict[str, int]] = {}
@@ -153,6 +170,7 @@ def get_smart_cache_stats() -> Dict[str, Dict[str, int]]:
 
 
 __all__ = [
+    "SmartOffloadAction",
     "log_smart_offload_action",
     "smart_offload_enabled",
     "smart_fallback_enabled",

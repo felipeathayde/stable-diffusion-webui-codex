@@ -7,6 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Smart-offload GPU residency invariants (auto-unload forbidden components between stages).
+Delegates canonical smart-offload generic load/unload event emission to the memory manager.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `enforce_smart_offload_pre_conditioning_residency` (function): Ensures denoiser/VAE are not resident on the accelerator
@@ -107,7 +108,12 @@ def enforce_smart_offload_pre_conditioning_residency(sd_model: Any, *, stage: st
             "[smart-offload] stage=%s: denoiser was still resident on accelerator; unloading before conditioning.",
             stage,
         )
-        memory_management.manager.unload_model(denoiser)
+        memory_management.manager.unload_model(
+            denoiser,
+            source="runtime.memory.smart_offload_invariants.pre_conditioning",
+            stage=stage,
+            component_hint="denoiser",
+        )
 
     vae_patcher = _resolve_vae_patcher(sd_model)
     if vae_patcher is not None and _is_model_loaded_on_accelerator(vae_patcher):
@@ -115,7 +121,12 @@ def enforce_smart_offload_pre_conditioning_residency(sd_model: Any, *, stage: st
             "[smart-offload] stage=%s: VAE was resident on accelerator; unloading before conditioning.",
             stage,
         )
-        memory_management.manager.unload_model(vae_patcher)
+        memory_management.manager.unload_model(
+            vae_patcher,
+            source="runtime.memory.smart_offload_invariants.pre_conditioning",
+            stage=stage,
+            component_hint="vae",
+        )
 
 
 def enforce_smart_offload_text_encoders_off(sd_model: Any, *, stage: str) -> None:
@@ -135,7 +146,12 @@ def enforce_smart_offload_text_encoders_off(sd_model: Any, *, stage: str) -> Non
                 stage,
                 name,
             )
-            memory_management.manager.unload_model(patcher)
+            memory_management.manager.unload_model(
+                patcher,
+                source="runtime.memory.smart_offload_invariants.text_encoders_off",
+                stage=stage,
+                component_hint=f"text_encoder:{name}",
+            )
 
 
 def enforce_smart_offload_pre_sampling_residency(
@@ -161,7 +177,12 @@ def enforce_smart_offload_pre_sampling_residency(
                 stage,
                 name,
             )
-            memory_management.manager.unload_model(patcher)
+            memory_management.manager.unload_model(
+                patcher,
+                source="runtime.memory.smart_offload_invariants.pre_sampling",
+                stage=stage,
+                component_hint=f"text_encoder:{name}",
+            )
 
     if not allow_vae_resident:
         vae_patcher = _resolve_vae_patcher(sd_model)
@@ -170,7 +191,12 @@ def enforce_smart_offload_pre_sampling_residency(
                 "[smart-offload] stage=%s: VAE was resident on accelerator; unloading before sampling.",
                 stage,
             )
-            memory_management.manager.unload_model(vae_patcher)
+            memory_management.manager.unload_model(
+                vae_patcher,
+                source="runtime.memory.smart_offload_invariants.pre_sampling",
+                stage=stage,
+                component_hint="vae",
+            )
 
 
 def enforce_smart_offload_pre_vae_residency(
@@ -198,7 +224,12 @@ def enforce_smart_offload_pre_vae_residency(
             "[smart-offload] stage=%s: denoiser was still resident on accelerator; unloading before VAE stage.",
             stage,
         )
-        memory_management.manager.unload_model(denoiser)
+        memory_management.manager.unload_model(
+            denoiser,
+            source="runtime.memory.smart_offload_invariants.pre_vae",
+            stage=stage,
+            component_hint="denoiser",
+        )
 
     for name, patcher in _iter_text_encoder_patchers(sd_model):
         if _is_model_loaded_on_accelerator(patcher):
@@ -207,7 +238,12 @@ def enforce_smart_offload_pre_vae_residency(
                 stage,
                 name,
             )
-            memory_management.manager.unload_model(patcher)
+            memory_management.manager.unload_model(
+                patcher,
+                source="runtime.memory.smart_offload_invariants.pre_vae",
+                stage=stage,
+                component_hint=f"text_encoder:{name}",
+            )
 
 
 def enforce_smart_offload_post_decode_residency(
@@ -238,7 +274,12 @@ def enforce_smart_offload_post_decode_residency(
             "[smart-offload] stage=%s: VAE remained resident after decode; unloading.",
             stage,
         )
-        memory_management.manager.unload_model(vae_patcher)
+        memory_management.manager.unload_model(
+            vae_patcher,
+            source="runtime.memory.smart_offload_invariants.post_decode",
+            stage=stage,
+            component_hint="vae",
+        )
 
     denoiser = getattr(codex_objects, "denoiser", None)
     if denoiser is None:
@@ -254,7 +295,13 @@ def enforce_smart_offload_post_decode_residency(
                 "[smart-offload] stage=%s: Smart Cache hit; prewarming denoiser on accelerator.",
                 stage,
             )
-            memory_management.manager.load_model(denoiser)
+            memory_management.manager.load_model(
+                denoiser,
+                source="runtime.memory.smart_offload_invariants.post_decode",
+                stage=stage,
+                component_hint="denoiser",
+                event_reason="smart_cache_hit_prewarm",
+            )
         return
 
     if _is_model_loaded_on_accelerator(denoiser):
@@ -262,7 +309,13 @@ def enforce_smart_offload_post_decode_residency(
             "[smart-offload] stage=%s: Smart Cache miss; unloading denoiser after decode.",
             stage,
         )
-        memory_management.manager.unload_model(denoiser)
+        memory_management.manager.unload_model(
+            denoiser,
+            source="runtime.memory.smart_offload_invariants.post_decode",
+            stage=stage,
+            component_hint="denoiser",
+            event_reason="smart_cache_miss_unload",
+        )
 
 
 __all__ = [

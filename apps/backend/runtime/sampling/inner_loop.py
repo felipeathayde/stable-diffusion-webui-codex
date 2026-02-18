@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Torch-bound sampling inner loop (kept separate so `apps.backend.runtime.sampling` stays import-light for API/UI imports).
 Implements conditioning batching, CFG routing (including optional APG/rescale/trunc/renorm guidance policy), and sampling lifecycle hooks
 (prepare/cleanup) for native samplers.
+Sampling prepare/cleanup delegates generic smart-offload load/unload event emission to the memory manager.
 Emits optional profiling sections (torch-profiler `record_function`) at key seams when `CODEX_PROFILE` is enabled.
 Supports an opt-in CFG cond+uncond fused batch mode (`CODEX_CFG_BATCH_MODE=fused|split`) that can reduce `apply_model` calls when memory allows,
 with a best-effort fallback to split on CUDA OOM.
@@ -711,7 +712,9 @@ def sampling_prepare(denoiser, x):
         memory_management.manager.load_models(
             models=models_to_load,
             memory_required=denoiser_inference_memory,
-            hard_memory_preservation=additional_inference_memory
+            hard_memory_preservation=additional_inference_memory,
+            source="runtime.sampling.inner_loop.sampling_prepare",
+            stage="sampling_prepare",
         )
 
         if smart_offload_enabled():
@@ -759,7 +762,11 @@ def sampling_cleanup(denoiser):
     if smart_offload_enabled():
         models_to_unload = getattr(denoiser, "_codex_smart_offload_models", [])
         for model in models_to_unload:
-            memory_management.manager.unload_model(model)
+            memory_management.manager.unload_model(
+                model,
+                source="runtime.sampling.inner_loop.sampling_cleanup",
+                stage="sampling_cleanup",
+            )
         setattr(denoiser, "_codex_smart_offload_models", [])
     _try_disable_gguf_dequant_forward_cache()
     from apps.backend.runtime.ops import cleanup_cache

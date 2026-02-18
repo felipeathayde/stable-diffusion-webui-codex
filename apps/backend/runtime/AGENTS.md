@@ -49,6 +49,7 @@ Status: Active
 - 2026-01-31: `CODEX_LOG_FILE` now attaches a file handler to the `backend` logger hierarchy as well as the root logger, since `backend.propagate=False` would otherwise yield an empty log file for backend logs (launcher “Write to log file”).
 - 2026-02-18: `runtime/logging.py` now exposes `get_backend_logger(...)` to normalize logger namespaces (`apps.backend.*` -> `backend.*`) for phase-based migration away from ad-hoc logger naming.
 - 2026-02-18: `runtime/logging.py` now applies richer default formatting (`%(name)s | %(message)s`), adds `format_log_message(...)` for event-style key/value log text, and supports Rich traceback/path toggles via `CODEX_LOG_RICH_TRACEBACKS` and `CODEX_LOG_RICH_SHOW_PATH`.
+- 2026-02-18: `runtime/logging.py` now defines `emit_backend_event(...)` as the canonical global event-emission path (single source of truth for backend event logs); domain helpers (e.g., smart-offload) should emit through this function.
 - 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-exec=dequant_upfront` (otherwise weights dequantize on the fly via `dequant_forward`).
 - 2026-01-23: Started gating future GGUF packed-kernel execution via `--gguf-exec=cuda_pack` (reserved; fail loud until implemented) and introduced `--lora-online-math` to make online LoRA semantics explicit.
 - 2026-01-04: Added `runtime.checkpoint.io.load_gguf_state_dict(...)` as the canonical GGUF load wrapper so runtime codepaths honor global GGUF flags consistently (no direct loader calls).

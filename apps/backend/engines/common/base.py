@@ -10,6 +10,7 @@ Purpose: Common engine base helpers for diffusion runtimes (component bundles, l
 Defines `CodexObjects` and the shared engine load/unload path, including fail-fast `.gguf` core-only validation and explicit `vae_source`/`tenc_source`
 selection. Also provides default first-stage VAE encode/decode for image engines and canonical task wrappers that delegate to mode use-cases (Option A) so engines stay adapters.
 External-asset-first families (e.g., Z-Image and Anima) treat `vae_path` as selection rather than a state-dict override.
+Engine lifecycle logs (`load.start` / `load.complete` / `unload.start`) are emitted through the global runtime event emitter.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
@@ -40,6 +41,7 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
     record_smart_cache_miss,
 )
+from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.common.vae_lane_policy import (
     detect_vae_layout,
@@ -591,7 +593,13 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 "(or via the API 'extras.tenc_sha' selector)."
             )
 
-        self._logger.info("[engine] Loading %s (ref=%s, source=%s)", self.engine_id, model_ref, bundle.source)
+        emit_backend_event(
+            "engine.load.start",
+            logger=self._logger.name,
+            engine=self.engine_id,
+            model_ref=model_ref,
+            source=bundle.source,
+        )
         self._reset_state()
 
         self._current_bundle = bundle
@@ -736,16 +744,21 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self.snapshot_after_lora()
 
         self.mark_loaded()
-        self._logger.info(
-            "[engine] Loaded %s (families=%s)",
-            self.engine_id,
-            ",".join(sorted(self._model_families)) or "unknown",
+        emit_backend_event(
+            "engine.load.complete",
+            logger=self._logger.name,
+            engine=self.engine_id,
+            families=",".join(sorted(self._model_families)) or "unknown",
         )
 
     def unload(self) -> None:  # type: ignore[override]
         if not self._is_loaded:
             return
-        self._logger.info("[engine] Unloading %s", self.engine_id)
+        emit_backend_event(
+            "engine.unload.start",
+            logger=self._logger.name,
+            engine=self.engine_id,
+        )
         try:
             self._unload_bound_models_from_memory_manager()
         except Exception:

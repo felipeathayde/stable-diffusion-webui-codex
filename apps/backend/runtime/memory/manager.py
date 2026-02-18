@@ -10,6 +10,7 @@ Purpose: Codex-native runtime memory management service (hardware probe + precis
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
 Exposes per-role storage vs compute dtype selection (core/TE default to fp16 on accelerator devices, VAE defaults to fp32, CPU remains fp32 unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
 Also emits canonical smart-offload INFO audit events for model load/unload transitions and unload no-op requests when smart offload is active.
+Generic smart-offload action emission (`load`/`unload`/`unload_noop`) is centralized here, with optional caller context fields (`source`/`stage`/`component_hint`/`event_reason`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
@@ -41,7 +42,7 @@ from .config import (
     SwapPolicy,
 )
 from .exceptions import HardwareProbeError, MemoryConfigurationError, MemoryLoadError
-from .smart_offload import log_smart_offload_action, smart_offload_enabled
+from .smart_offload import SmartOffloadAction, log_smart_offload_action, smart_offload_enabled
 
 
 logger = logging.getLogger("backend.memory.manager")
@@ -992,17 +993,35 @@ class CodexMemoryManager:
                 self._unload_record(record, avoid_model_moving=True, reason="unload_model_clones")
                 self._loaded_models.pop(index)
 
-    def unload_model(self, model: object) -> None:
+    def unload_model(
+        self,
+        model: object,
+        *,
+        source: str = "runtime.memory.manager.unload_model",
+        stage: str | None = None,
+        component_hint: str | None = None,
+        event_reason: str | None = None,
+    ) -> None:
         record = self._find_loaded_model(model)
         if record is None:
             if smart_offload_enabled():
                 log_smart_offload_action(
-                    "unload_noop",
-                    source="unload_model",
-                    component=type(model).__name__,
+                    SmartOffloadAction.UNLOAD_NOOP,
+                    source=source,
+                    stage=stage,
+                    component=component_hint or type(model).__name__,
+                    reason=event_reason,
                 )
             return
-        self._unload_record(record, avoid_model_moving=True, reason="unload_model")
+        self._unload_record(
+            record,
+            avoid_model_moving=True,
+            reason="unload_model",
+            event_source=source,
+            event_stage=stage,
+            event_component=component_hint,
+            event_reason=event_reason,
+        )
         try:
             self._loaded_models.remove(record)
         except ValueError:  # pragma: no cover
@@ -1017,6 +1036,10 @@ class CodexMemoryManager:
         *,
         memory_required: int = 0,
         hard_memory_preservation: int = 0,
+        source: str = "runtime.memory.manager.load_models",
+        stage: str | None = None,
+        component_hint: str | None = None,
+        event_reason: str | None = None,
     ) -> None:
         if not models:
             return
@@ -1054,7 +1077,13 @@ class CodexMemoryManager:
             current: _LoadedModelRecord | None = None
             try:
                 for current in models_to_load:
-                    self._load_record(current)
+                    self._load_record(
+                        current,
+                        event_source=source,
+                        event_stage=stage,
+                        event_component=component_hint,
+                        event_reason=event_reason,
+                    )
                     self._loaded_models.insert(0, current)
                     loaded_this_call.append(current)
             except Exception as exc:
@@ -1077,8 +1106,22 @@ class CodexMemoryManager:
         elapsed = time.perf_counter() - execution_start
         logger.info("Model load completed (%d new, %d existing) in %.2fs.", len(models_to_load), len(already_loaded), elapsed)
 
-    def load_model(self, model: object) -> None:
-        self.load_models([model])
+    def load_model(
+        self,
+        model: object,
+        *,
+        source: str = "runtime.memory.manager.load_model",
+        stage: str | None = None,
+        component_hint: str | None = None,
+        event_reason: str | None = None,
+    ) -> None:
+        self.load_models(
+            [model],
+            source=source,
+            stage=stage,
+            component_hint=component_hint,
+            event_reason=event_reason,
+        )
 
     def free_memory(
         self,
@@ -1234,7 +1277,15 @@ class CodexMemoryManager:
             storage_dtype=storage_dtype,
         )
 
-    def _load_record(self, record: _LoadedModelRecord) -> None:
+    def _load_record(
+        self,
+        record: _LoadedModelRecord,
+        *,
+        event_source: str,
+        event_stage: str | None = None,
+        event_component: str | None = None,
+        event_reason: str | None = None,
+    ) -> None:
         loader = record.loader or record.model
         module = record.base_module or self._extract_module(loader)
         if module is None:
@@ -1315,9 +1366,11 @@ class CodexMemoryManager:
             )
             if smart_offload_enabled():
                 log_smart_offload_action(
-                    "load",
-                    source="memory_manager._load_record",
-                    component=target_name,
+                    SmartOffloadAction.LOAD,
+                    source=event_source,
+                    stage=event_stage,
+                    component=event_component or target_name,
+                    reason=event_reason,
                     load_device=str(record.load_device),
                     offload_device=str(record.offload_device),
                     storage_dtype=str(record.storage_dtype),
@@ -1335,6 +1388,10 @@ class CodexMemoryManager:
         *,
         avoid_model_moving: bool = False,
         reason: str = "unknown",
+        event_source: str | None = None,
+        event_stage: str | None = None,
+        event_component: str | None = None,
+        event_reason: str | None = None,
     ) -> None:
         loader = record.loader or record.model
         target_device: torch.device | None = None
@@ -1349,9 +1406,11 @@ class CodexMemoryManager:
             logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
             if smart_offload_enabled():
                 log_smart_offload_action(
-                    "unload",
-                    source=reason,
-                    component=self._record_label(record),
+                    SmartOffloadAction.UNLOAD,
+                    source=event_source or reason,
+                    stage=event_stage,
+                    component=event_component or self._record_label(record),
+                    reason=event_reason,
                     load_device=str(record.load_device),
                     offload_device=str(record.offload_device),
                     target_device=str(target_device) if target_device is not None else "unknown",

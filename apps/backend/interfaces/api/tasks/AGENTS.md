@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/tasks Overview
 <!-- tags: backend, api, tasks, orchestration -->
 Date: 2026-01-30
-Last Review: 2026-02-16
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -22,3 +22,5 @@ Status: Active
 - 2026-02-16: `generation_tasks.py` logs typed `EngineExecutionError` explicitly to API console logs (`task_id`, `mode`, `engine`) before persisting sanitized `entry.error`; wire payload contract remains unchanged.
 - 2026-02-16: `generation_tasks.py` now enforces strict bool parsing for request smart flags via `resolve_request_smart_flags(...)` and drains orchestrator iterators on immediate-cancel paths (no early-return teardown bypass; inference-gate release happens after iterator/use-case finalizers complete).
 - 2026-02-18: `generation_tasks.py` now serializes PNG `parameters` as A1111-compatible infotext (prompt + optional negative prompt + KV line) instead of JSON blobs, while still preserving provenance text chunks separately.
+- 2026-02-18: `generation_tasks.py` inference-gate wait cancellation now honors any requested cancel mode (`immediate` or `after_current`) before work starts; once running, only `immediate` interrupts in-flight generation.
+- 2026-02-18: `upscale_tasks.py` and `supir_tasks.py` now follow the same gate-wait rule: any cancel mode aborts before start while `immediate` remains the only in-flight interrupt mode.

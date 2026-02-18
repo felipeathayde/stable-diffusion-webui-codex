@@ -1,6 +1,6 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
-Last Review: 2026-02-10
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -34,6 +34,8 @@ Status: Active
 - 2026-02-01: Added shared helper modules:
   - `model_scopes.py` (`stage_scoped_model_load`) to enforce stage-scoped smart-offload semantics when loading text encoders.
   - `capabilities_presets.py` (constants) to dedupe common image-engine capabilities tuples without hiding fields.
+- 2026-02-18: `model_scopes.stage_scoped_model_load(...)` now passes scoped event context into `memory_management.manager` so generic smart-offload `load`/`unload` emission remains centralized in manager ownership.
+- 2026-02-18: `base.py` engine lifecycle logs now emit via global runtime event emitter (`emit_backend_event`) for a single backend event emission path.
 - 2026-01-31: `CodexDiffusionEngine` improvements:
   - `__init__` accepts an optional `logger=` to avoid subclass logger collisions and keep per-engine log namespaces consistent.
   - Conditioning cache helpers (`_get_cached_cond/_set_cached_cond`) accept per-call enable overrides and store arbitrary payloads (tensors/dicts/tuples), with hit/miss metrics.

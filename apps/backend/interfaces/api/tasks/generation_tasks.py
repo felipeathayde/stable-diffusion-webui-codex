@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Shared task orchestration helpers for generation endpoints.
 Centralizes image encoding, engine-options building, and the common task worker loop (status/progress/result/end/error) so routers stay thin.
 Uses the shared inference gate when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished` (stream termination + cleanup).
+Inference-gate wait cancellation is mode-agnostic (both `immediate` and `after_current` cancel before start); once running, only immediate mode interrupts in-flight orchestration.
 When `CODEX_TRACE_CONTRACT=1`, emits prompt-redacted contract-trace JSONL events (`prompt_hash` only) for prepare/run/progress/result/error/end stages.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -412,7 +413,7 @@ def run_image_task(
                 )
 
             acquired = acquire_inference_gate(
-                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
+                should_cancel=lambda: bool(entry.cancel_requested),
             )
             if not acquired:
                 entry.error = "cancelled"

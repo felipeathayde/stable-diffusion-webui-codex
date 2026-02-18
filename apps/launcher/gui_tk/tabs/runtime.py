@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Runtime settings tab for the Tk launcher.
 Edits bootstrap-critical device defaults and global runtime/task knobs that must exist before the API starts (devices, GGUF/LoRA, task single-flight,
-task SSE buffer caps, upscaler safeweights).
+task cancel default mode, task SSE buffer caps, upscaler safeweights).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RuntimeTab` (class): Runtime settings tab (devices + GGUF/LoRA + PyTorch alloc conf).
@@ -26,6 +26,7 @@ from apps.launcher.settings import (
     DEVICE_CHOICES,
     IntSetting,
     SettingValidationError,
+    TASK_CANCEL_DEFAULT_MODE_CHOICES,
     TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
     TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
     normalize_gguf_lora_env,
@@ -63,6 +64,7 @@ class RuntimeTab:
 
         self._var_single_flight = tk.BooleanVar()
         self._var_safeweights = tk.BooleanVar()
+        self._var_task_cancel_default_mode = tk.StringVar()
         self._var_task_buffer_max_events = tk.StringVar()
         self._var_task_buffer_max_mb = tk.StringVar()
 
@@ -220,6 +222,22 @@ class RuntimeTab:
             "Env var: CODEX_SINGLE_FLIGHT\n"
             "When enabled (default), GPU-heavy tasks (generation/video/upscale/SUPIR) are serialized to avoid global-state races.",
         )
+        row = self._add_choice_combo(
+            body,
+            row,
+            label="Task cancel default mode (requires API restart):",
+            var=self._var_task_cancel_default_mode,
+            choices=list(TASK_CANCEL_DEFAULT_MODE_CHOICES),
+            on_change=lambda: self._sync_task_deps(mark_changed=True),
+            width=14,
+        )
+        row = add_help(
+            body,
+            row,
+            "Env var: CODEX_TASK_CANCEL_DEFAULT_MODE\n"
+            "immediate: cancels in-flight generation now.\n"
+            "after_current: finish current image job (1st pass + hires/decode/cleanup) before stopping.",
+        )
         row = self._add_entry_commit_int(
             body,
             row,
@@ -283,17 +301,19 @@ class RuntimeTab:
         self._var_pytorch_alloc_conf.set(alloc)
 
         try:
-            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+            single_flight, safeweights, max_events, max_mb, cancel_default_mode = normalize_task_runtime_env(env)
         except SettingValidationError as exc:
             self._controller.store.env["CODEX_SINGLE_FLIGHT"] = "1"
             self._controller.store.env["CODEX_SAFE_WEIGHTS"] = "0"
             self._controller.store.env["CODEX_TASK_EVENT_BUFFER_MAX_EVENTS"] = str(TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT)
             self._controller.store.env["CODEX_TASK_EVENT_BUFFER_MAX_MB"] = str(TASK_EVENT_BUFFER_MAX_MB_DEFAULT)
-            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+            self._controller.store.env["CODEX_TASK_CANCEL_DEFAULT_MODE"] = "immediate"
+            single_flight, safeweights, max_events, max_mb, cancel_default_mode = normalize_task_runtime_env(env)
             messagebox.showerror("Invalid task setting", str(exc))
 
         self._var_single_flight.set(bool(single_flight))
         self._var_safeweights.set(bool(safeweights))
+        self._var_task_cancel_default_mode.set(str(cancel_default_mode))
         self._var_task_buffer_max_events.set(str(int(max_events)))
         self._var_task_buffer_max_mb.set(str(int(max_mb)))
 
@@ -418,22 +438,25 @@ class RuntimeTab:
 
         BoolSetting("CODEX_SINGLE_FLIGHT", default=True).set(env, bool(self._var_single_flight.get()))
         BoolSetting("CODEX_SAFE_WEIGHTS", default=False).set(env, bool(self._var_safeweights.get()))
+        env["CODEX_TASK_CANCEL_DEFAULT_MODE"] = str(self._var_task_cancel_default_mode.get() or "").strip().lower()
         env["CODEX_TASK_EVENT_BUFFER_MAX_EVENTS"] = str(self._var_task_buffer_max_events.get() or "").strip()
         env["CODEX_TASK_EVENT_BUFFER_MAX_MB"] = str(self._var_task_buffer_max_mb.get() or "").strip()
 
         try:
-            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+            single_flight, safeweights, max_events, max_mb, cancel_default_mode = normalize_task_runtime_env(env)
         except SettingValidationError as exc:
             env["CODEX_SINGLE_FLIGHT"] = "1"
             env["CODEX_SAFE_WEIGHTS"] = "0"
             env["CODEX_TASK_EVENT_BUFFER_MAX_EVENTS"] = str(TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT)
             env["CODEX_TASK_EVENT_BUFFER_MAX_MB"] = str(TASK_EVENT_BUFFER_MAX_MB_DEFAULT)
-            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+            env["CODEX_TASK_CANCEL_DEFAULT_MODE"] = "immediate"
+            single_flight, safeweights, max_events, max_mb, cancel_default_mode = normalize_task_runtime_env(env)
             messagebox.showerror("Invalid task setting", str(exc))
             mark_changed = True
 
         self._var_single_flight.set(bool(single_flight))
         self._var_safeweights.set(bool(safeweights))
+        self._var_task_cancel_default_mode.set(str(cancel_default_mode))
         self._var_task_buffer_max_events.set(str(int(max_events)))
         self._var_task_buffer_max_mb.set(str(int(max_mb)))
 

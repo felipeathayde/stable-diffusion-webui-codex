@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onResizeModeChange` (function): Emits normalized resize-mode updates from the resize-type select.
 - `onUpscalerChange` (function): Emits upscaler selection updates.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
+- `toggleGuidanceAdvanced` (function): Toggles Advanced guidance mode and auto-syncs APG/CFG trunc activation flags when supported.
 - `swapWH` (function): Swaps width/height while respecting min/max and step constraints.
 -->
 
@@ -207,7 +208,7 @@ Symbols (top-level; keep in sync; no ghosts):
               type="button"
               :disabled="disabled"
               title="Show advanced guidance controls"
-              @click="patchGuidanceAdvanced({ enabled: !guidanceAdvanced.enabled })"
+              @click="toggleGuidanceAdvanced"
             >
               Advanced
             </button>
@@ -230,34 +231,12 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
 
       <div v-if="showGuidanceAdvancedRow" class="gc-row cfg-advanced-row">
-        <div v-if="hasGuidanceSupport('apg_enabled')" class="gc-col field gc-col--compact">
-          <label class="label-muted">APG</label>
-          <button
-            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', guidanceAdvanced.apgEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-            type="button"
-            :disabled="disabled"
-            @click="patchGuidanceAdvanced({ apgEnabled: !guidanceAdvanced.apgEnabled })"
-          >
-            {{ guidanceAdvanced.apgEnabled ? 'On' : 'Off' }}
-          </button>
-        </div>
-
-        <div v-if="hasGuidanceSupport('cfg_trunc_ratio')" class="gc-col field gc-col--compact">
-          <label class="label-muted">CFG Trunc</label>
-          <button
-            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', guidanceAdvanced.cfgTruncEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-            type="button"
-            :disabled="disabled"
-            @click="patchGuidanceAdvanced({ cfgTruncEnabled: !guidanceAdvanced.cfgTruncEnabled })"
-          >
-            {{ guidanceAdvanced.cfgTruncEnabled ? 'On' : 'Off' }}
-          </button>
-        </div>
-
         <SliderField
           v-if="hasGuidanceSupport('apg_start_step')"
           class="gc-col"
           label="APG Start"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgStartStep"
+          tooltipTitle="APG Start"
           :modelValue="guidanceAdvanced.apgStartStep"
           :min="0"
           :max="maxSteps"
@@ -265,7 +244,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :inputStep="1"
           :nudgeStep="1"
           inputClass="cdx-input-w-md"
-          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          :disabled="disabled"
           @update:modelValue="(v) => patchGuidanceAdvanced({ apgStartStep: clampInt(v, 0, maxSteps) })"
         />
 
@@ -273,6 +252,8 @@ Symbols (top-level; keep in sync; no ghosts):
           v-if="hasGuidanceSupport('apg_eta')"
           class="gc-col"
           label="APG Eta"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgEta"
+          tooltipTitle="APG Eta"
           :modelValue="guidanceAdvanced.apgEta"
           :min="-1"
           :max="1"
@@ -280,7 +261,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :inputStep="0.01"
           :nudgeStep="0.01"
           inputClass="cdx-input-w-md"
-          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          :disabled="disabled"
           @update:modelValue="(v) => patchGuidanceAdvanced({ apgEta: clampFloat(v, -1, 1) })"
         />
 
@@ -288,6 +269,8 @@ Symbols (top-level; keep in sync; no ghosts):
           v-if="hasGuidanceSupport('apg_momentum')"
           class="gc-col"
           label="APG Momentum"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgMomentum"
+          tooltipTitle="APG Momentum"
           :modelValue="guidanceAdvanced.apgMomentum"
           :min="0"
           :max="0.99"
@@ -295,29 +278,16 @@ Symbols (top-level; keep in sync; no ghosts):
           :inputStep="0.01"
           :nudgeStep="0.01"
           inputClass="cdx-input-w-md"
-          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          :disabled="disabled"
           @update:modelValue="(v) => patchGuidanceAdvanced({ apgMomentum: clampFloat(v, 0, 0.99) })"
-        />
-
-        <SliderField
-          v-if="hasGuidanceSupport('apg_norm_threshold')"
-          class="gc-col"
-          label="APG Norm"
-          :modelValue="guidanceAdvanced.apgNormThreshold"
-          :min="0"
-          :max="40"
-          :step="0.1"
-          :inputStep="0.1"
-          :nudgeStep="0.1"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled || !guidanceAdvanced.apgEnabled"
-          @update:modelValue="(v) => patchGuidanceAdvanced({ apgNormThreshold: clampFloat(v, 0, 40) })"
         />
 
         <SliderField
           v-if="hasGuidanceSupport('apg_rescale')"
           class="gc-col"
           label="APG Rescale"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgRescale"
+          tooltipTitle="APG Rescale"
           :modelValue="guidanceAdvanced.apgRescale"
           :min="0"
           :max="1"
@@ -325,14 +295,33 @@ Symbols (top-level; keep in sync; no ghosts):
           :inputStep="0.01"
           :nudgeStep="0.01"
           inputClass="cdx-input-w-md"
-          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          :disabled="disabled"
           @update:modelValue="(v) => patchGuidanceAdvanced({ apgRescale: clampFloat(v, 0, 1) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_norm_threshold')"
+          class="gc-col"
+          label="APG Norm"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgNormThreshold"
+          tooltipTitle="APG Norm"
+          :modelValue="guidanceAdvanced.apgNormThreshold"
+          :min="0"
+          :max="40"
+          :step="0.1"
+          :inputStep="0.1"
+          :nudgeStep="0.1"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgNormThreshold: clampFloat(v, 0, 40) })"
         />
 
         <SliderField
           v-if="hasGuidanceSupport('guidance_rescale')"
           class="gc-col"
           label="Guidance Rescale"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.guidanceRescale"
+          tooltipTitle="Guidance Rescale"
           :modelValue="guidanceAdvanced.guidanceRescale"
           :min="0"
           :max="1"
@@ -348,6 +337,8 @@ Symbols (top-level; keep in sync; no ghosts):
           v-if="hasGuidanceSupport('cfg_trunc_ratio')"
           class="gc-col"
           label="CFG Trunc Ratio"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.cfgTruncRatio"
+          tooltipTitle="CFG Trunc Ratio"
           :modelValue="guidanceAdvanced.cfgTruncRatio"
           :min="0"
           :max="1"
@@ -355,7 +346,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :inputStep="0.01"
           :nudgeStep="0.01"
           inputClass="cdx-input-w-md"
-          :disabled="disabled || !guidanceAdvanced.cfgTruncEnabled"
+          :disabled="disabled"
           @update:modelValue="(v) => patchGuidanceAdvanced({ cfgTruncRatio: clampFloat(v, 0, 1) })"
         />
 
@@ -363,6 +354,8 @@ Symbols (top-level; keep in sync; no ghosts):
           v-if="hasGuidanceSupport('renorm_cfg')"
           class="gc-col"
           label="Renorm CFG"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.renormCfg"
+          tooltipTitle="Renorm CFG"
           :modelValue="guidanceAdvanced.renormCfg"
           :min="0"
           :max="4"
@@ -407,6 +400,65 @@ const DEFAULT_GUIDANCE_ADVANCED: GuidanceAdvancedParams = {
   cfgTruncRatio: 0.8,
   renormCfg: 0,
 }
+
+const ADVANCED_GUIDANCE_TOOLTIPS = {
+  apgStartStep: [
+    'Sets the step where APG starts influencing guidance.',
+    'Increase: APG starts later, so early composition stays closer to plain CFG.',
+    'Decrease: APG starts earlier, so APG shapes structure sooner.',
+    'Example: for 30 steps, APG Start 24 = late subtle change; APG Start 4 = early visible change.',
+    'Neutral value: set it equal to total Steps (APG is almost off).',
+  ],
+  apgEta: [
+    'Controls APG steering aggressiveness.',
+    'Increase: stronger prompt steering, usually cleaner subject intent but can look over-shaped.',
+    'Decrease: weaker steering, usually softer and more natural transitions.',
+    'Example: on portraits, higher Eta can tighten facial features; lower Eta keeps looser detail.',
+    'Neutral value: 0.00.',
+  ],
+  apgMomentum: [
+    'Controls how much APG carries memory from previous steps.',
+    'Increase: smoother, more stable behavior across steps.',
+    'Decrease: faster reaction, but can introduce jitter between nearby details.',
+    'Example: higher Momentum can stabilize repeating textures; lower Momentum can make them flicker more.',
+    'Neutral value: 0.00.',
+  ],
+  apgRescale: [
+    'Final strength multiplier for APG.',
+    'Increase: APG has more visible influence on the image.',
+    'Decrease: APG influence fades out.',
+    'Example: for anime line-art, higher Rescale can sharpen contour intent; lower Rescale keeps softer edges.',
+    'Neutral value: 0.00.',
+  ],
+  apgNormThreshold: [
+    'Threshold that limits extreme guidance spikes.',
+    'Increase: less limiting, more freedom (and more risk of overshoot artifacts).',
+    'Decrease: clamps earlier, more controlled highlights/contrast.',
+    'Example: if bright areas blow out, lowering Norm Threshold can recover smoother lighting.',
+    'Neutral value: 40.0 (near no clamping).',
+  ],
+  guidanceRescale: [
+    'Rebalances final CFG to reduce overcooked outputs.',
+    'Increase: tones down harsh CFG artifacts and oversaturation.',
+    'Decrease: keeps raw CFG punch and stronger contrast swings.',
+    'Example: if skin turns plastic or neon, raising Guidance Rescale often makes it more natural.',
+    'Neutral value: 0.00.',
+  ],
+  cfgTruncRatio: [
+    'Truncates part of CFG to reduce instability.',
+    'Increase: less truncation, behavior closer to regular CFG.',
+    'Decrease: more truncation, safer but more conservative results.',
+    'Example: if high-CFG runs create halos/ringing, lowering Trunc Ratio can calm those artifacts.',
+    'Neutral value: 1.00 (no truncation).',
+  ],
+  renormCfg: [
+    'Renormalizes CFG magnitude for stability.',
+    'Increase: stronger normalization, usually fewer contrast explosions.',
+    'Decrease: weaker normalization, more raw CFG response.',
+    'Example: if edges look crunchy at high CFG, increasing Renorm CFG can soften those spikes.',
+    'Neutral value: 0.00.',
+  ],
+} as const
 
 const props = withDefaults(defineProps<{
   samplers: SamplerInfo[]
@@ -576,6 +628,14 @@ function hasGuidanceSupport(control: keyof GuidanceAdvancedCapabilities): boolea
 
 function patchGuidanceAdvanced(patch: Partial<GuidanceAdvancedParams>): void {
   emit('update:guidanceAdvanced', patch)
+}
+
+function toggleGuidanceAdvanced(): void {
+  const nextEnabled = !guidanceAdvanced.value.enabled
+  const patch: Partial<GuidanceAdvancedParams> = { enabled: nextEnabled }
+  if (hasGuidanceSupport('apg_enabled')) patch.apgEnabled = nextEnabled
+  if (hasGuidanceSupport('cfg_trunc_ratio')) patch.cfgTruncEnabled = nextEnabled
+  patchGuidanceAdvanced(patch)
 }
 
 function swapWH(): void {

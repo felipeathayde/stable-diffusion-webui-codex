@@ -36,3 +36,4 @@ Last Review: 2026-02-15
 - 2026-01-29: Launcher no longer exposes reserved `cuda_pack` GGUF exec mode; CodexPack packed GGUFs are auto-detected via `codex.pack.*` / `*.codexpack.gguf`. Legacy launcher configs are migrated to `dequant_forward`.
 - 2026-01-31: Launcher profiles now persist global profiling env flags (`CODEX_PROFILE*`) and the GUI diagnostics tab exposes them for backend torch-profiler runs.
 - 2026-02-15: Launcher API arg forwarding now includes trace toggles (`CODEX_TRACE_CONTRACT` -> `--trace-contract`, `CODEX_TRACE_PROFILER` -> `--trace-profiler`) for backend bootstrap alignment.
+- 2026-02-18: Launcher task/runtime profile defaults now persist `CODEX_TASK_CANCEL_DEFAULT_MODE` (`immediate|after_current`) as a backend bootstrap knob for task cancel policy.

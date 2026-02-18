@@ -9,15 +9,19 @@ Required Notice: see NOTICE
 Purpose: Task status and output file API routes.
 Exposes SSE task events (with bounded replay/resume via `after` / `Last-Event-ID` + monotonic `id:`), cancellation, and output file access under
 CODEX_ROOT/output.
-Cancellation endpoint is strict fail-loud for unsupported modes (`after_current` is rejected until worker semantics are implemented).
+Cancellation endpoint supports `immediate` and `after_current`; default mode is env-configurable via
+`CODEX_TASK_CANCEL_DEFAULT_MODE` with strict fail-loud validation.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_default_task_cancel_mode` (function): Resolves and strictly validates `CODEX_TASK_CANCEL_DEFAULT_MODE`.
+- `DEFAULT_TASK_CANCEL_MODE` (constant): Effective default cancel mode used when `/api/tasks/{id}/cancel` omits `mode`.
 - `build_router` (function): Build the APIRouter for task endpoints.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -33,6 +37,20 @@ from apps.backend.interfaces.api.task_registry import (
     request_task_cancel,
     restore_task_cancel_request,
 )
+
+
+def _default_task_cancel_mode() -> TaskCancelMode:
+    raw_mode = os.getenv("CODEX_TASK_CANCEL_DEFAULT_MODE", TaskCancelMode.IMMEDIATE.value)
+    try:
+        return parse_task_cancel_mode(raw_mode)
+    except ValueError as exc:
+        raise RuntimeError(
+            "Invalid CODEX_TASK_CANCEL_DEFAULT_MODE value; expected 'immediate' or 'after_current' "
+            f"(got {raw_mode!r})."
+        ) from exc
+
+
+DEFAULT_TASK_CANCEL_MODE = _default_task_cancel_mode()
 
 
 def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
@@ -159,14 +177,9 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="cancel payload must be an object")
         try:
-            mode = parse_task_cancel_mode(payload.get("mode", TaskCancelMode.IMMEDIATE.value))
+            mode = parse_task_cancel_mode(payload.get("mode", DEFAULT_TASK_CANCEL_MODE.value))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if mode is TaskCancelMode.AFTER_CURRENT:
-            raise HTTPException(
-                status_code=400,
-                detail="Cancel mode 'after_current' is not supported yet; use 'immediate'.",
-            )
 
         entry = get_task(task_id)
         if entry is None:

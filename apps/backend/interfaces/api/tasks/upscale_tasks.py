@@ -10,6 +10,7 @@ Purpose: Task orchestration helpers for upscaler endpoints.
 Keeps `/api/upscale` and `/api/upscalers/download` routers thin by centralizing the worker boilerplate:
 status/progress/result/end/error + cancellation checks.
 Uses the shared inference gate for the upscale worker when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished`.
+Any cancel mode may abort while waiting on the inference gate; once running, only `immediate` interrupts the active work loop.
 The upscalers download task verifies file integrity against the HF manifest (`upscalers/manifest.json`, schema v1) when available,
 and returns a per-destination `sha256_by_path` mapping in the task result `info` payload.
 
@@ -108,7 +109,7 @@ def run_upscale_task(
                 push({"type": "status", "stage": "waiting_for_inference"})
 
             acquired = acquire_inference_gate(
-                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE),
+                should_cancel=lambda: bool(entry.cancel_requested),
             )
             if not acquired:
                 entry.error = "cancelled"

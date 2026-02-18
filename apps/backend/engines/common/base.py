@@ -11,7 +11,7 @@ Defines `CodexObjects` and the shared engine load/unload path, including fail-fa
 selection. Also provides default first-stage VAE encode/decode for image engines and canonical task wrappers that delegate to mode use-cases (Option A) so engines stay adapters.
 External-asset-first families (e.g., Z-Image and Anima) treat `vae_path` as selection rather than a state-dict override.
 Engine lifecycle logs (`load.start` / `load.complete` / `unload.start`) are emitted through the global runtime event emitter.
-VAE memory lifecycle (first-stage encode/decode + engine unload cleanup) uses a canonical load target (`vae.patcher` when present) so smart-offload bookkeeping does not fork records across wrapper and patcher identities.
+Patcher-backed component memory lifecycle (for example VAE/CLIP-vision wrappers) uses canonical patcher-first targets so smart-offload bookkeeping does not fork records across wrapper and patcher identities.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
@@ -792,17 +792,17 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             return
 
         targets: list[object] = []
-        # These wrappers are passed directly into memory_management.manager.load_model(...)
+        # Core components may be wrappers around patchers; use canonical patcher-first targets.
         targets.append(getattr(components, "denoiser", None))
-        targets.append(self._canonical_vae_memory_target(getattr(components, "vae", None)))
-        targets.append(getattr(components, "clipvision", None))
+        targets.append(self._canonical_patcher_target(getattr(components, "vae", None)))
+        targets.append(self._canonical_patcher_target(getattr(components, "clipvision", None)))
 
         # Text encoders vary by engine; prefer `.patcher` when present.
         try:
             for obj in (getattr(components, "text_encoders", {}) or {}).values():
                 if obj is None:
                     continue
-                targets.append(getattr(obj, "patcher", obj))
+                targets.append(self._canonical_patcher_target(obj))
         except Exception:
             pass
 
@@ -950,16 +950,16 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         return None
 
     @staticmethod
-    def _canonical_vae_memory_target(vae: object | None) -> object | None:
-        """Return canonical VAE memory target (prefer patcher identity when available)."""
-        if vae is None:
+    def _canonical_patcher_target(component: object | None) -> object | None:
+        """Return canonical memory target (prefer patcher identity when available)."""
+        if component is None:
             return None
-        patcher = getattr(vae, "patcher", None)
-        return patcher if patcher is not None else vae
+        patcher = getattr(component, "patcher", None)
+        return patcher if patcher is not None else component
 
     def _vae_memory_target(self) -> object:
         """Return the canonical memory-manager target for first-stage VAE lifecycle."""
-        return self._canonical_vae_memory_target(self.codex_objects.vae)
+        return self._canonical_patcher_target(self.codex_objects.vae)
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:

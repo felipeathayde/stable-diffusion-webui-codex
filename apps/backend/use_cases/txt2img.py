@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Txt2img entry point using the staged pipeline runner.
 Delegates latent generation to `Txt2ImgPipelineRunner` and provides a canonical event-emitting wrapper used by engines/orchestrator.
+The wrapper reapplies request smart runtime overrides on final decode/post-cleanup paths that execute outside the worker-thread sampler.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_logger` (constant): Module logger for the txt2img use case.
@@ -95,13 +96,14 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     proc.subseeds = list(subseeds)
 
     prompts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
+    smart_flags = {
+        "smart_offload": bool(getattr(proc, "smart_offload", False)),
+        "smart_fallback": bool(getattr(proc, "smart_fallback", False)),
+        "smart_cache": bool(getattr(proc, "smart_cache", False)),
+    }
 
     def _generate() -> GenerationResult:
-        with smart_runtime_overrides(
-            smart_offload=bool(getattr(proc, "smart_offload", False)),
-            smart_fallback=bool(getattr(proc, "smart_fallback", False)),
-            smart_cache=bool(getattr(proc, "smart_cache", False)),
-        ):
+        with smart_runtime_overrides(**smart_flags):
             return generate_txt2img(
                 processing=proc,
                 conditioning=None,
@@ -128,11 +130,12 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     elif active_decode_engine is not engine:
         _logger.info("txt2img decode will use active pipeline model instance (swap/refiner path).")
 
-    images, decode_ms = _decode_generation_output(
-        engine=active_decode_engine,
-        output=outcome.output,
-        task_label="txt2img",
-    )
+    with smart_runtime_overrides(**smart_flags):
+        images, decode_ms = _decode_generation_output(
+            engine=active_decode_engine,
+            output=outcome.output,
+            task_label="txt2img",
+        )
 
     all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
     seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
@@ -174,9 +177,10 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
         cleanup_targets.append(active_decode_engine)
     if engine is not None and engine is not active_decode_engine:
         cleanup_targets.append(engine)
-    for target in cleanup_targets:
-        post_cleanup = getattr(target, "_post_txt2img_cleanup", None)
-        if callable(post_cleanup):
-            post_cleanup()
+    with smart_runtime_overrides(**smart_flags):
+        for target in cleanup_targets:
+            post_cleanup = getattr(target, "_post_txt2img_cleanup", None)
+            if callable(post_cleanup):
+                post_cleanup()
 
     yield ResultEvent(payload={"images": images, "info": json.dumps(info)})

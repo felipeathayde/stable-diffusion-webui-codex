@@ -11,6 +11,7 @@ Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image 
 The hires pass init is prepared via the global hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
+The wrapper reapplies request smart runtime overrides on final decode/post-cleanup paths that execute outside the worker-thread sampler.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
@@ -787,13 +788,14 @@ def run_img2img(
     proc.subseeds = list(subseeds)
 
     prompts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
+    smart_flags = {
+        "smart_offload": bool(getattr(proc, "smart_offload", False)),
+        "smart_fallback": bool(getattr(proc, "smart_fallback", False)),
+        "smart_cache": bool(getattr(proc, "smart_cache", False)),
+    }
 
     def _generate() -> GenerationResult:
-        with smart_runtime_overrides(
-            smart_offload=bool(getattr(proc, "smart_offload", False)),
-            smart_fallback=bool(getattr(proc, "smart_fallback", False)),
-            smart_cache=bool(getattr(proc, "smart_cache", False)),
-        ):
+        with smart_runtime_overrides(**smart_flags):
             return generate_img2img(
                 proc,
                 conditioning=None,
@@ -813,7 +815,8 @@ def run_img2img(
     if outcome.error is not None:
         raise outcome.error
 
-    images, decode_ms = _decode_generation_output(engine=engine, output=outcome.output, task_label="img2img")
+    with smart_runtime_overrides(**smart_flags):
+        images, decode_ms = _decode_generation_output(engine=engine, output=outcome.output, task_label="img2img")
 
     all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
     seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
@@ -853,7 +856,8 @@ def run_img2img(
     )
 
     post_cleanup = getattr(engine, "_post_txt2img_cleanup", None)
-    if callable(post_cleanup):
-        post_cleanup()
+    with smart_runtime_overrides(**smart_flags):
+        if callable(post_cleanup):
+            post_cleanup()
 
     yield ResultEvent(payload={"images": images, "info": json.dumps(info)})

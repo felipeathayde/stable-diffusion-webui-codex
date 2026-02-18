@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `LORA_CLIP_MAP` (constant): CLIP attention/MLP suffix mapping used for legacy LoRA key compatibility.
 - `_register_generic_weights` (function): Adds generic `{prefix: weight}` mappings for raw state dict keys.
 - `_build_unet_state_lookup` (function): Builds a canonical+runtime UNet key lookup using the SDXL keymap and runtime state keys.
+- `_resolve_active_model_config` (function): Resolves the active runtime config object used by keymap generation.
 - `model_lora_keys_clip` (function): Builds the LoRA-key → CLIP/text-encoder patch-target map (supports slice targets for fused-QKV encoders).
 - `model_lora_keys_unet` (function): Builds the LoRA-key → UNet parameter map (includes diffusers mapping for UNet architectures).
 """
@@ -71,6 +72,25 @@ def _build_unet_state_lookup(state_dict_keys) -> Dict[str, str]:
     return lookup
 
 
+def _resolve_active_model_config(model):
+    candidates = [
+        getattr(model, "model_config", None),
+        getattr(model, "config", None),
+    ]
+    diffusion_model = getattr(model, "diffusion_model", None)
+    if diffusion_model is not None:
+        candidates.extend(
+            [
+                getattr(diffusion_model, "model_config", None),
+                getattr(diffusion_model, "codex_config", None),
+            ]
+        )
+    for candidate in candidates:
+        if candidate is not None:
+            return candidate
+    return None
+
+
 def model_lora_keys_clip(model, key_map: Dict[str, PatchTarget] | None = None) -> Dict[str, PatchTarget]:
     state = model.state_dict()
     state_keys = list(state.keys())
@@ -78,7 +98,7 @@ def model_lora_keys_clip(model, key_map: Dict[str, PatchTarget] | None = None) -
     out: Dict[str, PatchTarget] = dict(key_map or {})
     _register_generic_weights(state_keys, out)
 
-    config = getattr(model, "model_config", None)
+    config = _resolve_active_model_config(model)
     text_map = getattr(config, "text_encoder_map", {}) if config else {}
 
     alias_set = {key.split(".")[0] for key in state_keys if "." in key}
@@ -188,7 +208,7 @@ def model_lora_keys_unet(model, key_map: Dict[str, str] | None = None) -> Dict[s
         else:
             out[logical_key] = target_key
 
-    model_config = getattr(model, "model_config", None)
+    model_config = _resolve_active_model_config(model)
     core_config = getattr(model_config, "core_config", None)
     core_signature = getattr(getattr(model_config, "signature", None), "core", None)
     if (

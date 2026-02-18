@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared streaming helpers for image mode wrappers (txt2img/img2img).
-Provides seed normalization, worker-thread execution, sampling progress polling, decode normalization, and common `info` metadata building.
+Provides seed normalization, worker-thread execution (with smart runtime override propagation), sampling progress polling, decode normalization, and common `info` metadata building.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_seed_plan` (function): Normalize request seed + batch_total into (seed, all_seeds, subseeds, subseed_strength).
-- `_run_inference_worker` (function): Run a callable in a daemon thread while capturing output/error and sampling timings.
+- `_run_inference_worker` (function): Run a callable in a daemon thread while propagating smart runtime overrides and capturing output/error/timings.
 - `_iter_sampling_progress` (function): Poll `backend_state` and yield `ProgressEvent` updates until a worker signals completion.
 - `_decode_generation_output` (function): Normalize `GenerationResult`/tensor output into a list of PIL images and decode timing.
 - `_build_common_info` (function): Build the shared `info` dict for image tasks (engine/task/dims/seed/sampler/scheduler/prompts/extra/timings).
@@ -68,17 +68,50 @@ def _run_inference_worker(
     *,
     name: str,
     fn: Callable[[], Any],
+    runtime_overrides: Mapping[str, bool | None] | None = None,
 ) -> tuple["threading.Event", _WorkerOutcome]:
     import threading
     import time
+
+    from apps.backend.runtime.memory.smart_offload import (
+        current_smart_runtime_overrides,
+    )
+
+    if runtime_overrides is None:
+        effective_runtime_overrides = current_smart_runtime_overrides()
+    else:
+        if not isinstance(runtime_overrides, Mapping):
+            raise TypeError(
+                "runtime_overrides must be Mapping[str, bool | None] when provided "
+                f"(got {type(runtime_overrides).__name__})."
+            )
+        allowed_keys = {"smart_offload", "smart_fallback", "smart_cache"}
+        unknown_keys = sorted(str(key) for key in runtime_overrides.keys() if key not in allowed_keys)
+        if unknown_keys:
+            raise ValueError(
+                "runtime_overrides received unknown keys; expected only "
+                f"{sorted(allowed_keys)} (got {unknown_keys})."
+            )
+        effective_runtime_overrides: dict[str, bool | None] = {}
+        for key in ("smart_offload", "smart_fallback", "smart_cache"):
+            raw_value = runtime_overrides.get(key, None)
+            if raw_value is not None and not isinstance(raw_value, bool):
+                raise TypeError(
+                    "runtime_overrides values must be bool | None "
+                    f"(key={key!r}, got {type(raw_value).__name__})."
+                )
+            effective_runtime_overrides[key] = raw_value
 
     outcome = _WorkerOutcome()
     done = threading.Event()
 
     def _worker() -> None:
+        from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+
         try:
-            outcome.sampling_start = time.perf_counter()
-            outcome.output = fn()
+            with smart_runtime_overrides(**effective_runtime_overrides):
+                outcome.sampling_start = time.perf_counter()
+                outcome.output = fn()
         except BaseException as exc:  # noqa: BLE001
             outcome.error = exc
         finally:

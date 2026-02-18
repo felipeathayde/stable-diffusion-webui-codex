@@ -6,10 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Thread-local overrides + option-backed helpers for smart offload/fallback/cache flags.
+Purpose: Thread-local overrides + option-backed helpers for smart offload/fallback/cache flags, including cross-worker override snapshot propagation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `smart_runtime_overrides` (function): Context manager to override smart flags for the current thread/request.
+- `current_smart_runtime_overrides` (function): Snapshot the current thread smart override tri-state values for cross-worker propagation.
 - `smart_offload_enabled` (function): True when smart offload is enabled (options + thread overrides).
 - `smart_fallback_enabled` (function): True when smart CPU fallback on OOM is enabled (options + thread overrides).
 - `smart_cache_enabled` (function): True when Smart Cache is enabled (options + thread overrides).
@@ -50,6 +51,15 @@ class SmartOffloadAction(str, Enum):
 
 def _get_override(name: str) -> bool | None:
     return getattr(_THREAD_OVERRIDES, name, None)
+
+
+def current_smart_runtime_overrides() -> Dict[str, bool | None]:
+    """Return the current thread smart-override tri-state snapshot."""
+    return {
+        "smart_offload": _get_override("smart_offload"),
+        "smart_fallback": _get_override("smart_fallback"),
+        "smart_cache": _get_override("smart_cache"),
+    }
 
 
 @contextmanager
@@ -171,6 +181,7 @@ def get_smart_cache_stats() -> Dict[str, Dict[str, int]]:
 
 __all__ = [
     "SmartOffloadAction",
+    "current_smart_runtime_overrides",
     "log_smart_offload_action",
     "smart_offload_enabled",
     "smart_fallback_enabled",

@@ -12,6 +12,7 @@ The hires pass init is prepared via the global hires-fix stage (`apps/backend/ru
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 The wrapper executes sampling + decode + post-cleanup inside the same worker-thread envelope so model residency/offload policies remain single-owner per job.
+Worker-thread smart runtime overrides are propagated through `_image_streaming._run_inference_worker(...)` and decode/cleanup hooks run under a `finally` contract.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
@@ -759,7 +760,6 @@ def run_img2img(
 
     from apps.backend.core.requests import Img2ImgRequest, ProgressEvent, ResultEvent
     from apps.backend.engines.util.adapters import build_img2img_processing
-    from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
     from apps.backend.runtime.text_processing import last_extra_generation_params
 
     from ._image_streaming import (
@@ -798,7 +798,12 @@ def run_img2img(
         import json
         import time
 
-        with smart_runtime_overrides(**smart_flags):
+        cleanup_targets: list[Any] = [engine]
+        sampling_start = 0.0
+        sampling_end = 0.0
+        active_decode_engine: Any = engine
+
+        try:
             sampling_start = time.perf_counter()
             output = generate_img2img(
                 proc,
@@ -811,7 +816,14 @@ def run_img2img(
             )
             sampling_end = time.perf_counter()
 
-            images, decode_ms = _decode_generation_output(engine=engine, output=output, task_label="img2img")
+            output_decode_engine = getattr(output, "decode_engine", None)
+            active_decode_engine = output_decode_engine if output_decode_engine is not None else getattr(proc, "sd_model", None)
+            if active_decode_engine is None:
+                active_decode_engine = engine
+            if active_decode_engine is not None and not any(existing is active_decode_engine for existing in cleanup_targets):
+                cleanup_targets.append(active_decode_engine)
+
+            images, decode_ms = _decode_generation_output(engine=active_decode_engine, output=output, task_label="img2img")
 
             all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
             seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
@@ -847,14 +859,21 @@ def run_img2img(
                 timings_ms=timings,
                 mode_info=mode_info,
             )
-
-            post_cleanup = getattr(engine, "_post_txt2img_cleanup", None)
-            if callable(post_cleanup):
-                post_cleanup()
-
             return {"images": images, "info": json.dumps(info)}
+        finally:
+            processing_model = getattr(proc, "sd_model", None)
+            if processing_model is not None and not any(existing is processing_model for existing in cleanup_targets):
+                cleanup_targets.append(processing_model)
+            for cleanup_target in cleanup_targets:
+                post_cleanup = getattr(cleanup_target, "_post_txt2img_cleanup", None)
+                if callable(post_cleanup):
+                    post_cleanup()
 
-    done, outcome = _run_inference_worker(name=f"{engine.engine_id}-img2img-worker", fn=_generate)
+    done, outcome = _run_inference_worker(
+        name=f"{engine.engine_id}-img2img-worker",
+        fn=_generate,
+        runtime_overrides=smart_flags,
+    )
 
     for step, total, eta in _iter_sampling_progress(done=done):
         pct = max(5.0, min(99.0, (step / total) * 100.0))

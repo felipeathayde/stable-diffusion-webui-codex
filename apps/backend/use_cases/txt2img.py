@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Txt2img entry point using the staged pipeline runner.
 Delegates latent generation to `Txt2ImgPipelineRunner` and provides a canonical event-emitting wrapper used by engines/orchestrator.
 The wrapper executes sampling + decode + post-cleanup inside the same worker-thread envelope so model residency/offload policies remain single-owner per job.
+Worker-thread smart runtime overrides are propagated through `_image_streaming._run_inference_worker(...)` and cleanup hooks always run in a `finally` block.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_logger` (constant): Module logger for the txt2img use case.
@@ -67,7 +68,6 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
 
     from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2ImgRequest
     from apps.backend.engines.util.adapters import build_txt2img_processing
-    from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
     from apps.backend.runtime.text_processing import last_extra_generation_params
 
     from ._image_streaming import (
@@ -105,7 +105,12 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     def _generate() -> dict[str, object]:
         import time
 
-        with smart_runtime_overrides(**smart_flags):
+        cleanup_targets: list[Any] = [engine]
+        sampling_start = 0.0
+        sampling_end = 0.0
+        active_decode_engine: Any = engine
+
+        try:
             sampling_start = time.perf_counter()
             output = generate_txt2img(
                 processing=proc,
@@ -124,6 +129,8 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
                 active_decode_engine = engine
             elif active_decode_engine is not engine:
                 _logger.info("txt2img decode will use active pipeline model instance (swap/refiner path).")
+            if active_decode_engine is not None and not any(existing is active_decode_engine for existing in cleanup_targets):
+                cleanup_targets.append(active_decode_engine)
 
             images, decode_ms = _decode_generation_output(
                 engine=active_decode_engine,
@@ -163,20 +170,21 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
                 timings_ms=timings,
                 mode_info=mode_info,
             )
-
-            cleanup_targets: list[Any] = []
-            if active_decode_engine is not None:
-                cleanup_targets.append(active_decode_engine)
-            if engine is not None and engine is not active_decode_engine:
-                cleanup_targets.append(engine)
+            return {"images": images, "info": json.dumps(info)}
+        finally:
+            processing_model = getattr(proc, "sd_model", None)
+            if processing_model is not None and not any(existing is processing_model for existing in cleanup_targets):
+                cleanup_targets.append(processing_model)
             for target in cleanup_targets:
                 post_cleanup = getattr(target, "_post_txt2img_cleanup", None)
                 if callable(post_cleanup):
                     post_cleanup()
 
-            return {"images": images, "info": json.dumps(info)}
-
-    done, outcome = _run_inference_worker(name=f"{engine.engine_id}-txt2img-worker", fn=_generate)
+    done, outcome = _run_inference_worker(
+        name=f"{engine.engine_id}-txt2img-worker",
+        fn=_generate,
+        runtime_overrides=smart_flags,
+    )
 
     for step, total, eta in _iter_sampling_progress(done=done):
         pct = max(5.0, min(99.0, (step / total) * 100.0))

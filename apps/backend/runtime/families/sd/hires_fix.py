@@ -25,6 +25,7 @@ import torch
 from apps.backend.runtime.pipeline_stages.hires_fix import HiresFillCropPlan
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
+    encode_image_batch,
     img2img_conditioning,
     txt2img_conditioning,
 )
@@ -89,7 +90,7 @@ def prepare_hires_latents_and_conditioning(
         if internal_w == tw and internal_h == th and crop_left == 0 and crop_top == 0:
             latents = upscaled_latents
             if getattr(sd_model, "is_inpaint", False):
-                tensor = decode_latent_batch(sd_model, latents)
+                tensor = decode_latent_batch(sd_model, latents, stage="hires.prepare.latent.inpaint_decode")
                 image_conditioning = img2img_conditioning(
                     sd_model,
                     tensor,
@@ -101,9 +102,13 @@ def prepare_hires_latents_and_conditioning(
                 image_conditioning = txt2img_conditioning(sd_model, latents, int(tw), int(th))
             return latents, image_conditioning
 
-        decoded = decode_latent_batch(sd_model, upscaled_latents).to(dtype=torch.float32)
+        decoded = decode_latent_batch(
+            sd_model,
+            upscaled_latents,
+            stage="hires.prepare.latent.crop_decode",
+        ).to(dtype=torch.float32)
         cropped = decoded[:, :, crop_top : crop_top + th, crop_left : crop_left + tw]
-        latents = sd_model.encode_first_stage(cropped)
+        latents = encode_image_batch(sd_model, cropped, stage="hires.prepare.latent.crop_encode")
         if getattr(sd_model, "is_inpaint", False):
             image_conditioning = img2img_conditioning(
                 sd_model,
@@ -121,7 +126,11 @@ def prepare_hires_latents_and_conditioning(
     if uid.startswith("spandrel:"):
         decoded = base_decoded
         if decoded is None:
-            decoded = decode_latent_batch(sd_model, base_samples).to(dtype=torch.float32)
+            decoded = decode_latent_batch(
+                sd_model,
+                base_samples,
+                stage="hires.prepare.spandrel.decode_base",
+            ).to(dtype=torch.float32)
         else:
             decoded = decoded.to(dtype=torch.float32)
 
@@ -140,7 +149,7 @@ def prepare_hires_latents_and_conditioning(
 
         # Convert back to [-1..1] for VAE encode and image-conditioning.
         tensor = upscaled_01.mul(2.0).sub(1.0)
-        latents = sd_model.encode_first_stage(tensor)
+        latents = encode_image_batch(sd_model, tensor, stage="hires.prepare.spandrel.encode_upscaled")
         image_conditioning = img2img_conditioning(
             sd_model,
             tensor,

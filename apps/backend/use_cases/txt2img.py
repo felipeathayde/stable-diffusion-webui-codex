@@ -121,7 +121,18 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     if outcome.error is not None:
         raise outcome.error
 
-    images, decode_ms = _decode_generation_output(engine=engine, output=outcome.output, task_label="txt2img")
+    output_decode_engine = getattr(outcome.output, "decode_engine", None)
+    active_decode_engine = output_decode_engine if output_decode_engine is not None else getattr(proc, "sd_model", None)
+    if active_decode_engine is None:
+        active_decode_engine = engine
+    elif active_decode_engine is not engine:
+        _logger.info("txt2img decode will use active pipeline model instance (swap/refiner path).")
+
+    images, decode_ms = _decode_generation_output(
+        engine=active_decode_engine,
+        output=outcome.output,
+        task_label="txt2img",
+    )
 
     all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
     seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
@@ -158,8 +169,14 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
         mode_info=mode_info,
     )
 
-    post_cleanup = getattr(engine, "_post_txt2img_cleanup", None)
-    if callable(post_cleanup):
-        post_cleanup()
+    cleanup_targets: list[Any] = []
+    if active_decode_engine is not None:
+        cleanup_targets.append(active_decode_engine)
+    if engine is not None and engine is not active_decode_engine:
+        cleanup_targets.append(engine)
+    for target in cleanup_targets:
+        post_cleanup = getattr(target, "_post_txt2img_cleanup", None)
+        if callable(post_cleanup):
+            post_cleanup()
 
     yield ResultEvent(payload={"images": images, "info": json.dumps(info)})

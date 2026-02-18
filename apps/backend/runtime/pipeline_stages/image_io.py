@@ -57,6 +57,10 @@ def maybe_decode_for_hr(processing: Any, samples: torch.Tensor) -> torch.Tensor 
     devices.torch_gc()
 
     if getattr(processing, "latent_scale_mode", None) is None:
-        decoded = decode_latent_batch(processing.sd_model, samples)
+        decoded = decode_latent_batch(
+            processing.sd_model,
+            samples,
+            stage="hires.prepare.base_decode",
+        )
         return decoded.to(dtype=torch.float32)
     return None

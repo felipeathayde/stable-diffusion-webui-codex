@@ -138,9 +138,12 @@ def _decode_generation_output(
     metadata: dict[str, Any] = {}
     metadata_error: RuntimeError | None = None
     cache_hit = False
+    decode_engine = engine
     if isinstance(output, GenerationResult):
         latents = output.samples
         decoded_images = output.decoded
+        if getattr(output, "decode_engine", None) is not None:
+            decode_engine = output.decode_engine
         if not isinstance(output.metadata, dict):
             metadata_error = RuntimeError(
                 f"{task_label} pipeline returned metadata as {type(output.metadata).__name__}; expected dict."
@@ -186,12 +189,16 @@ def _decode_generation_output(
                     raise RuntimeError(
                         f"{task_label} pipeline returned {type(latents).__name__}; expected torch.Tensor (latents)"
                     )
-                decoded = decode_latent_batch(engine, latents)
+                decoded = decode_latent_batch(
+                    decode_engine,
+                    latents,
+                    stage=f"{task_label}.decode(pre)",
+                )
                 images = latents_to_pil(decoded)
             decode_succeeded = True
     finally:
         enforce_smart_offload_post_decode_residency(
-            engine,
+            decode_engine,
             stage=f"{task_label}.decode",
             keep_denoiser_warm=cache_hit and decode_succeeded,
         )

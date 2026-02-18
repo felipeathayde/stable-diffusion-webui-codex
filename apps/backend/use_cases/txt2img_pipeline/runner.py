@@ -519,6 +519,7 @@ class Txt2ImgPipelineRunner:
                 "StableDiffusionXL exige CUDA ativo (torch.cuda.is_available() retornou False). "
                 "Instale os drivers/CUDA corretos ou execute o modo somente CPU conscientemente."
             )
+        setattr(processing, "_codex_last_decode_engine", None)
         t_start = time.perf_counter()
         t_prepare_end: float | None = None
         t_base_end: float | None = None
@@ -588,6 +589,7 @@ class Txt2ImgPipelineRunner:
             samples=final_samples,
             decoded=None,
             metadata={"conditioning_cache_hit": bool(getattr(processing, "_codex_conditioning_cache_hit", False))},
+            decode_engine=getattr(processing, "_codex_last_decode_engine", None) or processing.sd_model,
         )
 
     # ------------------------------------------------------------------ stages

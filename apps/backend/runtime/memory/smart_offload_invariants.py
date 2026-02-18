@@ -15,6 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
   no longer needed (e.g., Smart Cache hit provides embeddings without TE execution).
 - `enforce_smart_offload_pre_sampling_residency` (function): Ensures text encoders are not resident on the accelerator at
   sampling start, and optionally enforces VAE residency rules based on live-preview needs.
+- `enforce_smart_offload_pre_vae_residency` (function): Ensures denoiser/text-encoders are not resident on the accelerator
+  before explicit VAE encode/decode stages outside the sampling loop.
 - `enforce_smart_offload_post_decode_residency` (function): Enforces post-decode residency policy (VAE off accelerator; denoiser
   prewarmed on Smart Cache hit, unloaded on miss).
 """
@@ -171,6 +173,43 @@ def enforce_smart_offload_pre_sampling_residency(
             memory_management.manager.unload_model(vae_patcher)
 
 
+def enforce_smart_offload_pre_vae_residency(
+    sd_model: Any,
+    *,
+    stage: str,
+) -> None:
+    """Ensure denoiser/text-encoders are not resident before explicit VAE stages.
+
+    This guard is intended for VAE encode/decode phases that run outside sampling
+    (for example hires init preparation and final output decode). It must not be
+    used by live preview FULL inside the sampler loop.
+    """
+
+    if not smart_offload_enabled():
+        return
+
+    codex_objects = getattr(sd_model, "codex_objects", None)
+    if codex_objects is None:
+        return
+
+    denoiser = getattr(codex_objects, "denoiser", None)
+    if denoiser is not None and _is_model_loaded_on_accelerator(denoiser):
+        _LOGGER.warning(
+            "[smart-offload] stage=%s: denoiser was still resident on accelerator; unloading before VAE stage.",
+            stage,
+        )
+        memory_management.manager.unload_model(denoiser)
+
+    for name, patcher in _iter_text_encoder_patchers(sd_model):
+        if _is_model_loaded_on_accelerator(patcher):
+            _LOGGER.debug(
+                "[smart-offload] stage=%s: text encoder '%s' remained resident before VAE stage; unloading.",
+                stage,
+                name,
+            )
+            memory_management.manager.unload_model(patcher)
+
+
 def enforce_smart_offload_post_decode_residency(
     sd_model: Any,
     *,
@@ -230,5 +269,6 @@ __all__ = [
     "enforce_smart_offload_pre_conditioning_residency",
     "enforce_smart_offload_text_encoders_off",
     "enforce_smart_offload_pre_sampling_residency",
+    "enforce_smart_offload_pre_vae_residency",
     "enforce_smart_offload_post_decode_residency",
 ]

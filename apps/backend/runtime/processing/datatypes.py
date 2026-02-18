@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `HiResPlan` (dataclass): High-resolution second pass configuration (target size + upscaler id + steps/denoise/cfg).
 - `InitImageBundle` (dataclass): Inputs derived from an initial image (pixels/latents + optional mask).
 - `AppliedExtra` (dataclass): Record of applied extra network or post-processing effect.
-- `GenerationResult` (dataclass): Outputs and diagnostics from a generation pass (samples/decoded + metadata/applied_extras).
+- `GenerationResult` (dataclass): Outputs and diagnostics from a generation pass (samples/decoded + metadata/applied_extras/decode owner).
 - `VideoPlan` (dataclass): Execution plan for video workflows (frames/fps/steps/scheduler + extras).
 - `VideoResult` (dataclass): Result bundle for video workflows (frames + metadata).
 """
@@ -144,6 +144,7 @@ class GenerationResult:
     decoded: Any | None
     applied_extras: list[AppliedExtra] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
+    decode_engine: Any | None = None
 
 
 @dataclass(slots=True)

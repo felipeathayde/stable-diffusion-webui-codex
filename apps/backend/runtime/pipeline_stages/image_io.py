@@ -13,7 +13,7 @@ upscaler-aware gating (latent hires skips redundant base decode).
 Symbols (top-level; keep in sync; no ghosts):
 - `latents_to_pil` (function): Convert decoded latent tensors into RGB PIL images.
 - `pil_to_tensor` (function): Convert PIL images into a normalized tensor suitable for img2img/conditioning.
-- `maybe_decode_for_hr` (function): Decode samples to RGB only when the resolved hires upscaler requires pixel-space input.
+- `maybe_decode_for_hr` (function): Decode samples to RGB only when the resolved hires upscaler requires pixel-space input, preserving engine output dtype.
 """
 
 from __future__ import annotations
@@ -75,4 +75,4 @@ def maybe_decode_for_hr(
         samples,
         stage="hires.prepare.base_decode",
     )
-    return decoded.to(dtype=torch.float32)
+    return decoded

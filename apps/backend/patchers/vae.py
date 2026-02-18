@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: VAE patcher + tiled encode/decode fallback helpers (diffusers + WAN-aware).
 Provides a VAE wrapper that normalizes diffusers outputs (scalar and optional per-channel latent stats) using family-aware policy resolution for scale/shift semantics,
 supports tiled decode/encode paths, and integrates memory-management and smart-fallback behavior. Supports separate storage vs compute dtype selection
-(compute defaults to fp32 unless overridden).
+without hardcoded fp32 casts in hot decode/encode paths (compute defaults still follow runtime policy unless overridden).
 Tiled VAE fallback uses context-padding and center-crop stitching to reduce seams without fast/approximate paths.
 Regular-path OOM fallback notices are emitted through structured backend logger warnings.
 
@@ -56,7 +56,7 @@ def _tensor_stats(label: str, tensor: torch.Tensor) -> None:
         return
     with torch.no_grad():
         data = tensor.detach()
-        stats_tensor = data.float()
+        stats_tensor = data
         logger.info(
             "[vae] %s: shape=%s dtype=%s device=%s min=%.6f max=%.6f mean=%.6f std=%.6f",
             label,
@@ -170,8 +170,9 @@ class _NormalizingFirstStage:
                 raise RuntimeError("VAE latents_mean contains non-finite values.")
             if any((not math.isfinite(value)) or value <= 0.0 for value in std_values):
                 raise RuntimeError("VAE latents_std must contain finite positive values.")
-            self._latents_mean = torch.tensor(mean_values, dtype=torch.float32)
-            self._latents_std = torch.tensor(std_values, dtype=torch.float32)
+            default_dtype = torch.get_default_dtype()
+            self._latents_mean = torch.tensor(mean_values, dtype=default_dtype)
+            self._latents_std = torch.tensor(std_values, dtype=default_dtype)
 
     # Proxy core API used by VAE wrapper
     def encode(self, *args, **kwargs):  # noqa: D401
@@ -357,12 +358,14 @@ class VAE:
             except Exception:  # noqa: BLE001
                 native_storage = None
             if native_storage is None:
-                native_storage = torch.float32
+                native_storage = memory_management.manager.dtype_for_role(DeviceRole.VAE)
             dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE, native_dtype=native_storage)
 
         self.vae_dtype: torch.dtype | None = None
         self.vae_compute_dtype: torch.dtype | None = None
         self._pending_dtype = dtype  # Will be applied lazily when VAE is first used
+        self._supports_manual_cast_split = self._detect_manual_cast_split_support()
+        self._manual_cast_split_warned = False
         self.offload_device = offload_device
         self.output_device = memory_management.manager.get_device(DeviceRole.INTERMEDIATE)
 
@@ -383,11 +386,49 @@ class VAE:
         n.device = self.device
         n.vae_dtype = self.vae_dtype
         n.vae_compute_dtype = self.vae_compute_dtype
+        n._supports_manual_cast_split = self._supports_manual_cast_split
+        n._manual_cast_split_warned = self._manual_cast_split_warned
         n.output_device = self.output_device
         return n
 
+    def _detect_manual_cast_split_support(self) -> bool:
+        base = getattr(self.first_stage_model, "_base", self.first_stage_model)
+        if hasattr(base, "parameters_manual_cast"):
+            return True
+        modules_getter = getattr(base, "modules", None)
+        if callable(modules_getter):
+            try:
+                for module in modules_getter():
+                    if hasattr(module, "parameters_manual_cast"):
+                        return True
+            except Exception:  # noqa: BLE001
+                logger.debug("VAE manual-cast capability probe failed.", exc_info=True)
+        return False
+
+    def _effective_forward_dtype(
+        self,
+        *,
+        storage_dtype: torch.dtype,
+        compute_dtype: torch.dtype,
+        context: str,
+    ) -> torch.dtype:
+        if compute_dtype == storage_dtype:
+            return storage_dtype
+        if self._supports_manual_cast_split:
+            return compute_dtype
+        if not self._manual_cast_split_warned:
+            base = getattr(self.first_stage_model, "_base", self.first_stage_model)
+            logger.warning(
+                "VAE compute split suppressed at %s: module=%s has no manual-cast markers; forcing forward dtype to storage (%s).",
+                context,
+                base.__class__.__name__,
+                str(storage_dtype),
+            )
+            self._manual_cast_split_warned = True
+        return storage_dtype
+
     def _resolve_dtypes(self) -> tuple[torch.dtype, torch.dtype]:
-        native_storage = self.vae_dtype or self._pending_dtype or torch.float32
+        native_storage = self.vae_dtype or self._pending_dtype or memory_management.manager.dtype_for_role(DeviceRole.VAE)
         storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE, native_dtype=native_storage)
         compute_dtype = memory_management.manager.compute_dtype_for_role(DeviceRole.VAE, storage_dtype=storage_dtype)
         return storage_dtype, compute_dtype
@@ -398,15 +439,34 @@ class VAE:
         storage_dtype: torch.dtype | None = None,
         compute_dtype: torch.dtype | None = None,
     ) -> torch.dtype:
+        resolved_storage = storage_dtype or self.vae_dtype or self._pending_dtype or memory_management.manager.dtype_for_role(
+            DeviceRole.VAE
+        )
         if compute_dtype is not None:
-            return compute_dtype
+            return self._effective_forward_dtype(
+                storage_dtype=resolved_storage,
+                compute_dtype=compute_dtype,
+                context="active_forward_dtype(explicit)",
+            )
         if self.vae_compute_dtype is not None:
-            return self.vae_compute_dtype
+            return self._effective_forward_dtype(
+                storage_dtype=resolved_storage,
+                compute_dtype=self.vae_compute_dtype,
+                context="active_forward_dtype(cached)",
+            )
         if storage_dtype is not None:
             return storage_dtype
         if self.vae_dtype is not None:
             return self.vae_dtype
-        return torch.float32
+        fallback_compute = memory_management.manager.compute_dtype_for_role(
+            DeviceRole.VAE,
+            storage_dtype=resolved_storage,
+        )
+        return self._effective_forward_dtype(
+            storage_dtype=resolved_storage,
+            compute_dtype=fallback_compute,
+            context="active_forward_dtype(fallback)",
+        )
 
     def _autocast_context(self, forward_dtype: torch.dtype):
         device_type = torch.device(self.device).type
@@ -471,7 +531,7 @@ class VAE:
     def _decode_forward(self, samples: torch.Tensor, *, forward_dtype: torch.dtype) -> torch.Tensor:
         with self._autocast_context(forward_dtype):
             decoded_raw = self.first_stage_model.decode(samples.to(device=self.device, dtype=forward_dtype))
-        return _unwrap_decode_output(decoded_raw).to(self.output_device).float()
+        return _unwrap_decode_output(decoded_raw).to(self.output_device)
 
     def _encode_forward(
         self,
@@ -494,7 +554,7 @@ class VAE:
                     encoded_raw = base.encode(pixels_typed)
         if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
             encoded_raw = encoded_raw[0]
-        return _unwrap_encode_output(encoded_raw).to(self.output_device).float()
+        return _unwrap_encode_output(encoded_raw).to(self.output_device)
 
     @staticmethod
     def _decode_crop_bounds(
@@ -545,12 +605,13 @@ class VAE:
         pad = max(0, int(overlap))
         tile_x = int(tile_x)
         tile_y = int(tile_y)
+        forward_dtype = self._active_forward_dtype()
         output_height = round(samples.shape[2] * self.downscale_ratio)
         output_width = round(samples.shape[3] * self.downscale_ratio)
         output = torch.empty(
             (samples.shape[0], 3, output_height, output_width),
             device=self.output_device,
-            dtype=torch.float32,
+            dtype=forward_dtype,
         )
         windows = tuple(
             _iter_tile_windows(
@@ -564,7 +625,6 @@ class VAE:
         )
         if not windows:
             raise RuntimeError("decode_tiled_ produced no tile windows; check tile geometry.")
-        forward_dtype = self._active_forward_dtype()
         decode_scale = int(self.downscale_ratio)
 
         for batch_index in range(samples.shape[0]):
@@ -608,12 +668,13 @@ class VAE:
         pad = max(0, int(overlap))
         tile_x = int(tile_x)
         tile_y = int(tile_y)
+        forward_dtype = self._active_forward_dtype()
         output_height = round(pixel_samples.shape[2] // self.downscale_ratio)
         output_width = round(pixel_samples.shape[3] // self.downscale_ratio)
         output = torch.empty(
             (pixel_samples.shape[0], self.latent_channels, output_height, output_width),
             device=self.output_device,
-            dtype=torch.float32,
+            dtype=forward_dtype,
         )
         windows = tuple(
             _iter_tile_windows(
@@ -627,7 +688,6 @@ class VAE:
         )
         if not windows:
             raise RuntimeError("encode_tiled_ produced no tile windows; check tile geometry.")
-        forward_dtype = self._active_forward_dtype()
         downscale_ratio = int(self.downscale_ratio)
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
 
@@ -690,19 +750,25 @@ class VAE:
                 orig_dtype = None
 
             cpu_device = memory_management.manager.cpu_device
-            base.to(device=cpu_device, dtype=torch.float32)
+            storage_hint = orig_dtype or self.vae_dtype or self._pending_dtype or samples_in.dtype
+            cpu_forward_dtype = memory_management.manager.compute_dtype_for_role(
+                DeviceRole.VAE,
+                storage_dtype=storage_hint,
+            )
+            base.to(device=cpu_device, dtype=cpu_forward_dtype)
 
             with torch.no_grad():
-                samples_cpu = samples_in.to(cpu_device, dtype=torch.float32)
+                samples_cpu = samples_in.to(cpu_device, dtype=cpu_forward_dtype)
                 decoded_raw = self.first_stage_model.decode(samples_cpu)
-                decoded = _unwrap_decode_output(decoded_raw).to(self.output_device).float()
+                decoded = _unwrap_decode_output(decoded_raw).to(self.output_device)
                 pixel_samples = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
 
             return pixel_samples
         finally:
             if orig_device is not None:
                 try:
-                    base.to(device=orig_device, dtype=orig_dtype or self.vae_dtype or torch.float32)
+                    restore_dtype = orig_dtype or self.vae_dtype or self._pending_dtype or samples_in.dtype
+                    base.to(device=orig_device, dtype=restore_dtype)
                 except Exception:  # noqa: BLE001
                     logger.warning("Failed to restore VAE device after CPU fallback.", exc_info=True)
 
@@ -727,10 +793,15 @@ class VAE:
                 orig_dtype = None
 
             cpu_device = memory_management.manager.cpu_device
-            base.to(device=cpu_device, dtype=torch.float32)
+            storage_hint = orig_dtype or self.vae_dtype or self._pending_dtype or pixel_samples_chw.dtype
+            cpu_forward_dtype = memory_management.manager.compute_dtype_for_role(
+                DeviceRole.VAE,
+                storage_dtype=storage_hint,
+            )
+            base.to(device=cpu_device, dtype=cpu_forward_dtype)
 
             with torch.no_grad():
-                pixels_cpu = pixel_samples_chw.to(cpu_device, dtype=torch.float32)
+                pixels_cpu = pixel_samples_chw.to(cpu_device, dtype=cpu_forward_dtype)
                 pixels_in = 2.0 * pixels_cpu - 1.0
 
                 if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
@@ -745,13 +816,14 @@ class VAE:
 
                 if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
                     encoded_raw = encoded_raw[0]
-                encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
+                encoded = _unwrap_encode_output(encoded_raw).to(self.output_device)
 
             return encoded
         finally:
             if orig_device is not None:
                 try:
-                    base.to(device=orig_device, dtype=orig_dtype or self.vae_dtype or torch.float32)
+                    restore_dtype = orig_dtype or self.vae_dtype or self._pending_dtype or pixel_samples_chw.dtype
+                    base.to(device=orig_device, dtype=restore_dtype)
                 except Exception:  # noqa: BLE001
                     logger.warning("Failed to restore VAE device after CPU encode fallback.", exc_info=True)
 
@@ -769,7 +841,7 @@ class VAE:
                 forward_dtype=forward_dtype,
                 context="decode_inner",
             )
-            self._apply_precision(forward_dtype)
+            self._apply_precision(desired_storage)
             self.vae_compute_dtype = desired_compute
             use_tiled = bool(memory_management.manager.vae_always_tiled)
 
@@ -791,6 +863,7 @@ class VAE:
                             round(samples_in.shape[3] * self.downscale_ratio),
                         ),
                         device=self.output_device,
+                        dtype=forward_dtype,
                     )
                     for x in range(0, samples_in.shape[0], batch_number):
                         samples = samples_in[x:x + batch_number]
@@ -865,7 +938,7 @@ class VAE:
             forward_dtype=forward_dtype,
             context="decode_tiled",
         )
-        self._apply_precision(forward_dtype)
+        self._apply_precision(desired_storage)
         self.vae_compute_dtype = desired_compute
         output = self.decode_tiled_(samples, tile_x, tile_y, overlap)
         # Return BCHW format in [-1, 1] range like decode_inner
@@ -887,7 +960,7 @@ class VAE:
                 forward_dtype=forward_dtype,
                 context="encode_inner",
             )
-            self._apply_precision(forward_dtype)
+            self._apply_precision(desired_storage)
             self.vae_compute_dtype = desired_compute
             use_tiled = bool(memory_management.manager.vae_always_tiled)
 
@@ -908,6 +981,7 @@ class VAE:
                             round(pixel_samples.shape[3] // self.downscale_ratio),
                         ),
                         device=self.output_device,
+                        dtype=forward_dtype,
                     )
                     for x in range(0, pixel_samples.shape[0], batch_number):
                         pixels_in = 2.0 * pixel_samples[x:x + batch_number] - 1.0
@@ -980,7 +1054,7 @@ class VAE:
             forward_dtype=forward_dtype,
             context="encode_tiled",
         )
-        self._apply_precision(forward_dtype)
+        self._apply_precision(desired_storage)
         self.vae_compute_dtype = desired_compute
         samples = self.encode_tiled_(pixel_samples, tile_x=tile_x, tile_y=tile_y, overlap=overlap)
         return samples

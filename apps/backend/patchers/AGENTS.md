@@ -43,6 +43,8 @@ Status: Active
 - 2026-02-18: `ModelPatcher.codex_unpatch_model` now tags that event with `SmartOffloadAction.PIN_HOST_MEMORY`; generic smart-offload `load/unload` emission remains centralized in `runtime/memory/manager.py`.
 - 2026-02-08: `_NormalizingFirstStage` now supports optional per-channel latent stats (`latents_mean`/`latents_std`) in addition to scalar `scaling_factor`/`shift_factor`; 4D/5D rank, channel count, and non-finite/invalid stats are fail-loud.
 - 2026-02-08: VAE normalization now resolves scale/shift via `vae_normalization_policy.py` with explicit family shift contracts: no-shift families reject explicit numeric shifts; shift-required families fail loud on missing/`None` shift.
+- 2026-02-18: `vae.py` hot paths no longer hardcode fp32 outputs/buffers: `_decode_forward/_encode_forward` dropped unconditional `.float()`, decode/encode tiled+non-tiled buffers now allocate with `forward_dtype`, and storage-vs-compute contract now applies model residency using `desired_storage` while forward uses compute-preferred dtype.
+- 2026-02-18: `vae.py` now gates storage-vs-compute split on manual-cast capability markers (`parameters_manual_cast` on base/modules). When markers are absent (plain diffusers/external VAE paths), forward dtype is forced to storage dtype to avoid mixed-dtype mismatch.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

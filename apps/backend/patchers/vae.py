@@ -6,26 +6,27 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: VAE patcher + tiling helpers for encode/decode (diffusers + WAN-aware).
+Purpose: VAE patcher + tiled encode/decode fallback helpers (diffusers + WAN-aware).
 Provides a VAE wrapper that normalizes diffusers outputs (scalar and optional per-channel latent stats) using family-aware policy resolution for scale/shift semantics,
 supports tiled decode/encode paths, and integrates memory-management and smart-fallback behavior. Supports separate storage vs compute dtype selection
 (compute defaults to fp32 unless overridden).
-Tiling helpers are shared with the global upscalers runtime to avoid drift.
+Tiled VAE fallback uses context-padding and center-crop stitching to reduce seams without fast/approximate paths.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
 - `_unwrap_decode_output` (function): Normalizes diffusers decode outputs to a plain tensor (`DecoderOutput.sample` or passthrough).
 - `_unwrap_encode_output` (function): Normalizes diffusers encode outputs to a latent tensor (handles `latent_dist`, `.sample()`, `.mean`, etc.).
 - `_NormalizingFirstStage` (class): Wrapper around a first-stage VAE that applies strict scalar/per-channel latent normalization (including optional shift semantics) and proxies encode/decode APIs.
-- `tiled_scale_multidim` (function): Multi-dim tiled scaling helper (used to process large images in overlapping tiles).
-- `get_tiled_scale_steps` (function): Computes the number of tile steps given dimensions and overlap.
-- `tiled_scale` (function): Convenience wrapper for tiled scaling in 2D (tile_x/tile_y).
+- `_TileWindow` (dataclass): Immutable tile descriptor for core and context bounds in tiled VAE passes.
+- `_iter_tile_windows` (function): Yields ordered tiled windows with context padding and fail-loud geometry validation.
 - `VAE` (class): ModelPatcher for VAEs; provides encode/decode APIs (optionally tiled), device/dtype placement, and fallback/normalization logic
   (includes nested helpers for memory-management and diffusers/WAN VAE compatibility).
 """
 
+import contextlib
 import logging
 import math
+from dataclasses import dataclass
 
 import torch
 
@@ -42,11 +43,6 @@ except Exception:  # noqa: BLE001
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
-from apps.backend.runtime.vision.upscalers.tiled_scale import (
-    get_tiled_scale_steps,
-    tiled_scale,
-    tiled_scale_multidim,
-)
 from .base import ModelPatcher
 from .vae_normalization_policy import read_vae_config_field, resolve_vae_normalization_policy
 
@@ -282,6 +278,54 @@ class _NormalizingFirstStage:
             latents_std=latents_std_values,
         )
 
+
+@dataclass(frozen=True)
+class _TileWindow:
+    core_y0: int
+    core_y1: int
+    core_x0: int
+    core_x1: int
+    context_y0: int
+    context_y1: int
+    context_x0: int
+    context_x1: int
+
+
+def _iter_tile_windows(
+    *,
+    height: int,
+    width: int,
+    tile_y: int,
+    tile_x: int,
+    pad_y: int,
+    pad_x: int,
+):
+    if height <= 0 or width <= 0:
+        raise RuntimeError(f"Invalid tiled VAE geometry: height={height} width={width}.")
+    if tile_y <= 0 or tile_x <= 0:
+        raise RuntimeError(f"Invalid tiled VAE tile size: tile_y={tile_y} tile_x={tile_x}.")
+    if pad_y < 0 or pad_x < 0:
+        raise RuntimeError(f"Invalid tiled VAE padding: pad_y={pad_y} pad_x={pad_x}.")
+
+    for core_y0 in range(0, height, tile_y):
+        core_y1 = min(height, core_y0 + tile_y)
+        context_y0 = max(0, core_y0 - pad_y)
+        context_y1 = min(height, core_y1 + pad_y)
+        for core_x0 in range(0, width, tile_x):
+            core_x1 = min(width, core_x0 + tile_x)
+            context_x0 = max(0, core_x0 - pad_x)
+            context_x1 = min(width, core_x1 + pad_x)
+            yield _TileWindow(
+                core_y0=core_y0,
+                core_y1=core_y1,
+                core_x0=core_x0,
+                core_x1=core_x1,
+                context_y0=context_y0,
+                context_y1=context_y1,
+                context_x0=context_x0,
+                context_x1=context_x1,
+            )
+
 class VAE:
     def __init__(self, model=None, device=None, dtype=None, no_init=False, *, family=None):
         if no_init:
@@ -347,12 +391,41 @@ class VAE:
         compute_dtype = memory_management.manager.compute_dtype_for_role(DeviceRole.VAE, storage_dtype=storage_dtype)
         return storage_dtype, compute_dtype
 
-    def _active_forward_dtype(self) -> torch.dtype:
-        if self.vae_dtype is not None:
-            return self.vae_dtype
+    def _active_forward_dtype(
+        self,
+        *,
+        storage_dtype: torch.dtype | None = None,
+        compute_dtype: torch.dtype | None = None,
+    ) -> torch.dtype:
+        if compute_dtype is not None:
+            return compute_dtype
         if self.vae_compute_dtype is not None:
             return self.vae_compute_dtype
+        if storage_dtype is not None:
+            return storage_dtype
+        if self.vae_dtype is not None:
+            return self.vae_dtype
         return torch.float32
+
+    def _autocast_context(self, forward_dtype: torch.dtype):
+        device_type = torch.device(self.device).type
+        supported: dict[str, set[torch.dtype]] = {
+            "cuda": {torch.float16, torch.bfloat16},
+            "cpu": {torch.bfloat16},
+            "xpu": {torch.float16, torch.bfloat16},
+            "mps": {torch.float16},
+        }
+        if forward_dtype not in supported.get(device_type, set()):
+            return contextlib.nullcontext()
+        try:
+            return torch.autocast(device_type=device_type, dtype=forward_dtype)
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Autocast unavailable for VAE device=%s dtype=%s; falling back to regular forward.",
+                device_type,
+                str(forward_dtype),
+            )
+            return contextlib.nullcontext()
 
     def _apply_precision(self, dtype: torch.dtype, device: torch.device | str | None = None) -> None:
         if dtype == self.vae_dtype:
@@ -369,133 +442,194 @@ class VAE:
             target_device,
         )
 
-    def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16):
-        steps = samples.shape[0] * get_tiled_scale_steps(
-            samples.shape[3],
-            samples.shape[2],
-            tile_x=tile_x,
-            tile_y=tile_y,
-            overlap=overlap,
-        )
-        steps += samples.shape[0] * get_tiled_scale_steps(
-            samples.shape[3],
-            samples.shape[2],
-            tile_x=tile_x // 2,
-            tile_y=tile_y * 2,
-            overlap=overlap,
-        )
-        steps += samples.shape[0] * get_tiled_scale_steps(
-            samples.shape[3],
-            samples.shape[2],
-            tile_x=tile_x * 2,
-            tile_y=tile_y // 2,
-            overlap=overlap,
-        )
+    def _decode_forward(self, samples: torch.Tensor, *, forward_dtype: torch.dtype) -> torch.Tensor:
+        with self._autocast_context(forward_dtype):
+            decoded_raw = self.first_stage_model.decode(samples.to(device=self.device, dtype=forward_dtype))
+        return _unwrap_decode_output(decoded_raw).to(self.output_device).float()
 
-        def decode_fn(a: torch.Tensor) -> torch.Tensor:
-            forward_dtype = self._active_forward_dtype()
-            decoded = self.first_stage_model.decode(a.to(device=self.device, dtype=forward_dtype))
-            return (_unwrap_decode_output(decoded) + 1.0).float()
+    def _encode_forward(
+        self,
+        pixels_in: torch.Tensor,
+        *,
+        forward_dtype: torch.dtype,
+        regulation,
+    ) -> torch.Tensor:
+        base = getattr(self.first_stage_model, "_base", self.first_stage_model)
+        pixels_typed = pixels_in.to(device=self.device, dtype=forward_dtype)
+        with self._autocast_context(forward_dtype):
+            if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
+                encoded_raw = base.encode(pixels_typed, return_dict=True)
+            elif AutoencoderKL_LDM is not None and isinstance(base, AutoencoderKL_LDM):
+                encoded_raw = base.encode(pixels_typed, regulation)
+            else:
+                try:
+                    encoded_raw = base.encode(pixels_typed, regulation)
+                except TypeError:
+                    encoded_raw = base.encode(pixels_typed)
+        if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
+            encoded_raw = encoded_raw[0]
+        return _unwrap_encode_output(encoded_raw).to(self.output_device).float()
 
-        output = torch.clamp(
-            (
-                (
-                    tiled_scale(
-                        samples,
-                        decode_fn,
-                        tile_x=tile_x // 2,
-                        tile_y=tile_y * 2,
-                        overlap=overlap,
-                        upscale_amount=self.downscale_ratio,
-                        output_device=self.output_device,
-                    )
-                    + tiled_scale(
-                        samples,
-                        decode_fn,
-                        tile_x=tile_x * 2,
-                        tile_y=tile_y // 2,
-                        overlap=overlap,
-                        upscale_amount=self.downscale_ratio,
-                        output_device=self.output_device,
-                    )
-                    + tiled_scale(
-                        samples,
-                        decode_fn,
-                        tile_x=tile_x,
-                        tile_y=tile_y,
-                        overlap=overlap,
-                        upscale_amount=self.downscale_ratio,
-                        output_device=self.output_device,
-                    )
-                )
-                / 3.0
+    @staticmethod
+    def _tile_crop_bounds(
+        *,
+        window_start: int,
+        window_end: int,
+        context_start: int,
+        context_end: int,
+        decoded_extent: int,
+        scale_factor: float,
+    ) -> tuple[int, int]:
+        context_extent = context_end - context_start
+        if context_extent <= 0:
+            raise RuntimeError("Invalid tiled VAE context extent; expected positive size.")
+        scaled_context_start = round(context_start * scale_factor)
+        scaled_window_start = round(window_start * scale_factor)
+        scaled_window_end = round(window_end * scale_factor)
+        crop_start = scaled_window_start - scaled_context_start
+        crop_end = crop_start + (scaled_window_end - scaled_window_start)
+        if crop_start < 0 or crop_end > decoded_extent or crop_start >= crop_end:
+            raise RuntimeError(
+                "Invalid tiled VAE crop bounds: "
+                f"crop=({crop_start}, {crop_end}) decoded_extent={decoded_extent} "
+                f"context=({context_start}, {context_end}) window=({window_start}, {window_end}) scale={scale_factor}."
             )
-            / 2.0,
-            min=0.0,
-            max=1.0,
+        return crop_start, crop_end
+
+    def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16):
+        if samples.ndim != 4:
+            raise RuntimeError(f"decode_tiled_ expects NCHW latents; got shape={tuple(samples.shape)}.")
+        pad = max(0, int(overlap))
+        tile_x = int(tile_x)
+        tile_y = int(tile_y)
+        output_height = round(samples.shape[2] * self.downscale_ratio)
+        output_width = round(samples.shape[3] * self.downscale_ratio)
+        output = torch.empty(
+            (samples.shape[0], 3, output_height, output_width),
+            device=self.output_device,
+            dtype=torch.float32,
         )
-        return output
+        windows = tuple(
+            _iter_tile_windows(
+                height=int(samples.shape[2]),
+                width=int(samples.shape[3]),
+                tile_y=tile_y,
+                tile_x=tile_x,
+                pad_y=pad,
+                pad_x=pad,
+            )
+        )
+        if not windows:
+            raise RuntimeError("decode_tiled_ produced no tile windows; check tile geometry.")
+        forward_dtype = self._active_forward_dtype()
+        decode_scale = float(self.downscale_ratio)
+
+        for batch_index in range(samples.shape[0]):
+            for window in windows:
+                latent_tile = samples[
+                    batch_index : batch_index + 1,
+                    :,
+                    window.context_y0 : window.context_y1,
+                    window.context_x0 : window.context_x1,
+                ]
+                decoded_tile = self._decode_forward(latent_tile, forward_dtype=forward_dtype)
+                crop_y0, crop_y1 = self._tile_crop_bounds(
+                    window_start=window.core_y0,
+                    window_end=window.core_y1,
+                    context_start=window.context_y0,
+                    context_end=window.context_y1,
+                    decoded_extent=int(decoded_tile.shape[2]),
+                    scale_factor=decode_scale,
+                )
+                crop_x0, crop_x1 = self._tile_crop_bounds(
+                    window_start=window.core_x0,
+                    window_end=window.core_x1,
+                    context_start=window.context_x0,
+                    context_end=window.context_x1,
+                    decoded_extent=int(decoded_tile.shape[3]),
+                    scale_factor=decode_scale,
+                )
+                out_y0 = round(window.core_y0 * decode_scale)
+                out_y1 = round(window.core_y1 * decode_scale)
+                out_x0 = round(window.core_x0 * decode_scale)
+                out_x1 = round(window.core_x1 * decode_scale)
+                output[batch_index : batch_index + 1, :, out_y0:out_y1, out_x0:out_x1] = decoded_tile[
+                    :,
+                    :,
+                    crop_y0:crop_y1,
+                    crop_x0:crop_x1,
+                ]
+        return torch.clamp((output + 1.0) / 2.0, min=0.0, max=1.0)
 
     def encode_tiled_(self, pixel_samples, tile_x=512, tile_y=512, overlap=64):
-        steps = pixel_samples.shape[0] * get_tiled_scale_steps(
-            pixel_samples.shape[3],
-            pixel_samples.shape[2],
-            tile_x=tile_x,
-            tile_y=tile_y,
-            overlap=overlap,
+        if pixel_samples.ndim != 4:
+            raise RuntimeError(f"encode_tiled_ expects NCHW pixels; got shape={tuple(pixel_samples.shape)}.")
+        pad = max(0, int(overlap))
+        tile_x = int(tile_x)
+        tile_y = int(tile_y)
+        output_height = round(pixel_samples.shape[2] // self.downscale_ratio)
+        output_width = round(pixel_samples.shape[3] // self.downscale_ratio)
+        output = torch.empty(
+            (pixel_samples.shape[0], self.latent_channels, output_height, output_width),
+            device=self.output_device,
+            dtype=torch.float32,
         )
-        steps += pixel_samples.shape[0] * get_tiled_scale_steps(
-            pixel_samples.shape[3],
-            pixel_samples.shape[2],
-            tile_x=tile_x // 2,
-            tile_y=tile_y * 2,
-            overlap=overlap,
+        windows = tuple(
+            _iter_tile_windows(
+                height=int(pixel_samples.shape[2]),
+                width=int(pixel_samples.shape[3]),
+                tile_y=tile_y,
+                tile_x=tile_x,
+                pad_y=pad,
+                pad_x=pad,
+            )
         )
-        steps += pixel_samples.shape[0] * get_tiled_scale_steps(
-            pixel_samples.shape[3],
-            pixel_samples.shape[2],
-            tile_x=tile_x * 2,
-            tile_y=tile_y // 2,
-            overlap=overlap,
-        )
+        if not windows:
+            raise RuntimeError("encode_tiled_ produced no tile windows; check tile geometry.")
+        forward_dtype = self._active_forward_dtype()
+        encode_scale = 1.0 / float(self.downscale_ratio)
+        regulation = self.patcher.model_options.get("model_vae_regulation", None)
 
-        def encode_fn(a: torch.Tensor) -> torch.Tensor:
-            forward_dtype = self._active_forward_dtype()
-            encoded = self.first_stage_model.encode((2.0 * a - 1.0).to(device=self.device, dtype=forward_dtype))
-            return _unwrap_encode_output(encoded).float()
-
-        samples = tiled_scale(
-            pixel_samples,
-            encode_fn,
-            tile_x=tile_x,
-            tile_y=tile_y,
-            overlap=overlap,
-            upscale_amount=(1 / self.downscale_ratio),
-            out_channels=self.latent_channels,
-            output_device=self.output_device,
-        )
-        samples += tiled_scale(
-            pixel_samples,
-            encode_fn,
-            tile_x=tile_x * 2,
-            tile_y=tile_y // 2,
-            overlap=overlap,
-            upscale_amount=(1 / self.downscale_ratio),
-            out_channels=self.latent_channels,
-            output_device=self.output_device,
-        )
-        samples += tiled_scale(
-            pixel_samples,
-            encode_fn,
-            tile_x=tile_x // 2,
-            tile_y=tile_y * 2,
-            overlap=overlap,
-            upscale_amount=(1 / self.downscale_ratio),
-            out_channels=self.latent_channels,
-            output_device=self.output_device,
-        )
-        samples /= 3.0
-        return samples
+        for batch_index in range(pixel_samples.shape[0]):
+            for window in windows:
+                pixels_tile = pixel_samples[
+                    batch_index : batch_index + 1,
+                    :,
+                    window.context_y0 : window.context_y1,
+                    window.context_x0 : window.context_x1,
+                ]
+                encoded_tile = self._encode_forward(
+                    2.0 * pixels_tile - 1.0,
+                    forward_dtype=forward_dtype,
+                    regulation=regulation,
+                )
+                crop_y0, crop_y1 = self._tile_crop_bounds(
+                    window_start=window.core_y0,
+                    window_end=window.core_y1,
+                    context_start=window.context_y0,
+                    context_end=window.context_y1,
+                    decoded_extent=int(encoded_tile.shape[2]),
+                    scale_factor=encode_scale,
+                )
+                crop_x0, crop_x1 = self._tile_crop_bounds(
+                    window_start=window.core_x0,
+                    window_end=window.core_x1,
+                    context_start=window.context_x0,
+                    context_end=window.context_x1,
+                    decoded_extent=int(encoded_tile.shape[3]),
+                    scale_factor=encode_scale,
+                )
+                out_y0 = round(window.core_y0 * encode_scale)
+                out_y1 = round(window.core_y1 * encode_scale)
+                out_x0 = round(window.core_x0 * encode_scale)
+                out_x1 = round(window.core_x1 * encode_scale)
+                output[batch_index : batch_index + 1, :, out_y0:out_y1, out_x0:out_x1] = encoded_tile[
+                    :,
+                    :,
+                    crop_y0:crop_y1,
+                    crop_x0:crop_x1,
+                ]
+        return output
 
     def _decode_cpu_fallback(self, samples_in: torch.Tensor) -> torch.Tensor:
         """Best-effort CPU decode path used after CUDA OOM when smart fallback is enabled.
@@ -584,36 +718,40 @@ class VAE:
 
     def decode_inner(self, samples_in):
         _tensor_stats("decode_inner.latents", samples_in)
-        if memory_management.manager.vae_always_tiled:
-            return self.decode_tiled(samples_in).to(self.output_device)
-
         while True:
             desired_storage, desired_compute = self._resolve_dtypes()
-            self._apply_precision(desired_storage)
+            forward_dtype = self._active_forward_dtype(
+                storage_dtype=desired_storage,
+                compute_dtype=desired_compute,
+            )
+            self._apply_precision(forward_dtype)
             self.vae_compute_dtype = desired_compute
+            use_tiled = bool(memory_management.manager.vae_always_tiled)
 
             try:
-                forward_dtype = self._active_forward_dtype()
-                memory_used = self.memory_used_decode(samples_in.shape, forward_dtype)
-                memory_management.manager.load_models([self.patcher], memory_required=memory_used)
-                free_memory = memory_management.manager.get_free_memory(self.device)
-                batch_number = max(1, int(free_memory / memory_used))
+                if use_tiled:
+                    memory_management.manager.load_model(self.patcher)
+                    pixel_samples = self.decode_tiled_(samples_in)
+                else:
+                    memory_used = self.memory_used_decode(samples_in.shape, forward_dtype)
+                    memory_management.manager.load_models([self.patcher], memory_required=memory_used)
+                    free_memory = memory_management.manager.get_free_memory(self.device)
+                    batch_number = max(1, int(free_memory / memory_used))
 
-                pixel_samples = torch.empty(
-                    (
-                        samples_in.shape[0],
-                        3,
-                        round(samples_in.shape[2] * self.downscale_ratio),
-                        round(samples_in.shape[3] * self.downscale_ratio),
-                    ),
-                    device=self.output_device,
-                )
-                for x in range(0, samples_in.shape[0], batch_number):
-                    samples = samples_in[x:x + batch_number].to(device=self.device, dtype=forward_dtype)
-                    decoded_raw = self.first_stage_model.decode(samples)
-                    decoded = _unwrap_decode_output(decoded_raw).to(self.output_device).float()
-                    pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
-                    _tensor_stats("decode_inner.batch_decoded", decoded)
+                    pixel_samples = torch.empty(
+                        (
+                            samples_in.shape[0],
+                            3,
+                            round(samples_in.shape[2] * self.downscale_ratio),
+                            round(samples_in.shape[3] * self.downscale_ratio),
+                        ),
+                        device=self.output_device,
+                    )
+                    for x in range(0, samples_in.shape[0], batch_number):
+                        samples = samples_in[x:x + batch_number]
+                        decoded = self._decode_forward(samples, forward_dtype=forward_dtype)
+                        pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
+                        _tensor_stats("decode_inner.batch_decoded", decoded)
             except memory_management.manager.oom_exception:
                 if smart_fallback_enabled():
                     logger.warning(
@@ -623,6 +761,11 @@ class VAE:
                     )
                     pixel_samples = self._decode_cpu_fallback(samples_in)
                 else:
+                    if use_tiled:
+                        raise RuntimeError(
+                            "VAE tiled decode ran out of memory with smart fallback disabled. "
+                            "Disable vae_always_tiled or enable smart fallback."
+                        )
                     print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
                     pixel_samples = self.decode_tiled_(samples_in)
 
@@ -665,61 +808,56 @@ class VAE:
     def decode_tiled(self, samples, tile_x=64, tile_y=64, overlap=16):
         memory_management.manager.load_model(self.patcher)
         desired_storage, desired_compute = self._resolve_dtypes()
-        self._apply_precision(desired_storage)
+        forward_dtype = self._active_forward_dtype(
+            storage_dtype=desired_storage,
+            compute_dtype=desired_compute,
+        )
+        self._apply_precision(forward_dtype)
         self.vae_compute_dtype = desired_compute
         output = self.decode_tiled_(samples, tile_x, tile_y, overlap)
         # Return BCHW format in [-1, 1] range like decode_inner
         return output * 2.0 - 1.0
 
     def encode_inner(self, pixel_samples):
-        if memory_management.manager.vae_always_tiled:
-            return self.encode_tiled(pixel_samples)
-
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
-
         pixel_samples = pixel_samples.movedim(-1, 1)
 
         while True:
             desired_storage, desired_compute = self._resolve_dtypes()
-            self._apply_precision(desired_storage)
+            forward_dtype = self._active_forward_dtype(
+                storage_dtype=desired_storage,
+                compute_dtype=desired_compute,
+            )
+            self._apply_precision(forward_dtype)
             self.vae_compute_dtype = desired_compute
+            use_tiled = bool(memory_management.manager.vae_always_tiled)
 
             try:
-                forward_dtype = self._active_forward_dtype()
-                memory_used = self.memory_used_encode(pixel_samples.shape, forward_dtype)
-                memory_management.manager.load_models([self.patcher], memory_required=memory_used)
-                free_memory = memory_management.manager.get_free_memory(self.device)
-                batch_number = max(1, int(free_memory / memory_used))
-                samples = torch.empty(
-                    (
-                        pixel_samples.shape[0],
-                        self.latent_channels,
-                        round(pixel_samples.shape[2] // self.downscale_ratio),
-                        round(pixel_samples.shape[3] // self.downscale_ratio),
-                    ),
-                    device=self.output_device,
-                )
-                for x in range(0, pixel_samples.shape[0], batch_number):
-                    pixels_in = (2.0 * pixel_samples[x:x + batch_number] - 1.0).to(
-                        device=self.device,
-                        dtype=forward_dtype,
+                if use_tiled:
+                    memory_management.manager.load_model(self.patcher)
+                    samples = self.encode_tiled_(pixel_samples)
+                else:
+                    memory_used = self.memory_used_encode(pixel_samples.shape, forward_dtype)
+                    memory_management.manager.load_models([self.patcher], memory_required=memory_used)
+                    free_memory = memory_management.manager.get_free_memory(self.device)
+                    batch_number = max(1, int(free_memory / memory_used))
+                    samples = torch.empty(
+                        (
+                            pixel_samples.shape[0],
+                            self.latent_channels,
+                            round(pixel_samples.shape[2] // self.downscale_ratio),
+                            round(pixel_samples.shape[3] // self.downscale_ratio),
+                        ),
+                        device=self.output_device,
                     )
-                    base = getattr(self.first_stage_model, "_base", self.first_stage_model)
-
-                    if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
-                        encoded_raw = base.encode(pixels_in, return_dict=True)
-                    elif AutoencoderKL_LDM is not None and isinstance(base, AutoencoderKL_LDM):
-                        encoded_raw = base.encode(pixels_in, regulation)
-                    else:
-                        try:
-                            encoded_raw = base.encode(pixels_in, regulation)
-                        except TypeError:
-                            encoded_raw = base.encode(pixels_in)
-
-                    if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
-                        encoded_raw = encoded_raw[0]
-                    encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
-                    samples[x:x + batch_number] = encoded
+                    for x in range(0, pixel_samples.shape[0], batch_number):
+                        pixels_in = 2.0 * pixel_samples[x:x + batch_number] - 1.0
+                        encoded = self._encode_forward(
+                            pixels_in,
+                            forward_dtype=forward_dtype,
+                            regulation=regulation,
+                        )
+                        samples[x:x + batch_number] = encoded
             except memory_management.manager.oom_exception:
                 if smart_fallback_enabled():
                     logger.warning(
@@ -729,6 +867,11 @@ class VAE:
                     )
                     samples = self._encode_cpu_fallback(pixel_samples, regulation)
                 else:
+                    if use_tiled:
+                        raise RuntimeError(
+                            "VAE tiled encode ran out of memory with smart fallback disabled. "
+                            "Disable vae_always_tiled or enable smart fallback."
+                        )
                     print("Warning: Ran out of memory when regular VAE encoding, retrying with tiled VAE encoding.")
                     samples = self.encode_tiled_(pixel_samples)
 
@@ -766,7 +909,11 @@ class VAE:
         memory_management.manager.load_model(self.patcher)
         pixel_samples = pixel_samples.movedim(-1, 1)
         desired_storage, desired_compute = self._resolve_dtypes()
-        self._apply_precision(desired_storage)
+        forward_dtype = self._active_forward_dtype(
+            storage_dtype=desired_storage,
+            compute_dtype=desired_compute,
+        )
+        self._apply_precision(forward_dtype)
         self.vae_compute_dtype = desired_compute
         samples = self.encode_tiled_(pixel_samples, tile_x=tile_x, tile_y=tile_y, overlap=overlap)
         return samples

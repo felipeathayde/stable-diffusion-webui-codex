@@ -29,12 +29,13 @@ Status: Active
 - VAE patcher now respects the AUTO precision ladder: decode/encode paths inspect for NaNs and escalate fp16↔bf16↔fp32 via `memory_management.manager.report_precision_failure`; user-forced dtypes skip the ladder and surface explicit errors.
 - 2025-11-03: Host pinning for offloaded models honours `RuntimeMemoryConfig.swap.pin_shared_memory`; disable the flag to avoid Windows pagefile pressure.
 - 2025-11-22: VAE patcher unwraps diffusers `DecoderOutput`/`AutoencoderKLOutput` before `.to(...)`, preventing `'DecoderOutput' object has no attribute 'to'` when SDXL uses the standard diffusers VAE.
-- 2025-12-05: VAE patcher gains a `smart_fallback` path that, when enabled, catches CUDA OOM during decode and performs a single full-image decode on CPU instead of repeatedly retrying GPU paths (regular + tiled). Encode now mirrors this behaviour: OOM during encode triggers a single full-image CPU encode when Smart Fallback is on, otherwise it falls back to tiled encode.
+- 2025-12-05: VAE patcher gains a `smart_fallback` path that, when enabled, catches CUDA OOM during decode/encode and performs a single full-image CPU fallback. When smart fallback is off, regular decode/encode OOM retries tiled VAE; forced `vae_always_tiled` OOM now fails loud.
 - 2026-01-02: Removed token merging patches; prompt token-merging tags are stripped but have no effect.
 - 2026-01-02: Added standardized file header docstrings to patcher modules (doc-only change; part of rollout).
 - 2026-01-04: Added `DenoiserPatcher` for Flux/Z-Image/WAN runtimes; `UnetPatcher` remains UNet/ControlNet-specific.
 - 2026-01-20: Global LoRA apply mode now supports `merge` (default; merges into weights once) vs `online` (patch during forward) via `CODEX_LORA_APPLY_MODE` / `--lora-apply-mode`.
-- 2026-02-07: VAE decode/encode paths now cast forward inputs using the active storage dtype (not compute dtype) and size batches with that same dtype to prevent bf16/float input-bias mismatches when `storage != compute`.
+- 2026-02-18: VAE decode/encode runtime now resolves a compute-preferred forward dtype and casts VAE residency to that effective forward dtype before execution/memory sizing to avoid mixed-dtype forward failures.
+- 2026-02-18: Tiled VAE fallback was rewritten to a native context-padding + center-crop stitching flow (SUPIR-inspired, no fast/approximate path, no external tiled-scale dependency).
 - 2026-02-08: `_NormalizingFirstStage` now supports optional per-channel latent stats (`latents_mean`/`latents_std`) in addition to scalar `scaling_factor`/`shift_factor`; 4D/5D rank, channel count, and non-finite/invalid stats are fail-loud.
 - 2026-02-08: VAE normalization now resolves scale/shift via `vae_normalization_policy.py` with explicit family shift contracts: no-shift families reject explicit numeric shifts; shift-required families fail loud on missing/`None` shift.
 

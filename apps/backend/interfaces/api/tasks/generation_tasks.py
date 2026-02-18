@@ -197,6 +197,24 @@ def run_image_task(
         meta={"engine_key": engine_key},
     )
 
+    def _build_png_metadata(info_obj: object) -> dict[str, str]:
+        metadata: dict[str, str] = {}
+        if isinstance(info_obj, dict):
+            try:
+                parameters = json.dumps(info_obj, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                parameters = str(info_obj)
+            parameters = str(parameters).strip()
+            if parameters:
+                metadata["parameters"] = parameters
+        for key, value in generation_provenance.items():
+            key_text = str(key).strip()
+            value_text = str(value).strip()
+            if not key_text or not value_text:
+                continue
+            metadata.setdefault(key_text, value_text)
+        return metadata
+
     def worker() -> None:
         acquired = False
         success = False
@@ -332,17 +350,18 @@ def run_image_task(
                     if isinstance(info_obj, dict):
                         for key, value in generation_provenance.items():
                             info_obj.setdefault(key, value)
+                    png_metadata = _build_png_metadata(info_obj)
 
                     if bool(opts_get("samples_save", True)):
                         save_generated_images(
                             payload_obj.get("images", []),
                             task=task_type,
                             info=info_dict,
-                            metadata=generation_provenance,
+                            metadata=png_metadata,
                         )
 
                     result = {
-                        "images": encode_images(payload_obj.get("images", []), metadata=generation_provenance),
+                        "images": encode_images(payload_obj.get("images", []), metadata=png_metadata),
                         "info": info_obj,
                     }
                     entry.result = {"status": "completed", "result": result}

@@ -32,7 +32,7 @@ from .specs import LATENT_UPSCALE_MODES, TileConfig, UpscalerDefinition, Upscale
 
 
 _UPSCALERS_CACHE: list[UpscalerDefinition] | None = None
-_UPSCALERS_CACHE_KEY: tuple[tuple[str, str, float | None], ...] | None = None
+_UPSCALERS_CACHE_KEY: tuple[tuple[str, str, int, float | None], ...] | None = None
 
 
 def _iter_model_files(root: str) -> Iterable[Path]:
@@ -64,22 +64,42 @@ def invalidate_upscalers_cache() -> None:
     _UPSCALERS_CACHE_KEY = None
 
 
-def _dir_mtime(path: Path) -> float | None:
-    try:
-        if not path.is_dir():
-            return None
-        return float(path.stat().st_mtime)
-    except Exception:
-        return None
+def _directory_tree_signature(path: Path) -> tuple[int, float | None]:
+    if not path.is_dir():
+        return 0, None
+    dir_count = 0
+    newest_mtime: float | None = None
+    stack: list[Path] = [path]
+    while stack:
+        current = stack.pop()
+        if not current.is_dir():
+            continue
+        dir_count += 1
+        try:
+            current_mtime = float(current.stat().st_mtime)
+        except Exception:
+            current_mtime = None
+        if current_mtime is None:
+            pass
+        elif newest_mtime is None or current_mtime > newest_mtime:
+            newest_mtime = current_mtime
+        try:
+            for child in current.iterdir():
+                if child.is_dir():
+                    stack.append(child)
+        except Exception:
+            continue
+    return dir_count, newest_mtime
 
 
-def _compute_upscalers_cache_key() -> tuple[tuple[str, str, float | None], ...]:
-    parts: list[tuple[str, str, float | None]] = []
-    parts.append(("policy", f"safeweights={int(safeweights_enabled())}", None))
+def _compute_upscalers_cache_key() -> tuple[tuple[str, str, int, float | None], ...]:
+    parts: list[tuple[str, str, int, float | None]] = []
+    parts.append(("policy", f"safeweights={int(safeweights_enabled())}", 0, None))
     for root_key in ("upscale_models", "latent_upscale_models"):
         for root in get_paths_for(root_key):
             base = Path(str(root))
-            parts.append((root_key, base.as_posix(), _dir_mtime(base)))
+            count, newest_mtime = _directory_tree_signature(base)
+            parts.append((root_key, base.as_posix(), count, newest_mtime))
     return tuple(parts)
 
 

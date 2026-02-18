@@ -395,7 +395,7 @@ const schedulers = ref<SchedulerInfo[]>([])
 onMounted(() => {
   bootstrap
     .runRequired('Failed to initialize image tab controls', async () => {
-      await upscalersStore.load()
+      await upscalersStore.load({ refresh: true })
       await quicksettingsStore.init()
       const [samp, sched, pathRes] = await Promise.all([fetchSamplers(), fetchSchedulers(), fetchPaths()])
       samplers.value = samp.samplers

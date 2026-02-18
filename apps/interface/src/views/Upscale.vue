@@ -65,7 +65,7 @@ Symbols (top-level; keep in sync; no ghosts):
             </div>
             <p v-if="upscalersError" class="caption">Error: {{ upscalersError }}</p>
             <p v-else-if="!isLoadingUpscalers && spandrelUpscalers.length === 0" class="caption">
-              No upscaler weights installed. Use Download or drop `*.safetensors|*.pth|*.pt` into `models/upscale_models/`.
+              No upscaler weights installed. Use Download or drop `*.safetensors|*.pth|*.pt` into `models/upscale_models/` or `models/upscalers/`.
             </p>
           </div>
 

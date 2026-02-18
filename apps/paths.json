@@ -75,7 +75,8 @@
     "models/supir_models"
   ],
   "upscale_models": [
-    "models/upscale_models"
+    "models/upscale_models",
+    "models/upscalers"
   ],
   "latent_upscale_models": [
     "models/latent_upscale_models"

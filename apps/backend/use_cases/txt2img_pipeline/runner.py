@@ -912,34 +912,40 @@ class Txt2ImgPipelineRunner:
                 f"Invalid 'hires.upscaler': {upscaler_id!r}. "
                 "Expected a 'latent:*' or 'spandrel:*' upscaler id from GET /api/upscalers."
             )
-        if hi_cfg.resize_x is not None:
-            target_width = int(hi_cfg.resize_x)
-            if target_width <= 0:
-                raise ValueError("Hires is enabled but 'hires.resize_x' must be > 0 when provided.")
+        resize_x = int(hi_cfg.resize_x) if hi_cfg.resize_x is not None else 0
+        resize_y = int(hi_cfg.resize_y) if hi_cfg.resize_y is not None else 0
+        if resize_x < 0:
+            raise ValueError("Hires is enabled but 'hires.resize_x' must be >= 0 (0 means fallback to scale).")
+        if resize_y < 0:
+            raise ValueError("Hires is enabled but 'hires.resize_y' must be >= 0 (0 means fallback to scale).")
+
+        scale = float(hi_cfg.scale) if hi_cfg.scale is not None else None
+        if resize_x > 0:
+            target_width = resize_x
         else:
-            if hi_cfg.scale is None:
+            if scale is None or scale <= 0.0:
                 raise ValueError(
-                    "Hires is enabled but neither 'hires.resize_x' nor 'hires.scale' is set. "
+                    "Hires is enabled but neither 'hires.resize_x' nor a valid positive 'hires.scale' is set. "
                     "Provide explicit dimensions or a scale."
                 )
-            target_width = int(processing.width * hi_cfg.scale)
-        if hi_cfg.resize_y is not None:
-            target_height = int(hi_cfg.resize_y)
-            if target_height <= 0:
-                raise ValueError("Hires is enabled but 'hires.resize_y' must be > 0 when provided.")
+            target_width = int(processing.width * scale)
+
+        if resize_y > 0:
+            target_height = resize_y
         else:
-            if hi_cfg.scale is None:
+            if scale is None or scale <= 0.0:
                 raise ValueError(
-                    "Hires is enabled but neither 'hires.resize_y' nor 'hires.scale' is set. "
+                    "Hires is enabled but neither 'hires.resize_y' nor a valid positive 'hires.scale' is set. "
                     "Provide explicit dimensions or a scale."
                 )
-            target_height = int(processing.height * hi_cfg.scale)
-        if hi_cfg.second_pass_steps is not None:
-            steps = int(hi_cfg.second_pass_steps)
-            if steps <= 0:
-                raise ValueError("Hires is enabled but 'hires.steps' must be > 0 when provided.")
-        else:
-            steps = int(processing.steps)
+            target_height = int(processing.height * scale)
+
+        second_pass_steps = int(hi_cfg.second_pass_steps) if hi_cfg.second_pass_steps is not None else 0
+        if second_pass_steps < 0:
+            raise ValueError("Hires is enabled but 'hires.steps' must be >= 0 (0 means reuse first-pass steps).")
+        steps = second_pass_steps if second_pass_steps > 0 else int(processing.steps)
+        if steps <= 0:
+            raise ValueError("Hires is enabled but resolved 'steps' must be > 0.")
         denoise = float(hi_cfg.denoise)
         cfg_scale = hi_cfg.cfg
         return HiResPlan(

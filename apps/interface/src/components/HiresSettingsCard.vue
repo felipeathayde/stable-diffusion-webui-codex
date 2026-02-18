@@ -55,7 +55,7 @@ Symbols (top-level; keep in sync; no ghosts):
           label="Hires steps"
           :modelValue="steps"
           :min="0"
-          :max="stepsSliderMax"
+          :max="150"
           :step="1"
           :inputStep="1"
           :nudgeStep="1"
@@ -63,16 +63,6 @@ Symbols (top-level; keep in sync; no ghosts):
           :disabled="disabled || !enabled"
           @update:modelValue="(v) => emit('update:steps', Math.max(0, Math.trunc(v)))"
         >
-          <template #right>
-            <input
-              class="ui-input ui-input-sm cdx-input-w-md"
-              type="number"
-              min="0"
-              :value="steps"
-              :disabled="disabled || !enabled"
-              @change="onStepsChange"
-            />
-          </template>
           <template #below>
             <p class="hr-hint">0 = reuse base steps</p>
           </template>
@@ -347,11 +337,6 @@ const samplerValue = computed(() => String(props.sampler || '').trim())
 const schedulerValue = computed(() => String(props.scheduler || '').trim())
 const cfgLabel = computed(() => String(props.cfgLabel || 'CFG'))
 const cfgValue = computed(() => Number.isFinite(props.cfg) ? Number(props.cfg) : 7)
-const stepsSliderMax = computed(() => {
-  const current = Number(props.steps)
-  if (!Number.isFinite(current)) return 150
-  return Math.max(150, Math.trunc(current) + 50)
-})
 const resizeXValue = computed(() => {
   const value = Number(props.resizeX)
   if (!Number.isFinite(value)) return 0
@@ -448,11 +433,6 @@ function toggle(): void {
 
 function onUpscalerChange(event: Event): void {
   emit('update:upscaler', (event.target as HTMLSelectElement).value)
-}
-
-function onStepsChange(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  emit('update:steps', Number.isNaN(value) || value < 0 ? 0 : Math.trunc(value))
 }
 
 function onCheckpointChange(event: Event): void {

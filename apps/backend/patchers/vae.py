@@ -370,34 +370,130 @@ class VAE:
         )
 
     def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16):
-        steps = samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x, tile_y, overlap)
-        steps += samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x // 2, tile_y * 2, overlap)
-        steps += samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x * 2, tile_y // 2, overlap)
+        steps = samples.shape[0] * get_tiled_scale_steps(
+            samples.shape[3],
+            samples.shape[2],
+            tile_x=tile_x,
+            tile_y=tile_y,
+            overlap=overlap,
+        )
+        steps += samples.shape[0] * get_tiled_scale_steps(
+            samples.shape[3],
+            samples.shape[2],
+            tile_x=tile_x // 2,
+            tile_y=tile_y * 2,
+            overlap=overlap,
+        )
+        steps += samples.shape[0] * get_tiled_scale_steps(
+            samples.shape[3],
+            samples.shape[2],
+            tile_x=tile_x * 2,
+            tile_y=tile_y // 2,
+            overlap=overlap,
+        )
 
         def decode_fn(a: torch.Tensor) -> torch.Tensor:
             forward_dtype = self._active_forward_dtype()
             decoded = self.first_stage_model.decode(a.to(device=self.device, dtype=forward_dtype))
             return (_unwrap_decode_output(decoded) + 1.0).float()
 
-        output = torch.clamp(((tiled_scale(samples, decode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device) +
-                               tiled_scale(samples, decode_fn, tile_x * 2, tile_y // 2, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device) +
-                               tiled_scale(samples, decode_fn, tile_x, tile_y, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device))
-                              / 3.0) / 2.0, min=0.0, max=1.0)
+        output = torch.clamp(
+            (
+                (
+                    tiled_scale(
+                        samples,
+                        decode_fn,
+                        tile_x=tile_x // 2,
+                        tile_y=tile_y * 2,
+                        overlap=overlap,
+                        upscale_amount=self.downscale_ratio,
+                        output_device=self.output_device,
+                    )
+                    + tiled_scale(
+                        samples,
+                        decode_fn,
+                        tile_x=tile_x * 2,
+                        tile_y=tile_y // 2,
+                        overlap=overlap,
+                        upscale_amount=self.downscale_ratio,
+                        output_device=self.output_device,
+                    )
+                    + tiled_scale(
+                        samples,
+                        decode_fn,
+                        tile_x=tile_x,
+                        tile_y=tile_y,
+                        overlap=overlap,
+                        upscale_amount=self.downscale_ratio,
+                        output_device=self.output_device,
+                    )
+                )
+                / 3.0
+            )
+            / 2.0,
+            min=0.0,
+            max=1.0,
+        )
         return output
 
     def encode_tiled_(self, pixel_samples, tile_x=512, tile_y=512, overlap=64):
-        steps = pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x, tile_y, overlap)
-        steps += pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x // 2, tile_y * 2, overlap)
-        steps += pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x * 2, tile_y // 2, overlap)
+        steps = pixel_samples.shape[0] * get_tiled_scale_steps(
+            pixel_samples.shape[3],
+            pixel_samples.shape[2],
+            tile_x=tile_x,
+            tile_y=tile_y,
+            overlap=overlap,
+        )
+        steps += pixel_samples.shape[0] * get_tiled_scale_steps(
+            pixel_samples.shape[3],
+            pixel_samples.shape[2],
+            tile_x=tile_x // 2,
+            tile_y=tile_y * 2,
+            overlap=overlap,
+        )
+        steps += pixel_samples.shape[0] * get_tiled_scale_steps(
+            pixel_samples.shape[3],
+            pixel_samples.shape[2],
+            tile_x=tile_x * 2,
+            tile_y=tile_y // 2,
+            overlap=overlap,
+        )
 
         def encode_fn(a: torch.Tensor) -> torch.Tensor:
             forward_dtype = self._active_forward_dtype()
             encoded = self.first_stage_model.encode((2.0 * a - 1.0).to(device=self.device, dtype=forward_dtype))
             return _unwrap_encode_output(encoded).float()
 
-        samples = tiled_scale(pixel_samples, encode_fn, tile_x, tile_y, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
-        samples += tiled_scale(pixel_samples, encode_fn, tile_x * 2, tile_y // 2, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
-        samples += tiled_scale(pixel_samples, encode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
+        samples = tiled_scale(
+            pixel_samples,
+            encode_fn,
+            tile_x=tile_x,
+            tile_y=tile_y,
+            overlap=overlap,
+            upscale_amount=(1 / self.downscale_ratio),
+            out_channels=self.latent_channels,
+            output_device=self.output_device,
+        )
+        samples += tiled_scale(
+            pixel_samples,
+            encode_fn,
+            tile_x=tile_x * 2,
+            tile_y=tile_y // 2,
+            overlap=overlap,
+            upscale_amount=(1 / self.downscale_ratio),
+            out_channels=self.latent_channels,
+            output_device=self.output_device,
+        )
+        samples += tiled_scale(
+            pixel_samples,
+            encode_fn,
+            tile_x=tile_x // 2,
+            tile_y=tile_y * 2,
+            overlap=overlap,
+            upscale_amount=(1 / self.downscale_ratio),
+            out_channels=self.latent_channels,
+            output_device=self.output_device,
+        )
         samples /= 3.0
         return samples
 

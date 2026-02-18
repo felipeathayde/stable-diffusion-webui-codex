@@ -418,7 +418,8 @@ class CodexSampler:
                             for entry in compiled_uncond:
                                 entry["model_conds"]["c_concat"] = Condition(image_conditioning)
 
-                backend_state.start(job_count=1, sampling_steps=steps - start_idx)
+                run_total_steps = steps - start_idx
+                backend_state.start(job_count=1, sampling_steps=run_total_steps)
                 state_started = True
 
                 strict = True
@@ -430,14 +431,14 @@ class CodexSampler:
                 if use_progress:
                     from tqdm.auto import tqdm
 
-                    progress_bar = tqdm(total=steps - start_idx, desc="sampling", leave=False)
+                    progress_bar = tqdm(total=run_total_steps, desc="sampling", leave=False)
 
                 sampler_kind = active_context.sampler_kind
                 profile_meta = {
                     "algorithm": self.algorithm,
                     "sampler_kind": sampler_kind.value,
                     "scheduler": active_context.scheduler_name,
-                    "steps": steps - start_idx,
+                    "steps": run_total_steps,
                     "cfg_scale": float(cfg_scale),
                     "device": str(noise.device),
                     "noise_dtype": str(noise.dtype),
@@ -456,7 +457,7 @@ class CodexSampler:
                         "sampler algorithm=%s scheduler=%s steps=%d cfg_scale=%.4g head=%s",
                         sampler_kind.value,
                         active_context.scheduler_name,
-                        len(sigmas_run) - 1,
+                        run_total_steps,
                         float(cfg_scale),
                         head,
                     )
@@ -817,14 +818,16 @@ class CodexSampler:
                             else:
                                 raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
 
+                            current_step = step_index + 1
                             if post_step_hook is not None:
-                                post_step_hook(x, i + 1, steps)
+                                post_step_hook(x, current_step, run_total_steps)
 
                             if preview_callback is not None and (
-                                preview_interval > 0 and ((i + 1) % preview_interval == 0) or (i + 1) == steps
+                                (preview_interval > 0 and (current_step % preview_interval == 0))
+                                or current_step == run_total_steps
                             ):
                                 try:
-                                    preview_callback(denoised.detach(), i + 1, steps)
+                                    preview_callback(denoised.detach(), current_step, run_total_steps)
                                 except Exception:
                                     pass
 
@@ -847,7 +850,7 @@ class CodexSampler:
                             if progress_bar is not None:
                                 progress_bar.update(1)
 
-                            backend_state.tick(sampling_step=i + 1)
+                            backend_state.tick(sampling_step=current_step)
                         profiler.step()
 
                 if progress_bar is not None:

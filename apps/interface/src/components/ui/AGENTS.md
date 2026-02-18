@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, ui, primitives -->
 # apps/interface/src/components/ui Overview
 Date: 2025-12-23
-Last Review: 2026-02-08
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 - `apps/interface/src/components/ui/UpscalerTileControls.vue` — Tile presets + overlap + min tile + explicit OOM fallback toggle (shared by hires-fix + `/upscale`).
 - `apps/interface/src/components/ui/JsonTreeView.vue` — Collapsible JSON renderer used by the metadata modal (`<details>/<summary>` tree).
 - `apps/interface/src/components/ui/Dropzone.vue` — Drag-and-drop file picker primitive (presentational; emits `select`/`rejected`).
+- `apps/interface/src/components/ui/ImageZoomOverlay.vue` — Full-screen image zoom overlay with shared close semantics (Esc and outside-click).
 
 ## Notes
 - Keep components presentational: props in, emits out; no store calls or API fetching.
@@ -24,3 +25,4 @@ Status: Active
 - 2026-01-29: Added `Dropzone.vue` with styles in `apps/interface/src/styles/components/cdx-dropzone.css`.
 - 2026-02-04: `UpscalerTileControls.vue` now exposes `min_tile` as an Advanced control (keeps backend tile fallback behavior visible and configurable).
 - 2026-02-08: `UpscalerTileControls.vue` now supports `presetVariant='resolution'` so hires tile preset buttons can match the Basic Parameters resolution-button pattern while keeping legacy toggle styling as default.
+- 2026-02-17: Added `ImageZoomOverlay.vue`; `ResultViewer.vue` and init-image previews now reuse the same zoom behavior and close path (`Esc` and outside-click call the same close handler).

@@ -1,7 +1,7 @@
 # Text Processing Runtime — AGENTS Notes
 <!-- tags: backend, runtime, text-processing -->
 Date: 2025-11-03
-Last Review: 2026-02-09
+Last Review: 2026-02-18
 Status: Active
 
 ## Scope
@@ -43,3 +43,4 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `emphasis.py`, `extra_nets.py`, `parsing.py`, and `textual_inversion.py` (doc-only change; part of rollout).
 - 2026-01-25: CLIP Skip control tags now accept `0` as a first-class “use default” sentinel (no more clamping to 1 during parsing).
 - 2026-02-09: Version-counter mitigation is handled at engine conditioning entrypoints (`torch.no_grad()`); text processing must not rely on internal inference-mode toggles.
+- 2026-02-17: `extra_nets.py` keeps strict filename/path alias LoRA resolution for prompt tags (`<lora:filename:weight>`); SHA tokens are transport-only (`extras.lora_sha`) and are not valid prompt aliases.

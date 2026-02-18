@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Root WebUI layout and router shell.
-Renders the global header + navigation tabs + router outlet, and computes `--sticky-offset` from the header height so sticky result headers stay aligned.
+Renders the global header + navigation tabs + router outlet (home + enabled model tabs + gallery/workflows + utilities) and computes
+`--sticky-offset` from the header height so sticky result headers stay aligned.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `App` (component): Root application component and layout shell.
@@ -46,9 +47,6 @@ Symbols (top-level; keep in sync; no ghosts):
   <div v-else class="layout">
     <div class="main-shell">
       <header class="main-header" ref="headerRef">
-        <div class="main-header-top">
-          <h1 class="h2">Stable Diffusion WebUI Codex</h1>
-        </div>
         <div class="main-header-qs">
           <QuickSettingsBar />
         </div>
@@ -61,9 +59,8 @@ Symbols (top-level; keep in sync; no ghosts):
           {{ t.title }}
         </RouterLink>
         <!-- Model & workflow tools -->
-        <RouterLink class="tab-link" to="/models">models</RouterLink>
+        <RouterLink class="tab-link" to="/gallery">gallery</RouterLink>
         <RouterLink class="tab-link" to="/workflows">workflows</RouterLink>
-        <RouterLink class="tab-link" to="/xyz">xyz</RouterLink>
         <!-- Utilities on the right -->
         <RouterLink class="tab-link" to="/tools">🔧 tools</RouterLink>
         <RouterLink class="tab-link" to="/upscale">upscale</RouterLink>

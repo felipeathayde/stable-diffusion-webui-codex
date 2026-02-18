@@ -1,7 +1,7 @@
 <!-- tags: prompt, components, tiptap -->
 # apps/interface/src/components/prompt Overview
 Date: 2025-12-03
-Last Review: 2026-01-03
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 - 2025-12-26: `PromptCard.vue` panel header now renders the title as plain text (no wrapper `<span>`), consistent with the global panel header convention.
 - 2025-12-27: Removed the redundant Checkpoints button from `PromptCard.vue` (checkpoint selection lives in QuickSettings); Styles “New/Apply” are now rendered as input-inline actions.
 - 2026-01-03: Added standardized file header blocks to prompt components (non-test files) as part of the rollout (doc-only change).
+- 2026-02-17: `PromptTokenChip.vue` now resolves the live ProseMirror node from `tr.doc.nodeAt(getPos())` before toggle/weight/remove mutations, fixing stale chip-state updates that previously required view switching.

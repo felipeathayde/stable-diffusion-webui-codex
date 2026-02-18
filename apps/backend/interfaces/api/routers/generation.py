@@ -16,6 +16,8 @@ prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
+Resolves `extras.lora_sha` / `img2img_extras.lora_sha` into server-side `lora_path` overrides only when SHA ownership matches LoRA inventory
+(`inventory.loras`, `.safetensors`), rejecting non-LoRA resolution with HTTP 409.
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_animate_14b`),
@@ -688,7 +690,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             value = raw.get(key)
             if value is None:
                 continue
-            if key == "tenc_sha":
+            if key in {"tenc_sha", "lora_sha"}:
                 if isinstance(value, str):
                     sha = value.strip()
                     if sha:
@@ -698,14 +700,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     shas: list[str] = []
                     for entry in value:
                         if not isinstance(entry, str):
-                            raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
+                            raise HTTPException(status_code=400, detail=f"'extras.{key}' must be a string or array of strings")
                         sha = entry.strip()
                         if sha:
                             shas.append(sha)
                     if shas:
                         extras[key] = shas
                     continue
-                raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
+                raise HTTPException(status_code=400, detail=f"'extras.{key}' must be a string or array of strings")
 
             if not isinstance(value, str):
                 raise HTTPException(status_code=400, detail=f"'extras.{key}' must be a string")
@@ -1075,6 +1077,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             return out
         raise HTTPException(status_code=400, detail=f"'{field_label}' must be a string or array of strings")
 
+    def _normalize_path_for_compare(path_value: str) -> str:
+        return os.path.normcase(os.path.realpath(os.path.expanduser(path_value)))
+
     def _format_required_tenc_message(
         *,
         engine_id: str,
@@ -1126,9 +1131,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         vae_field = f"{field_prefix}.vae_sha"
         tenc_field = f"{field_prefix}.tenc_sha"
+        lora_field = f"{field_prefix}.lora_sha"
 
         vae_sha = _normalize_sha_field(extras.get("vae_sha"), field_label=vae_field)
         tenc_shas = _normalize_sha_list_field(extras.get("tenc_sha"), field_label=tenc_field)
+        lora_shas = _normalize_sha_list_field(extras.get("lora_sha"), field_label=lora_field)
 
         if contract.requires_vae and not vae_sha:
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires '{vae_field}' (sha256)")
@@ -1222,6 +1229,43 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "label": f"{engine_id}/sha",
                     "components": [f"{slot}={slot_to_path[slot]}" for slot in contract.tenc_slots],
                 }
+
+        if lora_shas:
+            from apps.backend.inventory.scanners.loras import iter_lora_files
+
+            known_lora_paths = {_normalize_path_for_compare(path) for path in iter_lora_files()}
+            if not known_lora_paths:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"'{lora_field}' was provided, but no LoRA assets are available in inventory.",
+                )
+
+            resolved_lora_paths: list[str] = []
+            seen_lora_paths: set[str] = set()
+            for sha in lora_shas:
+                path = resolve_asset_by_sha(sha)
+                if not path:
+                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {sha}")
+                canonical = _normalize_path_for_compare(path)
+                if not canonical.lower().endswith(".safetensors"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"'{lora_field}' must resolve to a .safetensors LoRA file: {sha}",
+                    )
+                if canonical not in known_lora_paths:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"'{lora_field}' resolved to a non-LoRA asset path: {path}. "
+                            "Select a SHA from inventory.loras."
+                        ),
+                    )
+                if canonical in seen_lora_paths:
+                    continue
+                resolved_lora_paths.append(path)
+                seen_lora_paths.add(canonical)
+            if resolved_lora_paths:
+                extras["lora_path"] = resolved_lora_paths[0] if len(resolved_lora_paths) == 1 else resolved_lora_paths
 
     @dataclass(frozen=True, slots=True)
     class _Txt2ImgPayloadDTO:

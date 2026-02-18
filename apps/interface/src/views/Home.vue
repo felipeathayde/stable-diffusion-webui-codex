@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Engine-agnostic landing page and model-tab manager UI with global dependency overview.
 Renders the Home workspace, exposes one dependency-check surface for all engines, creates new tabs, and manages existing tabs
-(enable/disable, rename, load/unload, duplicate, remove) while linking users to model tabs (`/models/:tabId`), workflows, and utilities.
+(enable/disable, rename, load/unload, duplicate, remove) while linking users to model tabs (`/models/:tabId`), gallery/workflows,
+and utilities; XYZ guidance points to the embedded Generation Parameters card (with `/xyz` compatibility route).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Home` (component): Home workspace + tab manager; drives tab CRUD and status actions via stores/API (contains nested UI helpers and dialogs).
@@ -56,7 +57,7 @@ Symbols (top-level; keep in sync; no ghosts):
           <li class="cdx-list-item">
             <div class="cdx-list-main">
               <div class="cdx-list-title">XYZ</div>
-              <div class="cdx-list-meta">Run frontend-driven XYZ sweeps (route <code>/xyz</code>) using the active model tab as the baseline.</div>
+              <div class="cdx-list-meta">Run frontend-driven XYZ sweeps from Generation Parameters inside image model tabs (route <code>/xyz</code> remains available for compatibility).</div>
             </div>
           </li>
         </ul>

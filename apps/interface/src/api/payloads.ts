@@ -133,7 +133,7 @@ export const Txt2ImgRequestSchema = z
         // SHA-based model selection
         tenc_sha: z.union([z.string(), z.array(z.string())]).optional(),
         vae_sha: z.string().optional(),
-        lora_sha: z.string().optional(),
+        lora_sha: z.union([z.string(), z.array(z.string())]).optional(),
         model_sha: z.string().optional(),
         // Z-Image variant selection
         zimage_variant: z.enum(['turbo', 'base']).optional(),

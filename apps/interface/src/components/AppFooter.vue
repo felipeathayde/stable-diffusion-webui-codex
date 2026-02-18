@@ -11,30 +11,40 @@ Renders footer links and fetches backend version metadata (commit/Python/PyTorch
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AppFooter` (component): Footer component rendered below the main layout.
+- `repoUrl` (const): Canonical repository URL used for footer links.
+- `commitHref` (const): Computed commit URL for the currently reported backend commit.
+- `commitLabel` (const): Short commit label used in the footer (`10` chars).
 -->
 
 <template>
   <footer class="app-footer">
-    <span>Stable Diffusion WebUI Codex</span>
-    <a v-if="sourceUrl" class="link" :href="sourceUrl" target="_blank" rel="noopener">Source</a>
-    <span v-if="commit">Commit: {{ commit }}</span>
-    <span v-if="py">Python: {{ py }}</span>
-    <span v-if="torch">PyTorch: {{ torch }}<template v-if="cuda"> (CUDA {{ cuda }})</template></span>
-    <span>© {{ year }}</span>
+    <div class="app-footer__group">
+      <a class="link" :href="repoUrl" target="_blank" rel="noopener noreferrer">Stable Diffusion WebUI Codex</a>
+      <span v-if="commit">
+        Commit:
+        <a class="link" :href="commitHref" target="_blank" rel="noopener noreferrer">{{ commitLabel }}</a>
+      </span>
+    </div>
+    <div class="app-footer__group">
+      <span v-if="py">Python: {{ py }}</span>
+      <span v-if="torch">PyTorch: {{ torch }}<template v-if="cuda"> (CUDA {{ cuda }})</template></span>
+      <a class="link" href="https://x.com/lucas_sangoi" target="_blank" rel="noopener noreferrer">by @lucas_sangoi</a>
+    </div>
   </footer>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { fetchVersion } from '../api/client'
-const year = new Date().getFullYear()
-// removed GPU mode label per request
-const sourceUrl = computed(() => (import.meta.env.VITE_SOURCE_URL as string | undefined) || '')
+
+const repoUrl = 'https://github.com/sangoi-exe/stable-diffusion-webui-codex'
 
 const commit = ref<string>('')
 const py = ref<string>('')
 const torch = ref<string>('')
 const cuda = ref<string>('')
+const commitHref = computed(() => `${repoUrl}/commit/${encodeURIComponent(commit.value)}`)
+const commitLabel = computed(() => commit.value.slice(0, 10))
 
 onMounted(async () => {
   try {

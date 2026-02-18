@@ -12,9 +12,10 @@ Displays generated outputs and provides an overlay viewer for zoom/pan actions, 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ResultViewer` (component): Viewer component for generated outputs and overlay interactions.
-- `adjustZoom` (function): Applies bounded zoom delta updates shared by button and wheel handlers.
-- `onOverlayWheel` (function): Handles overlay mouse-wheel zoom in/out interactions.
-- `onWindowKeydown` (function): Handles keyboard shortcuts for overlay interactions (`Escape` closes zoom).
+- `openZoom` (function): Opens the shared zoom overlay for a selected image.
+- `closeZoom` (function): Closes the shared zoom overlay.
+- `zoomOpen` (const): `v-model` bridge for the shared zoom overlay visibility.
+- `zoomedImageSrc` (const): Derived data URL for the currently zoomed image.
 -->
 
 <template>
@@ -71,33 +72,14 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
     </template>
 
-    <!-- Zoom overlay -->
-    <div v-if="zoomedImage" class="image-zoom-overlay" @click.self="closeZoom" @wheel.prevent="onOverlayWheel">
-      <div class="image-zoom-main">
-        <img
-          :src="imageUrl(zoomedImage)"
-          :alt="'Zoomed result'"
-          :style="zoomStyle"
-          @mousedown.prevent="onPanStart"
-        />
-      </div>
-      <div class="image-zoom-toolbar">
-        <div class="toolbar-group">
-          <button class="btn btn-sm btn-outline" type="button" @click.stop="resetView">Fit</button>
-          <button class="btn btn-sm btn-outline" type="button" @click.stop="setZoom(1)">1:1</button>
-          <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomIn">+</button>
-          <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomOut">-</button>
-          <button class="btn btn-sm btn-secondary" type="button" @click.stop="closeZoom">Close</button>
-        </div>
-        <span class="caption">Drag to pan · Scroll to zoom · Esc to close</span>
-      </div>
-    </div>
+    <ImageZoomOverlay v-model="zoomOpen" :src="zoomedImageSrc" alt="Zoomed result" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { GeneratedImage } from '../api/types'
+import ImageZoomOverlay from './ui/ImageZoomOverlay.vue'
 
 const props = defineProps<{
   mode: 'image' | 'video'
@@ -113,10 +95,6 @@ const props = defineProps<{
 }>()
 
 const zoomedImage = ref<GeneratedImage | null>(null)
-const zoom = ref(1)
-const offsetX = ref(0)
-const offsetY = ref(0)
-let panState: { startX: number; startY: number; originX: number; originY: number } | null = null
 
 function imageUrl(img: GeneratedImage): string {
   return `data:image/${img.format};base64,${img.data}`
@@ -139,90 +117,20 @@ function frameDownloadName(index: number, frame: GeneratedImage): string {
 
 function openZoom(img: GeneratedImage): void {
   zoomedImage.value = img
-  zoom.value = 1
-  offsetX.value = 0
-  offsetY.value = 0
 }
 
 function closeZoom(): void {
   zoomedImage.value = null
-  panState = null
-  window.removeEventListener('mousemove', onPanMove)
-  window.removeEventListener('mouseup', onPanEnd)
 }
 
-function adjustZoom(delta: number): void {
-  const next = zoom.value + delta
-  zoom.value = Math.max(0.25, Math.min(8, next))
-}
-
-function zoomIn(): void {
-  adjustZoom(0.25)
-}
-
-function zoomOut(): void {
-  adjustZoom(-0.25)
-}
-
-function setZoom(value: number): void {
-  zoom.value = value
-}
-
-const zoomStyle = computed(() => ({
-  transform: `translate(${offsetX.value}px, ${offsetY.value}px) scale(${zoom.value})`,
-}))
-
-function resetView(): void {
-  zoom.value = 1
-  offsetX.value = 0
-  offsetY.value = 0
-}
-
-function onPanStart(event: MouseEvent): void {
-  panState = {
-    startX: event.clientX,
-    startY: event.clientY,
-    originX: offsetX.value,
-    originY: offsetY.value,
-  }
-  window.addEventListener('mousemove', onPanMove)
-  window.addEventListener('mouseup', onPanEnd)
-}
-
-function onPanMove(event: MouseEvent): void {
-  if (!panState) return
-  const dx = event.clientX - panState.startX
-  const dy = event.clientY - panState.startY
-  offsetX.value = panState.originX + dx
-  offsetY.value = panState.originY + dy
-}
-
-function onPanEnd(): void {
-  panState = null
-  window.removeEventListener('mousemove', onPanMove)
-  window.removeEventListener('mouseup', onPanEnd)
-}
-
-function onOverlayWheel(event: WheelEvent): void {
-  if (!zoomedImage.value) return
-  const delta = event.deltaY < 0 ? 0.25 : -0.25
-  adjustZoom(delta)
-}
-
-function onWindowKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Escape') return
-  if (!zoomedImage.value) return
-  closeZoom()
-}
-
-onMounted(() => {
-  window.addEventListener('keydown', onWindowKeydown)
+const zoomOpen = computed({
+  get: () => Boolean(zoomedImage.value),
+  set: (open: boolean) => {
+    if (!open) closeZoom()
+  },
 })
 
-onBeforeUnmount(() => {
-  closeZoom()
-  window.removeEventListener('keydown', onWindowKeydown)
-})
+const zoomedImageSrc = computed(() => (zoomedImage.value ? imageUrl(zoomedImage.value) : ''))
 </script>
 
 <!-- styles moved to styles/components/result-viewer.css -->

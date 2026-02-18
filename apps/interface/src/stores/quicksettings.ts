@@ -15,7 +15,7 @@ sanitized so `tenc_sha` resolution remains deterministic across families (includ
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
-  setters that call API updates, and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers).
+  setters that call API updates, and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
 */
 
 import { defineStore } from 'pinia'
@@ -97,9 +97,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const textEncoderChoices = ref<string[]>([])
   const currentTextEncoders = ref<string[]>([])
   const textEncoderRootLabels = ref<Set<string>>(new Set())
-  // SHA256 lookup maps for text encoders and VAEs (populated from inventory)
+  // SHA256 lookup maps populated from inventory
   const textEncoderShaMap = ref<Map<string, string>>(new Map())
   const vaeShaMap = ref<Map<string, string>>(new Map())
+  const loraShaMap = ref<Map<string, string>>(new Map())
   const wanGgufShaMap = ref<Map<string, string>>(new Map())
   const attentionChoices = ref<{ value: string; label: string }[]>([
     { value: 'torch-sdpa', label: 'Torch (SDPA)' },
@@ -474,6 +475,25 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       }
     }
     wanGgufShaMap.value = wanMap
+
+    const loraMap = new Map<string, string>()
+    for (const lora of inv.loras || []) {
+      const sha = typeof lora.sha256 === 'string' ? lora.sha256.trim().toLowerCase() : ''
+      if (!sha || !/^[0-9a-f]{64}$/.test(sha)) continue
+      const name = typeof lora.name === 'string' ? lora.name.trim() : ''
+      const rawPath = typeof lora.path === 'string' ? lora.path.trim() : ''
+      const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+      const basename = normPath ? normPath.split('/').pop() : name
+      const keys = new Set<string>()
+      if (name) keys.add(name)
+      if (rawPath) keys.add(rawPath)
+      if (normPath) keys.add(normPath)
+      if (basename) keys.add(String(basename))
+      for (const key of keys) {
+        loraMap.set(key, sha)
+      }
+    }
+    loraShaMap.value = loraMap
     sanitizeTextEncoderOverrides()
   }
 
@@ -564,6 +584,26 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     const normalized = raw.replace(/\\+/g, '/')
     const tail = normalized.split('/').pop() || ''
     return wanGgufShaMap.value.get(normalized) || wanGgufShaMap.value.get(tail)
+  }
+
+  function resolveLoraSha(label: string | null | undefined): string | undefined {
+    const raw = String(label || '').trim()
+    if (!raw) return undefined
+
+    const lower = raw.toLowerCase()
+    if (lower.length === 64 && /^[0-9a-f]+$/.test(lower)) {
+      return lower
+    }
+
+    const normalized = raw.replace(/\\+/g, '/')
+    const withoutPrefix = normalized.includes('/') ? normalized.split('/').slice(1).join('/') : normalized
+    const tail = normalized.split('/').pop() || ''
+    return (
+      loraShaMap.value.get(raw) ||
+      loraShaMap.value.get(normalized) ||
+      loraShaMap.value.get(withoutPrefix) ||
+      loraShaMap.value.get(tail)
+    )
   }
 
   function isModelCoreOnly(label: string | null | undefined): boolean {
@@ -725,9 +765,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     resolveTextEncoderSha,
     resolveModelSha,
     resolveVaeSha,
+    resolveLoraSha,
     resolveWanGgufSha,
     isModelCoreOnly,
     vaeShaMap,
+    loraShaMap,
     wanGgufShaMap,
   }
 })

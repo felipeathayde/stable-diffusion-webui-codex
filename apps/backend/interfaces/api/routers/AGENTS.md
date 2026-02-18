@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-17
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -77,3 +77,4 @@ Status: Active
 - 2026-02-17: `generation.py` WAN video core validation now enforces frame domain `4n+1` in `[9,401]`, accepts strict `gguf_attention_mode` (`global|sliding`), and validates/forwards img2vid chunk controls (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`) fail-loud.
 - 2026-02-17: `generation.py` video worker now resolves core dtype overrides from persisted options (`codex_core_compute_dtype` with fallback to `codex_core_dtype`) and forwards `engine_options["dtype"]` to WAN loads; invalid option types/values fail loud.
 - 2026-02-17: `generation.py` resolves options/dtype inside the existing prepare-guard block so invalid options still follow terminal task cleanup (`entry.error`, `mark_finished(false)`, `unregister_task`) with no leaked task registry entries.
+- 2026-02-18: `generation.py` now resolves `extras.lora_sha`/`img2img_extras.lora_sha` into `lora_path` overrides using inventory ownership from `inventory.loras` (must resolve to known `.safetensors` LoRA paths; non-LoRA SHA resolution fails with HTTP 409).

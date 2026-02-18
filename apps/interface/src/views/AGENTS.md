@@ -61,3 +61,7 @@ Status: Active
 - 2026-02-08: `ImageModelTab.vue` swap-model controls now bind step-pointer semantics (`swapAtStep`) for both global and hires nested swap config (UI clamps to min 1).
 - 2026-02-08: `ImageModelTab.vue` now composes `Img2ImgInpaintParamsCard.vue` for detailed img2img/inpaint controls (init-image, denoise, mask parameters), removing the large inline block while keeping parent-owned state updates and normalization.
 - 2026-02-08: `ImageModelTab.vue` now hides `HiresSettingsCard` while `useInitImage=true` (img2img mode), keeps global swap-model controls visible, and routes hires card visibility/reset behavior through `resolveHiresModePolicy(...)`.
+- 2026-02-17: Added `Gallery.vue` as a placeholder route/tab; top nav removed direct `models`/`xyz` static tabs while keeping model tabs dynamic and `/xyz` available as a compatibility route.
+- 2026-02-17: `ImageModelTab.vue` now embeds XYZ controls/results at the end of Generation Parameters through `components/XyzSweepCard.vue`.
+- 2026-02-17: Run cards across `ImageModelTab.vue`, `WANTab.vue`, and `Upscale.vue` now use shared `components/results/RunProgressStatus.vue` for the canonical Stage/Progress/Step/ETA block.
+- 2026-02-17: `ImageModelTab.vue` init-image controls now use PNG-Info-style dropzone handling (thumbnail preview + click-to-zoom full-screen).

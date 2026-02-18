@@ -10,6 +10,7 @@ Purpose: Prompt parsing and prompt-derived overrides for pipeline processing obj
 Builds a `PromptContext` (cleaned prompts, negative prompts, LoRA tags, controls) and applies it onto a processing object.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_resolve_lora_overrides` (function): Normalize `override_settings.lora_path` into deterministic `LoraSelection` entries.
 - `build_prompt_context` (function): Parse prompts/negative prompts and return a `PromptContext` (includes extra-nets tags).
 - `apply_prompt_context` (function): Apply a `PromptContext` onto a processing object (prompts + clip-skip controls).
 - `apply_dimension_overrides` (function): Apply prompt-derived width/height controls onto the processing object.
@@ -18,17 +19,66 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from apps.backend.runtime.adapters.lora.selections import LoraSelection
 from apps.backend.runtime.processing.datatypes import PromptContext
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 
 logger = logging.getLogger(__name__)
 
 
+def _resolve_lora_overrides(processing: Any) -> list[LoraSelection]:
+    overrides = getattr(processing, "override_settings", None)
+    if not isinstance(overrides, dict):
+        return []
+
+    raw_lora_path = overrides.get("lora_path")
+    if raw_lora_path is None:
+        return []
+
+    resolved_paths: list[str] = []
+    if isinstance(raw_lora_path, str):
+        normalized = raw_lora_path.strip()
+        if normalized:
+            resolved_paths.append(Path(normalized).expanduser().resolve(strict=False).as_posix())
+    elif isinstance(raw_lora_path, list):
+        for index, value in enumerate(raw_lora_path):
+            if not isinstance(value, str):
+                raise ValueError(
+                    "Invalid override_settings.lora_path: expected array of strings "
+                    f"(entry {index} was {type(value).__name__})."
+                )
+            normalized = value.strip()
+            if normalized:
+                resolved_paths.append(Path(normalized).expanduser().resolve(strict=False).as_posix())
+    else:
+        raise ValueError(
+            "Invalid override_settings.lora_path: expected string or array of strings, "
+            f"got {type(raw_lora_path).__name__}."
+        )
+
+    return [LoraSelection(path=path, weight=1.0, online=False) for path in resolved_paths]
+
+
 def build_prompt_context(processing: Any, prompts: Sequence[str]) -> PromptContext:
     """Parse prompts, negative prompts, and extra network descriptors."""
-    cleaned_prompts, prompt_loras, prompt_controls = parse_prompts_with_extras(list(prompts))
+    cleaned_prompts, parsed_loras, prompt_controls = parse_prompts_with_extras(list(prompts))
+    prompt_loras = list(parsed_loras)
+    lora_overrides = _resolve_lora_overrides(processing)
+    if lora_overrides:
+        seen_paths = {
+            str(getattr(selection, "path", "") or "")
+            for selection in prompt_loras
+            if str(getattr(selection, "path", "") or "")
+        }
+        for selection in lora_overrides:
+            if selection.path in seen_paths:
+                continue
+            prompt_loras.append(selection)
+            seen_paths.add(selection.path)
+
     controls = dict(prompt_controls)
     if "clip_skip" not in controls:
         meta = getattr(processing, "metadata", None)

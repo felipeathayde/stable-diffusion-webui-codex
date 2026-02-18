@@ -1,6 +1,5 @@
 @layer components {
-  .xyz-panels { grid-template-columns: 1.2fr 1.1fr; }
-  .xyz-body { display: flex; flex-direction: column; gap: var(--space-lg); }
+  .xyz-card { display: flex; flex-direction: column; gap: var(--space-md); }
   .xyz-grid-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-md); }
   .xyz-axis-card { border: 0.0625rem solid hsla(0,0%,100%,0.08); border-radius: 0.75rem; padding: 0.9rem; background: hsla(0,0%,100%,0.03); display: flex; flex-direction: column; gap: 0.5rem; }
   .xyz-axis-card .axis-header { font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; font-size: 0.85rem; opacity: 0.9; }
@@ -16,5 +15,4 @@
   .xyz-cell-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; }
   .chip { display: inline-flex; align-items: center; gap: 0.25rem; background: hsla(0,0%,100%,0.08); border-radius: 999px; padding: 0.25rem 0.55rem; font-size: 0.75rem; border: 1px solid hsla(0,0%,100%,0.16); }
   .error-text { color: hsl(var(--destructive)); }
-  @media (max-width: 72rem) { .xyz-panels { grid-template-columns: 1fr; } }
 }

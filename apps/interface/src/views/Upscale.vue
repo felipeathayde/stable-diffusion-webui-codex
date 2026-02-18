@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Upscale route view.
 Standalone upscaling workspace (Spandrel SR) with tile controls (tile/overlap/min_tile), explicit OOM fallback toggle, HF-backed weight downloads, and task streaming.
 Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight upscale tasks after reload (SSE replay via `after` / `lastEventId`).
+Run status rendering is standardized through the shared `RunProgressStatus` block (`Stage/Progress/Step/ETA`).
 The remote download modal:
 - surfaces backend safeweights mode (`CODEX_SAFE_WEIGHTS`) and allowed suffixes,
 - shows manifest issues explicitly, and
@@ -121,7 +122,14 @@ Symbols (top-level; keep in sync; no ghosts):
         @generate="start"
       >
         <div v-if="notice" class="caption">{{ notice }}</div>
-        <div v-if="statusLine" class="caption">{{ statusLine }}</div>
+        <RunProgressStatus
+          v-if="isRunning && progress"
+          :stage="progress.stage"
+          :percent="progress.percent"
+          :step="progress.step"
+          :total-steps="progress.totalSteps"
+          :eta-seconds="progress.etaSeconds"
+        />
         <div v-if="errorMessage" class="caption">Error: {{ errorMessage }}</div>
       </RunCard>
 
@@ -310,6 +318,7 @@ import UpscalerTileControls from '../components/ui/UpscalerTileControls.vue'
 import ResultViewer from '../components/ResultViewer.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'
+import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 
 const presets = usePresetsStore()
 const presetName = ref('')
@@ -343,7 +352,7 @@ const info = ref<unknown | null>(null)
 const errorMessage = ref('')
 const taskId = ref('')
 const isRunning = ref(false)
-const progress = ref<{ stage: string; percent: number | null; step: number | null; totalSteps: number | null } | null>(null)
+const progress = ref<{ stage: string; percent: number | null; etaSeconds: number | null; step: number | null; totalSteps: number | null } | null>(null)
 let unsubTask: (() => void) | null = null
 
 const RESUME_STORAGE_KEY = 'codex.resume.upscale'
@@ -406,11 +415,12 @@ async function refreshTaskSnapshot(id: string): Promise<void> {
       progress.value = {
         stage: String(p.stage ?? progress.value?.stage ?? 'running'),
         percent: p.percent ?? null,
+        etaSeconds: p.eta_seconds ?? null,
         step: p.step ?? null,
         totalSteps: p.total_steps ?? null,
       }
     } else if (typeof res.stage === 'string' && res.stage.trim()) {
-      progress.value = { stage: res.stage, percent: null, step: null, totalSteps: null }
+      progress.value = { stage: res.stage, percent: null, etaSeconds: null, step: null, totalSteps: null }
     }
   } catch {
     // ignore snapshot refresh failures
@@ -439,11 +449,12 @@ async function tryAutoResume(): Promise<void> {
       progress.value = {
         stage: String(p.stage ?? 'running'),
         percent: p.percent ?? null,
+        etaSeconds: p.eta_seconds ?? null,
         step: p.step ?? null,
         totalSteps: p.total_steps ?? null,
       }
     } else if (typeof res.stage === 'string' && res.stage.trim()) {
-      progress.value = { stage: res.stage, percent: null, step: null, totalSteps: null }
+      progress.value = { stage: res.stage, percent: null, etaSeconds: null, step: null, totalSteps: null }
     }
     unsubTask = subscribeTask(saved.taskId, handleTaskEvent, undefined, {
       after: saved.lastEventId,
@@ -488,15 +499,6 @@ const generateTitle = computed(() => {
   if (!upscalerId.value) return 'Select an upscaler.'
   if (!spandrelUpscalers.value.some((u) => u.id === upscalerId.value)) return 'Select a Spandrel (pixel SR) upscaler.'
   return ''
-})
-
-const statusLine = computed(() => {
-  const p = progress.value
-  if (!p) return ''
-  const pct = p.percent !== null && Number.isFinite(p.percent) ? `${p.percent.toFixed(1)}%` : ''
-  const steps = (p.step !== null && p.totalSteps !== null) ? `${p.step}/${p.totalSteps}` : ''
-  const parts = [p.stage, pct, steps].filter((s) => String(s || '').trim())
-  return parts.join(' · ')
 })
 
 const remoteSelectable = computed<RemoteUpscalerWeight[]>(() => remote.value?.weights ?? [])
@@ -639,12 +641,13 @@ function stopStreams(): void {
 function handleTaskEvent(event: TaskEvent): void {
   switch (event.type) {
     case 'status':
-      progress.value = { stage: event.stage, percent: null, step: null, totalSteps: null }
+      progress.value = { stage: event.stage, percent: null, etaSeconds: null, step: null, totalSteps: null }
       break
     case 'progress':
       progress.value = {
         stage: event.stage,
         percent: event.percent ?? null,
+        etaSeconds: event.eta_seconds ?? null,
         step: event.step ?? null,
         totalSteps: event.total_steps ?? null,
       }

@@ -11,13 +11,6 @@
     }
   }
 
-  .wan-callout-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-sm);
-  }
-
   .wan-header-actions {
     display: flex;
     flex-wrap: wrap;
@@ -33,28 +26,6 @@
 
   .wan-results-summary {
     opacity: 0.85;
-  }
-
-  .wan-progress {
-    width: 100%;
-    height: 0.65rem;
-    border-radius: 999px;
-    overflow: hidden;
-  }
-
-  .wan-progress::-webkit-progress-bar {
-    background: hsla(0, 0%, 100%, 0.12);
-    border-radius: 999px;
-  }
-
-  .wan-progress::-webkit-progress-value {
-    background: hsl(var(--accent));
-    border-radius: 999px;
-  }
-
-  .wan-progress::-moz-progress-bar {
-    background: hsl(var(--accent));
-    border-radius: 999px;
   }
 
   .wan-summary-grid {

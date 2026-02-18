@@ -12,6 +12,7 @@ Defines the Tiptap `PromptToken` node view and implements best-effort conversion
 Symbols (top-level; keep in sync; no ghosts):
 - `PromptTokenAttrs` (interface): Attributes stored on a prompt token node (kind/name/weight/enabled).
 - `PromptToken` (const): Tiptap node definition rendered via `PromptTokenChip`.
+- `parseStrictFiniteNumber` (function): Parses numeric strings using strict finite-float rules (no partial/garbage suffix acceptance).
 - `nodeTypeName` (function): Best-effort node type resolver for ProseMirror/Tiptap nodes.
 - `forEachChild` (function): Child iterator for ProseMirror/Tiptap node content.
 - `serializePrompt` (function): Serializes an editor JSON document into a legacy prompt string (tokens + text).
@@ -60,6 +61,15 @@ export const PromptToken = Node.create({
   },
 })
 
+function parseStrictFiniteNumber(raw: string): number | null {
+  const candidate = String(raw || '').trim()
+  if (!candidate) return null
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(candidate)) return null
+  const value = Number(candidate)
+  if (!Number.isFinite(value)) return null
+  return value
+}
+
 function nodeTypeName(node: any): string | undefined {
   if (!node || typeof node !== 'object') return undefined
   if (typeof node.type === 'string') return node.type
@@ -89,7 +99,7 @@ export function serializePrompt(doc: any): string {
       const { kind, name, weight, enabled } = (node as { attrs?: Partial<PromptTokenAttrs> }).attrs ?? {}
       if (enabled === false) return
       const safeWeight = Number.isFinite(Number(weight)) ? Number(weight) : 1
-      if (kind === 'lora') parts.push(`<lora:${name}:${safeWeight.toFixed(2)}>`)
+      if (kind === 'lora' && name) parts.push(`<lora:${name}:${safeWeight.toFixed(2)}>`)
       else if (kind === 'ti') parts.push(`(${name}:${safeWeight.toFixed(2)})`)
       else if (name) parts.push(String(name))
     }
@@ -110,10 +120,17 @@ export function parsePromptToTiptap(prompt: string) {
       const end = prompt.indexOf('>', i + 6)
       if (end > -1) {
         const body = prompt.slice(i + 6, end)
-        const [name, w] = body.split(':')
-        nodes.push({ type: 'promptToken', attrs: { kind: 'lora', name, weight: parseFloat(w ?? '1'), enabled: true } })
-        i = end + 1
-        continue
+        const splitAt = body.lastIndexOf(':')
+        if (splitAt > 0) {
+          const name = body.slice(0, splitAt).trim()
+          const weightRaw = body.slice(splitAt + 1).trim()
+          const parsedWeight = weightRaw ? parseStrictFiniteNumber(weightRaw) : 1
+          if (name && parsedWeight !== null) {
+            nodes.push({ type: 'promptToken', attrs: { kind: 'lora', name, weight: parsedWeight, enabled: true } })
+            i = end + 1
+            continue
+          }
+        }
       }
     }
     // TI pattern
@@ -122,10 +139,13 @@ export function parsePromptToTiptap(prompt: string) {
       const colon = prompt.indexOf(':', i + 1)
       if (end > -1 && colon > -1 && colon < end) {
         const name = prompt.slice(i + 1, colon)
-        const w = prompt.slice(colon + 1, end)
-        nodes.push({ type: 'promptToken', attrs: { kind: 'ti', name, weight: parseFloat(w || '1'), enabled: true } })
-        i = end + 1
-        continue
+        const weightRaw = prompt.slice(colon + 1, end).trim()
+        const parsedWeight = weightRaw ? parseStrictFiniteNumber(weightRaw) : 1
+        if (parsedWeight !== null) {
+          nodes.push({ type: 'promptToken', attrs: { kind: 'ti', name, weight: parsedWeight, enabled: true } })
+          i = end + 1
+          continue
+        }
       }
     }
     // default: add single char and continue (coalesce later)

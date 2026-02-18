@@ -33,8 +33,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setMinTile` (function): Updates the global `min_tile` preference used as the tiled OOM fallback lower bound (hires-fix + `/upscale`).
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
+- `onInitImageRejected` (function): Surfaces dropzone reject reasons for init-image input.
 - `clearInit` (function): Clears init image fields.
 - `onMaskFileSet` (function): Reads a mask file into a data URL and stores it after validating dimensions (async).
+- `onMaskImageRejected` (function): Surfaces dropzone reject reasons for mask-image input.
 - `clearMask` (function): Clears mask fields.
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
 - `randomizeSeed` (function): Randomizes the seed field for the current tab params.
@@ -62,14 +64,6 @@ Symbols (top-level; keep in sync; no ghosts):
         :toolbarLabel="toolbarLabel"
         :fieldsId="`image-modeltab-prompt-${tabId}`"
       >
-        <div v-if="isRunning" class="panel-progress">
-          <p><strong>Stage:</strong> {{ progress.stage }}</p>
-          <p v-if="progressPercent !== null">Progress: {{ progressPercent.toFixed(1) }}%</p>
-          <p v-if="progress.totalSteps && progress.step !== null">
-            Step {{ progress.step }} / {{ progress.totalSteps }}
-          </p>
-          <p v-if="progress.etaSeconds !== null" class="caption">ETA ~ {{ progress.etaSeconds.toFixed(0) }}s</p>
-        </div>
         <div v-if="errorMessage" class="panel-error">
           {{ errorMessage }}
         </div>
@@ -92,9 +86,11 @@ Symbols (top-level; keep in sync; no ghosts):
             :maskBlur="params.maskBlur"
             @set:initImage="onInitFileSet"
             @clear:initImage="clearInit"
+            @reject:initImage="onInitImageRejected"
             @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             @set:maskImage="onMaskFileSet"
             @clear:maskImage="clearMask"
+            @reject:maskImage="onMaskImageRejected"
             @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
             @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
             @toggle:inpaintFullRes="setParams({ inpaintFullRes: !params.inpaintFullRes })"
@@ -220,6 +216,8 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:seed="(v) => setRefiner({ seed: Math.trunc(v) })"
             @update:model="(v) => setRefiner({ model: v })"
           />
+
+          <XyzSweepCard />
         </div>
       </div>
     </div>
@@ -238,6 +236,14 @@ Symbols (top-level; keep in sync; no ghosts):
         @update:batchCount="(v) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
         @update:batchSize="(v) => setParams({ batchSize: Math.max(1, Math.trunc(v)) })"
       >
+        <RunProgressStatus
+          v-if="isRunning"
+          :stage="progress.stage"
+          :percent="progressPercent"
+          :step="progress.step"
+          :total-steps="progress.totalSteps"
+          :eta-seconds="progress.etaSeconds"
+        />
         <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
         <RunSummaryChips :text="runSummary" />
       </RunCard>
@@ -345,7 +351,9 @@ import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import ResultViewer from '../components/ResultViewer.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'
+import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
+import XyzSweepCard from '../components/XyzSweepCard.vue'
 
 const props = defineProps<{ tabId: string; type: ImageTabType }>()
 const store = useModelTabsStore()
@@ -894,6 +902,11 @@ async function onInitFileSet(file: File): Promise<void> {
   setParams(patch)
 }
 
+function onInitImageRejected(payload: { reason: string; files: File[] }): void {
+  const fileName = payload.files[0]?.name || 'file'
+  toast(`Init image rejected (${fileName}): ${payload.reason}`)
+}
+
 function clearInit(): void {
   setParams({
     initImageData: '',
@@ -902,6 +915,11 @@ function clearInit(): void {
     maskImageData: '',
     maskImageName: '',
   })
+}
+
+function onMaskImageRejected(payload: { reason: string; files: File[] }): void {
+  const fileName = payload.files[0]?.name || 'file'
+  toast(`Mask image rejected (${fileName}): ${payload.reason}`)
 }
 
 async function onMaskFileSet(file: File): Promise<void> {

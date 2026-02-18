@@ -118,6 +118,12 @@
   .run-batch-menu__rows { display: grid; gap: var(--space-sm); }
   .run-batch-menu__row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-sm); align-items: center; }
   .run-batch-menu__actions { display: flex; justify-content: flex-end; margin-top: var(--space-sm); }
+  .run-progress-status { margin-top: var(--space-sm); }
+  .run-progress-status__bar { width: 100%; max-width: 20rem; height: 0.65rem; border-radius: 999px; overflow: hidden; }
+  .run-progress-status__bar::-webkit-progress-bar { background: hsla(0, 0%, 100%, 0.12); border-radius: 999px; }
+  .run-progress-status__bar::-webkit-progress-value { background: hsl(var(--accent)); border-radius: 999px; }
+  .run-progress-status__bar::-moz-progress-bar { background: hsl(var(--accent)); border-radius: 999px; }
+  .run-progress-status__extra { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; }
 
   /* Settings: Paths */
   .settings-paths-actions { display: flex; justify-content: flex-end; gap: var(--space-sm); }

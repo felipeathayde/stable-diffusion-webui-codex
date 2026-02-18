@@ -39,9 +39,4 @@
     flex-direction: column;
     gap: 0.5rem;
   }
-  .image-zoom-toolbar .caption {
-    text-align: center;
-    font-size: 0.75rem;
-    opacity: 0.7;
-  }
 }

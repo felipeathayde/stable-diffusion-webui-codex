@@ -67,3 +67,6 @@ Status: Active
 - 2026-02-08: Added `Img2ImgInpaintParamsCard.vue` to host detailed init-image + inpaint mask controls extracted from `ImageModelTab.vue`; parent view remains the source of truth for normalization/clamps and file handlers.
 - 2026-02-08: `HiresSettingsCard.vue` now follows the Basic Parameters row organization (sampler/scheduler/steps; upscaler/cfg/denoise; scale/width/height; model selector; prompt overrides) and keeps tile controls below prompts.
 - 2026-02-17: `VideoSettingsCard.vue` WAN frame controls now snap to `4n+1`, use slider/input step `4`, and default to the expanded frame range `[9,401]`.
+- 2026-02-17: `InitialImageCard.vue` now supports Dropzone-backed selection, thumbnail preview mode, click-to-zoom full-size preview, and rejected-file emits for parent-side toasts.
+- 2026-02-17: `ResultViewer.vue` now delegates zoom interactions to shared `ui/ImageZoomOverlay.vue` (no overlay legends; outside-click uses the same close path as `Esc`).
+- 2026-02-17: Added `components/results/RunProgressStatus.vue` and migrated Run status rendering to this shared component across image/WAN/upscale views.

@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image + denoise) and optional inpaint controls (mask source + enforcement/fill + mask toggles/sliders).
+Groups img2img controls (initial image + denoise) and optional inpaint controls (mask source + enforcement/fill + mask toggles/sliders),
+including dropzone/thumb/zoom handling for init images and rejected-file pass-through emits for parent toasts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
@@ -27,8 +28,12 @@ Symbols (top-level; keep in sync; no ghosts):
       :src="initImageData"
       :has-image="Boolean(initImageData)"
       :disabled="disabled"
+      :dropzone="true"
+      :thumbnail="true"
+      :zoomable="true"
       @set="(file) => emit('set:initImage', file)"
       @clear="() => emit('clear:initImage')"
+      @rejected="(payload) => emit('reject:initImage', payload)"
     >
       <template #footer>
         <p v-if="initImageName" class="caption img2img-caption">{{ initImageName }}</p>
@@ -62,6 +67,7 @@ Symbols (top-level; keep in sync; no ghosts):
         placeholder="Select a mask image (RGBA/alpha supported)."
         @set="(file) => emit('set:maskImage', file)"
         @clear="() => emit('clear:maskImage')"
+        @rejected="(payload) => emit('reject:maskImage', payload)"
       >
         <template #footer>
           <p v-if="maskImageName" class="caption img2img-caption">{{ maskImageName }}</p>
@@ -181,9 +187,11 @@ withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: 'set:initImage', value: File): void
   (e: 'clear:initImage'): void
+  (e: 'reject:initImage', payload: { reason: string; files: File[] }): void
   (e: 'update:denoiseStrength', value: number): void
   (e: 'set:maskImage', value: File): void
   (e: 'clear:maskImage'): void
+  (e: 'reject:maskImage', payload: { reason: string; files: File[] }): void
   (e: 'update:maskEnforcement', value: string): void
   (e: 'update:inpaintingFill', value: number): void
   (e: 'toggle:inpaintFullRes'): void

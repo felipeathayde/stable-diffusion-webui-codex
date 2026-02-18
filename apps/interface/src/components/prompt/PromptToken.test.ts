@@ -1,3 +1,18 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Regression tests for prompt token parsing/serialization behavior.
+Validates filename-based LoRA token round-trip semantics and malformed-weight handling.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptTokenTestModule` (module): Vitest suites covering `serializePrompt` and `parsePromptToTiptap`.
+*/
+
 import { describe, expect, it } from 'vitest'
 import { parsePromptToTiptap, serializePrompt } from './PromptToken'
 
@@ -22,7 +37,7 @@ describe('serializePrompt', () => {
       content: [
         { type: 'paragraph', content: [
           { type: 'text', text: 'a ' },
-          { type: 'promptToken', attrs: { kind: 'lora', name: 'cool', weight: 0.75, enabled: true } },
+          { type: 'promptToken', attrs: { kind: 'lora', name: 'cool.safetensors', weight: 0.75, enabled: true } },
           { type: 'text', text: ' and ' },
           { type: 'promptToken', attrs: { kind: 'ti', name: 'style', weight: 1.2, enabled: true } },
           { type: 'text', text: ' tokens' },
@@ -31,7 +46,7 @@ describe('serializePrompt', () => {
       ],
     }
 
-    expect(serializePrompt(doc)).toBe('a <lora:cool:0.75> and (style:1.20) tokens')
+    expect(serializePrompt(doc)).toBe('a <lora:cool.safetensors:0.75> and (style:1.20) tokens')
   })
 
   it('supports ProseMirror Node-like shapes with type.name', () => {
@@ -44,8 +59,15 @@ describe('serializePrompt', () => {
 })
 
 describe('parsePromptToTiptap', () => {
-  it('round-trips prompts with LoRA and TI tokens', () => {
-    const prompt = '<lora:cat:0.75> (style:1.10) tail'
+  it('round-trips prompts with LoRA filename and TI tokens', () => {
+    const prompt = '<lora:cat.safetensors:0.75> (style:1.10) tail'
+    const doc = parsePromptToTiptap(prompt)
+
+    expect(serializePrompt(doc)).toBe(prompt)
+  })
+
+  it('keeps malformed LoRA weights as plain text', () => {
+    const prompt = '<lora:cat.safetensors:0.75abc> tail'
     const doc = parsePromptToTiptap(prompt)
 
     expect(serializePrompt(doc)).toBe(prompt)

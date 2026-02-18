@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
 Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
-renders progress/results via task events (frames and/or exported video).
+renders progress/results via task events (frames and/or exported video), with Run progress shown through the shared
+`RunProgressStatus` block (`Stage/Progress/Step/ETA` + queue metadata).
 Passes explicit `token-engine="wan"` context to `PromptCard` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast.
@@ -442,6 +443,20 @@ Symbols (top-level; keep in sync; no ghosts):
 
         <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
         <RunSummaryChips class="wan-results-summary" :text="runSummary" />
+        <RunProgressStatus
+          v-if="isRunning"
+          :stage="progress.stage"
+          :percent="progress.percent"
+          :step="progress.step"
+          :total-steps="progress.totalSteps"
+          :eta-seconds="progress.etaSeconds"
+          :show-progress-bar="true"
+          :queue-label="queue.length ? `Queued: ${queue.length} / ${queueMax}` : ''"
+        >
+          <template #extra>
+            <button v-if="queue.length" class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
+          </template>
+        </RunProgressStatus>
       </RunCard>
 
       <ResultsCard
@@ -456,20 +471,6 @@ Symbols (top-level; keep in sync; no ghosts):
           </button>
           <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
         </template>
-
-        <div v-if="isRunning" class="panel-progress">
-          <p><strong>Stage:</strong> {{ progress.stage }}</p>
-          <p v-if="progress.percent !== null">Progress: {{ progress.percent.toFixed(1) }}%</p>
-          <progress v-if="progress.percent !== null" class="wan-progress" :value="progress.percent" max="100"></progress>
-          <p v-if="progress.step !== null && progress.totalSteps !== null">
-            Step {{ progress.step }} / {{ progress.totalSteps }}
-          </p>
-          <p v-if="progress.etaSeconds !== null" class="caption">ETA ~ {{ progress.etaSeconds.toFixed(0) }}s</p>
-          <div v-if="queue.length" class="wan-callout-actions mt-2">
-            <span class="caption">Queued: {{ queue.length }} / {{ queueMax }}</span>
-            <button class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
-          </div>
-        </div>
 
         <div class="gen-card mb-3">
           <WanSubHeader title="History">
@@ -519,14 +520,10 @@ Symbols (top-level; keep in sync; no ghosts):
                 <template v-else-if="videoUrl">Frames not returned</template>
                 <template v-else>No results yet</template>
               </div>
-              <div v-if="isRunning" class="caption">
-                Stage: {{ progress.stage }}
-                <template v-if="progress.percent !== null"> · {{ progress.percent.toFixed(1) }}%</template>
-              </div>
-              <div v-else-if="videoUrl" class="caption">
+              <div v-if="videoUrl" class="caption">
                 Enable “Return frames” in Video Output to include frames in the result payload (or disable Save output to force frames).
               </div>
-              <div v-else class="caption">Need help? Press Generate to see what is missing.</div>
+              <div v-else-if="!isRunning" class="caption">Need help? Press Generate to see what is missing.</div>
             </div>
           </template>
         </ResultViewer>
@@ -575,6 +572,7 @@ import InitialVideoCard from '../components/InitialVideoCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'
+import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
 import SliderField from '../components/ui/SliderField.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'

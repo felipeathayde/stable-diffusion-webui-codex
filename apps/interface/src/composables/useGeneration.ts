@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
 - `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
 - `sanitizeImg2ImgPayload` (function): Removes hires keys from img2img payloads (policy: img2img does not send hires settings).
+- `extractLoraNamesFromPrompt` (function): Extracts LoRA token names from prompt text (`<lora:name:weight>`).
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
   `vae_sha`/`tenc_sha` (core-only checkpoints) and enforcing engine-level external asset requirements via backend `asset_contracts`.
@@ -90,6 +91,7 @@ const IMG2IMG_HIRES_KEYS = [
   'img2img_hires_distilled_cfg',
   'img2img_hires_tile',
 ] as const
+const LORA_TAG_RE = /<\s*lora\s*:\s*([^:>]+)\s*(?::[^>]*)?>/gi
 
 type ResumeState = {
   taskId: string
@@ -173,6 +175,23 @@ export function sanitizeImg2ImgPayload(payload: Record<string, unknown>): Record
     delete sanitized[key]
   }
   return sanitized
+}
+
+function extractLoraNamesFromPrompt(prompt: string): string[] {
+  const names: string[] = []
+  const seen = new Set<string>()
+  const text = String(prompt || '')
+  let match: RegExpExecArray | null = null
+  LORA_TAG_RE.lastIndex = 0
+  while ((match = LORA_TAG_RE.exec(text)) !== null) {
+    const name = String(match[1] || '').trim()
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    names.push(name)
+  }
+  return names
 }
 
 export function isGenerationRunningForTab(tabId: string): boolean {
@@ -363,6 +382,10 @@ export function useGeneration(tabId: string) {
     const textEncoders = Array.isArray((p as any).textEncoders)
       ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
       : []
+    const loraNames = [
+      ...extractLoraNamesFromPrompt(p.prompt),
+      ...(supportsNegative ? extractLoraNamesFromPrompt(p.negativePrompt) : []),
+    ]
 
     // Build extras based on engine capabilities (e.g. tenc_sha)
     const extras: Record<string, unknown> = {}
@@ -419,6 +442,25 @@ export function useGeneration(tabId: string) {
       : false
     if (engineOverrideForRequest === 'zimage') {
       extras.zimage_variant = zimageTurbo ? 'turbo' : 'base'
+    }
+
+    if (loraNames.length > 0) {
+      const loraShas: string[] = []
+      const seenShas = new Set<string>()
+      for (const loraName of loraNames) {
+        const sha = quicksettings.resolveLoraSha(loraName)
+        if (!sha) {
+          state.value.status = 'error'
+          state.value.errorMessage = `LoRA SHA not found for '${loraName}'. Refresh inventory and retry.`
+          return
+        }
+        if (seenShas.has(sha)) continue
+        seenShas.add(sha)
+        loraShas.push(sha)
+      }
+      if (loraShas.length > 0) {
+        extras.lora_sha = loraShas.length === 1 ? loraShas[0] : loraShas
+      }
     }
 
     const device = (quicksettings.currentDevice || 'cpu') as any

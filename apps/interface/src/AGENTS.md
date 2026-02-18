@@ -1,7 +1,7 @@
 <!-- tags: frontend, interface-src, overview -->
 # apps/interface/src Overview
 Date: 2025-10-28
-Last Review: 2026-02-08
+Last Review: 2026-02-17
 Status: Active
 
 ## Purpose
@@ -38,3 +38,5 @@ Status: Active
 - 2026-02-08: SDXL swap-model UX now uses explicit step-pointer semantics across src (`swapAtStep` in stores/UI, serialized as `switch_at_step` in API payloads) to avoid confusion with literal SDXL refiner “step count”.
 - 2026-02-08: `ImageModelTab.vue` now composes `components/Img2ImgInpaintParamsCard.vue` for detailed init-image/inpaint controls; shared normalization moved to `utils/image_params.ts` with Vitest coverage (`utils/image_params.test.ts`).
 - 2026-02-08: Hires controls now follow the Basic Parameters row organization, are hidden in img2img mode by policy, and txt2img hires prompt overrides now fallback to base prompts when blank.
+- 2026-02-17: Top navigation removed `models`/`xyz`, added `/gallery` placeholder route/tab, and moved XYZ workflow into an embeddable card used inside image-tab Generation Parameters (with `/xyz` kept as compatibility wrapper).
+- 2026-02-17: Footer branding now links to the repository/commit and `@lucas_sangoi` profile; Run progress UI is standardized via shared `components/results/RunProgressStatus.vue` across generation surfaces.

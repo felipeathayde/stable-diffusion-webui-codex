@@ -8,16 +8,16 @@ Required Notice: see NOTICE
 
 Purpose: Unit tests for generation request helpers (engine mapping, img2img payload contract, revision-conflict parsing).
 Locks alias parity so UI disable-state and request engine selection remain consistent, and verifies stale-revision conflict helper behavior
-plus img2img payload invariants (no hires-prefixed keys).
+plus img2img payload invariants (no hires-prefixed keys) and advanced-guidance payload wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `useGeneration.engine.test` (module): resolveEngineForRequest mapping + img2img payload contract + revision-conflict helper tests.
+- `useGeneration.engine.test` (module): resolveEngineForRequest mapping + img2img payload contract + advanced-guidance payload + revision-conflict helper tests.
 */
 
 import { describe, expect, it } from 'vitest'
 
 import type { ImageBaseParams } from '../stores/model_tabs'
-import { buildImg2ImgPayload, resolveEngineForRequest } from './useGeneration'
+import { buildGuidancePayload, buildImg2ImgPayload, resolveEngineForRequest } from './useGeneration'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
 function makeImageParams(overrides: Partial<ImageBaseParams> = {}): ImageBaseParams {
@@ -36,6 +36,19 @@ function makeImageParams(overrides: Partial<ImageBaseParams> = {}): ImageBasePar
     batchCount: 1,
     img2imgResizeMode: 'just_resize',
     img2imgUpscaler: 'latent:bicubic-aa',
+    guidanceAdvanced: {
+      enabled: false,
+      apgEnabled: false,
+      apgStartStep: 0,
+      apgEta: 0,
+      apgMomentum: 0,
+      apgNormThreshold: 15,
+      apgRescale: 0,
+      guidanceRescale: 0,
+      cfgTruncEnabled: false,
+      cfgTruncRatio: 0.8,
+      renormCfg: 0,
+    },
     hires: {
       enabled: true,
       denoise: 0.35,
@@ -143,6 +156,79 @@ describe('buildImg2ImgPayload', () => {
     expect(payload.img2img_cfg_scale).toBe(1)
     expect(payload.img2img_distilled_cfg_scale).toBe(5.5)
     expect(payload.img2img_neg_prompt).toBe('')
+  })
+})
+
+describe('buildGuidancePayload', () => {
+  it('returns null when advanced guidance is disabled', () => {
+    const payload = buildGuidancePayload(
+      {
+        enabled: false,
+        apgEnabled: true,
+        apgStartStep: 2,
+        apgEta: 0.15,
+        apgMomentum: 0.2,
+        apgNormThreshold: 12,
+        apgRescale: 0.3,
+        guidanceRescale: 0.4,
+        cfgTruncEnabled: true,
+        cfgTruncRatio: 0.7,
+        renormCfg: 1.1,
+      },
+      {
+        apg_enabled: true,
+        apg_start_step: true,
+        apg_eta: true,
+        apg_momentum: true,
+        apg_norm_threshold: true,
+        apg_rescale: true,
+        guidance_rescale: true,
+        cfg_trunc_ratio: true,
+        renorm_cfg: true,
+      },
+    )
+    expect(payload).toBeNull()
+  })
+
+  it('keeps only supported controls and clamps values', () => {
+    const payload = buildGuidancePayload(
+      {
+        enabled: true,
+        apgEnabled: true,
+        apgStartStep: -4,
+        apgEta: 0.2,
+        apgMomentum: 2.5,
+        apgNormThreshold: -3,
+        apgRescale: 4,
+        guidanceRescale: -1,
+        cfgTruncEnabled: false,
+        cfgTruncRatio: 1.4,
+        renormCfg: -5,
+      },
+      {
+        apg_enabled: true,
+        apg_start_step: true,
+        apg_eta: false,
+        apg_momentum: true,
+        apg_norm_threshold: true,
+        apg_rescale: false,
+        guidance_rescale: true,
+        cfg_trunc_ratio: true,
+        renorm_cfg: true,
+      },
+    )
+
+    expect(payload).toEqual({
+      apg_enabled: true,
+      apg_start_step: 0,
+      apg_momentum: 0.999999,
+      apg_norm_threshold: 0,
+      guidance_rescale: 0,
+      renorm_cfg: 0,
+    })
+    expect(payload?.cfg_trunc_ratio).toBeUndefined()
+    expect(payload?.apg_eta).toBeUndefined()
+    expect(payload?.apg_rescale).toBeUndefined()
   })
 })
 

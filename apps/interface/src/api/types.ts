@@ -33,6 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `MemoryResponse` (interface): `/api/memory` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
 - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
+- `GuidanceAdvancedCapabilities` (interface): Per-engine support map for advanced CFG/APG controls.
 - `FamilyCapabilities` (interface): Per-family capability flags from backend (`families`) used to gate prompt/clip controls.
 - `EngineDependencyCheckRow` (interface): One dependency-check row returned by backend readiness contract.
 - `EngineDependencyStatus` (interface): Aggregated dependency status (`ready + checks`) for one semantic engine.
@@ -293,6 +294,19 @@ export interface EngineCapabilities {
   schedulers?: string[] | null
   default_sampler?: string | null
   default_scheduler?: string | null
+  guidance_advanced?: GuidanceAdvancedCapabilities | null
+}
+
+export interface GuidanceAdvancedCapabilities {
+  apg_enabled: boolean
+  apg_start_step: boolean
+  apg_eta: boolean
+  apg_momentum: boolean
+  apg_norm_threshold: boolean
+  apg_rescale: boolean
+  guidance_rescale: boolean
+  cfg_trunc_ratio: boolean
+  renorm_cfg: boolean
 }
 
 export interface FamilyCapabilities {

@@ -23,7 +23,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
-  (includes optional family-specific fields like `zimageTurbo` plus img2img layout state `img2imgResizeMode`/`img2imgUpscaler`).
+  (includes optional family-specific fields like `zimageTurbo`, img2img layout state `img2imgResizeMode`/`img2imgUpscaler`,
+  and advanced guidance policy controls).
+- `GuidanceAdvancedParams` (interface): Per-tab advanced guidance policy state (APG/rescale/trunc/renorm).
+- `DEFAULT_GUIDANCE_ADVANCED_PARAMS` (constant): Canonical defaults for `ImageBaseParams.guidanceAdvanced`.
 - `TabParamsByType` (type): Canonical params map by tab type.
 - `TabByType` (type): Typed tab shape (`type` + matching params payload).
 - `ModelTabsStorageState` (type): LocalStorage payload contract for light model-tabs state (`activeId` + tab refs).
@@ -190,6 +193,7 @@ export interface ImageBaseParams {
   batchCount: number
   img2imgResizeMode: Img2ImgResizeMode
   img2imgUpscaler: string
+  guidanceAdvanced: GuidanceAdvancedParams
   hires: HiresFormState
   refiner: RefinerFormState
   checkpoint: string
@@ -209,6 +213,34 @@ export interface ImageBaseParams {
   maskBlur: number
   maskRound: boolean
   zimageTurbo?: boolean
+}
+
+export interface GuidanceAdvancedParams {
+  enabled: boolean
+  apgEnabled: boolean
+  apgStartStep: number
+  apgEta: number
+  apgMomentum: number
+  apgNormThreshold: number
+  apgRescale: number
+  guidanceRescale: number
+  cfgTruncEnabled: boolean
+  cfgTruncRatio: number
+  renormCfg: number
+}
+
+export const DEFAULT_GUIDANCE_ADVANCED_PARAMS: GuidanceAdvancedParams = {
+  enabled: false,
+  apgEnabled: false,
+  apgStartStep: 0,
+  apgEta: 0,
+  apgMomentum: 0,
+  apgNormThreshold: 15,
+  apgRescale: 0,
+  guidanceRescale: 0,
+  cfgTruncEnabled: false,
+  cfgTruncRatio: 0.8,
+  renormCfg: 0,
 }
 
 export type TabParamsByType = {
@@ -395,6 +427,7 @@ function defaultParams<T extends BaseTabType>(
     batchCount: 1,
     img2imgResizeMode: DEFAULT_IMG2IMG_RESIZE_MODE,
     img2imgUpscaler: 'latent:bicubic-aa',
+    guidanceAdvanced: { ...DEFAULT_GUIDANCE_ADVANCED_PARAMS },
     hires: { ...hiresDefaults },
     refiner: { ...refinerDefaults },
     checkpoint: '',
@@ -533,6 +566,39 @@ function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): Tab
   }
 }
 
+function normalizeGuidanceAdvancedParams(raw: unknown, defaults: GuidanceAdvancedParams): GuidanceAdvancedParams {
+  const patch = asRecordObject(raw)
+  const toFiniteNumber = (value: unknown, fallback: number): number => {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? numeric : fallback
+  }
+  const clampNumber = (value: unknown, fallback: number, min?: number, max?: number): number => {
+    const numeric = toFiniteNumber(value, fallback)
+    if (min !== undefined && numeric < min) return min
+    if (max !== undefined && numeric > max) return max
+    return numeric
+  }
+  const clampInteger = (value: unknown, fallback: number, min?: number, max?: number): number => {
+    const numeric = Math.trunc(clampNumber(value, fallback, min, max))
+    if (min !== undefined && numeric < min) return min
+    if (max !== undefined && numeric > max) return max
+    return numeric
+  }
+  return {
+    enabled: typeof patch.enabled === 'boolean' ? patch.enabled : defaults.enabled,
+    apgEnabled: typeof patch.apgEnabled === 'boolean' ? patch.apgEnabled : defaults.apgEnabled,
+    apgStartStep: clampInteger(patch.apgStartStep, defaults.apgStartStep, 0),
+    apgEta: clampNumber(patch.apgEta, defaults.apgEta),
+    apgMomentum: clampNumber(patch.apgMomentum, defaults.apgMomentum, 0, 0.999999),
+    apgNormThreshold: clampNumber(patch.apgNormThreshold, defaults.apgNormThreshold, 0),
+    apgRescale: clampNumber(patch.apgRescale, defaults.apgRescale, 0, 1),
+    guidanceRescale: clampNumber(patch.guidanceRescale, defaults.guidanceRescale, 0, 1),
+    cfgTruncEnabled: typeof patch.cfgTruncEnabled === 'boolean' ? patch.cfgTruncEnabled : defaults.cfgTruncEnabled,
+    cfgTruncRatio: clampNumber(patch.cfgTruncRatio, defaults.cfgTruncRatio, 0, 1),
+    renormCfg: clampNumber(patch.renormCfg, defaults.renormCfg, 0),
+  }
+}
+
 function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBaseParams {
   const patch = asRecordObject(raw) as Partial<ImageBaseParams>
   const hiresPatch = asRecordObject(patch.hires)
@@ -582,6 +648,10 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   }
   merged.img2imgResizeMode = normalizeImg2ImgResizeMode(merged.img2imgResizeMode)
   merged.img2imgUpscaler = String(merged.img2imgUpscaler || '').trim() || defaults.img2imgUpscaler
+  merged.guidanceAdvanced = normalizeGuidanceAdvancedParams(
+    patch.guidanceAdvanced,
+    defaults.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED_PARAMS,
+  )
   return merged
 }
 

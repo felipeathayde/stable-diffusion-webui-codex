@@ -67,3 +67,4 @@ Status: Active
 - 2026-02-17: Run cards across `ImageModelTab.vue`, `WANTab.vue`, and `Upscale.vue` now use shared `components/results/RunProgressStatus.vue` for the canonical Stage/Progress/Step/ETA block.
 - 2026-02-17: `ImageModelTab.vue` init-image controls now use PNG-Info-style dropzone handling (thumbnail preview + click-to-zoom full-screen).
 - 2026-02-18: In `useInitImage` mode, `ImageModelTab.vue` now renders `Img2ImgBasicParametersCard.vue` (hires-like layout with resize-type/upscaler gating) instead of the txt2img `BasicParametersCard.vue`; this is layout/state parity only (img2img payload remains hires-free).
+- 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.

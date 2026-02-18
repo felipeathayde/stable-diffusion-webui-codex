@@ -8,16 +8,19 @@ Required Notice: see NOTICE
 
 Purpose: Img2img-focused Basic Parameters card with hires-like structure.
 Renders sampler/scheduler/steps, dimensions, resize-mode + upscaler controls, and seed/CFG/denoise
-for init-image mode without hires-only prompt/checkpoint swap controls.
+for init-image mode without hires-only prompt/checkpoint swap controls, plus optional advanced CFG/APG controls
+gated by per-engine capabilities.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgBasicParametersCard` (component): Img2img parameters card used when init image mode is active.
+- `hasGuidanceSupport` (function): Returns whether a specific advanced-guidance control is supported by the active engine capability contract.
 - `clampFloat` (function): Clamps a numeric value to a `[min,max]` range.
 - `clampInt` (function): Clamps and truncates a numeric value to an integer range.
 - `clampIntToStep` (function): Clamps and snaps an integer value to a step size.
 - `onSeedChange` (function): Handles manual seed input changes and emits a normalized integer seed.
 - `onResizeModeChange` (function): Emits normalized resize-mode updates from the resize-type select.
 - `onUpscalerChange` (function): Emits upscaler selection updates.
+- `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
 - `swapWH` (function): Swaps width/height while respecting min/max and step constraints.
 -->
 
@@ -186,7 +189,30 @@ Symbols (top-level; keep in sync; no ghosts):
           inputClass="cdx-input-w-md"
           :disabled="disabled"
           @update:modelValue="(value) => emit('update:cfgScale', clampFloat(value, minCfg, maxCfg))"
-        />
+        >
+          <template #right>
+            <NumberStepperInput
+              :modelValue="cfgScale"
+              :min="minCfg"
+              :max="maxCfg"
+              :step="cfgStep"
+              :nudgeStep="cfgStep"
+              inputClass="cdx-input-w-md"
+              :disabled="disabled"
+              @update:modelValue="(value) => emit('update:cfgScale', clampFloat(value, minCfg, maxCfg))"
+            />
+            <button
+              v-if="showGuidanceAdvancedToggle"
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', guidanceAdvanced.enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :disabled="disabled"
+              title="Show advanced guidance controls"
+              @click="patchGuidanceAdvanced({ enabled: !guidanceAdvanced.enabled })"
+            >
+              Advanced
+            </button>
+          </template>
+        </SliderField>
 
         <SliderField
           class="gc-col"
@@ -202,13 +228,160 @@ Symbols (top-level; keep in sync; no ghosts):
           @update:modelValue="(value) => emit('update:denoiseStrength', clampFloat(value, 0, 1))"
         />
       </div>
+
+      <div v-if="showGuidanceAdvancedRow" class="gc-row cfg-advanced-row">
+        <div v-if="hasGuidanceSupport('apg_enabled')" class="gc-col field gc-col--compact">
+          <label class="label-muted">APG</label>
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', guidanceAdvanced.apgEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :disabled="disabled"
+            @click="patchGuidanceAdvanced({ apgEnabled: !guidanceAdvanced.apgEnabled })"
+          >
+            {{ guidanceAdvanced.apgEnabled ? 'On' : 'Off' }}
+          </button>
+        </div>
+
+        <div v-if="hasGuidanceSupport('cfg_trunc_ratio')" class="gc-col field gc-col--compact">
+          <label class="label-muted">CFG Trunc</label>
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', guidanceAdvanced.cfgTruncEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :disabled="disabled"
+            @click="patchGuidanceAdvanced({ cfgTruncEnabled: !guidanceAdvanced.cfgTruncEnabled })"
+          >
+            {{ guidanceAdvanced.cfgTruncEnabled ? 'On' : 'Off' }}
+          </button>
+        </div>
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_start_step')"
+          class="gc-col"
+          label="APG Start"
+          :modelValue="guidanceAdvanced.apgStartStep"
+          :min="0"
+          :max="maxSteps"
+          :step="1"
+          :inputStep="1"
+          :nudgeStep="1"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgStartStep: clampInt(v, 0, maxSteps) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_eta')"
+          class="gc-col"
+          label="APG Eta"
+          :modelValue="guidanceAdvanced.apgEta"
+          :min="-1"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgEta: clampFloat(v, -1, 1) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_momentum')"
+          class="gc-col"
+          label="APG Momentum"
+          :modelValue="guidanceAdvanced.apgMomentum"
+          :min="0"
+          :max="0.99"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgMomentum: clampFloat(v, 0, 0.99) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_norm_threshold')"
+          class="gc-col"
+          label="APG Norm"
+          :modelValue="guidanceAdvanced.apgNormThreshold"
+          :min="0"
+          :max="40"
+          :step="0.1"
+          :inputStep="0.1"
+          :nudgeStep="0.1"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgNormThreshold: clampFloat(v, 0, 40) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_rescale')"
+          class="gc-col"
+          label="APG Rescale"
+          :modelValue="guidanceAdvanced.apgRescale"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !guidanceAdvanced.apgEnabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgRescale: clampFloat(v, 0, 1) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('guidance_rescale')"
+          class="gc-col"
+          label="Guidance Rescale"
+          :modelValue="guidanceAdvanced.guidanceRescale"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ guidanceRescale: clampFloat(v, 0, 1) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('cfg_trunc_ratio')"
+          class="gc-col"
+          label="CFG Trunc Ratio"
+          :modelValue="guidanceAdvanced.cfgTruncRatio"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !guidanceAdvanced.cfgTruncEnabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ cfgTruncRatio: clampFloat(v, 0, 1) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('renorm_cfg')"
+          class="gc-col"
+          label="Renorm CFG"
+          :modelValue="guidanceAdvanced.renormCfg"
+          :min="0"
+          :max="4"
+          :step="0.05"
+          :inputStep="0.05"
+          :nudgeStep="0.05"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ renormCfg: clampFloat(v, 0, 4) })"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { SamplerInfo, SchedulerInfo, UpscalerDefinition } from '../api/types'
+import type { GuidanceAdvancedCapabilities, SamplerInfo, SchedulerInfo, UpscalerDefinition } from '../api/types'
+import type { GuidanceAdvancedParams } from '../stores/model_tabs'
 
 import NumberStepperInput from './ui/NumberStepperInput.vue'
 import SliderField from './ui/SliderField.vue'
@@ -220,6 +393,20 @@ import {
   normalizeImg2ImgResizeMode,
   type Img2ImgResizeMode,
 } from '../utils/img2img_resize'
+
+const DEFAULT_GUIDANCE_ADVANCED: GuidanceAdvancedParams = {
+  enabled: false,
+  apgEnabled: false,
+  apgStartStep: 0,
+  apgEta: 0,
+  apgMomentum: 0,
+  apgNormThreshold: 15,
+  apgRescale: 0,
+  guidanceRescale: 0,
+  cfgTruncEnabled: false,
+  cfgTruncRatio: 0.8,
+  renormCfg: 0,
+}
 
 const props = withDefaults(defineProps<{
   samplers: SamplerInfo[]
@@ -257,6 +444,8 @@ const props = withDefaults(defineProps<{
   clipSkip?: number
   minClipSkip?: number
   maxClipSkip?: number
+  guidanceAdvanced?: GuidanceAdvancedParams
+  guidanceSupport?: GuidanceAdvancedCapabilities | null
 }>(), {
   disabled: false,
   upscalers: () => [],
@@ -281,6 +470,8 @@ const props = withDefaults(defineProps<{
   clipSkip: 0,
   minClipSkip: 0,
   maxClipSkip: 12,
+  guidanceAdvanced: () => ({ ...DEFAULT_GUIDANCE_ADVANCED }),
+  guidanceSupport: null,
 })
 
 const emit = defineEmits<{
@@ -295,6 +486,7 @@ const emit = defineEmits<{
   (e: 'update:upscaler', value: string): void
   (e: 'update:resizeMode', value: Img2ImgResizeMode): void
   (e: 'update:clipSkip', value: number): void
+  (e: 'update:guidanceAdvanced', patch: Partial<GuidanceAdvancedParams>): void
   (e: 'random-seed'): void
   (e: 'reuse-seed'): void
   (e: 'sync-init-image-dims'): void
@@ -316,6 +508,14 @@ const heightInputStep = computed(() => Number.isFinite(props.heightInputStep) ? 
 const minClipSkip = computed(() => Number.isFinite(props.minClipSkip) ? Math.trunc(Number(props.minClipSkip)) : 0)
 const maxClipSkip = computed(() => Number.isFinite(props.maxClipSkip) ? Math.trunc(Number(props.maxClipSkip)) : 12)
 const showClipSkip = computed(() => props.showClipSkip === true)
+const guidanceAdvanced = computed(() => props.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED)
+const guidanceSupport = computed(() => props.guidanceSupport ?? null)
+const showGuidanceAdvancedToggle = computed(() => {
+  const support = guidanceSupport.value
+  if (!support) return false
+  return Object.values(support).some((flag) => flag === true)
+})
+const showGuidanceAdvancedRow = computed(() => showGuidanceAdvancedToggle.value && guidanceAdvanced.value.enabled)
 
 const resizeModeOptions = IMG2IMG_RESIZE_MODE_OPTIONS
 const resizeModeValue = computed<Img2ImgResizeMode>(() => normalizeImg2ImgResizeMode(props.resizeMode))
@@ -356,6 +556,14 @@ function onResizeModeChange(event: Event): void {
 
 function onUpscalerChange(event: Event): void {
   emit('update:upscaler', (event.target as HTMLSelectElement).value)
+}
+
+function hasGuidanceSupport(control: keyof GuidanceAdvancedCapabilities): boolean {
+  return Boolean(guidanceSupport.value?.[control])
+}
+
+function patchGuidanceAdvanced(patch: Partial<GuidanceAdvancedParams>): void {
+  emit('update:guidanceAdvanced', patch)
 }
 
 function swapWH(): void {

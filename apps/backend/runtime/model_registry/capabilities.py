@@ -13,6 +13,7 @@ Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/im
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
+- `GuidanceAdvancedSurface` (dataclass): Optional per-engine support map for advanced CFG/APG controls (`extras.guidance` keys).
 - `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler allow-lists).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
@@ -51,6 +52,21 @@ class SemanticEngine(str, Enum):
 
 
 @dataclass(frozen=True)
+class GuidanceAdvancedSurface:
+    """Per-engine support map for advanced guidance controls exposed in `extras.guidance`."""
+
+    apg_enabled: bool = False
+    apg_start_step: bool = False
+    apg_eta: bool = False
+    apg_momentum: bool = False
+    apg_norm_threshold: bool = False
+    apg_rescale: bool = False
+    guidance_rescale: bool = False
+    cfg_trunc_ratio: bool = False
+    renorm_cfg: bool = False
+
+
+@dataclass(frozen=True)
 class EngineParamSurface:
     """Declared parameter surface for a semantic engine.
 
@@ -74,6 +90,21 @@ class EngineParamSurface:
     # Optional: UI defaults for sampler/scheduler selection.
     default_sampler: str | None = None
     default_scheduler: str | None = None
+    # Optional: support map for advanced guidance controls (`extras.guidance` keys).
+    guidance_advanced: GuidanceAdvancedSurface | None = None
+
+
+_GUIDANCE_ADVANCED_CLASSIC_CFG = GuidanceAdvancedSurface(
+    apg_enabled=True,
+    apg_start_step=True,
+    apg_eta=True,
+    apg_momentum=True,
+    apg_norm_threshold=True,
+    apg_rescale=True,
+    guidance_rescale=True,
+    cfg_trunc_ratio=True,
+    renorm_cfg=True,
+)
 
 
 ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
@@ -89,6 +120,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_controlnet=False,
         default_sampler="pndm",
         default_scheduler="ddim",
+        guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
     ),
     # SDXL image workflows (base + hires + refiner).
     SemanticEngine.SDXL: EngineParamSurface(
@@ -102,6 +134,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_controlnet=False,
         default_sampler="euler",
         default_scheduler="euler_discrete",
+        guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
     ),
     # Flux.1 (flow-based image diffusion).
     SemanticEngine.FLUX: EngineParamSurface(
@@ -132,6 +165,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         schedulers=("simple",),
         default_sampler="euler",
         default_scheduler="simple",
+        guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
     ),
     # Anima (Cosmos Predict2; flow-based; Qwen3-0.6B conditioning; classic CFG).
     SemanticEngine.ANIMA: EngineParamSurface(
@@ -147,6 +181,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         schedulers=("simple", "beta", "normal", "exponential"),
         default_sampler="euler",
         default_scheduler="simple",
+        guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
     ),
     # Chroma (flow-based image generation).
     SemanticEngine.CHROMA: EngineParamSurface(
@@ -280,6 +315,7 @@ def serialize_family_capabilities() -> Dict[str, Dict[str, object]]:
 
 __all__ = [
     "SemanticEngine",
+    "GuidanceAdvancedSurface",
     "EngineParamSurface",
     "ENGINE_SURFACES",
     "ENGINE_ID_TO_SEMANTIC_ENGINE",

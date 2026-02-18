@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
 - `BuildImg2ImgPayloadArgs` (interface): Input contract for deterministic img2img payload assembly (no hires keys).
 - `buildImg2ImgPayload` (function): Builds img2img start payload at the source and enforces the no-`img2img_hires_*` invariant fail-loud.
+- `buildGuidancePayload` (function): Builds `extras.guidance` payload from tab state + per-engine advanced-guidance support matrix.
 - `extractLoraNamesFromPrompt` (function): Extracts LoRA token names from prompt text (`<lora:name:weight>`).
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
@@ -28,14 +29,14 @@ Symbols (top-level; keep in sync; no ghosts):
 */
 
 import { computed, reactive, ref } from 'vue'
-import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
+import { useModelTabsStore, type BaseTab, type GuidanceAdvancedParams, type ImageBaseParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useUpscalersStore } from '../stores/upscalers'
 import { getEngineConfig, type EngineType } from '../stores/engine_config'
 import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
 import { fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
-import type { GeneratedImage, TaskEvent } from '../api/types'
+import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '../api/types'
 import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
@@ -211,6 +212,46 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
   return payload
 }
 
+export function buildGuidancePayload(
+  guidanceAdvanced: GuidanceAdvancedParams,
+  support: GuidanceAdvancedCapabilities | null | undefined,
+): Record<string, unknown> | null {
+  if (!guidanceAdvanced.enabled) return null
+  if (!support) return null
+
+  const toFinite = (value: unknown, fallback: number): number => {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? numeric : fallback
+  }
+  const clamp = (value: unknown, fallback: number, min?: number, max?: number): number => {
+    const numeric = toFinite(value, fallback)
+    if (min !== undefined && numeric < min) return min
+    if (max !== undefined && numeric > max) return max
+    return numeric
+  }
+  const clampInt = (value: unknown, fallback: number, min?: number): number => {
+    const numeric = Math.trunc(toFinite(value, fallback))
+    if (min !== undefined && numeric < min) return min
+    return numeric
+  }
+
+  const payload: Record<string, unknown> = {}
+
+  if (support.apg_enabled) payload.apg_enabled = Boolean(guidanceAdvanced.apgEnabled)
+  if (support.apg_start_step) payload.apg_start_step = clampInt(guidanceAdvanced.apgStartStep, 0, 0)
+  if (support.apg_eta) payload.apg_eta = toFinite(guidanceAdvanced.apgEta, 0)
+  if (support.apg_momentum) payload.apg_momentum = clamp(guidanceAdvanced.apgMomentum, 0, 0, 0.999999)
+  if (support.apg_norm_threshold) payload.apg_norm_threshold = clamp(guidanceAdvanced.apgNormThreshold, 15, 0)
+  if (support.apg_rescale) payload.apg_rescale = clamp(guidanceAdvanced.apgRescale, 0, 0, 1)
+  if (support.guidance_rescale) payload.guidance_rescale = clamp(guidanceAdvanced.guidanceRescale, 0, 0, 1)
+  if (support.cfg_trunc_ratio && guidanceAdvanced.cfgTruncEnabled) {
+    payload.cfg_trunc_ratio = clamp(guidanceAdvanced.cfgTruncRatio, 0.8, 0, 1)
+  }
+  if (support.renorm_cfg) payload.renorm_cfg = clamp(guidanceAdvanced.renormCfg, 0, 0)
+
+  return Object.keys(payload).length > 0 ? payload : null
+}
+
 function extractLoraNamesFromPrompt(prompt: string): string[] {
   const names: string[] = []
   const seen = new Set<string>()
@@ -288,6 +329,7 @@ export function useGeneration(tabId: string) {
       batchCount: p.batchCount,
       img2imgResizeMode: p.img2imgResizeMode,
       img2imgUpscaler: p.img2imgUpscaler,
+      guidanceAdvanced: p.guidanceAdvanced,
 
       hires: p.hires,
       refiner: p.refiner,
@@ -377,6 +419,7 @@ export function useGeneration(tabId: string) {
       return
     }
     const supportsNegative = familyCaps.supports_negative_prompt
+    const guidanceSupport = engineSurface.guidance_advanced ?? null
 
     const assetContract = backendCaps.getAssetContract(engineOverrideForRequest, { checkpointCoreOnly: modelIsCoreOnly })
 
@@ -425,6 +468,10 @@ export function useGeneration(tabId: string) {
 
     // Build extras based on engine capabilities (e.g. tenc_sha)
     const extras: Record<string, unknown> = {}
+    const guidancePayload = buildGuidancePayload(p.guidanceAdvanced, guidanceSupport)
+    if (guidancePayload) {
+      extras.guidance = guidancePayload
+    }
 
     const needsTencSha = (assetContract?.tenc_count ?? 0) > 0
     if (needsTencSha) {

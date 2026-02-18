@@ -10,6 +10,7 @@ Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-fa
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (hires-like layout only; no img2img hires payload).
+CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
 Also shares the global `min_tile` preference (tiled OOM fallback lower bound) with `/upscale`.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
@@ -26,6 +27,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `loadProfile` (function): Loads a saved profile into current params (with validation/defaulting).
 - `saveProfile` (function): Saves current params as a profile in localStorage.
 - `setParams` (function): Applies partial updates to the current tab params state.
+- `normalizeGuidanceAdvancedPatch` (function): Sanitizes/normalizes advanced-guidance payload fragments (profile + UI patch merges).
+- `setGuidanceAdvanced` (function): Applies partial advanced-guidance updates into `params.guidanceAdvanced`.
 - `setHires` (function): Applies partial updates to the hires config object.
 - `setHiresRefiner` (function): Applies partial updates to the hires-refiner config object.
 - `setRefiner` (function): Applies partial updates to the refiner config object.
@@ -133,6 +136,8 @@ Symbols (top-level; keep in sync; no ghosts):
             :show-clip-skip="showClipSkip"
             :min-clip-skip="minClipSkip"
             :max-clip-skip="12"
+            :guidance-advanced="params.guidanceAdvanced"
+            :guidance-support="guidanceAdvancedSupport"
             :upscaler="params.img2imgUpscaler"
             :resize-mode="params.img2imgResizeMode"
             :show-init-image-dims="Boolean(params.initImageData)"
@@ -146,6 +151,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
             @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
+            @update:guidanceAdvanced="setGuidanceAdvanced"
             @update:upscaler="(v) => setParams({ img2imgUpscaler: String(v || '').trim() })"
             @update:resizeMode="(v) => setParams({ img2imgResizeMode: normalizeImg2ImgResizeMode(v) })"
             @random-seed="randomizeSeed"
@@ -174,6 +180,8 @@ Symbols (top-level; keep in sync; no ghosts):
             :show-clip-skip="showClipSkip"
             :min-clip-skip="minClipSkip"
             :max-clip-skip="12"
+            :guidance-advanced="params.guidanceAdvanced"
+            :guidance-support="guidanceAdvancedSupport"
             :show-init-image-dims="false"
             :disabled="isRunning"
             @update:sampler="onSamplerChange"
@@ -184,6 +192,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:cfgScale="(v) => setParams({ cfgScale: v })"
             @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
             @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
+            @update:guidanceAdvanced="setGuidanceAdvanced"
             @random-seed="randomizeSeed"
             @reuse-seed="reuseSeed"
           />
@@ -383,10 +392,17 @@ Symbols (top-level; keep in sync; no ghosts):
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchPaths, fetchSamplers, fetchSchedulers } from '../api/client'
-import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
+import type { GeneratedImage, GuidanceAdvancedCapabilities, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { resolveEngineForRequest, useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
-import { defaultImageParamsForType, useModelTabsStore, type ImageBaseParams, type ImageTabType, type TabByType } from '../stores/model_tabs'
+import {
+  defaultImageParamsForType,
+  useModelTabsStore,
+  type GuidanceAdvancedParams,
+  type ImageBaseParams,
+  type ImageTabType,
+  type TabByType,
+} from '../stores/model_tabs'
 import { getEngineConfig, getEngineDefaults } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useQuicksettingsStore } from '../stores/quicksettings'
@@ -497,6 +513,10 @@ const params = computed<ImageBaseParams>(() => imageTab.value?.params ?? fallbac
 const engineConfig = computed(() => getEngineConfig(props.type))
 const resolvedEngineForMode = computed(() => resolveEngineForRequest(props.type, Boolean(params.value.useInitImage)))
 const engineSurface = computed(() => engineCaps.get(resolvedEngineForMode.value))
+const guidanceAdvancedSupport = computed<GuidanceAdvancedCapabilities | null>(() => {
+  const guidance = engineSurface.value?.guidance_advanced
+  return guidance ?? null
+})
 const familyCapabilities = computed(() => engineCaps.getFamilyForEngine(resolvedEngineForMode.value))
 const dependencyStatus = computed(() => engineCaps.getDependencyStatus(resolvedEngineForMode.value))
 const dependencyError = computed(() => engineCaps.firstDependencyError(resolvedEngineForMode.value))
@@ -850,6 +870,40 @@ function profileStorageKeyFor(type: ImageTabType): string {
   return `codex.${type}.profile.v1`
 }
 
+function normalizeGuidanceAdvancedPatch(raw: unknown, base: GuidanceAdvancedParams): GuidanceAdvancedParams {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {}
+  const toFinite = (value: unknown, fallback: number): number => {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? numeric : fallback
+  }
+  const clamp = (value: unknown, fallback: number, min?: number, max?: number): number => {
+    const numeric = toFinite(value, fallback)
+    if (min !== undefined && numeric < min) return min
+    if (max !== undefined && numeric > max) return max
+    return numeric
+  }
+  const clampInt = (value: unknown, fallback: number, min?: number): number => {
+    const numeric = Math.trunc(toFinite(value, fallback))
+    if (min !== undefined && numeric < min) return min
+    return numeric
+  }
+  return {
+    enabled: typeof source.enabled === 'boolean' ? source.enabled : base.enabled,
+    apgEnabled: typeof source.apgEnabled === 'boolean' ? source.apgEnabled : base.apgEnabled,
+    apgStartStep: clampInt(source.apgStartStep, base.apgStartStep, 0),
+    apgEta: clamp(source.apgEta, base.apgEta),
+    apgMomentum: clamp(source.apgMomentum, base.apgMomentum, 0, 0.99),
+    apgNormThreshold: clamp(source.apgNormThreshold, base.apgNormThreshold, 0),
+    apgRescale: clamp(source.apgRescale, base.apgRescale, 0, 1),
+    guidanceRescale: clamp(source.guidanceRescale, base.guidanceRescale, 0, 1),
+    cfgTruncEnabled: typeof source.cfgTruncEnabled === 'boolean' ? source.cfgTruncEnabled : base.cfgTruncEnabled,
+    cfgTruncRatio: clamp(source.cfgTruncRatio, base.cfgTruncRatio, 0, 1),
+    renormCfg: clamp(source.renormCfg, base.renormCfg, 0),
+  }
+}
+
 function loadProfile(): void {
   const key = profileStorageKeyFor(props.type)
   try {
@@ -877,6 +931,9 @@ function loadProfile(): void {
     const clipSkip = numberOrNull(snapshot.clipSkip); if (clipSkip !== null) next.clipSkip = Math.max(minClipSkip.value, Math.trunc(clipSkip))
     const batchSize = numberOrNull(snapshot.batchSize); if (batchSize !== null) next.batchSize = Math.max(1, Math.trunc(batchSize))
     const batchCount = numberOrNull(snapshot.batchCount); if (batchCount !== null) next.batchCount = Math.max(1, Math.trunc(batchCount))
+    if (snapshot.guidanceAdvanced && typeof snapshot.guidanceAdvanced === 'object') {
+      next.guidanceAdvanced = normalizeGuidanceAdvancedPatch(snapshot.guidanceAdvanced, params.value.guidanceAdvanced)
+    }
 
     const selectedModel = typeof snapshot.selectedModel === 'string' ? snapshot.selectedModel : ''
     const selectedSampler = typeof snapshot.selectedSampler === 'string' ? snapshot.selectedSampler : ''
@@ -907,6 +964,7 @@ function saveProfile(): void {
       clipSkip: params.value.clipSkip,
       batchSize: params.value.batchSize,
       batchCount: params.value.batchCount,
+      guidanceAdvanced: params.value.guidanceAdvanced,
       selectedModel: params.value.checkpoint,
       selectedSampler: params.value.sampler,
       selectedScheduler: params.value.scheduler,
@@ -923,6 +981,14 @@ function setParams(patch: Partial<ImageBaseParams>): void {
   store.updateParams(props.tabId, patch as Partial<Record<string, unknown>>).catch((error) => {
     toast(error instanceof Error ? error.message : String(error))
   })
+}
+
+function setGuidanceAdvanced(patch: Partial<GuidanceAdvancedParams>): void {
+  const next = normalizeGuidanceAdvancedPatch(
+    patch,
+    params.value.guidanceAdvanced,
+  )
+  setParams({ guidanceAdvanced: next })
 }
 
 function setHires(patch: Partial<ImageBaseParams['hires']>): void {

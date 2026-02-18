@@ -64,3 +64,4 @@ Status: Active
 - 2026-02-06: `model_tabs.reorder(...)` now rejects duplicate ids explicitly, and `model_tabs.updateParams(...)` rollback snapshots only touched keys (avoids full deep-clone cost for large tab params like init-image payloads).
 - 2026-02-17: `model_tabs.ts` WAN video params now include `attentionMode` + img2vid chunk controls, and normalization clamps/snap-normalizes WAN frame/chunk counts to the `4n+1` domain within `[9,401]` during hydration/persistence.
 - 2026-02-18: `model_tabs.ts` image-tab params now include `img2imgResizeMode` (default `just_resize`) and `img2imgUpscaler` (default `latent:bicubic-aa`) with normalization via `utils/img2img_resize.ts` for img2img UI layout/state parity.
+- 2026-02-18: `model_tabs.ts` image-tab params now include `guidanceAdvanced` (APG/rescale/trunc/renorm controls), with strict numeric/boolean normalization and defaults used by CFG Advanced UI + request extras wiring.

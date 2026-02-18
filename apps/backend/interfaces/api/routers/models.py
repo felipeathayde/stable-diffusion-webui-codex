@@ -72,7 +72,7 @@ def _load_tokenizer(tokenizer_dir: str) -> Any:
 
 
 def _tokenize_len(tokenizer: Any, prompt: str) -> int:
-    encoded = tokenizer([prompt], truncation=False, add_special_tokens=False)
+    encoded = tokenizer([prompt], truncation=False, add_special_tokens=False, verbose=False)
     ids = encoded.get("input_ids")
     if not (isinstance(ids, list) and ids and isinstance(ids[0], list)):
         raise RuntimeError("Prompt tokenizer returned invalid 'input_ids' payload.")

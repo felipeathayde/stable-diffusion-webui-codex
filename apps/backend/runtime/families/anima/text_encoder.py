@@ -229,6 +229,7 @@ def tokenize_qwen_with_weights(
                 padding=False,
                 truncation=False,
                 add_special_tokens=False,
+                verbose=False,
             )
             seg_ids = tokenized.get("input_ids")
             if not (isinstance(seg_ids, list) and seg_ids and isinstance(seg_ids[0], list)):
@@ -298,6 +299,7 @@ class AnimaQwenTextEncoder(nn.Module):
             padding=False,
             truncation=False,
             add_special_tokens=False,
+            verbose=False,
         )
         probe_ids = probe.get("input_ids")
         if isinstance(probe_ids, list):
@@ -577,6 +579,7 @@ def tokenize_t5_with_weights(
                 padding=False,
                 truncation=False,
                 add_special_tokens=False,
+                verbose=False,
             )
             seg_ids = tokenized.get("input_ids")
             if not (isinstance(seg_ids, list) and seg_ids and isinstance(seg_ids[0], list)):

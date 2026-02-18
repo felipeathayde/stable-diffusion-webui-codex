@@ -144,7 +144,7 @@ class ClassicTextProcessingEngine:
         return math.ceil(max(token_count, 1) / self.chunk_length) * self.chunk_length
 
     def tokenize(self, texts):
-        tokenized = self.tokenizer(texts, truncation=False, add_special_tokens=False)["input_ids"]
+        tokenized = self.tokenizer(texts, truncation=False, add_special_tokens=False, verbose=False)["input_ids"]
 
         return tokenized
 

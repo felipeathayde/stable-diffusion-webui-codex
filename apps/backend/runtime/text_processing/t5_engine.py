@@ -114,7 +114,7 @@ class T5TextProcessingEngine:
     def tokenize(self, texts: Sequence[str]) -> List[List[int]]:
         if not isinstance(texts, Sequence):
             raise TypeError("texts must be a sequence of strings")
-        result = self.tokenizer(texts, truncation=False, add_special_tokens=False)["input_ids"]
+        result = self.tokenizer(texts, truncation=False, add_special_tokens=False, verbose=False)["input_ids"]
         logger.debug("Tokenized %d prompts", len(result))
         return result
 

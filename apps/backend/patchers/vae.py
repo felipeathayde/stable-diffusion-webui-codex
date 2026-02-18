@@ -442,6 +442,31 @@ class VAE:
             target_device,
         )
 
+    def _log_precision_resolution(
+        self,
+        *,
+        storage_dtype: torch.dtype,
+        compute_dtype: torch.dtype,
+        forward_dtype: torch.dtype,
+        context: str,
+    ) -> None:
+        if storage_dtype == forward_dtype:
+            logger.debug(
+                "VAE precision %s: storage=%s compute=%s forward=%s",
+                context,
+                str(storage_dtype),
+                str(compute_dtype),
+                str(forward_dtype),
+            )
+            return
+        logger.info(
+            "VAE precision %s: storage=%s compute=%s -> forward=%s (compute-preferred runtime)",
+            context,
+            str(storage_dtype),
+            str(compute_dtype),
+            str(forward_dtype),
+        )
+
     def _decode_forward(self, samples: torch.Tensor, *, forward_dtype: torch.dtype) -> torch.Tensor:
         with self._autocast_context(forward_dtype):
             decoded_raw = self.first_stage_model.decode(samples.to(device=self.device, dtype=forward_dtype))
@@ -471,30 +496,47 @@ class VAE:
         return _unwrap_encode_output(encoded_raw).to(self.output_device).float()
 
     @staticmethod
-    def _tile_crop_bounds(
+    def _decode_crop_bounds(
         *,
         window_start: int,
         window_end: int,
         context_start: int,
-        context_end: int,
         decoded_extent: int,
-        scale_factor: float,
+        upscale_ratio: int,
     ) -> tuple[int, int]:
-        context_extent = context_end - context_start
-        if context_extent <= 0:
-            raise RuntimeError("Invalid tiled VAE context extent; expected positive size.")
-        scaled_context_start = round(context_start * scale_factor)
-        scaled_window_start = round(window_start * scale_factor)
-        scaled_window_end = round(window_end * scale_factor)
-        crop_start = scaled_window_start - scaled_context_start
-        crop_end = crop_start + (scaled_window_end - scaled_window_start)
+        crop_start = (window_start - context_start) * upscale_ratio
+        crop_end = crop_start + ((window_end - window_start) * upscale_ratio)
         if crop_start < 0 or crop_end > decoded_extent or crop_start >= crop_end:
             raise RuntimeError(
-                "Invalid tiled VAE crop bounds: "
+                "Invalid tiled VAE decode crop bounds: "
                 f"crop=({crop_start}, {crop_end}) decoded_extent={decoded_extent} "
-                f"context=({context_start}, {context_end}) window=({window_start}, {window_end}) scale={scale_factor}."
+                f"context_start={context_start} window=({window_start}, {window_end}) ratio={upscale_ratio}."
             )
         return crop_start, crop_end
+
+    @staticmethod
+    def _encode_crop_bounds(
+        *,
+        window_start: int,
+        window_end: int,
+        context_start: int,
+        encoded_extent: int,
+        downscale_ratio: int,
+    ) -> tuple[int, int, int, int] | None:
+        out_start = window_start // downscale_ratio
+        out_end = window_end // downscale_ratio
+        if out_end <= out_start:
+            return None
+        context_start_latent = context_start // downscale_ratio
+        crop_start = out_start - context_start_latent
+        crop_end = crop_start + (out_end - out_start)
+        if crop_start < 0 or crop_end > encoded_extent or crop_start >= crop_end:
+            raise RuntimeError(
+                "Invalid tiled VAE encode crop bounds: "
+                f"crop=({crop_start}, {crop_end}) encoded_extent={encoded_extent} "
+                f"context_start={context_start} window=({window_start}, {window_end}) ratio={downscale_ratio}."
+            )
+        return out_start, out_end, crop_start, crop_end
 
     def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16):
         if samples.ndim != 4:
@@ -522,7 +564,7 @@ class VAE:
         if not windows:
             raise RuntimeError("decode_tiled_ produced no tile windows; check tile geometry.")
         forward_dtype = self._active_forward_dtype()
-        decode_scale = float(self.downscale_ratio)
+        decode_scale = int(self.downscale_ratio)
 
         for batch_index in range(samples.shape[0]):
             for window in windows:
@@ -533,26 +575,24 @@ class VAE:
                     window.context_x0 : window.context_x1,
                 ]
                 decoded_tile = self._decode_forward(latent_tile, forward_dtype=forward_dtype)
-                crop_y0, crop_y1 = self._tile_crop_bounds(
+                crop_y0, crop_y1 = self._decode_crop_bounds(
                     window_start=window.core_y0,
                     window_end=window.core_y1,
                     context_start=window.context_y0,
-                    context_end=window.context_y1,
                     decoded_extent=int(decoded_tile.shape[2]),
-                    scale_factor=decode_scale,
+                    upscale_ratio=decode_scale,
                 )
-                crop_x0, crop_x1 = self._tile_crop_bounds(
+                crop_x0, crop_x1 = self._decode_crop_bounds(
                     window_start=window.core_x0,
                     window_end=window.core_x1,
                     context_start=window.context_x0,
-                    context_end=window.context_x1,
                     decoded_extent=int(decoded_tile.shape[3]),
-                    scale_factor=decode_scale,
+                    upscale_ratio=decode_scale,
                 )
-                out_y0 = round(window.core_y0 * decode_scale)
-                out_y1 = round(window.core_y1 * decode_scale)
-                out_x0 = round(window.core_x0 * decode_scale)
-                out_x1 = round(window.core_x1 * decode_scale)
+                out_y0 = window.core_y0 * decode_scale
+                out_y1 = window.core_y1 * decode_scale
+                out_x0 = window.core_x0 * decode_scale
+                out_x1 = window.core_x1 * decode_scale
                 output[batch_index : batch_index + 1, :, out_y0:out_y1, out_x0:out_x1] = decoded_tile[
                     :,
                     :,
@@ -587,7 +627,7 @@ class VAE:
         if not windows:
             raise RuntimeError("encode_tiled_ produced no tile windows; check tile geometry.")
         forward_dtype = self._active_forward_dtype()
-        encode_scale = 1.0 / float(self.downscale_ratio)
+        downscale_ratio = int(self.downscale_ratio)
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
 
         for batch_index in range(pixel_samples.shape[0]):
@@ -603,26 +643,24 @@ class VAE:
                     forward_dtype=forward_dtype,
                     regulation=regulation,
                 )
-                crop_y0, crop_y1 = self._tile_crop_bounds(
+                y_bounds = self._encode_crop_bounds(
                     window_start=window.core_y0,
                     window_end=window.core_y1,
                     context_start=window.context_y0,
-                    context_end=window.context_y1,
-                    decoded_extent=int(encoded_tile.shape[2]),
-                    scale_factor=encode_scale,
+                    encoded_extent=int(encoded_tile.shape[2]),
+                    downscale_ratio=downscale_ratio,
                 )
-                crop_x0, crop_x1 = self._tile_crop_bounds(
+                x_bounds = self._encode_crop_bounds(
                     window_start=window.core_x0,
                     window_end=window.core_x1,
                     context_start=window.context_x0,
-                    context_end=window.context_x1,
-                    decoded_extent=int(encoded_tile.shape[3]),
-                    scale_factor=encode_scale,
+                    encoded_extent=int(encoded_tile.shape[3]),
+                    downscale_ratio=downscale_ratio,
                 )
-                out_y0 = round(window.core_y0 * encode_scale)
-                out_y1 = round(window.core_y1 * encode_scale)
-                out_x0 = round(window.core_x0 * encode_scale)
-                out_x1 = round(window.core_x1 * encode_scale)
+                if y_bounds is None or x_bounds is None:
+                    continue
+                out_y0, out_y1, crop_y0, crop_y1 = y_bounds
+                out_x0, out_x1, crop_x0, crop_x1 = x_bounds
                 output[batch_index : batch_index + 1, :, out_y0:out_y1, out_x0:out_x1] = encoded_tile[
                     :,
                     :,
@@ -724,6 +762,12 @@ class VAE:
                 storage_dtype=desired_storage,
                 compute_dtype=desired_compute,
             )
+            self._log_precision_resolution(
+                storage_dtype=desired_storage,
+                compute_dtype=desired_compute,
+                forward_dtype=forward_dtype,
+                context="decode_inner",
+            )
             self._apply_precision(forward_dtype)
             self.vae_compute_dtype = desired_compute
             use_tiled = bool(memory_management.manager.vae_always_tiled)
@@ -812,6 +856,12 @@ class VAE:
             storage_dtype=desired_storage,
             compute_dtype=desired_compute,
         )
+        self._log_precision_resolution(
+            storage_dtype=desired_storage,
+            compute_dtype=desired_compute,
+            forward_dtype=forward_dtype,
+            context="decode_tiled",
+        )
         self._apply_precision(forward_dtype)
         self.vae_compute_dtype = desired_compute
         output = self.decode_tiled_(samples, tile_x, tile_y, overlap)
@@ -827,6 +877,12 @@ class VAE:
             forward_dtype = self._active_forward_dtype(
                 storage_dtype=desired_storage,
                 compute_dtype=desired_compute,
+            )
+            self._log_precision_resolution(
+                storage_dtype=desired_storage,
+                compute_dtype=desired_compute,
+                forward_dtype=forward_dtype,
+                context="encode_inner",
             )
             self._apply_precision(forward_dtype)
             self.vae_compute_dtype = desired_compute
@@ -912,6 +968,12 @@ class VAE:
         forward_dtype = self._active_forward_dtype(
             storage_dtype=desired_storage,
             compute_dtype=desired_compute,
+        )
+        self._log_precision_resolution(
+            storage_dtype=desired_storage,
+            compute_dtype=desired_compute,
+            forward_dtype=forward_dtype,
+            context="encode_tiled",
         )
         self._apply_precision(forward_dtype)
         self.vae_compute_dtype = desired_compute

@@ -36,6 +36,7 @@ Status: Active
 - 2026-01-20: Global LoRA apply mode now supports `merge` (default; merges into weights once) vs `online` (patch during forward) via `CODEX_LORA_APPLY_MODE` / `--lora-apply-mode`.
 - 2026-02-18: VAE decode/encode runtime now resolves a compute-preferred forward dtype and casts VAE residency to that effective forward dtype before execution/memory sizing to avoid mixed-dtype forward failures.
 - 2026-02-18: Tiled VAE fallback was rewritten to a native context-padding + center-crop stitching flow (SUPIR-inspired, no fast/approximate path, no external tiled-scale dependency).
+- 2026-02-18: Tiled encode/decode crop/index math now uses deterministic integer mapping (decode multiply, encode floor-div) to avoid border mismatch on odd image dimensions.
 - 2026-02-08: `_NormalizingFirstStage` now supports optional per-channel latent stats (`latents_mean`/`latents_std`) in addition to scalar `scaling_factor`/`shift_factor`; 4D/5D rank, channel count, and non-finite/invalid stats are fail-loud.
 - 2026-02-08: VAE normalization now resolves scale/shift via `vae_normalization_policy.py` with explicit family shift contracts: no-shift families reject explicit numeric shifts; shift-required families fail loud on missing/`None` shift.
 

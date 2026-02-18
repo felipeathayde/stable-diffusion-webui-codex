@@ -36,7 +36,7 @@ Status: Active
   - `capabilities_presets.py` (constants) to dedupe common image-engine capabilities tuples without hiding fields.
 - 2026-02-18: `model_scopes.stage_scoped_model_load(...)` now passes scoped event context into `memory_management.manager` so generic smart-offload `load`/`unload` emission remains centralized in manager ownership.
 - 2026-02-18: `base.py` engine lifecycle logs now emit via global runtime event emitter (`emit_backend_event`) for a single backend event emission path.
-- 2026-02-18: `base.py` now canonicalizes patcher-backed memory-manager targets (`component.patcher` when present, else component) across first-stage VAE encode/decode and engine-level unload cleanup (including `clipvision` and text-encoder fallback when `patcher is None`), preventing wrapper-vs-patcher record splits.
+- 2026-02-18: `base.py` now canonicalizes patcher-backed memory-manager targets (`component.patcher` when present, else component) across first-stage VAE encode/decode and engine-level unload cleanup (denoiser, VAE, clipvision, and text-encoders fallback when `patcher is None`), preventing wrapper-vs-patcher record splits.
 - 2026-01-31: `CodexDiffusionEngine` improvements:
   - `__init__` accepts an optional `logger=` to avoid subclass logger collisions and keep per-engine log namespaces consistent.
   - Conditioning cache helpers (`_get_cached_cond/_set_cached_cond`) accept per-call enable overrides and store arbitrary payloads (tensors/dicts/tuples), with hit/miss metrics.

@@ -11,7 +11,7 @@ Defines `CodexObjects` and the shared engine load/unload path, including fail-fa
 selection. Also provides default first-stage VAE encode/decode for image engines and canonical task wrappers that delegate to mode use-cases (Option A) so engines stay adapters.
 External-asset-first families (e.g., Z-Image and Anima) treat `vae_path` as selection rather than a state-dict override.
 Engine lifecycle logs (`load.start` / `load.complete` / `unload.start`) are emitted through the global runtime event emitter.
-Patcher-backed component memory lifecycle (for example VAE/CLIP-vision wrappers) uses canonical patcher-first targets so smart-offload bookkeeping does not fork records across wrapper and patcher identities.
+Patcher-backed component memory lifecycle (for example denoiser/VAE/CLIP-vision wrappers) uses canonical patcher-first targets so smart-offload bookkeeping does not fork records across wrapper and patcher identities.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
@@ -793,7 +793,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
         targets: list[object] = []
         # Core components may be wrappers around patchers; use canonical patcher-first targets.
-        targets.append(getattr(components, "denoiser", None))
+        targets.append(self._canonical_patcher_target(getattr(components, "denoiser", None)))
         targets.append(self._canonical_patcher_target(getattr(components, "vae", None)))
         targets.append(self._canonical_patcher_target(getattr(components, "clipvision", None)))
 

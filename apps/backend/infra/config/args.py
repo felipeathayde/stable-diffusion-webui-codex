@@ -10,6 +10,7 @@ Purpose: Backend CLI argument parsing and runtime memory config bootstrap.
 Builds the argparse schema for runtime flags (devices/dtypes/attention/swap/smart offload) and turns argv/env into a `RuntimeMemoryConfig`.
 Supports separate storage vs compute dtype overrides for core/text encoder/VAE (e.g., `--core-dtype` vs `--core-compute-dtype`) for stability and tuning.
 Also parses diagnostics bootstrap toggles (`--trace-contract`, `--trace-profiler`) for runtime trace/profiler activation.
+Also parses strict LoRA loader policy toggles (`--lora-merge-mode`, `--lora-refresh-signature`) for merge/signature behavior.
 Interactive prompt stdout writes use centralized helpers from `apps.backend.infra.stdio`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -39,6 +40,18 @@ from apps.backend.infra.stdio import flush_stdout, write_stdout
 from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
 from .gguf_exec_mode import DEFAULT_GGUF_EXEC_MODE, GgufExecMode
 from .lora_online_math import DEFAULT_LORA_ONLINE_MATH, LoraOnlineMath
+from .lora_merge_mode import (
+    DEFAULT_LORA_MERGE_MODE,
+    ENV_LORA_MERGE_MODE,
+    LoraMergeMode,
+    parse_lora_merge_mode,
+)
+from .lora_refresh_signature import (
+    DEFAULT_LORA_REFRESH_SIGNATURE_MODE,
+    ENV_LORA_REFRESH_SIGNATURE,
+    LoraRefreshSignatureMode,
+    parse_lora_refresh_signature_mode,
+)
 
 from apps.backend.runtime.memory.config import (
     AttentionBackend,
@@ -199,6 +212,26 @@ def _build_parser() -> argparse.ArgumentParser:
             "'activation' applies LoRA as an activation-side delta (reserved for packed GGUF kernels)."
         ),
     )
+    parser.add_argument(
+        "--lora-merge-mode",
+        choices=[m.value for m in LoraMergeMode],
+        default=None,
+        help=(
+            "Offline LoRA merge math mode: "
+            "'fast' uses float32 accumulation (default), "
+            "'precise' uses float64 accumulation to reduce repeated-merge numeric drift."
+        ),
+    )
+    parser.add_argument(
+        "--lora-refresh-signature",
+        choices=[m.value for m in LoraRefreshSignatureMode],
+        default=None,
+        help=(
+            "LoRA refresh signature mode: "
+            "'structural' hashes bundle structure only (default), "
+            "'content_sha256' also hashes patch tensor contents to force refresh when values change."
+        ),
+    )
 
     parser.add_argument(
         "--debug-conditioning",
@@ -245,7 +278,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--swap-method",
         choices=[m.value for m in SwapMethod],
         default=SwapMethod.BLOCKED.value,
-        help="Data transfer mode for swap operations.",
+        help="Data transfer mode for swap operations (`blocked`, `async`, `block_swap_experimental`).",
     )
     parser.add_argument(
         "--gpu-prefer-construct",
@@ -773,6 +806,22 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
+    # LoRA merge mode (global): honour env only when CLI arg is unset.
+    raw_lora_merge_mode = env.get(ENV_LORA_MERGE_MODE)
+    if raw_lora_merge_mode is not None and not _has_value(getattr(ns, "lora_merge_mode", None)):
+        try:
+            ns.lora_merge_mode = parse_lora_merge_mode(raw_lora_merge_mode).value
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    # LoRA refresh signature mode (global): honour env only when CLI arg is unset.
+    raw_lora_refresh_signature = env.get(ENV_LORA_REFRESH_SIGNATURE)
+    if raw_lora_refresh_signature is not None and not _has_value(getattr(ns, "lora_refresh_signature", None)):
+        try:
+            ns.lora_refresh_signature = parse_lora_refresh_signature_mode(raw_lora_refresh_signature).value
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:
     explicit = getattr(ns, "attention_backend", None)
@@ -927,6 +976,10 @@ def initialize(
         namespace.gguf_dequant_cache = "off"
     if getattr(namespace, "lora_online_math", None) is None:
         namespace.lora_online_math = DEFAULT_LORA_ONLINE_MATH.value
+    if getattr(namespace, "lora_merge_mode", None) is None:
+        namespace.lora_merge_mode = DEFAULT_LORA_MERGE_MODE.value
+    if getattr(namespace, "lora_refresh_signature", None) is None:
+        namespace.lora_refresh_signature = DEFAULT_LORA_REFRESH_SIGNATURE_MODE.value
 
     if strict:
         _validate_runtime_flags(namespace)

@@ -2,7 +2,7 @@
 
 # apps/backend/types Overview
 Date: 2026-01-03
-Last Review: 2026-02-16
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: Active
 - 2026-02-08: `payloads.Txt2ImgKeys.HIRES` now explicitly includes `refiner` and `distilled_cfg` to stay consistent with `extras.hires.*` parsing in API router validation.
 - 2026-02-15: `payloads.Txt2ImgKeys` now includes explicit `settings_revision` contract key group so generation payload validation can enforce revision parity.
 - 2026-02-16: WAN22 video/model key ownership is outside `payloads.py`; model-specific keymaps now live in `apps/backend/runtime/state_dict/*`.
+- 2026-02-18: `payloads.ExtrasKeys.COMMON` now includes `guidance` so txt2img/img2img extras can carry strict guidance-policy overrides (`apg_*`, `guidance_rescale`, `cfg_trunc_ratio`, `renorm_cfg`) without contract drift.

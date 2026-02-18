@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Torch-bound sampling inner loop (kept separate so `apps.backend.runtime.sampling` stays import-light for API/UI imports).
-Implements conditioning batching, CFG routing, and sampling lifecycle hooks (prepare/cleanup) for native samplers.
+Implements conditioning batching, CFG routing (including optional APG/rescale/trunc/renorm guidance policy), and sampling lifecycle hooks
+(prepare/cleanup) for native samplers.
 Emits optional profiling sections (torch-profiler `record_function`) at key seams when `CODEX_PROFILE` is enabled.
 Supports an opt-in CFG cond+uncond fused batch mode (`CODEX_CFG_BATCH_MODE=fused|split`) that can reduce `apply_model` calls when memory allows,
 with a best-effort fallback to split on CUDA OOM.
@@ -23,7 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `calc_cond_uncond_batch` (function): Runs batched UNet calls to compute conditional/unconditional predictions with area masks, memory-aware
   batching, and strict conditioning validation (no fallbacks).
 - `sampling_function_inner` (function): Core CFG math and hook routing; handles distilled/turbo `uncond=None`, optional deep debug logs,
-  and sampler pre/post cfg modifiers.
+  sampler pre/post cfg modifiers, and optional APG/rescale/trunc/renorm policy execution.
 - `sampling_function` (function): Wrapper around `sampling_function_inner` for the denoiser interface; applies conditioning modifiers and
   control/image concat plumbing, returning denoised + (cond/uncond) predictions.
 - `sampling_prepare` (function): Pre-sampling hook; activates ControlNet runtime, loads required models to GPU, and prepares smart-offload state.
@@ -36,6 +37,7 @@ import torch
 import math
 import collections
 import logging
+from typing import Any, Mapping
 
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
@@ -48,6 +50,156 @@ from .condition import Condition, compile_conditions, compile_weighted_condition
 logger = logging.getLogger("backend.runtime.sampling")
 
 _ZIMAGE_SAMPLING_DEBUG_COUNT = 0
+
+_GUIDANCE_POLICY_KEY = "codex_guidance_policy"
+_GUIDANCE_STEP_INDEX_KEY = "codex_guidance_step_index"
+_GUIDANCE_TOTAL_STEPS_KEY = "codex_guidance_total_steps"
+_GUIDANCE_APG_MOMENTUM_BUFFER_KEY = "codex_guidance_apg_momentum_buffer"
+_GUIDANCE_WARNED_SAMPLER_CFG_KEY = "codex_guidance_sampler_cfg_warned"
+
+
+def _rescale_noise_cfg(guided_noise: torch.Tensor, conditional_noise: torch.Tensor, rescale_factor: float) -> torch.Tensor:
+    if rescale_factor <= 0.0:
+        return guided_noise
+    spatial_dims = tuple(range(1, conditional_noise.ndim))
+    conditional_std = conditional_noise.std(dim=spatial_dims, keepdim=True)
+    guided_std = guided_noise.std(dim=spatial_dims, keepdim=True)
+    safe_guided_std = guided_std.clamp(min=1e-12)
+    rescaled = guided_noise * (conditional_std / safe_guided_std)
+    return rescale_factor * rescaled + (1.0 - rescale_factor) * guided_noise
+
+
+def _guidance_policy_from_options(model_options: Mapping[str, Any]) -> dict[str, Any] | None:
+    policy = model_options.get(_GUIDANCE_POLICY_KEY)
+    if policy is None:
+        return None
+    if not isinstance(policy, dict):
+        raise RuntimeError(
+            f"Invalid model_options.{_GUIDANCE_POLICY_KEY}: expected object, got {type(policy).__name__}."
+        )
+    return policy
+
+
+def _guidance_progress_ratio(model_options: Mapping[str, Any]) -> float:
+    raw_step_index = model_options.get(_GUIDANCE_STEP_INDEX_KEY, 0)
+    raw_total_steps = model_options.get(_GUIDANCE_TOTAL_STEPS_KEY, 1)
+    try:
+        step_index = int(raw_step_index)
+        total_steps = int(raw_total_steps)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "Invalid guidance step metadata in model_options: "
+            f"{_GUIDANCE_STEP_INDEX_KEY}={raw_step_index!r} {_GUIDANCE_TOTAL_STEPS_KEY}={raw_total_steps!r}"
+        ) from exc
+    if total_steps <= 1:
+        return 0.0
+    return float(max(0.0, min(1.0, step_index / float(total_steps - 1))))
+
+
+def _apply_apg_guidance(
+    cond_pred: torch.Tensor,
+    uncond_pred: torch.Tensor,
+    cond_scale: float,
+    *,
+    policy: Mapping[str, Any],
+    model_options: dict[str, Any],
+) -> torch.Tensor:
+    diff = cond_pred - uncond_pred
+    dims = tuple(range(1, diff.ndim))
+
+    momentum = float(policy.get("apg_momentum", 0.0) or 0.0)
+    if momentum > 0.0:
+        previous = model_options.get(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY)
+        if not isinstance(previous, torch.Tensor) or previous.shape != diff.shape:
+            previous = torch.zeros_like(diff)
+        elif previous.dtype != diff.dtype or previous.device != diff.device:
+            previous = previous.to(device=diff.device, dtype=diff.dtype)
+        diff = diff + momentum * previous
+        model_options[_GUIDANCE_APG_MOMENTUM_BUFFER_KEY] = diff.detach()
+    else:
+        model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
+
+    norm_threshold = float(policy.get("apg_norm_threshold", 0.0) or 0.0)
+    if norm_threshold > 0.0:
+        diff_norm = torch.linalg.vector_norm(diff, dim=dims, keepdim=True).clamp(min=1e-12)
+        threshold = torch.full_like(diff_norm, fill_value=norm_threshold)
+        scale_factor = torch.minimum(torch.ones_like(diff_norm), threshold / diff_norm)
+        diff = diff * scale_factor
+
+    cond_unit = torch.nn.functional.normalize(cond_pred.double(), dim=dims)
+    diff_double = diff.double()
+    diff_parallel = (diff_double * cond_unit).sum(dim=dims, keepdim=True) * cond_unit
+    diff_orthogonal = diff_double - diff_parallel
+    eta = float(policy.get("apg_eta", 0.0) or 0.0)
+    normalized_update = (diff_orthogonal + eta * diff_parallel).to(dtype=diff.dtype)
+    guided = uncond_pred + cond_scale * normalized_update
+
+    apg_rescale = float(policy.get("apg_rescale", 0.0) or 0.0)
+    if apg_rescale > 0.0:
+        guided = _rescale_noise_cfg(guided, cond_pred, apg_rescale)
+    return guided
+
+
+def _apply_guidance_policy(
+    cond_pred: torch.Tensor,
+    uncond_pred: torch.Tensor,
+    *,
+    cond_scale: float,
+    edit_strength: float,
+    model_options: dict[str, Any],
+    policy: Mapping[str, Any],
+) -> torch.Tensor:
+    cond_scale_effective = float(cond_scale) * float(edit_strength)
+    cfg_trunc_ratio_raw = policy.get("cfg_trunc_ratio", None)
+    cfg_enabled = True
+    if cfg_trunc_ratio_raw is not None:
+        cfg_trunc_ratio = float(cfg_trunc_ratio_raw)
+        if cfg_trunc_ratio < 0.0 or cfg_trunc_ratio > 1.0:
+            raise RuntimeError(
+                f"Invalid guidance cfg_trunc_ratio={cfg_trunc_ratio!r}; expected range [0, 1]."
+            )
+        progress_ratio = _guidance_progress_ratio(model_options)
+        cfg_enabled = progress_ratio < cfg_trunc_ratio
+
+    if not cfg_enabled or math.isclose(cond_scale_effective, 1.0):
+        model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
+        return cond_pred
+
+    step_index_raw = model_options.get(_GUIDANCE_STEP_INDEX_KEY, 0)
+    try:
+        step_index = int(step_index_raw)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"Invalid guidance step index in model_options: {_GUIDANCE_STEP_INDEX_KEY}={step_index_raw!r}"
+        ) from exc
+
+    apg_enabled = bool(policy.get("apg_enabled", False))
+    apg_start_step = int(policy.get("apg_start_step", 0) or 0)
+    if apg_enabled and step_index >= apg_start_step:
+        guided = _apply_apg_guidance(
+            cond_pred,
+            uncond_pred,
+            cond_scale_effective,
+            policy=policy,
+            model_options=model_options,
+        )
+    else:
+        guided = uncond_pred + (cond_pred - uncond_pred) * cond_scale_effective
+        model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
+        guidance_rescale = float(policy.get("guidance_rescale", 0.0) or 0.0)
+        if guidance_rescale > 0.0:
+            guided = _rescale_noise_cfg(guided, cond_pred, guidance_rescale)
+
+    renorm_cfg = float(policy.get("renorm_cfg", 0.0) or 0.0)
+    if renorm_cfg > 0.0:
+        dims = tuple(range(1, cond_pred.ndim))
+        cond_norm = torch.linalg.vector_norm(cond_pred, dim=dims, keepdim=True)
+        max_norm = cond_norm * renorm_cfg
+        guided_norm = torch.linalg.vector_norm(guided, dim=dims, keepdim=True).clamp(min=1e-12)
+        scale_factor = torch.minimum(torch.ones_like(guided_norm), max_norm / guided_norm)
+        guided = guided * scale_factor
+
+    return guided
 
 
 def get_area_and_mult(conds, x_in, timestep_in):
@@ -445,15 +597,35 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
     # Distilled / turbo models may omit unconditional conditioning entirely.
     # In that case, skip CFG math and return the conditional prediction as-is.
     if uncond_ is None:
+        model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
         cfg_result = cond_pred
     elif "sampler_cfg_function" in model_options:
         args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
                 "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
         cfg_result = x - model_options["sampler_cfg_function"](args)
-    elif not math.isclose(edit_strength, 1.0):
-        cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale * edit_strength
     else:
-        cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
+        guidance_policy = _guidance_policy_from_options(model_options)
+        if guidance_policy is None:
+            if not math.isclose(edit_strength, 1.0):
+                cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale * edit_strength
+            else:
+                cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
+            model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
+        else:
+            cfg_result = _apply_guidance_policy(
+                cond_pred,
+                uncond_pred,
+                cond_scale=cond_scale,
+                edit_strength=edit_strength,
+                model_options=model_options,
+                policy=guidance_policy,
+            )
+    if "sampler_cfg_function" in model_options and _guidance_policy_from_options(model_options) is not None:
+        if not bool(model_options.get(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, False)):
+            logger.warning(
+                "Guidance policy is ignored because sampler_cfg_function is active."
+            )
+            model_options[_GUIDANCE_WARNED_SAMPLER_CFG_KEY] = True
 
     for fn in model_options.get("sampler_post_cfg_function", []):
         args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,

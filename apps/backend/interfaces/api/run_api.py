@@ -10,6 +10,7 @@ Required Notice: see NOTICE
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
+Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`, `CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) from resolved runtime namespace values.
 Startup settings normalization preserves `codex_options_revision` while pruning unknown/invalid registry keys.
 Launcher/backend trace toggles (`--trace-contract`, `--trace-profiler`) are published via bootstrap env for runtime diagnostics modules.
 
@@ -533,6 +534,20 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
             mode_value = str(mode).strip()
             if mode_value and mode_value != DEFAULT_LORA_APPLY_MODE.value:
                 _set_bootstrap_env("CODEX_LORA_APPLY_MODE", mode_value)
+        lora_merge_mode = getattr(ns, "lora_merge_mode", None)
+        if lora_merge_mode is not None:
+            from apps.backend.infra.config.lora_merge_mode import DEFAULT_LORA_MERGE_MODE
+
+            mode_value = str(lora_merge_mode).strip()
+            if mode_value and mode_value != DEFAULT_LORA_MERGE_MODE.value:
+                _set_bootstrap_env("CODEX_LORA_MERGE_MODE", mode_value)
+        lora_refresh_signature = getattr(ns, "lora_refresh_signature", None)
+        if lora_refresh_signature is not None:
+            from apps.backend.infra.config.lora_refresh_signature import DEFAULT_LORA_REFRESH_SIGNATURE_MODE
+
+            signature_value = str(lora_refresh_signature).strip()
+            if signature_value and signature_value != DEFAULT_LORA_REFRESH_SIGNATURE_MODE.value:
+                _set_bootstrap_env("CODEX_LORA_REFRESH_SIGNATURE", signature_value)
     except Exception:
         pass
     mem_management.reinitialize(runtime_config)

@@ -9,12 +9,13 @@ Required Notice: see NOTICE
 Purpose: Sampling driver (native-only) for diffusion runtimes.
 Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
 while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`), including native ER-SDE stage updates
-with strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`).
+with strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring (APG/rescale/trunc/renorm).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
 - `_raise_if_cancelled` (function): Checks cancellation state and raises `_SamplingCancelled` when requested.
 - `_PrecisionFallbackRequest` (exception): Signals the caller to retry sampling with a different precision policy.
+- `_resolve_guidance_policy` (function): Resolves and validates optional guidance policy overrides (env + request extras) for APG/rescale/trunc/renorm.
 - `CodexSampler` (class): Main sampler driver; builds `SamplingContext`, resolves sampler specs, runs the native sampler loop, and integrates
   memory-management/timeline diagnostics.
 """
@@ -23,13 +24,15 @@ from __future__ import annotations
 
 # tags: sampling, diagnostics
 
-from typing import Any, Optional, Callable, List
+from typing import Any, Optional, Callable, List, Mapping
 import math
 import logging
+import os
 
 import torch
 
 from apps.backend.infra.config.env_flags import env_flag, env_int
+from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 
 from .inner_loop import sampling_function_inner, sampling_prepare, sampling_cleanup
 from .condition import compile_conditions
@@ -63,6 +66,192 @@ _LMS_COEFFS = {
 
 class _PrecisionFallbackRequest(Exception):
     """Internal control flow exception used to trigger a sampling retry."""
+
+
+_GUIDANCE_POLICY_KEY = "codex_guidance_policy"
+_GUIDANCE_STEP_INDEX_KEY = "codex_guidance_step_index"
+_GUIDANCE_TOTAL_STEPS_KEY = "codex_guidance_total_steps"
+_GUIDANCE_APG_MOMENTUM_BUFFER_KEY = "codex_guidance_apg_momentum_buffer"
+_GUIDANCE_WARNED_SAMPLER_CFG_KEY = "codex_guidance_sampler_cfg_warned"
+
+_GUIDANCE_ALLOWED_KEYS = {
+    "apg_enabled",
+    "apg_start_step",
+    "apg_eta",
+    "apg_momentum",
+    "apg_norm_threshold",
+    "apg_rescale",
+    "guidance_rescale",
+    "cfg_trunc_ratio",
+    "renorm_cfg",
+}
+
+
+def _read_env_text(name: str) -> str | None:
+    value = get_bootstrap_env(name)
+    if value is None:
+        value = os.getenv(name)
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
+
+
+def _read_env_float(name: str, default: float) -> float:
+    text = _read_env_text(name)
+    if text is None:
+        return float(default)
+    try:
+        value = float(text)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{name} must be a float; got: {text!r}") from exc
+    if not math.isfinite(value):
+        raise RuntimeError(f"{name} must be finite; got: {text!r}")
+    return value
+
+
+def _read_env_bool(name: str, default: bool) -> bool:
+    text = _read_env_text(name)
+    if text is None:
+        return bool(default)
+    normalized = text.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean (1/0/true/false/yes/no/on/off); got: {text!r}")
+
+
+def _read_env_nonnegative_int(name: str, default: int) -> int:
+    text = _read_env_text(name)
+    if text is None:
+        return int(default)
+    try:
+        value = int(text)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{name} must be an integer >= 0; got: {text!r}") from exc
+    if value < 0:
+        raise RuntimeError(f"{name} must be >= 0; got: {text!r}")
+    return value
+
+
+def _read_env_optional_float(name: str) -> float | None:
+    text = _read_env_text(name)
+    if text is None:
+        return None
+    try:
+        value = float(text)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{name} must be a float; got: {text!r}") from exc
+    if not math.isfinite(value):
+        raise RuntimeError(f"{name} must be finite; got: {text!r}")
+    return value
+
+
+def _resolve_guidance_policy(processing: Any) -> dict[str, Any] | None:
+    policy: dict[str, Any] = {
+        "apg_enabled": _read_env_bool("CODEX_GUIDANCE_APG_ENABLED", default=False),
+        "apg_start_step": _read_env_nonnegative_int("CODEX_GUIDANCE_APG_START_STEP", default=0),
+        "apg_eta": _read_env_float("CODEX_GUIDANCE_APG_ETA", default=0.0),
+        "apg_momentum": _read_env_float("CODEX_GUIDANCE_APG_MOMENTUM", default=0.0),
+        "apg_norm_threshold": _read_env_float("CODEX_GUIDANCE_APG_NORM_THRESHOLD", default=15.0),
+        "apg_rescale": _read_env_float("CODEX_GUIDANCE_APG_RESCALE", default=0.0),
+        "guidance_rescale": _read_env_float("CODEX_GUIDANCE_RESCALE", default=0.0),
+        "cfg_trunc_ratio": _read_env_optional_float("CODEX_GUIDANCE_CFG_TRUNC_RATIO"),
+        "renorm_cfg": _read_env_float("CODEX_GUIDANCE_RENORM_CFG", default=0.0),
+    }
+
+    overrides = getattr(processing, "override_settings", {})
+    if isinstance(overrides, Mapping):
+        guidance_override = overrides.get("guidance")
+        if guidance_override is not None:
+            if not isinstance(guidance_override, Mapping):
+                raise RuntimeError(
+                    "override_settings.guidance must be an object when provided "
+                    f"(got {type(guidance_override).__name__})."
+                )
+            unknown = sorted(str(key) for key in guidance_override.keys() if str(key) not in _GUIDANCE_ALLOWED_KEYS)
+            if unknown:
+                raise RuntimeError(
+                    "Unexpected override_settings.guidance key(s): "
+                    + ", ".join(unknown)
+                )
+            for key in _GUIDANCE_ALLOWED_KEYS:
+                if key not in guidance_override:
+                    continue
+                raw_value = guidance_override[key]
+                if key == "apg_enabled":
+                    if not isinstance(raw_value, bool):
+                        raise RuntimeError("override_settings.guidance.apg_enabled must be boolean.")
+                    policy[key] = raw_value
+                    continue
+                if key == "apg_start_step":
+                    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                        raise RuntimeError("override_settings.guidance.apg_start_step must be an integer >= 0.")
+                    if isinstance(raw_value, float) and not raw_value.is_integer():
+                        raise RuntimeError("override_settings.guidance.apg_start_step must be an integer >= 0.")
+                    value_int = int(raw_value)
+                    if value_int < 0:
+                        raise RuntimeError("override_settings.guidance.apg_start_step must be >= 0.")
+                    policy[key] = value_int
+                    continue
+                if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                    raise RuntimeError(f"override_settings.guidance.{key} must be numeric.")
+                value_float = float(raw_value)
+                if not math.isfinite(value_float):
+                    raise RuntimeError(f"override_settings.guidance.{key} must be finite.")
+                policy[key] = value_float
+
+    apg_enabled = bool(policy.get("apg_enabled", False))
+    apg_start_step = int(policy.get("apg_start_step", 0) or 0)
+    apg_eta = float(policy.get("apg_eta", 0.0) or 0.0)
+    apg_momentum = float(policy.get("apg_momentum", 0.0) or 0.0)
+    apg_norm_threshold = float(policy.get("apg_norm_threshold", 0.0) or 0.0)
+    apg_rescale = float(policy.get("apg_rescale", 0.0) or 0.0)
+    guidance_rescale = float(policy.get("guidance_rescale", 0.0) or 0.0)
+    cfg_trunc_ratio = policy.get("cfg_trunc_ratio")
+    renorm_cfg = float(policy.get("renorm_cfg", 0.0) or 0.0)
+
+    if apg_start_step < 0:
+        raise RuntimeError(f"Invalid guidance apg_start_step={apg_start_step}; expected >= 0.")
+    if apg_momentum < 0.0 or apg_momentum >= 1.0:
+        raise RuntimeError(f"Invalid guidance apg_momentum={apg_momentum}; expected range [0, 1).")
+    if apg_norm_threshold < 0.0:
+        raise RuntimeError(f"Invalid guidance apg_norm_threshold={apg_norm_threshold}; expected >= 0.")
+    if guidance_rescale < 0.0 or guidance_rescale > 1.0:
+        raise RuntimeError(f"Invalid guidance guidance_rescale={guidance_rescale}; expected range [0, 1].")
+    if apg_rescale < 0.0 or apg_rescale > 1.0:
+        raise RuntimeError(f"Invalid guidance apg_rescale={apg_rescale}; expected range [0, 1].")
+    if renorm_cfg < 0.0:
+        raise RuntimeError(f"Invalid guidance renorm_cfg={renorm_cfg}; expected >= 0.")
+    if cfg_trunc_ratio is not None:
+        cfg_trunc_ratio = float(cfg_trunc_ratio)
+        if cfg_trunc_ratio < 0.0 or cfg_trunc_ratio > 1.0:
+            raise RuntimeError(f"Invalid guidance cfg_trunc_ratio={cfg_trunc_ratio}; expected range [0, 1].")
+
+    active = (
+        apg_enabled
+        or guidance_rescale > 0.0
+        or apg_rescale > 0.0
+        or renorm_cfg > 0.0
+        or cfg_trunc_ratio is not None
+    )
+    if not active:
+        return None
+
+    return {
+        "apg_enabled": apg_enabled,
+        "apg_start_step": apg_start_step,
+        "apg_eta": apg_eta,
+        "apg_momentum": apg_momentum,
+        "apg_norm_threshold": apg_norm_threshold,
+        "apg_rescale": apg_rescale,
+        "guidance_rescale": guidance_rescale,
+        "cfg_trunc_ratio": cfg_trunc_ratio,
+        "renorm_cfg": renorm_cfg,
+    }
 
 class CodexSampler:
     """Minimal native sampler for txt2img using an Euler ODE loop.
@@ -275,6 +464,7 @@ class CodexSampler:
             prepared = False
             state_started = False
             active_context = base_context
+            guidance_policy: dict[str, Any] | None = None
 
             try:
                 allow_vae_resident = False
@@ -419,6 +609,26 @@ class CodexSampler:
                                 entry["model_conds"]["c_concat"] = Condition(image_conditioning)
 
                 run_total_steps = steps - start_idx
+                guidance_policy = _resolve_guidance_policy(processing)
+                if guidance_policy is None:
+                    denoiser.model_options.pop(_GUIDANCE_POLICY_KEY, None)
+                    denoiser.model_options.pop(_GUIDANCE_STEP_INDEX_KEY, None)
+                    denoiser.model_options.pop(_GUIDANCE_TOTAL_STEPS_KEY, None)
+                    denoiser.model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
+                    denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
+                else:
+                    denoiser.model_options[_GUIDANCE_POLICY_KEY] = guidance_policy
+                    denoiser.model_options[_GUIDANCE_TOTAL_STEPS_KEY] = run_total_steps
+                    denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
+                    self._logger.info(
+                        "Guidance policy enabled: apg=%s start_step=%d cfg_trunc_ratio=%s rescale=%.4g apg_rescale=%.4g renorm=%.4g",
+                        bool(guidance_policy.get("apg_enabled", False)),
+                        int(guidance_policy.get("apg_start_step", 0) or 0),
+                        guidance_policy.get("cfg_trunc_ratio"),
+                        float(guidance_policy.get("guidance_rescale", 0.0) or 0.0),
+                        float(guidance_policy.get("apg_rescale", 0.0) or 0.0),
+                        float(guidance_policy.get("renorm_cfg", 0.0) or 0.0),
+                    )
                 backend_state.start(job_count=1, sampling_steps=run_total_steps)
                 state_started = True
 
@@ -488,6 +698,8 @@ class CodexSampler:
                         if backend_state.should_stop:
                             raise _SamplingCancelled("cancelled")
                         step_index = i - start_idx
+                        if guidance_policy is not None:
+                            denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = step_index
                         with profiler.section(f"sampling.step/{step_index + 1}"):
                             sigma = sigmas[i]
                             sigma_next = sigmas[i + 1]
@@ -879,6 +1091,11 @@ class CodexSampler:
                     sampling_cleanup(denoiser)
                 if state_started:
                     backend_state.end()
+                denoiser.model_options.pop(_GUIDANCE_POLICY_KEY, None)
+                denoiser.model_options.pop(_GUIDANCE_STEP_INDEX_KEY, None)
+                denoiser.model_options.pop(_GUIDANCE_TOTAL_STEPS_KEY, None)
+                denoiser.model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
+                denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
                 backend_state.clear_flags()
 
             if retry:

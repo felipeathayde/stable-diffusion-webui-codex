@@ -13,7 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DeviceBackend` (enum): Execution backend selection (auto/cuda/cpu/mps/xpu/directml).
 - `DeviceRole` (enum): Logical component roles managed by the memory manager.
 - `SwapPolicy` (enum): Where models are offloaded when VRAM is constrained.
-- `SwapMethod` (enum): How tensors are copied during swap operations (blocked vs async).
+- `SwapMethod` (enum): How tensors are copied during swap operations (blocked vs async/block-swap experimental).
 - `AttentionBackend` (enum): Preferred attention implementation.
 - `PrecisionFlags` (dataclass): Fine-grained dtype override flags for core/text/VAE/CLIP components.
 - `ComponentPolicy` (dataclass): Device/dtype expectations for a component role (storage dtype + optional compute dtype override).
@@ -66,6 +66,7 @@ class SwapMethod(str, Enum):
 
     BLOCKED = "blocked"
     ASYNC = "async"
+    BLOCK_SWAP_EXPERIMENTAL = "block_swap_experimental"
 
 
 class AttentionBackend(str, Enum):

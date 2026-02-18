@@ -11,7 +11,7 @@ Contains request parsing and payload validation (including hires tile config via
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`).
-Includes strict ER-SDE option parsing (`extras.er_sde` / `img2img_extras.er_sde`) plus release-scope enforcement for sampler fields and
+Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope enforcement for sampler fields and
 prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
@@ -98,6 +98,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _IMG2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.IMG2VID_ALL)
     _WAN_STAGE_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
+    _GUIDANCE_OPTION_KEYS = {
+        "apg_enabled",
+        "apg_start_step",
+        "apg_eta",
+        "apg_momentum",
+        "apg_norm_threshold",
+        "apg_rescale",
+        "guidance_rescale",
+        "cfg_trunc_ratio",
+        "renorm_cfg",
+    }
     _PROMPT_SAMPLER_CONTROL_RE = re.compile(
         r"<\s*sampler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
         re.IGNORECASE,
@@ -667,6 +678,66 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         }
 
 
+    def _parse_guidance_options(value: object, *, field_name: str) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
+        _reject_unknown_keys(value, _GUIDANCE_OPTION_KEYS, field_name)
+        options = dict(value)
+        parsed: Dict[str, Any] = {}
+
+        if "apg_enabled" in options:
+            apg_enabled = options.get("apg_enabled")
+            if not isinstance(apg_enabled, bool):
+                raise HTTPException(status_code=400, detail=f"'{field_name}.apg_enabled' must be a boolean")
+            parsed["apg_enabled"] = apg_enabled
+
+        if "apg_start_step" in options:
+            start_step = options.get("apg_start_step")
+            if isinstance(start_step, bool) or not isinstance(start_step, (int, float)):
+                raise HTTPException(status_code=400, detail=f"'{field_name}.apg_start_step' must be an integer >= 0")
+            if isinstance(start_step, float) and not start_step.is_integer():
+                raise HTTPException(status_code=400, detail=f"'{field_name}.apg_start_step' must be an integer >= 0")
+            start_step_i = int(start_step)
+            if start_step_i < 0:
+                raise HTTPException(status_code=400, detail=f"'{field_name}.apg_start_step' must be >= 0")
+            parsed["apg_start_step"] = start_step_i
+
+        def _parse_optional_float(
+            key: str,
+            *,
+            minimum: float | None = None,
+            maximum: float | None = None,
+            maximum_inclusive: bool = True,
+        ) -> None:
+            if key not in options:
+                return
+            raw = options.get(key)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise HTTPException(status_code=400, detail=f"'{field_name}.{key}' must be numeric")
+            value_f = float(raw)
+            if not math.isfinite(value_f):
+                raise HTTPException(status_code=400, detail=f"'{field_name}.{key}' must be finite")
+            if minimum is not None and value_f < minimum:
+                raise HTTPException(status_code=400, detail=f"'{field_name}.{key}' must be >= {minimum}")
+            if maximum is not None:
+                if maximum_inclusive:
+                    if value_f > maximum:
+                        raise HTTPException(status_code=400, detail=f"'{field_name}.{key}' must be <= {maximum}")
+                elif value_f >= maximum:
+                    raise HTTPException(status_code=400, detail=f"'{field_name}.{key}' must be < {maximum}")
+            parsed[key] = value_f
+
+        _parse_optional_float("apg_eta")
+        _parse_optional_float("apg_momentum", minimum=0.0, maximum=1.0, maximum_inclusive=False)
+        _parse_optional_float("apg_norm_threshold", minimum=0.0)
+        _parse_optional_float("apg_rescale", minimum=0.0, maximum=1.0)
+        _parse_optional_float("guidance_rescale", minimum=0.0, maximum=1.0)
+        _parse_optional_float("cfg_trunc_ratio", minimum=0.0, maximum=1.0)
+        _parse_optional_float("renorm_cfg", minimum=0.0)
+
+        return parsed
+
+
     def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         raw = payload.get('extras')
         if raw is None:
@@ -737,6 +808,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 extras['zimage_variant'] = variant
         if "er_sde" in raw:
             extras["er_sde"] = _parse_er_sde_options(raw["er_sde"], field_name="extras.er_sde")
+        if "guidance" in raw:
+            extras["guidance"] = _parse_guidance_options(raw["guidance"], field_name="extras.guidance")
         # Hires options
         hires = raw.get('hires')
         hires_cfg: Optional[Dict[str, Any]] = None
@@ -2013,6 +2086,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raw_extras["er_sde"] = _parse_er_sde_options(
                     raw_extras["er_sde"],
                     field_name="img2img_extras.er_sde",
+                )
+            if "guidance" in raw_extras:
+                raw_extras["guidance"] = _parse_guidance_options(
+                    raw_extras["guidance"],
+                    field_name="img2img_extras.guidance",
                 )
 
             extras.update(raw_extras)

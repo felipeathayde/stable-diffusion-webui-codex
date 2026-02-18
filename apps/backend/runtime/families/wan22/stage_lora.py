@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Apply per-stage LoRA patches to WAN22 GGUF stage models (merge or online).
-Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys (direct match or via `remap_wan22_gguf_state_dict`).
+Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys (direct match or via `remap_wan22_gguf_state_dict`),
+with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `apply_wan22_stage_lora` (function): Applies a LoRA file to a loaded stage model (merge or online).
@@ -22,6 +23,7 @@ from typing import Any, Dict, Mapping, Optional, Set
 import safetensors.torch as sf
 import torch
 
+from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_apply_mode
 from apps.backend.patchers.lora_loader import CodexLoraLoader
 from apps.backend.runtime.adapters.lora.pipeline import build_patch_dicts
@@ -79,6 +81,34 @@ _LORA_LOGICAL_SUFFIXES: tuple[str, ...] = (
     ".b1.weight",
     ".b2.weight",
 )
+
+_ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO = "CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO"
+
+
+def _read_min_match_ratio() -> float:
+    raw = get_bootstrap_env(_ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO)
+    if raw is None:
+        raw = os.getenv(_ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO)
+    if raw is None:
+        return 0.0
+    text = str(raw).strip()
+    if not text:
+        return 0.0
+    try:
+        ratio = float(text)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"{_ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO} must be a float in [0, 1], got: {raw!r}"
+        ) from exc
+    if not math.isfinite(ratio):
+        raise RuntimeError(
+            f"{_ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO} must be finite, got: {raw!r}"
+        )
+    if ratio < 0.0 or ratio > 1.0:
+        raise RuntimeError(
+            f"{_ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO} must be in [0, 1], got: {raw!r}"
+        )
+    return ratio
 
 
 def _strip_known_prefixes(name: str) -> str:
@@ -185,12 +215,32 @@ def apply_wan22_stage_lora(
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF stage '{stage}': failed to load LoRA file {resolved_path}: {exc}") from exc
 
+    logical_key_count = len(_extract_logical_keys(tensors))
     to_load = _build_to_load_map(model, tensors)
     if not to_load:
         raise RuntimeError(
             "WAN22 GGUF stage '{stage}': LoRA file matched 0 targets; "
             "this LoRA key layout is not supported by the WAN transformer mapping. "
             "file={path}".format(stage=stage, path=resolved_path)
+        )
+    matched_count = len(to_load)
+    coverage = (matched_count / logical_key_count) if logical_key_count > 0 else 0.0
+    min_match_ratio = _read_min_match_ratio()
+    if min_match_ratio > 0.0 and coverage < min_match_ratio:
+        raise RuntimeError(
+            "WAN22 GGUF stage '{stage}': LoRA logical-key coverage below threshold "
+            f"(matched={matched_count}/{logical_key_count} ratio={coverage:.4f} required>={min_match_ratio:.4f}). "
+            "Adjust CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO or use a compatible adapter mapping. "
+            "file={path}".format(stage=stage, path=resolved_path)
+        )
+    if logical_key_count > 0 and coverage < 1.0:
+        log.warning(
+            "[wan22.gguf] stage LoRA partial logical-key coverage: stage=%s matched=%d total=%d ratio=%.4f required_ratio=%.4f",
+            stage,
+            matched_count,
+            logical_key_count,
+            coverage,
+            min_match_ratio,
         )
 
     patch_dict = build_patch_dicts(tensors, to_load)

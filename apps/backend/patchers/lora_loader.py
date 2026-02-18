@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Deterministic LoRA loader/applier with transactional backups.
 Applies patch dictionaries onto model parameters with device/dtype management, supporting GGUF packed parameters.
+Supports explicit merge precision mode (`CODEX_LORA_MERGE_MODE`) and refresh signature mode (`CODEX_LORA_REFRESH_SIGNATURE`).
 Fails loud when CodexPack packed weights are present (v1 packed-kernel execution does not support LoRA/DoRA yet).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -18,12 +19,18 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from typing import Dict, List, Mapping, MutableMapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, MutableMapping, Sequence, Tuple
 
 import torch
 from tqdm.auto import tqdm
 
+from apps.backend.infra.config.lora_merge_mode import LoraMergeMode, read_lora_merge_mode
+from apps.backend.infra.config.lora_refresh_signature import (
+    LoraRefreshSignatureMode,
+    read_lora_refresh_signature_mode,
+)
 from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
 from apps.backend.quantization.api import quantize_numpy
 from apps.backend.quantization.tensor import CodexParameter
@@ -74,7 +81,10 @@ class CodexLoraLoader:
                 "Load the base GGUF (non-codexpack) or disable LoRA."
             )
 
-        signature = self._signature(lora_patches)
+        merge_mode = read_lora_merge_mode()
+        merge_dtype = torch.float64 if merge_mode is LoraMergeMode.PRECISE else torch.float32
+        signature_mode = read_lora_refresh_signature_mode()
+        signature = self._signature(lora_patches, mode=signature_mode)
         if signature == self.loaded_signature and not force_refresh:
             logger.debug("LoRA loader refresh skipped (no changes).")
             return
@@ -87,10 +97,12 @@ class CodexLoraLoader:
 
         offline_groups = sum(1 for (_, online) in grouped.keys() if not online)
         logger.info(
-            "Refreshing LoRA patches: groups=%d offline=%d online=%d",
+            "Refreshing LoRA patches: groups=%d offline=%d online=%d merge_mode=%s signature_mode=%s",
             len(grouped),
             offline_groups,
             len(grouped) - offline_groups,
+            merge_mode.value,
+            signature_mode.value,
         )
 
         offline_total = sum(len(patches) for (key, online), patches in grouped.items() if not online and patches)
@@ -138,7 +150,7 @@ class CodexLoraLoader:
                         entries,
                         tensor,
                         key=param_key,
-                        computation_dtype=torch.float32,
+                        computation_dtype=merge_dtype,
                     )
                 except RuntimeError as err:
                     if "out of memory" not in str(err).lower():
@@ -150,7 +162,7 @@ class CodexLoraLoader:
                         entries,
                         tensor,
                         key=param_key,
-                        computation_dtype=torch.float32,
+                        computation_dtype=merge_dtype,
                     )
 
                 if gguf_parameter is None:
@@ -229,13 +241,100 @@ class CodexLoraLoader:
                 )
         return grouped
 
-    def _signature(self, lora_patches: Mapping[Tuple[str, float, float, bool], Dict[str, List[LoraPatchEntry]]]) -> str:
+    def _signature(
+        self,
+        lora_patches: Mapping[Tuple[str, float, float, bool], Dict[str, List[LoraPatchEntry]]],
+        *,
+        mode: LoraRefreshSignatureMode | None = None,
+    ) -> str:
+        selected_mode = read_lora_refresh_signature_mode() if mode is None else mode
+        if selected_mode is LoraRefreshSignatureMode.CONTENT_SHA256:
+            return self._content_signature(lora_patches)
         items = []
         for key in sorted(lora_patches.keys()):
             param_map = lora_patches[key]
             for param_key in sorted(param_map.keys()):
                 items.append((key, param_key, len(param_map[param_key])))
-        return str(items)
+        return f"structural:{items}"
+
+    def _content_signature(
+        self,
+        lora_patches: Mapping[Tuple[str, float, float, bool], Dict[str, List[LoraPatchEntry]]],
+    ) -> str:
+        digest = hashlib.sha256()
+        digest.update(b"codex-lora-refresh-signature:v1")
+        for key in sorted(lora_patches.keys()):
+            self._hash_signature_value(digest, key, path="bundle_key")
+            param_map = lora_patches[key]
+            for param_key in sorted(param_map.keys()):
+                digest.update(b"|param|")
+                self._hash_signature_value(digest, param_key, path="param_key")
+                entries = param_map[param_key]
+                self._hash_signature_value(digest, len(entries), path="entry_count")
+                for entry_index, entry in enumerate(entries):
+                    digest.update(b"|entry|")
+                    self._hash_signature_value(digest, entry_index, path="entry_index")
+                    self._hash_signature_value(digest, entry, path="entry")
+        return f"content_sha256:{digest.hexdigest()}"
+
+    @staticmethod
+    def _hash_signature_value(digest: Any, value: object, *, path: str) -> None:
+        if value is None:
+            digest.update(b"none")
+            return
+        if isinstance(value, bool):
+            digest.update(b"bool")
+            digest.update(b"1" if value else b"0")
+            return
+        if isinstance(value, int):
+            digest.update(b"int")
+            digest.update(str(value).encode("utf-8"))
+            return
+        if isinstance(value, float):
+            digest.update(b"float")
+            digest.update(repr(value).encode("utf-8"))
+            return
+        if isinstance(value, str):
+            digest.update(b"str")
+            digest.update(value.encode("utf-8"))
+            return
+        if isinstance(value, bytes):
+            digest.update(b"bytes")
+            digest.update(value)
+            return
+        if isinstance(value, torch.Tensor):
+            tensor = value.detach().contiguous()
+            digest.update(b"tensor")
+            digest.update(str(tensor.dtype).encode("utf-8"))
+            digest.update(str(tuple(tensor.shape)).encode("utf-8"))
+            raw = tensor.to(device="cpu").view(torch.uint8).numpy().tobytes()
+            digest.update(raw)
+            return
+        if isinstance(value, Mapping):
+            digest.update(b"mapping")
+            for key in sorted(value.keys(), key=lambda item: str(item)):
+                CodexLoraLoader._hash_signature_value(digest, key, path=f"{path}.key")
+                CodexLoraLoader._hash_signature_value(digest, value[key], path=f"{path}.value")
+            return
+        if isinstance(value, Sequence):
+            digest.update(b"sequence")
+            digest.update(str(len(value)).encode("utf-8"))
+            for index, item in enumerate(value):
+                CodexLoraLoader._hash_signature_value(digest, index, path=f"{path}.index")
+                CodexLoraLoader._hash_signature_value(digest, item, path=f"{path}.item")
+            return
+        if callable(value):
+            digest.update(b"callable")
+            module = getattr(value, "__module__", "")
+            qualname = getattr(value, "__qualname__", getattr(value, "__name__", type(value).__name__))
+            digest.update(f"{module}:{qualname}".encode("utf-8"))
+            return
+        raise TypeError(
+            "Unsupported value in content signature at {path}: {type_name}".format(
+                path=path,
+                type_name=type(value).__name__,
+            )
+        )
 
     def _offload_model(self, parameter_devices: Mapping[str, torch.device], offload_device: torch.device) -> None:
         for key in parameter_devices.keys():

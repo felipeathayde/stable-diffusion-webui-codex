@@ -466,7 +466,19 @@ const props = withDefaults(defineProps<{
   sectionTitle: '',
   resolutionPresets: () => [],
   showInitImageDims: false,
-  guidanceAdvanced: () => ({ ...DEFAULT_GUIDANCE_ADVANCED }),
+  guidanceAdvanced: () => ({
+    enabled: false,
+    apgEnabled: false,
+    apgStartStep: 0,
+    apgEta: 0,
+    apgMomentum: 0,
+    apgNormThreshold: 15,
+    apgRescale: 0,
+    guidanceRescale: 0,
+    cfgTruncEnabled: false,
+    cfgTruncRatio: 0.8,
+    renormCfg: 0,
+  }),
   guidanceSupport: null,
 })
 

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Z Image engine (Turbo/Base variants) for txt2img/img2img.
 Implements prompt formatting, conditioning, and execution for Z Image using a runtime assembled from a core transformer checkpoint + external assets
 (text encoder + Flow16 VAE) with memory-manager storage/compute dtypes and vendored HF metadata under `apps/backend/huggingface/Tongyi-MAI/**`.
+Sampling-path latent decode uses the shared canonical VAE memory target helper to keep manager identity aligned with engine unload cleanup.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_ZImagePromptList` (class): List-like prompt wrapper that carries per-run metadata (CFG scale, smart-cache policy, negative marker).
@@ -406,7 +407,8 @@ class ZImageEngine(CodexDiffusionEngine):
                 memory_management.manager.unload_model(runtime.denoiser)
         
         # Step 4: Decode latents to images
-        memory_management.manager.load_model(self.codex_objects.vae)
+        vae_target = self._vae_memory_target()
+        memory_management.manager.load_model(vae_target)
         try:
             images_tensor = decode_latents(runtime.vae, latents)
             
@@ -422,4 +424,4 @@ class ZImageEngine(CodexDiffusionEngine):
             
         finally:
             if self.smart_offload_enabled:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(vae_target)

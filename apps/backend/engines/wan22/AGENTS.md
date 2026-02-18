@@ -42,6 +42,7 @@ Status: Active
 - 2026-02-11: `diffusers_loader.py` now wraps native WAN VAE instances with a strict diffusers-compat adapter (`encode/decode` contract), including 5D video batch adaptation and explicit `dtype` exposure, so pipeline calls consume `latents`/`sample` outputs without fallback shims.
 - 2026-02-16: `WanEngineSpec.family` now uses explicit WAN22 variant families (`WAN22_14B`/`WAN22_5B`) and runtime VAE wrapper ownership follows `spec.family` (no shared WAN family alias).
 - 2026-02-17: `wan22_14b` canonical registration now points to a dedicated GGUF 14B lane (`Wan2214BGgufEngine`) with no inheritance from `wan22_5b`; 14B/5B routing remains explicit per engine id.
+- 2026-02-18: `wan22_14b` first-stage VAE encode/decode now load/unload using base canonical VAE memory target (`self._vae_memory_target()`, patcher when present) to keep memory-manager identity consistent with shared unload cleanup.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: WAN 2.2 14B engine (Codex runtime assembly) for txt2vid.
 Resolves the model bundle, assembles a `WanEngineRuntime` via `CodexWan22Factory`, and executes video requests with optional core
-streaming settings (Flux-like engine pattern).
+streaming settings (Flux-like engine pattern). First-stage VAE encode/decode uses the shared canonical VAE memory target helper so
+memory-manager identity stays aligned with base-engine unload cleanup.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Wan2214BEngine` (class): Codex diffusion engine for WAN22 14B; assembles runtime and handles txt2vid runs (img2vid is not yet ported).
@@ -154,7 +155,8 @@ class Wan2214BEngine(CodexDiffusionEngine):
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         """Encode video frames to latents."""
         runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.vae)
+        vae_target = self._vae_memory_target()
+        memory_management.manager.load_model(vae_target)
         unload = self.smart_offload_enabled
         try:
             # WAN VAE expects [B, C, T, H, W]
@@ -162,20 +164,21 @@ class Wan2214BEngine(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(vae_target)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         """Decode latents to video frames."""
         runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.vae)
+        vae_target = self._vae_memory_target()
+        memory_management.manager.load_model(vae_target)
         unload = self.smart_offload_enabled
         try:
             sample = runtime.vae.decode(x)
             return sample.to(x)
         finally:
             if unload:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(vae_target)
 
     # ------------------------------------------------------------------ Tasks
     def txt2vid(self, request: Txt2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:

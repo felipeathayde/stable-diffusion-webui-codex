@@ -38,3 +38,4 @@ Status: Active
 - 2026-01-31: ZImage conditioning caching now uses the shared engine cache helpers (hit/miss metrics + CPU storage + explicit restore to device/dtype). `clip_skip` is handled as a default no-op by the base engine (Z-Image does not use CLIP).
 - 2026-02-09: ZImage conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-11: `CodexZImageFactory` now wires `text_encoders[\"qwen3\"]` to the dedicated Qwen patcher wrapper (`runtime.qwen`) instead of the non-loadable text-processing engine object, so smart-offload TE staging can call memory-manager load/unload without resolver failures.
+- 2026-02-18: sampling-path latent decode in `zimage.py` now loads/unloads VAE with the base canonical target (`self._vae_memory_target()`), avoiding wrapper-vs-patcher identity drift against shared engine unload cleanup.

@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-02-17
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -66,6 +66,8 @@ Status: Active
 - 2026-02-08: `RefinerSettingsCard.vue` / `HiresSettingsCard.vue` swap-model controls now use step-pointer semantics (`Swap At Step`, min 1) and avoid “refiner step-count” wording.
 - 2026-02-08: Added `Img2ImgInpaintParamsCard.vue` to host detailed init-image + inpaint mask controls extracted from `ImageModelTab.vue`; parent view remains the source of truth for normalization/clamps and file handlers.
 - 2026-02-08: `HiresSettingsCard.vue` now follows the Basic Parameters row organization (sampler/scheduler/steps; upscaler/cfg/denoise; scale/width/height; model selector; prompt overrides) and keeps tile controls below prompts.
+- 2026-02-18: Added `Img2ImgBasicParametersCard.vue` for init-image mode (hires-like structure without swap-model/prompt overrides): sampler/scheduler/steps, scale+dimensions, resize-type/upscaler gating, and seed+CFG+denoise.
+- 2026-02-18: `HiresSettingsCard.vue` row order now renders dimensions (`scale/width/height`) before the upscaler row (`upscaler/cfg/denoise`) for parity with the img2img basic-parameters layout.
 - 2026-02-17: `VideoSettingsCard.vue` WAN frame controls now snap to `4n+1`, use slider/input step `4`, and default to the expanded frame range `[9,401]`.
 - 2026-02-17: `InitialImageCard.vue` now supports Dropzone-backed selection, thumbnail preview mode, click-to-zoom full-size preview, and rejected-file emits for parent-side toasts.
 - 2026-02-17: `ResultViewer.vue` now delegates zoom interactions to shared `ui/ImageZoomOverlay.vue` (no overlay legends; outside-click uses the same close path as `Esc`).

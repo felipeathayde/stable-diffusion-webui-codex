@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-02-08
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 - 2026-02-07: Updated Anima fallback sampling defaults to `euler/simple` in `engine_taxonomy.ts` and added `engine_taxonomy.test.ts` regression coverage.
 - 2026-02-08: Added `image_params.ts` + `image_params.test.ts` for pure img2img/inpaint normalization helpers (`normalizeMaskEnforcement`, `normalizeInpaintingFill`, `normalizeNonNegativeInt`) used by `ImageModelTab.vue`.
 - 2026-02-08: `image_params.ts` now also exposes hires policy/text helpers (`resolveTextOverride`, `resolveHiresModePolicy`) used by payload/view wiring to keep mode visibility and prompt fallback behavior deterministic.
+- 2026-02-18: Added `img2img_resize.ts` as the canonical img2img resize-mode contract (`just_resize`, `crop_and_resize`, `resize_and_fill`, `just_resize_latent_upscale`, `upscaler`) with a shared normalizer for store/view/composable wiring.

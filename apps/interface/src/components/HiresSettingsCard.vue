@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Hires (second pass) settings panel.
-Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, upscaler/cfg/denoise,
-scale/width/height, model selector, prompt overrides), plus tile controls and optional second-pass swap-model settings.
+Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, scale/width/height,
+upscaler/cfg/denoise, model selector, prompt overrides), plus tile controls and optional second-pass swap-model settings.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels. Uses the shared `WanSubHeader`
 title pattern to match the BASIC PARAMETERS card header style.
 
@@ -67,53 +67,6 @@ Symbols (top-level; keep in sync; no ghosts):
             <p class="hr-hint">0 = reuse base steps</p>
           </template>
         </SliderField>
-      </div>
-
-      <div class="gc-row">
-        <div class="gc-col field">
-          <label class="label-muted">Upscaler</label>
-          <select class="select-md" :value="upscaler" :disabled="disabled || !enabled || upscalersLoading" @change="onUpscalerChange">
-            <option v-if="upscalersLoading" :value="upscaler">Loading…</option>
-            <option v-else-if="upscaler && !isUpscalerKnown" :value="upscaler">Invalid selection: {{ upscaler }}</option>
-            <option v-else value="" disabled>Select</option>
-            <optgroup v-if="spandrelUpscalers.length" label="Spandrel (pixel SR)">
-              <option v-for="u in spandrelUpscalers" :key="u.id" :value="u.id">{{ u.label }}</option>
-            </optgroup>
-            <optgroup v-if="latentUpscalers.length" label="Latent">
-              <option v-for="u in latentUpscalers" :key="u.id" :value="u.id">{{ u.label }}</option>
-            </optgroup>
-          </select>
-          <p class="hr-hint" v-if="upscalersError">Error: {{ upscalersError }}</p>
-          <p class="hr-hint" v-else-if="upscaler && !isUpscalerKnown">Select an upscaler id from `GET /api/upscalers`.</p>
-        </div>
-
-        <SliderField
-          class="gc-col"
-          :label="cfgLabel"
-          :modelValue="cfgValue"
-          :min="0"
-          :max="30"
-          :step="0.5"
-          :inputStep="0.5"
-          :nudgeStep="0.5"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled || !enabled"
-          @update:modelValue="(v) => emit('update:cfg', v)"
-        />
-
-        <SliderField
-          class="gc-col"
-          label="Denoise"
-          :modelValue="denoise"
-          :min="0"
-          :max="1"
-          :step="0.01"
-          :inputStep="0.01"
-          :nudgeStep="0.01"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled || !enabled"
-          @update:modelValue="(v) => emit('update:denoise', v)"
-        />
       </div>
 
       <div class="gc-row">
@@ -178,6 +131,53 @@ Symbols (top-level; keep in sync; no ghosts):
           inputClass="cdx-input-w-md"
           :disabled="disabled || !enabled"
           @update:modelValue="(v) => emit('update:resizeY', v)"
+        />
+      </div>
+
+      <div class="gc-row">
+        <div class="gc-col field">
+          <label class="label-muted">Upscaler</label>
+          <select class="select-md" :value="upscaler" :disabled="disabled || !enabled || upscalersLoading" @change="onUpscalerChange">
+            <option v-if="upscalersLoading" :value="upscaler">Loading…</option>
+            <option v-else-if="upscaler && !isUpscalerKnown" :value="upscaler">Invalid selection: {{ upscaler }}</option>
+            <option v-else value="" disabled>Select</option>
+            <optgroup v-if="spandrelUpscalers.length" label="Spandrel (pixel SR)">
+              <option v-for="u in spandrelUpscalers" :key="u.id" :value="u.id">{{ u.label }}</option>
+            </optgroup>
+            <optgroup v-if="latentUpscalers.length" label="Latent">
+              <option v-for="u in latentUpscalers" :key="u.id" :value="u.id">{{ u.label }}</option>
+            </optgroup>
+          </select>
+          <p class="hr-hint" v-if="upscalersError">Error: {{ upscalersError }}</p>
+          <p class="hr-hint" v-else-if="upscaler && !isUpscalerKnown">Select an upscaler id from `GET /api/upscalers`.</p>
+        </div>
+
+        <SliderField
+          class="gc-col"
+          :label="cfgLabel"
+          :modelValue="cfgValue"
+          :min="0"
+          :max="30"
+          :step="0.5"
+          :inputStep="0.5"
+          :nudgeStep="0.5"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !enabled"
+          @update:modelValue="(v) => emit('update:cfg', v)"
+        />
+
+        <SliderField
+          class="gc-col"
+          label="Denoise"
+          :modelValue="denoise"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled || !enabled"
+          @update:modelValue="(v) => emit('update:denoise', v)"
         />
       </div>
 

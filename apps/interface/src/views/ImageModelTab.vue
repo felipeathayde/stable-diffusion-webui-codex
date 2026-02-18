@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-family engines.
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
+When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (hires-like layout only; no img2img hires payload).
 Hires settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
 Also shares the global `min_tile` preference (tiled OOM fallback lower bound) with `/upscale`.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
@@ -112,7 +113,48 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
         </div>
         <div class="panel-body">
+          <Img2ImgBasicParametersCard
+            v-if="params.useInitImage"
+            :samplers="filteredSamplers"
+            :schedulers="filteredSchedulers"
+            :upscalers="upscalers"
+            :upscalersLoading="upscalersLoading"
+            :upscalersError="upscalersError"
+            :sampler="params.sampler"
+            :scheduler="params.scheduler"
+            :steps="params.steps"
+            :width="params.width"
+            :height="params.height"
+            :cfg-scale="params.cfgScale"
+            :cfg-label="cfgLabel"
+            :denoise-strength="params.denoiseStrength"
+            :seed="params.seed"
+            :clip-skip="params.clipSkip"
+            :show-clip-skip="showClipSkip"
+            :min-clip-skip="minClipSkip"
+            :max-clip-skip="12"
+            :upscaler="params.img2imgUpscaler"
+            :resize-mode="params.img2imgResizeMode"
+            :show-init-image-dims="Boolean(params.initImageData)"
+            :disabled="isRunning"
+            @update:sampler="onSamplerChange"
+            @update:scheduler="(v) => setParams({ scheduler: v })"
+            @update:steps="(v) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
+            @update:width="(v) => setParams({ width: Math.max(64, Math.trunc(v)) })"
+            @update:height="(v) => setParams({ height: Math.max(64, Math.trunc(v)) })"
+            @update:cfgScale="(v) => setParams({ cfgScale: v })"
+            @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
+            @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
+            @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
+            @update:upscaler="(v) => setParams({ img2imgUpscaler: String(v || '').trim() })"
+            @update:resizeMode="(v) => setParams({ img2imgResizeMode: normalizeImg2ImgResizeMode(v) })"
+            @random-seed="randomizeSeed"
+            @reuse-seed="reuseSeed"
+            @sync-init-image-dims="syncInitImageDims"
+          />
+
           <BasicParametersCard
+            v-else
             :samplers="filteredSamplers"
             :schedulers="filteredSchedulers"
             :sampler="params.sampler"
@@ -126,13 +168,13 @@ Symbols (top-level; keep in sync; no ghosts):
             section-title="Basic Parameters"
             :resolutionPresets="resolutionPresets"
             :show-cfg="true"
-            :show-denoise="params.useInitImage"
+            :show-denoise="false"
             :denoise-strength="params.denoiseStrength"
             :cfg-label="cfgLabel"
             :show-clip-skip="showClipSkip"
             :min-clip-skip="minClipSkip"
             :max-clip-skip="12"
-            :show-init-image-dims="params.useInitImage && Boolean(params.initImageData)"
+            :show-init-image-dims="false"
             :disabled="isRunning"
             @update:sampler="onSamplerChange"
             @update:scheduler="(v) => setParams({ scheduler: v })"
@@ -140,12 +182,10 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:width="(v) => setParams({ width: Math.max(64, Math.trunc(v)) })"
             @update:height="(v) => setParams({ height: Math.max(64, Math.trunc(v)) })"
             @update:cfgScale="(v) => setParams({ cfgScale: v })"
-            @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
             @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
             @random-seed="randomizeSeed"
             @reuse-seed="reuseSeed"
-            @sync-init-image-dims="syncInitImageDims"
           />
 
           <HiresSettingsCard
@@ -356,9 +396,11 @@ import { useWorkflowsStore } from '../stores/workflows'
 import { useXyzStore } from '../stores/xyz'
 import { normalizeTabFamily } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
+import { normalizeImg2ImgResizeMode } from '../utils/img2img_resize'
 import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy } from '../utils/image_params'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
+import Img2ImgBasicParametersCard from '../components/Img2ImgBasicParametersCard.vue'
 import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'

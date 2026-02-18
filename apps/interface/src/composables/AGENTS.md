@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-17
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -35,7 +35,7 @@ Status: Active
 - 2026-02-06: `useVideoGeneration(tabId)` default WAN video params now include `returnFrames` (default false) and align interpolation defaults (`rifeEnabled`/`rifeModel`) with the canonical WAN params surface (prevents drift between store/view/composable defaults).
 - 2026-02-06: `useGeneration` engine mapping now delegates to `utils/engine_taxonomy.ts` so request engine-id resolution (`flux1_kontext`, `flux1_chroma`) is centralized and shared with other frontend modules.
 - 2026-02-08: `useGeneration.ts` now exports `isGenerationRunningForTab(tabId)` so header quicksettings controls can enforce run-lock behavior on mode toggles (e.g., INPAINT).
-- 2026-02-08: `useGeneration.ts` now sanitizes img2img payloads via `sanitizeImg2ImgPayload(...)` so `img2img_hires_*` keys are never sent (policy: img2img runs without hires).
+- 2026-02-18: `useGeneration.ts` keeps img2img payloads hires-free at the payload source (no `img2img_hires_*` keys are emitted); `img2imgResizeMode`/`img2imgUpscaler` are UI-state fields only (layout/selection, no hires dispatch).
 - 2026-02-15: `useGeneration(tabId)` and `useVideoGeneration(tabId)` now emit `settings_revision` on every start payload and handle stale-revision backend conflicts (`409` + `current_revision`) by refreshing revision state and surfacing a manual-retry message.
 - 2026-02-15: Added `settings_revision_conflict.ts` shared composable helper for parsing/formatting stale-settings conflict UX across image/video generation.
 - 2026-02-06: `useVideoGeneration(tabId)` now consumes typed WAN tab params (`TabByType<'wan'>`) and shared `WanAssetsParams` from `model_tabs.ts` instead of local `tab.params as any` casting for core WAN param reads.

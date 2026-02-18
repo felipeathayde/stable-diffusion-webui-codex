@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the WebUI.
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
 default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
-(`latent:*` / `spandrel:*`) for hires-fix wiring.
+(`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
+`img2imgUpscaler`) decoupled from backend hires dispatch.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -22,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
-  (includes optional family-specific fields like `zimageTurbo`).
+  (includes optional family-specific fields like `zimageTurbo` plus img2img layout state `img2imgResizeMode`/`img2imgUpscaler`).
 - `TabParamsByType` (type): Canonical params map by tab type.
 - `TabByType` (type): Typed tab shape (`type` + matching params payload).
 - `ModelTabsStorageState` (type): LocalStorage payload contract for light model-tabs state (`activeId` + tab refs).
@@ -62,6 +63,7 @@ import type { HiresFormState, RefinerFormState } from '../api/payloads'
 import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_config'
 import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, type TabFamily } from '../utils/engine_taxonomy'
+import { DEFAULT_IMG2IMG_RESIZE_MODE, normalizeImg2ImgResizeMode, type Img2ImgResizeMode } from '../utils/img2img_resize'
 
 export type BaseTabType = ApiTab['type']
 export type ImageTabType = Exclude<BaseTabType, 'wan'>
@@ -186,6 +188,8 @@ export interface ImageBaseParams {
   clipSkip: number
   batchSize: number
   batchCount: number
+  img2imgResizeMode: Img2ImgResizeMode
+  img2imgUpscaler: string
   hires: HiresFormState
   refiner: RefinerFormState
   checkpoint: string
@@ -389,6 +393,8 @@ function defaultParams<T extends BaseTabType>(
     clipSkip: 0,
     batchSize: 1,
     batchCount: 1,
+    img2imgResizeMode: DEFAULT_IMG2IMG_RESIZE_MODE,
+    img2imgUpscaler: 'latent:bicubic-aa',
     hires: { ...hiresDefaults },
     refiner: { ...refinerDefaults },
     checkpoint: '',
@@ -574,6 +580,8 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   if (typeof merged.scheduler !== 'string' || !merged.scheduler.trim()) {
     merged.scheduler = defaults.scheduler
   }
+  merged.img2imgResizeMode = normalizeImg2ImgResizeMode(merged.img2imgResizeMode)
+  merged.img2imgUpscaler = String(merged.img2imgUpscaler || '').trim() || defaults.img2imgUpscaler
   return merged
 }
 

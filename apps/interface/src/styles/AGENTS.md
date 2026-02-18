@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
-Last Review: 2026-02-17  
+Last Review: 2026-02-18  
 Status: Active
 
 ## Purpose
@@ -96,6 +96,8 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-03: Renamed the hires settings card stylesheet to `styles/components/hires-settings-card.css` and updated the card root class to `.hires-card`.
 - 2026-02-08: Added `styles/components/img2img-inpaint-params-card.css` for extracted img2img/inpaint controls and aligned `hires-settings-card.css` / `refiner-settings-card.css` layout structure to the `gen-card` organization style.
 - 2026-02-08: `hires-settings-card.css` now styles the full Basic-params-like hires row layout (including pseudo-disabled scale visuals when width/height overrides are active); tile preset visuals in hires use the shared resolution-button variant from `UpscalerTileControls.vue`.
+- 2026-02-18: Added `styles/components/img2img-basic-parameters-card.css` for the new init-image basic-parameters card and imported it in `styles.css`.
+- 2026-02-18: Hires card row order parity update (dimensions row before upscaler row) keeps selectors scoped under `.hires-card` / `.img2img-basic-card` to avoid global `.gc-row` regressions.
 - 2026-02-17: Added `styles/components/xyz-sweep-card.css` and removed `styles/views/xyz.css`; XYZ styling now lives with the shared embeddable card.
 - 2026-02-17: Added shared `run-progress-status*` rules in `styles/components/views-shared.css` and removed duplicated WAN-only progress styles from `styles/views/wan.css`.
 - 2026-02-17: `quicksettings.css` flex sizing was adjusted for wide monitors (reduced right-side dead space in the top row).

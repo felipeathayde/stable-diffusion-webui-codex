@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
-starts `/api/txt2img` and `/api/img2img` (with optional hires settings in txt2img only), includes `settings_revision` in payloads, handles
+starts `/api/txt2img` and `/api/img2img` (txt2img can include hires settings; img2img stays hires-free),
+includes `settings_revision` in payloads, handles
 stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 
@@ -18,7 +19,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
 - `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
-- `sanitizeImg2ImgPayload` (function): Removes hires keys from img2img payloads (policy: img2img does not send hires settings).
+- `BuildImg2ImgPayloadArgs` (interface): Input contract for deterministic img2img payload assembly (no hires keys).
+- `buildImg2ImgPayload` (function): Builds img2img start payload at the source and enforces the no-`img2img_hires_*` invariant fail-loud.
 - `extractLoraNamesFromPrompt` (function): Extracts LoRA token names from prompt text (`<lora:name:weight>`).
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
@@ -75,22 +77,6 @@ export interface GenerationState {
 const MAX_HISTORY = 8
 const RESUME_STORAGE_PREFIX = 'codex.resume.image'
 const resumeAttempts = new Set<string>()
-const IMG2IMG_HIRES_KEYS = [
-  'img2img_hires_enable',
-  'img2img_hires_scale',
-  'img2img_hires_resize_x',
-  'img2img_hires_resize_y',
-  'img2img_hires_steps',
-  'img2img_hires_denoise',
-  'img2img_hires_upscaler',
-  'img2img_hires_sampling',
-  'img2img_hires_scheduler',
-  'img2img_hires_prompt',
-  'img2img_hires_neg_prompt',
-  'img2img_hires_cfg',
-  'img2img_hires_distilled_cfg',
-  'img2img_hires_tile',
-] as const
 const LORA_TAG_RE = /<\s*lora\s*:\s*([^:>]+)\s*(?::[^>]*)?>/gi
 
 type ResumeState = {
@@ -169,12 +155,60 @@ export function resolveEngineForRequest(tabType: string, useInitImage: boolean):
   return resolveImageRequestEngineId(tabType, useInitImage)
 }
 
-export function sanitizeImg2ImgPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  const sanitized = { ...payload }
-  for (const key of IMG2IMG_HIRES_KEYS) {
-    delete sanitized[key]
+export interface BuildImg2ImgPayloadArgs {
+  params: ImageBaseParams
+  supportsNegativePrompt: boolean
+  isDistilledCfgModel: boolean
+  batchCount: number
+  batchSize: number
+  device: string
+  settingsRevision: number
+  engineId: string
+  modelOverride: string
+  extras: Record<string, unknown>
+}
+
+export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<string, unknown> {
+  const params = args.params
+  const payload: Record<string, unknown> = {
+    img2img_init_image: params.initImageData,
+    img2img_mask: params.useMask ? params.maskImageData : '',
+    img2img_prompt: params.prompt,
+    img2img_neg_prompt: args.supportsNegativePrompt ? params.negativePrompt : '',
+    img2img_styles: [],
+    img2img_batch_count: args.batchCount,
+    img2img_batch_size: args.batchSize,
+    img2img_steps: params.steps,
+    img2img_cfg_scale: args.isDistilledCfgModel ? 1.0 : params.cfgScale,
+    img2img_distilled_cfg_scale: args.isDistilledCfgModel ? params.cfgScale : undefined,
+    img2img_denoising_strength: params.denoiseStrength,
+    img2img_width: params.width,
+    img2img_height: params.height,
+    img2img_sampling: params.sampler,
+    img2img_scheduler: params.scheduler,
+    img2img_seed: params.seed,
+    img2img_clip_skip: params.clipSkip,
+    device: args.device,
+    settings_revision: args.settingsRevision,
+    engine: args.engineId,
+    model: args.modelOverride,
+    img2img_extras: { ...args.extras },
   }
-  return sanitized
+  if (params.useMask) {
+    payload.img2img_mask_enforcement = params.maskEnforcement
+    payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(params.inpaintingFill))))
+    payload.img2img_inpaint_full_res = Boolean(params.inpaintFullRes)
+    payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(params.inpaintFullResPadding)))
+    payload.img2img_inpainting_mask_invert = params.maskInvert ? 1 : 0
+    payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(params.maskBlur)))
+    payload.img2img_mask_round = Boolean(params.maskRound)
+  }
+  for (const key of Object.keys(payload)) {
+    if (key.startsWith('img2img_hires_')) {
+      throw new Error(`Invalid img2img payload key '${key}'. Fix payload builder source.`)
+    }
+  }
+  return payload
 }
 
 function extractLoraNamesFromPrompt(prompt: string): string[] {
@@ -252,6 +286,8 @@ export function useGeneration(tabId: string) {
 
       batchSize: p.batchSize,
       batchCount: p.batchCount,
+      img2imgResizeMode: p.img2imgResizeMode,
+      img2imgUpscaler: p.img2imgUpscaler,
 
       hires: p.hires,
       refiner: p.refiner,
@@ -468,43 +504,19 @@ export function useGeneration(tabId: string) {
     try {
       let taskId = ''
       if (p.useInitImage) {
-        const isFlowModel = Boolean(config.capabilities.usesDistilledCfg) && !config.capabilities.usesCfg
-        const img2imgExtras: Record<string, unknown> = { ...extras }
-
-        const payload: any = {
-          img2img_init_image: p.initImageData,
-          img2img_mask: p.useMask ? p.maskImageData : '',
-          img2img_prompt: p.prompt,
-          img2img_neg_prompt: supportsNegative ? p.negativePrompt : '',
-          img2img_styles: [],
-          img2img_batch_count: batchCount,
-          img2img_batch_size: batchSize,
-          img2img_steps: p.steps,
-          img2img_cfg_scale: isFlowModel ? 1.0 : p.cfgScale,
-          img2img_distilled_cfg_scale: isFlowModel ? p.cfgScale : undefined,
-          img2img_denoising_strength: p.denoiseStrength,
-          img2img_width: p.width,
-          img2img_height: p.height,
-          img2img_sampling: p.sampler,
-          img2img_scheduler: p.scheduler,
-          img2img_seed: p.seed,
-          img2img_clip_skip: p.clipSkip,
+        const payload = buildImg2ImgPayload({
+          params: p,
+          supportsNegativePrompt: supportsNegative,
+          isDistilledCfgModel: Boolean(config.capabilities.usesDistilledCfg) && !config.capabilities.usesCfg,
+          batchCount,
+          batchSize,
           device,
-          settings_revision: settingsRevision,
-          engine: engineOverrideForRequest,
-          model: modelOverride,
-          img2img_extras: img2imgExtras,
-        }
-        if (p.useMask) {
-          payload.img2img_mask_enforcement = p.maskEnforcement
-          payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(p.inpaintingFill))))
-          payload.img2img_inpaint_full_res = Boolean(p.inpaintFullRes)
-          payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(p.inpaintFullResPadding)))
-          payload.img2img_inpainting_mask_invert = p.maskInvert ? 1 : 0
-          payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(p.maskBlur)))
-          payload.img2img_mask_round = Boolean(p.maskRound)
-        }
-        const { task_id } = await startImg2Img(sanitizeImg2ImgPayload(payload))
+          settingsRevision,
+          engineId: engineOverrideForRequest,
+          modelOverride,
+          extras,
+        })
+        const { task_id } = await startImg2Img(payload)
         taskId = task_id
       } else {
         let payload: Txt2ImgRequest

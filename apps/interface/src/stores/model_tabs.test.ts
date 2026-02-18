@@ -108,6 +108,8 @@ function createSeededStore() {
       seed: -1,
       batchSize: 1,
       batchCount: 1,
+      img2imgResizeMode: 'just_resize',
+      img2imgUpscaler: 'latent:bicubic-aa',
       useInitImage: false,
       initImageData: '',
       initImageName: '',
@@ -192,6 +194,8 @@ describe('defaultImageParamsForType', () => {
     expect(defaults.hires.scale).toBe(2)
     expect(defaults.hires.resizeX).toBe(0)
     expect(defaults.hires.resizeY).toBe(0)
+    expect(defaults.img2imgResizeMode).toBe('just_resize')
+    expect(defaults.img2imgUpscaler).toBe('latent:bicubic-aa')
   })
 })
 

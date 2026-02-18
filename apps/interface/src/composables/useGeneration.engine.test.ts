@@ -6,17 +6,78 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Unit tests for generation request helpers (engine mapping, payload sanitization, revision-conflict parsing).
-Locks alias parity so UI disable-state and request engine selection remain consistent, and verifies stale-revision conflict helper behavior.
+Purpose: Unit tests for generation request helpers (engine mapping, img2img payload contract, revision-conflict parsing).
+Locks alias parity so UI disable-state and request engine selection remain consistent, and verifies stale-revision conflict helper behavior
+plus img2img payload invariants (no hires-prefixed keys).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `useGeneration.engine.test` (module): resolveEngineForRequest mapping + img2img payload sanitization + revision-conflict helper tests.
+- `useGeneration.engine.test` (module): resolveEngineForRequest mapping + img2img payload contract + revision-conflict helper tests.
 */
 
 import { describe, expect, it } from 'vitest'
 
-import { resolveEngineForRequest, sanitizeImg2ImgPayload } from './useGeneration'
+import type { ImageBaseParams } from '../stores/model_tabs'
+import { buildImg2ImgPayload, resolveEngineForRequest } from './useGeneration'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
+
+function makeImageParams(overrides: Partial<ImageBaseParams> = {}): ImageBaseParams {
+  return {
+    prompt: 'portrait of a woman',
+    negativePrompt: 'low quality',
+    width: 1024,
+    height: 896,
+    sampler: 'dpm++ 2m',
+    scheduler: 'karras',
+    steps: 32,
+    cfgScale: 7,
+    seed: 123456,
+    clipSkip: 0,
+    batchSize: 1,
+    batchCount: 1,
+    img2imgResizeMode: 'just_resize',
+    img2imgUpscaler: 'latent:bicubic-aa',
+    hires: {
+      enabled: true,
+      denoise: 0.35,
+      scale: 2,
+      resizeX: 0,
+      resizeY: 0,
+      steps: 0,
+      upscaler: 'latent:bicubic-aa',
+      tile: { tile: 1024, overlap: 64 },
+      sampler: 'euler',
+      scheduler: 'simple',
+      prompt: 'override prompt',
+      negativePrompt: 'override negative',
+      cfg: 6,
+      distilledCfg: undefined,
+    },
+    refiner: {
+      enabled: false,
+      swapAtStep: 28,
+      cfg: 7,
+      seed: -1,
+    },
+    checkpoint: 'model.safetensors',
+    textEncoders: [],
+    useInitImage: true,
+    initImageData: 'data:image/png;base64,AAAA',
+    initImageName: 'init.png',
+    denoiseStrength: 0.5,
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
+    maskEnforcement: 'post_blend',
+    inpaintFullRes: true,
+    inpaintFullResPadding: 32,
+    inpaintingFill: 1,
+    maskInvert: false,
+    maskBlur: 4,
+    maskRound: false,
+    zimageTurbo: true,
+    ...overrides,
+  }
+}
 
 describe('resolveEngineForRequest', () => {
   it('maps wan and chroma aliases', () => {
@@ -35,41 +96,53 @@ describe('resolveEngineForRequest', () => {
   })
 })
 
-describe('sanitizeImg2ImgPayload', () => {
-  it('removes all img2img hires keys', () => {
-    const payload = sanitizeImg2ImgPayload({
-      img2img_prompt: 'base',
-      img2img_hires_enable: true,
-      img2img_hires_scale: 2,
-      img2img_hires_resize_x: 0,
-      img2img_hires_resize_y: 0,
-      img2img_hires_steps: 0,
-      img2img_hires_denoise: 0.4,
-      img2img_hires_upscaler: 'latent:bicubic-aa',
-      img2img_hires_sampling: 'euler',
-      img2img_hires_scheduler: 'simple',
-      img2img_hires_prompt: 'override',
-      img2img_hires_neg_prompt: '',
-      img2img_hires_cfg: 7,
-      img2img_hires_distilled_cfg: undefined,
-      img2img_hires_tile: { tile: 256, overlap: 16 },
+describe('buildImg2ImgPayload', () => {
+  it('builds payload without any img2img_hires_* keys', () => {
+    const params = makeImageParams({
+      useMask: true,
+      maskImageData: 'data:image/png;base64,BBBB',
+      maskImageName: 'mask.png',
     })
 
-    expect(payload.img2img_prompt).toBe('base')
+    const payload = buildImg2ImgPayload({
+      params,
+      supportsNegativePrompt: true,
+      isDistilledCfgModel: false,
+      batchCount: 2,
+      batchSize: 1,
+      device: 'cuda',
+      settingsRevision: 17,
+      engineId: 'sdxl',
+      modelOverride: 'sha256:abc',
+      extras: { lora_sha: 'sha256:lora' },
+    })
+
+    expect(Object.keys(payload).some((key) => key.startsWith('img2img_hires_'))).toBe(false)
     expect(payload.img2img_hires_enable).toBeUndefined()
-    expect(payload.img2img_hires_scale).toBeUndefined()
-    expect(payload.img2img_hires_resize_x).toBeUndefined()
-    expect(payload.img2img_hires_resize_y).toBeUndefined()
-    expect(payload.img2img_hires_steps).toBeUndefined()
-    expect(payload.img2img_hires_denoise).toBeUndefined()
-    expect(payload.img2img_hires_upscaler).toBeUndefined()
-    expect(payload.img2img_hires_sampling).toBeUndefined()
-    expect(payload.img2img_hires_scheduler).toBeUndefined()
-    expect(payload.img2img_hires_prompt).toBeUndefined()
-    expect(payload.img2img_hires_neg_prompt).toBeUndefined()
-    expect(payload.img2img_hires_cfg).toBeUndefined()
-    expect(payload.img2img_hires_distilled_cfg).toBeUndefined()
-    expect(payload.img2img_hires_tile).toBeUndefined()
+    expect(payload.img2img_init_image).toBe(params.initImageData)
+    expect(payload.img2img_extras).toEqual({ lora_sha: 'sha256:lora' })
+    expect(payload.img2img_mask).toBe(params.maskImageData)
+  })
+
+  it('routes distilled cfg and negative prompt according to engine support', () => {
+    const params = makeImageParams({ cfgScale: 5.5, negativePrompt: 'should be dropped' })
+
+    const payload = buildImg2ImgPayload({
+      params,
+      supportsNegativePrompt: false,
+      isDistilledCfgModel: true,
+      batchCount: 1,
+      batchSize: 1,
+      device: 'cuda',
+      settingsRevision: 3,
+      engineId: 'flux1_kontext',
+      modelOverride: 'sha256:def',
+      extras: {},
+    })
+
+    expect(payload.img2img_cfg_scale).toBe(1)
+    expect(payload.img2img_distilled_cfg_scale).toBe(5.5)
+    expect(payload.img2img_neg_prompt).toBe('')
   })
 })
 

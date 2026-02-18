@@ -11,6 +11,7 @@ Renders a compact chip for `PromptToken` nodes with controls to enable/disable, 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PromptTokenChip` (component): Node-view component for prompt token chips.
+- `chipName` (const): Display label for chip name (LoRA chips hide trailing `.safetensors`).
 - `update` (function): Updates node attributes via a Tiptap transaction after resolving the current node from `tr.doc` at `getPos()`.
 - `remove` (function): Deletes the token node from the document after resolving the live node size from `tr.doc` at `getPos()`.
 - `toggle` (function): Toggles the token enabled state.
@@ -20,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <NodeViewWrapper as="span" class="chip" :data-enabled="props.node.attrs.enabled ? '1' : '0'" contenteditable="false">
-    <span class="chip-name">{{ props.node.attrs.name }}</span>
+    <span class="chip-name">{{ chipName }}</span>
     <span class="chip-weight">{{ props.node.attrs.weight.toFixed(2) }}</span>
     <button class="chip-btn" type="button" @click.stop="toggle" :title="props.node.attrs.enabled ? 'Disable' : 'Enable'">⛔</button>
     <button class="chip-btn" type="button" @click.stop="dec" title="Weight -" >-</button>
@@ -31,9 +32,16 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/vue-3'
+import { computed } from 'vue'
 const props = defineProps<NodeViewProps>()
 const editor = props.editor
 const getPos = props.getPos
+const chipName = computed(() => {
+  const rawName = String(props.node.attrs.name || '')
+  if (String(props.node.attrs.kind || '') !== 'lora') return rawName
+  const stripped = rawName.replace(/\.safetensors$/i, '')
+  return stripped || rawName
+})
 
 function update(
   next:

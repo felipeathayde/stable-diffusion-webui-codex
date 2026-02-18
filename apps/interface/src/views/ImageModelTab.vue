@@ -48,6 +48,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `syncInitImageDims` (function): Synchronizes init-image derived dimensions into width/height params (async).
 - `maybeApplyKontextDefaults` (function): Applies Kontext-specific default params when relevant to the current engine/tab.
 - `syncPreviewHeight` (function): Keeps the preview panel height aligned with layout changes (uses DOM measurements).
+- `onGenerate` (function): Run handler for the Run card; dispatches standard generation or XYZ sweep depending on XYZ enable state.
+- `runGenerateDisabled`/`runGenerateTitle` (const): Run CTA state/title derived from capabilities + active mode + XYZ running/enabled state.
+- `xyzSamplerChoices`/`xyzSchedulerChoices` (const): Sampler/scheduler names passed to embedded XYZ autofill (scheduler list is sampler-compatible).
 -->
 
 <template>
@@ -73,7 +76,6 @@ Symbols (top-level; keep in sync; no ghosts):
             :disabled="isRunning"
             :initImageData="params.initImageData"
             :initImageName="params.initImageName"
-            :denoiseStrength="params.denoiseStrength"
             :useMask="params.useMask"
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"
@@ -87,7 +89,6 @@ Symbols (top-level; keep in sync; no ghosts):
             @set:initImage="onInitFileSet"
             @clear:initImage="clearInit"
             @reject:initImage="onInitImageRejected"
-            @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             @set:maskImage="onMaskFileSet"
             @clear:maskImage="clearMask"
             @reject:maskImage="onMaskImageRejected"
@@ -125,6 +126,8 @@ Symbols (top-level; keep in sync; no ghosts):
             section-title="Basic Parameters"
             :resolutionPresets="resolutionPresets"
             :show-cfg="true"
+            :show-denoise="params.useInitImage"
+            :denoise-strength="params.denoiseStrength"
             :cfg-label="cfgLabel"
             :show-clip-skip="showClipSkip"
             :min-clip-skip="minClipSkip"
@@ -137,6 +140,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:width="(v) => setParams({ width: Math.max(64, Math.trunc(v)) })"
             @update:height="(v) => setParams({ height: Math.max(64, Math.trunc(v)) })"
             @update:cfgScale="(v) => setParams({ cfgScale: v })"
+            @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
             @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
             @random-seed="randomizeSeed"
@@ -217,7 +221,10 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:model="(v) => setRefiner({ model: v })"
           />
 
-          <XyzSweepCard />
+          <XyzSweepCard
+            :samplers="xyzSamplerChoices"
+            :schedulers="xyzSchedulerChoices"
+          />
         </div>
       </div>
     </div>
@@ -225,14 +232,15 @@ Symbols (top-level; keep in sync; no ghosts):
     <!-- Right column: Run + Results -->
     <div class="panel-stack">
       <RunCard
-        :generateDisabled="isRunning || !canGenerateForCurrentMode"
-        :generateTitle="generateDisabledReason"
-        :isRunning="isRunning"
+        :generateLabel="generateLabel"
+        :generateDisabled="runGenerateDisabled"
+        :generateTitle="runGenerateTitle"
+        :isRunning="isRunBusy"
         :showBatchControls="true"
         :batchCount="params.batchCount"
         :batchSize="params.batchSize"
-        :disabled="isRunning"
-        @generate="generate"
+        :disabled="isRunBusy"
+        @generate="onGenerate"
         @update:batchCount="(v) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
         @update:batchSize="(v) => setParams({ batchSize: Math.max(1, Math.trunc(v)) })"
       >
@@ -244,6 +252,12 @@ Symbols (top-level; keep in sync; no ghosts):
           :total-steps="progress.totalSteps"
           :eta-seconds="progress.etaSeconds"
         />
+        <div v-else-if="xyzRunning" class="run-progress-status">
+          <p class="run-progress-status__line"><strong>Stage:</strong> xyz sweep</p>
+          <p v-if="xyzStore.progress.total" class="run-progress-status__line">Progress: {{ xyzProgressPercentLabel }}</p>
+          <p v-if="xyzStore.progress.total" class="run-progress-status__line">Step {{ xyzStore.progress.completed }} / {{ xyzStore.progress.total }}</p>
+          <p v-if="xyzStore.progress.current" class="run-progress-status__line">Current: {{ xyzStore.progress.current }}</p>
+        </div>
         <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
         <RunSummaryChips :text="runSummary" />
       </RunCard>
@@ -339,6 +353,7 @@ import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
+import { useXyzStore } from '../stores/xyz'
 import { normalizeTabFamily } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
 import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy } from '../utils/image_params'
@@ -362,11 +377,12 @@ const quicksettingsStore = useQuicksettingsStore()
 const bootstrap = useBootstrapStore()
 const workflows = useWorkflowsStore()
 const upscalersStore = useUpscalersStore()
+const xyzStore = useXyzStore()
 const { upscalers, loading: upscalersLoading, error: upscalersError, fallbackOnOom, minTile } = storeToRefs(upscalersStore)
 
 // Use unified generation composable
 const {
-  generate,
+  generate: generateBase,
   stopStream,
   gallery,
   progress,
@@ -469,6 +485,36 @@ const generateDisabledReason = computed(() => {
   if (!familyCapabilities.value) return `Family capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (params.value.useInitImage && !supportsImg2Img.value) return `${engineConfig.value.label} does not support img2img.`
   if (!params.value.useInitImage && !supportsTxt2Img.value) return `${engineConfig.value.label} does not support txt2img.`
+  return ''
+})
+const xyzSamplerChoices = computed(() => filteredSamplers.value.map((entry) => entry.name))
+const xyzSchedulerChoices = computed(() => filteredSchedulers.value.map((entry) => entry.name))
+const xyzRunning = computed(() => xyzStore.status === 'running')
+const isRunBusy = computed(() => isRunning.value || xyzRunning.value)
+const generateLabel = computed(() => (xyzStore.enabled ? 'Generate xyz' : 'Generate'))
+const xyzProgressPercent = computed(() => {
+  if (!xyzStore.progress.total) return null
+  return (xyzStore.progress.completed / xyzStore.progress.total) * 100
+})
+const xyzProgressPercentLabel = computed(() => {
+  if (xyzProgressPercent.value === null) return '—'
+  return `${xyzProgressPercent.value.toFixed(1)}%`
+})
+const runGenerateDisabled = computed(() => {
+  if (isRunBusy.value) return true
+  if (xyzStore.enabled) {
+    return !(dependencyReady.value && Boolean(familyCapabilities.value) && supportsTxt2Img.value)
+  }
+  return !canGenerateForCurrentMode.value
+})
+const runGenerateTitle = computed(() => {
+  if (xyzRunning.value) return 'XYZ sweep is running.'
+  if (!xyzStore.enabled) return generateDisabledReason.value
+  if (!dependencyStatus.value) return `Dependency checks for '${resolvedEngineForMode.value}' are not available.`
+  if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
+  if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
+  if (!familyCapabilities.value) return `Family capabilities for '${resolvedEngineForMode.value}' are not loaded.`
+  if (!supportsTxt2Img.value) return `${engineConfig.value.label} does not support txt2img.`
   return ''
 })
 
@@ -696,6 +742,14 @@ const runSummary = computed(() => {
   const seedLabel = params.value.seed === -1 ? 'seed random' : `seed ${params.value.seed}`
   return `${params.value.width}×${params.value.height} px · ${params.value.steps} steps · ${cfgLabel.value} ${params.value.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel} · batch ${params.value.batchCount}×${params.value.batchSize}`
 })
+
+async function onGenerate(): Promise<void> {
+  if (xyzStore.enabled) {
+    await xyzStore.run()
+    return
+  }
+  await generateBase()
+}
 
 async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
@@ -1025,5 +1079,5 @@ function syncPreviewHeight(): void {
   previewStyle.value = { minHeight: `${Math.max(300, Math.floor(h))}px` }
 }
 
-defineExpose({ generate })
+defineExpose({ generate: onGenerate })
 </script>

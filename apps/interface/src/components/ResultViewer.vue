@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Viewer for generated images/videos with zoom overlay.
 Displays generated outputs and provides an overlay viewer for zoom/pan actions, wheel/keyboard zoom controls, and per-item controls
-(including per-frame downloads when available).
+(including per-frame downloads when available). Image previews are constrained for card readability (`max-height: 30dvh`)
+while preserving click-to-zoom full-screen behavior.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ResultViewer` (component): Viewer component for generated outputs and overlay interactions.
@@ -25,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <template v-if="images && images.length">
         <div class="gallery-grid">
           <figure v-for="(img, index) in images" :key="index" class="gallery-figure">
-            <img :src="imageUrl(img)" :alt="`Result ${index + 1}`" @click="openZoom(img)" />
+            <img class="result-image" :src="imageUrl(img)" :alt="`Result ${index + 1}`" @click="openZoom(img)" />
             <div class="badge-ar" v-if="width && height">{{ width }}×{{ height }}</div>
             <div class="gallery-overlay">
               <div class="gallery-actions">
@@ -39,7 +40,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <template v-else-if="previewImage">
         <div class="gallery-grid">
           <figure class="gallery-figure">
-            <img :src="imageUrl(previewImage)" alt="Live preview" @click="openZoom(previewImage)" />
+            <img class="result-image" :src="imageUrl(previewImage)" alt="Live preview" @click="openZoom(previewImage)" />
             <div class="badge-ar" v-if="width && height">{{ width }}×{{ height }}</div>
             <figcaption class="gallery-caption">{{ previewCaption || 'Live preview' }}</figcaption>
           </figure>

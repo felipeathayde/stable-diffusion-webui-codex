@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Hires (second pass) settings panel.
 Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, upscaler/cfg/denoise,
 scale/width/height, model selector, prompt overrides), plus tile controls and optional second-pass swap-model settings.
-Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels.
+Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels. Uses the shared `WanSubHeader`
+title pattern to match the BASIC PARAMETERS card header style.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `HiresSettingsCard` (component): Hires settings block for supported image tabs.
@@ -19,17 +20,16 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <div class="gen-card hires-card">
-    <div class="row-split">
-      <span class="label-muted">Hires (second pass)</span>
+    <WanSubHeader title="Hires (second pass)">
       <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
         :aria-pressed="enabled"
         @click="toggle"
-    >
+      >
         {{ enabled ? 'Enabled' : 'Disabled' }}
       </button>
-    </div>
+    </WanSubHeader>
     <div v-if="enabled" class="gc-stack">
       <div class="gc-row">
         <SamplerSelector
@@ -263,6 +263,7 @@ import SamplerSelector from './SamplerSelector.vue'
 import SchedulerSelector from './SchedulerSelector.vue'
 import SliderField from './ui/SliderField.vue'
 import UpscalerTileControls from './ui/UpscalerTileControls.vue'
+import WanSubHeader from './wan/WanSubHeader.vue'
 
 type TileConfigState = { tile: number; overlap: number }
 

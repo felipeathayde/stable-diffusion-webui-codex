@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Swap-model configuration card (first pass or hires second pass).
 Renders a compact enable switch and optional fields (checkpoint swap step + CFG/seed), emitting updates to parent views.
+Uses the shared `WanSubHeader` title pattern to match the BASIC PARAMETERS card header style.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RefinerSettingsCard` (component): Swap-model settings panel component.
@@ -16,8 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <div :class="['gen-card', 'refiner-card', { 'refiner-card--dense': dense } ]">
-    <div class="row-split">
-      <span class="label-muted">{{ label }}</span>
+    <WanSubHeader :title="label">
       <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
       >
         {{ enabled ? 'Enabled' : 'Disabled' }}
       </button>
-    </div>
+    </WanSubHeader>
     <div v-if="enabled" class="rf-grid">
       <div class="field rf-field--full">
         <label class="label-muted">Checkpoint Swap</label>
@@ -56,6 +56,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 // tags: refiner, settings, grid
 import { computed } from 'vue'
+import WanSubHeader from './wan/WanSubHeader.vue'
 
 const props = withDefaults(defineProps<{
   enabled: boolean

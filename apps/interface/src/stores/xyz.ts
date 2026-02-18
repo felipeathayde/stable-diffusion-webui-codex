@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `StopMode` (type): Stop behavior for a running sweep (`immediate` vs `after_current`).
 - `XyzJob` (interface): Internal job record for each cell (payload/task id/status/result/error).
 - `useXyzStore` (store): Pinia store for XYZ sweeps; builds combos, runs jobs, subscribes to task SSE, and writes results into cells.
+- `enabled`/`xEnabled`/`yEnabled`/`zEnabled` (store refs): Master and per-axis toggles used by the embedded XYZ card + Run integration.
 - `XyzStore` (type): Convenience return type alias for `useXyzStore`.
 */
 
@@ -51,6 +52,10 @@ export const useXyzStore = defineStore('xyz', () => {
   const xParam = ref<AxisParam>('cfg')
   const yParam = ref<AxisParam>('steps')
   const zParam = ref<AxisParam>('sampler')
+  const enabled = ref(false)
+  const xEnabled = ref(true)
+  const yEnabled = ref(true)
+  const zEnabled = ref(true)
 
   const xValuesText = ref('6, 7, 8')
   const yValuesText = ref('20, 28')
@@ -72,9 +77,13 @@ export const useXyzStore = defineStore('xyz', () => {
     return AXIS_OPTIONS.find((o) => o.id === param)?.kind ?? 'text'
   }
 
-  const xValues = computed<AxisValue[]>(() => parseAxisValues(xValuesText.value, axisKind(xParam.value)))
-  const yValues = computed<AxisValue[]>(() => parseAxisValues(yValuesText.value, axisKind(yParam.value)))
-  const zValues = computed<AxisValue[]>(() => parseAxisValues(zValuesText.value, axisKind(zParam.value)))
+  const xParsedValues = computed<AxisValue[]>(() => parseAxisValues(xValuesText.value, axisKind(xParam.value)))
+  const yParsedValues = computed<AxisValue[]>(() => parseAxisValues(yValuesText.value, axisKind(yParam.value)))
+  const zParsedValues = computed<AxisValue[]>(() => parseAxisValues(zValuesText.value, axisKind(zParam.value)))
+
+  const xValues = computed<AxisValue[]>(() => (xEnabled.value ? xParsedValues.value : ['(base)']))
+  const yValues = computed<AxisValue[]>(() => (yEnabled.value ? yParsedValues.value : []))
+  const zValues = computed<AxisValue[]>(() => (zEnabled.value ? zParsedValues.value : []))
 
   const combos = computed(() => buildCombos(xValues.value, yValues.value, zValues.value))
 
@@ -245,9 +254,42 @@ export const useXyzStore = defineStore('xyz', () => {
     const quick = useQuicksettingsStore()
     const activeTab = tabs.activeTab
     const params = activeTab?.params as ImageBaseParams | undefined
-    
-    if (!xValues.value.length) {
-      errorMessage.value = 'X axis needs at least one value.'
+
+    if (!enabled.value) {
+      errorMessage.value = 'Enable XYZ before running.'
+      status.value = 'error'
+      return
+    }
+    if (!xEnabled.value && !yEnabled.value && !zEnabled.value) {
+      errorMessage.value = 'Enable at least one axis before running XYZ.'
+      status.value = 'error'
+      return
+    }
+    if (xEnabled.value && !xParsedValues.value.length) {
+      errorMessage.value = 'X axis needs at least one value while enabled.'
+      status.value = 'error'
+      return
+    }
+    if (yEnabled.value && !yParsedValues.value.length) {
+      errorMessage.value = 'Y axis needs at least one value while enabled.'
+      status.value = 'error'
+      return
+    }
+    if (zEnabled.value && !zParsedValues.value.length) {
+      errorMessage.value = 'Z axis needs at least one value while enabled.'
+      status.value = 'error'
+      return
+    }
+    const samplerAxisEnabled =
+      (xEnabled.value && xParam.value === 'sampler')
+      || (yEnabled.value && yParam.value === 'sampler')
+      || (zEnabled.value && zParam.value === 'sampler')
+    const schedulerAxisEnabled =
+      (xEnabled.value && xParam.value === 'scheduler')
+      || (yEnabled.value && yParam.value === 'scheduler')
+      || (zEnabled.value && zParam.value === 'scheduler')
+    if (samplerAxisEnabled && schedulerAxisEnabled) {
+      errorMessage.value = 'Sampler and Scheduler axes cannot be varied together in the same XYZ run.'
       status.value = 'error'
       return
     }
@@ -274,9 +316,9 @@ export const useXyzStore = defineStore('xyz', () => {
     // Pre-build job queue with payload snapshots
     for (const combo of comboList) {
       const form = buildBaseForm()
-      applyAxis(form, xParam.value, combo.x)
-      if (combo.y !== null) applyAxis(form, yParam.value, combo.y)
-      if (combo.z !== null) applyAxis(form, zParam.value, combo.z)
+      if (xEnabled.value) applyAxis(form, xParam.value, combo.x)
+      if (combo.y !== null && yEnabled.value) applyAxis(form, yParam.value, combo.y)
+      if (combo.z !== null && zEnabled.value) applyAxis(form, zParam.value, combo.z)
       try {
         const payload = buildTxt2ImgPayload(form, { hiresFallbackOnOom, hiresMinTile })
         jobs.value.push({
@@ -310,7 +352,11 @@ export const useXyzStore = defineStore('xyz', () => {
 
       job.status = 'running'
       cell.status = 'running'
-      progress.current = `${labelOf(job.combo.x)} / ${labelOf(job.combo.y)} / ${labelOf(job.combo.z)}`
+      const currentParts: string[] = []
+      if (xEnabled.value) currentParts.push(labelOf(job.combo.x))
+      if (yEnabled.value) currentParts.push(labelOf(job.combo.y))
+      if (zEnabled.value) currentParts.push(labelOf(job.combo.z))
+      progress.current = currentParts.join(' / ') || 'base'
 
       try {
         const { task_id } = await startTxt2Img(job.payload)
@@ -353,6 +399,10 @@ export const useXyzStore = defineStore('xyz', () => {
     xParam,
     yParam,
     zParam,
+    enabled,
+    xEnabled,
+    yEnabled,
+    zEnabled,
     xValuesText,
     yValuesText,
     zValuesText,

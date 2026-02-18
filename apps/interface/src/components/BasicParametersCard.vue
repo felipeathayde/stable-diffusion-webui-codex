@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared basic generation parameters card (sampler/scheduler/steps/seed/CFG/dimensions).
-Reusable card used across model tabs to edit common fields, with optional resolution presets, CLIP skip, and init-image dimension sync.
+Reusable card used across model tabs to edit common fields, with optional resolution presets, CLIP skip, init-image dimension sync, and img2img denoise control.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BasicParametersCard` (component): Basic params card SFC; wires selectors/sliders and emits `update:*` events plus seed actions/sync hooks.
@@ -158,6 +158,21 @@ Symbols (top-level; keep in sync; no ghosts):
           :disabled="disabled"
           @update:modelValue="(v) => emit('update:cfgScale', clampFloat(v, minCfg, maxCfg))"
         />
+
+        <SliderField
+          v-if="showDenoise"
+          class="gc-col"
+          label="Denoise"
+          :modelValue="denoiseStrength"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-xs"
+          :disabled="disabled"
+          @update:modelValue="(v) => emit('update:denoiseStrength', clampFloat(v, 0, 1))"
+        />
       </div>
     </div>
   </div>
@@ -181,6 +196,7 @@ const props = withDefaults(defineProps<{
   scheduler: string
   steps: number
   cfgScale: number
+  denoiseStrength?: number
   seed: number
   width: number
   height: number
@@ -206,6 +222,7 @@ const props = withDefaults(defineProps<{
   minSteps?: number
   maxSteps?: number
   showCfg?: boolean
+  showDenoise?: boolean
   minCfg?: number
   maxCfg?: number
   cfgStep?: number
@@ -240,6 +257,8 @@ const props = withDefaults(defineProps<{
   minSteps: 1,
   maxSteps: 150,
   showCfg: true,
+  showDenoise: false,
+  denoiseStrength: 0.5,
   minCfg: 0,
   maxCfg: 30,
   cfgStep: 0.5,
@@ -265,6 +284,7 @@ const emit = defineEmits<{
   (e: 'update:scheduler', value: string): void
   (e: 'update:steps', value: number): void
   (e: 'update:cfgScale', value: number): void
+  (e: 'update:denoiseStrength', value: number): void
   (e: 'update:seed', value: number): void
   (e: 'update:width', value: number): void
   (e: 'update:height', value: number): void

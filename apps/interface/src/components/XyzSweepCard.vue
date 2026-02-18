@@ -7,11 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Embedded XYZ sweep card.
-Provides XYZ controls/results as an embeddable card (for Generation Parameters), reusing the shared XYZ store.
+Provides XYZ controls/results as an embeddable card (for Generation Parameters), reusing the shared XYZ store
+with per-axis toggles and sampler/scheduler autofill actions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `XyzSweepCard` (component): Embedded XYZ controls + results card.
-- `onRun` (function): Starts the XYZ run via store.
+- `controlsLocked` (const): Read-only lock state while an XYZ run is active.
+- `showFillAllButton` (function): Returns whether sampler/scheduler autofill is available for the selected axis param.
+- `fillAxisValues` (function): Fills an axis values input with all available samplers/schedulers.
 - `toDataUrl` (function): Converts generated image payloads to `data:` URLs.
 - `label` (function): Formats axis values for display.
 - `cellKey` (function): Builds stable keys for result cells.
@@ -19,42 +22,118 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <div class="gen-card xyz-card">
-    <div class="row-split">
-      <span class="label-muted">Script</span>
-      <span class="caption">X/Y/Z plot</span>
-    </div>
+    <WanSubHeader title="Script">
+      <template #subtitle>
+        <span class="caption">X/Y/Z plot</span>
+      </template>
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', store.enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :aria-pressed="store.enabled"
+        :disabled="controlsLocked"
+        @click="store.enabled = !store.enabled"
+      >
+        {{ store.enabled ? 'Enabled' : 'Disabled' }}
+      </button>
+    </WanSubHeader>
 
     <div class="xyz-grid-config">
-      <div class="xyz-axis-card">
-        <div class="axis-header">X type</div>
-        <select class="select-md" v-model="store.xParam">
-          <option v-for="opt in axisOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
-        </select>
+      <div :class="['xyz-axis-card', { 'xyz-axis-card--disabled': !store.xEnabled }]">
+        <div class="axis-header">
+          <span class="axis-title">X type</span>
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', store.xEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :aria-pressed="store.xEnabled"
+            :disabled="controlsLocked"
+            @click="store.xEnabled = !store.xEnabled"
+          >
+            {{ store.xEnabled ? 'On' : 'Off' }}
+          </button>
+        </div>
+        <div class="axis-select-row">
+          <select class="select-md" :disabled="controlsLocked || !store.xEnabled" v-model="store.xParam">
+            <option v-for="opt in axisOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
+          </select>
+          <button
+            v-if="showFillAllButton(store.xParam)"
+            class="btn btn-sm btn-outline"
+            type="button"
+            :disabled="controlsLocked || !store.xEnabled"
+            @click="fillAxisValues('x')"
+          >
+            All
+          </button>
+        </div>
         <label class="label-muted">X values</label>
-        <textarea class="ui-textarea h-prompt-sm" v-model="store.xValuesText" placeholder="e.g. 6,7,8"></textarea>
+        <textarea class="ui-textarea h-prompt-sm" :disabled="controlsLocked || !store.xEnabled" v-model="store.xValuesText" placeholder="e.g. 6,7,8"></textarea>
       </div>
 
-      <div class="xyz-axis-card">
-        <div class="axis-header">Y type</div>
-        <select class="select-md" v-model="store.yParam">
-          <option v-for="opt in axisOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
-        </select>
+      <div :class="['xyz-axis-card', { 'xyz-axis-card--disabled': !store.yEnabled }]">
+        <div class="axis-header">
+          <span class="axis-title">Y type</span>
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', store.yEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :aria-pressed="store.yEnabled"
+            :disabled="controlsLocked"
+            @click="store.yEnabled = !store.yEnabled"
+          >
+            {{ store.yEnabled ? 'On' : 'Off' }}
+          </button>
+        </div>
+        <div class="axis-select-row">
+          <select class="select-md" :disabled="controlsLocked || !store.yEnabled" v-model="store.yParam">
+            <option v-for="opt in axisOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
+          </select>
+          <button
+            v-if="showFillAllButton(store.yParam)"
+            class="btn btn-sm btn-outline"
+            type="button"
+            :disabled="controlsLocked || !store.yEnabled"
+            @click="fillAxisValues('y')"
+          >
+            All
+          </button>
+        </div>
         <label class="label-muted">Y values</label>
-        <textarea class="ui-textarea h-prompt-sm" v-model="store.yValuesText" placeholder="optional"></textarea>
+        <textarea class="ui-textarea h-prompt-sm" :disabled="controlsLocked || !store.yEnabled" v-model="store.yValuesText" placeholder="optional"></textarea>
       </div>
 
-      <div class="xyz-axis-card">
-        <div class="axis-header">Z type</div>
-        <select class="select-md" v-model="store.zParam">
-          <option v-for="opt in axisOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
-        </select>
+      <div :class="['xyz-axis-card', { 'xyz-axis-card--disabled': !store.zEnabled }]">
+        <div class="axis-header">
+          <span class="axis-title">Z type</span>
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', store.zEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :aria-pressed="store.zEnabled"
+            :disabled="controlsLocked"
+            @click="store.zEnabled = !store.zEnabled"
+          >
+            {{ store.zEnabled ? 'On' : 'Off' }}
+          </button>
+        </div>
+        <div class="axis-select-row">
+          <select class="select-md" :disabled="controlsLocked || !store.zEnabled" v-model="store.zParam">
+            <option v-for="opt in axisOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
+          </select>
+          <button
+            v-if="showFillAllButton(store.zParam)"
+            class="btn btn-sm btn-outline"
+            type="button"
+            :disabled="controlsLocked || !store.zEnabled"
+            @click="fillAxisValues('z')"
+          >
+            All
+          </button>
+        </div>
         <label class="label-muted">Z values</label>
-        <textarea class="ui-textarea h-prompt-sm" v-model="store.zValuesText" placeholder="optional"></textarea>
+        <textarea class="ui-textarea h-prompt-sm" :disabled="controlsLocked || !store.zEnabled" v-model="store.zValuesText" placeholder="optional"></textarea>
       </div>
     </div>
 
     <div class="toolbar">
-      <button class="btn btn-sm btn-primary" type="button" :disabled="store.status === 'running'" @click="onRun">Run XYZ</button>
+      <span class="caption">Run XYZ from the main Generate button while XYZ is enabled.</span>
       <button class="btn btn-sm btn-outline" type="button" :disabled="store.status !== 'running'" @click="() => store.stop('after_current')">
         Stop after current
       </button>
@@ -87,8 +166,8 @@ Symbols (top-level; keep in sync; no ghosts):
               </template>
             </div>
             <div class="xyz-cell-meta">
-              <span class="chip">X: {{ label(cell.x) }}</span>
-              <span class="chip">Y: {{ label(cell.y) }}</span>
+              <span class="xyz-chip">X: {{ label(cell.x) }}</span>
+              <span class="xyz-chip">Y: {{ label(cell.y) }}</span>
             </div>
             <p v-if="cell.error" class="caption error-text">{{ cell.error }}</p>
           </div>
@@ -99,15 +178,60 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { AXIS_OPTIONS, labelOf } from '../utils/xyz'
+import { AXIS_OPTIONS, labelOf, type AxisParam } from '../utils/xyz'
 import { useXyzStore } from '../stores/xyz'
 import type { GeneratedImage } from '../api/types'
+import WanSubHeader from './wan/WanSubHeader.vue'
+import { computed } from 'vue'
+
+type AxisKey = 'x' | 'y' | 'z'
+
+const props = withDefaults(defineProps<{
+  samplers?: string[]
+  schedulers?: string[]
+}>(), {
+  samplers: () => [],
+  schedulers: () => [],
+})
 
 const store = useXyzStore()
 const axisOptions = AXIS_OPTIONS
+const controlsLocked = computed(() => store.status === 'running')
 
-function onRun(): void {
-  void store.run()
+function axisValuesForParam(param: AxisParam): string[] {
+  if (param === 'sampler') return props.samplers
+  if (param === 'scheduler') return props.schedulers
+  return []
+}
+
+function showFillAllButton(param: AxisParam): boolean {
+  return axisValuesForParam(param).length > 0
+}
+
+function normalizedCsv(values: string[]): string {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of values) {
+    const value = String(raw || '').trim()
+    if (!value) continue
+    const key = value.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(value)
+  }
+  return out.join(',')
+}
+
+function fillAxisValues(axis: AxisKey): void {
+  if (axis === 'x') {
+    store.xValuesText = normalizedCsv(axisValuesForParam(store.xParam))
+    return
+  }
+  if (axis === 'y') {
+    store.yValuesText = normalizedCsv(axisValuesForParam(store.yParam))
+    return
+  }
+  store.zValuesText = normalizedCsv(axisValuesForParam(store.zParam))
 }
 
 function toDataUrl(image: GeneratedImage): string {
@@ -122,4 +246,3 @@ function cellKey(cell: { x: unknown; y: unknown; z: unknown }): string {
   return `${label(cell.z)}-${label(cell.y)}-${label(cell.x)}`
 }
 </script>
-

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image + denoise) and optional inpaint controls (mask source + enforcement/fill + mask toggles/sliders),
+Groups img2img controls (initial image) and optional inpaint controls (mask source + enforcement/fill + mask toggles/sliders),
 including dropzone/thumb/zoom handling for init images and rejected-file pass-through emits for parent toasts.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -18,10 +18,11 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <div class="gen-card img2img-params-card">
-    <div class="row-split">
-      <span class="label-muted">Img2Img Parameters</span>
-      <span class="caption">Initial image + denoise</span>
-    </div>
+    <WanSubHeader title="Img2Img Parameters">
+      <template #subtitle>
+        <span class="caption">Initial image</span>
+      </template>
+    </WanSubHeader>
 
     <InitialImageCard
       label="Initial Image"
@@ -40,23 +41,12 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
     </InitialImageCard>
 
-    <SliderField
-      label="Denoise"
-      :modelValue="denoiseStrength"
-      :min="0"
-      :max="1"
-      :step="0.01"
-      :inputStep="0.05"
-      inputClass="cdx-input-w-xs"
-      :disabled="disabled"
-      @update:modelValue="(value) => emit('update:denoiseStrength', value)"
-    />
-
     <div v-if="useMask" class="img2img-mask-stack">
-      <div class="row-split">
-        <span class="label-muted">Inpaint Parameters</span>
-        <span class="caption">Mask controls</span>
-      </div>
+      <WanSubHeader title="Inpaint Parameters">
+        <template #subtitle>
+          <span class="caption">Mask controls</span>
+        </template>
+      </WanSubHeader>
 
       <InitialImageCard
         label="Mask"
@@ -64,6 +54,9 @@ Symbols (top-level; keep in sync; no ghosts):
         :src="maskImageData"
         :has-image="Boolean(maskImageData)"
         :disabled="disabled"
+        :dropzone="true"
+        :thumbnail="true"
+        :zoomable="true"
         placeholder="Select a mask image (RGBA/alpha supported)."
         @set="(file) => emit('set:maskImage', file)"
         @clear="() => emit('clear:maskImage')"
@@ -74,7 +67,7 @@ Symbols (top-level; keep in sync; no ghosts):
         </template>
       </InitialImageCard>
 
-      <div class="img2img-mask-grid">
+      <div class="gc-row img2img-mask-grid">
         <div class="field">
           <label class="label-muted">Enforcement</label>
           <select class="select-md" :disabled="disabled" :value="maskEnforcement" @change="onMaskEnforcementChange">
@@ -157,6 +150,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import InitialImageCard from './InitialImageCard.vue'
 import SliderField from './ui/SliderField.vue'
+import WanSubHeader from './wan/WanSubHeader.vue'
 
 type MaskEnforcement = 'post_blend' | 'per_step_clamp'
 
@@ -164,7 +158,6 @@ withDefaults(defineProps<{
   disabled?: boolean
   initImageData?: string
   initImageName?: string
-  denoiseStrength: number
   useMask: boolean
   maskImageData?: string
   maskImageName?: string
@@ -188,7 +181,6 @@ const emit = defineEmits<{
   (e: 'set:initImage', value: File): void
   (e: 'clear:initImage'): void
   (e: 'reject:initImage', payload: { reason: string; files: File[] }): void
-  (e: 'update:denoiseStrength', value: number): void
   (e: 'set:maskImage', value: File): void
   (e: 'clear:maskImage'): void
   (e: 'reject:maskImage', payload: { reason: string; files: File[] }): void

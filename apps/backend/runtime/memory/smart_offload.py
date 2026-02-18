@@ -13,6 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `smart_offload_enabled` (function): True when smart offload is enabled (options + thread overrides).
 - `smart_fallback_enabled` (function): True when smart CPU fallback on OOM is enabled (options + thread overrides).
 - `smart_cache_enabled` (function): True when Smart Cache is enabled (options + thread overrides).
+- `log_smart_offload_action` (function): Emits canonical INFO events for smart-offload actions.
 - `record_smart_cache_hit` (function): Increment Smart Cache hit counter for a named bucket.
 - `record_smart_cache_miss` (function): Increment Smart Cache miss counter for a named bucket.
 - `get_smart_cache_stats` (function): Return hit/miss counters for all Smart Cache buckets.
@@ -23,6 +24,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 import threading
 from typing import Dict, Iterator
+
+from apps.backend.runtime.logging import format_log_message, get_backend_logger
+
+
+_SMART_OFFLOAD_LOG = get_backend_logger("smart_offload")
 
 
 def _snapshot():
@@ -101,6 +107,15 @@ def smart_cache_enabled() -> bool:
         return False
 
 
+def log_smart_offload_action(action: str, /, **fields: object) -> None:
+    """Emit the canonical INFO log event for a smart-offload action."""
+
+    action_name = str(action).strip().replace(" ", "_")
+    if not action_name:
+        action_name = "unknown"
+    _SMART_OFFLOAD_LOG.info(format_log_message(f"smart_offload.{action_name}", **fields))
+
+
 _SMART_CACHE_COUNTERS: Dict[str, Dict[str, int]] = {}
 
 
@@ -138,6 +153,7 @@ def get_smart_cache_stats() -> Dict[str, Dict[str, int]]:
 
 
 __all__ = [
+    "log_smart_offload_action",
     "smart_offload_enabled",
     "smart_fallback_enabled",
     "smart_cache_enabled",

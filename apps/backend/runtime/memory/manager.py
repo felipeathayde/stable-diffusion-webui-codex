@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Codex-native runtime memory management service (hardware probe + precision/budget policies + loaded model registry).
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
 Exposes per-role storage vs compute dtype selection (core/TE default to fp16 on accelerator devices, VAE defaults to fp32, CPU remains fp32 unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
+Also emits canonical smart-offload INFO audit events for model load/unload transitions and unload no-op requests when smart offload is active.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
@@ -40,7 +41,7 @@ from .config import (
     SwapPolicy,
 )
 from .exceptions import HardwareProbeError, MemoryConfigurationError, MemoryLoadError
-from .smart_offload import smart_offload_enabled
+from .smart_offload import log_smart_offload_action, smart_offload_enabled
 
 
 logger = logging.getLogger("backend.memory.manager")
@@ -946,7 +947,7 @@ class CodexMemoryManager:
         failures: List[Tuple[_LoadedModelRecord, Exception]] = []
         for record in list(self._loaded_models):
             try:
-                self._unload_record(record, avoid_model_moving=True)
+                self._unload_record(record, avoid_model_moving=True, reason="unload_all_models")
             except Exception as exc:
                 failures.append((record, exc))
                 continue
@@ -988,14 +989,20 @@ class CodexMemoryManager:
             except Exception:  # pragma: no cover
                 matches = False
             if matches:
-                self._unload_record(record, avoid_model_moving=True)
+                self._unload_record(record, avoid_model_moving=True, reason="unload_model_clones")
                 self._loaded_models.pop(index)
 
     def unload_model(self, model: object) -> None:
         record = self._find_loaded_model(model)
         if record is None:
+            if smart_offload_enabled():
+                log_smart_offload_action(
+                    "unload_noop",
+                    source="unload_model",
+                    component=type(model).__name__,
+                )
             return
-        self._unload_record(record, avoid_model_moving=True)
+        self._unload_record(record, avoid_model_moving=True, reason="unload_model")
         try:
             self._loaded_models.remove(record)
         except ValueError:  # pragma: no cover
@@ -1087,7 +1094,7 @@ class CodexMemoryManager:
         released = 0
 
         for record in release_candidates:
-            self._unload_record(record, avoid_model_moving=free_all)
+            self._unload_record(record, avoid_model_moving=free_all, reason="free_memory")
             self._loaded_models.remove(record)
             released += record.exclusive_memory
             if not free_all and released >= memory_required:
@@ -1127,7 +1134,7 @@ class CodexMemoryManager:
                 continue
             seen.add(ident)
             try:
-                self._unload_record(record)
+                self._unload_record(record, reason="rollback_after_load_failure")
             except Exception as exc:
                 failures.append((record, exc))
                 continue
@@ -1306,21 +1313,50 @@ class CodexMemoryManager:
                 compute_dtype,
                 record.inclusive_memory,
             )
+            if smart_offload_enabled():
+                log_smart_offload_action(
+                    "load",
+                    source="memory_manager._load_record",
+                    component=target_name,
+                    load_device=str(record.load_device),
+                    offload_device=str(record.offload_device),
+                    storage_dtype=str(record.storage_dtype),
+                    compute_dtype=str(compute_dtype),
+                    bytes=record.inclusive_memory,
+                )
         except self._oom_exception as exc:
             raise MemoryLoadError(f"OOM while loading {record.model}: {exc}") from exc
         except Exception as exc:
             raise MemoryLoadError(f"Failed to load model {record.model}: {exc}") from exc
 
-    def _unload_record(self, record: _LoadedModelRecord, *, avoid_model_moving: bool = False) -> None:
+    def _unload_record(
+        self,
+        record: _LoadedModelRecord,
+        *,
+        avoid_model_moving: bool = False,
+        reason: str = "unknown",
+    ) -> None:
         loader = record.loader or record.model
+        target_device: torch.device | None = None
         try:
             if hasattr(loader, "codex_unpatch_model"):
-                offload_device = record.offload_device if not avoid_model_moving else self._cpu_device
-                loader.codex_unpatch_model(offload_device)
+                target_device = record.offload_device if not avoid_model_moving else self._cpu_device
+                loader.codex_unpatch_model(target_device)
             elif hasattr(loader, "to") and not avoid_model_moving:
-                loader.to(self._cpu_device)
+                target_device = self._cpu_device
+                loader.to(target_device)
             record.model_accelerated = False
             logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
+            if smart_offload_enabled():
+                log_smart_offload_action(
+                    "unload",
+                    source=reason,
+                    component=self._record_label(record),
+                    load_device=str(record.load_device),
+                    offload_device=str(record.offload_device),
+                    target_device=str(target_device) if target_device is not None else "unknown",
+                    avoid_model_moving=avoid_model_moving,
+                )
         except Exception as exc:
             raise MemoryLoadError(
                 f"Failed to unload model {self._record_label(record)} "

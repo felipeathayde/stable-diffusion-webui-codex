@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Core patcher primitives (model options hooks + LoRA patch registry + object patching + ModelPatcher wrapper).
 Provides the shared patch/registry structures that engines use to apply LoRA patches, inject CFG/UNet/VAE wrappers, and manage
 device placement and smart offload interactions.
+Host-memory pinning during smart-offload CPU unpatch now also emits canonical INFO audit events via `backend.smart_offload`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LoraPatchRegistry` (dataclass): Tracks LoRA patch bundles keyed by filename/strength (clone/merge helpers; supports “online” LoRA mode).
@@ -33,7 +34,7 @@ from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Tuple
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+from apps.backend.runtime.memory.smart_offload import log_smart_offload_action, smart_offload_enabled
 from .lora import CodexLoraLoader
 
 logger = logging.getLogger("backend.patchers.base")
@@ -538,6 +539,14 @@ class ModelPatcher:
                     "Pinned host memory for offloaded model params=%d buffers=%d (dtype preserved)",
                     pinned_params,
                     pinned_bufs,
+                )
+                log_smart_offload_action(
+                    "pin_host_memory",
+                    source="patchers.base.codex_unpatch_model",
+                    component=type(self.model).__name__,
+                    to_device=str(target_device),
+                    pinned_params=pinned_params,
+                    pinned_buffers=pinned_bufs,
                 )
 
         self._object_registry.restore(self.model)

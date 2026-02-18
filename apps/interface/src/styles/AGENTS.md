@@ -92,6 +92,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-01-01: History cards now render as a single-row horizontal strip (with horizontal scroll); per-item action buttons appear on hover as a compact overlay (with horizontal scroll when needed) and stay visible for the selected item via `styles/components/views-shared.css` (image tabs + WAN).
 - 2026-01-14: Tools view now right-aligns GGUF action buttons (Overwrite/Comfy Layout + Convert) via `styles/views/tools.css`.
 - 2026-01-29: Added `styles/components/cdx-dropzone.css` and `styles/views/pnginfo.css` for the revamped PNG Info view/dropzone.
+- 2026-02-18: `styles/views/pnginfo.css` now defines a PNG-specific header-actions layout (`pnginfo-header-*`) to avoid shared `results-actions` row-wrap collisions, and adds loaded-preview clear-button positioning (`pnginfo-clear-button`).
 - 2026-02-03: Renamed the hires settings card stylesheet to `styles/components/hires-settings-card.css` and updated the card root class to `.hires-card`.
 - 2026-02-08: Added `styles/components/img2img-inpaint-params-card.css` for extracted img2img/inpaint controls and aligned `hires-settings-card.css` / `refiner-settings-card.css` layout structure to the `gen-card` organization style.
 - 2026-02-08: `hires-settings-card.css` now styles the full Basic-params-like hires row layout (including pseudo-disabled scale visuals when width/height overrides are active); tile preset visuals in hires use the shared resolution-button variant from `UpscalerTileControls.vue`.

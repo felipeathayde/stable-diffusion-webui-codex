@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-16
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -54,3 +54,4 @@ Status: Active
 - 2026-02-15: `public_errors.py` also sanitizes synchronous HTTP error details for generation/upscale/supir routes (`public_http_error_detail`), removing raw exception text from `HTTPException.detail` and `/api/upscalers/remote` manifest parse errors while preserving actionable OOM classification.
 - 2026-02-15: `public_errors.py` now keeps `EngineExecutionError` messages visible in task channels using stable `engine error: ...` formatting (idempotent on replay/snapshot re-serialization), so frontend task error panels can surface actionable runtime failures instead of opaque `internal error (error_id=...)`.
 - 2026-02-16: Generation task workers now also emit explicit API-console logs for typed `EngineExecutionError` (`task_id` + `mode` + `engine` + message) before public-error sanitization, so local runtime failures remain visible in backend logs without changing task/SSE payload contracts.
+- 2026-02-18: `run_api.py` phase-1 logging cleanup removed the `logging.basicConfig(...)` fallback in `ensure_initialized()` (fail-loud on logging bootstrap failure) and migrated startup/settings/port-guard/init console `print(...)` messages to structured logger calls.

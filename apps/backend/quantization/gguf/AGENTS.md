@@ -1,7 +1,7 @@
 <!-- tags: backend, codex, gguf, io -->
 # apps/backend/quantization/gguf Overview
 Date: 2025-12-15
-Last Review: 2026-01-29
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -22,3 +22,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to GGUF helper modules (doc-only change; part of rollout).
 - 2026-01-20: Removed unreferenced legacy helpers (`lazy.py`, `metadata.py`, `tensor_mapping.py`, `utility.py`, `vocab.py`); converter metadata injection lives in `apps/backend/runtime/tools/gguf_converter_metadata.py`.
 - 2026-01-29: CodexPack manifest validation now recognizes `fallback_fp16_keys` (list of keys dequantized offline to FP16 when Q4_K tile alignment is not satisfied).
+- 2026-02-18: `writer.py` dry-run filename emission now uses centralized `apps.backend.infra.stdio.write_stdout(...)` and raises `SystemExit(0)` explicitly instead of `print(...)` + `exit()`, preserving user-visible dry-run output order while removing raw primitive callsites from writer code.

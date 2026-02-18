@@ -11,6 +11,7 @@ Inspect uploaded PNG metadata, parse common infotext formats, and bridge extract
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PngInfo` (component): PNG info route view component.
+- `clearLoadedPng` (function): Resets the currently loaded PNG preview/analysis state from the dropzone.
 -->
 
 <template>
@@ -28,6 +29,17 @@ Symbols (top-level; keep in sync; no ghosts):
           >
             <div class="pnginfo-dropzone-slot">
               <div v-if="previewDataUrl" class="pnginfo-preview">
+                <button
+                  class="btn btn-icon pnginfo-clear-button"
+                  type="button"
+                  aria-label="Clear loaded PNG"
+                  title="Clear"
+                  @click.stop="clearLoadedPng"
+                  @keydown.enter.stop
+                  @keydown.space.stop
+                >
+                  ✕
+                </button>
                 <img :src="previewDataUrl" alt="PNG preview" />
               </div>
               <div class="pnginfo-dropzone-meta">
@@ -46,27 +58,33 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <div class="panel-stack">
-      <ResultsCard :showGenerate="false" headerClass="three-cols results-sticky" headerRightClass="results-actions" title="PNG Info">
+      <ResultsCard :showGenerate="false" headerClass="three-cols results-sticky" headerRightClass="pnginfo-header-actions" title="PNG Info">
         <template #header-right>
-          <select class="select-md pnginfo-select" v-model="targetTabId" :disabled="!compatibleTabs.length">
-            <option value="" disabled>Select tab</option>
-            <option v-for="t in compatibleTabs" :key="t.id" :value="t.id">
-              {{ t.title }} ({{ t.type }})
-            </option>
-          </select>
+          <div class="pnginfo-header-controls">
+            <div class="pnginfo-header-selects">
+              <select class="select-md pnginfo-select" v-model="targetTabId" :disabled="!compatibleTabs.length">
+                <option value="" disabled>Select tab</option>
+                <option v-for="t in compatibleTabs" :key="t.id" :value="t.id">
+                  {{ t.title }} ({{ t.type }})
+                </option>
+              </select>
 
-          <select class="select-md pnginfo-select" v-model="targetMode" :disabled="!targetTab">
-            <option value="txt2img">txt2img</option>
-            <option value="img2img">img2img</option>
-          </select>
+              <select class="select-md pnginfo-select" v-model="targetMode" :disabled="!targetTab">
+                <option value="txt2img">txt2img</option>
+                <option value="img2img">img2img</option>
+              </select>
+            </div>
 
-          <button class="btn btn-sm btn-secondary" type="button" :disabled="!canSaveSnapshot" @click="saveSnapshot">
-            {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
-          </button>
+            <div class="pnginfo-header-buttons">
+              <button class="btn btn-sm btn-secondary" type="button" :disabled="!canSaveSnapshot" @click="saveSnapshot">
+                {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
+              </button>
 
-          <button class="btn btn-sm btn-primary" type="button" :disabled="!canSendTo" @click="sendTo">
-            {{ sendBusy ? 'Sending…' : 'Send to' }}
-          </button>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="!canSendTo" @click="sendTo">
+                {{ sendBusy ? 'Sending…' : 'Send to' }}
+              </button>
+            </div>
+          </div>
         </template>
 
         <div v-if="notice" class="pnginfo-notice-row">
@@ -162,6 +180,26 @@ Symbols (top-level; keep in sync; no ghosts):
                   <dt>Denoise</dt>
                   <dd>{{ parsed.denoiseStrength }}</dd>
                 </template>
+                <template v-if="parsed.rng">
+                  <dt>RNG</dt>
+                  <dd>{{ parsed.rng }}</dd>
+                </template>
+                <template v-if="parsed.eta !== undefined">
+                  <dt>Eta</dt>
+                  <dd>{{ parsed.eta }}</dd>
+                </template>
+                <template v-if="parsed.ngms !== undefined">
+                  <dt>NGMS</dt>
+                  <dd>{{ parsed.ngms }}</dd>
+                </template>
+                <template v-if="parsed.hiresModule1">
+                  <dt>Hires module</dt>
+                  <dd>{{ parsed.hiresModule1 }}</dd>
+                </template>
+                <template v-if="parsed.version">
+                  <dt>Version</dt>
+                  <dd>{{ parsed.version }}</dd>
+                </template>
               </dl>
             </div>
 
@@ -223,6 +261,7 @@ const previewDataUrl = ref('')
 const analysis = ref<PngInfoAnalyzeResponse | null>(null)
 const infotext = ref('')
 const error = ref('')
+const analyzeRequestEpoch = ref(0)
 
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
@@ -305,7 +344,12 @@ const hasAnyParsedField = computed(() => {
       || p.sampler
       || p.scheduler
       || p.clipSkip !== undefined
-      || p.denoiseStrength !== undefined,
+      || p.denoiseStrength !== undefined
+      || p.rng
+      || p.eta !== undefined
+      || p.ngms !== undefined
+      || p.hiresModule1
+      || p.version,
   )
 })
 
@@ -339,7 +383,9 @@ function metadataValue(metadata: Record<string, string> | undefined | null, key:
 }
 
 async function analyzeSelectedFile(): Promise<void> {
-  if (!selectedFile.value) return
+  const file = selectedFile.value
+  if (!file) return
+  const requestEpoch = ++analyzeRequestEpoch.value
   error.value = ''
   analysis.value = null
   lastSentTabId.value = ''
@@ -348,7 +394,9 @@ async function analyzeSelectedFile(): Promise<void> {
   comfyWarnings.value = []
 
   try {
-    const res = await analyzePngInfo(selectedFile.value)
+    const res = await analyzePngInfo(file)
+    if (requestEpoch !== analyzeRequestEpoch.value) return
+    if (selectedFile.value !== file) return
     analysis.value = res
     const params = metadataValue(res.metadata, 'parameters')
     if (params) {
@@ -398,6 +446,7 @@ async function analyzeSelectedFile(): Promise<void> {
       if (!infotext.value.trim()) infotext.value = ''
     }
   } catch (err) {
+    if (requestEpoch !== analyzeRequestEpoch.value) return
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
@@ -405,25 +454,46 @@ async function analyzeSelectedFile(): Promise<void> {
 async function onDropFiles(files: File[]): Promise<void> {
   const file = files[0]
   if (!file) return
+  const requestEpoch = ++analyzeRequestEpoch.value
 
   selectedFile.value = file
   error.value = ''
   lastSentTabId.value = ''
 
   try {
-    previewDataUrl.value = await readFileAsDataURL(file)
+    const dataUrl = await readFileAsDataURL(file)
+    if (requestEpoch !== analyzeRequestEpoch.value) return
+    if (selectedFile.value !== file) return
+    previewDataUrl.value = dataUrl
   } catch (err) {
+    if (requestEpoch !== analyzeRequestEpoch.value) return
+    if (selectedFile.value !== file) return
     previewDataUrl.value = ''
     error.value = err instanceof Error ? err.message : String(err)
     return
   }
 
+  if (requestEpoch !== analyzeRequestEpoch.value) return
+  if (selectedFile.value !== file) return
   await analyzeSelectedFile()
 }
 
 function onDropRejected(payload: { reason: string; files: File[] }): void {
   const list = payload.files.map(f => f.name).join(', ')
   error.value = list ? `${payload.reason} (${list})` : payload.reason
+}
+
+function clearLoadedPng(): void {
+  analyzeRequestEpoch.value += 1
+  selectedFile.value = null
+  previewDataUrl.value = ''
+  analysis.value = null
+  infotext.value = ''
+  error.value = ''
+  lastSentTabId.value = ''
+  comfyPromptGraph.value = null
+  comfyWorkflowGraph.value = null
+  comfyWarnings.value = []
 }
 
 function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: boolean }): { patch: Record<string, unknown>; warnings: string[] } {

@@ -21,3 +21,4 @@ Status: Active
 - 2026-02-15: task workers sanitize terminal errors through `apps/backend/interfaces/api/public_errors.py` before persisting `entry.error`, preventing raw exception leakage through task status/SSE.
 - 2026-02-16: `generation_tasks.py` logs typed `EngineExecutionError` explicitly to API console logs (`task_id`, `mode`, `engine`) before persisting sanitized `entry.error`; wire payload contract remains unchanged.
 - 2026-02-16: `generation_tasks.py` now enforces strict bool parsing for request smart flags via `resolve_request_smart_flags(...)` and drains orchestrator iterators on immediate-cancel paths (no early-return teardown bypass; inference-gate release happens after iterator/use-case finalizers complete).
+- 2026-02-18: `generation_tasks.py` now serializes PNG `parameters` as A1111-compatible infotext (prompt + optional negative prompt + KV line) instead of JSON blobs, while still preserving provenance text chunks separately.

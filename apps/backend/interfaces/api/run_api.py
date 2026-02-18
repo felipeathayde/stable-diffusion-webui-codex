@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `port_free` (function): Checks whether a TCP port is free on IPv4/IPv6 loopback/wildcard.
 - `scan_range` (function): Scans a port range to find a free port.
 - `pick_api_port_simple` (function): Picks a free port near a base port (and reports whether it was the base).
-- `banner` (function): Prints the startup banner with the selected port.
+- `banner` (function): Logs the startup banner with the selected port.
 - `_DummyRequest` (class): Minimal request shim used where a request-like object is needed without FastAPI internals.
 - `build_app` (function): Constructs the FastAPI app; wires router modules, configures middleware, and mounts the UI SPA (lifespan-aware).
 - `_bootstrap_runtime` (function): Bootstraps runtime settings/env before app creation (used by the uvicorn factory path).
@@ -57,6 +57,9 @@ from apps.backend.runtime.diagnostics.pipeline_debug import apply_env_flag as _a
 from apps.backend.runtime.memory import memory_management as mem_management
 from apps.backend.runtime.models import api as model_api
 from apps.backend.core.state import state as backend_state
+from apps.backend.runtime.logging import get_backend_logger
+
+_LOG = get_backend_logger(__name__)
 
 def _cli_arg_value(argv: Sequence[str], flag: str) -> Optional[str]:
     for idx, token in enumerate(argv):
@@ -88,24 +91,22 @@ try:
         _call_trace.enable(max_calls_per_func=max_per_func)
 except Exception:
     # Never block startup because of tracing/logging issues, but don't fail silently.
-    logging.getLogger("backend.startup").exception("startup: failed to enable trace-debug")
+    _LOG.exception("startup: failed to enable trace-debug")
 
 try:
     from colorama import Fore, Style  # type: ignore
 
     def color_cyan(s: str) -> str: return Fore.CYAN + s + Style.RESET_ALL
-    def color_red(s: str) -> str: return Fore.RED + s + Style.RESET_ALL
 except Exception:  # pragma: no cover - optional dependency missing
 
     def color_cyan(s: str) -> str: return s
-    def color_red(s: str) -> str: return s
 
 # Install global exception hooks as early as possible so any startup errors are dumped
 try:
     from apps.backend.runtime.diagnostics.exception_hook import install_exception_hooks as _install_exc_hooks
     _EXC_LOG_PATH = _install_exc_hooks(log_dir=str(CODEX_ROOT / 'logs'))
 except Exception:
-    logging.getLogger("backend.startup").exception("startup: failed to install exception hooks")
+    _LOG.exception("startup: failed to install exception hooks")
     _EXC_LOG_PATH = None
 
 
@@ -124,11 +125,8 @@ def ensure_initialized() -> None:
         from apps.backend.runtime import logging as runtime_logging
 
         runtime_logging.setup_logging(level="INFO")
-    except Exception:
-        # Fall back to a minimal configuration on failure.
-        root = logging.getLogger()
-        if not root.handlers:
-            logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    except Exception as exc:
+        raise RuntimeError("backend logging bootstrap failed in ensure_initialized()") from exc
 
     _initialized = True
 
@@ -270,7 +268,7 @@ def banner(port: int) -> None:
         " Tip: set API_PORT or free blocked range.     \n"
         "==============================================\n"
     )
-    print(color_cyan(msg))
+    _LOG.info("%s", color_cyan(msg))
 
 
 class _DummyRequest:
@@ -304,7 +302,7 @@ def build_app() -> FastAPI:
                     loop = asyncio.get_event_loop()
                 _attach_asyncio(loop)
             except Exception:  # noqa: BLE001
-                logging.getLogger("backend.startup").exception("startup: failed to attach asyncio exception hook")
+                _LOG.exception("startup: failed to attach asyncio exception hook")
             yield
 
         lifespan = _lifespan
@@ -356,7 +354,7 @@ def build_app() -> FastAPI:
         )
         _settings_registry_ok = True
     except Exception as _e:  # pragma: no cover - optional during transition
-        print(color_red(f"[settings] registry not available: {_e}"))
+        _LOG.warning("settings: registry not available: %s", _e)
         _settings_registry_ok = False
         _schema_hardcoded = None
 
@@ -417,14 +415,17 @@ def build_app() -> FastAPI:
             changed = True
         if changed:
             if dropped:
-                print(color_red(f"[settings] dropped invalid/unknown keys from settings_values.json: {', '.join(sorted(set(dropped)))}"))
+                _LOG.warning(
+                    "settings: dropped invalid/unknown keys from settings_values.json: %s",
+                    ", ".join(sorted(set(dropped))),
+                )
             _opts_save_native(saved)
 
     # Apply saved settings early (after modules init) before serving
     try:
         _apply_saved_settings()
     except Exception as e:  # pragma: no cover
-        print(color_red(f"[settings] failed to validate saved settings: {e}"))
+        _LOG.exception("settings: failed to validate saved settings: %s", e)
 
     # Honour pipeline debug env flag
     _apply_pipeline_debug_flag()
@@ -565,7 +566,7 @@ def _enable_trace_debug(ns: Any) -> None:
 
             _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
     except Exception:
-        logging.getLogger("backend.startup").exception("startup: failed to enable trace debug")
+        _LOG.exception("startup: failed to enable trace debug")
 
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
@@ -583,6 +584,12 @@ def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mappin
     return app
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
+    try:
+        ensure_initialized()
+    except Exception as exc:
+        _LOG.exception("startup: failed to initialize backend logging: %s", exc)
+        raise SystemExit(1) from exc
+
     host = '0.0.0.0'
     override = os.environ.get('API_PORT_OVERRIDE')
     used_fallback = False
@@ -606,7 +613,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             # default base 7850
             port, used_fallback = pick_api_port_simple(7850, host)
         except RuntimeError as e:
-            print(color_red(f"[PORT GUARD] {e}"))
+            _LOG.error("[PORT GUARD] %s", e)
             raise SystemExit(1)
 
     if used_fallback:
@@ -616,7 +623,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         argv_seq = list(argv) if argv is not None else sys.argv[1:]
         api_app = create_api_app(argv=argv_seq, env=os.environ)
     except Exception as exc:
-        print(color_red(f"[INIT] {exc}"))
+        _LOG.exception("[INIT] %s", exc)
         raise SystemExit(1) from exc
 
     # Configure Uvicorn logging to match our unified format

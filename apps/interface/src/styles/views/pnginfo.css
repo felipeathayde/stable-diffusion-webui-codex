@@ -6,6 +6,7 @@
 }
 
 .pnginfo-preview {
+  position: relative;
   border-radius: 0.75rem;
   overflow: hidden;
   border: 0.0625rem solid hsla(0, 0%, 100%, 0.12);
@@ -138,3 +139,42 @@
   min-width: 10rem;
 }
 
+.pnginfo-header-actions {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pnginfo-header-controls {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.pnginfo-header-selects,
+.pnginfo-header-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.pnginfo-header-selects .pnginfo-select {
+  width: auto;
+}
+
+.pnginfo-clear-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+}
+
+@media (max-width: 1440px) {
+  .pnginfo-header-controls {
+    justify-content: flex-start;
+  }
+}

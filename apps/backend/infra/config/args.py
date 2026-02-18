@@ -10,6 +10,7 @@ Purpose: Backend CLI argument parsing and runtime memory config bootstrap.
 Builds the argparse schema for runtime flags (devices/dtypes/attention/swap/smart offload) and turns argv/env into a `RuntimeMemoryConfig`.
 Supports separate storage vs compute dtype overrides for core/text encoder/VAE (e.g., `--core-dtype` vs `--core-compute-dtype`) for stability and tuning.
 Also parses diagnostics bootstrap toggles (`--trace-contract`, `--trace-profiler`) for runtime trace/profiler activation.
+Interactive prompt stdout writes use centralized helpers from `apps.backend.infra.stdio`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_parser` (function): Defines the argparse schema for backend runtime flags (devices/dtypes/attention/swap/etc).
@@ -34,6 +35,7 @@ import os
 import sys
 from typing import Mapping, MutableMapping, Sequence
 
+from apps.backend.infra.stdio import flush_stdout, write_stdout
 from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
 from .gguf_exec_mode import DEFAULT_GGUF_EXEC_MODE, GgufExecMode
 from .lora_online_math import DEFAULT_LORA_ONLINE_MATH, LoraOnlineMath
@@ -549,11 +551,11 @@ def _validate_required_devices(ns: argparse.Namespace) -> None:
         )
 
     def _prompt(attr: str, label: str) -> str:
-        sys.stdout.write("\n")
-        sys.stdout.write(f"[config] Missing {attr} ({label}). Choose one:\n")
+        write_stdout("\n")
+        write_stdout(f"[config] Missing {attr} ({label}). Choose one:\n")
         for idx, option in enumerate(choices, start=1):
-            sys.stdout.write(f"  {idx}) {option}\n")
-        sys.stdout.flush()
+            write_stdout(f"  {idx}) {option}\n")
+        flush_stdout()
         while True:
             try:
                 raw = input(f"Select {attr} (1-{len(choices)} or value, 'q' to abort): ").strip()
@@ -570,8 +572,8 @@ def _validate_required_devices(ns: argparse.Namespace) -> None:
                     return choices[n - 1]
             if lowered in choices:
                 return lowered
-            sys.stdout.write(f"Invalid choice {raw!r}. Allowed: {', '.join(choices)}\n")
-            sys.stdout.flush()
+            write_stdout(f"Invalid choice {raw!r}. Allowed: {', '.join(choices)}\n")
+            flush_stdout()
 
     for attr, label in missing:
         setattr(ns, attr, _prompt(attr, label))

@@ -14,6 +14,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `TqdmAwareHandler` (class): Proxy handler that cooperates with tqdm-managed progress bars.
 - `_is_stream_handler` (function): Detects stream handlers including wrapped `TqdmAwareHandler`.
 - `_parse_level` (function): Parses level names (including TRACE=5) and returns a logging level.
+- `format_log_message` (function): Builds a consistent event-style log message with optional key/value context.
+- `get_backend_logger` (function): Returns a normalized backend logger (`backend.*`) from module or relative names.
 - `LevelFilter` (class): Env-driven log-level filter (CODEX_LOG_DEBUG/INFO/WARNING/ERROR).
 - `setup_logging` (function): Idempotent root logger setup using env vars (level/format/file, optional Rich handler).
 """
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from typing import Optional
 
@@ -46,6 +49,7 @@ if _colorama_init is not None:  # pragma: no cover - environment dependent
     _colorama_init(autoreset=True)
 
 _CONFIGURED = False
+_SAFE_LOG_TOKEN = re.compile(r"^[A-Za-z0-9._:/-]+$")
 
 
 class TqdmAwareHandler(logging.Handler):
@@ -93,6 +97,70 @@ def _parse_level(value: Optional[str]) -> int:
     resolved = mapping.get(v, logging.DEBUG)
     logging.addLevelName(5, "TRACE")
     return resolved
+
+
+def format_log_message(event: str, /, **fields: object) -> str:
+    """Build a consistent event-style log message.
+
+    Output format:
+    - without fields: `event`
+    - with fields: `event | key=value key2='text value'`
+    """
+
+    tokens: list[str] = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        safe_key = key if _SAFE_LOG_TOKEN.fullmatch(key) else repr(key)
+        if isinstance(value, bool):
+            rendered = "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            rendered = str(value)
+        elif isinstance(value, str):
+            rendered = value if _SAFE_LOG_TOKEN.fullmatch(value) else repr(value)
+        else:
+            rendered = repr(value)
+        tokens.append(f"{safe_key}={rendered}")
+
+    safe_event = event if _SAFE_LOG_TOKEN.fullmatch(event) else repr(event)
+    if not tokens:
+        return safe_event
+    return f"{safe_event} | {' '.join(tokens)}"
+
+
+def get_backend_logger(name: Optional[str] = None) -> logging.Logger:
+    """Return a backend logger with normalized namespace.
+
+    Accepted forms:
+    - `apps.backend`/`backend` -> `backend`
+    - `apps.backend.<...>` -> `backend.<...>`
+    - `backend.<...>`      -> unchanged
+    - `<relative>`         -> `backend.<relative>`
+    - empty/None           -> `backend`
+    """
+
+    if name is None:
+        return logging.getLogger("backend")
+
+    normalized = name.strip()
+    if not normalized:
+        return logging.getLogger("backend")
+    normalized = normalized.strip(".")
+    if not normalized:
+        return logging.getLogger("backend")
+
+    if normalized in {"backend", "apps.backend"}:
+        normalized = "backend"
+    elif normalized.startswith("apps.backend."):
+        normalized = "backend." + normalized[len("apps.backend.") :]
+    elif not normalized.startswith("backend."):
+        normalized = "backend." + normalized
+    normalized = normalized.rstrip(".")
+    normalized = ".".join(part for part in normalized.split(".") if part)
+    if not normalized:
+        normalized = "backend"
+
+    return logging.getLogger(normalized)
 
 
 class LevelFilter(logging.Filter):
@@ -149,7 +217,7 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
     # Concise format: [MM/DD/YY HH:MM:SS] LEVEL     message
     fmt = os.environ.get(
         "CODEX_LOG_FORMAT",
-        "[%(asctime)s] %(levelname)-8s %(message)s",
+        "[%(asctime)s] %(levelname)-8s %(name)s | %(message)s",
     )
     datefmt = "%m/%d/%y %H:%M:%S"
 
@@ -163,26 +231,32 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
             return False
         return env.strip().lower() in {"1", "true", "yes", "on"}
 
+    def _env_true(name: str, default: str = "0") -> bool:
+        return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
     def _build_stream_handler() -> logging.Handler:
         level_filter = LevelFilter()
+        formatter: logging.Formatter
         if not _should_force_plain() and RichHandler is not None and Console is not None:
             console = Console(color_system="auto", soft_wrap=True, highlight=False, emoji=False)
-            handler: logging.Handler = RichHandler(
+            inner: logging.Handler = RichHandler(
                 console=console,
                 show_time=True,
-                show_path=False,
-                rich_tracebacks=False,
+                show_path=_env_true("CODEX_LOG_RICH_SHOW_PATH", "0"),
+                rich_tracebacks=_env_true("CODEX_LOG_RICH_TRACEBACKS", "1"),
                 markup=False,
             )
-            handler.setLevel(resolved_level)
-            handler.setFormatter(logging.Formatter("%(message)s"))
+            formatter = logging.Formatter("%(name)s | %(message)s")
         else:
-            handler = logging.StreamHandler(stream=sys.stderr)
-            handler.setLevel(resolved_level)
-            handler.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
-        handler.addFilter(level_filter)
+            inner = logging.StreamHandler(stream=sys.stderr)
+            formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
         if install_tqdm_bridge and tqdm is not None:
-            handler = TqdmAwareHandler(handler)
+            handler: logging.Handler = TqdmAwareHandler(inner)
+        else:
+            handler = inner
+        handler.setLevel(resolved_level)
+        handler.setFormatter(formatter)
+        handler.addFilter(level_filter)
         return handler
 
     if not any(_is_stream_handler(h) for h in root.handlers):

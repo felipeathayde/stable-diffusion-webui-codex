@@ -15,6 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `encode_images` (function): Encode PIL images to base64 PNG payloads, optionally injecting PNG text metadata.
 - `build_engine_options` (function): Build `engine_options` dict from request extras + options snapshot (TE/VAE overrides, Z-Image variant, core streaming).
 - `resolve_request_smart_flags` (function): Parse/validate per-request smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) as strict booleans.
+- `_format_parameters_infotext` (function): Serializes generation `info` dicts into A1111-compatible infotext for PNG `parameters`.
+- `_build_png_metadata` (function): Builds PNG text chunks (`parameters` + provenance) for saved/API-encoded images.
 - `run_image_task` (function): Run a generic image task worker (txt2img/img2img) using a `prepare(payload)` callback and orchestrator event stream.
 """
 
@@ -24,6 +26,7 @@ import base64
 import io
 import json
 import logging
+import math
 import threading
 from typing import Any, Callable, Mapping, Optional
 
@@ -132,6 +135,196 @@ def resolve_request_smart_flags(req: Any) -> tuple[bool, bool, bool]:
     return values["smart_offload"], values["smart_fallback"], values["smart_cache"]
 
 
+def _as_text(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
+
+
+def _as_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.startswith("+"):
+            text = text[1:]
+        if text.startswith("-"):
+            return None
+        if not text.isdigit():
+            return None
+        try:
+            return int(text)
+        except Exception:
+            return None
+    return None
+
+
+def _as_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        out = float(value)
+        if not math.isfinite(out):
+            return None
+        return out
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            out = float(text)
+        except Exception:
+            return None
+        if not math.isfinite(out):
+            return None
+        return out
+    return None
+
+
+def _format_number(value: object) -> str | None:
+    integer = _as_int(value)
+    if integer is not None:
+        return str(integer)
+    number = _as_float(value)
+    if number is None:
+        return None
+    return f"{number:g}"
+
+
+def _format_parameters_infotext(info_obj: object) -> str:
+    if not isinstance(info_obj, dict):
+        return _as_text(info_obj)
+
+    info = dict(info_obj)
+    lines: list[str] = []
+    kv_entries: list[str] = []
+    seen_keys: set[str] = set()
+
+    def add_kv(label: str, value: object) -> None:
+        if not isinstance(label, str):
+            return
+        key = label.strip()
+        if not key:
+            return
+        text = _as_text(value)
+        if not text:
+            return
+        normalized = key.lower()
+        if normalized in seen_keys:
+            return
+        seen_keys.add(normalized)
+        kv_entries.append(f"{key}: {text}")
+
+    prompt = _as_text(info.get("prompt", ""))
+    if prompt:
+        lines.append(prompt)
+    negative_prompt = _as_text(info.get("negative_prompt", ""))
+    if negative_prompt:
+        lines.append(f"Negative prompt: {negative_prompt}")
+
+    steps = _as_int(info.get("steps"))
+    if steps is not None and steps >= 0:
+        add_kv("Steps", steps)
+
+    sampler = _as_text(info.get("sampler_name", "") or info.get("sampler", ""))
+    if sampler:
+        add_kv("Sampler", sampler)
+
+    scheduler = _as_text(info.get("schedule_type", "") or info.get("scheduler", ""))
+    if scheduler:
+        add_kv("Schedule type", scheduler)
+
+    cfg_scale = _format_number(info.get("cfg_scale", info.get("guidance_scale")))
+    if cfg_scale is not None:
+        add_kv("CFG scale", cfg_scale)
+
+    seed = _as_int(info.get("seed"))
+    if seed is not None:
+        add_kv("Seed", seed)
+
+    width = _as_int(info.get("width"))
+    height = _as_int(info.get("height"))
+    if width is not None and height is not None and width > 0 and height > 0:
+        add_kv("Size", f"{width}x{height}")
+
+    model_hash = _as_text(info.get("model_hash", ""))
+    if model_hash:
+        add_kv("Model hash", model_hash)
+
+    model_name = _as_text(info.get("model", "") or info.get("sd_model_checkpoint", ""))
+    if model_name:
+        add_kv("Model", model_name)
+
+    vae_name = _as_text(info.get("vae", "") or info.get("vae_name", ""))
+    if vae_name:
+        add_kv("VAE", vae_name)
+
+    clip_skip = _as_int(info.get("clip_skip"))
+    if clip_skip is not None and clip_skip >= 0:
+        add_kv("Clip skip", clip_skip)
+
+    denoise = _format_number(
+        info.get("denoising_strength", info.get("denoise_strength", info.get("denoiseStrength")))
+    )
+    if denoise is not None:
+        add_kv("Denoising strength", denoise)
+
+    rng = _as_text(info.get("rng", "") or info.get("rng_source", ""))
+    if rng:
+        add_kv("RNG", rng)
+
+    extra = info.get("extra")
+    if isinstance(extra, dict):
+        for raw_key, raw_value in extra.items():
+            if raw_value is None:
+                continue
+            key_text = _as_text(raw_key)
+            if not key_text:
+                continue
+            if isinstance(raw_value, (dict, list)):
+                try:
+                    value_text = json.dumps(raw_value, ensure_ascii=False)
+                except Exception:
+                    value_text = _as_text(raw_value)
+            else:
+                value_text = _as_text(raw_value)
+                if "," in value_text or "\n" in value_text or "\r" in value_text:
+                    value_text = json.dumps(value_text, ensure_ascii=False)
+            if not value_text:
+                continue
+            add_kv(key_text, value_text)
+
+    if kv_entries:
+        lines.append(", ".join(kv_entries))
+
+    return "\n".join(lines).strip()
+
+
+def _build_png_metadata(info_obj: object, *, generation_provenance: Mapping[str, str]) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+
+    parameters = _format_parameters_infotext(info_obj)
+    if parameters:
+        metadata["parameters"] = parameters
+
+    for key, value in generation_provenance.items():
+        key_text = str(key).strip()
+        value_text = str(value).strip()
+        if not key_text or not value_text:
+            continue
+        metadata.setdefault(key_text, value_text)
+    return metadata
+
+
 def run_image_task(
     *,
     task_id: str,
@@ -196,24 +389,6 @@ def run_image_task(
         prompt_hash_value=prompt_hash_value,
         meta={"engine_key": engine_key},
     )
-
-    def _build_png_metadata(info_obj: object) -> dict[str, str]:
-        metadata: dict[str, str] = {}
-        if isinstance(info_obj, dict):
-            try:
-                parameters = json.dumps(info_obj, ensure_ascii=False, sort_keys=True)
-            except Exception:
-                parameters = str(info_obj)
-            parameters = str(parameters).strip()
-            if parameters:
-                metadata["parameters"] = parameters
-        for key, value in generation_provenance.items():
-            key_text = str(key).strip()
-            value_text = str(value).strip()
-            if not key_text or not value_text:
-                continue
-            metadata.setdefault(key_text, value_text)
-        return metadata
 
     def worker() -> None:
         acquired = False
@@ -350,7 +525,7 @@ def run_image_task(
                     if isinstance(info_obj, dict):
                         for key, value in generation_provenance.items():
                             info_obj.setdefault(key, value)
-                    png_metadata = _build_png_metadata(info_obj)
+                    png_metadata = _build_png_metadata(info_obj, generation_provenance=generation_provenance)
 
                     if bool(opts_get("samples_save", True)):
                         save_generated_images(

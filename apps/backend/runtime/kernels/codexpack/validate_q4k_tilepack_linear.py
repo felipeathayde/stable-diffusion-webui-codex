@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: CUDA correctness harness for CodexPack packed Q4_K linear (tilepack_v1).
 Validates `torch.ops.codexpack.q4k_tilepack_linear(...)` against a baseline:
 Q4_K bytes → dequantize (fp16) → `torch.nn.functional.linear`.
+CLI success output is emitted via shared infra stdout helpers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexPackCudaValidationError` (exception): Raised when validation prerequisites are not met.
@@ -23,6 +24,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from apps.backend.infra.stdio import write_stdout
 from apps.backend.quantization.api import quantize_numpy
 from apps.backend.quantization.dequant import dequantize_blocks_Q4_K
 from apps.backend.quantization.gguf.codexpack import (
@@ -158,7 +160,7 @@ def _main(argv: list[str] | None = None) -> int:
         rtol=ns.rtol,
         atol=ns.atol,
     )
-    print(f"OK: max_abs_err={max_abs:.6g}")
+    write_stdout(f"OK: max_abs_err={max_abs:.6g}\n")
     return 0
 
 

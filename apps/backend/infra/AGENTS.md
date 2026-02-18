@@ -1,6 +1,6 @@
 # apps/backend/infra Overview
 Date: 2025-10-28
-Last Review: 2026-02-15
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -31,3 +31,4 @@ Status: Active
 - 2026-01-20: Added `--lora-apply-mode` (and `CODEX_LORA_APPLY_MODE`) as a global LoRA application switch: `merge` (default; rewrites weights once) vs `online` (apply on-the-fly during forward). Requires restarting the backend process to take effect.
 - 2026-01-02: Added standardized file header docstrings to `infra/__init__.py`, `infra/accelerators/*`, `infra/config/*`, and `infra/registry/*` modules (doc-only change; part of rollout).
 - 2026-02-10: Added global structural-conversion policy reader `config/weight_structural_conversion.py` (`CODEX_WEIGHT_STRUCTURAL_CONVERSION=auto|convert`) so runtime/keymap/parser seams can enforce fail-loud no-conversion behavior in `auto`.
+- 2026-02-18: Added `infra/stdio.py` as the shared low-level stdout/stderr emission seam used by CLI prompts and contract-sensitive console notices, centralizing primitive stream writes in one module.

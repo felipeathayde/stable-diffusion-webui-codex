@@ -16,4 +16,6 @@ Notes:
 - If a failure is expected/optional, make it explicit; do not swallow unexpected errors.
 - Contract-trace payloads must remain prompt-redacted (`prompt_hash` only).
 
-Last Review: 2026-02-15
+Last Review: 2026-02-18
+
+- 2026-02-18: `exception_hook.py` and `timeline.py` now route explicit stream emission through `apps.backend.infra.stdio` (`write_stderr`/`write_stdout`), preserving crash-path and timeline console contracts while centralizing primitive stream writes.

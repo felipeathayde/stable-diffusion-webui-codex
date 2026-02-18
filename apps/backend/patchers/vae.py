@@ -11,6 +11,7 @@ Provides a VAE wrapper that normalizes diffusers outputs (scalar and optional pe
 supports tiled decode/encode paths, and integrates memory-management and smart-fallback behavior. Supports separate storage vs compute dtype selection
 (compute defaults to fp32 unless overridden).
 Tiled VAE fallback uses context-padding and center-crop stitching to reduce seams without fast/approximate paths.
+Regular-path OOM fallback notices are emitted through structured backend logger warnings.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
@@ -24,7 +25,6 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 import contextlib
-import logging
 import math
 from dataclasses import dataclass
 
@@ -43,10 +43,11 @@ except Exception:  # noqa: BLE001
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
+from apps.backend.runtime.logging import get_backend_logger
 from .base import ModelPatcher
 from .vae_normalization_policy import read_vae_config_field, resolve_vae_normalization_policy
 
-logger = logging.getLogger("backend.patchers.vae")
+logger = get_backend_logger(__name__)
 
 
 def _tensor_stats(label: str, tensor: torch.Tensor) -> None:
@@ -810,7 +811,9 @@ class VAE:
                             "VAE tiled decode ran out of memory with smart fallback disabled. "
                             "Disable vae_always_tiled or enable smart fallback."
                         )
-                    print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
+                    logger.warning(
+                        "Ran out of memory when regular VAE decoding; retrying with tiled VAE decoding."
+                    )
                     pixel_samples = self.decode_tiled_(samples_in)
 
             # Return BCHW format in [-1, 1] range directly
@@ -928,7 +931,9 @@ class VAE:
                             "VAE tiled encode ran out of memory with smart fallback disabled. "
                             "Disable vae_always_tiled or enable smart fallback."
                         )
-                    print("Warning: Ran out of memory when regular VAE encoding, retrying with tiled VAE encoding.")
+                    logger.warning(
+                        "Ran out of memory when regular VAE encoding; retrying with tiled VAE encoding."
+                    )
                     samples = self.encode_tiled_(pixel_samples)
 
             if torch.isnan(samples).any():

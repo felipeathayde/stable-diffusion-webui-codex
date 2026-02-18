@@ -1,6 +1,6 @@
 # AGENT — apps/backend/patchers/controlnet/architectures/sd
 Date: 2025-10-31
-Last Review: 2026-01-18
+Last Review: 2026-02-18
 Status: Active
 
 ## Purpose
@@ -12,3 +12,4 @@ Status: Active
 - `control_lite.py` — placeholder raising `NotImplementedError` until Lite variants are ported.
 - `lora.py` — Control Lora implementation with SafeTensor materialisation.
 - `t2i_adapter.py` — Adapter-based conditioning path.
+- 2026-02-18: `t2i_adapter.py` no longer emits direct stdout prints for state-dict mismatch notices; it now logs structured warnings/debug entries via backend logger namespace.

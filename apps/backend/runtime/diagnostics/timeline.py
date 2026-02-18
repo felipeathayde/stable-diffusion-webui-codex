@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Timeline tracer for inference pipelines (nested stage/event tracking + ASCII render + Chrome trace export).
 Provides a lightweight runtime “timeline” for debugging inference flow, including optional VRAM snapshots and per-thread event streams.
 Can be enabled via env (`CODEX_TIMELINE=1`) or used programmatically with `timeline.capture(...)` / `@timeline_node(...)`.
+Console timeline output is emitted via shared infra stdout helpers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TimelineEvent` (dataclass): One enter/exit event (stage/name/depth/thread + duration/vram + extra metadata).
@@ -38,6 +39,7 @@ from typing import Any, Callable, List, Optional, TypeVar
 
 import torch
 
+from apps.backend.infra.stdio import write_stdout
 from apps.backend.infra.config.env_flags import env_flag, env_int
 
 _log = logging.getLogger("backend.timeline")
@@ -382,7 +384,7 @@ def render_timeline(capture: Optional[TimelineCapture] = None, *, use_color: boo
 
 def print_timeline(capture: Optional[TimelineCapture] = None) -> None:
     """Print timeline to console."""
-    print(render_timeline(capture))
+    write_stdout(render_timeline(capture) + "\n")
 
 
 # -----------------------------------------------------------------------------

@@ -1,3 +1,18 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Regression tests for PNG Info parsing/mapping helpers.
+Covers A1111-like infotext parsing, legacy JSON fallback parsing, and sampler/scheduler/checkpoint mapping behavior used by PNG Info send-to flows.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `pnginfo utils` (test suite): Validates parse and mapping behavior for PNG Info helper functions.
+*/
+
 import { describe, expect, it } from 'vitest'
 
 import { mapCheckpointTitle, mapSamplerScheduler, parseComfyPromptJson, parseInfotext } from './pnginfo'
@@ -28,11 +43,85 @@ describe('pnginfo utils', () => {
     expect(parsed.vae).toBe('vae-ft-mse')
   })
 
+  it('parses additional infotext fields and keeps quoted comma values intact', () => {
+    const infotext = [
+      'portrait of a woman',
+      'Negative prompt: low quality',
+      'Steps: 32, Sampler: DPM++ 2M, Schedule type: Karras, CFG scale: 7, Seed: 4164830019, Size: 1024x1024, RNG: CPU, Eta: 0, NGMS: 4, Hires Module 1: Use same choices, Version: f2.0.1, Lora hashes: \"foo: 123, bar: 456\"',
+    ].join('\n')
+
+    const { parsed, warnings } = parseInfotext(infotext)
+    expect(warnings).toEqual([])
+    expect(parsed.rng).toBe('CPU')
+    expect(parsed.eta).toBe(0)
+    expect(parsed.ngms).toBe(4)
+    expect(parsed.hiresModule1).toBe('Use same choices')
+    expect(parsed.version).toBe('f2.0.1')
+    expect(parsed.rawKv['Lora hashes']).toBe('\"foo: 123, bar: 456\"')
+    expect(parsed.rawKv.bar).toBeUndefined()
+  })
+
   it("treats infotext without 'Steps:' as prompt-only", () => {
     const { parsed, warnings } = parseInfotext('just a prompt')
     expect(parsed.prompt).toBe('just a prompt')
     expect(parsed.rawKv).toEqual({})
     expect(warnings.join('\n')).toMatch(/Steps:/i)
+  })
+
+  it('parses legacy JSON metadata blobs', () => {
+    const legacy = JSON.stringify({
+      prompt: 'a cat',
+      negative_prompt: 'blurry',
+      steps: 20,
+      sampler_name: 'Euler a',
+      scheduler: 'karras',
+      guidance_scale: 7,
+      seed: 123,
+      width: 512,
+      height: 768,
+      clip_skip: 2,
+      denoising_strength: 0.55,
+      model: 'sdxl.safetensors',
+      model_hash: 'abcdef1234',
+      vae: 'vae-ft-mse',
+      rng_source: 'CPU',
+    })
+
+    const { parsed, warnings } = parseInfotext(legacy)
+    expect(warnings.join('\n')).toMatch(/legacy JSON/i)
+    expect(parsed.prompt).toBe('a cat')
+    expect(parsed.negativePrompt).toBe('blurry')
+    expect(parsed.hasNegativePrompt).toBe(true)
+    expect(parsed.steps).toBe(20)
+    expect(parsed.sampler).toBe('Euler a')
+    expect(parsed.scheduler).toBe('karras')
+    expect(parsed.cfgScale).toBe(7)
+    expect(parsed.seed).toBe(123)
+    expect(parsed.width).toBe(512)
+    expect(parsed.height).toBe(768)
+    expect(parsed.clipSkip).toBe(2)
+    expect(parsed.denoiseStrength).toBe(0.55)
+    expect(parsed.model).toBe('sdxl.safetensors')
+    expect(parsed.modelHash).toBe('abcdef1234')
+    expect(parsed.vae).toBe('vae-ft-mse')
+    expect(parsed.rng).toBe('CPU')
+  })
+
+  it('parses infotext from JSON metadata field parameters', () => {
+    const payload = JSON.stringify({
+      parameters: 'a cat\\nNegative prompt: blurry\\nSteps: 20, Sampler: Euler a, Schedule type: Karras, CFG scale: 7, Seed: 123, Size: 512x768',
+    })
+    const { parsed, warnings } = parseInfotext(payload)
+    expect(warnings.join('\n')).toMatch(/field 'parameters'/i)
+    expect(parsed.prompt).toBe('a cat')
+    expect(parsed.negativePrompt).toBe('blurry')
+    expect(parsed.steps).toBe(20)
+    expect(parsed.sampler).toBe('Euler a')
+    expect(parsed.scheduler).toBe('Karras')
+    expect(parsed.cfgScale).toBe(7)
+    expect(parsed.seed).toBe(123)
+    expect(parsed.width).toBe(512)
+    expect(parsed.height).toBe(768)
   })
 
   it('maps sampler/scheduler names case-insensitively', () => {

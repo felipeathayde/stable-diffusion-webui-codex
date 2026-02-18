@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Centralized exception capture + full-traceback dumping for backend processes.
 Installs sys/threading/asyncio exception hooks that dump full tracebacks to an append-only log file (by day + pid) under `CODEX_ROOT/logs/`,
 and provides helpers to persist caught exceptions with a one-line stderr notice for TUI visibility.
+Stderr notice emission is routed through shared infra stdio helpers while preserving best-effort crash-path behavior.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_ensure_log_path` (function): Resolves and creates the exception log file path (stable by day+pid).
@@ -31,6 +32,7 @@ import time
 import traceback
 from typing import Any, Dict, Optional
 
+from apps.backend.infra.stdio import write_stderr
 from apps.backend.infra.config.repo_root import get_repo_root
 
 _installed = False
@@ -172,8 +174,7 @@ def dump_current_exception(where: str = "manual", context: Optional[Dict[str, An
 
 def _stderr_notice(path: str) -> None:
     try:
-        sys.stderr.write(f"[EXC] Dumped exception to {path}\n")
-        sys.stderr.flush()
+        write_stderr(f"[EXC] Dumped exception to {path}\n", flush=True)
     except Exception:
         pass
 

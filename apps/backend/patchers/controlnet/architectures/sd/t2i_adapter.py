@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: T2I-Adapter ControlNet module and loader.
-Provides the `T2IAdapter` patcher module plus helpers to detect/load adapter state dicts into a runnable SD-family model.
+Provides the `T2IAdapter` patcher module plus helpers to detect/load adapter state dicts into a runnable SD-family model, with
+state-dict mismatch notices emitted through structured backend logger entries.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `T2IAdapter` (class): Adapter-based control module projecting hints via dedicated adapter networks.
@@ -24,6 +25,7 @@ import torch
 from apps.backend.runtime.models.state_dict import state_dict_prefix_replace
 from apps.backend.runtime.families.sd.cnets import t2i_adapter
 from apps.backend.runtime.misc.image_resize import adaptive_resize
+from apps.backend.runtime.logging import get_backend_logger
 
 from ...base import ControlModuleBase
 from ...weighting import broadcast_image_to
@@ -158,9 +160,12 @@ def load_t2i_adapter(t2i_data) -> Optional[T2IAdapter]:
         return None
 
     missing, unexpected = model_adapter.load_state_dict(t2i_data)
+    logger = get_backend_logger(__name__)
     if missing:
-        print("t2i missing", missing)
+        logger.warning("t2i adapter state dict has %d missing keys.", len(missing))
+        logger.debug("t2i adapter missing keys: %s", missing)
     if unexpected:
-        print("t2i unexpected", unexpected)
+        logger.warning("t2i adapter state dict has %d unexpected keys.", len(unexpected))
+        logger.debug("t2i adapter unexpected keys: %s", unexpected)
 
     return T2IAdapter(model_adapter, model_adapter.input_channels)

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: GGUF file writer (header/KV/tensor-info/tensor-data) with sharding and alignment support.
 Serializes GGUF metadata keys and quantized tensor buffers to `.gguf` files, handling endianness, type tags, and write-state transitions.
+Dry-run shard filename emission uses centralized stdout helpers to keep primitive stream writes out of writer callsites.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TensorInfo` (dataclass): Tensor metadata (shape/dtype/size + optional numpy buffer) used during write planning.
@@ -34,6 +35,7 @@ from string import ascii_letters, digits
 
 import numpy as np
 
+from apps.backend.infra.stdio import write_stdout
 from .constants import (
     GGUF_DEFAULT_ALIGNMENT,
     GGUF_MAGIC,
@@ -205,8 +207,8 @@ class GGUFWriter:
         if self.dry_run:
             logger.info("Dry run, not writing files")
             for name in filenames:
-                print(name)  # noqa: NP100
-            exit()
+                write_stdout(f"{name}\n")
+            raise SystemExit(0)
 
         return filenames
 

@@ -45,6 +45,7 @@ Status: Active
 - 2026-01-27: `WANTab.vue` supports video-first WAN results (exported video shown even when frames are omitted); when `Return frames` is disabled and a video exists, the frames viewer empty state shows “Frames not returned” with a hint.
 - 2026-01-28: `ImageModelTab.vue` treats Z-Image as Turbo/Base variant-dependent: toolbar/CFG labels and negative-prompt support follow the per-tab Turbo toggle.
 - 2026-01-29: `PngInfo.vue` now uses a Codex-native dropzone, extracts PNG text metadata, parses infotext, and supports “Save snapshot” (Workflows) + “Send to” (tab + mode).
+- 2026-02-18: `PngInfo.vue` header actions now use a local layout container (no shared `results-actions` coupling), and loaded PNG previews expose a clear `✕` action that resets preview/analysis/infotext state without triggering the dropzone picker.
 - 2026-02-01: `Upscale.vue` now wires the standalone `/upscale` workspace to the backend (`/api/upscalers`, `/api/upscale`) with SSE task streaming, tile presets, an explicit OOM fallback toggle (persisted), and an HF-backed download modal.
 - 2026-02-03: `Upscale.vue` download modal renders curated manifest metadata (arch/scale/license/sha256/tags/notes) vs “Other files” and surfaces manifest validation issues; raw manifest JSON is now behind a hamburger (☰) action.
 - 2026-02-04: `Upscale.vue` and `ImageModelTab.vue` now also wire the global `min_tile` preference into the shared tile controls and requests (keeps tiled upscaling OOM fallback behavior configurable).

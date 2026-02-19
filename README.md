@@ -5,7 +5,7 @@
 <h1 align="center">Stable Diffusion WebUI Codex</h1>
 
 <p align="center">
-  FastAPI + Vue 3 WebUI for running multiple diffusion engines with explicit contracts (no silent fallbacks).
+  FastAPI + Vue 3 WebUI for running multiple diffusion engines.
 </p>
 
 <p align="center">
@@ -18,19 +18,18 @@
   <a href="https://huggingface.co/sangoi-exe/sd-webui-codex"><img alt="Hugging Face: sangoi-exe/sd-webui-codex" src="https://img.shields.io/badge/huggingface-sangoi--exe%2Fsd--webui--codex-yellow?logo=huggingface&logoColor=black" /></a>
 </p>
 
-## ✨ What you get
+## ✨ Capabilities
 
-- 🧠 Multi-engine: SD15, SDXL, FLUX.1, Chroma, Z-Image, and WAN 2.2 (video).
-- 📡 Streaming jobs: request → `task_id` → SSE events → results.
-- 🧾 Explicit contracts: missing/invalid inputs fail loud (no silent guessing).
+- 🧠 Multi-engine: SD15, SDXL, FLUX.1, Chroma, Z-Image, and WAN 2.2, Anima, etc.
 - 🧰 Utility views: PNG Info, XYZ plot, GGUF tools, Workflows snapshots, Settings.
 
 ## 🚀 Quick start
 
 Prereqs:
 - Git
-- Internet access for first install (downloads `uv`, CPython, Node.js, and wheels)
-- No manual ffmpeg setup required: installer provisions repo-local `ffmpeg`/`ffprobe` and default RIFE model assets for video interpolation.
+- PC
+- Keyboard
+- Maybe a GPU
 
 ### Windows
 ```bat
@@ -79,18 +78,6 @@ Available weights on the Hub (generated via `hf download --dry-run` on 2026-01-2
   - `wan22-loras/wan22_t2v_14b_HN_lx2v_4step_lora_rank64_1017.safetensors`
   - `wan22-loras/wan22_t2v_14b_LN_lx2v_4step_lora_rank64_1017.safetensors`
 
-Coming soon (supported by the WebUI, but not published on the Hub yet):
-- ⏳ Chroma (Flux.1 Chroma packs)
-- ⏳ Z-Image Base variant packs (Turbo is available today)
-- ⏳ WAN 2.2 5B packs (GGUF)
-- ⏳ WAN 2.2 Animate packs (GGUF)
-- ⏳ More WAN 2.2 packs/variants
-
-Refresh the list:
-```bash
-hf download --dry-run --quiet sangoi-exe/sd-webui-codex --include '*.gguf' --include '*.safetensors'
-```
-
 By default, models live under `models/`:
 - `models/sd15/`, `models/sdxl/`, `models/flux/`, `models/zimage/`, `models/wan22/`
 - plus `*-vae`, `*-tenc`, `*-loras`
@@ -109,4 +96,4 @@ If you customize model roots, edit `apps/paths.json`.
 ## 🙏 Credits
 
 - Semantic baseline for “parity”: Hugging Face Diffusers.
-- Inspiration: AUTOMATIC1111 + Forge (Codex backend/UI are reimplemented; no copy/paste ports).
+- Inspiration: AUTOMATIC1111 and Forge.

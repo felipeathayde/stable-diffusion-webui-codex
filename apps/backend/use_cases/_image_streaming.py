@@ -7,13 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared streaming helpers for image mode wrappers (txt2img/img2img).
-Provides seed normalization, worker-thread execution (with smart runtime override propagation), sampling progress polling, decode normalization, and common `info` metadata building.
+Provides seed normalization, worker-thread execution (with smart runtime override propagation), sampling progress polling, decode normalization (including pre-decode cache flush + CPU-target decode transfer), and common `info` metadata building.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_seed_plan` (function): Normalize request seed + batch_total into (seed, all_seeds, subseeds, subseed_strength).
 - `_run_inference_worker` (function): Run a callable in a daemon thread while propagating smart runtime overrides and capturing output/error/timings.
 - `_iter_sampling_progress` (function): Poll `backend_state` and yield `ProgressEvent` updates until a worker signals completion.
-- `_decode_generation_output` (function): Normalize `GenerationResult`/tensor output into a list of PIL images and decode timing.
+- `_decode_generation_output` (function): Normalize `GenerationResult`/tensor output into a list of PIL images and decode timing (pre-decode cache flush + CPU-target decode transfer).
 - `_build_common_info` (function): Build the shared `info` dict for image tasks (engine/task/dims/seed/sampler/scheduler/prompts/extra/timings).
 """
 
@@ -155,10 +155,12 @@ def _decode_generation_output(
     output: Any,
     task_label: str,
 ) -> tuple[list[object], float]:
+    import gc
     import time
 
     import torch
 
+    from apps.backend.runtime.memory import memory_management
     from apps.backend.runtime.memory.smart_offload_invariants import (
         enforce_smart_offload_post_decode_residency,
     )
@@ -222,9 +224,12 @@ def _decode_generation_output(
                     raise RuntimeError(
                         f"{task_label} pipeline returned {type(latents).__name__}; expected torch.Tensor (latents)"
                     )
+                gc.collect()
+                memory_management.manager.soft_empty_cache(force=True)
                 decoded = decode_latent_batch(
                     decode_engine,
                     latents,
+                    target_device=memory_management.manager.cpu_device,
                     stage=f"{task_label}.decode(pre)",
                 )
                 images = latents_to_pil(decoded)

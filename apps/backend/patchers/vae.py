@@ -25,6 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 import contextlib
+import gc
 import math
 from dataclasses import dataclass
 
@@ -41,7 +42,7 @@ except Exception:  # noqa: BLE001
     AutoencoderKL_LDM = None
 
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.config import DeviceRole
+from apps.backend.runtime.memory.config import DeviceBackend, DeviceRole
 from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
 from apps.backend.runtime.logging import get_backend_logger
 from .base import ModelPatcher
@@ -367,7 +368,11 @@ class VAE:
         self._supports_manual_cast_split = self._detect_manual_cast_split_support()
         self._manual_cast_split_warned = False
         self.offload_device = offload_device
-        self.output_device = memory_management.manager.get_device(DeviceRole.INTERMEDIATE)
+        intermediate_policy = memory_management.manager.config.component_policy(DeviceRole.INTERMEDIATE)
+        if intermediate_policy.preferred_backend == DeviceBackend.AUTO:
+            self.output_device = memory_management.manager.cpu_device
+        else:
+            self.output_device = memory_management.manager.get_device(DeviceRole.INTERMEDIATE)
 
         self.patcher = ModelPatcher(
             self.first_stage_model,
@@ -887,6 +892,22 @@ class VAE:
                     logger.warning(
                         "Ran out of memory when regular VAE decoding; retrying with tiled VAE decoding."
                     )
+                    memory_management.manager.unload_model(
+                        self.patcher,
+                        source="apps.backend.patchers.vae.decode_inner",
+                        stage="vae.decode_inner.tiled_retry_cleanup",
+                        component_hint="vae",
+                        event_reason="regular_decode_oom",
+                    )
+                    gc.collect()
+                    memory_management.manager.soft_empty_cache(force=True)
+                    memory_management.manager.load_model(
+                        self.patcher,
+                        source="apps.backend.patchers.vae.decode_inner",
+                        stage="vae.decode_inner.tiled_retry",
+                        component_hint="vae",
+                        event_reason="regular_decode_oom",
+                    )
                     pixel_samples = self.decode_tiled_(samples_in)
 
             # Return BCHW format in [-1, 1] range directly
@@ -1007,6 +1028,22 @@ class VAE:
                         )
                     logger.warning(
                         "Ran out of memory when regular VAE encoding; retrying with tiled VAE encoding."
+                    )
+                    memory_management.manager.unload_model(
+                        self.patcher,
+                        source="apps.backend.patchers.vae.encode_inner",
+                        stage="vae.encode_inner.tiled_retry_cleanup",
+                        component_hint="vae",
+                        event_reason="regular_encode_oom",
+                    )
+                    gc.collect()
+                    memory_management.manager.soft_empty_cache(force=True)
+                    memory_management.manager.load_model(
+                        self.patcher,
+                        source="apps.backend.patchers.vae.encode_inner",
+                        stage="vae.encode_inner.tiled_retry",
+                        component_hint="vae",
+                        event_reason="regular_encode_oom",
                     )
                     samples = self.encode_tiled_(pixel_samples)
 

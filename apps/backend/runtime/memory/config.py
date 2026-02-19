@@ -145,7 +145,7 @@ def _default_component_policies() -> Dict[DeviceRole, ComponentPolicy]:
         DeviceRole.CORE: ComponentPolicy(),
         DeviceRole.TEXT_ENCODER: ComponentPolicy(),
         DeviceRole.VAE: ComponentPolicy(),
-        DeviceRole.INTERMEDIATE: ComponentPolicy(),
+        DeviceRole.INTERMEDIATE: ComponentPolicy(preferred_backend=DeviceBackend.CPU),
         DeviceRole.CLIP_VISION: ComponentPolicy(),
     }
 

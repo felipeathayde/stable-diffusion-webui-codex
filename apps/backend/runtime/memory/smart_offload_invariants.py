@@ -88,6 +88,17 @@ def _resolve_vae_patcher(sd_model: Any) -> object | None:
     return patcher if patcher is not None else vae
 
 
+def _resolve_denoiser_target(sd_model: Any) -> object | None:
+    codex_objects = getattr(sd_model, "codex_objects", None)
+    if codex_objects is None:
+        return None
+    denoiser = getattr(codex_objects, "denoiser", None)
+    if denoiser is None:
+        return None
+    patcher = getattr(denoiser, "patcher", None)
+    return patcher if patcher is not None else denoiser
+
+
 def enforce_smart_offload_pre_conditioning_residency(sd_model: Any, *, stage: str) -> None:
     """Ensure non-conditioning components are not resident on the accelerator.
 
@@ -102,14 +113,14 @@ def enforce_smart_offload_pre_conditioning_residency(sd_model: Any, *, stage: st
     if codex_objects is None:
         return
 
-    denoiser = getattr(codex_objects, "denoiser", None)
-    if denoiser is not None and _is_model_loaded_on_accelerator(denoiser):
+    denoiser_target = _resolve_denoiser_target(sd_model)
+    if denoiser_target is not None and _is_model_loaded_on_accelerator(denoiser_target):
         _LOGGER.warning(
             "[smart-offload] stage=%s: denoiser was still resident on accelerator; unloading before conditioning.",
             stage,
         )
         memory_management.manager.unload_model(
-            denoiser,
+            denoiser_target,
             source="runtime.memory.smart_offload_invariants.pre_conditioning",
             stage=stage,
             component_hint="denoiser",
@@ -218,14 +229,14 @@ def enforce_smart_offload_pre_vae_residency(
     if codex_objects is None:
         return
 
-    denoiser = getattr(codex_objects, "denoiser", None)
-    if denoiser is not None and _is_model_loaded_on_accelerator(denoiser):
+    denoiser_target = _resolve_denoiser_target(sd_model)
+    if denoiser_target is not None and _is_model_loaded_on_accelerator(denoiser_target):
         _LOGGER.warning(
             "[smart-offload] stage=%s: denoiser was still resident on accelerator; unloading before VAE stage.",
             stage,
         )
         memory_management.manager.unload_model(
-            denoiser,
+            denoiser_target,
             source="runtime.memory.smart_offload_invariants.pre_vae",
             stage=stage,
             component_hint="denoiser",
@@ -281,22 +292,22 @@ def enforce_smart_offload_post_decode_residency(
             component_hint="vae",
         )
 
-    denoiser = getattr(codex_objects, "denoiser", None)
-    if denoiser is None:
+    denoiser_target = _resolve_denoiser_target(sd_model)
+    if denoiser_target is None:
         return
 
-    denoiser_target = _as_device(getattr(denoiser, "load_device", None))
-    if denoiser_target is not None and denoiser_target.type == "cpu":
+    denoiser_target_device = _as_device(getattr(denoiser_target, "load_device", None))
+    if denoiser_target_device is not None and denoiser_target_device.type == "cpu":
         return
 
     if keep_denoiser_warm:
-        if not _is_model_loaded_on_accelerator(denoiser):
+        if not _is_model_loaded_on_accelerator(denoiser_target):
             _LOGGER.debug(
                 "[smart-offload] stage=%s: Smart Cache hit; prewarming denoiser on accelerator.",
                 stage,
             )
             memory_management.manager.load_model(
-                denoiser,
+                denoiser_target,
                 source="runtime.memory.smart_offload_invariants.post_decode",
                 stage=stage,
                 component_hint="denoiser",
@@ -304,13 +315,13 @@ def enforce_smart_offload_post_decode_residency(
             )
         return
 
-    if _is_model_loaded_on_accelerator(denoiser):
+    if _is_model_loaded_on_accelerator(denoiser_target):
         _LOGGER.debug(
             "[smart-offload] stage=%s: Smart Cache miss; unloading denoiser after decode.",
             stage,
         )
         memory_management.manager.unload_model(
-            denoiser,
+            denoiser_target,
             source="runtime.memory.smart_offload_invariants.post_decode",
             stage=stage,
             component_hint="denoiser",

@@ -1,6 +1,6 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
-Last Review: 2026-02-18
+Last Review: 2026-02-19
 Status: Active
 
 ## Purpose
@@ -27,3 +27,5 @@ Status: Active
 - 2026-02-18: Smart-offload action names are now strict via `SmartOffloadAction` enum (fail-loud on non-enum inputs in `log_smart_offload_action`), removing free-form/legacy alias action strings.
 - 2026-02-18: `smart_offload.py` now exports `current_smart_runtime_overrides()` so worker boundaries can propagate per-request smart flag tri-state (`smart_offload`/`smart_fallback`/`smart_cache`) without wrapper-local override hacks.
 - 2026-02-18: `CodexMemoryManager.unload_model(...)` now performs explicit CPU-target unload for both plain `nn.Module` loaders and patcher-backed loaders (`_unload_record(..., avoid_model_moving=False, force_cpu_target=True)`), preventing false unload bookkeeping and swap-policy-dependent stale GPU residency on explicit unload calls.
+- 2026-02-19: Smart-offload denoiser invariants now canonicalize to patcher identity when available (`smart_offload_invariants._resolve_denoiser_target`), preventing unload/load no-op drift when wrappers differ from memory-manager tracked objects.
+- 2026-02-19: `RuntimeMemoryConfig` now defaults `DeviceRole.INTERMEDIATE` to CPU backend, aligning decode/output staging with low-VRAM expectations (Forge-style CPU intermediate by default unless explicitly overridden).

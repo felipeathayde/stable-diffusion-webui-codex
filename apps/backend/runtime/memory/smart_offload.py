@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Thread-local overrides + option-backed helpers for smart offload/fallback/cache flags, including cross-worker override snapshot propagation.
+Purpose: Thread-local overrides + option-backed helpers for smart offload/fallback/cache flags, including cross-worker override snapshot propagation and canonical smart-offload telemetry enrichment.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `smart_runtime_overrides` (function): Context manager to override smart flags for the current thread/request.
@@ -15,6 +15,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `smart_fallback_enabled` (function): True when smart CPU fallback on OOM is enabled (options + thread overrides).
 - `smart_cache_enabled` (function): True when Smart Cache is enabled (options + thread overrides).
 - `SmartOffloadAction` (enum): Canonical smart-offload action catalog for structured event emission.
+- `_bytes_to_mib` (function): Convert a byte count to MiB for structured telemetry payloads.
+- `_read_memory_snapshot` (function): Best-effort runtime memory snapshot reader used to enrich smart-offload events.
+- `_memory_fields_from_snapshot` (function): Build structured memory fields from a snapshot using the requested prefix.
 - `log_smart_offload_action` (function): Emits canonical smart-offload INFO events via the global event emitter.
 - `record_smart_cache_hit` (function): Increment Smart Cache hit counter for a named bucket.
 - `record_smart_cache_miss` (function): Increment Smart Cache miss counter for a named bucket.
@@ -25,8 +28,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from enum import Enum
+import math
 import threading
-from typing import Dict, Iterator
+from typing import Dict, Iterator, Mapping
 
 from apps.backend.runtime.logging import emit_backend_event
 
@@ -125,6 +129,57 @@ def smart_cache_enabled() -> bool:
         return False
 
 
+def _bytes_to_mib(value: int) -> float:
+    return round(float(max(0, int(value))) / (1024.0 * 1024.0), 2)
+
+
+def _read_memory_snapshot() -> dict[str, object] | None:
+    """Best-effort runtime memory snapshot for smart-offload telemetry fields."""
+
+    try:
+        from apps.backend.runtime.memory import memory_management
+
+        snapshot = memory_management.memory_snapshot()
+    except Exception:
+        return None
+    if not isinstance(snapshot, dict):
+        return None
+    return snapshot
+
+
+def _memory_fields_from_snapshot(snapshot: Mapping[str, object], *, prefix: str) -> Dict[str, object]:
+    fields: Dict[str, object] = {}
+
+    primary_device = snapshot.get("primary_device")
+    if primary_device is not None:
+        fields[f"{prefix}_device"] = str(primary_device)
+
+    torch_stats = snapshot.get("torch")
+    if not isinstance(torch_stats, Mapping):
+        return fields
+
+    mapping = (
+        ("allocated_bytes", "alloc"),
+        ("reserved_bytes", "reserved"),
+        ("free_bytes", "free"),
+        ("total_bytes", "total"),
+    )
+    for source_key, target_key in mapping:
+        raw_value = torch_stats.get(source_key)
+        if not isinstance(raw_value, (int, float)):
+            continue
+        if isinstance(raw_value, float) and not math.isfinite(raw_value):
+            continue
+        try:
+            bytes_value = max(0, int(raw_value))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        fields[f"{prefix}_{target_key}_bytes"] = bytes_value
+        fields[f"{prefix}_{target_key}_mb"] = _bytes_to_mib(bytes_value)
+
+    return fields
+
+
 def log_smart_offload_action(action: SmartOffloadAction, /, **fields: object) -> None:
     """Emit the canonical INFO log event for a smart-offload action."""
 
@@ -136,10 +191,26 @@ def log_smart_offload_action(action: SmartOffloadAction, /, **fields: object) ->
     action_name = action.value.strip().replace(" ", "_")
     if not action_name:
         action_name = "unknown"
+
+    event_fields: Dict[str, object] = dict(fields)
+    has_window_fields = any(
+        key.startswith("memory_before_") or key.startswith("memory_after_")
+        for key in event_fields
+    )
+    if not has_window_fields:
+        snapshot = _read_memory_snapshot()
+        if snapshot is not None:
+            try:
+                snapshot_fields = _memory_fields_from_snapshot(snapshot, prefix="memory_current")
+            except Exception:
+                snapshot_fields = {}
+            for key, value in snapshot_fields.items():
+                event_fields.setdefault(key, value)
+
     emit_backend_event(
         f"smart_offload.{action_name}",
         logger="smart_offload",
-        **fields,
+        **event_fields,
     )
 
 

@@ -10,6 +10,7 @@ Purpose: Codex-native runtime memory management service (hardware probe + precis
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
 Exposes per-role storage vs compute dtype selection (core/TE default to fp16 on accelerator devices, VAE defaults to fp32, CPU remains fp32 unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
 Also emits canonical smart-offload INFO audit events for model load/unload transitions and unload no-op requests when smart offload is active.
+Smart-offload action payloads include best-effort memory windows (`memory_before_*`/`memory_after_*`) to provide global per-action residency telemetry.
 `unload_model(...)` performs explicit CPU-target unload for both patcher-backed and plain module loaders, avoiding bookkeeping-only unloads and swap-policy-dependent stale GPU residency.
 Generic smart-offload action emission (`load`/`unload`/`unload_noop`) is centralized here, with optional caller context fields (`source`/`stage`/`component_hint`/`event_reason`).
 
@@ -1006,12 +1007,16 @@ class CodexMemoryManager:
         record = self._find_loaded_model(model)
         if record is None:
             if smart_offload_enabled():
+                action_memory_before = self._smart_offload_memory_fields(prefix="memory_before")
+                action_memory_after = self._smart_offload_memory_fields(prefix="memory_after")
                 log_smart_offload_action(
                     SmartOffloadAction.UNLOAD_NOOP,
                     source=source,
                     stage=stage,
                     component=component_hint or type(model).__name__,
                     reason=event_reason,
+                    **action_memory_before,
+                    **action_memory_after,
                 )
             return
         self._unload_record(
@@ -1163,6 +1168,49 @@ class CodexMemoryManager:
             return module.__class__.__name__
         return type(record.model).__name__
 
+    @staticmethod
+    def _bytes_to_mib(value: int) -> float:
+        return round(float(max(0, int(value))) / (1024.0 * 1024.0), 2)
+
+    def _smart_offload_memory_fields(self, *, prefix: str) -> Dict[str, object]:
+        """Best-effort primary-device memory telemetry for smart-offload logs."""
+
+        device = self._primary_device
+        fields: Dict[str, object] = {
+            f"{prefix}_device": str(device),
+        }
+
+        try:
+            if device.type == "cuda":
+                free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+                allocated_bytes = torch.cuda.memory_allocated(device)
+                reserved_bytes = torch.cuda.memory_reserved(device)
+            elif device.type == "xpu":
+                free_bytes, total_bytes = torch.xpu.mem_get_info(device)  # type: ignore[attr-defined]
+                allocated_bytes = torch.xpu.memory_allocated(device)  # type: ignore[attr-defined]
+                reserved_bytes = torch.xpu.memory_reserved(device)  # type: ignore[attr-defined]
+            elif device.type == "mps":
+                allocated_bytes = int(torch.mps.current_allocated_memory())
+                total_bytes = int(torch.mps.driver_allocated_memory())
+                reserved_bytes = allocated_bytes
+                free_bytes = max(total_bytes - allocated_bytes, 0)
+            else:
+                return fields
+        except Exception:
+            return fields
+
+        stats = (
+            ("alloc", int(allocated_bytes)),
+            ("reserved", int(reserved_bytes)),
+            ("free", int(free_bytes)),
+            ("total", int(total_bytes)),
+        )
+        for key, bytes_value in stats:
+            fields[f"{prefix}_{key}_bytes"] = bytes_value
+            fields[f"{prefix}_{key}_mb"] = self._bytes_to_mib(bytes_value)
+
+        return fields
+
     def _format_record_failures(self, failures: Sequence[Tuple[_LoadedModelRecord, Exception]]) -> str:
         return "; ".join(f"{self._record_label(record)}: {exc}" for record, exc in failures)
 
@@ -1297,6 +1345,9 @@ class CodexMemoryManager:
         # Ensure cache of module for downstream accounting
         record.base_module = module
         target_name = module.__class__.__name__
+        action_memory_before: Dict[str, object] = {}
+        if smart_offload_enabled():
+            action_memory_before = self._smart_offload_memory_fields(prefix="memory_before")
 
         # DEBUG: Log module size before loading
         module_size_bytes = self.module_size(module)
@@ -1367,6 +1418,7 @@ class CodexMemoryManager:
                 record.inclusive_memory,
             )
             if smart_offload_enabled():
+                action_memory_after = self._smart_offload_memory_fields(prefix="memory_after")
                 log_smart_offload_action(
                     SmartOffloadAction.LOAD,
                     source=event_source,
@@ -1378,6 +1430,8 @@ class CodexMemoryManager:
                     storage_dtype=str(record.storage_dtype),
                     compute_dtype=str(compute_dtype),
                     bytes=record.inclusive_memory,
+                    **action_memory_before,
+                    **action_memory_after,
                 )
         except self._oom_exception as exc:
             raise MemoryLoadError(f"OOM while loading {record.model}: {exc}") from exc
@@ -1398,6 +1452,9 @@ class CodexMemoryManager:
     ) -> None:
         loader = record.loader or record.model
         target_device: torch.device | None = None
+        action_memory_before: Dict[str, object] = {}
+        if smart_offload_enabled():
+            action_memory_before = self._smart_offload_memory_fields(prefix="memory_before")
         try:
             if hasattr(loader, "codex_unpatch_model"):
                 if force_cpu_target:
@@ -1411,6 +1468,7 @@ class CodexMemoryManager:
             record.model_accelerated = False
             logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
             if smart_offload_enabled():
+                action_memory_after = self._smart_offload_memory_fields(prefix="memory_after")
                 log_smart_offload_action(
                     SmartOffloadAction.UNLOAD,
                     source=event_source or reason,
@@ -1422,6 +1480,8 @@ class CodexMemoryManager:
                     target_device=str(target_device) if target_device is not None else "unknown",
                     avoid_model_moving=avoid_model_moving,
                     force_cpu_target=force_cpu_target,
+                    **action_memory_before,
+                    **action_memory_after,
                 )
         except Exception as exc:
             raise MemoryLoadError(

@@ -892,6 +892,14 @@ class VAE:
                     logger.warning(
                         "Ran out of memory when regular VAE decoding; retrying with tiled VAE decoding."
                     )
+                    try:
+                        del decoded
+                    except UnboundLocalError:
+                        pass
+                    try:
+                        del pixel_samples
+                    except UnboundLocalError:
+                        pass
                     memory_management.manager.unload_model(
                         self.patcher,
                         source="apps.backend.patchers.vae.decode_inner",
@@ -1029,6 +1037,18 @@ class VAE:
                     logger.warning(
                         "Ran out of memory when regular VAE encoding; retrying with tiled VAE encoding."
                     )
+                    try:
+                        del encoded
+                    except UnboundLocalError:
+                        pass
+                    try:
+                        del pixels_in
+                    except UnboundLocalError:
+                        pass
+                    try:
+                        del samples
+                    except UnboundLocalError:
+                        pass
                     memory_management.manager.unload_model(
                         self.patcher,
                         source="apps.backend.patchers.vae.encode_inner",

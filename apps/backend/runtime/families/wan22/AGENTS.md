@@ -79,6 +79,7 @@ Status: Active
 - 2026-02-18: shared native `AutoencoderKL_LDM` logger namespace was renamed from `backend.runtime.wan22.vae` to `backend.runtime.vae.ldm` to reflect cross-family usage (SDXL/Flux/ZImage/WAN) and avoid misleading WAN-only telemetry in SDXL runs.
 - 2026-02-20: `runtime/families/wan22/vae.py` is now a compatibility re-export shim; canonical ownership for native 2D `AutoencoderKL_LDM` moved to `runtime/common/vae_ldm.py` to remove WAN-only ownership drift for shared VAE code.
 - 2026-02-20: WAN22 SDPA wrapper now delegates per-call SDPA compute to runtime dispatcher helper `attention_function_pre_shaped(...)` (explicit PyTorch backend path) while preserving WAN policy/chunk/sliding orchestration and cross-attn fallback semantics.
+- 2026-02-20: WAN22 SDPA policy parsing is now strict fail-loud (`mem_efficient|flash|math` only); API/config parsing and runtime wrapper validation reject invalid values before execution.
 - 2026-02-20: WAN22 GGUF TE runtime wiring no longer accepts legacy `cuda_fp8` selection knobs; API/config now fail loud on `gguf_te_impl` / `gguf_te_kernel_required`, and text context runs through GGUF/HF local loading only.
 - 2026-02-20: Removed legacy WAN TE FP8 modules (`wan_te_cuda.py`, `wan_te_loader.py`, `wan_te_encoder.py`) and legacy CUDA extension sources under `runtime/kernels/wan_t5`; no runtime callsite uses this lane.
 - 2026-02-20: `config.py` no longer accepts `wan22_14b_native` in `extras.wan_engine_variant`; WAN 14B variant identity is canonicalized as `wan22_14b`/`14b` only.

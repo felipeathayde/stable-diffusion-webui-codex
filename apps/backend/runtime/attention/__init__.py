@@ -17,9 +17,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `attention_sub_quad` (function): Memory-saving attention variant (sub-quadratic/chunked) for long sequences.
 - `attention_split` (function): Splits attention computation into chunks to reduce peak memory.
 - `attention_xformers` (function): xFormers attention path (when available and not broken).
-- `attention_pytorch` (function): PyTorch SDPA attention path (uses `efficient_dot_product_attention`).
-- `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`).
-- `attention_function_pre_shaped` (function): Dispatcher wrapper for pre-shaped Q/K/V tensors (`[B,H,S,D]` -> `[B,H,S,D]`).
+- `attention_pytorch` (function): PyTorch SDPA attention path with optional per-call SDPA policy (`auto|flash|mem_efficient|math`).
+- `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`) with optional SDPA policy forwarding for PyTorch backend.
+- `attention_function_pre_shaped` (function): Dispatcher wrapper for pre-shaped Q/K/V tensors (`[B,H,S,D]` -> `[B,H,S,D]`), including optional SDPA policy forwarding.
 - `attention_function_single_head_spatial` (function): Runtime-selected single-head spatial attention dispatcher (VAE; driven by runtime config).
 - `slice_attention_single_head_spatial` (function): Single-head spatial attention variant using slicing/chunking.
 - `normal_attention_single_head_spatial` (function): Baseline single-head spatial attention.
@@ -30,8 +30,11 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import logging
 import math
-import torch
+from contextlib import nullcontext
+from typing import Literal
+
 import einops
+import torch
 
 from apps.backend.infra.config.args import args
 from apps.backend.runtime.memory import memory_management
@@ -47,6 +50,7 @@ _XFORMERS_OPS = None
 _XFORMERS_BROKEN = None
 _XFORMERS_VERSION = None
 _XFORMERS_IMPORT_ERROR: Exception | None = None
+_SDPA_POLICY_LOGGED: set[tuple[str, str, str]] = set()
 
 
 def _require_xformers_ops():
@@ -73,6 +77,100 @@ def _require_xformers_ops():
     return _XFORMERS_OPS, bool(_XFORMERS_BROKEN), version
 
 __all__ = [name for name in globals() if not name.startswith("_")]
+
+
+_SDPA_POLICY_VALUES = frozenset({"auto", "flash", "mem_efficient", "math"})
+_SDPAPolicy = Literal["auto", "flash", "mem_efficient", "math"]
+
+
+def _resolve_default_sdpa_policy() -> _SDPAPolicy:
+    try:
+        cfg = memory_management.manager.config.attention
+    except Exception:
+        return "auto"
+    if cfg.backend != AttentionBackend.PYTORCH:
+        return "auto"
+    if cfg.enable_flash and cfg.enable_mem_efficient:
+        return "auto"
+    if cfg.enable_flash:
+        return "flash"
+    if cfg.enable_mem_efficient:
+        return "mem_efficient"
+    return "math"
+
+
+def _normalize_sdpa_policy(sdpa_policy: str | None) -> _SDPAPolicy:
+    if sdpa_policy is None:
+        return _resolve_default_sdpa_policy()
+    if not isinstance(sdpa_policy, str):
+        raise TypeError(
+            "attention SDPA policy must be a string when provided "
+            f"(got {type(sdpa_policy).__name__})."
+        )
+    normalized = sdpa_policy.strip().lower()
+    if normalized not in _SDPA_POLICY_VALUES:
+        allowed = ", ".join(sorted(_SDPA_POLICY_VALUES))
+        raise RuntimeError(
+            f"Unsupported attention SDPA policy {sdpa_policy!r}. "
+            f"Allowed: {allowed}."
+        )
+    return normalized  # type: ignore[return-value]
+
+
+def _sdpa_context(*, sdpa_policy: _SDPAPolicy, device: torch.device):
+    if device.type != "cuda" or sdpa_policy == "auto":
+        return nullcontext()
+    try:
+        from torch.nn.attention import SDPBackend  # type: ignore[attr-defined]
+        from torch.nn.attention import sdpa_kernel  # type: ignore[attr-defined]
+    except Exception as exc:
+        raise RuntimeError(
+            "Per-call SDPA policy selection requires torch.nn.attention.sdpa_kernel support."
+        ) from exc
+    policy_to_backend = {
+        "flash": SDPBackend.FLASH_ATTENTION,
+        "mem_efficient": SDPBackend.EFFICIENT_ATTENTION,
+        "math": SDPBackend.MATH,
+    }
+    backend = policy_to_backend.get(sdpa_policy)
+    if backend is None:
+        raise RuntimeError(f"Unsupported SDPA policy {sdpa_policy!r} for torch.nn.attention.sdpa_kernel.")
+    return sdpa_kernel(backend)
+
+
+def _log_sdpa_policy_once(*, sdpa_policy: _SDPAPolicy, device: torch.device, dtype: torch.dtype) -> None:
+    key = (sdpa_policy, device.type, str(dtype))
+    if key in _SDPA_POLICY_LOGGED:
+        return
+    _SDPA_POLICY_LOGGED.add(key)
+    _LOGGER.info(
+        "[attention] pytorch sdpa policy=%s device=%s dtype=%s",
+        sdpa_policy,
+        str(device),
+        str(dtype),
+    )
+
+
+def _run_pytorch_sdpa(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    mask: torch.Tensor | None,
+    is_causal: bool,
+    sdpa_policy: str | None,
+) -> torch.Tensor:
+    normalized_policy = _normalize_sdpa_policy(sdpa_policy)
+    _log_sdpa_policy_once(sdpa_policy=normalized_policy, device=q.device, dtype=q.dtype)
+    with _sdpa_context(sdpa_policy=normalized_policy, device=q.device):
+        return torch.nn.functional.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=mask,
+            dropout_p=0.0,
+            is_causal=is_causal,
+        )
 
 
 def get_attn_precision(attn_precision=torch.float32):
@@ -365,7 +463,17 @@ def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_resh
     return out
 
 
-def attention_pytorch(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, is_causal=False):
+def attention_pytorch(
+    q,
+    k,
+    v,
+    heads,
+    mask=None,
+    attn_precision=None,
+    skip_reshape=False,
+    is_causal=False,
+    sdpa_policy: str | None = None,
+):
     if skip_reshape:
         b, _, _, dim_head = q.shape
     else:
@@ -376,7 +484,14 @@ def attention_pytorch(q, k, v, heads, mask=None, attn_precision=None, skip_resha
             (q, k, v),
         )
 
-    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=is_causal)
+    out = _run_pytorch_sdpa(
+        q,
+        k,
+        v,
+        mask=mask,
+        is_causal=is_causal,
+        sdpa_policy=sdpa_policy,
+    )
     out = (
         out.transpose(1, 2).reshape(b, -1, heads * dim_head)
     )
@@ -455,7 +570,7 @@ def xformers_attention_single_head_spatial(q, k, v):
     return out
 
 
-def pytorch_attention_single_head_spatial(q, k, v):
+def pytorch_attention_single_head_spatial(q, k, v, *, sdpa_policy: str | None = None):
     # compute attention
     B, C, H, W = q.shape
     q, k, v = map(
@@ -463,7 +578,14 @@ def pytorch_attention_single_head_spatial(q, k, v):
         (q, k, v),
     )
 
-    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+    out = _run_pytorch_sdpa(
+        q,
+        k,
+        v,
+        mask=None,
+        is_causal=False,
+        sdpa_policy=sdpa_policy,
+    )
     out = out.transpose(2, 3).reshape(B, C, H, W)
     return out
 
@@ -487,8 +609,15 @@ def attention_function(
     skip_reshape=False,
     is_causal=False,
     backend: AttentionBackend | None = None,
+    sdpa_policy: str | None = None,
 ):
     backend_selected = _selected_backend(backend_override=backend)
+    normalized_sdpa_policy = _normalize_sdpa_policy(sdpa_policy) if sdpa_policy is not None else None
+    if normalized_sdpa_policy is not None and backend_selected != AttentionBackend.PYTORCH:
+        raise RuntimeError(
+            "attention_function(sdpa_policy=...) is supported only for backend='pytorch'. "
+            f"Got backend={backend_selected.value!r} policy={normalized_sdpa_policy!r}."
+        )
     if skip_reshape and int(q.shape[1]) != int(heads):
         raise RuntimeError(
             "attention_function(skip_reshape=True) requires `heads` to match q.shape[1] "
@@ -504,6 +633,7 @@ def attention_function(
             attn_precision=attn_precision,
             skip_reshape=skip_reshape,
             is_causal=is_causal,
+            sdpa_policy=normalized_sdpa_policy,
         )
     if backend_selected == AttentionBackend.PYTORCH:
         return attention_pytorch(
@@ -547,6 +677,7 @@ def attention_function(
         attn_precision=attn_precision,
         skip_reshape=skip_reshape,
         is_causal=is_causal,
+        sdpa_policy=normalized_sdpa_policy,
     )
 
 
@@ -558,6 +689,7 @@ def attention_function_pre_shaped(
     mask=None,
     is_causal=False,
     backend: AttentionBackend | None = None,
+    sdpa_policy: str | None = None,
 ):
     if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
         raise RuntimeError(
@@ -587,6 +719,7 @@ def attention_function_pre_shaped(
         skip_reshape=True,
         is_causal=is_causal,
         backend=backend,
+        sdpa_policy=sdpa_policy,
     )
     expected = heads * head_dim
     if out.ndim != 3 or int(out.shape[0]) != batch or int(out.shape[1]) != q_tokens or int(out.shape[2]) != expected:
@@ -602,7 +735,7 @@ def attention_function_single_head_spatial(q, k, v):
     if backend == AttentionBackend.XFORMERS:
         return xformers_attention_single_head_spatial(q, k, v)
     if backend == AttentionBackend.PYTORCH:
-        return pytorch_attention_single_head_spatial(q, k, v)
+        return pytorch_attention_single_head_spatial(q, k, v, sdpa_policy=None)
     return normal_attention_single_head_spatial(q, k, v)
 
 

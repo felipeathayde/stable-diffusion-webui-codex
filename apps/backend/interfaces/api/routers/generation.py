@@ -21,7 +21,7 @@ Resolves `extras.lora_sha` / `img2img_extras.lora_sha` into server-side `lora_pa
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
-and derives WAN sampler/scheduler defaults from metadata scheduler assets.
+and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`mem_efficient|flash|math`) fail-loud.
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
 resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
@@ -2395,6 +2395,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if attn_mode not in {'global', 'sliding'}:
                 raise HTTPException(status_code=400, detail=f"Invalid gguf_attention_mode: {extras.get('gguf_attention_mode')!r}")
             extras['gguf_attention_mode'] = attn_mode
+        if 'gguf_sdpa_policy' in extras:
+            sdpa_policy = str(extras.get('gguf_sdpa_policy') or '').strip().lower()
+            if sdpa_policy not in {'mem_efficient', 'flash', 'math'}:
+                raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
+            extras['gguf_sdpa_policy'] = sdpa_policy
 
         engine_key, wan_engine_variant = _resolve_wan22_engine_key(
             payload,
@@ -2585,6 +2590,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if attn_mode not in {'global', 'sliding'}:
                 raise HTTPException(status_code=400, detail=f"Invalid gguf_attention_mode: {extras.get('gguf_attention_mode')!r}")
             extras['gguf_attention_mode'] = attn_mode
+        if 'gguf_sdpa_policy' in extras:
+            sdpa_policy = str(extras.get('gguf_sdpa_policy') or '').strip().lower()
+            if sdpa_policy not in {'mem_efficient', 'flash', 'math'}:
+                raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
+            extras['gguf_sdpa_policy'] = sdpa_policy
         raw_chunk_frames = payload.get('img2vid_chunk_frames')
         if isinstance(raw_chunk_frames, str):
             raw_chunk_frames = raw_chunk_frames.strip()

@@ -1,6 +1,6 @@
 # apps/backend/runtime/attention Overview
 Date: 2025-10-28
-Last Review: 2026-01-24
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -10,3 +10,4 @@ Status: Active
 - Keep new attention kernels registered here so engines/runtime modules can reference a single entrypoint.
 - 2026-01-24: Attention dispatch is now runtime-config-driven (no import-time backend binding). xFormers is imported lazily when selected and errors fail loud when unavailable/disabled.
 - 2026-02-20: Added `attention_function_pre_shaped(...)` and causal-aware dispatcher signatures so pre-shaped `[B,H,S,D]` callsites can route through the central runtime backend selector without bypassing dispatcher contracts.
+- 2026-02-20: PyTorch SDPA paths now support strict per-call policy forwarding (`auto|flash|mem_efficient|math`) through `attention_function(...)` / `attention_function_pre_shaped(...)`; non-PyTorch backend + policy combinations fail loud.

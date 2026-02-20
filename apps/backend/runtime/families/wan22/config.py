@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
 geometry validation (e.g. `height/width % 16 == 0`), metadata-derived sampler/scheduler defaults, and strict WAN VAE
-config-source contract checks (bundle dir or file+config).
+config-source contract checks (bundle dir or file+config), plus strict `gguf_sdpa_policy` validation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -655,6 +655,17 @@ def build_wan22_gguf_run_config(
     if attention_mode == "sliding" and attn_chunk_size is None:
         attn_chunk_size = 1024
 
+    sdpa_policy_raw = extras.get("gguf_sdpa_policy")
+    sdpa_policy: str | None = None
+    if sdpa_policy_raw is not None:
+        sdpa_policy = str(sdpa_policy_raw).strip().lower()
+        if sdpa_policy not in {"mem_efficient", "flash", "math"}:
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_sdpa_policy' must be one of "
+                "'mem_efficient', 'flash', or 'math' when provided, "
+                f"got {sdpa_policy_raw!r}."
+            )
+
     return RunConfig(
         width=width,
         height=height,
@@ -673,7 +684,7 @@ def build_wan22_gguf_run_config(
         tokenizer_dir=tokenizer_dir,
         metadata_dir=meta_dir,
         wan_engine_variant=wan_engine_variant,
-        sdpa_policy=(extras.get("gguf_sdpa_policy") if extras.get("gguf_sdpa_policy") is not None else None),
+        sdpa_policy=sdpa_policy,
         attention_mode=attention_mode,
         attn_chunk_size=attn_chunk_size,
         gguf_cache_policy=(extras.get("gguf_cache_policy") if extras.get("gguf_cache_policy") is not None else None),

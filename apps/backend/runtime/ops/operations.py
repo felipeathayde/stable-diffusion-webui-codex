@@ -581,22 +581,19 @@ class CodexOperations:
         def forward(self, x):
             if not x.is_floating_point():
                 raise TypeError(f"GroupNorm expects a floating-point input tensor; got dtype={x.dtype}.")
-            original_dtype = x.dtype
-            x_float = x.float()
-            weight_args = {"dtype": torch.float32}
-            bias_args = {"dtype": torch.float32}
+            norm_dtype = x.dtype
+            weight_args = {"dtype": norm_dtype}
+            bias_args = {"dtype": norm_dtype}
 
             if self.parameters_manual_cast:
-                weight, bias, signal = weights_manual_cast(self, x, target_dtype=torch.float32)
+                weight, bias, signal = weights_manual_cast(self, x, target_dtype=norm_dtype)
                 with main_stream_worker(weight, bias, signal):
                     with autocast_disabled(x.device.type):
-                        out = torch.nn.functional.group_norm(x_float, self.num_groups, weight, bias, self.eps)
-                        return out.to(dtype=original_dtype)
+                        return torch.nn.functional.group_norm(x, self.num_groups, weight, bias, self.eps)
 
             weight, bias = get_weight_and_bias(self, weight_args, bias_args)
             with autocast_disabled(x.device.type):
-                out = torch.nn.functional.group_norm(x_float, self.num_groups, weight, bias, self.eps)
-                return out.to(dtype=original_dtype)
+                return torch.nn.functional.group_norm(x, self.num_groups, weight, bias, self.eps)
 
     class LayerNorm(torch.nn.LayerNorm):
         def __init__(self, *args, **kwargs):
@@ -614,22 +611,19 @@ class CodexOperations:
         def forward(self, x):
             if not x.is_floating_point():
                 raise TypeError(f"LayerNorm expects a floating-point input tensor; got dtype={x.dtype}.")
-            original_dtype = x.dtype
-            x_float = x.float()
-            weight_args = {"dtype": torch.float32}
-            bias_args = {"dtype": torch.float32}
+            norm_dtype = x.dtype
+            weight_args = {"dtype": norm_dtype}
+            bias_args = {"dtype": norm_dtype}
 
             if self.parameters_manual_cast:
-                weight, bias, signal = weights_manual_cast(self, x, target_dtype=torch.float32)
+                weight, bias, signal = weights_manual_cast(self, x, target_dtype=norm_dtype)
                 with main_stream_worker(weight, bias, signal):
                     with autocast_disabled(x.device.type):
-                        out = torch.nn.functional.layer_norm(x_float, self.normalized_shape, weight, bias, self.eps)
-                        return out.to(dtype=original_dtype)
+                        return torch.nn.functional.layer_norm(x, self.normalized_shape, weight, bias, self.eps)
 
             weight, bias = get_weight_and_bias(self, weight_args, bias_args)
             with autocast_disabled(x.device.type):
-                out = torch.nn.functional.layer_norm(x_float, self.normalized_shape, weight, bias, self.eps)
-                return out.to(dtype=original_dtype)
+                return torch.nn.functional.layer_norm(x, self.normalized_shape, weight, bias, self.eps)
 
     class Embedding(torch.nn.Embedding):
         def __init__(self, *args, **kwargs):
@@ -1162,19 +1156,17 @@ class CodexOperationsGGUF(CodexOperations):
         def forward(self, x):
             if not x.is_floating_point():
                 raise TypeError(f"GroupNorm expects a floating-point input tensor; got dtype={x.dtype}.")
-            original_dtype = x.dtype
-            x_float = x.float()
+            norm_dtype = x.dtype
             weight, bias, signal = weights_manual_cast(
                 self,
                 x,
                 weight_fn=dequantize_tensor,
                 bias_fn=dequantize_tensor,
-                target_dtype=torch.float32,
+                target_dtype=norm_dtype,
             )
             with main_stream_worker(weight, bias, signal):
                 with autocast_disabled(x.device.type):
-                    out = torch.nn.functional.group_norm(x_float, self.num_groups, weight, bias, self.eps)
-                    return out.to(dtype=original_dtype)
+                    return torch.nn.functional.group_norm(x, self.num_groups, weight, bias, self.eps)
 
     class LayerNorm(_GGUFMixin, CodexOperations.LayerNorm):
         def __init__(self, *args, **kwargs):
@@ -1202,19 +1194,17 @@ class CodexOperationsGGUF(CodexOperations):
         def forward(self, x):
             if not x.is_floating_point():
                 raise TypeError(f"LayerNorm expects a floating-point input tensor; got dtype={x.dtype}.")
-            original_dtype = x.dtype
-            x_float = x.float()
+            norm_dtype = x.dtype
             weight, bias, signal = weights_manual_cast(
                 self,
                 x,
                 weight_fn=dequantize_tensor,
                 bias_fn=dequantize_tensor,
-                target_dtype=torch.float32,
+                target_dtype=norm_dtype,
             )
             with main_stream_worker(weight, bias, signal):
                 with autocast_disabled(x.device.type):
-                    out = torch.nn.functional.layer_norm(x_float, self.normalized_shape, weight, bias, self.eps)
-                    return out.to(dtype=original_dtype)
+                    return torch.nn.functional.layer_norm(x, self.normalized_shape, weight, bias, self.eps)
 
 
 @contextlib.contextmanager

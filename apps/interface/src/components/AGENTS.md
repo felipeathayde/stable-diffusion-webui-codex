@@ -76,4 +76,4 @@ Status: Active
 - 2026-02-17: Added `components/results/RunProgressStatus.vue` and migrated Run status rendering to this shared component across image/WAN/upscale views.
 - 2026-02-20: `WanSubHeader` now supports opt-in full-row click toggles (`header-click`), and `HiresSettingsCard.vue` / `RefinerSettingsCard.vue` / `XyzSweepCard.vue` wire header-area click parity for enable/disable collapse behavior.
 - 2026-02-20: `XyzSweepCard.vue` now collapses body content when disabled (same visible pattern as Hires/Swap cards) instead of always rendering controls/results.
-- 2026-02-20: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now render `APG Eta` on a dedicated second advanced-guidance row, anchored on the left for clearer CFG-advanced scanning.
+- 2026-02-20: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now keep CFG advanced controls split into two rows: primary (`APG Start/Momentum/Rescale/Norm`) and secondary (`APG Eta` left-anchored + `Guidance Rescale` + `CFG Trunc Ratio` + `Renorm CFG`).

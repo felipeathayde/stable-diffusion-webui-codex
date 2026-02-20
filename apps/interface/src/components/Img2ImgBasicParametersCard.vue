@@ -299,6 +299,29 @@ Symbols (top-level; keep in sync; no ghosts):
           @update:modelValue="(v) => patchGuidanceAdvanced({ apgNormThreshold: clampFloat(v, 0, 40) })"
         />
 
+      </div>
+
+      <div
+        v-if="showGuidanceAdvancedRow && (hasGuidanceSupport('apg_eta') || hasGuidanceSupport('guidance_rescale') || hasGuidanceSupport('cfg_trunc_ratio') || hasGuidanceSupport('renorm_cfg'))"
+        class="gc-row cfg-advanced-row cfg-advanced-row--secondary"
+      >
+        <SliderField
+          v-if="hasGuidanceSupport('apg_eta')"
+          class="gc-col gc-col--cfg-advanced-apg-eta"
+          label="APG Eta"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgEta"
+          tooltipTitle="APG Eta"
+          :modelValue="guidanceAdvanced.apgEta"
+          :min="-1"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgEta: clampFloat(v, -1, 1) })"
+        />
+
         <SliderField
           v-if="hasGuidanceSupport('guidance_rescale')"
           class="gc-col"
@@ -348,27 +371,6 @@ Symbols (top-level; keep in sync; no ghosts):
           inputClass="cdx-input-w-md"
           :disabled="disabled"
           @update:modelValue="(v) => patchGuidanceAdvanced({ renormCfg: clampFloat(v, 0, 4) })"
-        />
-      </div>
-
-      <div
-        v-if="showGuidanceAdvancedRow && hasGuidanceSupport('apg_eta')"
-        class="gc-row cfg-advanced-row cfg-advanced-row--apg-eta"
-      >
-        <SliderField
-          class="gc-col gc-col--cfg-advanced-apg-eta"
-          label="APG Eta"
-          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgEta"
-          tooltipTitle="APG Eta"
-          :modelValue="guidanceAdvanced.apgEta"
-          :min="-1"
-          :max="1"
-          :step="0.01"
-          :inputStep="0.01"
-          :nudgeStep="0.01"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled"
-          @update:modelValue="(v) => patchGuidanceAdvanced({ apgEta: clampFloat(v, -1, 1) })"
         />
       </div>
     </div>

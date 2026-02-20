@@ -103,10 +103,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const loraShaMap = ref<Map<string, string>>(new Map())
   const wanGgufShaMap = ref<Map<string, string>>(new Map())
   const attentionChoices = ref<{ value: string; label: string }[]>([
-    { value: 'torch-sdpa', label: 'Torch (SDPA)' },
+    { value: 'pytorch', label: 'PyTorch (SDPA)' },
     { value: 'xformers', label: 'xFormers' },
+    { value: 'split', label: 'Split (Chunked)' },
+    { value: 'quad', label: 'Quad (Sub-Quadratic)' },
   ])
-  const currentAttention = ref<string>('torch-sdpa')
+  const currentAttention = ref<string>('pytorch')
   const deviceChoices = ref<{ value: string; label: string }[]>([
     { value: 'cuda', label: 'CUDA' },
     { value: 'cpu', label: 'CPU' },

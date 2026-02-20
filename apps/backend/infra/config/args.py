@@ -427,10 +427,12 @@ def _apply_source_overrides(
         raw_backend = _setting_value("codex_attention_backend")
         if raw_backend:
             mapped = raw_backend.strip().lower()
-            if mapped == "torch-sdpa":
-                mapped = "pytorch"
-            if mapped in {"pytorch", "xformers", "split", "quad"}:
-                ns.attention_backend = mapped
+            if mapped not in {"pytorch", "xformers", "split", "quad"}:
+                raise RuntimeError(
+                    "Invalid saved setting codex_attention_backend="
+                    f"'{raw_backend}'. Allowed: pytorch, xformers, split, quad.",
+                )
+            ns.attention_backend = mapped
 
     if getattr(ns, "debug_conditioning", False):
         env_map["CODEX_DEBUG_COND"] = "1"
@@ -836,8 +838,8 @@ def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:
         resolved = mapping.get(normalized)
         if resolved is not None:
             return resolved
-        _LOG.warning("Unsupported attention backend '%s'; falling back to PyTorch.", explicit)
-        return AttentionBackend.PYTORCH
+        allowed = ", ".join(sorted(mapping))
+        raise RuntimeError(f"Unsupported attention backend '{explicit}'. Allowed: {allowed}.")
 
     if ns.attention_split:
         return AttentionBackend.SPLIT

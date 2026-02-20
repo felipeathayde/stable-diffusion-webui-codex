@@ -8,14 +8,14 @@ Required Notice: see NOTICE
 
 Purpose: Bundle-aware engine loader for backend use cases.
 Resolves a `DiffusionModelBundle`, instantiates the matching engine via the registry, loads the model, and applies runtime options
-(attention/accelerator) for engines backed by diffusers pipelines.
+(attention/accelerator) for engines backed by diffusers pipelines with explicit failures on invalid attention backend configuration.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineLoadOptions` (dataclass): Optional engine load overrides (device/dtype/attention backend/accelerator/VAE override).
 - `_ensure_registry_ready` (function): Ensures the engine registry has the default engines registered (idempotent).
 - `_instantiate_engine` (function): Creates an engine instance for a resolved diffusion bundle (family → engine key).
 - `_options_to_kwargs` (function): Converts `EngineLoadOptions` into `engine.load(...)` keyword arguments.
-- `_apply_runtime_options` (function): Applies best-effort runtime options (attention backend, accelerator) to diffusers-backed engines.
+- `_apply_runtime_options` (function): Applies runtime options (attention backend, accelerator) to diffusers-backed engines.
 - `load_engine` (function): Loads and initializes a diffusion engine for direct use (best-effort cleanup on failures).
 """
 
@@ -44,7 +44,7 @@ _LOG = logging.getLogger("backend.core.engine_loader")
 class EngineLoadOptions:
     device: Optional[str] = None  # 'cuda'|'cpu'|None → auto
     dtype: Optional[str] = None  # 'fp16'|'bf16'|'fp32'|None → default
-    attention_backend: Optional[str] = None  # 'torch-sdpa'|'xformers'|'sage'
+    attention_backend: Optional[str] = None  # 'pytorch'|'xformers'|'split'|'quad'
     accelerator: Optional[str] = None  # 'tensorrt'|'none'
     vae_path: Optional[str] = None  # optional override
 
@@ -87,13 +87,10 @@ def _apply_runtime_options(engine: Any, opts: EngineLoadOptions | None) -> Any:
     if opts and opts.attention_backend is not None:
         attention_backend = opts.attention_backend
     else:
-        attention_backend = str(options_store.get_value("codex_attention_backend", "torch-sdpa") or "torch-sdpa")
+        attention_backend = str(options_store.get_value("codex_attention_backend", "pytorch") or "pytorch")
 
     if attention_backend is not None:
-        try:
-            _apply_attn(pipe, backend=attention_backend)
-        except Exception as exc:  # noqa: BLE001
-            _LOG.warning("Failed to apply attention backend %s: %s", attention_backend, exc)
+        _apply_attn(pipe, backend=attention_backend)
 
     if opts and opts.accelerator is not None:
         try:

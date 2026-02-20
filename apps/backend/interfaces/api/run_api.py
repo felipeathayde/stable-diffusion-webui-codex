@@ -11,7 +11,7 @@ Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
 Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`, `CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) from resolved runtime namespace values.
-Startup settings normalization preserves `codex_options_revision` while pruning unknown/invalid registry keys.
+Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid `codex_attention_backend`.
 Launcher/backend trace toggles (`--trace-contract`, `--trace-profiler`) are published via bootstrap env for runtime diagnostics modules.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -388,6 +388,14 @@ def build_app() -> FastAPI:
                 continue
             try:
                 if getattr(f, 'choices', None) and isinstance(f.choices, list) and saved[k] not in f.choices:
+                    if k == "codex_attention_backend":
+                        allowed = ", ".join(str(choice) for choice in f.choices)
+                        raise RuntimeError(
+                            "Invalid persisted setting codex_attention_backend="
+                            f"'{saved[k]}' in {options_store.SETTINGS_PATH}. "
+                            f"Allowed: {allowed}. "
+                            "Edit settings_values.json and set codex_attention_backend to an allowed value.",
+                        )
                     dropped.append(k)
                     saved.pop(k, None)
                     changed = True
@@ -406,6 +414,8 @@ def build_app() -> FastAPI:
                     saved[k] = saved[k].lower() in ('1','true','yes','on')
                     changed = True
             except Exception:
+                if k == "codex_attention_backend":
+                    raise
                 dropped.append(k)
                 saved.pop(k, None)
                 changed = True
@@ -427,6 +437,7 @@ def build_app() -> FastAPI:
         _apply_saved_settings()
     except Exception as e:  # pragma: no cover
         _LOG.exception("settings: failed to validate saved settings: %s", e)
+        raise
 
     # Honour pipeline debug env flag
     _apply_pipeline_debug_flag()

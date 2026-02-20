@@ -14,4 +14,4 @@ Status: Active
 ## Notes
 - Do not edit `settings_registry.py` by hand; regenerate it after changing `settings_schema.json`:
   - `CODEX_ROOT=$PWD PYTHONPATH=$PWD python .sangoi/dev/tools/settings/generate_settings_registry.py`
-- 2026-01-24: `codex_attention_backend` choices now exclude the unported `sage` option (kept strict: `torch-sdpa|xformers`).
+- 2026-02-20: `codex_attention_backend` is canonicalized to `pytorch|xformers|split|quad`; legacy aliases (`torch-sdpa`, `sage`) are removed from the active contract.

@@ -105,7 +105,7 @@ def set_attention_backend(backend: str) -> bool:
     cycle via `reinitialize(...)`.
 
     Accepted values:
-    - pytorch | torch-sdpa
+    - pytorch
     - xformers
     - split
     - quad
@@ -114,15 +114,12 @@ def set_attention_backend(backend: str) -> bool:
     normalized = (backend or "").strip().lower()
     mapping = {
         "pytorch": AttentionBackend.PYTORCH,
-        "torch-sdpa": AttentionBackend.PYTORCH,
         "xformers": AttentionBackend.XFORMERS,
         "split": AttentionBackend.SPLIT,
         "quad": AttentionBackend.QUAD,
-        "sub_quad": AttentionBackend.QUAD,
-        "sub-quadratic": AttentionBackend.QUAD,
     }
     if normalized not in mapping:
-        allowed = ", ".join(sorted({k for k in mapping if not k.startswith("sub")}))
+        allowed = ", ".join(sorted(mapping))
         raise ValueError(f"Invalid attention backend '{backend}'. Allowed: {allowed}")
 
     target = mapping[normalized]

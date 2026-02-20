@@ -157,13 +157,15 @@
       "label": "(Codex) Attention backend",
       "type": "dropdown",
       "section": "system",
-      "default": "torch-sdpa",
+      "default": "pytorch",
       "min": null,
       "max": null,
       "step": null,
       "choices": [
-        "torch-sdpa",
-        "xformers"
+        "pytorch",
+        "xformers",
+        "split",
+        "quad"
       ],
       "choices_source": null
     },

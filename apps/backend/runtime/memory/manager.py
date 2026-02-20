@@ -299,12 +299,58 @@ class CodexMemoryManager:
         if self._attention.backend == AttentionBackend.PYTORCH and self._probe.cuda_available:
             try:
                 torch.backends.cuda.enable_math_sdp(True)
-                if self._attention.enable_flash:
-                    torch.backends.cuda.enable_flash_sdp(True)
-                if self._attention.enable_mem_efficient:
-                    torch.backends.cuda.enable_mem_efficient_sdp(True)
+                torch.backends.cuda.enable_flash_sdp(bool(self._attention.enable_flash))
+                torch.backends.cuda.enable_mem_efficient_sdp(bool(self._attention.enable_mem_efficient))
             except Exception:  # pragma: no cover
                 logger.debug("Failed to enable PyTorch SDP backends.", exc_info=True)
+        self._log_attention_runtime()
+
+    @staticmethod
+    def _torch_sdp_flag(getter_name: str) -> bool | None:
+        getter = getattr(torch.backends.cuda, getter_name, None)
+        if getter is None or not callable(getter):
+            return None
+        try:
+            return bool(getter())
+        except Exception:
+            return None
+
+    def _sdpa_policy_label(self) -> str:
+        if self._attention.backend != AttentionBackend.PYTORCH:
+            return "n/a"
+        if self._attention.enable_flash and self._attention.enable_mem_efficient:
+            return "auto"
+        if self._attention.enable_flash:
+            return "flash_only"
+        if self._attention.enable_mem_efficient:
+            return "mem_efficient_only"
+        return "math_only"
+
+    def _log_attention_runtime(self) -> None:
+        runtime_flash: bool | None = None
+        runtime_mem_efficient: bool | None = None
+        runtime_math: bool | None = None
+        if self._probe.cuda_available:
+            runtime_flash = self._torch_sdp_flag("flash_sdp_enabled")
+            runtime_mem_efficient = self._torch_sdp_flag("mem_efficient_sdp_enabled")
+            runtime_math = self._torch_sdp_flag("math_sdp_enabled")
+
+        logger.info(
+            "[memory] attention runtime | backend=%s sdpa_policy=%s sdpa_enable_flash=%s "
+            "sdpa_enable_mem_efficient=%s sdpa_enable_math=%s sdpa_runtime_flash=%s "
+            "sdpa_runtime_mem_efficient=%s sdpa_runtime_math=%s xformers_available=%s "
+            "xformers_enabled=%s",
+            self._attention.backend.value,
+            self._sdpa_policy_label(),
+            bool(self._attention.enable_flash) if self._attention.backend == AttentionBackend.PYTORCH else False,
+            bool(self._attention.enable_mem_efficient) if self._attention.backend == AttentionBackend.PYTORCH else False,
+            self._attention.backend == AttentionBackend.PYTORCH,
+            runtime_flash,
+            runtime_mem_efficient,
+            runtime_math,
+            self._probe.xformers_available,
+            self.xformers_enabled(),
+        )
 
     def _initialize_precision_states(self) -> None:
         self._precision_states.clear()
@@ -1206,7 +1252,6 @@ class CodexMemoryManager:
             ("total", int(total_bytes)),
         )
         for key, bytes_value in stats:
-            fields[f"{prefix}_{key}_bytes"] = bytes_value
             fields[f"{prefix}_{key}_mb"] = self._bytes_to_mib(bytes_value)
 
         return fields
@@ -1429,7 +1474,6 @@ class CodexMemoryManager:
                     offload_device=str(record.offload_device),
                     storage_dtype=str(record.storage_dtype),
                     compute_dtype=str(compute_dtype),
-                    bytes=record.inclusive_memory,
                     **action_memory_before,
                     **action_memory_after,
                 )

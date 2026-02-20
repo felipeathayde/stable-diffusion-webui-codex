@@ -174,7 +174,6 @@ def _memory_fields_from_snapshot(snapshot: Mapping[str, object], *, prefix: str)
             bytes_value = max(0, int(raw_value))
         except (TypeError, ValueError, OverflowError):
             continue
-        fields[f"{prefix}_{target_key}_bytes"] = bytes_value
         fields[f"{prefix}_{target_key}_mb"] = _bytes_to_mib(bytes_value)
 
     return fields

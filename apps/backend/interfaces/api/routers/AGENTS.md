@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-18
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -72,7 +72,7 @@ Status: Active
 - 2026-02-16: WAN22 video request allowlists are now owned by model keymap module `apps/backend/runtime/state_dict/keymap_wan22_transformer.py` (`WAN22_REQUEST_KEYS`), not by payload type definitions.
 - 2026-02-18: `tasks.py` cancellation endpoint now accepts both `immediate` and `after_current`; when `mode` is omitted it uses `CODEX_TASK_CANCEL_DEFAULT_MODE` (strictly validated at startup, fail-loud on invalid values). `stop_generating()` is invoked only for `immediate`.
 - 2026-02-18: `generation.py` video worker inference-gate wait now aborts on any cancel mode (`immediate`/`after_current`) before start; in-flight interruption remains immediate-only and still drains orchestrator iterators before gate release.
-- 2026-02-16: `models.py` prompt-token endpoint now recognizes `wan22_animate_14b`; `ui.py` tab-type normalization accepts `wan22_animate_14b` and normalizes all WAN aliases to `wan`.
+- 2026-02-16: `models.py` prompt-token endpoint now recognizes `wan22_14b_animate`; `ui.py` tab-type normalization accepts `wan22_14b_animate` and normalizes all WAN aliases to `wan`.
 - 2026-02-17: `generation.py` WAN variant resolution now preserves 14B identity across repo/path hints (expanded token set + 14B-first heuristics) and avoids silent 14B→5B collapse during engine-key resolution.
 - 2026-02-17: `generation.py` keeps animate metadata hints remapped to the task-capable `wan22_14b` lane for txt2vid/img2vid while preserving the requested variant metadata (`wan_engine_variant`).
 - 2026-02-17: `generation.py` WAN video core validation now enforces frame domain `4n+1` in `[9,401]`, accepts strict `gguf_attention_mode` (`global|sliding`), and validates/forwards img2vid chunk controls (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`) fail-loud.

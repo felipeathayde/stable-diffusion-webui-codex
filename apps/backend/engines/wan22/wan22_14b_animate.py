@@ -35,7 +35,7 @@ HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
 
 
 class Wan22Animate14BEngine(BaseVideoEngine):
-    engine_id = "wan22_animate_14b"
+    engine_id = "wan22_14b_animate"
 
     def __init__(self) -> None:
         super().__init__()

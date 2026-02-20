@@ -20,7 +20,7 @@ Resolves `extras.lora_sha` / `img2img_extras.lora_sha` into server-side `lora_pa
 (`inventory.loras`, `.safetensors`), rejecting non-LoRA resolution with HTTP 409.
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
-resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_animate_14b`),
+resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets.
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
 resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
@@ -342,15 +342,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
         if isinstance(meta_dir, str) and meta_dir.strip():
-            return _path_from_api(meta_dir)
+            try:
+                return _path_from_api(meta_dir)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid WAN metadata path: {exc}") from exc
 
         raise HTTPException(status_code=400, detail="'wan_metadata_repo' (or 'wan_metadata_dir') is required for WAN GGUF")
 
     _WAN22_ENGINE_HINTS: tuple[tuple[str, str], ...] = (
         ("wan2.2-ti2v-5b-diffusers", "wan22_5b"),
         ("wan2.2-ti2v-5b", "wan22_5b"),
-        ("wan2.2-animate-14b-diffusers", "wan22_animate_14b"),
-        ("wan2.2-animate-14b", "wan22_animate_14b"),
+        ("wan2.2-animate-14b-diffusers", "wan22_14b_animate"),
+        ("wan2.2-animate-14b", "wan22_14b_animate"),
         ("wan2.2-i2v-a14b-diffusers", "wan22_14b"),
         ("wan2.2-i2v-a14b", "wan22_14b"),
         ("wan2.2-t2v-a14b-diffusers", "wan22_14b"),
@@ -366,7 +369,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 return engine_key
         # Fallback heuristics are variant-preserving and must never collapse 14B hints into 5B.
         if "animate" in raw and "14b" in raw:
-            return "wan22_animate_14b"
+            return "wan22_14b_animate"
         if "14b" in raw:
             return "wan22_14b"
         if "ti2v" in raw or "5b" in raw:
@@ -376,11 +379,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     def _resolve_wan_sampler_scheduler_defaults_from_assets(metadata_dir: str) -> Tuple[str, str]:
         """Resolve WAN sampler/scheduler defaults from metadata assets.
 
-        Back-compat: if metadata scheduler files are missing, keep legacy defaults.
+        Fail loud when required scheduler metadata is missing or invalid.
         """
         vendor_dir = os.path.expanduser(str(metadata_dir or "").strip())
         if not vendor_dir:
-            return ("uni-pc", "simple")
+            raise HTTPException(status_code=400, detail="WAN metadata directory is required.")
 
         scheduler_dir = Path(vendor_dir) / "scheduler"
         if not scheduler_dir.is_dir():
@@ -388,13 +391,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if parent_scheduler.is_dir():
                 scheduler_dir = parent_scheduler
             else:
-                return ("uni-pc", "simple")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"WAN metadata scheduler directory is missing: {scheduler_dir}",
+                )
 
         config_path = scheduler_dir / "scheduler_config.json"
         if not config_path.is_file():
             config_path = scheduler_dir / "config.json"
         if not config_path.is_file():
-            return ("uni-pc", "simple")
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "WAN metadata scheduler config is missing: "
+                    f"expected '{scheduler_dir / 'scheduler_config.json'}' or '{scheduler_dir / 'config.json'}'."
+                ),
+            )
 
         try:
             config_raw = json.loads(config_path.read_text(encoding="utf-8"))
@@ -464,9 +476,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 has_image_encoder = _has_component(model_index.get("image_encoder"))
 
                 if "wananimatepipeline" in class_name or "animate" in str(model_index_path).lower():
-                    candidate = "wan22_animate_14b"
+                    candidate = "wan22_14b_animate"
                 elif has_image_encoder and not has_transformer_2:
-                    candidate = "wan22_animate_14b"
+                    candidate = "wan22_14b_animate"
                 elif has_transformer_2:
                     candidate = "wan22_14b"
                 elif model_index.get("expand_timesteps") is not None:
@@ -478,9 +490,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         # model identities across variants.
         # - TXT2VID: animate lane is vid2vid-only; route through WAN22 14B.
         # - IMG2VID: animate lane routes through WAN22 14B.
-        if task_type is TaskType.TXT2VID and candidate == "wan22_animate_14b":
+        if task_type is TaskType.TXT2VID and candidate == "wan22_14b_animate":
             candidate = "wan22_14b"
-        if task_type is TaskType.IMG2VID and candidate == "wan22_animate_14b":
+        if task_type is TaskType.IMG2VID and candidate == "wan22_14b_animate":
             candidate = "wan22_14b"
 
         try:
@@ -2716,7 +2728,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if isinstance(out.get("model_dir"), str) and str(out.get("model_dir")).strip():
             # model_dir may refer to a GGUF file or a diffusers directory; enforce repo-root scoping either way.
             raw_model_dir = str(out.get("model_dir") or "")
-            p = Path(_path_from_api(raw_model_dir)).expanduser()
+            try:
+                p = Path(_path_from_api(raw_model_dir)).expanduser()
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"'{field}.model_dir' is invalid: {exc}") from exc
             try:
                 resolved = p.resolve()
             except Exception:

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: UI persistence and metadata API routes.
 Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`.
-Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_animate_14b`) into the canonical UI `wan` tab type.
+Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for UI endpoints.
@@ -113,7 +113,7 @@ def build_router(
 
     def _normalize_tab_type(value: object) -> str:
         raw = str(value or "").strip().lower()
-        if raw in ("wan22", "wan22_14b", "wan22_5b", "wan22_animate_14b"):
+        if raw in ("wan22", "wan22_14b", "wan22_5b", "wan22_14b_animate"):
             return "wan"
         if raw == "flux":
             return "flux1"
@@ -261,7 +261,7 @@ def build_router(
             raise HTTPException(status_code=400, detail="tab type is required")
         if raw_type == "flux":
             raise HTTPException(status_code=400, detail="invalid tab type: flux (use flux1)")
-        if raw_type not in _ALLOWED_TAB_TYPES and raw_type not in ("wan22", "wan22_14b", "wan22_5b", "wan22_animate_14b"):
+        if raw_type not in _ALLOWED_TAB_TYPES and raw_type not in ("wan22", "wan22_14b", "wan22_5b", "wan22_14b_animate"):
             raise HTTPException(status_code=400, detail=f"invalid tab type: {raw_type}")
         ttype = _normalize_tab_type(raw_type)
         title = str(payload.get("title") or ("FLUX.1" if ttype == "flux1" else ttype.upper()))

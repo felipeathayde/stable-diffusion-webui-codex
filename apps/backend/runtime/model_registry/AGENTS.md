@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-02-08
+Last Review: 2026-02-20
 Status: Draft
 
 ## Purpose
@@ -26,6 +26,8 @@ Status: Draft
 - 2026-02-08: `SemanticEngine.ANIMA` re-enabled native `er sde` rollout (Anima-only release scope) while keeping default sampler `euler`.
 - 2026-02-16: WAN22 family bucket was split into explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`); detector family assignment now follows model type (`ti2v` -> 5B, `animate` -> WAN22_ANIMATE, others -> 14B).
 - 2026-02-18: `EngineParamSurface` now includes optional `guidance_advanced` per-engine support flags (`apg_*`, `guidance_rescale`, `cfg_trunc_ratio`, `renorm_cfg`) so frontend CFG-Advanced UI can be gated by backend contract (including partial per-control support).
+- 2026-02-20: Removed semantic-engine map entry for `wan22_14b_native`; WAN22 14B semantic ownership is now single-key (`wan22_14b`).
+- 2026-02-20: WAN22 animate semantic/loader key was renamed to `wan22_14b_animate` (old `wan22_animate_14b` removed).
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from typing import Any as StableDiffusionXL
     from typing import Any as StableDiffusionXLRefiner
     from typing import Any as Wan2214BEngine
-    from typing import Any as Wan2214BGgufEngine
     from typing import Any as Wan225BEngine
     from typing import Any as Wan22Animate14BEngine
     from typing import Any as ZImageEngine
@@ -78,7 +77,7 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     # WAN22 GGUF lanes are explicit and variant-specific.
     _maybe_register("wan22_5b", registration.register_wan22_5b)
     _maybe_register("wan22_14b", registration.register_wan22_14b)
-    _maybe_register("wan22_animate_14b", registration.register_wan22_animate_14b)
+    _maybe_register("wan22_14b_animate", registration.register_wan22_14b_animate)
 
 
 __all__ = [
@@ -97,7 +96,6 @@ __all__ = [
     "AnimaEngine",
     "Wan22Animate14BEngine",
     "Wan2214BEngine",
-    "Wan2214BGgufEngine",
     "Wan225BEngine",
 ]
 
@@ -112,8 +110,7 @@ _ENGINE_EXPORTS = {
     "Chroma": ("apps.backend.engines.flux.chroma", "Chroma"),
     "ZImageEngine": ("apps.backend.engines.zimage.zimage", "ZImageEngine"),
     "AnimaEngine": ("apps.backend.engines.anima.anima", "AnimaEngine"),
-    "Wan22Animate14BEngine": ("apps.backend.engines.wan22.wan22_animate_14b", "Wan22Animate14BEngine"),
-    "Wan2214BGgufEngine": ("apps.backend.engines.wan22.wan22_14b_gguf", "Wan2214BGgufEngine"),
+    "Wan22Animate14BEngine": ("apps.backend.engines.wan22.wan22_14b_animate", "Wan22Animate14BEngine"),
     "Wan2214BEngine": ("apps.backend.engines.wan22.wan22_14b", "Wan2214BEngine"),
     "Wan225BEngine": ("apps.backend.engines.wan22.wan22_5b", "Wan225BEngine"),
 }

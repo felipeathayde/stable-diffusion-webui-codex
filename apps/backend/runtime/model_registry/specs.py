@@ -48,7 +48,7 @@ class ModelFamily(Enum):
     ANIMA = "anima"
     WAN22_5B = "wan22_5b"
     WAN22_14B = "wan22_14b"
-    WAN22_ANIMATE = "wan22_animate_14b"
+    WAN22_ANIMATE = "wan22_14b_animate"
     AURA = "aura"
     HUNYUAN = "hunyuan"
     SVD = "svd"

@@ -7,13 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Path normalization helpers for API payloads and responses.
-Keeps API-facing paths stable (repo-relative when possible) and resolves payload paths back to absolute paths under CODEX_ROOT.
+Keeps API-facing paths stable (repo-relative when possible) and resolves payload paths to absolute repo-scoped paths under CODEX_ROOT.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CODEX_ROOT` (constant): Repo root used for path normalization.
 - `_path_for_api` (function): Normalizes filesystem paths for API responses (prefer repo-relative under CODEX_ROOT).
 - `_normalize_inventory_for_api` (function): Applies `_path_for_api` to inventory items before returning them to the UI.
-- `_path_from_api` (function): Resolves repo-relative paths from API payloads back to absolute paths under CODEX_ROOT.
+- `_path_from_api` (function): Resolves API payload paths to absolute paths under CODEX_ROOT (rejects paths outside the repo root).
 - `_normalize_wan_stage_payload` (function): Normalizes WAN stage override payload fields (`model_dir`) to absolute paths; rejects stage `lora_path`.
 """
 
@@ -75,7 +75,10 @@ def _normalize_inventory_for_api(items: object) -> list[dict[str, object]]:
 
 
 def _path_from_api(raw: object) -> str:
-    """Resolve a user-supplied path relative to CODEX_ROOT when not absolute."""
+    """Resolve a user-supplied path to an absolute path under CODEX_ROOT.
+
+    Rejects any path that resolves outside the repository root.
+    """
     value = str(raw or "").strip()
     if not value:
         return ""
@@ -83,9 +86,22 @@ def _path_from_api(raw: object) -> str:
         p = Path(os.path.expanduser(value))
     except Exception:
         return value
-    if p.is_absolute():
-        return str(p)
-    return str(CODEX_ROOT / p)
+    candidate = p if p.is_absolute() else (CODEX_ROOT / p)
+    try:
+        root = CODEX_ROOT.resolve()
+    except Exception:
+        root = CODEX_ROOT
+    try:
+        resolved = candidate.resolve(strict=False)
+    except Exception:
+        resolved = candidate
+    try:
+        resolved.relative_to(root)
+    except Exception as exc:
+        raise ValueError(
+            f"Path resolves outside CODEX_ROOT: {resolved} (root={root})",
+        ) from exc
+    return str(resolved)
 
 
 def _normalize_wan_stage_payload(raw: object) -> object:

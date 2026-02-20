@@ -251,7 +251,7 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "anima": SemanticEngine.ANIMA,
     "wan22_5b": SemanticEngine.WAN22,
     "wan22_14b": SemanticEngine.WAN22,
-    "wan22_animate_14b": SemanticEngine.WAN22,
+    "wan22_14b_animate": SemanticEngine.WAN22,
     "svd": SemanticEngine.SVD,
     "hunyuan_video": SemanticEngine.HUNYUAN_VIDEO,
 }

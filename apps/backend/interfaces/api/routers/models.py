@@ -60,7 +60,7 @@ _ENGINE_TOKENIZER_KEY: Dict[str, str] = {
     "wan22": "wan",
     "wan22_5b": "wan",
     "wan22_14b": "wan",
-    "wan22_animate_14b": "wan",
+    "wan22_14b_animate": "wan",
 }
 
 

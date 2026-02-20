@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
 - `_infer_stage_variant` (function): Infer WAN model variant (`5b`/`14b`) from a stage GGUF filename.
-- `_resolve_stage_pair_variant` (function): Resolve a single variant for high/low stages and fail loud on explicit mismatch.
+- `_resolve_stage_pair_variant` (function): Resolve a single variant for high/low stages with API variant authority and fail loud mismatches.
 - `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
 - `_extract_i2v_decode_latents` (function): Extract pure latent channels from I2V model state before VAE decode (order-aware `lat_first`/`lat_last`).
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
@@ -321,8 +321,13 @@ def _infer_stage_variant(stage_path: str, *, stage: str, mode: str) -> str | Non
     return "14b"
 
 
-def _resolve_stage_pair_variant(hi_path: str, lo_path: str, *, mode: str, logger: Any) -> str:
-    log = get_logger(logger)
+def _resolve_stage_pair_variant(
+    hi_path: str,
+    lo_path: str,
+    *,
+    mode: str,
+    requested_variant: str | None,
+) -> str:
     hi_variant = _infer_stage_variant(hi_path, stage="high", mode=mode)
     lo_variant = _infer_stage_variant(lo_path, stage="low", mode=mode)
     if hi_variant is not None and lo_variant is not None and hi_variant != lo_variant:
@@ -330,18 +335,25 @@ def _resolve_stage_pair_variant(hi_path: str, lo_path: str, *, mode: str, logger
             f"WAN22 GGUF ({mode}) high/low variant mismatch: high={hi_variant} low={lo_variant} "
             f"(high={hi_path!r} low={lo_path!r})"
         )
-    resolved = hi_variant or lo_variant
-    if resolved is None:
-        # Preserve historical behavior when filenames do not encode variant markers.
-        log.warning(
-            "[wan22.gguf] could not infer 5b/14b from stage filenames for %s; defaulting variant=14b "
-            "(high=%s low=%s).",
-            mode,
-            os.path.basename(hi_path),
-            os.path.basename(lo_path),
+    inferred = hi_variant or lo_variant
+    if requested_variant is not None:
+        normalized_requested = str(requested_variant).strip().lower()
+        if normalized_requested not in {"5b", "14b"}:
+            raise RuntimeError(
+                f"WAN22 GGUF ({mode}) invalid requested variant={requested_variant!r}; expected '5b' or '14b'."
+            )
+        if inferred is not None and inferred != normalized_requested:
+            raise RuntimeError(
+                f"WAN22 GGUF ({mode}) variant mismatch: requested={normalized_requested} inferred={inferred} "
+                f"(high={hi_path!r} low={lo_path!r})"
+            )
+        return normalized_requested
+    if inferred is None:
+        raise RuntimeError(
+            f"WAN22 GGUF ({mode}) could not infer 5b/14b from stage filenames and no explicit variant was provided "
+            f"(high={hi_path!r} low={lo_path!r})."
         )
-        return "14b"
-    return resolved
+    return inferred
 
 
 def _build_i2v_seed_state(
@@ -493,7 +505,12 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
-    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="txt2vid", logger=log)
+    variant = _resolve_stage_pair_variant(
+        hi_path,
+        lo_path,
+        mode="txt2vid",
+        requested_variant=getattr(cfg, "wan_engine_variant", None),
+    )
     model_key = f"wan_t2v_{variant}"
 
     lvl = _resolve_offload_level(cfg)
@@ -742,7 +759,12 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
-    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="txt2vid", logger=log)
+    variant = _resolve_stage_pair_variant(
+        hi_path,
+        lo_path,
+        mode="txt2vid",
+        requested_variant=getattr(cfg, "wan_engine_variant", None),
+    )
     model_key = f"wan_t2v_{variant}"
     lvl = _resolve_offload_level(cfg)
 
@@ -953,7 +975,12 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
 
-    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="img2vid", logger=log)
+    variant = _resolve_stage_pair_variant(
+        hi_path,
+        lo_path,
+        mode="img2vid",
+        requested_variant=getattr(cfg, "wan_engine_variant", None),
+    )
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
@@ -1210,7 +1237,12 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
     lvl = _resolve_offload_level(cfg)
-    variant = _resolve_stage_pair_variant(hi_path, lo_path, mode="img2vid", logger=log)
+    variant = _resolve_stage_pair_variant(
+        hi_path,
+        lo_path,
+        mode="img2vid",
+        requested_variant=getattr(cfg, "wan_engine_variant", None),
+    )
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name

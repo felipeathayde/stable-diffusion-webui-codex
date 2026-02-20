@@ -70,6 +70,7 @@ class RunConfig:
     text_encoder_dir: Optional[str] = None
     tokenizer_dir: Optional[str] = None
     metadata_dir: Optional[str] = None
+    wan_engine_variant: Optional[str] = None  # '5b' | '14b' when provided by API dispatch
     high: Optional[StageConfig] = None
     low: Optional[StageConfig] = None
     # Memory/attention controls (optional)
@@ -203,6 +204,30 @@ def build_wan22_gguf_run_config(
     """
     ex_raw = getattr(request, "extras", {}) or {}
     extras: dict[str, Any] = dict(ex_raw) if isinstance(ex_raw, Mapping) else {}
+
+    raw_wan_engine_variant = extras.get("wan_engine_variant")
+    wan_engine_variant: str | None = None
+    if raw_wan_engine_variant is not None:
+        if not isinstance(raw_wan_engine_variant, str):
+            raise RuntimeError(
+                "WAN22 GGUF: 'wan_engine_variant' must be a string when provided, "
+                f"got {type(raw_wan_engine_variant).__name__}.",
+            )
+        normalized_variant = raw_wan_engine_variant.strip().lower()
+        variant_map = {
+            "5b": "5b",
+            "14b": "14b",
+            "wan22_5b": "5b",
+            "wan22_14b": "14b",
+            "wan22_14b_animate": "14b",
+        }
+        wan_engine_variant = variant_map.get(normalized_variant)
+        if wan_engine_variant is None:
+            allowed = ", ".join(sorted(variant_map))
+            raise RuntimeError(
+                "WAN22 GGUF: invalid 'wan_engine_variant'="
+                f"{raw_wan_engine_variant!r}. Allowed: {allowed}.",
+            )
 
     vae_path = str(extras.get("wan_vae_path") or "").strip() or None
 
@@ -522,7 +547,11 @@ def build_wan22_gguf_run_config(
                 config_path = candidate
                 break
         if not config_path:
-            return ("uni-pc", "simple")
+            raise RuntimeError(
+                "WAN22 GGUF: missing scheduler config under metadata dir "
+                f"(expected '{os.path.join(scheduler_dir, 'scheduler_config.json')}' "
+                f"or '{os.path.join(scheduler_dir, 'config.json')}')."
+            )
         try:
             scheduler_config = json.loads(open(config_path, encoding="utf-8").read())
         except Exception as exc:  # noqa: BLE001 - strict decode
@@ -643,6 +672,7 @@ def build_wan22_gguf_run_config(
         text_encoder_dir=te_path,
         tokenizer_dir=tokenizer_dir,
         metadata_dir=meta_dir,
+        wan_engine_variant=wan_engine_variant,
         sdpa_policy=(extras.get("gguf_sdpa_policy") if extras.get("gguf_sdpa_policy") is not None else None),
         attention_mode=attention_mode,
         attn_chunk_size=attn_chunk_size,

@@ -78,6 +78,11 @@ class Wan225BEngine(BaseVideoEngine):
                 p = alt
             else:
                 raise EngineLoadError(f"WAN22 {engine_label} GGUF model not found: {model_ref}")
+        path_base = os.path.basename(p).lower()
+        if "14b" in path_base and "5b" not in path_base:
+            raise EngineLoadError(
+                f"WAN22 {engine_label} requires 5B GGUF weights; got a 14B-labeled file: {model_ref}"
+            )
 
         comp.model_dir = p
         comp.dtype = dty
@@ -93,7 +98,7 @@ class Wan225BEngine(BaseVideoEngine):
         comp.pipeline = None
         ref_base = os.path.basename(str(model_ref or "")).lower()
         if "animate" in ref_base and "14b" in ref_base:
-            variant_hint = "wan22_animate_14b"
+            variant_hint = "wan22_14b_animate"
         elif "14b" in ref_base:
             variant_hint = "wan22_14b"
         elif "5b" in ref_base:

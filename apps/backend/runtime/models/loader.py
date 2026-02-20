@@ -181,7 +181,7 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "anima": ModelFamily.ANIMA,
     "wan22_5b": ModelFamily.WAN22_5B,
     "wan22_14b": ModelFamily.WAN22_14B,
-    "wan22_animate_14b": ModelFamily.WAN22_ANIMATE,
+    "wan22_14b_animate": ModelFamily.WAN22_ANIMATE,
 }
 
 FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
@@ -197,7 +197,7 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.ANIMA: "anima",
     ModelFamily.WAN22_5B: "wan22_5b",
     ModelFamily.WAN22_14B: "wan22_14b",
-    ModelFamily.WAN22_ANIMATE: "wan22_animate_14b",
+    ModelFamily.WAN22_ANIMATE: "wan22_14b_animate",
 }
 
 _WAN22_FAMILIES: tuple[ModelFamily, ...] = (

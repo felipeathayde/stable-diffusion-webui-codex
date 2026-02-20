@@ -81,6 +81,7 @@ Status: Active
 - 2026-02-20: WAN22 SDPA wrapper now delegates per-call SDPA compute to runtime dispatcher helper `attention_function_pre_shaped(...)` (explicit PyTorch backend path) while preserving WAN policy/chunk/sliding orchestration and cross-attn fallback semantics.
 - 2026-02-20: WAN22 GGUF TE runtime wiring no longer accepts legacy `cuda_fp8` selection knobs; API/config now fail loud on `gguf_te_impl` / `gguf_te_kernel_required`, and text context runs through GGUF/HF local loading only.
 - 2026-02-20: Removed legacy WAN TE FP8 modules (`wan_te_cuda.py`, `wan_te_loader.py`, `wan_te_encoder.py`) and legacy CUDA extension sources under `runtime/kernels/wan_t5`; no runtime callsite uses this lane.
+- 2026-02-20: `config.py` no longer accepts `wan22_14b_native` in `extras.wan_engine_variant`; WAN 14B variant identity is canonicalized as `wan22_14b`/`14b` only.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

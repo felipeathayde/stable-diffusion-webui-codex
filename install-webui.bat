@@ -20,6 +20,8 @@ set "MENU_RERUN_REQUEST=%CODEX_MENU_RERUN%"
 set "CODEX_MENU_USED="
 set "CODEX_MENU_CANCEL="
 set "CODEX_MENU_RERUN="
+set "CODEX_HELP_ONLY="
+set "CODEX_REINSTALL_DEPS_LOCK="
 
 set "SHOW_MENU=1"
 set "FORCE_MENU="
@@ -30,17 +32,11 @@ REM Args:
 REM   --no-menu   Skip prompts
 REM   --menu      Force prompts even if env vars are set
 REM   --simple    Equivalent to AUTO (no prompts)
-if /i "%~1"=="--no-menu" set "SHOW_MENU="
-if /i "%~1"=="--simple" (
-  set "SHOW_MENU="
-  set "CODEX_TORCH_MODE=auto"
-  set "CODEX_TORCH_BACKEND="
-  set "CODEX_CUDA_VARIANT="
-)
-if /i "%~1"=="--menu" (
-  set "SHOW_MENU=1"
-  set "FORCE_MENU=1"
-)
+REM   --check     Check installed dependencies only
+REM   --reinstall-deps  Reinstall dependencies in-place
+call :parse_args %*
+if errorlevel 1 exit /b 1
+if defined CODEX_HELP_ONLY exit /b 0
 
 if defined CODEX_NO_MENU set "SHOW_MENU="
 if defined CI set "SHOW_MENU="
@@ -50,6 +46,9 @@ if not defined FORCE_MENU (
   if defined CODEX_TORCH_MODE set "SHOW_MENU="
   if defined CODEX_TORCH_BACKEND set "SHOW_MENU="
   if defined CODEX_CUDA_VARIANT set "SHOW_MENU="
+  if defined CODEX_CUSTOM_TORCH_SRC set "SHOW_MENU="
+  if defined CODEX_INSTALL_CHECK set "SHOW_MENU="
+  if defined CODEX_REINSTALL_DEPS set "SHOW_MENU="
   if defined CODEX_PYTHON_VERSION set "SHOW_MENU="
   if defined CODEX_UV_VERSION set "SHOW_MENU="
 )
@@ -84,15 +83,107 @@ set "UV_CACHE_DIR=%ROOT%.uv\cache"
 set "NPM_CONFIG_CACHE=%ROOT%.npm-cache"
 set "XDG_DATA_HOME=%ROOT%.uv\xdg-data"
 set "XDG_CACHE_HOME=%ROOT%.uv\xdg-cache"
-if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%"
-if not exist "%NPM_CONFIG_CACHE%" mkdir "%NPM_CONFIG_CACHE%"
-if not exist "%XDG_DATA_HOME%" mkdir "%XDG_DATA_HOME%"
-if not exist "%XDG_CACHE_HOME%" mkdir "%XDG_CACHE_HOME%"
 
 set "TORCH_MODE=%CODEX_TORCH_MODE%"
 if "%TORCH_MODE%"=="" set "TORCH_MODE=auto"
 set "TORCH_BACKEND=%CODEX_TORCH_BACKEND%"
 set "CUDA_VARIANT=%CODEX_CUDA_VARIANT%"
+set "CUSTOM_TORCH_SRC=%CODEX_CUSTOM_TORCH_SRC%"
+set "CUSTOM_TORCH_PLACEHOLDER=https://placeholder.invalid/path/to/custom-torch.whl"
+set "USE_CUSTOM_TORCH=0"
+set "PYTORCH_MANIFEST_URL=%CODEX_PYTORCH_MANIFEST_URL%"
+if "%PYTORCH_MANIFEST_URL%"=="" set "PYTORCH_MANIFEST_URL=https://raw.githubusercontent.com/sangoi-exe/stable-diffusion-webui-codex/main/pytorch_manifest.json"
+
+set "INSTALL_CHECK=%CODEX_INSTALL_CHECK%"
+if "%INSTALL_CHECK%"=="" set "INSTALL_CHECK=0"
+if /i "%INSTALL_CHECK%"=="true" set "INSTALL_CHECK=1"
+if /i "%INSTALL_CHECK%"=="yes" set "INSTALL_CHECK=1"
+if /i "%INSTALL_CHECK%"=="on" set "INSTALL_CHECK=1"
+if /i "%INSTALL_CHECK%"=="false" set "INSTALL_CHECK=0"
+if /i "%INSTALL_CHECK%"=="no" set "INSTALL_CHECK=0"
+if /i "%INSTALL_CHECK%"=="off" set "INSTALL_CHECK=0"
+if not "%INSTALL_CHECK%"=="0" if not "%INSTALL_CHECK%"=="1" (
+  echo Error: invalid CODEX_INSTALL_CHECK='%INSTALL_CHECK%' ^(expected 0^|1^|true^|false^|yes^|no^|on^|off^).>&2
+  exit /b 1
+)
+
+set "REINSTALL_DEPS=%CODEX_REINSTALL_DEPS%"
+if "%REINSTALL_DEPS%"=="" set "REINSTALL_DEPS=0"
+if /i "%REINSTALL_DEPS%"=="true" set "REINSTALL_DEPS=1"
+if /i "%REINSTALL_DEPS%"=="yes" set "REINSTALL_DEPS=1"
+if /i "%REINSTALL_DEPS%"=="on" set "REINSTALL_DEPS=1"
+if /i "%REINSTALL_DEPS%"=="false" set "REINSTALL_DEPS=0"
+if /i "%REINSTALL_DEPS%"=="no" set "REINSTALL_DEPS=0"
+if /i "%REINSTALL_DEPS%"=="off" set "REINSTALL_DEPS=0"
+if not "%REINSTALL_DEPS%"=="0" if not "%REINSTALL_DEPS%"=="1" (
+  echo Error: invalid CODEX_REINSTALL_DEPS='%REINSTALL_DEPS%' ^(expected 0^|1^|true^|false^|yes^|no^|on^|off^).>&2
+  exit /b 1
+)
+
+if "%INSTALL_CHECK%"=="1" if "%REINSTALL_DEPS%"=="1" (
+  echo Error: --check and --reinstall-deps are mutually exclusive.>&2
+  exit /b 1
+)
+
+set "TORCH_MODE_VALID=0"
+if /i "%TORCH_MODE%"=="auto" set "TORCH_MODE_VALID=1"
+if /i "%TORCH_MODE%"=="cpu" set "TORCH_MODE_VALID=1"
+if /i "%TORCH_MODE%"=="cuda" set "TORCH_MODE_VALID=1"
+if /i "%TORCH_MODE%"=="rocm" set "TORCH_MODE_VALID=1"
+if /i "%TORCH_MODE%"=="skip" set "TORCH_MODE_VALID=1"
+if /i "%TORCH_MODE%"=="custom" set "TORCH_MODE_VALID=1"
+if "%TORCH_MODE_VALID%"=="0" (
+  echo Error: invalid CODEX_TORCH_MODE='%TORCH_MODE%' ^(expected auto^|cpu^|cuda^|rocm^|skip^|custom^).>&2
+  exit /b 1
+)
+set "TORCH_MODE_VALID="
+
+if not "%TORCH_BACKEND%"=="" (
+  set "TORCH_BACKEND_VALID=0"
+  if /i "%TORCH_BACKEND%"=="cpu" set "TORCH_BACKEND_VALID=1"
+  if /i "%TORCH_BACKEND%"=="cu126" set "TORCH_BACKEND_VALID=1"
+  if /i "%TORCH_BACKEND%"=="cu128" set "TORCH_BACKEND_VALID=1"
+  if /i "%TORCH_BACKEND%"=="cu130" set "TORCH_BACKEND_VALID=1"
+  if /i "%TORCH_BACKEND%"=="rocm64" set "TORCH_BACKEND_VALID=1"
+  if "%TORCH_BACKEND_VALID%"=="0" (
+    echo Error: invalid CODEX_TORCH_BACKEND='%TORCH_BACKEND%' ^(expected cpu^|cu126^|cu128^|cu130^|rocm64^).>&2
+    exit /b 1
+  )
+  set "TORCH_BACKEND_VALID="
+)
+
+if not "%CUDA_VARIANT%"=="" (
+  set "CUDA_VARIANT_VALID=0"
+  if /i "%CUDA_VARIANT%"=="12.6" set "CUDA_VARIANT_VALID=1"
+  if /i "%CUDA_VARIANT%"=="cu126" set "CUDA_VARIANT_VALID=1"
+  if /i "%CUDA_VARIANT%"=="12.8" set "CUDA_VARIANT_VALID=1"
+  if /i "%CUDA_VARIANT%"=="cu128" set "CUDA_VARIANT_VALID=1"
+  if /i "%CUDA_VARIANT%"=="13" set "CUDA_VARIANT_VALID=1"
+  if /i "%CUDA_VARIANT%"=="cu130" set "CUDA_VARIANT_VALID=1"
+  if "%CUDA_VARIANT_VALID%"=="0" (
+    echo Error: invalid CODEX_CUDA_VARIANT='%CUDA_VARIANT%' ^(expected 12.6^|12.8^|13^|cu126^|cu128^|cu130^).>&2
+    exit /b 1
+  )
+  set "CUDA_VARIANT_VALID="
+)
+
+if /i "%TORCH_MODE%"=="custom" (
+  if not "%TORCH_BACKEND%"=="" (
+    echo Error: CODEX_TORCH_MODE=custom cannot be combined with CODEX_TORCH_BACKEND.>&2
+    exit /b 1
+  )
+  if not "%CUDA_VARIANT%"=="" (
+    echo Error: CODEX_TORCH_MODE=custom cannot be combined with CODEX_CUDA_VARIANT.>&2
+    exit /b 1
+  )
+)
+
+if not "%INSTALL_CHECK%"=="1" (
+  if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%"
+  if not exist "%NPM_CONFIG_CACHE%" mkdir "%NPM_CONFIG_CACHE%"
+  if not exist "%XDG_DATA_HOME%" mkdir "%XDG_DATA_HOME%"
+  if not exist "%XDG_CACHE_HOME%" mkdir "%XDG_CACHE_HOME%"
+)
 
 echo [install] Repo: %ROOT%
 echo [install] uv: %UV_BIN%  version pin: %UV_VERSION%
@@ -101,10 +192,26 @@ echo [install] Python: %PYTHON_VERSION%  managed by uv
 echo [install] Venv: %VENV%  created by uv; uses the managed Python
 echo [install] Node.js: %NODE_VERSION%  managed by nodeenv  (installs into %NODEENV%)
 echo [install] FFmpeg runtime version: %FFMPEG_VERSION%  managed by ffmpeg-downloader
-echo [install] Torch mode: %TORCH_MODE%  CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip
+echo [install] Torch mode: %TORCH_MODE%  CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip^|custom
 if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND%  CODEX_TORCH_BACKEND
 if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT%  CODEX_CUDA_VARIANT
+if /i "%TORCH_MODE%"=="custom" echo [install] Custom torch source: %CUSTOM_TORCH_SRC%
+echo [install] PyTorch manifest URL: %PYTORCH_MANIFEST_URL%  CODEX_PYTORCH_MANIFEST_URL
+echo [install] Dependency check mode: %INSTALL_CHECK%  CODEX_INSTALL_CHECK
+echo [install] Reinstall dependencies: %REINSTALL_DEPS%  CODEX_REINSTALL_DEPS
 echo [install] npm cache: %NPM_CONFIG_CACHE%
+
+if "%INSTALL_CHECK%"=="1" (
+  call :run_dependency_checks
+  if errorlevel 1 exit /b 1
+  echo.
+  echo [install] Done (check-only).
+  if defined CODEX_MENU_USED (
+    call :ui_menu_post
+    if defined CODEX_MENU_RERUN goto :restart
+  )
+  exit /b 0
+)
 
 if exist "%UV_BIN%" goto :uv_ok
 if not exist "%UV_DIR%" mkdir "%UV_DIR%"
@@ -135,15 +242,27 @@ exit /b 1
 :python_ok
 
 set "TORCH_EXTRA="
+set "UV_SYNC_REINSTALL_ARG="
+if "%REINSTALL_DEPS%"=="1" set "UV_SYNC_REINSTALL_ARG=--reinstall"
 if "%TORCH_BACKEND%"=="" goto :torch_mode_start
 set "TORCH_EXTRA=%TORCH_BACKEND%"
-goto :torch_extra_done
+if /i "%TORCH_EXTRA%"=="cpu" goto :torch_extra_done
+if /i "%TORCH_EXTRA%"=="cu126" goto :torch_extra_done
+if /i "%TORCH_EXTRA%"=="cu128" goto :torch_extra_done
+if /i "%TORCH_EXTRA%"=="cu130" goto :torch_extra_done
+if /i "%TORCH_EXTRA%"=="rocm64" goto :torch_extra_done
+echo Error: invalid CODEX_TORCH_BACKEND='%TORCH_BACKEND%' ^(expected cpu^|cu126^|cu128^|cu130^|rocm64^).>&2
+exit /b 1
 
 :torch_mode_start
 if /i "%TORCH_MODE%"=="skip" goto :torch_extra_done
 if /i "%TORCH_MODE%"=="cpu" goto :torch_mode_cpu
 if /i "%TORCH_MODE%"=="rocm" goto :torch_mode_rocm
 if /i "%TORCH_MODE%"=="cuda" goto :torch_mode_cuda
+if /i "%TORCH_MODE%"=="custom" goto :torch_mode_custom
+if /i "%TORCH_MODE%"=="auto" goto :torch_mode_auto
+echo Error: invalid CODEX_TORCH_MODE='%TORCH_MODE%' ^(expected auto^|cpu^|cuda^|rocm^|skip^|custom^).>&2
+exit /b 1
 goto :torch_mode_auto
 
 :torch_mode_cpu
@@ -153,6 +272,11 @@ goto :torch_extra_done
 :torch_mode_rocm
 echo [install] Warning: ROCm is Linux-only; falling back to CPU. 1>&2
 set "TORCH_EXTRA=cpu"
+goto :torch_extra_done
+
+:torch_mode_custom
+set "USE_CUSTOM_TORCH=1"
+set "TORCH_EXTRA="
 goto :torch_extra_done
 
 :torch_mode_cuda
@@ -243,19 +367,45 @@ goto :torch_extra_done
 
 :torch_extra_done
 
+if "%USE_CUSTOM_TORCH%"=="1" goto :uv_sync_custom_torch
 if "%TORCH_EXTRA%"=="" goto :uv_sync_no_torch
 
 echo [install] Syncing Python dependencies [locked] with torch extra: %TORCH_EXTRA% ...
-"%UV_BIN%" sync --locked --extra "%TORCH_EXTRA%"
+"%UV_BIN%" sync --locked %UV_SYNC_REINSTALL_ARG% --extra "%TORCH_EXTRA%"
+goto :uv_sync_done
+
+:uv_sync_custom_torch
+if "%CUSTOM_TORCH_SRC%"=="" (
+  set "CUSTOM_TORCH_SRC=%CUSTOM_TORCH_PLACEHOLDER%"
+)
+if /i "%CUSTOM_TORCH_SRC%"=="%CUSTOM_TORCH_PLACEHOLDER%" goto :custom_torch_src_placeholder
+echo [install] Syncing Python dependencies [locked] without bundled torch extras ...
+"%UV_BIN%" sync --locked %UV_SYNC_REINSTALL_ARG%
+if errorlevel 1 goto :uv_sync_failed
+echo [install] Installing custom PyTorch from source: %CUSTOM_TORCH_SRC%
+"%UV_BIN%" pip install --python "%VENV_PYTHON%" --force-reinstall --no-deps "%CUSTOM_TORCH_SRC%"
+if errorlevel 1 goto :custom_torch_install_failed
 goto :uv_sync_done
 
 :uv_sync_no_torch
 echo [install] Warning: skipping torch/torchvision install. CODEX_TORCH_MODE=skip. WebUI requires PyTorch. 1>&2
 echo [install] Syncing Python dependencies [locked] ...
-"%UV_BIN%" sync --locked
+"%UV_BIN%" sync --locked %UV_SYNC_REINSTALL_ARG%
 
 :uv_sync_done
 if not errorlevel 1 goto :uv_sync_ok
+goto :uv_sync_failed
+
+:custom_torch_src_placeholder
+echo Error: CODEX_TORCH_MODE=custom requires CODEX_CUSTOM_TORCH_SRC to point to a real wheel/source.>&2
+echo [install] Placeholder in use: %CUSTOM_TORCH_PLACEHOLDER%>&2
+exit /b 1
+
+:custom_torch_install_failed
+echo Error: failed to install custom PyTorch from '%CUSTOM_TORCH_SRC%'.>&2
+exit /b 1
+
+:uv_sync_failed
 echo Error: uv sync failed.>&2
 exit /b 1
 :uv_sync_ok
@@ -311,6 +461,77 @@ if defined CODEX_MENU_USED (
   if defined CODEX_MENU_RERUN goto :restart
 )
 
+exit /b 0
+
+:run_dependency_checks
+if not exist "%UV_BIN%" (
+  echo Error: uv binary not found at '%UV_BIN%'. Run install mode first.>&2
+  exit /b 1
+)
+if not exist "%VENV_PYTHON%" (
+  echo Error: venv python not found at '%VENV_PYTHON%'. Run install mode first.>&2
+  exit /b 1
+)
+
+if /i "%TORCH_MODE%"=="skip" goto :check_python_runtime_no_torch
+
+"%VENV_PYTHON%" -c "from apps.backend.video.runtime_dependencies import resolve_ffmpeg_binary, resolve_rife_model_path; import torch, cv2, ccvfi; print('[install] torch: ' + str(torch.__version__)); print('[install] ffmpeg: ' + str(resolve_ffmpeg_binary('ffmpeg'))); print('[install] ffprobe: ' + str(resolve_ffmpeg_binary('ffprobe'))); print('[install] RIFE model: ' + str(resolve_rife_model_path(None))); print('[install] opencv-python: ' + cv2.__version__); print('[install] ccvfi: ' + str(getattr(ccvfi, '__version__', 'unknown')))"
+if errorlevel 1 (
+  echo Error: Python dependency/runtime check failed.>&2
+  exit /b 1
+)
+goto :check_nodeenv_runtime
+
+:check_python_runtime_no_torch
+"%VENV_PYTHON%" -c "from apps.backend.video.runtime_dependencies import resolve_ffmpeg_binary, resolve_rife_model_path; import cv2, ccvfi; print('[install] torch check skipped (CODEX_TORCH_MODE=skip)'); print('[install] ffmpeg: ' + str(resolve_ffmpeg_binary('ffmpeg'))); print('[install] ffprobe: ' + str(resolve_ffmpeg_binary('ffprobe'))); print('[install] RIFE model: ' + str(resolve_rife_model_path(None))); print('[install] opencv-python: ' + cv2.__version__); print('[install] ccvfi: ' + str(getattr(ccvfi, '__version__', 'unknown')))"
+if errorlevel 1 (
+  echo Error: Python dependency/runtime check failed.>&2
+  exit /b 1
+)
+
+:check_nodeenv_runtime
+call :check_nodeenv_only
+if errorlevel 1 exit /b 1
+if not exist "%ROOT%apps\\interface\\package-lock.json" (
+  echo Error: missing frontend lockfile '%ROOT%apps\\interface\\package-lock.json'.>&2
+  exit /b 1
+)
+if not exist "%ROOT%apps\\interface\\node_modules\\vite\\package.json" (
+  echo Error: frontend dependency sentinel missing: apps\\interface\\node_modules\\vite\\package.json.>&2
+  exit /b 1
+)
+echo [install] node:
+"%NODEENV_NODE%" -v
+echo [install] npm:
+call "%NODEENV_NPM%" -v
+exit /b 0
+
+:check_nodeenv_only
+set "NODEENV_NODE="
+set "NODEENV_NPM="
+if exist "%NODEENV%\Scripts\node.exe" set "NODEENV_NODE=%NODEENV%\Scripts\node.exe"
+if exist "%NODEENV%\Scripts\npm.cmd" set "NODEENV_NPM=%NODEENV%\Scripts\npm.cmd"
+if "%NODEENV_NODE%"=="" if exist "%NODEENV%\bin\node.exe" set "NODEENV_NODE=%NODEENV%\bin\node.exe"
+if "%NODEENV_NPM%"=="" if exist "%NODEENV%\bin\npm.cmd" set "NODEENV_NPM=%NODEENV%\bin\npm.cmd"
+if "%NODEENV_NODE%"=="" (
+  echo Error: node executable missing under '%NODEENV%'.>&2
+  exit /b 1
+)
+if "%NODEENV_NPM%"=="" (
+  echo Error: npm executable missing under '%NODEENV%'.>&2
+  exit /b 1
+)
+set "NODE_EXISTING="
+for /f "delims=" %%i in ('"%NODEENV_NODE%" -v 2^>nul') do if not defined NODE_EXISTING set "NODE_EXISTING=%%i"
+if "%NODE_EXISTING%"=="" (
+  echo Error: failed to read Node.js version from '%NODEENV_NODE%'.>&2
+  exit /b 1
+)
+set "NODE_EXISTING=%NODE_EXISTING:v=%"
+if not "%NODE_EXISTING%"=="%NODE_VERSION%" (
+  echo Error: '%NODEENV%' contains Node.js %NODE_EXISTING%, expected %NODE_VERSION%.>&2
+  exit /b 1
+)
 exit /b 0
 
 :prepend_nodeenv_path
@@ -426,22 +647,45 @@ echo  Codex WebUI Installer (Windows)
 echo ==================================================
 echo.
 echo  [1] Simple install (AUTO)
-echo  [2] Advanced (choose backend / CUDA)
-echo  [3] Exit
+echo  [2] Advanced (choose backend / CUDA / custom torch)
+echo  [3] Check installed dependencies
+echo  [4] Reinstall dependencies (in-place)
+echo  [5] Exit
 echo.
 set "CHOICE="
-set /p "CHOICE=Select an option (1-3): "
+set /p "CHOICE=Select an option (1-5): "
 
 if "%CHOICE%"=="1" goto :ui_menu_set_simple
 if "%CHOICE%"=="2" goto :ui_menu_advanced
-if "%CHOICE%"=="3" goto :ui_menu_cancel
+if "%CHOICE%"=="3" goto :ui_menu_set_check
+if "%CHOICE%"=="4" goto :ui_menu_set_reinstall
+if "%CHOICE%"=="5" goto :ui_menu_cancel
 goto :ui_menu_loop
 
 :ui_menu_set_simple
 set "CODEX_TORCH_MODE=auto"
 set "CODEX_TORCH_BACKEND="
 set "CODEX_CUDA_VARIANT="
+set "CODEX_CUSTOM_TORCH_SRC="
+set "CODEX_INSTALL_CHECK="
+set "CODEX_REINSTALL_DEPS="
+set "CODEX_REINSTALL_DEPS_LOCK="
 exit /b 0
+
+:ui_menu_set_check
+set "CODEX_TORCH_MODE=auto"
+set "CODEX_TORCH_BACKEND="
+set "CODEX_CUDA_VARIANT="
+set "CODEX_CUSTOM_TORCH_SRC="
+set "CODEX_INSTALL_CHECK=1"
+set "CODEX_REINSTALL_DEPS="
+set "CODEX_REINSTALL_DEPS_LOCK="
+exit /b 0
+
+:ui_menu_set_reinstall
+set "CODEX_INSTALL_CHECK="
+set "CODEX_REINSTALL_DEPS_LOCK=1"
+goto :ui_menu_advanced
 
 :ui_menu_cancel
 set "CODEX_MENU_CANCEL=1"
@@ -458,17 +702,23 @@ echo   [1] AUTO (default)
 echo   [2] CPU
 echo   [3] CUDA (pick 12.6/12.8/13)
 echo   [4] SKIP torch install (not recommended)
-echo   [5] Back
+echo   [5] CUSTOM PyTorch source (Windows only)
+echo   [6] Back
 echo.
 set "BCHOICE="
-set /p "BCHOICE=Select backend (1-5): "
+set /p "BCHOICE=Select backend (1-6): "
 
-if "%BCHOICE%"=="5" goto :ui_menu_loop
+if "%BCHOICE%"=="6" goto :ui_menu_loop
 
 REM Reset only what this UI owns.
 set "CODEX_TORCH_MODE="
 set "CODEX_TORCH_BACKEND="
 set "CODEX_CUDA_VARIANT="
+set "CODEX_CUSTOM_TORCH_SRC="
+set "CODEX_INSTALL_CHECK="
+set "CODEX_REINSTALL_DEPS="
+if defined CODEX_REINSTALL_DEPS_LOCK set "CODEX_REINSTALL_DEPS=1"
+set "CODEX_REINSTALL_DEPS_LOCK="
 
 if "%BCHOICE%"=="1" (
   set "CODEX_TORCH_MODE=auto"
@@ -481,6 +731,13 @@ if "%BCHOICE%"=="2" (
 if "%BCHOICE%"=="3" goto :ui_menu_cuda
 if "%BCHOICE%"=="4" (
   set "CODEX_TORCH_MODE=skip"
+  exit /b 0
+)
+if "%BCHOICE%"=="5" (
+  call :select_custom_torch_from_manifest
+  if errorlevel 3 goto :ui_menu_advanced
+  if errorlevel 1 goto :ui_menu_advanced
+  set "CODEX_TORCH_MODE=custom"
   exit /b 0
 )
 goto :ui_menu_advanced
@@ -523,6 +780,97 @@ set "PCHOICE="
 set /p "PCHOICE=Select an option (1-2): "
 if "%PCHOICE%"=="1" set "CODEX_MENU_RERUN=1"
 exit /b 0
+
+:select_custom_torch_from_manifest
+set "PYTORCH_MANIFEST_PICK_FILE=%TEMP%\codex-pytorch-manifest-pick-%RANDOM%%RANDOM%.txt"
+if exist "%PYTORCH_MANIFEST_PICK_FILE%" del /Q "%PYTORCH_MANIFEST_PICK_FILE%" >NUL 2>&1
+if "%PYTORCH_MANIFEST_URL%"=="" (
+  echo Error: CODEX_PYTORCH_MANIFEST_URL is empty.>&2
+  exit /b 1
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop';" ^
+  "$manifestUrl = $env:PYTORCH_MANIFEST_URL;" ^
+  "if ([string]::IsNullOrWhiteSpace($manifestUrl)) { throw 'Manifest URL is empty.' };" ^
+  "$manifest = Invoke-RestMethod -Uri $manifestUrl;" ^
+  "$entries = @();" ^
+  "foreach ($candidate in @($manifest.windows_custom_torch)) { if (-not [string]::IsNullOrWhiteSpace([string]$candidate.url)) { $entries += $candidate } };" ^
+  "if ($entries.Count -eq 0) { throw ('Manifest has no windows_custom_torch entries: ' + $manifestUrl) };" ^
+  "Write-Host '';" ^
+  "Write-Host ('  Custom PyTorch options (from ' + $manifestUrl + '):');" ^
+  "for ($i = 0; $i -lt $entries.Count; $i++) { $entry = $entries[$i]; $label = [string]$entry.label; if ([string]::IsNullOrWhiteSpace($label)) { $label = [string]$entry.id }; Write-Host ('   [' + ($i + 1) + '] ' + $label) };" ^
+  "Write-Host '   [0] Back';" ^
+  "$rawChoice = Read-Host ('Select custom wheel (0-' + $entries.Count + ')');" ^
+  "if ([string]::IsNullOrWhiteSpace($rawChoice) -or $rawChoice -eq '0') { exit 3 };" ^
+  "if ($rawChoice -notmatch '^[0-9]+$') { throw ('Invalid selection: ' + $rawChoice) };" ^
+  "$choice = [int]$rawChoice;" ^
+  "if ($choice -lt 1 -or $choice -gt $entries.Count) { throw ('Invalid selection: ' + $rawChoice) };" ^
+  "$selectedUrl = [string]$entries[$choice - 1].url;" ^
+  "if ([string]::IsNullOrWhiteSpace($selectedUrl)) { throw 'Selected entry has empty url.' };" ^
+  "[System.IO.File]::WriteAllText($env:PYTORCH_MANIFEST_PICK_FILE, $selectedUrl);"
+
+if errorlevel 3 exit /b 3
+if errorlevel 1 (
+  if exist "%PYTORCH_MANIFEST_PICK_FILE%" del /Q "%PYTORCH_MANIFEST_PICK_FILE%" >NUL 2>&1
+  echo Error: failed to load/select custom PyTorch from manifest URL '%PYTORCH_MANIFEST_URL%'.>&2
+  exit /b 1
+)
+
+set "CODEX_CUSTOM_TORCH_SRC="
+set /p "CODEX_CUSTOM_TORCH_SRC="<"%PYTORCH_MANIFEST_PICK_FILE%"
+if exist "%PYTORCH_MANIFEST_PICK_FILE%" del /Q "%PYTORCH_MANIFEST_PICK_FILE%" >NUL 2>&1
+if "%CODEX_CUSTOM_TORCH_SRC%"=="" (
+  echo Error: selected custom PyTorch URL is empty.>&2
+  exit /b 1
+)
+exit /b 0
+
+:parse_args
+if "%~1"=="" exit /b 0
+if /i "%~1"=="--no-menu" (
+  set "SHOW_MENU="
+  shift
+  goto :parse_args
+)
+if /i "%~1"=="--simple" (
+  set "SHOW_MENU="
+  set "CODEX_TORCH_MODE=auto"
+  set "CODEX_TORCH_BACKEND="
+  set "CODEX_CUDA_VARIANT="
+  set "CODEX_CUSTOM_TORCH_SRC="
+  set "CODEX_INSTALL_CHECK="
+  set "CODEX_REINSTALL_DEPS="
+  shift
+  goto :parse_args
+)
+if /i "%~1"=="--menu" (
+  set "SHOW_MENU=1"
+  set "FORCE_MENU=1"
+  shift
+  goto :parse_args
+)
+if /i "%~1"=="--check" (
+  set "SHOW_MENU="
+  set "CODEX_INSTALL_CHECK=1"
+  shift
+  goto :parse_args
+)
+if /i "%~1"=="--reinstall-deps" (
+  set "SHOW_MENU="
+  set "CODEX_REINSTALL_DEPS=1"
+  shift
+  goto :parse_args
+)
+if /i "%~1"=="--help" (
+  echo Usage: install-webui.bat [--menu^|--no-menu^|--simple^|--check^|--reinstall-deps^|--help]
+  echo   --check           Verify installer-managed dependencies only.
+  echo   --reinstall-deps  Reinstall dependencies in-place without deleting environments.
+  set "CODEX_HELP_ONLY=1"
+  exit /b 0
+)
+echo Error: unknown argument '%~1'. Use --help.>&2
+exit /b 1
 
 :pick_cuda_variant
 if /i "%CUDA_VARIANT%"=="12.6" goto :pick_cuda_cu126

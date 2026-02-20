@@ -19,8 +19,13 @@ Video runtime note:
 install-webui.bat
 ```
 
-On Windows, `install-webui.bat` prompts for **Simple vs Advanced** (CUDA 12.6/12.8/13) by default.
-For automation, pass `--no-menu`.
+On Windows, `install-webui.bat` prompts for **Simple / Advanced / Check / Reinstall** by default.
+Advanced mode includes CPU/CUDA/skip and a **Windows-only custom PyTorch** entry that loads options from a remote JSON manifest.
+For automation, pass `--no-menu` and use flags/env vars.
+
+Windows installer flags:
+- `install-webui.bat --check` (verify installer-managed dependencies only; non-destructive)
+- `install-webui.bat --reinstall-deps` (reinstall dependencies in-place, without deleting `.venv` / `.nodeenv`)
 
 2) Launch the GUI launcher:
 ```bat
@@ -37,6 +42,10 @@ update-webui.bat
 ```bash
 bash install-webui.sh
 ```
+
+Linux installer flags:
+- `bash install-webui.sh --check` (verify installer-managed dependencies only; non-destructive)
+- `bash install-webui.sh --reinstall-deps` (reinstall dependencies in-place, without deleting `.venv` / `.nodeenv`)
 
 2) Start API + UI:
 ```bash
@@ -89,8 +98,18 @@ Override:
 - `CODEX_TORCH_MODE=skip` (skip torch/torchvision entirely; the WebUI will not run without PyTorch)
 - `CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64` (explicitly pick the PyTorch backend extra)
 - `CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130` (aliases map to `cu126|cu128|cu130`; validated whenever set and used for backend selection when `CODEX_TORCH_BACKEND` is not set)
+- `CODEX_INSTALL_CHECK=1` (check mode; verifies installer-managed dependencies only)
+- `CODEX_REINSTALL_DEPS=1` (reinstall dependencies in-place without deleting environments)
 - `CODEX_INSTALL_TRACE=1` (Linux/WSL installer: enable shell trace for debugging)
 - `CODEX_FFMPEG_VERSION=<version>` (pin ffmpeg-downloader runtime build; default: `7.0.2`)
+
+Windows-only custom PyTorch:
+- `CODEX_TORCH_MODE=custom`
+- `CODEX_CUSTOM_TORCH_SRC=<custom wheel/source URL or path>`
+- `CODEX_PYTORCH_MANIFEST_URL=<remote json manifest url>` (optional override; defaults to this repo `main` branch)
+- Menu options are loaded from remote JSON field `windows_custom_torch`.
+- To publish a new custom build, update `pytorch_manifest.json` in the repo (installer keeps fetching it remotely; no installer code changes needed).
+- Linux/WSL does **not** support `CODEX_TORCH_MODE=custom` in `install-webui.sh`.
 
 If CUDA install fails, try a different backend:
 - Example: `CODEX_TORCH_BACKEND=cu126 bash install-webui.sh`
@@ -114,8 +133,10 @@ If it still happens, see the deep dive runbook:
 Your `peft` and `transformers` are out of sync (common when extra packages pull older pins).
 
 Fix: remove the venv and re-install with this repo’s locked dependencies:
-- Delete `.venv`
-- Re-run `install-webui.(bat|sh)`
+- First try in-place reinstall:
+  - Windows: `install-webui.bat --reinstall-deps`
+  - Linux/WSL: `bash install-webui.sh --reinstall-deps`
+- If the environment is still irrecoverable, delete `.venv` and re-run `install-webui.(bat|sh)`.
 
 ### Don’t mix “research deps” into the WebUI venv
 Packages like `pyiqa`, `datasets`, `numba`, `opencv-python-headless` often pin conflicting `transformers`/`numpy`.

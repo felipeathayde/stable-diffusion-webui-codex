@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-02-20",
+  "windows_custom_torch": [
+    {
+      "id": "torch-2.9.1-sm_86-cuda12.8-cp312-win_amd64",
+      "label": "PyTorch 2.9.1 (CUDA 12.8, SM_86 only, cp312, win_amd64)",
+      "url": "https://github.com/sangoi-exe/pytorch/releases/download/v2.9.1-codex.1/torch-2.9.1a0%2Bgit1e56056-cp312-cp312-win_amd64.whl",
+      "sha256": "5e8a9b160abeb07f6ab63e3e8cb5747f1aa0abf68d6c2892304cfeeaf3f1061c",
+      "notes": "Built with TORCH_CUDA_ARCH_LIST=8.6 (SM_86 only)."
+    }
+  ]
+}

@@ -12,6 +12,8 @@ VENV_DIR="${ROOT_DIR}/.venv"
 TORCH_MODE="${CODEX_TORCH_MODE:-auto}" # auto|cpu|cuda|rocm|skip
 TORCH_BACKEND="${CODEX_TORCH_BACKEND:-}" # cpu|cu126|cu128|cu130|rocm64 (optional override)
 CUDA_VARIANT="${CODEX_CUDA_VARIANT:-}" # 12.6|12.8|13|cu126|cu128|cu130 (optional override)
+INSTALL_CHECK="${CODEX_INSTALL_CHECK:-0}" # 0|1 (verification-only mode)
+REINSTALL_DEPS="${CODEX_REINSTALL_DEPS:-0}" # 0|1 (force reinstall in-place)
 TRACE="${CODEX_INSTALL_TRACE:-0}"
 
 NODE_VERSION="${CODEX_NODE_VERSION:-24.13.0}"
@@ -24,6 +26,84 @@ FFMPEG_VERSION="${CODEX_FFMPEG_VERSION:-7.0.2}"
 log() { echo "[install] $*"; }
 warn() { echo "[install] Warning: $*" >&2; }
 die() { echo "[install] Error: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+Usage: bash install-webui.sh [--check] [--reinstall-deps] [--help]
+
+Options:
+  --check            Verify installer-managed dependencies without installing.
+  --reinstall-deps   Reinstall dependencies in-place (no .venv/.nodeenv deletion).
+  --help             Show this help text.
+EOF
+}
+
+normalize_bool() {
+  local name="$1"
+  local raw="$2"
+  local value
+  value="$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
+    1|true|yes|on) echo "1" ;;
+    0|false|no|off|"") echo "0" ;;
+    *) die "invalid ${name}='${raw}' (expected 0|1|true|false|yes|no|on|off)" ;;
+  esac
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check)
+        INSTALL_CHECK="1"
+        ;;
+      --reinstall-deps)
+        REINSTALL_DEPS="1"
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        die "unknown argument: '$1' (use --help)"
+        ;;
+    esac
+    shift
+  done
+}
+
+validate_torch_mode() {
+  case "${TORCH_MODE}" in
+    auto|cpu|cuda|rocm|skip) ;;
+    *) die "invalid CODEX_TORCH_MODE='${TORCH_MODE}' (expected: auto|cpu|cuda|rocm|skip)" ;;
+  esac
+}
+
+validate_torch_backend() {
+  [[ -z "${TORCH_BACKEND}" ]] && return 0
+  case "${TORCH_BACKEND}" in
+    cpu|cu126|cu128|cu130|rocm64) ;;
+    *) die "invalid CODEX_TORCH_BACKEND='${TORCH_BACKEND}' (expected: cpu|cu126|cu128|cu130|rocm64)" ;;
+  esac
+}
+
+validate_cuda_variant() {
+  [[ -z "${CUDA_VARIANT}" ]] && return 0
+  case "${CUDA_VARIANT}" in
+    12.6|12.8|13|cu126|cu128|cu130) ;;
+    *) die "invalid CODEX_CUDA_VARIANT='${CUDA_VARIANT}' (expected: 12.6|12.8|13|cu126|cu128|cu130)" ;;
+  esac
+}
+
+parse_args "$@"
+INSTALL_CHECK="$(normalize_bool "CODEX_INSTALL_CHECK" "${INSTALL_CHECK}")"
+REINSTALL_DEPS="$(normalize_bool "CODEX_REINSTALL_DEPS" "${REINSTALL_DEPS}")"
+validate_torch_mode
+validate_torch_backend
+validate_cuda_variant
+
+if [[ "${INSTALL_CHECK}" == "1" && "${REINSTALL_DEPS}" == "1" ]]; then
+  die "--check and --reinstall-deps are mutually exclusive."
+fi
 
 if [[ "${TRACE}" == "1" ]]; then
   log "Trace enabled (CODEX_INSTALL_TRACE=1)."
@@ -40,7 +120,9 @@ CODEX_FFMPEG_VERSION="${FFMPEG_VERSION}"
 export UV_CACHE_DIR
 export NPM_CONFIG_CACHE="${NPM_CACHE_DIR}"
 export XDG_DATA_HOME XDG_CACHE_HOME CODEX_ROOT PYTHONPATH CODEX_FFMPEG_VERSION
-mkdir -p "${UV_CACHE_DIR}" "${NPM_CACHE_DIR}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}"
+if [[ "${INSTALL_CHECK}" != "1" ]]; then
+  mkdir -p "${UV_CACHE_DIR}" "${NPM_CACHE_DIR}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}"
+fi
 
 log "Repo: ${ROOT_DIR}"
 log "uv: ${UV_BIN} (version pin: ${UV_VERSION})"
@@ -58,6 +140,8 @@ fi
 if [[ -n "${CUDA_VARIANT}" ]]; then
   log "CUDA variant override: ${CUDA_VARIANT} (CODEX_CUDA_VARIANT)"
 fi
+log "Dependency check mode: ${INSTALL_CHECK} (CODEX_INSTALL_CHECK)"
+log "Reinstall dependencies: ${REINSTALL_DEPS} (CODEX_REINSTALL_DEPS)"
 log "npm cache: ${NPM_CACHE_DIR}"
 log "Host: $(uname -a)"
 
@@ -227,15 +311,78 @@ sync_python_deps() {
 
   local extra
   extra="$(pick_torch_extra)"
+  local -a sync_args=(sync --locked)
+  if [[ "${REINSTALL_DEPS}" == "1" ]]; then
+    sync_args+=(--reinstall)
+  fi
   if [[ -z "${extra}" ]]; then
     warn "Skipping torch/torchvision install (CODEX_TORCH_MODE=skip). The WebUI will not run without PyTorch."
     log "Syncing Python dependencies (locked) ..."
-    "${UV_BIN}" sync --locked
+    "${UV_BIN}" "${sync_args[@]}"
     return 0
   fi
 
   log "Syncing Python dependencies (locked) with torch extra: ${extra} ..."
-  "${UV_BIN}" sync --locked --extra "${extra}"
+  "${UV_BIN}" "${sync_args[@]}" --extra "${extra}"
+}
+
+check_python_runtime_deps() {
+  local py="${VENV_DIR}/bin/python"
+  if [[ ! -x "${py}" ]]; then
+    die "venv python not found at '${py}'. Run installer first."
+  fi
+
+  log "Checking Python runtime dependencies ..."
+  "${py}" - <<'PY'
+import os
+
+from apps.backend.video.runtime_dependencies import resolve_ffmpeg_binary, resolve_rife_model_path
+
+skip_torch = os.environ.get("CODEX_TORCH_MODE", "").strip().lower() == "skip"
+if skip_torch:
+    print("[install] torch check skipped (CODEX_TORCH_MODE=skip)")
+else:
+    import torch
+
+    print(f"[install] torch: {torch.__version__}")
+
+import cv2
+import ccvfi
+
+ffmpeg = resolve_ffmpeg_binary("ffmpeg")
+ffprobe = resolve_ffmpeg_binary("ffprobe")
+rife = resolve_rife_model_path(None)
+
+print(f"[install] ffmpeg: {ffmpeg}")
+print(f"[install] ffprobe: {ffprobe}")
+print(f"[install] RIFE model: {rife}")
+print(f"[install] opencv-python: {cv2.__version__}")
+print(f"[install] ccvfi: {getattr(ccvfi, '__version__', 'unknown')}")
+PY
+}
+
+check_node_and_frontend_deps() {
+  if [[ ! -x "${NODEENV_NODE}" || ! -x "${NODEENV_NPM}" ]]; then
+    die "nodeenv is missing or incomplete at '${NODEENV_DIR}'. Run installer first."
+  fi
+
+  local existing
+  existing="$("${NODEENV_NODE}" -v | tr -d '\r\n')"
+  existing="${existing#v}"
+  if [[ "${existing}" != "${NODE_VERSION}" ]]; then
+    die "'${NODEENV_DIR}' contains Node.js ${existing}, but CODEX_NODE_VERSION=${NODE_VERSION}."
+  fi
+
+  [[ -f "${ROOT_DIR}/apps/interface/package-lock.json" ]] || die "missing lockfile: ${ROOT_DIR}/apps/interface/package-lock.json"
+  [[ -f "${ROOT_DIR}/apps/interface/node_modules/vite/package.json" ]] || die "missing frontend dependency: ${ROOT_DIR}/apps/interface/node_modules/vite/package.json"
+
+  log "node: $("${NODEENV_NODE}" -v)  npm: $("${NODEENV_NPM}" -v)"
+}
+
+run_dependency_check() {
+  [[ -x "${UV_BIN}" ]] || die "missing uv binary at '${UV_BIN}'. Run installer first."
+  check_python_runtime_deps
+  check_node_and_frontend_deps
 }
 
 provision_video_runtime_deps() {
@@ -304,6 +451,13 @@ ensure_nodeenv() {
     die "nodeenv completed, but '${NODEENV_NPM}' is missing or not executable."
   fi
 }
+
+if [[ "${INSTALL_CHECK}" == "1" ]]; then
+  run_dependency_check
+  echo ""
+  log "Done (check-only)."
+  exit 0
+fi
 
 bootstrap_uv
 install_python

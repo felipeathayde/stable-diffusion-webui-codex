@@ -74,7 +74,7 @@ class RunConfig:
     high: Optional[StageConfig] = None
     low: Optional[StageConfig] = None
     # Memory/attention controls (optional)
-    sdpa_policy: Optional[str] = None  # 'mem_efficient' | 'flash' | 'math'
+    sdpa_policy: Optional[str] = None  # 'auto' | 'mem_efficient' | 'flash' | 'math'
     attention_mode: str = "global"  # 'global' | 'sliding'
     attn_chunk_size: Optional[int] = None  # split attention along sequence if set (>0)
     gguf_cache_policy: Optional[str] = None  # 'none' | 'cpu_lru'
@@ -659,10 +659,10 @@ def build_wan22_gguf_run_config(
     sdpa_policy: str | None = None
     if sdpa_policy_raw is not None:
         sdpa_policy = str(sdpa_policy_raw).strip().lower()
-        if sdpa_policy not in {"mem_efficient", "flash", "math"}:
+        if sdpa_policy not in {"auto", "mem_efficient", "flash", "math"}:
             raise RuntimeError(
                 "WAN22 GGUF: 'gguf_sdpa_policy' must be one of "
-                "'mem_efficient', 'flash', or 'math' when provided, "
+                "'auto', 'mem_efficient', 'flash', or 'math' when provided, "
                 f"got {sdpa_policy_raw!r}."
             )
 

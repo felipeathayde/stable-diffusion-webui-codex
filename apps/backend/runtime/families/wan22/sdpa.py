@@ -31,7 +31,7 @@ _LOG_ONCE = {
 _SDPA_LOG_COUNT = 0
 
 _SDPA_SETTINGS = {
-    "policy": "mem_efficient",
+    "policy": "auto",
     "mode": "global",
     "chunk": 0,
 }
@@ -40,11 +40,11 @@ _SDPA_SETTINGS = {
 def set_sdpa_settings(policy: Optional[str], chunk: Optional[int], attention_mode: Optional[str] = None) -> None:
     if policy is not None and not isinstance(policy, str):
         raise TypeError(f"WAN22 SDPA: policy must be a string when provided, got {type(policy).__name__}.")
-    pol = str(policy if policy is not None else "mem_efficient").strip().lower()
-    if pol not in ("mem_efficient", "flash", "math"):
+    pol = str(policy if policy is not None else "auto").strip().lower()
+    if pol not in ("auto", "mem_efficient", "flash", "math"):
         raise RuntimeError(
             "WAN22 SDPA: unsupported policy "
-            f"{policy!r} (expected one of: 'mem_efficient', 'flash', 'math')."
+            f"{policy!r} (expected one of: 'auto', 'mem_efficient', 'flash', 'math')."
         )
     mode = str(attention_mode if attention_mode is not None else "global").strip().lower()
     if mode not in ("global", "sliding"):

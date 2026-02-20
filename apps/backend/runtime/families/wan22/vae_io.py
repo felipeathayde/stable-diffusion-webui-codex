@@ -794,7 +794,10 @@ def vae_decode_video(
         # Diffusers VAEs output [-1, 1]; convert to [0, 1] for image conversion.
         x = (x + 1.0) * 0.5
         x = x.clamp(0, 1)
-        arr = (x.permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
+        frame_hwc = x.permute(1, 2, 0)
+        # Keep conversion on torch side so BF16 tensors never hit numpy unsupported dtypes.
+        frame_uint8 = frame_hwc.mul(255).to(dtype=torch.uint8)
+        arr = frame_uint8.cpu().numpy()
         frames.append(Image.fromarray(arr))
 
     return frames

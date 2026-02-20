@@ -48,6 +48,7 @@ export interface ImageRunHistoryItem {
   summary: string
   promptPreview: string
   paramsSnapshot: Record<string, unknown>
+  thumbnail?: GeneratedImage | null
   errorMessage?: string
 }
 
@@ -615,6 +616,7 @@ export function useGeneration(tabId: string) {
         summary,
         promptPreview,
         paramsSnapshot,
+        thumbnail: null,
       }
 
       state.value.progress.stage = 'submitted'
@@ -660,15 +662,25 @@ export function useGeneration(tabId: string) {
         if (event.preview_image) {
           state.value.previewImage = event.preview_image
           state.value.previewStep = event.preview_step ?? null
+          if (state.value.currentRun?.taskId) {
+            state.value.currentRun.thumbnail = event.preview_image
+          }
         }
         break
       case 'result':
         state.value.gallery = event.images || []
         state.value.info = event.info ?? null
+        const previewBeforeReset = state.value.previewImage
+        const firstResultImage = Array.isArray(event.images) && event.images.length > 0 ? event.images[0] : null
         state.value.previewImage = null
         state.value.previewStep = null
         if (state.value.currentRun?.taskId) {
           state.value.currentRun.status = 'completed'
+          if (firstResultImage) {
+            state.value.currentRun.thumbnail = firstResultImage
+          } else if (previewBeforeReset && !state.value.currentRun.thumbnail) {
+            state.value.currentRun.thumbnail = previewBeforeReset
+          }
           pushHistory(state.value.currentRun)
           state.value.selectedTaskId = state.value.currentRun.taskId
           state.value.currentRun = null
@@ -694,10 +706,14 @@ export function useGeneration(tabId: string) {
         state.value.status = 'error'
         state.value.errorMessage = event.message
         state.value.finishedAtMs = performance.now()
+        const previewBeforeError = state.value.previewImage
         state.value.previewImage = null
         state.value.previewStep = null
         if (state.value.currentRun?.taskId) {
           state.value.currentRun.status = 'error'
+          if (previewBeforeError && !state.value.currentRun.thumbnail) {
+            state.value.currentRun.thumbnail = previewBeforeError
+          }
           state.value.currentRun.errorMessage = event.message
           pushHistory(state.value.currentRun)
           state.value.selectedTaskId = state.value.currentRun.taskId

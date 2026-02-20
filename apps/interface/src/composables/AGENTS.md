@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-18
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -45,3 +45,4 @@ Status: Active
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates WAN stage `flowShift` (`high/low.flowShift` → `wan_high/wan_low.flow_shift`) so distill runs can enforce non-default scheduler shifts explicitly.
 - 2026-02-17: `useVideoGeneration(tabId)` now propagates WAN attention mode (`global|sliding`) and img2vid chunk controls (chunk/overlap/anchor/seed mode) into payload builders and run-history snapshots.
 - 2026-02-20: `useGeneration(tabId)` now fails loud on empty VAE selection before payload submission by using `quicksettings.requireVaeSelection()` (prevents blank VAE submits on SDXL/related tabs).
+- 2026-02-20: `useGeneration(tabId)` and `useVideoGeneration(tabId)` history entries now include optional `thumbnail` previews (`GeneratedImage`) updated during progress/result flow, enabling square thumbnail-only History cards with detail modal drill-down in views.

@@ -66,6 +66,7 @@ export interface VideoRunHistoryItem {
   summary: string
   promptPreview: string
   paramsSnapshot: Record<string, unknown>
+  thumbnail?: GeneratedImage | null
   errorMessage?: string
 }
 
@@ -687,6 +688,7 @@ export function useVideoGeneration(tabId: string) {
         summary: run.summary,
         promptPreview: run.promptPreview,
         paramsSnapshot: run.paramsSnapshot,
+        thumbnail: null,
       }
       const key = resumeKey(tabId)
       saveResumeState(key, {
@@ -778,7 +780,12 @@ export function useVideoGeneration(tabId: string) {
         state.value.info = event.info ?? null
         state.value.video = event.video ?? null
         state.value.status = 'done'
-        if (state.value.currentRun && state.value.currentRun.taskId) state.value.currentRun.status = 'completed'
+        if (state.value.currentRun && state.value.currentRun.taskId) {
+          state.value.currentRun.status = 'completed'
+          if (Array.isArray(event.images) && event.images.length > 0) {
+            state.value.currentRun.thumbnail = event.images[0]
+          }
+        }
         break
       case 'error':
         setError(event.message)
@@ -859,6 +866,7 @@ export function useVideoGeneration(tabId: string) {
         summary: saved.summary,
         promptPreview: saved.promptPreview,
         paramsSnapshot: saved.paramsSnapshot,
+        thumbnail: null,
       }
 
       if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
@@ -903,6 +911,7 @@ export function useVideoGeneration(tabId: string) {
         summary: saved.summary,
         promptPreview: saved.promptPreview,
         paramsSnapshot: saved.paramsSnapshot,
+        thumbnail: Array.isArray(res.result.images) && res.result.images.length > 0 ? res.result.images[0] : null,
       })
       state.value.selectedTaskId = saved.taskId
       return
@@ -918,6 +927,7 @@ export function useVideoGeneration(tabId: string) {
         summary: saved.summary,
         promptPreview: saved.promptPreview,
         paramsSnapshot: saved.paramsSnapshot,
+        thumbnail: null,
         errorMessage: String(res.error || 'Task failed.'),
       })
       state.value.selectedTaskId = saved.taskId

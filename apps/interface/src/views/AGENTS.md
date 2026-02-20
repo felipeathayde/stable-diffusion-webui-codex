@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-18
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -68,3 +68,4 @@ Status: Active
 - 2026-02-17: `ImageModelTab.vue` init-image controls now use PNG-Info-style dropzone handling (thumbnail preview + click-to-zoom full-screen).
 - 2026-02-18: In `useInitImage` mode, `ImageModelTab.vue` now renders `Img2ImgBasicParametersCard.vue` (hires-like layout with resize-type/upscaler gating) instead of the txt2img `BasicParametersCard.vue`; this is layout/state parity only (img2img payload remains hires-free).
 - 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.
+- 2026-02-20: `ImageModelTab.vue` and `WANTab.vue` History strips now render square 1:1 thumbnail cards (image fit/contain, no inline metadata text); clicking a card opens a details modal with organized run metadata (mode/time/status/task), prompt/negative prompt, params snapshot, and explicit Load/Apply/Copy actions.

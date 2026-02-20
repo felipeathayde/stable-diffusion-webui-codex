@@ -327,22 +327,25 @@ Symbols (top-level; keep in sync; no ghosts):
             <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!history.length || isRunning" @click="clearHistory">Clear</button>
           </WanSubHeader>
           <div v-if="history.length" class="cdx-history-list">
-            <div v-for="item in history" :key="item.taskId" :class="['cdx-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
-              <div class="cdx-history-meta">
-                <div class="cdx-history-title">{{ formatHistoryTitle(item) }}</div>
-                <div class="cdx-history-sub">{{ item.summary }}</div>
-                <div v-if="item.promptPreview" class="cdx-history-sub">{{ item.promptPreview }}</div>
-                <div v-if="item.status !== 'completed'" class="caption">Status: {{ item.status }}</div>
-                <div v-if="item.errorMessage" class="caption">Error: {{ item.errorMessage }}</div>
+            <button
+              v-for="item in history"
+              :key="item.taskId"
+              type="button"
+              :class="['cdx-history-item', { 'is-selected': item.taskId === selectedTaskId }]"
+              :aria-label="`Open history details for ${formatHistoryTitle(item)}`"
+              @click="openHistoryDetails(item)"
+            >
+              <img
+                v-if="item.thumbnail"
+                class="cdx-history-thumb"
+                :src="toDataUrl(item.thumbnail)"
+                :alt="formatHistoryTitle(item)"
+                loading="lazy"
+              >
+              <div v-else class="cdx-history-thumb cdx-history-thumb--empty">
+                <span>No preview</span>
               </div>
-              <div class="cdx-history-actions">
-                <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning || historyLoadingTaskId === item.taskId" @click="loadHistory(item.taskId)">
-                  {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'Load' }}
-                </button>
-                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="applyHistory(item)">Apply</button>
-                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="copyHistoryParams(item)">Copy</button>
-              </div>
-            </div>
+            </button>
           </div>
           <div v-else class="caption">No runs yet.</div>
         </div>
@@ -382,6 +385,63 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
     </div>
+
+    <Modal v-model="historyDetailsOpen" :title="historyDetailsTitle">
+      <div v-if="historyDetailsItem" class="cdx-history-modal">
+        <div class="cdx-history-modal__top">
+          <img
+            v-if="historyDetailsImageUrl"
+            class="cdx-history-modal__preview"
+            :src="historyDetailsImageUrl"
+            :alt="historyDetailsTitle"
+          >
+          <div v-else class="cdx-history-modal__preview cdx-history-modal__preview--empty">No preview</div>
+          <div class="cdx-history-modal__meta">
+            <div class="cdx-history-modal__meta-row"><span>Mode</span><strong>{{ historyDetailsModeLabel }}</strong></div>
+            <div class="cdx-history-modal__meta-row"><span>Created</span><strong>{{ historyDetailsCreatedAtLabel }}</strong></div>
+            <div class="cdx-history-modal__meta-row"><span>Status</span><strong>{{ historyDetailsItem.status }}</strong></div>
+            <div class="cdx-history-modal__meta-row"><span>Task</span><code>{{ historyDetailsItem.taskId }}</code></div>
+          </div>
+        </div>
+
+        <div class="cdx-history-modal__section">
+          <p class="label-muted">Summary</p>
+          <p class="cdx-history-modal__summary">{{ historyDetailsItem.summary }}</p>
+        </div>
+
+        <div v-if="historyDetailsPrompt" class="cdx-history-modal__section">
+          <p class="label-muted">Prompt</p>
+          <pre class="text-xs break-words">{{ historyDetailsPrompt }}</pre>
+        </div>
+        <div v-if="historyDetailsNegativePrompt" class="cdx-history-modal__section">
+          <p class="label-muted">Negative Prompt</p>
+          <pre class="text-xs break-words">{{ historyDetailsNegativePrompt }}</pre>
+        </div>
+        <div v-if="historyDetailsItem.errorMessage" class="cdx-history-modal__section">
+          <p class="label-muted">Error</p>
+          <pre class="text-xs break-words">{{ historyDetailsItem.errorMessage }}</pre>
+        </div>
+        <details class="accordion">
+          <summary>Params snapshot</summary>
+          <div class="accordion-body">
+            <pre class="text-xs break-words">{{ formatJson(historyDetailsItem.paramsSnapshot) }}</pre>
+          </div>
+        </details>
+      </div>
+      <template #footer>
+        <button
+          class="btn btn-sm btn-secondary"
+          type="button"
+          :disabled="!historyDetailsItem || isRunning || historyLoadingTaskId === historyDetailsItem.taskId"
+          @click="onLoadHistoryDetails"
+        >
+          {{ historyDetailsItem && historyLoadingTaskId === historyDetailsItem.taskId ? 'Loading…' : 'Load' }}
+        </button>
+        <button class="btn btn-sm btn-outline" type="button" :disabled="!historyDetailsItem || isRunning" @click="onApplyHistoryDetails">Apply</button>
+        <button class="btn btn-sm btn-outline" type="button" :disabled="!historyDetailsItem || isRunning" @click="onCopyHistoryDetails">Copy</button>
+        <button class="btn btn-sm btn-outline" type="button" @click="historyDetailsOpen = false">Close</button>
+      </template>
+    </Modal>
   </section>
   <section v-else>
     <div class="panel"><div class="panel-body">Tab not found.</div></div>
@@ -427,6 +487,7 @@ import RunCard from '../components/results/RunCard.vue'
 import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
 import XyzSweepCard from '../components/XyzSweepCard.vue'
+import Modal from '../components/ui/Modal.vue'
 
 const props = defineProps<{ tabId: string; type: ImageTabType }>()
 const store = useModelTabsStore()
@@ -465,6 +526,8 @@ const previewStyle = ref<Record<string, string>>({})
 const modelPaths = ref<Record<string, string[]>>({})
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
+const historyDetailsOpen = ref(false)
+const historyDetailsItem = ref<ImageRunHistoryItem | null>(null)
 
 onMounted(() => {
   bootstrap
@@ -491,6 +554,33 @@ onBeforeUnmount(() => {
 const workflowBusy = ref(false)
 const { notice: copyNotice, toast, copyJson } = useResultsCard()
 type ImageTab = TabByType<ImageTabType>
+
+const historyDetailsTitle = computed(() => (historyDetailsItem.value ? formatHistoryTitle(historyDetailsItem.value) : 'History details'))
+const historyDetailsCreatedAtLabel = computed(() => {
+  const timestamp = historyDetailsItem.value?.createdAtMs
+  if (!timestamp) return '—'
+  return new Date(timestamp).toLocaleString()
+})
+const historyDetailsModeLabel = computed(() => {
+  const mode = historyDetailsItem.value?.mode
+  return mode === 'img2img' ? 'Img2Img' : 'Txt2Img'
+})
+const historyDetailsImageUrl = computed(() => {
+  const thumbnail = historyDetailsItem.value?.thumbnail
+  return thumbnail ? toDataUrl(thumbnail) : ''
+})
+const historyDetailsPrompt = computed(() => {
+  const item = historyDetailsItem.value
+  if (!item) return ''
+  const prompt = readHistorySnapshotText(item, 'prompt')
+  if (prompt) return prompt
+  return item.promptPreview || ''
+})
+const historyDetailsNegativePrompt = computed(() => {
+  const item = historyDetailsItem.value
+  if (!item) return ''
+  return readHistorySnapshotText(item, 'negativePrompt')
+})
 
 watch(
   resumeNotice,
@@ -841,6 +931,29 @@ async function copyHistoryParams(item: ImageRunHistoryItem): Promise<void> {
   await copyJson(item.paramsSnapshot, 'Copied history params.')
 }
 
+function openHistoryDetails(item: ImageRunHistoryItem): void {
+  historyDetailsItem.value = item
+  historyDetailsOpen.value = true
+}
+
+async function onLoadHistoryDetails(): Promise<void> {
+  const item = historyDetailsItem.value
+  if (!item) return
+  await loadHistory(item.taskId)
+}
+
+function onApplyHistoryDetails(): void {
+  const item = historyDetailsItem.value
+  if (!item) return
+  applyHistory(item)
+}
+
+async function onCopyHistoryDetails(): Promise<void> {
+  const item = historyDetailsItem.value
+  if (!item) return
+  await copyHistoryParams(item)
+}
+
 function applyHistory(item: ImageRunHistoryItem): void {
   const snap = item.paramsSnapshot as Partial<ImageBaseParams>
   setParams({
@@ -860,6 +973,14 @@ function formatHistoryTitle(item: { mode: string; createdAtMs: number; taskId: s
   const hh = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   const label = item.mode === 'img2img' ? 'Img2Img' : 'Txt2Img'
   return `${label} · ${hh}`
+}
+
+function readHistorySnapshotText(item: ImageRunHistoryItem, key: string): string {
+  const snapshot = item.paramsSnapshot
+  if (!snapshot || typeof snapshot !== 'object') return ''
+  const value = (snapshot as Record<string, unknown>)[key]
+  if (typeof value !== 'string') return ''
+  return value.trim()
 }
 
 function profileStorageKeyFor(type: ImageTabType): string {

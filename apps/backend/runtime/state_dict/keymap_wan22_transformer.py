@@ -167,8 +167,6 @@ class Wan22RequestKeys:
             "gguf_cache_limit_mb",
             "gguf_log_mem_interval",
             "gguf_te_device",
-            "gguf_te_impl",
-            "gguf_te_kernel_required",
         }
     )
     TXT2VID: FrozenSet[str] = frozenset(

@@ -26,7 +26,7 @@ Status: Active
 - `sdpa.py`: seleção de backend SDPA + chunking (policy/chunk) usada pelo core WAN22 (para alinhar com env/flags do runtime).
 - `streaming/`: infraestrutura de streaming de core para `WanTransformer2DModel` (`WanExecutionPlan`, `WanCoreController`, `StreamedWanTransformer`) com execução por segmentos; controller semantics são compartilhadas com Flux via `apps/backend/runtime/streaming/controller.py` para evitar drift.
 - `sampler.py`: `WanVideoSampler` e `sample_txt2vid`, sampler de fluxo para latentes 5D `[B, C, T, H, W]` usando `WanTransformer2DModel` + VAE, agora exercitado pelo caminho experimental runtime/spec de `Wan2214BEngine.txt2vid`.
-- `vae.py`, `wan_latent_norms.py`, `wan_te_*`: componentes auxiliares (VAE, normalização de latentes, text encoder) compartilhados pelos caminhos GGUF/HF.
+- `vae.py`, `wan_latent_norms.py`: componentes auxiliares (VAE, normalização de latentes) compartilhados pelos caminhos GGUF/HF.
 
 ## Notes
 - Ensure updates stay synchronized with `apps/backend/engines/wan22/` and the shared GGUF quantization/ops layer (`apps/backend/quantization/**`, `apps/backend/runtime/ops/operations.py`, `apps/backend/runtime/ops/operations_gguf.py`); the production GGUF runtime remains `wan22.py`.
@@ -78,12 +78,15 @@ Status: Active
 - 2026-02-18: `text_context.py` now tags that event with `SmartOffloadAction.DIRECT_CPU_OFFLOAD`; generic smart-offload `load/unload` emission remains manager-owned.
 - 2026-02-18: shared native `AutoencoderKL_LDM` logger namespace was renamed from `backend.runtime.wan22.vae` to `backend.runtime.vae.ldm` to reflect cross-family usage (SDXL/Flux/ZImage/WAN) and avoid misleading WAN-only telemetry in SDXL runs.
 - 2026-02-20: `runtime/families/wan22/vae.py` is now a compatibility re-export shim; canonical ownership for native 2D `AutoencoderKL_LDM` moved to `runtime/common/vae_ldm.py` to remove WAN-only ownership drift for shared VAE code.
+- 2026-02-20: WAN22 SDPA wrapper now delegates per-call SDPA compute to runtime dispatcher helper `attention_function_pre_shaped(...)` (explicit PyTorch backend path) while preserving WAN policy/chunk/sliding orchestration and cross-attn fallback semantics.
+- 2026-02-20: WAN22 GGUF TE runtime wiring no longer accepts legacy `cuda_fp8` selection knobs; API/config now fail loud on `gguf_te_impl` / `gguf_te_kernel_required`, and text context runs through GGUF/HF local loading only.
+- 2026-02-20: Removed legacy WAN TE FP8 modules (`wan_te_cuda.py`, `wan_te_loader.py`, `wan_te_encoder.py`) and legacy CUDA extension sources under `runtime/kernels/wan_t5`; no runtime callsite uses this lane.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):
   - Requer tokenizer dir válido; carrega `AutoTokenizer` com `local_files_only=True`.
   - TE:
-    - `cuda_fp8` exige kernel disponível; sem fallback.
+    - Execução padronizada em caminho GGUF/HF local (`_Enc`); `gguf_te_impl` e `gguf_te_kernel_required` foram removidos e agora falham alto.
     - Em HF (`_Enc`), valida `hidden_size` do output com `config.hidden_size`.
   - Logs (INFO): shapes de `input_ids` e `last_hidden_state` (prompt/negative), dtype/device.
 - Engine (Diffusers path):

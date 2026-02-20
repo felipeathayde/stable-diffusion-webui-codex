@@ -2375,8 +2375,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             'gguf_cache_limit_mb',
             'gguf_log_mem_interval',
             'gguf_te_device',
-            'gguf_te_impl',
-            'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
@@ -2567,8 +2565,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             'gguf_cache_limit_mb',
             'gguf_log_mem_interval',
             'gguf_te_device',
-            'gguf_te_impl',
-            'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)

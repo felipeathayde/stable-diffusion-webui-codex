@@ -82,8 +82,6 @@ class RunConfig:
     # Aggressive offload controls
     aggressive_offload: bool = True  # legacy switch; see offload_level
     te_device: Optional[str] = None  # 'cuda' | 'cpu' (None = follow cfg.device)
-    te_impl: Optional[str] = None  # 'cuda_fp8' | 'hf' (None = default)
-    te_kernel_required: Optional[bool] = None  # if True, error if CUDA kernel unavailable
     # New: coarse-grained offload profile (takes precedence over aggressive_offload if provided)
     # 0 = off (keep resident), 1 = light (offload TE/VAE only), 2 = balanced (also clear between stages), 3 = aggressive (current behavior)
     offload_level: Optional[int] = None
@@ -601,12 +599,13 @@ def build_wan22_gguf_run_config(
             f"WAN22 GGUF: 'gguf_offload' must be a boolean when provided, got {aggressive_offload_raw!r}."
         )
 
-    te_kernel_required_raw = extras.get("gguf_te_kernel_required", False)
-    te_kernel_required = _coerce_bool(te_kernel_required_raw)
-    if te_kernel_required is None:
+    if "gguf_te_impl" in extras:
         raise RuntimeError(
-            "WAN22 GGUF: 'gguf_te_kernel_required' must be a boolean when provided, "
-            f"got {te_kernel_required_raw!r}."
+            "WAN22 GGUF: 'gguf_te_impl' was removed. WAN22 text-encoder execution is GGUF-only."
+        )
+    if "gguf_te_kernel_required" in extras:
+        raise RuntimeError(
+            "WAN22 GGUF: 'gguf_te_kernel_required' was removed. WAN22 text-encoder execution is GGUF-only."
         )
 
     attention_mode_raw = extras.get("gguf_attention_mode")
@@ -657,8 +656,6 @@ def build_wan22_gguf_run_config(
         aggressive_offload=aggressive_offload,
         offload_level=offload_level,
         te_device=(str(extras.get("gguf_te_device")).lower() if extras.get("gguf_te_device") is not None else None),
-        te_impl=(str(extras.get("gguf_te_impl")).lower() if extras.get("gguf_te_impl") is not None else None),
-        te_kernel_required=te_kernel_required,
         high=StageConfig(
             model_dir=hi_dir,
             sampler=str(hi_sampler or sampler_fallback),

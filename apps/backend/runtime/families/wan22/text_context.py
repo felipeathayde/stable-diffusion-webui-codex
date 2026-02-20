@@ -127,8 +127,6 @@ def get_text_context(
     logger: Any = None,
     offload_after: bool = True,
     te_device: Optional[str] = None,
-    te_impl: Optional[str] = None,
-    te_kernel_required: Optional[bool] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """GGUF path: use Transformers tokenizer + encoder only; do NOT fall back to Diffusers.
 
@@ -190,13 +188,6 @@ def get_text_context(
         int(max_sequence_length),
     )
 
-    # Effective TE preferences (extras > env > defaults)
-    te_kernel_required_eff = bool(te_kernel_required) if te_kernel_required is not None else False
-    te_impl_eff = (te_impl or "hf").strip().lower()
-    if te_kernel_required_eff:
-        te_impl_eff = "cuda_fp8"
-    te_req_eff = te_impl_eff == "cuda_fp8"
-
     te_dev_eff = (te_device or device or "cpu").strip().lower()
     if te_dev_eff == "gpu":
         te_dev_eff = "cuda"
@@ -205,101 +196,18 @@ def get_text_context(
     if te_dev_eff == "cpu" and str(dtype).lower().strip() not in {"fp32", "float32"}:
         dtype = "fp32"
 
-    log.info(
-        "[wan22.gguf] text-encoder: impl=%s required=%s device=%s",
-        te_impl_eff,
-        str(bool(te_req_eff)).lower(),
-        te_dev_eff,
-    )
-
-    # CUDA TE kernel (FP8). Required if selected; do not fallback.
-    if te_impl_eff == "cuda_fp8":
-        try:
-            from . import wan_te_cuda as _tecuda
-        except Exception as exc:
-            raise RuntimeError(f"WAN22 TE CUDA kernel required but module not importable: {exc}") from exc
-
-        if not _tecuda.available():
-            last = None
-            try:
-                last = _tecuda.last_error()
-            except Exception:
-                last = None
-            if last:
-                raise RuntimeError(f"WAN22 TE CUDA kernel required but not available ({last}).")
-            raise RuntimeError("WAN22 TE CUDA kernel required but not available. Build wan_te_cuda.")
-
-        inputs = tok(
-            [prompt_cleaned, negative_cleaned],
-            padding="max_length",
-            truncation=True,
-            max_length=int(max_sequence_length),
-            add_special_tokens=True,
-            return_attention_mask=True,
-            return_tensors="pt",
-        )
-        input_ids = inputs["input_ids"]  # [2,L]
-        attn_mask = inputs.get("attention_mask", None)
-        log.info("[wan22.gguf] tokenized(fp8): batch=%d seqlen=%d", int(input_ids.shape[0]), int(input_ids.shape[1]))
-
-        if not metadata_dir:
-            raise RuntimeError("WAN22 GGUF: 'wan_metadata_dir' is required for TE CUDA path (need text_encoder config).")
-
-        if not te_file:
-            raise RuntimeError("WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required for TE CUDA path.")
-        if te_file.lower().endswith(".gguf"):
-            raise RuntimeError("WAN22 GGUF: TE CUDA path requires a .safetensors weights file (GGUF is unsupported).")
-
-        enc_dir = os.path.join(metadata_dir, "text_encoder")
-        cfg_hf = AutoConfig.from_pretrained(enc_dir, local_files_only=True)
-        num_heads = int(getattr(cfg_hf, "num_heads", getattr(cfg_hf, "num_attention_heads", 32)))
-        d_kv = int(getattr(cfg_hf, "d_kv", getattr(cfg_hf, "hidden_size", 4096) // num_heads))
-
-        from apps.backend.runtime.families.wan22.wan_te_encoder import encode_fp8 as _encode_fp8
-
-        dev = torch.device(te_dev_eff if te_dev_eff.startswith("cuda") and torch.cuda.is_available() else "cpu")
-        if dev.type != "cuda":
-            raise RuntimeError("WAN22 TE CUDA path requested but selected device is not CUDA")
-
-        dt = as_torch_dtype(dtype)
-
-        def _run_one(ids: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
-            ids = ids.to(torch.long)
-            return _encode_fp8(
-                te_weights_path=te_file or "",
-                input_ids=ids.to(dev),
-                attention_mask=(mask.to(dev) if mask is not None else None),
-                device=dev,
-                dtype=dt,
-                num_heads=num_heads,
-                d_kv=d_kv,
-                log_metrics=True,
-            )
-
-        p_mask = (attn_mask[0:1] if attn_mask is not None else None)
-        n_mask = (attn_mask[1:2] if attn_mask is not None else None)
-        p = _run_one(input_ids[0:1], p_mask)
-        n = _run_one(input_ids[1:2], n_mask)
-        if p_mask is not None:
-            p = p * p_mask.to(dtype=p.dtype, device=p.device).unsqueeze(-1)
-        if n_mask is not None:
-            n = n * n_mask.to(dtype=n.dtype, device=n.device).unsqueeze(-1)
-        log.info(
-            "[wan22.gguf] TE(fp8) outputs: prompt=%s negative=%s dtype=%s device=%s",
-            tuple(p.shape),
-            tuple(n.shape),
-            str(p.dtype),
-            str(p.device),
-        )
-        if offload_after and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        return p, n
-
     # Strict: require a TE weights file; directory-based TE loading is not supported in WAN22 GGUF.
     if te_file is None:
         raise RuntimeError(
             "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors or .gguf file) is required. Directory-based text encoders are not supported."
         )
+
+    te_impl_label = "gguf" if te_file.lower().endswith(".gguf") else "safetensors"
+    log.info(
+        "[wan22.gguf] text-encoder: impl=%s device=%s",
+        te_impl_label,
+        te_dev_eff,
+    )
 
     if not metadata_dir or not os.path.isdir(metadata_dir):
         raise RuntimeError("WAN22 GGUF: 'wan_metadata_dir' is required when providing 'wan_text_encoder_path'.")

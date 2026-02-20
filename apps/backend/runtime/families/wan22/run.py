@@ -519,24 +519,10 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 pass
 
         te_dev_eff = getattr(cfg, "te_device", None) or dev_name
-        te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-        te_kernel_required = getattr(cfg, "te_kernel_required", False)
-        if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
-            raise RuntimeError(
-                "WAN22 GGUF: te_kernel_required must be boolean when provided "
-                f"(got {type(te_kernel_required).__name__})."
-            )
-        if bool(te_kernel_required):
-            te_impl_val = "cuda_fp8"
-        te_required = te_impl_val == "cuda_fp8"
-        if te_required:
-            te_dev_eff = "cuda"
         log.info(
-            "[wan22.gguf] offload profile: level=%s te_device=%s te_impl=%s te_required=%s",
+            "[wan22.gguf] offload profile: level=%s te_device=%s",
             lvl,
             te_dev_eff,
-            te_impl_val,
-            str(bool(te_required)).lower(),
         )
 
         t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
@@ -560,8 +546,6 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             logger=log,
             offload_after=smart_offload_enabled(),
             te_device=(cfg.te_device or te_dev_eff),
-            te_impl=getattr(cfg, "te_impl", None),
-            te_kernel_required=getattr(cfg, "te_kernel_required", None),
         )
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
         negative_embeds = negative_embeds.to(device=dev, dtype=dt)
@@ -776,18 +760,6 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         )
         hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
         te_dev_eff = getattr(cfg, "te_device", None) or dev_name
-        te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-        te_kernel_required = getattr(cfg, "te_kernel_required", False)
-        if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
-            raise RuntimeError(
-                "WAN22 GGUF: te_kernel_required must be boolean when provided "
-                f"(got {type(te_kernel_required).__name__})."
-            )
-        if bool(te_kernel_required):
-            te_impl_val = "cuda_fp8"
-        te_required = te_impl_val == "cuda_fp8"
-        if te_required:
-            te_dev_eff = "cuda"
 
         prompt_embeds, negative_embeds = get_text_context(
             model_dir=os.path.dirname(hi_path),
@@ -803,8 +775,6 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             logger=log,
             offload_after=smart_offload_enabled(),
             te_device=(cfg.te_device or te_dev_eff),
-            te_impl=te_impl_val,
-            te_kernel_required=te_required,
         )
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
         negative_embeds = negative_embeds.to(device=dev, dtype=dt)
@@ -987,24 +957,10 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
-    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    te_kernel_required = getattr(cfg, "te_kernel_required", False)
-    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
-        raise RuntimeError(
-            "WAN22 GGUF: te_kernel_required must be boolean when provided "
-            f"(got {type(te_kernel_required).__name__})."
-        )
-    if bool(te_kernel_required):
-        te_impl_val = "cuda_fp8"
-    te_required = te_impl_val == "cuda_fp8"
-    if te_required:
-        te_dev_eff = "cuda"
     log.info(
-        "[wan22.gguf] offload profile: level=%s te_device=%s te_impl=%s te_required=%s",
+        "[wan22.gguf] offload profile: level=%s te_device=%s",
         lvl,
         te_dev_eff,
-        te_impl_val,
-        str(bool(te_required)).lower(),
     )
 
     t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
@@ -1054,8 +1010,6 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         logger=log,
         offload_after=smart_offload_enabled(),
         te_device=(cfg.te_device or te_dev_eff),
-        te_impl=getattr(cfg, "te_impl", None),
-        te_kernel_required=getattr(cfg, "te_kernel_required", None),
     )
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
@@ -1260,18 +1214,6 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or dev_name
-    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
-    te_kernel_required = getattr(cfg, "te_kernel_required", False)
-    if te_kernel_required is not None and not isinstance(te_kernel_required, bool):
-        raise RuntimeError(
-            "WAN22 GGUF: te_kernel_required must be boolean when provided "
-            f"(got {type(te_kernel_required).__name__})."
-        )
-    if bool(te_kernel_required):
-        te_impl_val = "cuda_fp8"
-    te_required = te_impl_val == "cuda_fp8"
-    if te_required:
-        te_dev_eff = "cuda"
 
     t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
     log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
@@ -1316,8 +1258,6 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         logger=log,
         offload_after=smart_offload_enabled(),
         te_device=(cfg.te_device or te_dev_eff),
-        te_impl=te_impl_val,
-        te_kernel_required=te_required,
     )
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)

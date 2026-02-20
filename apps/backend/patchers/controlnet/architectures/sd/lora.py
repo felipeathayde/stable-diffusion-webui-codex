@@ -60,7 +60,8 @@ class ControlLora(ControlModuleBase):
         ):
             self.control_model = cldm.ControlNet(**controlnet_config)
 
-        self.control_model.to(device=memory_management.manager.get_device(DeviceRole.CORE), dtype=dtype)
+        core_device = memory_management.manager.get_device(DeviceRole.CORE)
+        self.control_model.to(device=core_device, dtype=dtype)
         diffusion_model = model.diffusion_model
         state_dict = diffusion_model.state_dict()
 
@@ -76,14 +77,14 @@ class ControlLora(ControlModuleBase):
             utils.set_attr(
                 self.control_model,
                 key,
-                weight.to(dtype).to(memory_management.manager.get_device(DeviceRole.CORE)),
+                weight.to(device=core_device, dtype=dtype),
             )
 
         self.control_proxy = ControlNet(
             self.control_model,
             global_average_pooling=self.global_average_pooling,
             device=self.device,
-            load_device=memory_management.manager.get_device(DeviceRole.CORE),
+            load_device=core_device,
             manual_cast_dtype=self.manual_cast_dtype,
         )
         self.control_proxy.previous_control = self.previous_control

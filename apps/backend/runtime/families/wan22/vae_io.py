@@ -354,10 +354,7 @@ def _prepare_init_image_tensor(
                 "WAN22 GGUF: init_image tensor must be 4D [B,C,H,W] (or 5D [B,C,T,H,W]); "
                 f"got {getattr(t, 'shape', None)}"
             )
-        try:
-            t = t.to(target).to(torch_dtype)
-        except Exception:
-            t = t.to(target)
+        t = t.to(device=target, dtype=torch_dtype)
         t = _maybe_resize_hw(t, height=height, width=width)
         return t
 
@@ -369,7 +366,7 @@ def _prepare_init_image_tensor(
         img = img.resize((int(width), int(height)), resample=Image.BICUBIC)
         arr = np.array(img).astype("float32") / 255.0
         t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
-        t = t.to(target).to(torch_dtype)
+        t = t.to(device=target, dtype=torch_dtype)
         return t * 2.0 - 1.0
 
     arr = np.asarray(init_image).astype("float32")
@@ -381,7 +378,7 @@ def _prepare_init_image_tensor(
     else:
         raise RuntimeError("WAN22 GGUF: unsupported init_image array shape")
 
-    t = t.to(target).to(torch_dtype)
+    t = t.to(device=target, dtype=torch_dtype)
     t = _maybe_resize_hw(t, height=height, width=width)
     return t * 2.0 - 1.0
 

@@ -166,7 +166,7 @@ class CodexLoraLoader:
                     )
 
                 if gguf_parameter is None:
-                    merged = merged.to(dtype=parameter.dtype, device=parameter.device).clone()
+                    merged = merged.to(dtype=parameter.dtype, device=parameter.device)
 
                 if gguf_parameter is not None:
                     # Re-quantize offline-merged weights back into GGUF packed storage.

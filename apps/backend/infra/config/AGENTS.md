@@ -19,4 +19,5 @@ Status: Active
 ## Notes
 - 2026-02-18: Interactive device prompts in `args.py` now route explicit stdout writes through `apps.backend.infra.stdio` to keep primitive stream emission centralized while preserving CLI prompt behavior.
 - 2026-02-18: Added LoRA loader runtime toggles `CODEX_LORA_MERGE_MODE` (`fast|precise`) and `CODEX_LORA_REFRESH_SIGNATURE` (`structural|content_sha256`) with strict parsing and CLI wiring (`--lora-merge-mode`, `--lora-refresh-signature`).
+- 2026-02-20: `paths.py` now enforces fail-loud config semantics: invalid `apps/paths.json` parse/type errors raise, repo-relative entries are containment-checked against `CODEX_ROOT` (parent/symlink escapes rejected), and `_ensure_model_dirs` no longer swallows directory-provisioning failures.
 - Keep this folder focused on config/bootstrap contracts; runtime execution logic belongs outside `infra/config`.

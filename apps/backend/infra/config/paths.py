@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_repo_root` (function): Returns repo root (delegates to `get_repo_root()`).
 - `_paths_json_path` (function): Returns the absolute path to `apps/paths.json` under the repo root.
 - `_load_paths_config` (function): Loads and caches the `paths.json` mapping (and triggers best-effort directory provisioning).
+- `_resolve_repo_relative_path` (function): Resolves and validates repo-relative entries with root-containment checks.
 - `_ensure_model_dirs` (function): Creates missing model directories for known keys when entries are repo-relative.
 - `get_paths_config` (function): Returns a shallow copy of the raw `paths.json` mapping.
 - `get_paths_for` (function): Returns a normalized list of filesystem paths for a given logical key.
@@ -83,6 +84,29 @@ def _paths_json_path() -> Path:
     return _repo_root() / "apps" / "paths.json"
 
 
+def _resolve_repo_relative_path(*, root: Path, key: str, entry: str) -> Path:
+    value = entry.strip()
+    if not value:
+        raise RuntimeError(f"paths.json entry for key {key!r} must not be empty.")
+
+    normalized = value.replace("\\", "/")
+    normalized_parts = [part for part in normalized.split("/") if part not in ("", ".")]
+    if ".." in normalized_parts:
+        raise RuntimeError(
+            f"paths.json entry for key {key!r} escapes repository root via parent traversal: {entry!r}."
+        )
+
+    candidate = (root / value).resolve(strict=False)
+    root_resolved = root.resolve(strict=True)
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"paths.json entry for key {key!r} resolves outside repository root: {entry!r} -> {candidate}."
+        ) from exc
+    return candidate
+
+
 def _load_paths_config() -> Dict[str, List[str]]:
     global _PATHS_CACHE, _PATHS_MTIME
 
@@ -100,8 +124,15 @@ def _load_paths_config() -> Dict[str, List[str]]:
     try:
         with path.open("r", encoding="utf-8") as handle:
             raw = json.load(handle) or {}
-    except Exception:
-        raw = {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"paths.json is invalid JSON at {path}: {exc}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Failed to read paths.json at {path}: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load paths.json at {path}: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"paths.json root must be an object at {path} (got {type(raw).__name__}).")
 
     cfg: Dict[str, List[str]] = {}
     for key, value in raw.items():
@@ -116,13 +147,7 @@ def _load_paths_config() -> Dict[str, List[str]]:
                         items.append(v)
         cfg[key] = items
 
-    # Best-effort creation of model directories for relative roots declared
-    # in apps/paths.json. Only relative entries are touched; absolute paths
-    # are left to the operator to provision.
-    try:
-        _ensure_model_dirs(cfg)
-    except Exception:  # pragma: no cover - defensive
-        _LOG.exception("Failed to ensure model directories from paths.json")
+    _ensure_model_dirs(cfg)
 
     _PATHS_CACHE = cfg
     _PATHS_MTIME = stat.st_mtime
@@ -135,7 +160,7 @@ def _ensure_model_dirs(cfg: Dict[str, List[str]]) -> None:
     This is intentionally conservative:
       - only keys in _MODEL_DIR_KEYS are considered;
       - only relative entries are created (joined against the repo root);
-      - failures are logged but not raised.
+      - failures raise with key/path context.
     """
     root = _repo_root()
     for key in _MODEL_DIR_KEYS:
@@ -148,16 +173,11 @@ def _ensure_model_dirs(cfg: Dict[str, List[str]]) -> None:
             # paths may live on separate volumes or require manual setup.
             if os.path.isabs(v):
                 continue
-            path = root / v
+            path = _resolve_repo_relative_path(root=root, key=key, entry=v)
             try:
                 path.mkdir(parents=True, exist_ok=True)
-            except Exception as exc:  # pragma: no cover - defensive
-                _LOG.warning(
-                    "Failed to create model directory for key %s at %s: %s",
-                    key,
-                    path,
-                    exc,
-                )
+            except OSError as exc:
+                raise RuntimeError(f"Failed to create model directory for key {key!r} at {path}: {exc}") from exc
 
 
 def get_paths_config() -> Dict[str, List[str]]:
@@ -187,11 +207,12 @@ def get_paths_for(key: str) -> List[str]:
         if not v:
             continue
         if os.path.isabs(v):
-            norm = os.path.expanduser(v)
+            norm = Path(os.path.expanduser(v)).resolve(strict=False)
         else:
-            norm = os.path.join(str(root), v)
-        if norm not in out:
-            out.append(norm)
+            norm = _resolve_repo_relative_path(root=root, key=key, entry=v)
+        norm_str = str(norm)
+        if norm_str not in out:
+            out.append(norm_str)
     return out
 
 

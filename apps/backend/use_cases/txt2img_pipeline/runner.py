@@ -76,6 +76,7 @@ from apps.backend.runtime.pipeline_stages.sampling_plan import (
     ensure_sampler_and_rng,
     resolve_sampler_scheduler_override,
 )
+from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
 from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
 from apps.backend.runtime.sampling.driver import CodexSampler
@@ -422,7 +423,9 @@ class Txt2ImgPipelineRunner:
                 return
 
             def _shape(t):
-                return tuple(t.shape) if isinstance(t, torch.Tensor) else None
+                if not isinstance(t, torch.Tensor):
+                    return None
+                return "x".join(str(int(dim)) for dim in t.shape)
 
             def _dtype(t):
                 return str(t.dtype) if isinstance(t, torch.Tensor) else None
@@ -474,21 +477,45 @@ class Txt2ImgPipelineRunner:
                 except Exception:
                     return None
 
-            self._logger.info(
-                "[sdxl] cond: cross shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f | vector shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f pooled_mean=%.4f pooled_l2=%.4f adm_mean=%.4f adm_l2=%.4f guidance=%s",
-                _shape(ca), _dtype(ca), _device(ca), (_norm(ca) or 0.0), float(ca.detach().float().norm().item()) if ca is not None else 0.0,
-                _shape(va), _dtype(va), _device(va), (_norm(va) or 0.0), float(va.detach().float().norm().item()) if va is not None else 0.0,
-                (p_mean or 0.0), (p_l2 or 0.0), (adm_mean or 0.0), (adm_l2 or 0.0),
-                _guidance_scalar(ga),
+            emit_backend_event(
+                "sdxl.conditioning.cond",
+                logger=self._logger.name,
+                cross_shape=_shape(ca),
+                cross_dtype=_dtype(ca),
+                cross_device=_device(ca),
+                cross_mean_abs=(_norm(ca) or 0.0),
+                cross_l2=float(ca.detach().float().norm().item()) if ca is not None else 0.0,
+                vector_shape=_shape(va),
+                vector_dtype=_dtype(va),
+                vector_device=_device(va),
+                vector_mean_abs=(_norm(va) or 0.0),
+                vector_l2=float(va.detach().float().norm().item()) if va is not None else 0.0,
+                pooled_mean_abs=(p_mean or 0.0),
+                pooled_l2=(p_l2 or 0.0),
+                adm_mean_abs=(adm_mean or 0.0),
+                adm_l2=(adm_l2 or 0.0),
+                guidance=_guidance_scalar(ga),
             )
             # Only log uncond if it exists (distilled CFG models like Flux don't use uncond)
             if uncond is not None:
-                self._logger.info(
-                    "[sdxl] uncond: cross shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f | vector shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f pooled_mean=%.4f pooled_l2=%.4f adm_mean=%.4f adm_l2=%.4f guidance=%s",
-                    _shape(ua), _dtype(ua), _device(ua), (_norm(ua) or 0.0), float(ua.detach().float().norm().item()) if ua is not None else 0.0,
-                    _shape(uv), _dtype(uv), _device(uv), (_norm(uv) or 0.0), float(uv.detach().float().norm().item()) if uv is not None else 0.0,
-                    (up_mean or 0.0), (up_l2 or 0.0), (uadm_mean or 0.0), (uadm_l2 or 0.0),
-                    _guidance_scalar(ug),
+                emit_backend_event(
+                    "sdxl.conditioning.uncond",
+                    logger=self._logger.name,
+                    cross_shape=_shape(ua),
+                    cross_dtype=_dtype(ua),
+                    cross_device=_device(ua),
+                    cross_mean_abs=(_norm(ua) or 0.0),
+                    cross_l2=float(ua.detach().float().norm().item()) if ua is not None else 0.0,
+                    vector_shape=_shape(uv),
+                    vector_dtype=_dtype(uv),
+                    vector_device=_device(uv),
+                    vector_mean_abs=(_norm(uv) or 0.0),
+                    vector_l2=float(uv.detach().float().norm().item()) if uv is not None else 0.0,
+                    pooled_mean_abs=(up_mean or 0.0),
+                    pooled_l2=(up_l2 or 0.0),
+                    adm_mean_abs=(uadm_mean or 0.0),
+                    adm_l2=(uadm_l2 or 0.0),
+                    guidance=_guidance_scalar(ug),
                 )
         except Exception as exc:  # noqa: BLE001
             self._logger.debug("[sdxl] conditioning diagnostics skipped: %s", exc)

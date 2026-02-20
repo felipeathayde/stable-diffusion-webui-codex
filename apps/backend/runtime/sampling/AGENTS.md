@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-02-18
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -69,6 +69,7 @@ Status: Active
 - 2026-02-16: `inner_loop.sampling_prepare(...)` is now self-cleaning on failure: if post-load setup fails (e.g., GGUF dequant cache/config/control-prepare), it immediately calls `sampling_cleanup(...)`; if cleanup also fails, the function raises a combined fail-loud error with both prepare and cleanup causes.
 - 2026-02-18: `driver.py`/`inner_loop.py` now support optional guidance policy wiring (env + `override_settings.guidance`) for APG, CFG truncation by progress ratio, guidance rescale, and renorm clamp; policy parsing is strict and inactive policies are ignored (legacy sampling preserved when unset).
 - 2026-02-18: `inner_loop.sampling_prepare(...)` / `sampling_cleanup(...)` now route smart-offload load/unload context through `memory_management.manager` (`source`/`stage`), keeping generic action emission (`load`/`unload`) centralized in the manager.
+- 2026-02-20: `driver.py` now emits dense sampler diagnostics through `emit_backend_event(...)` (`sampling.sigma_schedule`, `sampling.plan.prepare`, `sampling.plan.run`, `sampling.cfg_delta`, `sampling.step`, `guidance.policy`) so logs inherit centralized multiline formatting/colorization instead of ad-hoc single-line format strings.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.
@@ -83,7 +84,7 @@ Status: Active
 
 ### Logging
 - DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.
-- `CODEX_LOG_SAMPLER=1` logs sampler setup with scheduler name, prediction_type (from predictor/scheduler), sigma bounds, and the first few sigmas; per-step logs continue to show sigma transitions and latent norms.
+- `CODEX_LOG_SAMPLER=1` logs sampler setup with scheduler name, prediction_type (from predictor/scheduler), sigma bounds, and the first few sigmas; setup/step diagnostics now use structured `event + key=value` output (multiline for dense entries).
 - Sampler diagnostics (`CODEX_LOG_SAMPLER`) do not change sampler routing (native vs other backends).
 
 ### Pré-checagens antes do denoiser

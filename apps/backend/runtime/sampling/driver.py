@@ -45,6 +45,7 @@ from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload_invariants import enforce_smart_offload_pre_sampling_residency
 from apps.backend.runtime.diagnostics.timeline import timeline
 from apps.backend.runtime.diagnostics.profiler import profiler
+from apps.backend.runtime.logging import emit_backend_event
 
 class _SamplingCancelled(Exception):
     """Signal that sampling was cancelled externally."""
@@ -268,6 +269,15 @@ class CodexSampler:
         self._logger = logging.getLogger(__name__ + ".CodexSampler")
         self._log_enabled = env_flag("CODEX_LOG_SAMPLER", default=False)
         self._log_sigmas = env_flag("CODEX_LOG_SIGMAS", default=False)
+
+    def _emit_event(self, event: str, /, **fields: object) -> None:
+        emit_backend_event(event, logger=self._logger.name, **fields)
+
+    @staticmethod
+    def _compact_series(values: list[float]) -> str:
+        if not values:
+            return "none"
+        return "/".join(f"{value:.6g}" for value in values)
 
     def _summarize_sigmas(self, sigmas: torch.Tensor, *, window: int = 6) -> str:
         try:
@@ -541,14 +551,14 @@ class CodexSampler:
                     schedule_summary = self._summarize_sigmas(sigmas)
                     sigma_min_val = float("nan") if active_context.sigma_min is None else float(active_context.sigma_min)
                     sigma_max_val = float("nan") if active_context.sigma_max is None else float(active_context.sigma_max)
-                    self._logger.info(
-                        "sigma schedule len=%d predict_min=%.6g predict_max=%.6g first=%.6g last=%.6g ladder=%s",
-                        len(sigmas) - 1,
-                        sigma_min_val,
-                        sigma_max_val,
-                        schedule_first,
-                        schedule_last,
-                        schedule_summary,
+                    self._emit_event(
+                        "sampling.sigma_schedule",
+                        length=len(sigmas) - 1,
+                        predict_min=sigma_min_val,
+                        predict_max=sigma_max_val,
+                        first=schedule_first,
+                        last=schedule_last,
+                        ladder=schedule_summary,
                     )
 
                 start_idx = int(start_at_step or 0)
@@ -572,17 +582,17 @@ class CodexSampler:
                         head = []
                     pred_type = getattr(model.predictor, "prediction_type", None)
                     sigma_data = getattr(model.predictor, "sigma_data", None)
-                    self._logger.info(
-                        "sampler algorithm=%s scheduler=%s steps=%d cfg_scale=%.4g prediction=%s sigma_max=%.6g sigma_min=%.6g sigma_data=%s head=%s",
-                        self.algorithm,
-                        active_context.scheduler_name,
-                        steps,
-                        float(cfg_scale),
-                        pred_type or getattr(active_context, "prediction_type", None) or "<unknown>",
-                        smax,
-                        smin,
-                        f"{float(sigma_data):.4g}" if sigma_data is not None else "n/a",
-                        head,
+                    self._emit_event(
+                        "sampling.plan.prepare",
+                        algorithm=self.algorithm,
+                        scheduler=active_context.scheduler_name,
+                        steps=steps,
+                        cfg_scale=float(cfg_scale),
+                        prediction=pred_type or getattr(active_context, "prediction_type", None) or "<unknown>",
+                        sigma_max=smax,
+                        sigma_min=smin,
+                        sigma_data=float(sigma_data) if sigma_data is not None else "n/a",
+                        head=self._compact_series(head),
                     )
 
                 compiled_cond = compile_conditions(cond)
@@ -620,14 +630,14 @@ class CodexSampler:
                     denoiser.model_options[_GUIDANCE_POLICY_KEY] = guidance_policy
                     denoiser.model_options[_GUIDANCE_TOTAL_STEPS_KEY] = run_total_steps
                     denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
-                    self._logger.info(
-                        "Guidance policy enabled: apg=%s start_step=%d cfg_trunc_ratio=%s rescale=%.4g apg_rescale=%.4g renorm=%.4g",
-                        bool(guidance_policy.get("apg_enabled", False)),
-                        int(guidance_policy.get("apg_start_step", 0) or 0),
-                        guidance_policy.get("cfg_trunc_ratio"),
-                        float(guidance_policy.get("guidance_rescale", 0.0) or 0.0),
-                        float(guidance_policy.get("apg_rescale", 0.0) or 0.0),
-                        float(guidance_policy.get("renorm_cfg", 0.0) or 0.0),
+                    self._emit_event(
+                        "guidance.policy",
+                        apg_enabled=bool(guidance_policy.get("apg_enabled", False)),
+                        start_step=int(guidance_policy.get("apg_start_step", 0) or 0),
+                        cfg_trunc_ratio=guidance_policy.get("cfg_trunc_ratio"),
+                        guidance_rescale=float(guidance_policy.get("guidance_rescale", 0.0) or 0.0),
+                        apg_rescale=float(guidance_policy.get("apg_rescale", 0.0) or 0.0),
+                        renorm_cfg=float(guidance_policy.get("renorm_cfg", 0.0) or 0.0),
                     )
                 backend_state.start(job_count=1, sampling_steps=run_total_steps)
                 state_started = True
@@ -663,13 +673,13 @@ class CodexSampler:
                         head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
                     except Exception:
                         head = []
-                    self._logger.info(
-                        "sampler algorithm=%s scheduler=%s steps=%d cfg_scale=%.4g head=%s",
-                        sampler_kind.value,
-                        active_context.scheduler_name,
-                        run_total_steps,
-                        float(cfg_scale),
-                        head,
+                    self._emit_event(
+                        "sampling.plan.run",
+                        algorithm=sampler_kind.value,
+                        scheduler=active_context.scheduler_name,
+                        steps=run_total_steps,
+                        cfg_scale=float(cfg_scale),
+                        head=self._compact_series(head),
                     )
 
                 old_denoised: Optional[torch.Tensor] = None
@@ -721,26 +731,26 @@ class CodexSampler:
                                     "disable_cfg1_optimization", False
                                 )
                                 if compiled_uncond is None or cfg1_optimization:
-                                    self._logger.info(
-                                        "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g uncond_used=%s",
-                                        i + 1,
-                                        steps,
-                                        float(sigma),
-                                        float(cfg_scale),
-                                        False,
+                                    self._emit_event(
+                                        "sampling.cfg_delta",
+                                        step=i + 1,
+                                        total_steps=steps,
+                                        sigma=float(sigma),
+                                        cfg_scale=float(cfg_scale),
+                                        uncond_used=False,
                                     )
                                 else:
                                     try:
                                         delta_abs_mean = float((cond_pred - uncond_pred).detach().float().abs().mean().item())
                                     except Exception:
                                         delta_abs_mean = float("nan")
-                                    self._logger.info(
-                                        "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g delta_abs_mean=%.6g",
-                                        i + 1,
-                                        steps,
-                                        float(sigma),
-                                        float(cfg_scale),
-                                        delta_abs_mean,
+                                    self._emit_event(
+                                        "sampling.cfg_delta",
+                                        step=i + 1,
+                                        total_steps=steps,
+                                        sigma=float(sigma),
+                                        cfg_scale=float(cfg_scale),
+                                        delta_abs_mean=delta_abs_mean,
                                     )
                             else:
                                 denoised = sampling_function_inner(
@@ -1046,16 +1056,16 @@ class CodexSampler:
                             if self._log_enabled and (i == 0 or (i + 1) == steps or (i + 1) % max(1, steps // 5) == 0):
                                 eps_norm = float(eps.norm().item()) if hasattr(eps, "norm") else float("nan")
                                 den_norm = float(denoised.norm().item()) if hasattr(denoised, "norm") else float("nan")
-                                self._logger.info(
-                                    "step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f norm(eps)=%.4f norm(den)=%.4f dt=%.2fms",
-                                    i + 1,
-                                    steps,
-                                    float(sigma),
-                                    float(sigma_next),
-                                    float(x.norm().item()),
-                                    eps_norm,
-                                    den_norm,
-                                    (_time.perf_counter() - t0) * 1000.0,
+                                self._emit_event(
+                                    "sampling.step",
+                                    step=i + 1,
+                                    total_steps=steps,
+                                    sigma=float(sigma),
+                                    sigma_next=float(sigma_next),
+                                    norm_x=float(x.norm().item()),
+                                    norm_eps=eps_norm,
+                                    norm_den=den_norm,
+                                    dt_ms=(_time.perf_counter() - t0) * 1000.0,
                                 )
                                 t0 = _time.perf_counter()
 

@@ -56,9 +56,10 @@ if _colorama_init is not None:  # pragma: no cover - environment dependent
     _colorama_init(autoreset=True)
 
 _CONFIGURED = False
-_SAFE_LOG_TOKEN = re.compile(r"^[A-Za-z0-9._:/-]+$")
+_SAFE_LOG_TOKEN = re.compile(r"^[A-Za-z0-9._:/,-]+$")
 _STRUCTURED_MEMORY_PREFIXES = ("memory_before_", "memory_after_", "memory_current_")
-_STRUCTURED_FIELD_CHUNK_SIZE = 5
+_STRUCTURED_FIELD_CHUNK_SIZE = 4
+_STRUCTURED_INLINE_MAX_FIELDS = 6
 
 
 if RegexHighlighter is not None:  # pragma: no cover - optional dependency
@@ -67,13 +68,14 @@ if RegexHighlighter is not None:  # pragma: no cover - optional dependency
 
         base_style = "codexlog."
         highlights = [
-            r"\b(?P<event>[A-Za-z_][A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)\b",
-            r"\b(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?==)",
+            r"(?m)^(?:[A-Za-z_][A-Za-z0-9_.-]*\s\|\s)?(?P<event>[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z0-9_.-]+)+)\b(?=\s*(?:\||$))",
+            r"(?P<tag>\[[A-Za-z0-9_:.@/-]+\])",
+            r"(?<![\w.])(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?==)",
+            r"=(?P<value>(?!torch\.[A-Za-z0-9_]+\b)(?!(?:cuda|cpu|mps|xpu)(?::\d+)?\b)(?!(?i:true|false)\b)(?![-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?\b)[^\s|]+)",
             r"=(?P<dtype>torch\.[A-Za-z0-9_]+)\b",
             r"=(?P<device>(?:cuda|cpu|mps|xpu)(?::\d+)?)\b",
-            r"=(?P<bool>true|false)\b",
-            r"=(?P<number>[-+]?\d+(?:\.\d+)?)\b",
-            r"=(?P<value>[^\s|]+)",
+            r"=(?P<bool>(?i:true|false))\b",
+            r"=(?P<number>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)\b",
             r"(?P<arrow>->)",
         ]
 else:
@@ -158,7 +160,7 @@ def format_log_message(event: str, /, **fields: object) -> str:
         key.startswith(_STRUCTURED_MEMORY_PREFIXES)
         for key, _value in rendered_fields
     )
-    if not has_memory_windows and len(rendered_fields) <= 8:
+    if not has_memory_windows and len(rendered_fields) <= _STRUCTURED_INLINE_MAX_FIELDS:
         inline = " ".join(f"{key}={value}" for key, value in rendered_fields)
         return f"{safe_event} | {inline}"
 
@@ -339,13 +341,14 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
             if Theme is not None:
                 console_theme = Theme(
                     {
-                        "codexlog.event": "bold bright_white",
+                        "codexlog.event": "bold bright_magenta",
+                        "codexlog.tag": "bold bright_blue",
                         "codexlog.key": "bright_cyan",
                         "codexlog.dtype": "bright_green",
-                        "codexlog.device": "bright_blue",
-                        "codexlog.bool": "magenta",
+                        "codexlog.device": "cyan",
+                        "codexlog.bool": "bright_magenta",
                         "codexlog.number": "bright_yellow",
-                        "codexlog.value": "white",
+                        "codexlog.value": "grey70",
                         "codexlog.arrow": "bright_black",
                     }
                 )

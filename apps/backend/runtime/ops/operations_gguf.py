@@ -402,13 +402,40 @@ def dequantize_tensor_for_forward(
             moved = moved_candidate
     else:
         cache.moved_hits += 1
-        if target_dtype is not None and getattr(moved, "computation_dtype", None) != target_dtype:
-            moved = moved.to(dtype=target_dtype)
+        if target_dtype is not None:
+            moved_dtype = getattr(moved, "computation_dtype", None)
+            if moved_dtype is not None and not isinstance(moved_dtype, torch.dtype):
+                raise TypeError(
+                    "GGUF moved cache contains invalid `computation_dtype` metadata: "
+                    f"{moved_dtype!r} ({type(moved_dtype)!r})."
+                )
+            if moved_dtype != target_dtype:
+                _LOG.warning(
+                    "GGUF moved cache dtype mismatch on hit: source_id=%d device=%s "
+                    "cached_dtype=%s target_dtype=%s; recasting.",
+                    source_id,
+                    device_key,
+                    moved_dtype,
+                    target_dtype,
+                )
+                moved = moved.to(dtype=target_dtype)
 
     if cache.level != "lvl2":
         return codex_dequantize(moved)
 
-    dtype_key = target_dtype or getattr(moved, "computation_dtype", torch.float32)
+    if target_dtype is not None:
+        dtype_key = target_dtype
+    else:
+        moved_dtype = getattr(moved, "computation_dtype", None)
+        if moved_dtype is None:
+            dtype_key = torch.float32
+        elif isinstance(moved_dtype, torch.dtype):
+            dtype_key = moved_dtype
+        else:
+            raise TypeError(
+                "GGUF moved cache contains invalid `computation_dtype` metadata: "
+                f"{moved_dtype!r} ({type(moved_dtype)!r})."
+            )
     out_key = (source_id, device_key, dtype_key)
     cached = cache.dequant_tensors.get(out_key)
     if cached is not None:

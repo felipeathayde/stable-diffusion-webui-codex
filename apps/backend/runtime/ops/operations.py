@@ -215,6 +215,35 @@ def _resolve_dtype(default: torch.dtype = torch.float32) -> torch.dtype:
     return ctx.dtype if ctx.dtype is not None else default
 
 
+_CAST_ARG_KEYS = frozenset({"device", "dtype", "non_blocking"})
+
+
+def _validate_cast_args(arg_name: str, args: Optional[Dict[str, object]]) -> None:
+    if args is None:
+        return
+    if not isinstance(args, dict):
+        raise TypeError(f"{arg_name} must be dict[str, object] or None, got {type(args)!r}.")
+    unknown_keys = sorted(set(args) - _CAST_ARG_KEYS)
+    if unknown_keys:
+        raise ValueError(
+            f"{arg_name} has unsupported keys: {unknown_keys}. "
+            f"Allowed keys: {sorted(_CAST_ARG_KEYS)}."
+        )
+    dtype_value = args.get("dtype")
+    if dtype_value is not None and not isinstance(dtype_value, torch.dtype):
+        raise TypeError(f"{arg_name}['dtype'] must be torch.dtype or None, got {type(dtype_value)!r}.")
+    device_value = args.get("device")
+    if device_value is not None and not isinstance(device_value, torch.device):
+        raise TypeError(
+            f"{arg_name}['device'] must be torch.device or None, got {type(device_value)!r}."
+        )
+    non_blocking_value = args.get("non_blocking")
+    if non_blocking_value is not None and not isinstance(non_blocking_value, bool):
+        raise TypeError(
+            f"{arg_name}['non_blocking'] must be bool or None, got {type(non_blocking_value)!r}."
+        )
+
+
 def get_weight_and_bias(
     layer,
     weight_args: Optional[Dict[str, object]] = None,
@@ -222,6 +251,9 @@ def get_weight_and_bias(
     weight_fn=None,
     bias_fn=None,
 ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    _validate_cast_args("weight_args", weight_args)
+    _validate_cast_args("bias_args", bias_args)
+
     scale_weight = getattr(layer, "scale_weight", None)
     patches = getattr(layer, "codex_online_loras", None)
 

@@ -88,8 +88,8 @@ class RMSNorm(nn.Module):
             raise TypeError(f"Qwen3 RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         dtype = x.dtype
         with autocast_disabled(x.device.type):
-            x_float = x.float()
-            norm = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+            x = x.float()
+            norm = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
             out = norm * self.weight.float()
             return out.to(dtype=dtype)
 

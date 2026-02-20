@@ -418,8 +418,8 @@ class RMSNorm(torch.nn.Module):
             raise TypeError(f"RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         dtype = x.dtype
         with autocast_disabled(x.device.type):
-            x_float = x.float()
-            norm = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+            x = x.float()
+            norm = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
             return norm.to(dtype=dtype)
 
     def forward(self, x):
@@ -435,9 +435,11 @@ class RMSNorm(torch.nn.Module):
             weight = self.weight
             if weight is None:
                 raise RuntimeError("RMSNorm learnable_scale=True but weight is None.")
+            x_dtype = x.dtype
             with autocast_disabled(x.device.type):
-                out = x.float() * weight.to(device=x.device, dtype=torch.float32)
-                return out.to(dtype=x.dtype)
+                x = x.float()
+                out = x * weight.to(device=x.device, dtype=torch.float32)
+                return out.to(dtype=x_dtype)
         return x
 
 

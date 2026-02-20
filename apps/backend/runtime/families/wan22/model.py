@@ -89,10 +89,10 @@ class WanRMSNorm(nn.Module):
             w = torch.as_tensor(w)
         w = w.to(device=x.device)
         with autocast_disabled(x.device.type):
-            x_float = x.float()
-            w_float = w.float()
-            out = x_float * torch.rsqrt(x_float.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-            out = out * w_float
+            x = x.float()
+            w = w.float()
+            out = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+            out = out * w
             return out.to(dtype=original_dtype)
 
 
@@ -438,19 +438,21 @@ class WanTransformerBlock(nn.Module):
         ffn_shift, ffn_scale, ffn_gate = mod[:, 3], mod[:, 4], mod[:, 5]
 
         # Self-attention: pre-norm (no affine) + time modulation + gated residual.
-        x_sa = (self.norm1(x.float()) * (1.0 + sa_scale[:, None, :]) + sa_shift[:, None, :]).type_as(x)
+        x_float = x.float()
+        x_sa = (self.norm1(x_float) * (1.0 + sa_scale[:, None, :]) + sa_shift[:, None, :]).to(dtype=x.dtype)
         sa_out = self.self_attn(x_sa, rotary_emb=rotary_emb)
-        x = (x.float() + sa_out.float() * sa_gate[:, None, :]).type_as(x)
+        x = (x_float + sa_out.float() * sa_gate[:, None, :]).to(dtype=x.dtype)
 
         # Cross-attention: pre-norm3 (affine) + residual (no time modulation).
-        x_ca = self.norm3(x.float()).type_as(x)
+        x_ca = self.norm3(x.float()).to(dtype=x.dtype)
         ca_out = self.cross_attn(x_ca, context)
         x = x + ca_out
 
         # FFN: pre-norm (no affine) + time modulation + gated residual.
-        x_ffn = (self.norm2(x.float()) * (1.0 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]).type_as(x)
+        x_float = x.float()
+        x_ffn = (self.norm2(x_float) * (1.0 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]).to(dtype=x.dtype)
         ffn_out = self.ffn(x_ffn)
-        x = (x.float() + ffn_out.float() * ffn_gate[:, None, :]).type_as(x)
+        x = (x_float + ffn_out.float() * ffn_gate[:, None, :]).to(dtype=x.dtype)
 
         return x
 
@@ -611,8 +613,9 @@ class WanTransformer2DModel(nn.Module):
 
         # Output head (Diffusers parity: float32 norm + float32 modulation, then cast back before projection).
         shift, scale = (self.head_modulation.float() + t_emb.float()[:, None, :]).chunk(2, dim=1)  # [B, 1, C] each
-        tokens_f32 = self.norm_out(tokens.float())
-        fused = (tokens_f32 * (1.0 + scale) + shift).type_as(tokens)
+        tokens_dtype = tokens.dtype
+        tokens = self.norm_out(tokens.float())
+        fused = (tokens * (1.0 + scale) + shift).to(dtype=tokens_dtype)
         patches = self.head(fused)
 
         # Unpatchify: [B, L, patch_dim] -> [B, C, T, H, W]

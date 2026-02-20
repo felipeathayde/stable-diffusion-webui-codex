@@ -50,10 +50,10 @@ class T5LayerNorm(torch.nn.Module):
             raise TypeError(f"T5LayerNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         original_dtype = x.dtype
         with autocast_disabled(x.device.type):
-            x_float = x.float()
-            variance = x_float.pow(2).mean(-1, keepdim=True)
-            x_float = x_float * torch.rsqrt(variance + self.variance_epsilon)
-            out = x_float * self.weight.float()
+            x = x.float()
+            variance = x.pow(2).mean(-1, keepdim=True)
+            x = x * torch.rsqrt(variance + self.variance_epsilon)
+            out = x * self.weight.float()
             return out.to(dtype=original_dtype)
 
 

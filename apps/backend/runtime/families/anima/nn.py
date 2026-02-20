@@ -36,7 +36,7 @@ class RMSNorm(nn.Module):
         if not x.is_floating_point():
             raise TypeError(f"RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         dtype = x.dtype
-        x_float = x.float()
-        normed = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+        x = x.float()
+        normed = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
         out = normed * self.weight.float()
         return out.to(dtype=dtype)

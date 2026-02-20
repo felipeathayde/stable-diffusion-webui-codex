@@ -48,10 +48,10 @@ class RMSNorm(nn.Module):
             raise TypeError(f"Flux RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         dtype = x.dtype
         with autocast_disabled(x.device.type):
-            x_float = x.float()
-            second_moment = torch.mean(x_float * x_float, dim=-1, keepdim=True)
+            x = x.float()
+            second_moment = torch.mean(x * x, dim=-1, keepdim=True)
             inv_rms = torch.rsqrt(second_moment + self.eps)
-            out = x_float * inv_rms * self.scale.float()
+            out = x * inv_rms * self.scale.float()
             return out.to(dtype=dtype)
 
 

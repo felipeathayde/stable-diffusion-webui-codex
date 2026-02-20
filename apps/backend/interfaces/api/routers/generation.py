@@ -2596,6 +2596,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             chunk_frames = _require_int_field(payload, 'img2vid_chunk_frames', minimum=9, maximum=401)
             if (chunk_frames - 1) % 4 != 0:
                 raise HTTPException(status_code=400, detail=f"'img2vid_chunk_frames' must satisfy 4n+1, got {chunk_frames}.")
+            if int(chunk_frames) >= int(frames_val):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "'img2vid_chunk_frames' must be smaller than 'img2vid_num_frames' "
+                        f"(chunk={int(chunk_frames)} total={int(frames_val)})."
+                    ),
+                )
             extras['img2vid_chunk_frames'] = chunk_frames
         if has_overlap_frames:
             overlap_frames = _require_int_field(payload, 'img2vid_overlap_frames', minimum=0, maximum=400)

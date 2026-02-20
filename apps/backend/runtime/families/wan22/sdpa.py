@@ -24,6 +24,7 @@ import torch
 
 _LOG_ONCE = {
     "sdpa": False,
+    "cross_attn_sliding_fallback": False,
 }
 _SDPA_LOG_COUNT = 0
 
@@ -118,6 +119,34 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
     if mode == "sliding":
         if ch <= 0:
             raise RuntimeError("WAN22 SDPA: sliding attention mode requires gguf_attn_chunk > 0.")
+        q_length = int(q.shape[2])
+        kv_length = int(k.shape[2])
+        if kv_length != q_length:
+            if not _LOG_ONCE.get("cross_attn_sliding_fallback", False):
+                _LOG_ONCE["cross_attn_sliding_fallback"] = True
+                try:
+                    import logging
+
+                    logging.getLogger("backend.runtime.wan22.sdpa").warning(
+                        "sliding mode fallback: q_len=%d differs from kv_len=%d; using full K/V per query chunk",
+                        q_length,
+                        kv_length,
+                    )
+                except Exception:
+                    pass
+            with ctx:
+                out_chunks = []
+                for start in range(0, q_length, ch):
+                    end = min(q_length, start + ch)
+                    out_chunks.append(
+                        torch.nn.functional.scaled_dot_product_attention(
+                            q[:, :, start:end],
+                            k,
+                            v,
+                            is_causal=causal,
+                        )
+                    )
+                return torch.cat(out_chunks, dim=2)
         with ctx:
             _, _, length, _ = q.shape
             out_chunks = []

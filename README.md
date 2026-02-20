@@ -5,7 +5,7 @@
 <h1 align="center">Stable Diffusion WebUI Codex</h1>
 
 <p align="center">
-  FastAPI + Vue 3 WebUI for running multiple diffusion engines.
+  Local-first FastAPI + Vue 3 WebUI for running modern diffusion pipelines with managed installers and safe updates.
 </p>
 
 <p align="center">
@@ -18,59 +18,90 @@
   <a href="https://huggingface.co/sangoi-exe/sd-webui-codex"><img alt="Hugging Face: sangoi-exe/sd-webui-codex" src="https://img.shields.io/badge/huggingface-sangoi--exe%2Fsd--webui--codex-yellow?logo=huggingface&logoColor=black" /></a>
 </p>
 
-## ✨ Capabilities
+<p align="center">
+  Quick links:
+  <a href="INSTALL.md">Install</a> |
+  <a href="#quick-start">Quick Start</a> |
+  <a href="README_HF_MODELS.md">Model Hub Notes</a> |
+  <a href="#support">Support</a>
+</p>
 
-- 🧠 Multi-engine: SD15, SDXL, FLUX.1, Chroma, Z-Image, and WAN 2.2, Anima, etc.
-- 🧰 Utility views: PNG Info, XYZ plot, GGUF tools, Workflows snapshots, etc.
+## What you can run
 
-## 🚀 Quick start
+- Multi-engine workflows: SD15, SDXL, FLUX.1, Z-Image, WAN 2.2, and related adapters.
+- Utility views and tools: PNG Info, XYZ plot, GGUF tools, and workflow snapshots.
+- Local-first backend/UI stack with managed Python and Node environments.
 
-Prereqs:
+## Quick start
+
+Prerequisites:
 - Git
-- PC
-- Keyboard
-- Maybe a GPU
+- Internet access for first install (`uv`, managed Python, repo-local Node.js via nodeenv, and Python wheels)
+
+For detailed install options, backend selection, and troubleshooting, see [INSTALL.md](INSTALL.md).
 
 ### Windows
+
 ```bat
 install-webui.bat
 run-webui.bat
+```
+
+Optional safe update:
+
+```bat
 update-webui.bat
 ```
 
 ### Linux / WSL
+
 ```bash
 bash install-webui.sh
 ./run-webui.sh
-bash update-webui.sh
 ```
 
-When the WebUI starts, it prints the URLs:
+Optional safe update:
+
+```bash
+bash update-webui.sh
+# Optional: ignore untracked-path preflight checks (tracked changes still abort)
+bash update-webui.sh --force
+```
+
+On Linux/WSL, startup prints the local URLs:
+
 ```text
 [webui] API: http://localhost:7850
 [webui]  UI: http://localhost:7860
 ```
+
 Open the UI URL in your browser. Stop with `Ctrl+C`.
 
-More details (CUDA/ROCm selection, troubleshooting): see `INSTALL.md`.
+On Windows, use the launcher output/UI to confirm the active API and UI endpoints.
 
-### Safe updater behavior
-- `update-webui.(bat|sh)` is fail-closed: it aborts on unsafe git state (dirty tree, detached HEAD, no upstream, ahead/diverged, merge/rebase/cherry-pick/bisect in progress).
-- Abort output includes explicit causes and offending file/folder paths when local changes exist.
-- Ignored paths (`.gitignore`) are excluded from the dirty-tree abort policy.
-- Update path is non-destructive: `git fetch --prune` + `git pull --ff-only`; no `git clean`/`reset --hard`.
+## Safe updater behavior
 
-## 📦 Models
+`update-webui.(bat|sh)` is fail-closed and non-destructive:
+
+- Dirty worktree checks are strict: tracked changes always abort; untracked changes abort unless `--force` is set.
+- `--force` only relaxes untracked-path preflight checks; `git pull --ff-only` safety checks still apply.
+- Ignored paths (`.gitignore`) are excluded from dirty-tree abort checks.
+- Update path remains non-destructive: `git fetch --prune` + `git pull --ff-only`.
+
+Full contract and edge cases are documented in [INSTALL.md](INSTALL.md).
+
+## Models
 
 Official Hugging Face repo: https://huggingface.co/sangoi-exe/sd-webui-codex
 
-Available weights on the Hub (generated via `hf download --dry-run` on 2026-01-29):
-- ⚡ FLUX.1
+Highlights from the Hub (snapshot from `hf download --dry-run` on 2026-01-29):
+
+- FLUX.1
   - `flux/FLUX.1-dev-Q5_K_M-Codex.gguf`
-- 🖼️ Z-Image
+- Z-Image
   - `zimage/Z-Image-Turbo-Q5_K_M-Codex.gguf`
   - `zimage/Z-Image-Turbo-Q8_0-Codex.gguf`
-- 🎞️ WAN 2.2
+- WAN 2.2
   - `wan22/wan22_i2v_14b_HN_lx2v_4step-Q4_K_M-Codex.gguf`
   - `wan22/wan22_i2v_14b_LN_lx2v_4step-Q4_K_M-Codex.gguf`
   - `wan22-loras/wan22_i2v_14b_HN_lx2v_4step_lora_rank64_1022.safetensors`
@@ -78,22 +109,27 @@ Available weights on the Hub (generated via `hf download --dry-run` on 2026-01-2
   - `wan22-loras/wan22_t2v_14b_HN_lx2v_4step_lora_rank64_1017.safetensors`
   - `wan22-loras/wan22_t2v_14b_LN_lx2v_4step_lora_rank64_1017.safetensors`
 
-By default, models live under `models/`:
+Default model roots are under `models/`:
+
 - `models/sd15/`, `models/sdxl/`, `models/flux/`, `models/zimage/`, `models/wan22/`
 - plus `*-vae`, `*-tenc`, `*-loras`
 
-Model hub notes and folder layout: see `README_HF_MODELS.md`.
+More model hub and folder layout details: [README_HF_MODELS.md](README_HF_MODELS.md).
+If you customize model roots, edit [apps/paths.json](apps/paths.json).
 
-If you customize model roots, edit `apps/paths.json`.
+## Support
 
-## 📄 License (noncommercial)
+- Bug reports: https://github.com/sangoi-exe/stable-diffusion-webui-codex/issues
+- Questions and discussion: https://github.com/sangoi-exe/stable-diffusion-webui-codex/discussions
 
-- Code license: PolyForm Noncommercial License 1.0.0 (`LICENSE`).
-- Required notice must be preserved: `NOTICE`.
-- Commercial use is not permitted: `COMMERCIAL.md`.
-- Trademarks/branding: `TRADEMARKS.md`.
+## License (noncommercial)
 
-## 🙏 Credits
+- Code license: PolyForm Noncommercial License 1.0.0 ([LICENSE](LICENSE)).
+- Required notice must be preserved: [NOTICE](NOTICE).
+- Commercial use is not permitted: [COMMERCIAL.md](COMMERCIAL.md).
+- Trademarks and branding: [TRADEMARKS.md](TRADEMARKS.md).
 
-- Semantic baseline: Hugging Face Diffusers.
-- Inspiration: AUTOMATIC1111 and Forge.
+## Credits
+
+- Diffusion ecosystem baseline: Hugging Face Diffusers.
+- UX and workflow inspiration: AUTOMATIC1111 and Forge.

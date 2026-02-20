@@ -147,7 +147,10 @@ def _parse_img2vid_chunk_options(extras: Mapping[str, Any], *, total_frames: int
     if (chunk_frames - 1) % 4 != 0:
         raise RuntimeError(f"img2vid_chunk_frames must satisfy 4n+1, got: {chunk_frames}")
     if chunk_frames >= int(total_frames):
-        return None
+        raise RuntimeError(
+            "img2vid_chunk_frames must be smaller than the requested total frame count "
+            f"(chunk={chunk_frames} total={int(total_frames)})"
+        )
 
     raw_overlap = extras.get("img2vid_overlap_frames", max(1, chunk_frames // 4))
     try:
@@ -283,6 +286,11 @@ def run_img2vid(
             stitched: list[Any] = []
             base_seed = getattr(request, "seed", None)
             for chunk_index, chunk_start in enumerate(chunk_starts):
+                yield ProgressEvent(
+                    stage=f"run_chunk_{chunk_index + 1}",
+                    percent=((float(chunk_index) / float(len(chunk_starts))) * 100.0),
+                    message=f"Preparing chunk {chunk_index + 1}/{len(chunk_starts)}",
+                )
                 chunk_seed = _resolve_chunk_seed(base_seed, chunk_index=chunk_index, mode=chunk_opts.chunk_seed_mode)
                 if chunk_index == 0:
                     chunk_init = getattr(request, "init_image", None)

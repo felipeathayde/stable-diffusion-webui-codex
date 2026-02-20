@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
-Last Review: 2026-02-18  
+Last Review: 2026-02-20  
 Status: Active
 
 ## Purpose
@@ -106,3 +106,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-17: `result-viewer.css` removed zoom legend styles; zoom UI now relies on icon-only controls in the shared overlay.
 - 2026-02-20: `styles/views/wan.css` adds opt-in clickable `wan-subheader` states (`--clickable` hover/focus) for full-row header toggles; `xyz-sweep-card.css` adds `.xyz-card-body` for collapsed-body layout grouping.
 - 2026-02-20: `styles.css` sets `.btn-destructive` height to `2rem` for size parity with adjacent `.btn-outline` controls in compact toolbars.
+- 2026-02-20: `generation-settings-card.css` now defines `cfg-advanced-row--apg-eta` and `gc-col--cfg-advanced-apg-eta` to place `APG Eta` on its own lower row, left-aligned.

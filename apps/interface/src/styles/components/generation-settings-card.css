@@ -45,6 +45,15 @@
     min-width: 4.75rem;
     justify-content: center;
   }
+  .gen-card .cfg-advanced-row--apg-eta {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+    justify-content: flex-start;
+  }
+  .gen-card .gc-col--cfg-advanced-apg-eta {
+    flex: 0 1 16rem;
+  }
   .gen-card .cdx-slider-field__right .qs-toggle-btn {
     flex-shrink: 0;
   }

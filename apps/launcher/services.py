@@ -435,6 +435,9 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     if raw_lora_math:
         args.append(f"--lora-online-math={raw_lora_math}")
 
+    if _env_truthy(env.get("CODEX_CUDA_MALLOC")):
+        args.append("--cuda-malloc")
+
     if _env_truthy(env.get("CODEX_TRACE_CONTRACT")):
         args.append("--trace-contract")
     if _env_truthy(env.get("CODEX_TRACE_PROFILER")):

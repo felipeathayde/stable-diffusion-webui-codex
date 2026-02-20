@@ -15,6 +15,8 @@ task cancel mode, task SSE buffer caps, safeweights) so runs are reproducible.
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
 - `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
+- `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_CUDA_ALLOC_CONF` is unset.
+- `CODEX_CUDA_MALLOC_KEY` (constant): Env key toggling backend `--cuda-malloc` forwarding in launcher-managed runs.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
 - `LauncherProfileStore` (dataclass): Main profile store; loads/saves meta/env maps, resolves key routing, and provides lookup helpers
@@ -75,12 +77,16 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_GGUF_DEQUANT_CACHE": "off",
         "CODEX_LORA_APPLY_MODE": "merge",
         "CODEX_LORA_ONLINE_MATH": "weight_merge",
+        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY: "1",
+        CODEX_CUDA_MALLOC_KEY: "0",
     }
     return {"core": core}
 
 
 DEFAULT_MODEL_NAME = "default"
 DEFAULT_PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
+ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
+CODEX_CUDA_MALLOC_KEY = "CODEX_CUDA_MALLOC"
 
 
 @dataclass
@@ -172,7 +178,9 @@ class LauncherProfileStore:
             env.update(mapping)
         active_model = self.meta.active_model
         env.update(self.models.get(active_model, {}))
-        if not str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip():
+        raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "1") or "").strip().lower()
+        default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
+        if default_alloc_enabled and not str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip():
             env["PYTORCH_CUDA_ALLOC_CONF"] = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
         return env
 

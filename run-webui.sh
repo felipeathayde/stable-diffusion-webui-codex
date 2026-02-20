@@ -27,6 +27,10 @@ Backend args:
 
 Launcher args:
   - '--pytorch-cuda-alloc-conf <value>': sets 'PYTORCH_CUDA_ALLOC_CONF' for the backend process (requires restart).
+  - '--enable-default-pytorch-cuda-alloc-conf' / '--disable-default-pytorch-cuda-alloc-conf':
+      toggles default allocator tuning when 'PYTORCH_CUDA_ALLOC_CONF' is unset.
+  - '--enable-cuda-malloc' / '--disable-cuda-malloc':
+      toggles backend '--cuda-malloc' forwarding (cudaMallocAsync backend).
 
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
@@ -35,6 +39,8 @@ Environment overrides:
   - CODEX_TE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
   - CODEX_VAE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
   - CODEX_LORA_APPLY_MODE (merge|online; default: merge)
+  - CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF (1|0; default: 1)
+  - CODEX_CUDA_MALLOC (1|0; default: 0)
   - PYTORCH_CUDA_ALLOC_CONF (PyTorch CUDA allocator tuning; optional)
   - API_PORT_OVERRIDE / API_PORT / WEB_PORT (advanced; ports are auto-paired when unset)
 EOF
@@ -115,6 +121,22 @@ while [[ $# -gt 0 ]]; do
       export PYTORCH_CUDA_ALLOC_CONF="${1#*=}"
       shift
       ;;
+    --enable-default-pytorch-cuda-alloc-conf)
+      export CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF="1"
+      shift
+      ;;
+    --disable-default-pytorch-cuda-alloc-conf)
+      export CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF="0"
+      shift
+      ;;
+    --enable-cuda-malloc)
+      export CODEX_CUDA_MALLOC="1"
+      shift
+      ;;
+    --disable-cuda-malloc)
+      export CODEX_CUDA_MALLOC="0"
+      shift
+      ;;
     *)
       api_args+=("$1")
       shift
@@ -122,6 +144,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 set -- "${api_args[@]}"
+
+is_truthy() {
+  local value
+  value="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "${value}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 normalize_device_choice() {
   local raw="${1:-}"
@@ -279,13 +310,13 @@ if ! has_backend_flag "--vae-device" "$@"; then
 fi
 
 need_prompt=0
-if [[ -z "${core_device}" && ! has_backend_flag "--core-device" "$@" ]]; then
+if [[ -z "${core_device}" ]] && ! has_backend_flag "--core-device" "$@"; then
   need_prompt=1
 fi
-if [[ -z "${te_device}" && ! has_backend_flag "--te-device" "$@" ]]; then
+if [[ -z "${te_device}" ]] && ! has_backend_flag "--te-device" "$@"; then
   need_prompt=1
 fi
-if [[ -z "${vae_device}" && ! has_backend_flag "--vae-device" "$@" ]]; then
+if [[ -z "${vae_device}" ]] && ! has_backend_flag "--vae-device" "$@"; then
   need_prompt=1
 fi
 
@@ -295,29 +326,34 @@ if (( need_prompt == 1 )); then
     echo "[webui] Provide flags: --core-device/--te-device/--vae-device, or set CODEX_CORE_DEVICE/CODEX_TE_DEVICE/CODEX_VAE_DEVICE." >&2
     exit 2
   fi
-  if [[ -z "${core_device}" && ! has_backend_flag "--core-device" "$@" ]]; then
+  if [[ -z "${core_device}" ]] && ! has_backend_flag "--core-device" "$@"; then
     core_device="$(prompt_device "CORE_DEVICE")"
   fi
-  if [[ -z "${te_device}" && ! has_backend_flag "--te-device" "$@" ]]; then
+  if [[ -z "${te_device}" ]] && ! has_backend_flag "--te-device" "$@"; then
     te_device="$(prompt_device "TE_DEVICE")"
   fi
-  if [[ -z "${vae_device}" && ! has_backend_flag "--vae-device" "$@" ]]; then
+  if [[ -z "${vae_device}" ]] && ! has_backend_flag "--vae-device" "$@"; then
     vae_device="$(prompt_device "VAE_DEVICE")"
   fi
 fi
 
-if [[ -n "${core_device}" && ! has_backend_flag "--core-device" "$@" ]]; then
+if [[ -n "${core_device}" ]] && ! has_backend_flag "--core-device" "$@"; then
   set -- "--core-device=${core_device}" "$@"
 fi
-if [[ -n "${te_device}" && ! has_backend_flag "--te-device" "$@" ]]; then
+if [[ -n "${te_device}" ]] && ! has_backend_flag "--te-device" "$@"; then
   set -- "--te-device=${te_device}" "$@"
 fi
-if [[ -n "${vae_device}" && ! has_backend_flag "--vae-device" "$@" ]]; then
+if [[ -n "${vae_device}" ]] && ! has_backend_flag "--vae-device" "$@"; then
   set -- "--vae-device=${vae_device}" "$@"
 fi
 
-if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
+default_alloc_conf_enabled="${CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF:-1}"
+if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]] && is_truthy "${default_alloc_conf_enabled}"; then
   export PYTORCH_CUDA_ALLOC_CONF="${DEFAULT_PYTORCH_CUDA_ALLOC_CONF}"
+fi
+
+if is_truthy "${CODEX_CUDA_MALLOC:-0}" && ! has_backend_flag "--cuda-malloc" "$@"; then
+  set -- "--cuda-malloc" "$@"
 fi
 
 is_uint() {

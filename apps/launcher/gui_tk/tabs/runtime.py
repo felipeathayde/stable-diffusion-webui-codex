@@ -11,7 +11,7 @@ Edits bootstrap-critical device defaults and global runtime/task knobs that must
 task cancel default mode, task SSE buffer caps, upscaler safeweights).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RuntimeTab` (class): Runtime settings tab (devices + GGUF/LoRA + PyTorch alloc conf).
+- `RuntimeTab` (class): Runtime settings tab (devices + GGUF/LoRA + PyTorch alloc conf/cuda-malloc toggles).
 """
 
 from __future__ import annotations
@@ -20,7 +20,11 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, List
 
-from apps.launcher.profiles import DEFAULT_PYTORCH_CUDA_ALLOC_CONF
+from apps.launcher.profiles import (
+    CODEX_CUDA_MALLOC_KEY,
+    DEFAULT_PYTORCH_CUDA_ALLOC_CONF,
+    ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
+)
 from apps.launcher.settings import (
     BoolSetting,
     DEVICE_CHOICES,
@@ -61,6 +65,8 @@ class RuntimeTab:
         self._var_gguf_dequant_cache_ratio = tk.StringVar()
         self._var_lora_online_math = tk.StringVar()
         self._var_pytorch_alloc_conf = tk.StringVar()
+        self._var_default_alloc_conf_enabled = tk.BooleanVar()
+        self._var_cuda_malloc = tk.BooleanVar()
 
         self._var_single_flight = tk.BooleanVar()
         self._var_safeweights = tk.BooleanVar()
@@ -200,7 +206,33 @@ class RuntimeTab:
             width=56,
             on_change=self._on_alloc_conf_changed,
         )
-        row = add_help(body, row, "Env var: PYTORCH_CUDA_ALLOC_CONF\n" f"Default: {DEFAULT_PYTORCH_CUDA_ALLOC_CONF}")
+        row = self._add_check(
+            body,
+            row,
+            label="Apply default PyTorch alloc conf when unset (requires API restart):",
+            var=self._var_default_alloc_conf_enabled,
+            on_change=self._on_default_alloc_conf_toggle_changed,
+        )
+        row = add_help(
+            body,
+            row,
+            "Env var: PYTORCH_CUDA_ALLOC_CONF\n"
+            f"Default value: {DEFAULT_PYTORCH_CUDA_ALLOC_CONF}\n"
+            f"Default toggle env: {ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY}",
+        )
+        row = self._add_check(
+            body,
+            row,
+            label="Enable cudaMallocAsync backend (requires API restart):",
+            var=self._var_cuda_malloc,
+            on_change=self._on_cuda_malloc_changed,
+        )
+        row = add_help(
+            body,
+            row,
+            f"Env var: {CODEX_CUDA_MALLOC_KEY}\n"
+            "When enabled, launcher forwards backend flag '--cuda-malloc'.",
+        )
         _ = add_help(
             body,
             row,
@@ -296,8 +328,23 @@ class RuntimeTab:
         self._var_gguf_dequant_cache.set(_get("CODEX_GGUF_DEQUANT_CACHE", "off"))
         self._var_gguf_dequant_cache_ratio.set(str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip())
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
+        try:
+            default_alloc_enabled = BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True).get(env)
+        except SettingValidationError:
+            default_alloc_enabled = True
+            BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True).set(env, default_alloc_enabled)
+        self._var_default_alloc_conf_enabled.set(bool(default_alloc_enabled))
 
-        alloc = str(self._controller.store.build_env().get("PYTORCH_CUDA_ALLOC_CONF") or DEFAULT_PYTORCH_CUDA_ALLOC_CONF).strip()
+        try:
+            cuda_malloc_enabled = BoolSetting(CODEX_CUDA_MALLOC_KEY, default=False).get(env)
+        except SettingValidationError:
+            cuda_malloc_enabled = False
+            BoolSetting(CODEX_CUDA_MALLOC_KEY, default=False).set(env, cuda_malloc_enabled)
+        self._var_cuda_malloc.set(bool(cuda_malloc_enabled))
+
+        alloc = str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
+        if not alloc and default_alloc_enabled:
+            alloc = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
         self._var_pytorch_alloc_conf.set(alloc)
 
         try:
@@ -422,6 +469,26 @@ class RuntimeTab:
                 pass
         else:
             self._controller.store.env[key] = value
+        self._mark_changed()
+
+    def _on_default_alloc_conf_toggle_changed(self) -> None:
+        env = self._controller.store.env
+        enabled = bool(self._var_default_alloc_conf_enabled.get())
+        BoolSetting(
+            ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
+            default=True,
+        ).set(env, enabled)
+        if not enabled and "PYTORCH_CUDA_ALLOC_CONF" not in env:
+            self._var_pytorch_alloc_conf.set("")
+        if enabled and "PYTORCH_CUDA_ALLOC_CONF" not in env and not str(self._var_pytorch_alloc_conf.get() or "").strip():
+            self._var_pytorch_alloc_conf.set(DEFAULT_PYTORCH_CUDA_ALLOC_CONF)
+        self._mark_changed()
+
+    def _on_cuda_malloc_changed(self) -> None:
+        BoolSetting(
+            CODEX_CUDA_MALLOC_KEY,
+            default=False,
+        ).set(self._controller.store.env, bool(self._var_cuda_malloc.get()))
         self._mark_changed()
 
     def _on_gguf_dequant_cache_ratio_changed(self) -> None:

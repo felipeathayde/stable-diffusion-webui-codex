@@ -231,6 +231,7 @@ def get_weight_and_bias(
     weight = None
     if layer.weight is not None:
         weight = layer.weight
+        apply_weight_args = weight_args is not None
         if weight_fn is not None:
             if (
                 weight_fn is dequantize_tensor
@@ -238,17 +239,20 @@ def get_weight_and_bias(
                 and weight_args is not None
                 and (device := weight_args.get("device")) is not None
             ):
+                source_is_quantized = isinstance(weight, CodexParameter) and weight.qtype is not None
                 weight = dequantize_tensor_for_forward(
                     weight,
                     target_device=device,
                     target_dtype=weight_args.get("dtype") if isinstance(weight_args.get("dtype"), torch.dtype) else None,
                     non_blocking=bool(weight_args.get("non_blocking", False)),
                 )
+                if source_is_quantized:
+                    apply_weight_args = False
             else:
                 if weight_args is not None and (device := weight_args.get("device")) is not None:
                     weight = weight.to(device=device)
                 weight = weight_fn(weight)
-        if weight_args is not None:
+        if apply_weight_args and weight_args is not None:
             weight = weight.to(**weight_args)
         if scale_weight is not None:
             weight = weight * scale_weight.to(device=weight.device, dtype=weight.dtype)
@@ -265,6 +269,7 @@ def get_weight_and_bias(
     bias = None
     if layer.bias is not None:
         bias = layer.bias
+        apply_bias_args = bias_args is not None
         if bias_fn is not None:
             if (
                 bias_fn is dequantize_tensor
@@ -272,17 +277,20 @@ def get_weight_and_bias(
                 and bias_args is not None
                 and (device := bias_args.get("device")) is not None
             ):
+                source_is_quantized = isinstance(bias, CodexParameter) and bias.qtype is not None
                 bias = dequantize_tensor_for_forward(
                     bias,
                     target_device=device,
                     target_dtype=bias_args.get("dtype") if isinstance(bias_args.get("dtype"), torch.dtype) else None,
                     non_blocking=bool(bias_args.get("non_blocking", False)),
                 )
+                if source_is_quantized:
+                    apply_bias_args = False
             else:
                 if bias_args is not None and (device := bias_args.get("device")) is not None:
                     bias = bias.to(device=device)
                 bias = bias_fn(bias)
-        if bias_args is not None:
+        if apply_bias_args and bias_args is not None:
             bias = bias.to(**bias_args)
         if bias_patches is not None:
             from apps.backend.patchers.lora import merge_lora_to_weight

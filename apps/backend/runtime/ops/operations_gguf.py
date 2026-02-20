@@ -402,7 +402,7 @@ def dequantize_tensor_for_forward(
             moved = moved_candidate
     else:
         cache.moved_hits += 1
-        if target_dtype is not None:
+        if target_dtype is not None and getattr(moved, "computation_dtype", None) != target_dtype:
             moved = moved.to(dtype=target_dtype)
 
     if cache.level != "lvl2":

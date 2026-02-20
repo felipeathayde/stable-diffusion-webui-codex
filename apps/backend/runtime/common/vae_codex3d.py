@@ -34,7 +34,7 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from torch import nn
 
-from apps.backend.runtime.families.wan22.vae import DiagonalGaussianDistribution
+from apps.backend.runtime.common.vae_ldm import DiagonalGaussianDistribution
 from apps.backend.runtime.state_dict.keymap_wan22_vae import remap_wan22_vae_3d_state_dict
 
 _CACHE_T = 2

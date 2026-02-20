@@ -1,6 +1,6 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Last Review: 2026-02-19
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -47,6 +47,7 @@ Status: Active
 - 2026-02-18: `vae.py` now gates storage-vs-compute split on manual-cast capability markers (`parameters_manual_cast` on base/modules). When markers are absent (plain diffusers/external VAE paths), forward dtype is forced to storage dtype to avoid mixed-dtype mismatch.
 - 2026-02-19: `vae.py` decode/encode OOM regular→tiled retries now drop failed-path buffers before explicit cleanup (`unload_model` + `gc.collect()` + `soft_empty_cache(force=True)`) and deterministic VAE reload before tiled retry, avoiding allocator carry-over across fallback attempts.
 - 2026-02-19: `vae.py` output staging now treats `DeviceRole.INTERMEDIATE=auto` as CPU-target by default, preventing large decode buffers from staying on GPU unless intermediate backend is explicitly overridden.
+- 2026-02-20: `vae.py` native-LDM type checks now import `AutoencoderKL_LDM` from `runtime/common/vae_ldm.py` (canonical shared lane) instead of the WAN family path.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

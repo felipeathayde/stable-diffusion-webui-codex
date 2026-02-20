@@ -30,7 +30,7 @@ from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.nn.unet.layers import Downsample, ResBlock, SpatialTransformer, TimestepEmbedSequential
 from apps.backend.runtime.common.nn.unet.model import UNet2DConditionModel
 from apps.backend.runtime.common.nn.unet.utils import conv_nd, exists, timestep_embedding
-from apps.backend.runtime.families.wan22.vae import AutoencoderKL_LDM
+from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM
 from apps.backend.runtime.families.flux import FluxTransformer2DModel, FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalConfig
 from apps.backend.runtime.families.flux.flux import (
     attention,

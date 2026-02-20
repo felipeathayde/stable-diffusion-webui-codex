@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-18
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -76,6 +76,7 @@ Status: Active
 - 2026-02-18: `text_context.py` direct smart-offload TE CPU transition now emits canonical INFO audit events via `log_smart_offload_action("direct_cpu_offload", ...)` to `backend.smart_offload`.
 - 2026-02-18: `text_context.py` now tags that event with `SmartOffloadAction.DIRECT_CPU_OFFLOAD`; generic smart-offload `load/unload` emission remains manager-owned.
 - 2026-02-18: shared native `AutoencoderKL_LDM` logger namespace was renamed from `backend.runtime.wan22.vae` to `backend.runtime.vae.ldm` to reflect cross-family usage (SDXL/Flux/ZImage/WAN) and avoid misleading WAN-only telemetry in SDXL runs.
+- 2026-02-20: `runtime/families/wan22/vae.py` is now a compatibility re-export shim; canonical ownership for native 2D `AutoencoderKL_LDM` moved to `runtime/common/vae_ldm.py` to remove WAN-only ownership drift for shared VAE code.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

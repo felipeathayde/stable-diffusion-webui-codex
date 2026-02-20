@@ -37,7 +37,7 @@ except Exception:  # noqa: BLE001
     DiffusersAutoencoderKL = None
 
 try:  # Optional; only needed to detect native LDM VAEs explicitly
-    from apps.backend.runtime.families.wan22.vae import AutoencoderKL_LDM
+    from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM
 except Exception:  # noqa: BLE001
     AutoencoderKL_LDM = None
 

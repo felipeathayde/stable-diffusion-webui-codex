@@ -1,6 +1,6 @@
 # apps/backend/runtime/common Overview
 Date: 2025-10-28
-Last Review: 2026-02-17
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -17,6 +17,7 @@ Status: Active
 - 2026-02-11: Global VAE lane policy now treats WAN22 as native-LDM-only: `resolve_vae_layout_lane` fails loud on non-LDM layout or `diffusers_native` override for WAN22 instead of allowing drift between policy and loader behavior.
 - 2026-02-16: WAN22 native-LDM-only policy is now enforced across explicit family variants (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) via shared `_WAN22_FAMILIES` gate.
 - 2026-02-11: `vae_ldm.sanitize_ldm_vae_config` now maps WAN alias config fields (`z_dim`, `base_dim`, `dim_mult`, `num_res_blocks`) into native LDM constructor fields before instantiation, keeping config-to-constructor contracts explicit.
+- 2026-02-20: `vae_ldm.py` now owns the full shared native `AutoencoderKL_LDM` implementation (moved out of `runtime/families/wan22/vae.py`); `runtime/families/wan22/vae.py` remains a compatibility re-export shim and `vae_codex3d.py` imports `DiagonalGaussianDistribution` from `runtime/common/vae_ldm.py`.
 - 2026-02-11: Added shared native temporal VAE lane module `vae_codex3d.py` (`AutoencoderCodex3D`) with strict diffusers→codex key remap (`remap_codex3d_vae_state_dict`) and config normalization (`sanitize_codex3d_vae_config`) for no-flatten 3D runtime paths.
 - 2026-02-16: `vae_codex3d.py` now delegates WAN22 3D VAE key remap ownership to `apps/backend/runtime/state_dict/keymap_wan22_vae.py` to keep model keymaps centralized in `runtime/state_dict`.
 - 2026-02-17: `vae_codex3d.py` now mirrors upstream WAN temporal cache semantics in native code (causal conv cache, chunked encode/decode loop, cached 3D upsample handling, nearest-exact upsample), closing WAN2.2 14B I2V decode parity drift without switching to Diffusers model classes.

@@ -39,7 +39,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - Normalization converges on Diffusers-style text encoder keys: converts legacy resblocks to `text_model.*` and accepts plain `text_model.*` roots by lifting them into the active wrapper namespace.
 
 ## Updates
-- 2025-11-22: VAE selection now prefers diffusers `AutoencoderKL` for SD/SDXL/Flux/etc., reserving WAN22 for the native `AutoencoderKL_LDM` lane so SDXL latents are decoded with the proper architecture.
+- 2025-11-22: VAE selection now prefers diffusers `AutoencoderKL` on diffusers-native layouts; native `AutoencoderKL_LDM` is selected only on native-LDM lane resolution (WAN22 constrained, other supported families policy-driven).
 - 2025-11-23: VAE loader now fails fast when weights are missing (e.g., pruned checkpoints without VAE); error names missing key count and asks for a compatible VAE.
 - 2025-11-23: VAE loader logs missing/expected/unexpected key counts before raising, making “frame cinza” cases debuggable when a single safetensors lacks VAE tensors.
 - 2025-11-23: `_resolve_vae_class` no longer routes non‑WAN22 families through the WAN native `AutoencoderKL_LDM` class when the VAE layout looks like LDM; layout is used only for key mapping outside the WAN22 family.

@@ -21,7 +21,7 @@
 ## ✨ Capabilities
 
 - 🧠 Multi-engine: SD15, SDXL, FLUX.1, Chroma, Z-Image, and WAN 2.2, Anima, etc.
-- 🧰 Utility views: PNG Info, XYZ plot, GGUF tools, Workflows snapshots, Settings.
+- 🧰 Utility views: PNG Info, XYZ plot, GGUF tools, Workflows snapshots, etc.
 
 ## 🚀 Quick start
 
@@ -95,5 +95,5 @@ If you customize model roots, edit `apps/paths.json`.
 
 ## 🙏 Credits
 
-- Semantic baseline for “parity”: Hugging Face Diffusers.
+- Semantic baseline: Hugging Face Diffusers.
 - Inspiration: AUTOMATIC1111 and Forge.

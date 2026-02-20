@@ -478,7 +478,7 @@ class Txt2ImgPipelineRunner:
                     return None
 
             emit_backend_event(
-                "sdxl.conditioning.cond",
+                "conditioning.cond",
                 logger=self._logger.name,
                 cross_shape=_shape(ca),
                 cross_dtype=_dtype(ca),
@@ -499,7 +499,7 @@ class Txt2ImgPipelineRunner:
             # Only log uncond if it exists (distilled CFG models like Flux don't use uncond)
             if uncond is not None:
                 emit_backend_event(
-                    "sdxl.conditioning.uncond",
+                    "conditioning.uncond",
                     logger=self._logger.name,
                     cross_shape=_shape(ua),
                     cross_dtype=_dtype(ua),
@@ -518,7 +518,7 @@ class Txt2ImgPipelineRunner:
                     guidance=_guidance_scalar(ug),
                 )
         except Exception as exc:  # noqa: BLE001
-            self._logger.debug("[sdxl] conditioning diagnostics skipped: %s", exc)
+            self._logger.debug("[conditioning] diagnostics skipped: %s", exc)
 
     def _apply_refiner_stage(
         self,

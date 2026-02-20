@@ -16,6 +16,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" />
   <img alt="Vue 3" src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white" />
   <a href="https://huggingface.co/sangoi-exe/sd-webui-codex"><img alt="Hugging Face: sangoi-exe/sd-webui-codex" src="https://img.shields.io/badge/huggingface-sangoi--exe%2Fsd--webui--codex-yellow?logo=huggingface&logoColor=black" /></a>
+  <a href="https://github.com/sangoi-exe/pytorch"><img alt="PyTorch fork with FlashAttention2" src="https://img.shields.io/badge/pytorch-fork%20with%20FA2-ee4c2c?logo=pytorch&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -23,8 +24,23 @@
   <a href="INSTALL.md">Install</a> |
   <a href="#quick-start">Quick Start</a> |
   <a href="README_HF_MODELS.md">Model Hub Notes</a> |
+  <a href="#custom-pytorch-builds-flashattention2">Custom PyTorch FA2</a> |
   <a href="#support">Support</a>
 </p>
+
+## Custom PyTorch builds (FlashAttention2)
+
+> [!IMPORTANT]
+> This project optionally provides Windows PyTorch builds with FlashAttention2 enabled for RTX architecture targets.
+
+- Repository: https://github.com/sangoi-exe/pytorch
+- Targeted RTX build variants:
+  - `SM80`
+  - `SM86`
+  - `SM89`
+  - `SM90`
+
+For this workflow, these custom builds are the recommended path when you want FA2-enabled runtime behavior.
 
 ## What you can run
 

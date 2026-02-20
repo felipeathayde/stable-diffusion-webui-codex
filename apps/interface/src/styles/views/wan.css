@@ -43,6 +43,26 @@
     border-bottom: 0.0625rem solid hsla(0, 0%, 100%, 0.06);
   }
 
+  .wan-subheader--clickable {
+    border-radius: 0.5rem;
+    margin: -0.2rem -0.3rem 0;
+    padding: 0.2rem 0.3rem 0.35rem;
+    transition: background-color 0.14s ease, box-shadow 0.14s ease;
+  }
+
+  .wan-subheader--clickable:not(.wan-subheader--disabled):hover {
+    background: hsla(0, 0%, 100%, 0.05);
+  }
+
+  .wan-subheader--clickable:not(.wan-subheader--disabled):focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 0.125rem hsla(210, 70%, 65%, 0.35);
+  }
+
+  .wan-subheader--disabled {
+    cursor: default;
+  }
+
   .wan-subheader-left {
     display: flex;
     align-items: baseline;

@@ -74,3 +74,5 @@ Status: Active
 - 2026-02-17: `InitialImageCard.vue` now supports Dropzone-backed selection, thumbnail preview mode, click-to-zoom full-size preview, and rejected-file emits for parent-side toasts.
 - 2026-02-17: `ResultViewer.vue` now delegates zoom interactions to shared `ui/ImageZoomOverlay.vue` (no overlay legends; outside-click uses the same close path as `Esc`).
 - 2026-02-17: Added `components/results/RunProgressStatus.vue` and migrated Run status rendering to this shared component across image/WAN/upscale views.
+- 2026-02-20: `WanSubHeader` now supports opt-in full-row click toggles (`header-click`), and `HiresSettingsCard.vue` / `RefinerSettingsCard.vue` / `XyzSweepCard.vue` wire header-area click parity for enable/disable collapse behavior.
+- 2026-02-20: `XyzSweepCard.vue` now collapses body content when disabled (same visible pattern as Hires/Swap cards) instead of always rendering controls/results.

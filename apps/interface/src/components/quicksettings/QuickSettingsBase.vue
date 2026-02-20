@@ -11,6 +11,8 @@ Renders Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, em
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBase` (component): Base quicksettings selectors for diffusion model tabs.
+- `isVaeSentinel` (function): Returns whether a VAE value is a sentinel selection (built-in/none) without metadata.
+- `vaeLabel` (function): Formats canonical VAE sentinel values for dropdown display.
 - `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder dropdown values.
 -->
 
@@ -46,13 +48,13 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="qs-pair">
           <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
             <option v-for="v in vaeChoices" :key="v" :value="v">
-              {{ v === 'Automatic' ? 'Built-in' : v }}
+              {{ vaeLabel(v) }}
             </option>
           </select>
           <button
             class="btn qs-btn-outline qs-inline-btn qs-info-btn"
             type="button"
-            :disabled="!vae || ['Automatic', 'Built in', 'None'].includes(vae)"
+            :disabled="!vae || isVaeSentinel(vae)"
             title="Show VAE metadata"
             aria-label="Show VAE metadata"
             @click="$emit('showMetadata', { kind: 'vae', value: vae })"
@@ -97,6 +99,18 @@ defineEmits<{
 }>()
 
 const textEncoderAutomaticLabel = props.textEncoderAutomaticLabel ?? 'Built-in'
+
+function isVaeSentinel(value: string): boolean {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === 'automatic' || normalized === 'built in' || normalized === 'built-in' || normalized === 'none'
+}
+
+function vaeLabel(value: string): string {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'automatic' || normalized === 'built in' || normalized === 'built-in') return 'Built-in'
+  if (normalized === 'none') return 'None'
+  return value
+}
 
 function textEncoderLabel(raw: unknown): string {
   const value = String(raw ?? '')

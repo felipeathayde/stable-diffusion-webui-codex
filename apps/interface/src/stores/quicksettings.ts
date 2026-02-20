@@ -11,7 +11,8 @@ Loads lists from `/api/*`, persists option changes via `/api/options`, and maint
 resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options,
 and caches the current `/api/options` revision for generation payload contracts (`settings_revision`).
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
-sanitized so `tenc_sha` resolution remains deterministic across families (including Anima).
+sanitized so `tenc_sha` resolution remains deterministic across families (including Anima). VAE state defaults to canonical `built-in`
+when no persisted value exists, and request preflight can enforce fail-loud non-empty selection via `requireVaeSelection`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
@@ -26,6 +27,8 @@ import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInve
 const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_overrides'
 const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
 const VAE_STORAGE_KEY = 'codex.quicksettings.vae'
+const DEFAULT_VAE_SELECTION = 'built-in'
+const NONE_VAE_SELECTION = 'none'
 
 const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
   ['sd15', 'sd15_tenc'],
@@ -89,11 +92,22 @@ function lookupTextEncoderShaFromMap(map: Map<string, string>, label: string): s
   return map.get(normalized) || map.get(withoutPrefix) || map.get(tail)
 }
 
+function normalizeVaeSelection(value: string | null | undefined): string {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const lower = raw.toLowerCase()
+  if (lower === 'automatic' || lower === 'built in' || lower === 'built-in') {
+    return DEFAULT_VAE_SELECTION
+  }
+  if (lower === 'none') return NONE_VAE_SELECTION
+  return raw
+}
+
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
   const currentModel = ref<string>('')
   const vaeChoices = ref<string[]>([])
-  const currentVae = ref<string>('Automatic')
+  const currentVae = ref<string>(DEFAULT_VAE_SELECTION)
   const textEncoderChoices = ref<string[]>([])
   const currentTextEncoders = ref<string[]>([])
   const textEncoderRootLabels = ref<Set<string>>(new Set())
@@ -223,10 +237,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   function loadVaeFromStorage(): void {
     try {
       const raw = localStorage.getItem(VAE_STORAGE_KEY)
-      if (!raw) return
-      const normalized = String(raw).trim()
-      if (!normalized) return
-      currentVae.value = normalized
+      if (!raw) {
+        currentVae.value = DEFAULT_VAE_SELECTION
+        return
+      }
+      const normalized = normalizeVaeSelection(raw)
+      currentVae.value = normalized || DEFAULT_VAE_SELECTION
     } catch (err) {
       console.warn('[quicksettings] failed to load VAE selection from localStorage', err)
     }
@@ -234,7 +250,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   function saveVaeToStorage(label: string): void {
     try {
-      localStorage.setItem(VAE_STORAGE_KEY, String(label))
+      const normalized = normalizeVaeSelection(label)
+      if (!normalized) {
+        localStorage.removeItem(VAE_STORAGE_KEY)
+        return
+      }
+      localStorage.setItem(VAE_STORAGE_KEY, normalized)
     } catch (err) {
       console.warn('[quicksettings] failed to persist VAE selection to localStorage', err)
     }
@@ -364,7 +385,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   async function loadVaes(): Promise<void> {
     const inv = await fetchModelInventory()
     const seen = new Set<string>()
-    const out: string[] = ['Automatic', 'Built in', 'None']
+    const out: string[] = [DEFAULT_VAE_SELECTION, NONE_VAE_SELECTION]
     for (const item of (inv as any)?.vaes || []) {
       const name = String(item?.name || '').trim()
       if (!name || seen.has(name)) continue
@@ -553,13 +574,13 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   }
 
   function resolveVaeSha(label: string | null | undefined): string | undefined {
-    const raw = String(label || '').trim()
+    const raw = normalizeVaeSelection(label)
     if (!raw) return undefined
 
-    const lower = raw.toLowerCase()
-    if (lower === 'automatic' || lower === 'built in' || lower === 'built-in' || lower === 'none') {
+    if (raw === DEFAULT_VAE_SELECTION || raw === NONE_VAE_SELECTION) {
       return undefined
     }
+    const lower = raw.toLowerCase()
     if (lower.length === 64 && /^[0-9a-f]+$/.test(lower)) {
       return lower
     }
@@ -623,8 +644,17 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   }
 
   async function setVae(label: string): Promise<void> {
-    currentVae.value = label
-    saveVaeToStorage(label)
+    const normalized = normalizeVaeSelection(label)
+    currentVae.value = normalized
+    saveVaeToStorage(normalized)
+  }
+
+  function requireVaeSelection(label?: string | null): string {
+    const normalized = normalizeVaeSelection(label ?? currentVae.value)
+    if (!normalized) {
+      throw new Error('Select a VAE before generating.')
+    }
+    return normalized
   }
 
   async function setTextEncoders(labels: string[]): Promise<void> {
@@ -767,6 +797,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     resolveTextEncoderSha,
     resolveModelSha,
     resolveVaeSha,
+    requireVaeSelection,
     resolveLoraSha,
     resolveWanGgufSha,
     isModelCoreOnly,

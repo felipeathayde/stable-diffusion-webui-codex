@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Swap-model configuration card (first pass or hires second pass).
 Renders a compact enable switch and optional fields (checkpoint swap step + CFG/seed), emitting updates to parent views.
-Uses the shared `WanSubHeader` title pattern to match the BASIC PARAMETERS card header style.
+Uses the shared `WanSubHeader` title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RefinerSettingsCard` (component): Swap-model settings panel component.
@@ -17,12 +17,18 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <div :class="['gen-card', 'refiner-card', { 'refiner-card--dense': dense } ]">
-    <WanSubHeader :title="label">
+    <WanSubHeader
+      :title="label"
+      :clickable="true"
+      :aria-pressed="enabled"
+      :aria-expanded="enabled"
+      @header-click="toggle"
+    >
       <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
         :aria-pressed="enabled"
-        @click="toggle"
+        @click.stop="toggle"
       >
         {{ enabled ? 'Enabled' : 'Disabled' }}
       </button>

@@ -33,3 +33,4 @@ Status: Active
 - 2025-12-28: Removed the obsolete “Diffusion in Low Bits” selectors and moved Smart toggles + GPU VRAM / Attention Backend / Overrides into a collapsible Advanced nested area (open by default, left-side handle); WAN `LightX2V` is a toggle button and the Guided gen header button is hidden for now.
 - 2025-12-31: `QuickSettingsWan.vue` now declares `defineEmits(...)` for `browse*` + `update:*` events to avoid Vue “extraneous non-emits listeners” warnings with a fragment root template.
 - 2026-01-03: Added standardized file header blocks to quicksettings components (doc-only change; part of rollout).
+- 2026-02-20: VAE selectors now recognize canonical sentinel `built-in` across families; metadata buttons are disabled for sentinel values (`built-in`/`none`) to avoid invalid metadata lookups.

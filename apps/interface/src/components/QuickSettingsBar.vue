@@ -27,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onShowMetadata` (function): Resolves selection metadata and opens a modal.
 - `fileInPaths` (function): Checks whether a file path belongs to the configured roots for a key from `/api/paths` (drives selector filtering).
 - `isVaeForFamily` (function): Filters VAE entries to those relevant for the current family.
+- `withBuiltInVaeChoice` (function): Prepends canonical `built-in` to filtered VAE choices and removes legacy aliases/duplicates.
 - `normalizeTextEncoderLabels` (function): Normalizes raw TE values into a stable label list (used for Flux/WAN multi-TE cases).
 - `WanAssetsParams` (type): Minimal WAN assets triple used for payload building (metadata dir + TE + VAE).
 - `currentWanAssets` (function): Builds `WanAssetsParams` from current UI selections (used by WAN payload generation).
@@ -912,19 +913,42 @@ function isVaeForFamily(name: string, fam: string): boolean {
   return true
 }
 
+function withBuiltInVaeChoice(values: string[]): string[] {
+  const out: string[] = ['built-in']
+  const seen = new Set<string>(['built-in'])
+  for (const raw of values) {
+    const value = String(raw || '').trim()
+    if (!value) continue
+    const lower = value.toLowerCase()
+    if (lower === 'automatic' || lower === 'built in' || lower === 'built-in') continue
+    if (seen.has(value)) continue
+    seen.add(value)
+    out.push(value)
+  }
+  return out
+}
+
 const filteredVaeChoices = computed(() => {
   const fam = activeFamily.value
   if (fam === 'flux1' || fam === 'chroma') {
-    return inventoryVaes.value
+    return withBuiltInVaeChoice(inventoryVaes.value
       .filter((v) => typeof v.path === 'string' && fileInPaths(v.path, 'flux1_vae'))
       .map((v) => String(v.path || ''))
+    )
   }
   if (fam === 'zimage') {
-    return inventoryVaes.value
+    return withBuiltInVaeChoice(inventoryVaes.value
       .filter((v) => typeof v.path === 'string' && (fileInPaths(v.path, 'zimage_vae') || fileInPaths(v.path, 'flux1_vae')))
       .map((v) => String(v.path || ''))
+    )
   }
-  return (store.vaeChoices.length ? store.vaeChoices : ['Automatic']).filter(v => v === 'Automatic' || isVaeForFamily(v, fam))
+  const familyChoices = (store.vaeChoices.length ? store.vaeChoices : ['built-in']).filter((value) => {
+    const normalized = String(value || '').trim().toLowerCase()
+    if (normalized === 'automatic' || normalized === 'built in' || normalized === 'built-in') return true
+    if (normalized === 'none') return true
+    return isVaeForFamily(value, fam)
+  })
+  return withBuiltInVaeChoice(familyChoices)
 })
 
 const filteredTextEncoderChoices = computed(() => {

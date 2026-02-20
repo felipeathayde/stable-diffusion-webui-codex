@@ -504,7 +504,14 @@ export function useGeneration(tabId: string) {
       }
     }
 
-    const selectedVae = String(quicksettings.currentVae || '').trim()
+    let selectedVae = ''
+    try {
+      selectedVae = quicksettings.requireVaeSelection()
+    } catch (error) {
+      state.value.status = 'error'
+      state.value.errorMessage = error instanceof Error ? error.message : String(error)
+      return
+    }
     const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
     const needsVaeSha = Boolean(assetContract?.requires_vae)
     if (needsVaeSha) {

@@ -1,5 +1,6 @@
 @layer components {
   .xyz-card { display: flex; flex-direction: column; gap: var(--space-md); }
+  .xyz-card-body { display: flex; flex-direction: column; gap: var(--space-md); }
   .xyz-grid-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-md); }
   .xyz-axis-card { border: 0.0625rem solid hsla(0,0%,100%,0.08); border-radius: 0.75rem; padding: 0.9rem; background: hsla(0,0%,100%,0.03); display: flex; flex-direction: column; gap: 0.5rem; }
   .xyz-axis-card--disabled { opacity: 0.72; }

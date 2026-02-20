@@ -13,6 +13,7 @@ optional `modeToggles` slot immediately after Turbo for parent-owned mode action
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsZImage` (component): Z-Image quicksettings row used by the main quicksettings bar.
 - `truncatePath` (function): Truncates absolute paths for compact dropdown labels.
+- `isVaeSentinel` (function): Returns whether a VAE value is a sentinel selection (built-in/none) without metadata.
 - `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder values.
 -->
 
@@ -69,7 +70,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <button
           class="btn qs-btn-outline qs-inline-btn qs-info-btn"
           type="button"
-          :disabled="!vae"
+          :disabled="!vae || isVaeSentinel(vae)"
           title="Show VAE metadata"
           aria-label="Show VAE metadata"
           @click="$emit('showMetadata', { kind: 'vae', value: vae })"
@@ -133,6 +134,11 @@ function truncatePath(path: string, maxLen = 40): string {
   const parts = path.replace(/\\/g, '/').split('/')
   const name = parts[parts.length - 1] || path
   return name.length > maxLen ? `...${name.slice(-maxLen)}` : name
+}
+
+function isVaeSentinel(value: string): boolean {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === 'automatic' || normalized === 'built in' || normalized === 'built-in' || normalized === 'none'
 }
 
 function textEncoderLabel(raw: unknown): string {

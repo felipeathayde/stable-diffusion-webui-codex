@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Frontend-driven XYZ sweep store for image tabs.
 Builds parameter grid combos, enqueues jobs, starts txt2img tasks (including required `settings_revision`), streams task events, and supports stop modes/cancellation while collecting
 per-cell results. Hires upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring; hires tile prefs (fallback/min_tile) are propagated from the shared upscalers store.
+Preflight now fails loud when VAE selection is empty before queuing XYZ requests.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): XYZ sweep lifecycle status (`idle`/`running`/`stopped`/`error`/`done`).
@@ -295,6 +296,13 @@ export const useXyzStore = defineStore('xyz', () => {
     }
     if (!params?.prompt?.trim()) {
       errorMessage.value = 'Prompt must not be empty before running XYZ.'
+      status.value = 'error'
+      return
+    }
+    try {
+      quick.requireVaeSelection()
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : String(error)
       status.value = 'error'
       return
     }

@@ -44,3 +44,4 @@ Status: Active
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates `output.returnFrames` into common WAN payload input for all modes, fixing dropped `video_return_frames` requests from the composable path.
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates WAN stage `flowShift` (`high/low.flowShift` → `wan_high/wan_low.flow_shift`) so distill runs can enforce non-default scheduler shifts explicitly.
 - 2026-02-17: `useVideoGeneration(tabId)` now propagates WAN attention mode (`global|sliding`) and img2vid chunk controls (chunk/overlap/anchor/seed mode) into payload builders and run-history snapshots.
+- 2026-02-20: `useGeneration(tabId)` now fails loud on empty VAE selection before payload submission by using `quicksettings.requireVaeSelection()` (prevents blank VAE submits on SDXL/related tabs).

@@ -10,7 +10,7 @@ Purpose: Hires (second pass) settings panel.
 Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, scale/width/height,
 upscaler/cfg/denoise, model selector, prompt overrides), plus tile controls and optional second-pass swap-model settings.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels. Uses the shared `WanSubHeader`
-title pattern to match the BASIC PARAMETERS card header style.
+title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `HiresSettingsCard` (component): Hires settings block for supported image tabs.
@@ -20,12 +20,18 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <div class="gen-card hires-card">
-    <WanSubHeader title="Hires (second pass)">
+    <WanSubHeader
+      title="Hires (second pass)"
+      :clickable="true"
+      :aria-pressed="enabled"
+      :aria-expanded="enabled"
+      @header-click="toggle"
+    >
       <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
         :aria-pressed="enabled"
-        @click="toggle"
+        @click.stop="toggle"
       >
         {{ enabled ? 'Enabled' : 'Disabled' }}
       </button>

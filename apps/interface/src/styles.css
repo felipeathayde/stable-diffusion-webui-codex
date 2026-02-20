@@ -154,7 +154,7 @@
   .btn-outline:hover { background: hsla(0,0%,100%,0.06); }
   .btn-ghost { background: transparent; height: 2rem; color: var(--color-foreground); border-color: transparent; }
   .btn-ghost:hover { background: hsla(0,0%,100%,0.06); }
-  .btn-destructive { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground)); border-color: hsla(0,0%,100%,0.08); }
+  .btn-destructive { background: hsl(var(--destructive)); height: 2rem; color: hsl(var(--destructive-foreground)); border-color: hsla(0,0%,100%,0.08); }
   .btn-destructive:hover { filter: brightness(1.04); }
 
   .h1 { @apply text-3xl font-semibold; }

@@ -29,3 +29,4 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to WAN components (doc-only change; part of rollout).
 - 2026-01-06: `WanStagePanel.vue` now labels empty sampler/scheduler selections as “Inherit” (stage overrides are optional; no automatic token).
 - 2026-01-27: Added a `Return frames` toggle to `WanVideoOutputPanel.vue` (default off) and an inline note when `Save output` is off (frames still returned so users can download them).
+- 2026-02-20: `WanSubHeader.vue` now supports opt-in full-row toggle behavior (`clickable` + `header-click`), with built-in interactive-target exclusion and Enter/Space keyboard parity for collapsible cards.

@@ -65,3 +65,5 @@ Status: Active
 - 2026-02-17: `model_tabs.ts` WAN video params now include `attentionMode` + img2vid chunk controls, and normalization clamps/snap-normalizes WAN frame/chunk counts to the `4n+1` domain within `[9,401]` during hydration/persistence.
 - 2026-02-18: `model_tabs.ts` image-tab params now include `img2imgResizeMode` (default `just_resize`) and `img2imgUpscaler` (default `latent:bicubic-aa`) with normalization via `utils/img2img_resize.ts` for img2img UI layout/state parity.
 - 2026-02-18: `model_tabs.ts` image-tab params now include `guidanceAdvanced` (APG/rescale/trunc/renorm controls), with strict numeric/boolean normalization and defaults used by CFG Advanced UI + request extras wiring.
+- 2026-02-20: `quicksettings.ts` now defaults VAE selection to canonical `built-in` when nothing is persisted and exposes `requireVaeSelection()` for fail-loud request preflight on empty VAE selections.
+- 2026-02-20: `xyz.ts` run preflight now blocks sweeps when VAE selection is empty (shared fail-loud guard via `quicksettings.requireVaeSelection()`).

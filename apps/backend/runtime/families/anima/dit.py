@@ -28,6 +28,8 @@ import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
+from apps.backend.runtime.attention import attention_function_pre_shaped
+from apps.backend.runtime.memory.config import AttentionBackend
 from .nn import RMSNorm
 from .position_embedding import LearnablePosEmbAxis, VideoRopePosition3DEmb
 
@@ -126,7 +128,14 @@ class Attention(nn.Module):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=False)
+        out = attention_function_pre_shaped(
+            q,
+            k,
+            v,
+            mask=mask,
+            is_causal=False,
+            backend=AttentionBackend.PYTORCH,
+        )
         out = out.transpose(1, 2).contiguous()
         out = out.view(out.shape[0], out.shape[1], self.num_heads * self.head_dim)
         return self.output_dropout(self.output_proj(out))

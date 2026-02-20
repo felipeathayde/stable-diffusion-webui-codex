@@ -27,7 +27,8 @@ Symbols (top-level; keep in sync; no ghosts):
 import torch
 import math
 
-from apps.backend.runtime.attention import attention_pytorch as attention_function
+from apps.backend.runtime.attention import attention_function
+from apps.backend.runtime.memory.config import AttentionBackend
 from apps.backend.runtime.misc.autocast import autocast_disabled
 from transformers.activations import NewGELUActivation
 
@@ -170,7 +171,14 @@ class T5Attention(torch.nn.Module):
             else:
                 mask = past_bias
 
-        out = attention_function(q, k * ((k.shape[-1] / self.num_heads) ** 0.5), v, self.num_heads, mask)
+        out = attention_function(
+            q,
+            k * ((k.shape[-1] / self.num_heads) ** 0.5),
+            v,
+            self.num_heads,
+            mask,
+            backend=AttentionBackend.PYTORCH,
+        )
         return self.o(out), past_bias
 
 

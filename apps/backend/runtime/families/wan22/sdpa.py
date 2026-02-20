@@ -22,6 +22,9 @@ from typing import Optional
 
 import torch
 
+from apps.backend.runtime.attention import attention_function_pre_shaped
+from apps.backend.runtime.memory.config import AttentionBackend
+
 _LOG_ONCE = {
     "sdpa": False,
     "cross_attn_sliding_fallback": False,
@@ -139,11 +142,12 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
                 for start in range(0, q_length, ch):
                     end = min(q_length, start + ch)
                     out_chunks.append(
-                        torch.nn.functional.scaled_dot_product_attention(
+                        attention_function_pre_shaped(
                             q[:, :, start:end],
                             k,
                             v,
                             is_causal=causal,
+                            backend=AttentionBackend.PYTORCH,
                         )
                     )
                 return torch.cat(out_chunks, dim=2)
@@ -155,11 +159,12 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
                 window_start = max(0, start - ch)
                 window_end = min(length, end + ch)
                 out_chunks.append(
-                    torch.nn.functional.scaled_dot_product_attention(
+                    attention_function_pre_shaped(
                         q[:, :, start:end],
                         k[:, :, window_start:window_end],
                         v[:, :, window_start:window_end],
                         is_causal=causal,
+                        backend=AttentionBackend.PYTORCH,
                     )
                 )
             return torch.cat(out_chunks, dim=2)
@@ -171,8 +176,20 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
             for start in range(0, length, ch):
                 end = min(length, start + ch)
                 out_chunks.append(
-                    torch.nn.functional.scaled_dot_product_attention(q[:, :, start:end], k, v, is_causal=causal)
+                    attention_function_pre_shaped(
+                        q[:, :, start:end],
+                        k,
+                        v,
+                        is_causal=causal,
+                        backend=AttentionBackend.PYTORCH,
+                    )
                 )
             return torch.cat(out_chunks, dim=2)
     with ctx:
-        return torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=causal)
+        return attention_function_pre_shaped(
+            q,
+            k,
+            v,
+            is_causal=causal,
+            backend=AttentionBackend.PYTORCH,
+        )

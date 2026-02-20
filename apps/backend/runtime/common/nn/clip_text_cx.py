@@ -35,6 +35,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from apps.backend.runtime.attention import attention_function_pre_shaped
+from apps.backend.runtime.memory.config import AttentionBackend
+
 
 class ClipActivation(str, Enum):
     QUICK_GELU = "quick_gelu"
@@ -95,7 +98,14 @@ class _CLIPAttention(nn.Module):
         # SDPA is the canonical attention path in this repo.
         # `mask` is expected to be additive (0 for keep, -inf for masked) and broadcastable
         # to (B, H, T, T). We combine causal + padding masks upstream.
-        o = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+        o = attention_function_pre_shaped(
+            q,
+            k,
+            v,
+            mask=mask,
+            is_causal=False,
+            backend=AttentionBackend.PYTORCH,
+        )
         o = o.transpose(1, 2).contiguous().view(B, T, C)
         return self.out_proj(o)
 
@@ -114,7 +124,14 @@ class _CLIPAttentionFusedQKV(nn.Module):
         H = self.heads
         qkv = self.in_proj(x).view(B, T, 3, H, C // H).permute(2, 0, 3, 1, 4).contiguous()
         q, k, v = qkv[0], qkv[1], qkv[2]
-        o = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+        o = attention_function_pre_shaped(
+            q,
+            k,
+            v,
+            mask=mask,
+            is_causal=False,
+            backend=AttentionBackend.PYTORCH,
+        )
         o = o.transpose(1, 2).contiguous().view(B, T, C)
         return self.out_proj(o)
 

@@ -22,6 +22,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from apps.backend.runtime.attention import attention_function_pre_shaped
+from apps.backend.runtime.memory.config import AttentionBackend
 from .config import LLMAdapterConfig
 from .nn import RMSNorm
 
@@ -131,7 +133,14 @@ class Attention(nn.Module):
             cos_ctx, sin_ctx = position_embeddings_context
             k = _apply_rotary(k, cos_ctx, sin_ctx, unsqueeze_dim=1)
 
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
+        out = attention_function_pre_shaped(
+            q,
+            k,
+            v,
+            mask=attn_mask,
+            is_causal=False,
+            backend=AttentionBackend.PYTORCH,
+        )
         out = out.transpose(1, 2).reshape(b, s_q, self.num_heads * self.head_dim).contiguous()
         return self.o_proj(out)
 

@@ -40,19 +40,23 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
+from apps.backend.runtime.attention import attention_function as dispatch_attention
+from apps.backend.runtime.memory.config import AttentionBackend
 from apps.backend.runtime.misc.autocast import autocast_disabled
 
 _log = logging.getLogger("backend.runtime.sd.mmditx")
 
 def attention(q, k, v, heads, mask=None):
     """Convenience wrapper around a basic attention operation"""
-    b, _, dim_head = q.shape
-    dim_head //= heads
-    q, k, v = map(lambda t: t.view(b, -1, heads, dim_head).transpose(1, 2), (q, k, v))
-    out = torch.nn.functional.scaled_dot_product_attention(
-        q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False
+    out = dispatch_attention(
+        q,
+        k,
+        v,
+        heads,
+        mask=mask,
+        backend=AttentionBackend.PYTORCH,
     )
-    return out.transpose(1, 2).reshape(b, -1, heads * dim_head)
+    return out
 
 class Mlp(nn.Module):
     """MLP as used in Vision Transformer, MLP-Mixer and related networks"""

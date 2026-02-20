@@ -45,6 +45,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from apps.backend.runtime.attention import attention_function_pre_shaped
+from apps.backend.runtime.memory.config import AttentionBackend
 from apps.backend.runtime.misc.autocast import autocast_disabled
 
 logger = logging.getLogger("backend.runtime.zimage.qwen3")
@@ -233,10 +235,13 @@ class Attention(nn.Module):
         # Scaled dot-product attention
         # IMPORTANT: Always use is_causal=False! The causal mask is already in attention_mask.
         # Construct causal mask manually (required by this implementation).
-        attn_output = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attention_mask,
+        attn_output = attention_function_pre_shaped(
+            q,
+            k,
+            v,
+            mask=attention_mask,
             is_causal=False,  # Causal mask is in attention_mask, not is_causal flag
+            backend=AttentionBackend.PYTORCH,
         )
         
         # Reshape and project output

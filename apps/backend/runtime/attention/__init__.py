@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `attention_xformers` (function): xFormers attention path (when available and not broken).
 - `attention_pytorch` (function): PyTorch SDPA attention path (uses `efficient_dot_product_attention`).
 - `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`).
+- `attention_function_pre_shaped` (function): Dispatcher wrapper for pre-shaped Q/K/V tensors (`[B,H,S,D]` -> `[B,H,S,D]`).
 - `attention_function_single_head_spatial` (function): Runtime-selected single-head spatial attention dispatcher (VAE; driven by runtime config).
 - `slice_attention_single_head_spatial` (function): Single-head spatial attention variant using slicing/chunking.
 - `normal_attention_single_head_spatial` (function): Baseline single-head spatial attention.
@@ -87,7 +88,9 @@ def exists(val):
     return val is not None
 
 
-def attention_basic(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False):
+def attention_basic(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, is_causal=False):
+    if is_causal:
+        raise RuntimeError("attention_basic does not support is_causal=True")
     attn_precision = get_attn_precision(attn_precision)
 
     if skip_reshape:
@@ -146,7 +149,9 @@ def attention_basic(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
     return out
 
 
-def attention_sub_quad(query, key, value, heads, mask=None, attn_precision=None, skip_reshape=False):
+def attention_sub_quad(query, key, value, heads, mask=None, attn_precision=None, skip_reshape=False, is_causal=False):
+    if is_causal:
+        raise RuntimeError("attention_sub_quad does not support is_causal=True")
     attn_precision = get_attn_precision(attn_precision)
 
     if skip_reshape:
@@ -214,7 +219,9 @@ def attention_sub_quad(query, key, value, heads, mask=None, attn_precision=None,
     return hidden_states
 
 
-def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False):
+def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, is_causal=False):
+    if is_causal:
+        raise RuntimeError("attention_split does not support is_causal=True")
     attn_precision = get_attn_precision(attn_precision)
 
     if skip_reshape:
@@ -305,7 +312,9 @@ def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
     return r1
 
 
-def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False):
+def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, is_causal=False):
+    if is_causal:
+        raise RuntimeError("xformers attention path does not support is_causal=True")
     if not memory_management.manager.xformers_enabled():
         raise RuntimeError(
             "xformers attention was requested, but the active runtime is not configured for xformers. "
@@ -356,7 +365,7 @@ def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_resh
     return out
 
 
-def attention_pytorch(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False):
+def attention_pytorch(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, is_causal=False):
     if skip_reshape:
         b, _, _, dim_head = q.shape
     else:
@@ -367,7 +376,7 @@ def attention_pytorch(q, k, v, heads, mask=None, attn_precision=None, skip_resha
             (q, k, v),
         )
 
-    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=is_causal)
     out = (
         out.transpose(1, 2).reshape(b, -1, heads * dim_head)
     )
@@ -458,7 +467,9 @@ def pytorch_attention_single_head_spatial(q, k, v):
     out = out.transpose(2, 3).reshape(B, C, H, W)
     return out
 
-def _selected_backend() -> AttentionBackend:
+def _selected_backend(*, backend_override: AttentionBackend | None = None) -> AttentionBackend:
+    if backend_override is not None:
+        return backend_override
     try:
         backend = memory_management.manager.config.attention.backend
     except Exception:
@@ -466,17 +477,124 @@ def _selected_backend() -> AttentionBackend:
     return backend
 
 
-def attention_function(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False):
-    backend = _selected_backend()
-    if backend == AttentionBackend.XFORMERS:
-        return attention_xformers(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
-    if backend == AttentionBackend.PYTORCH:
-        return attention_pytorch(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
-    if backend == AttentionBackend.SPLIT:
-        return attention_split(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
-    if backend == AttentionBackend.QUAD:
-        return attention_sub_quad(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
-    return attention_pytorch(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
+def attention_function(
+    q,
+    k,
+    v,
+    heads,
+    mask=None,
+    attn_precision=None,
+    skip_reshape=False,
+    is_causal=False,
+    backend: AttentionBackend | None = None,
+):
+    backend_selected = _selected_backend(backend_override=backend)
+    if skip_reshape and int(q.shape[1]) != int(heads):
+        raise RuntimeError(
+            "attention_function(skip_reshape=True) requires `heads` to match q.shape[1] "
+            f"(heads={int(heads)} q.shape[1]={int(q.shape[1])})."
+        )
+    if backend_selected == AttentionBackend.XFORMERS:
+        return attention_xformers(
+            q,
+            k,
+            v,
+            heads,
+            mask=mask,
+            attn_precision=attn_precision,
+            skip_reshape=skip_reshape,
+            is_causal=is_causal,
+        )
+    if backend_selected == AttentionBackend.PYTORCH:
+        return attention_pytorch(
+            q,
+            k,
+            v,
+            heads,
+            mask=mask,
+            attn_precision=attn_precision,
+            skip_reshape=skip_reshape,
+            is_causal=is_causal,
+        )
+    if backend_selected == AttentionBackend.SPLIT:
+        return attention_split(
+            q,
+            k,
+            v,
+            heads,
+            mask=mask,
+            attn_precision=attn_precision,
+            skip_reshape=skip_reshape,
+            is_causal=is_causal,
+        )
+    if backend_selected == AttentionBackend.QUAD:
+        return attention_sub_quad(
+            q,
+            k,
+            v,
+            heads,
+            mask=mask,
+            attn_precision=attn_precision,
+            skip_reshape=skip_reshape,
+            is_causal=is_causal,
+        )
+    return attention_pytorch(
+        q,
+        k,
+        v,
+        heads,
+        mask=mask,
+        attn_precision=attn_precision,
+        skip_reshape=skip_reshape,
+        is_causal=is_causal,
+    )
+
+
+def attention_function_pre_shaped(
+    q,
+    k,
+    v,
+    *,
+    mask=None,
+    is_causal=False,
+    backend: AttentionBackend | None = None,
+):
+    if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
+        raise RuntimeError(
+            "attention_function_pre_shaped expects q/k/v with shape [B,H,S,D]; "
+            f"got q={tuple(q.shape)} k={tuple(k.shape)} v={tuple(v.shape)}."
+        )
+    if tuple(q.shape[:2]) != tuple(k.shape[:2]) or tuple(q.shape[:2]) != tuple(v.shape[:2]):
+        raise RuntimeError(
+            "attention_function_pre_shaped expects matching [B,H] dimensions across q/k/v; "
+            f"got q={tuple(q.shape)} k={tuple(k.shape)} v={tuple(v.shape)}."
+        )
+    if int(q.shape[-1]) != int(k.shape[-1]) or int(q.shape[-1]) != int(v.shape[-1]):
+        raise RuntimeError(
+            "attention_function_pre_shaped expects matching head dims across q/k/v; "
+            f"got q={tuple(q.shape)} k={tuple(k.shape)} v={tuple(v.shape)}."
+        )
+    batch = int(q.shape[0])
+    heads = int(q.shape[1])
+    q_tokens = int(q.shape[2])
+    head_dim = int(q.shape[3])
+    out = attention_function(
+        q,
+        k,
+        v,
+        heads=heads,
+        mask=mask,
+        skip_reshape=True,
+        is_causal=is_causal,
+        backend=backend,
+    )
+    expected = heads * head_dim
+    if out.ndim != 3 or int(out.shape[0]) != batch or int(out.shape[1]) != q_tokens or int(out.shape[2]) != expected:
+        raise RuntimeError(
+            "attention_function_pre_shaped expected flattened output [B,S,H*D]; "
+            f"got {tuple(out.shape)} for q={tuple(q.shape)}."
+        )
+    return out.reshape(batch, q_tokens, heads, head_dim).transpose(1, 2).contiguous()
 
 
 def attention_function_single_head_spatial(q, k, v):

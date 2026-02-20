@@ -46,6 +46,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from apps.backend.runtime.attention import attention_function_pre_shaped
+from apps.backend.runtime.memory.config import AttentionBackend
 from apps.backend.runtime.misc.autocast import autocast_disabled
 from .debug import env_flag, env_int, tensor_stats
 
@@ -393,7 +395,14 @@ class Attention(nn.Module):
         if attention_mask is not None and attention_mask.ndim == 2:
             attention_mask = attention_mask[:, None, None, :]
 
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask)
+        out = attention_function_pre_shaped(
+            q,
+            k,
+            v,
+            mask=attention_mask,
+            is_causal=False,
+            backend=AttentionBackend.PYTORCH,
+        )
         out = out.transpose(1, 2).reshape(B, N, self.inner_dim)
         if debug_dtype:
             try:

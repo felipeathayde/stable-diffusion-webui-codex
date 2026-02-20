@@ -1,7 +1,7 @@
 # apps/backend/use_cases/txt2img_pipeline Overview
 <!-- tags: backend, use-case, txt2img, pipeline, refiner -->
 Date: 2025-10-31
-Last Review: 2026-02-18
+Last Review: 2026-02-20
 Status: Active
 
 ## Purpose
@@ -23,3 +23,4 @@ Status: Active
 - 2026-02-09: Smart-offload conditioning now loads every registered text encoder patcher in `codex_objects.text_encoders` (not just `clip`) and offloads encoders after conditioning; this includes Qwen-backed slots such as `qwen3`.
 - 2026-02-16: Runner Smart Cache identity now fingerprints model/load/component state (`model_ref`, normalized load options, LoRA hash, TE/VAE patcher ids) plus wrapped prompt metadata to avoid stale hits across model swaps or load-option changes; cached cond/uncond payloads are now stored detached on CPU and moved back to the active TE device on cache hit (prevents shared runner cache from pinning GPU tensors between jobs).
 - 2026-02-18: `_execute_base_sampling(...)` now passes the resolved hires upscaler id into `maybe_decode_for_hr(...)`, so latent hires (`latent:*`) no longer triggers redundant first-pass base decode before second-pass prep.
+- 2026-02-20: `_run_hires_pass(...)` now logs explicit transition checkpoints for the 1st->2nd pass handoff (`[hires] transition base_to_hires` and `[hires] upscale_ready`) with upscaler, target size, sampler/scheduler, latent/image-conditioning shapes, and computed `start_at_step`.

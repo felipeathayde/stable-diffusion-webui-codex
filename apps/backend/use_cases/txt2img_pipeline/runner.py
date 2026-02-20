@@ -788,6 +788,25 @@ class Txt2ImgPipelineRunner:
             processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
             processing.prepare_prompt_data()
 
+            base_samples_shape = tuple(int(dim) for dim in base_result.samples.shape)
+            base_decoded_shape = (
+                tuple(int(dim) for dim in base_result.decoded.shape)
+                if isinstance(base_result.decoded, torch.Tensor)
+                else None
+            )
+            self._logger.info(
+                "[hires] transition base_to_hires upscaler=%s target=%dx%d steps=%d denoise=%.4f sampler=%s scheduler=%s base_samples=%s base_decoded=%s",
+                hires_plan_cfg.upscaler_id,
+                target_width,
+                target_height,
+                steps,
+                denoise,
+                hires_sampler,
+                hires_scheduler,
+                base_samples_shape,
+                base_decoded_shape,
+            )
+
             latents, image_conditioning = prepare_hires_latents_and_conditioning(
                 processing,
                 base_samples=base_result.samples,
@@ -812,6 +831,18 @@ class Txt2ImgPipelineRunner:
                 dtype=latents.dtype,
             )
             start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
+            image_conditioning_shape = (
+                tuple(int(dim) for dim in image_conditioning.shape)
+                if isinstance(image_conditioning, torch.Tensor)
+                else None
+            )
+            self._logger.info(
+                "[hires] upscale_ready latents=%s image_conditioning=%s start_at_step=%d total_steps=%d",
+                tuple(int(dim) for dim in latents.shape),
+                image_conditioning_shape,
+                start_index,
+                int(processing.steps),
+            )
 
             hires_plan = replace(
                 state.sampling_plan,

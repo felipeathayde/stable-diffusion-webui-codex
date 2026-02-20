@@ -9,12 +9,14 @@ Required Notice: see NOTICE
 Purpose: Centralized backend logging setup (env-driven level, optional rich/tqdm integration).
 Configures root logging once per interpreter, supports console/file handlers, and can wrap stream handlers to cooperate with tqdm progress
 bars. Level filtering can also be controlled per-level via `CODEX_LOG_*` env vars.
+Includes structured multiline rendering for dense telemetry events and a custom Rich key/value highlighter for readable console diagnostics.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TqdmAwareHandler` (class): Proxy handler that cooperates with tqdm-managed progress bars.
 - `_is_stream_handler` (function): Detects stream handlers including wrapped `TqdmAwareHandler`.
 - `_parse_level` (function): Parses level names (including TRACE=5) and returns a logging level.
 - `format_log_message` (function): Builds a consistent event-style log message with optional key/value context.
+- `CodexLogHighlighter` (class): Regex-based Rich highlighter for structured `key=value` diagnostics.
 - `get_backend_logger` (function): Returns a normalized backend logger (`backend.*`) from module or relative names.
 - `emit_backend_event` (function): Canonical global backend event emitter (single source of truth for event emission path).
 - `LevelFilter` (class): Env-driven log-level filter (CODEX_LOG_DEBUG/INFO/WARNING/ERROR).
@@ -36,10 +38,14 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
 try:  # pragma: no cover - optional dependency
     from rich.console import Console  # type: ignore
+    from rich.highlighter import RegexHighlighter  # type: ignore
     from rich.logging import RichHandler  # type: ignore
+    from rich.theme import Theme  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     Console = None  # type: ignore[assignment]
+    RegexHighlighter = None  # type: ignore[assignment]
     RichHandler = None  # type: ignore[assignment]
+    Theme = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency
     from tqdm import tqdm  # type: ignore
@@ -51,6 +57,27 @@ if _colorama_init is not None:  # pragma: no cover - environment dependent
 
 _CONFIGURED = False
 _SAFE_LOG_TOKEN = re.compile(r"^[A-Za-z0-9._:/-]+$")
+_STRUCTURED_MEMORY_PREFIXES = ("memory_before_", "memory_after_", "memory_current_")
+_STRUCTURED_FIELD_CHUNK_SIZE = 5
+
+
+if RegexHighlighter is not None:  # pragma: no cover - optional dependency
+    class CodexLogHighlighter(RegexHighlighter):
+        """Highlight backend diagnostic tokens (`key=value`) with stable styles."""
+
+        base_style = "codexlog."
+        highlights = [
+            r"\b(?P<event>[A-Za-z_][A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)\b",
+            r"\b(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?==)",
+            r"=(?P<dtype>torch\.[A-Za-z0-9_]+)\b",
+            r"=(?P<device>(?:cuda|cpu|mps|xpu)(?::\d+)?)\b",
+            r"=(?P<bool>true|false)\b",
+            r"=(?P<number>[-+]?\d+(?:\.\d+)?)\b",
+            r"=(?P<value>[^\s|]+)",
+            r"(?P<arrow>->)",
+        ]
+else:
+    CodexLogHighlighter = None  # type: ignore[assignment,misc]
 
 
 class TqdmAwareHandler(logging.Handler):
@@ -108,7 +135,7 @@ def format_log_message(event: str, /, **fields: object) -> str:
     - with fields: `event | key=value key2='text value'`
     """
 
-    tokens: list[str] = []
+    rendered_fields: list[tuple[str, str]] = []
     for key, value in fields.items():
         if value is None:
             continue
@@ -121,12 +148,54 @@ def format_log_message(event: str, /, **fields: object) -> str:
             rendered = value if _SAFE_LOG_TOKEN.fullmatch(value) else repr(value)
         else:
             rendered = repr(value)
-        tokens.append(f"{safe_key}={rendered}")
+        rendered_fields.append((safe_key, rendered))
 
     safe_event = event if _SAFE_LOG_TOKEN.fullmatch(event) else repr(event)
-    if not tokens:
+    if not rendered_fields:
         return safe_event
-    return f"{safe_event} | {' '.join(tokens)}"
+
+    has_memory_windows = any(
+        key.startswith(_STRUCTURED_MEMORY_PREFIXES)
+        for key, _value in rendered_fields
+    )
+    if not has_memory_windows and len(rendered_fields) <= 8:
+        inline = " ".join(f"{key}={value}" for key, value in rendered_fields)
+        return f"{safe_event} | {inline}"
+
+    context_tokens: list[str] = []
+    memory_before_tokens: list[str] = []
+    memory_after_tokens: list[str] = []
+    memory_current_tokens: list[str] = []
+
+    for key, value in rendered_fields:
+        token = f"{key}={value}"
+        if key.startswith("memory_before_"):
+            suffix = key[len("memory_before_") :]
+            memory_before_tokens.append(f"{suffix}={value}")
+            continue
+        if key.startswith("memory_after_"):
+            suffix = key[len("memory_after_") :]
+            memory_after_tokens.append(f"{suffix}={value}")
+            continue
+        if key.startswith("memory_current_"):
+            suffix = key[len("memory_current_") :]
+            memory_current_tokens.append(f"{suffix}={value}")
+            continue
+        context_tokens.append(token)
+
+    def _append_group(lines: list[str], label: str, tokens: list[str]) -> None:
+        if not tokens:
+            return
+        for start in range(0, len(tokens), _STRUCTURED_FIELD_CHUNK_SIZE):
+            chunk = tokens[start : start + _STRUCTURED_FIELD_CHUNK_SIZE]
+            lines.append(f"  {label}: {' '.join(chunk)}")
+
+    lines: list[str] = [safe_event]
+    _append_group(lines, "context", context_tokens)
+    _append_group(lines, "memory_before", memory_before_tokens)
+    _append_group(lines, "memory_after", memory_after_tokens)
+    _append_group(lines, "memory_current", memory_current_tokens)
+    return "\n".join(lines)
 
 
 def get_backend_logger(name: Optional[str] = None) -> logging.Logger:
@@ -232,10 +301,20 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
     )
     resolved_level = _parse_level(level_name)
 
+    include_logger_name = (
+        os.environ.get("CODEX_LOG_INCLUDE_LOGGER_NAME", "0").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
     # Concise format: [MM/DD/YY HH:MM:SS] LEVEL     message
+    default_fmt = (
+        "[%(asctime)s] %(levelname)-8s %(name)s | %(message)s"
+        if include_logger_name
+        else "[%(asctime)s] %(levelname)-8s %(message)s"
+    )
     fmt = os.environ.get(
         "CODEX_LOG_FORMAT",
-        "[%(asctime)s] %(levelname)-8s %(name)s | %(message)s",
+        default_fmt,
     )
     datefmt = "%m/%d/%y %H:%M:%S"
 
@@ -256,15 +335,38 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
         level_filter = LevelFilter()
         formatter: logging.Formatter
         if not _should_force_plain() and RichHandler is not None and Console is not None:
-            console = Console(color_system="auto", soft_wrap=True, highlight=False, emoji=False)
+            console_theme = None
+            if Theme is not None:
+                console_theme = Theme(
+                    {
+                        "codexlog.event": "bold bright_white",
+                        "codexlog.key": "bright_cyan",
+                        "codexlog.dtype": "bright_green",
+                        "codexlog.device": "bright_blue",
+                        "codexlog.bool": "magenta",
+                        "codexlog.number": "bright_yellow",
+                        "codexlog.value": "white",
+                        "codexlog.arrow": "bright_black",
+                    }
+                )
+            console = Console(
+                color_system="auto",
+                soft_wrap=True,
+                highlight=False,
+                emoji=False,
+                theme=console_theme,
+            )
+            rich_highlighter = CodexLogHighlighter() if CodexLogHighlighter is not None else None
             inner: logging.Handler = RichHandler(
                 console=console,
                 show_time=True,
                 show_path=_env_true("CODEX_LOG_RICH_SHOW_PATH", "0"),
                 rich_tracebacks=_env_true("CODEX_LOG_RICH_TRACEBACKS", "1"),
                 markup=False,
+                highlighter=rich_highlighter,
+                keywords=[],
             )
-            formatter = logging.Formatter("%(name)s | %(message)s")
+            formatter = logging.Formatter("%(name)s | %(message)s" if include_logger_name else "%(message)s")
         else:
             inner = logging.StreamHandler(stream=sys.stderr)
             formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)

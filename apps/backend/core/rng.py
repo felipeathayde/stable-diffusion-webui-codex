@@ -124,7 +124,10 @@ class ImageRNG:
     ) -> torch.Tensor:
         if isinstance(generator, PhiloxGenerator):
             return generator.randn(shape, device=self._target)
-        return torch.randn(shape, generator=generator, device=self._generator_device).to(self._target)
+        noise = torch.randn(shape, generator=generator, device=self._generator_device)
+        if noise.device == self._target:
+            return noise
+        return noise.to(self._target)
 
     def _initial_noise(self) -> torch.Tensor:
         seeds = list(self.seeds) or [0]
@@ -146,7 +149,9 @@ class ImageRNG:
 
             if self.subseeds and self.subseed_strength != 0.0:
                 subseed = self.subseeds[index] if index < len(self.subseeds) else 0
-                secondary = _seed_to_tensor(noise_shape, subseed, device=self._generator_device).to(self._target)
+                secondary = _seed_to_tensor(noise_shape, subseed, device=self._generator_device)
+                if secondary.device != self._target:
+                    secondary = secondary.to(self._target)
                 primary = _slerp(float(self.subseed_strength), primary.unsqueeze(0), secondary.unsqueeze(0))[0]
 
             if resize and noise_shape != self.shape:
@@ -163,7 +168,7 @@ class ImageRNG:
         if eta_delta:
             self._generators = [self._create_generator(seed + eta_delta) for seed in seeds]
 
-        stacked = torch.stack(batch).to(self._target)
+        stacked = torch.stack(batch)
         return stacked
 
     def next(self) -> torch.Tensor:
@@ -183,7 +188,7 @@ class ImageRNG:
             self._noise_from_generator(generator, self.shape)
             for generator in self._generators
         ]
-        stacked = torch.stack(samples).to(self._target)
+        stacked = torch.stack(samples)
         return stacked
 
 

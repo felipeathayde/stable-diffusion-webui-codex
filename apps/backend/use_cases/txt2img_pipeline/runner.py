@@ -273,6 +273,17 @@ class Txt2ImgPipelineRunner:
         return "cpu"
 
     @staticmethod
+    def _to_device_dtype_if_needed(
+        tensor: torch.Tensor,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if tensor.device == device and tensor.dtype == dtype:
+            return tensor
+        return tensor.to(device=device, dtype=dtype)
+
+    @staticmethod
     def _log_tensor_stats(label: str, tensor: torch.Tensor | None) -> None:
         logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
         if tensor is None:
@@ -281,7 +292,7 @@ class Txt2ImgPipelineRunner:
         with torch.no_grad():
             data = tensor.detach()
             try:
-                stats_tensor = data.float()
+                stats_tensor = data if data.dtype in {torch.float32, torch.float64} else data.float()
             except Exception:
                 stats_tensor = data
             mean = float(stats_tensor.mean().item())
@@ -676,7 +687,11 @@ class Txt2ImgPipelineRunner:
             finally:
                 finalize_tiling(tiling_applied, previous_tiling)
         elif base_samples is None and decoded_samples is not None:
-            tensor = decoded_samples.to(devices.default_device(), dtype=torch.float32)
+            tensor = self._to_device_dtype_if_needed(
+                decoded_samples,
+                device=devices.default_device(),
+                dtype=torch.float32,
+            )
             base_samples = processing.sd_model.encode_first_stage(tensor)
 
         if base_samples is None:
@@ -791,7 +806,11 @@ class Txt2ImgPipelineRunner:
                 seed_resize_from_w=getattr(processing, "seed_resize_from_w", 0),
                 settings=hires_settings,
             )
-            noise = rng_hr.next().to(latents)
+            noise = self._to_device_dtype_if_needed(
+                rng_hr.next(),
+                device=latents.device,
+                dtype=latents.dtype,
+            )
             start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
 
             hires_plan = replace(
@@ -892,8 +911,11 @@ class Txt2ImgPipelineRunner:
 
         array = np.array(image).astype(np.float32) / 255.0
         array = np.moveaxis(array, 2, 0)
-        tensor = torch.from_numpy(np.expand_dims(array, axis=0))
-        tensor = tensor.to(devices.default_device(), dtype=torch.float32)
+        tensor = self._to_device_dtype_if_needed(
+            torch.from_numpy(np.expand_dims(array, axis=0)),
+            device=devices.default_device(),
+            dtype=torch.float32,
+        )
 
         samples = processing.sd_model.encode_first_stage(tensor)
         devices.torch_gc()

@@ -112,3 +112,8 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-20: `styles/components/views-shared.css` now styles History as square 1:1 thumbnail cards (`.cdx-history-item` + `.cdx-history-thumb`, object-fit contain) and adds `cdx-history-modal*` layout rules for organized run-details dialogs.
 - 2026-02-21: Added `styles/components/inpaint-mask-editor.css` and imported it in `styles.css` for the new full-screen inpaint mask editor overlay (stage/content/cursor/toolbar semantics).
 - 2026-02-21: `styles/components/result-viewer.css` now constrains video frame previews to `max-height: 30dvh` with `object-fit: contain` and no forced full-width stretch; `styles/views/wan.css` applies the same contract to WAN exported-video previews inside Results.
+- 2026-02-21: Added `styles/components/base-tab-header.css` and moved `BaseTabHeader.vue` action-row alignment/margins out of inline template styles.
+- 2026-02-21: `styles.css` modal shell now sizes `.modal-panel` by viewport width (`min(96vw, 72rem)`) instead of `100dvh` width, preserving consistent dialog proportions.
+- 2026-02-21: `styles.css` removed duplicate baseline definitions (`.panel-stack`, `.viewer-card`, `.viewer-empty`) and normalized modal list spacing under shared `.modal-list-section`.
+- 2026-02-21: `styles/components/settings-form.css` now uses namespaced `settings-*` selectors to prevent collisions with global `.form-*` hooks used by other views.
+- 2026-02-21: Added `styles/components/bootstrap-screen.css` and `styles/components/dependency-check-panel.css`, migrating remaining scoped style blocks from `App.vue` and `DependencyCheckPanel.vue` into shared style modules.

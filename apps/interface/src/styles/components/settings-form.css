@@ -1,12 +1,12 @@
 @layer components {
   .settings-form { display: block; }
-  .grid-col { display: flex; flex-direction: column; gap: .75rem; }
-  .form-row { display: grid; grid-template-columns: 1fr; gap: .35rem; }
-  .form-label { font-size: .85rem; opacity: .85; }
-  .form-control { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-  .radio-group { display: flex; gap: .75rem; flex-wrap: wrap; }
-  .radio-item { display: inline-flex; align-items: center; gap: .35rem; }
-  .form-actions { margin-top: .75rem; display: flex; gap: .5rem; align-items: center; }
+  .settings-grid-col { display: flex; flex-direction: column; gap: .75rem; }
+  .settings-form-row { display: grid; grid-template-columns: 1fr; gap: .35rem; }
+  .settings-form-label { font-size: .85rem; opacity: .85; }
+  .settings-form-control { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .settings-radio-group { display: flex; gap: .75rem; flex-wrap: wrap; }
+  .settings-radio-item { display: inline-flex; align-items: center; gap: .35rem; }
+  .settings-form-actions { margin-top: .75rem; display: flex; gap: .5rem; align-items: center; }
   .settings-apply-alert {
     margin-top: .5rem;
     padding: .5rem .65rem;

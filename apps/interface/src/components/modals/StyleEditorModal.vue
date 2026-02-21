@@ -15,43 +15,37 @@ Symbols (top-level; keep in sync; no ghosts):
 -->
 
 <template>
-  <div v-if="modelValue" class="modal">
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h3>Create Style</h3>
-        <button class="btn btn-sm btn-ghost" @click="$emit('update:modelValue', false)">✕</button>
+  <Modal v-model="open" title="Create Style">
+    <div class="space-y-3">
+      <div>
+        <label class="label-muted">Name</label>
+        <input class="ui-input" v-model="name" placeholder="My style" />
       </div>
-      <div class="modal-body">
-        <div class="space-y-3">
-          <div>
-            <label class="label-muted">Name</label>
-            <input class="ui-input" v-model="name" placeholder="My style" />
-          </div>
-          <div>
-            <label class="label-muted">Prompt</label>
-            <textarea class="ui-textarea" rows="4" v-model="prompt" />
-          </div>
-          <div>
-            <label class="label-muted">Negative</label>
-            <textarea class="ui-textarea" rows="3" v-model="negative" />
-          </div>
-        </div>
+      <div>
+        <label class="label-muted">Prompt</label>
+        <textarea class="ui-textarea" rows="4" v-model="prompt" />
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-sm btn-outline" @click="$emit('update:modelValue', false)">Cancel</button>
-        <button class="btn btn-sm btn-primary" :disabled="!name.trim()" @click="onSave">Save</button>
+      <div>
+        <label class="label-muted">Negative</label>
+        <textarea class="ui-textarea" rows="3" v-model="negative" />
       </div>
     </div>
-  </div>
+    <template #footer>
+      <button class="btn btn-sm btn-outline" type="button" @click="open = false">Cancel</button>
+      <button class="btn btn-sm btn-primary" type="button" :disabled="!name.trim()" @click="onSave">Save</button>
+    </template>
+  </Modal>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import Modal from '../ui/Modal.vue'
 import { useStylesStore } from '../../stores/styles'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits(['update:modelValue','saved'])
 const styles = useStylesStore()
+const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('update:modelValue', v) })
 
 const name = ref('')
 const prompt = ref('')
@@ -64,7 +58,7 @@ watch(() => props.modelValue, (v) => {
 function onSave(): void {
   styles.create({ name: name.value.trim(), prompt: prompt.value, negative: negative.value })
   emit('saved', name.value.trim())
-  emit('update:modelValue', false)
+  open.value = false
 }
 </script>
 

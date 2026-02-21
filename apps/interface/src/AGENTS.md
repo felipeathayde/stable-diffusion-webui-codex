@@ -1,7 +1,7 @@
 <!-- tags: frontend, interface-src, overview -->
 # apps/interface/src Overview
 Date: 2025-10-28
-Last Review: 2026-02-17
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -35,6 +35,7 @@ Status: Active
 - 2026-02-16: WAN LightX2V I2V 14B now keeps stage `flowShift` in tab state and auto-manages `flowShift=5.0` from QuickSettings mode/toggle wiring for distill parity.
 - 2026-02-06: Added `src/env.d.ts` and enabled Vue SFC typechecking via `vue-tsc` (ensures `.vue` imports are typechecked; prevents silent TS drift).
 - 2026-02-06: Added hard-fatal bootstrap orchestration (`stores/bootstrap.ts`) with root App loader/fatal retry gating; App now blocks partial UI until required startup dependencies load.
+- 2026-02-21: `App.vue` bootstrap/fatal screen styles were moved from local `<style scoped>` into shared stylesheet `styles/components/bootstrap-screen.css` (imported via `styles.css`).
 - 2026-02-08: SDXL swap-model UX now uses explicit step-pointer semantics across src (`swapAtStep` in stores/UI, serialized as `switch_at_step` in API payloads) to avoid confusion with literal SDXL refiner “step count”.
 - 2026-02-08: `ImageModelTab.vue` now composes `components/Img2ImgInpaintParamsCard.vue` for detailed init-image/inpaint controls; shared normalization moved to `utils/image_params.ts` with Vitest coverage (`utils/image_params.test.ts`).
 - 2026-02-08: Hires controls now follow the Basic Parameters row organization, are hidden in img2img mode by policy, and txt2img hires prompt overrides now fallback to base prompts when blank.

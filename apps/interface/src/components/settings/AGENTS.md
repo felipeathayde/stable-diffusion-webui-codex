@@ -1,7 +1,7 @@
 <!-- tags: frontend, settings, paths -->
 # apps/interface/src/components/settings Overview
 Date: 2025-12-04
-Last Review: 2026-02-15
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 - 2025-12-23: Settings sliders use `cdx-input-w-sm` for the numeric input width (no more `w-24` one-off CSS).
 - 2026-01-03: Added standardized file header blocks to settings components and widgets (doc-only change; part of rollout).
 - 2026-02-15: `SettingsForm.vue` now surfaces `/api/options` apply metadata after save (`applied_now[]` and `restart_required[]`) so non-hot settings explicitly show restart alerts.
+- 2026-02-21: `SettingsForm.vue` now uses namespaced CSS hooks (`settings-*`) so settings-only form styles no longer override global `.form-row`/`.form-label` classes used by other views.

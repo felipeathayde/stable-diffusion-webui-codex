@@ -27,7 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <input class="ui-input" type="number" step="0.1" min="0" v-model.number="weight" />
       </div>
     </div>
-    <div class="panel-section" style="margin-top:.5rem">
+    <div class="panel-section modal-list-section">
       <ul class="list" role="listbox">
         <li v-for="name in filtered" :key="name" class="list-item clickable" @click="insert(name)">
           {{ name }}

@@ -27,7 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="card text-sm">{{ qs.currentModel || '(none)' }}</div>
       </div>
     </div>
-    <div class="panel-section" style="margin-top: .5rem">
+    <div class="panel-section modal-list-section">
       <ul class="list" role="listbox">
         <li v-for="m in filtered" :key="m.title" class="list-item clickable" @click="apply(m.title)">
           <div class="flex items-center justify-between">

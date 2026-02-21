@@ -37,7 +37,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <span class="caption">{{ filtered.length }} / {{ items.length }} LoRAs</span>
     </div>
     <p v-if="loadError" class="caption">Error: {{ loadError }}</p>
-    <div class="panel-section lora-modal-list">
+    <div class="panel-section modal-list-section">
       <ul class="list" role="listbox">
         <li v-for="item in filtered" :key="item.path || item.name" class="list-item clickable">
           <div class="flex items-center justify-between">

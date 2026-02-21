@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, modals -->
 # apps/interface/src/components/modals Overview
 Date: 2025-12-04
-Last Review: 2026-02-17
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -24,3 +24,5 @@ Status: Active
 - 2026-01-13: `AssetMetadataModal.vue` adds in-view controls (Beautify + expand/collapse all) to switch between raw/nested file metadata and manage large trees.
 - 2026-02-15: `QuickSettingsOverridesModal.vue` now reflects backend apply metadata; restart warning appears only when `/api/options` reports `restart_required[]`, otherwise it shows hot-apply guidance.
 - 2026-02-17: `LoraModal.vue` now supports explicit inventory refresh (`refreshModelInventory`) and surfaces load errors in-modal while emitting filename-based LoRA prompt tokens (`<lora:filename:weight>`); SHA resolution is attached separately at request payload build time.
+- 2026-02-21: `StyleEditorModal.vue` now reuses the shared `ui/Modal.vue` shell (teleport + backdrop + footer slot) instead of rendering an ad-hoc modal container.
+- 2026-02-21: Shared modal list spacing now uses `.modal-list-section` across checkpoint/TI/LoRA pickers; inline `style="margin-top: ..."` was removed.

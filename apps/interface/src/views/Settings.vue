@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <button v-for="s in filteredSections" :key="s.key" class="subtab" :class="{active: s.key===activeSection}" @click="activeSection=s.key">{{ s.label }}</button>
           </div>
 
-          <div class="layout">
+          <div class="settings-layout">
             <div class="left">
               <div class="toolbar">
                 <input class="ui-input" v-model="q" placeholder="Search settings" />

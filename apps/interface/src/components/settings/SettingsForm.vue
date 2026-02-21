@@ -19,8 +19,8 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <div class="settings-form">
     <div v-if="fields.length === 0" class="card caption">No settings in this section.</div>
-    <div v-else class="grid-col">
-      <div v-for="f in fields" :key="f.key" class="form-row">
+    <div v-else class="settings-grid-col">
+      <div v-for="f in fields" :key="f.key" class="settings-form-row">
         <template v-if="f.type === 'slider'">
           <SliderField
             :label="f.label"
@@ -37,14 +37,14 @@ Symbols (top-level; keep in sync; no ghosts):
           />
         </template>
         <template v-else>
-          <label class="form-label">{{ f.label }}</label>
-          <div class="form-control">
+          <label class="settings-form-label">{{ f.label }}</label>
+          <div class="settings-form-control">
             <template v-if="f.type === 'checkbox'">
               <input type="checkbox" :checked="asBool(model[f.key])" @change="onChange(f.key, ($event.target as HTMLInputElement).checked)" />
             </template>
             <template v-else-if="f.type === 'radio' && f.choices && f.choices.length">
-              <div class="radio-group">
-                <label v-for="opt in f.choices" :key="String(opt)" class="radio-item">
+              <div class="settings-radio-group">
+                <label v-for="opt in f.choices" :key="String(opt)" class="settings-radio-item">
                   <input type="radio" :name="'rad-'+f.key" :checked="String(model[f.key])===String(opt)" @change="onChange(f.key, opt)" />
                   <span>{{ String(opt) }}</span>
                 </label>
@@ -70,7 +70,7 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
         </template>
       </div>
-      <div class="form-actions">
+      <div class="settings-form-actions">
         <button class="btn btn-sm btn-primary" :disabled="pending || changedCount===0" @click="applyChanges">Apply</button>
         <span class="caption" v-if="changedCount>0">{{ changedCount }} change(s) pending</span>
       </div>

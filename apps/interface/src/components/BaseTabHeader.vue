@@ -36,15 +36,15 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
     </div>
     <div class="panel-body">
-      <div class="grid grid-3">
-        <div>
+      <div class="base-tab-header-actions-grid">
+        <div class="base-tab-header-actions-left">
           <button class="btn btn-secondary" type="button" @click="$emit('load')">Load</button>
-          <button class="btn" type="button" style="margin-left: 0.5rem" @click="$emit('unload')">Unload</button>
+          <button class="btn base-tab-header-unload" type="button" @click="$emit('unload')">Unload</button>
         </div>
-        <div style="text-align:center">
+        <div class="base-tab-header-actions-center">
           <button class="btn" type="button" @click="$emit('send-to-workflows')">Send to Workflows</button>
         </div>
-        <div style="text-align: right">
+        <div class="base-tab-header-actions-right">
           <button class="btn btn-primary" type="button" @click="$emit('generate')">Generate</button>
         </div>
       </div>

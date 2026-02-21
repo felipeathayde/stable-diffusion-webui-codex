@@ -735,9 +735,7 @@
 
 .ab-chart__total {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -748,8 +746,8 @@
 }
 
 .ab-chart__viz[data-variant="semi"] .ab-chart__total {
-  top: var(--ab-semi-total-top);
-  transform: translate(-50%, -20%);
+  align-items: flex-start;
+  padding-top: var(--ab-semi-total-top);
 }
 
 .ab-queue-footer {
@@ -1762,7 +1760,7 @@ select option[disabled] {
   border-radius: 50%;
   background: var(--ab-bg-default);
   box-shadow: var(--ab-shadow-subtle);
-  transition: transform 160ms ease;
+  transition: left 160ms ease;
 }
 
 .ab-toggle__input {
@@ -1779,7 +1777,7 @@ select option[disabled] {
 }
 
 .ab-toggle__input:checked + .ab-toggle__slider::before {
-  transform: translateX(20px);
+  left: 22px;
 }
 
 .ab-toggle__slider:hover {
@@ -1887,8 +1885,10 @@ select option[disabled] {
 .fg-split > .fg-input .ab-toggle {
   position: absolute;
   right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
+  height: max-content;
 }
 
 .fg-input input[type="datetime-local"] {
@@ -2270,7 +2270,6 @@ select option[disabled] {
   transition: top 160ms cubic-bezier(0.2, 0.9, 0.25, 1),
     left 160ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 120ms ease-out;
   will-change: top, left;
-  transform: translateZ(0);
 }
 
 .ab-queue-preview__title {

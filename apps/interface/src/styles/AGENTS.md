@@ -117,3 +117,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-21: `styles.css` removed duplicate baseline definitions (`.panel-stack`, `.viewer-card`, `.viewer-empty`) and normalized modal list spacing under shared `.modal-list-section`.
 - 2026-02-21: `styles/components/settings-form.css` now uses namespaced `settings-*` selectors to prevent collisions with global `.form-*` hooks used by other views.
 - 2026-02-21: Added `styles/components/bootstrap-screen.css` and `styles/components/dependency-check-panel.css`, migrating remaining scoped style blocks from `App.vue` and `DependencyCheckPanel.vue` into shared style modules.
+- 2026-02-21: Removed every `transform: translate...` usage from active UI styles (and the `EXAMPLE-dashboard-surface-base.css` reference sheet), replacing those offsets with `top/left`, `inset`, margin-based centering, and non-translate transitions.

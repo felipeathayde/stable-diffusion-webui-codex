@@ -32,7 +32,7 @@
       0 0.75rem 2rem hsla(0, 0%, 0%, 0.45),
       inset 0 0.0625rem 0 hsla(0, 0%, 100%, 0.1);
     opacity: 0;
-    transform: translateY(0.25rem) scale(0.985);
+    transform: scale(0.985);
     transform-origin: bottom left;
     pointer-events: none;
     transition:
@@ -44,13 +44,13 @@
     content: "";
     position: absolute;
     left: 0.85rem;
-    top: 100%;
+    top: calc(100% - 0.28rem);
     width: 0.55rem;
     height: 0.55rem;
     border-right: 0.0625rem solid hsla(210, 70%, 65%, 0.35);
     border-bottom: 0.0625rem solid hsla(210, 70%, 65%, 0.35);
     background: hsla(224, 24%, 12%, 0.98);
-    transform: translateY(-0.28rem) rotate(45deg);
+    transform: rotate(45deg);
   }
 
   .cdx-hover-tooltip__title {
@@ -68,6 +68,6 @@
 
   .cdx-hover-tooltip:is(:hover, :focus-within) .cdx-hover-tooltip__panel {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: scale(1);
   }
 }

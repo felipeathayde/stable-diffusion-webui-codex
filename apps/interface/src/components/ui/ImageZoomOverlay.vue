@@ -47,7 +47,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -145,8 +145,11 @@ function setZoom(value: number): void {
   offsetY.value = 0
 }
 
-const zoomStyle = computed(() => ({
-  transform: `translate(${offsetX.value}px, ${offsetY.value}px) scale(${zoom.value})`,
+const zoomStyle = computed<CSSProperties>(() => ({
+  position: 'relative',
+  left: `${offsetX.value}px`,
+  top: `${offsetY.value}px`,
+  transform: `scale(${zoom.value})`,
 }))
 
 function resetView(): void {

@@ -1,5 +1,5 @@
 # UI Consistency Report
-- generated_at: 2026-02-21T16:59:03.611Z
+- generated_at: 2026-02-21T18:04:32.504Z
 - source_root: apps/interface/src
 - css_root: apps/interface/src/styles
 - strict_mode: enabled

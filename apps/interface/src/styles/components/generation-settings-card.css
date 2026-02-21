@@ -31,7 +31,7 @@
   /* use shared .btn-icon base */
   .gen-card .number-with-controls { position: relative; display: inline-flex; align-items: center; }
   .gen-card .number-with-controls .pad-right { padding-right: 4.5rem; }
-  .gen-card .number-with-controls .stepper { position: absolute; right: 0.375rem; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 0.375rem; }
+  .gen-card .number-with-controls .stepper { position: absolute; right: 0.375rem; top: 0; bottom: 0; margin-block: auto; height: max-content; display: inline-flex; align-items: center; gap: 0.375rem; }
   .gen-card .step-btn { width: 1.75rem; height: 1.75rem; border-radius: 0.375rem; border: 0.0625rem solid hsla(0,0%,100%,0.18); background: hsla(0,0%,100%,0.08); font-weight: 700; }
   .gen-card .step-btn:hover { background: hsla(0,0%,100%,0.16); }
   .gen-card .field-right { display: contents; }

@@ -137,7 +137,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
 import {
   InpaintMaskEditorEngine,
   MASK_VALUE_EMPTY,
@@ -228,10 +228,12 @@ const transientMask = ref<Uint8Array | null>(null)
 const isOpen = computed(() => Boolean(props.modelValue) && Boolean(props.initImageData))
 const hasRenderableSource = computed(() => Boolean(props.initImageData) && props.imageWidth > 0 && props.imageHeight > 0)
 
-const contentTransformStyle = computed(() => ({
+const contentTransformStyle = computed<CSSProperties>(() => ({
   width: `${props.imageWidth}px`,
   height: `${props.imageHeight}px`,
-  transform: `translate(${offsetX.value}px, ${offsetY.value}px) scale(${zoom.value})`,
+  left: `${offsetX.value}px`,
+  top: `${offsetY.value}px`,
+  transform: `scale(${zoom.value})`,
 }))
 
 const showBrushCursor = computed(() => {
@@ -240,7 +242,7 @@ const showBrushCursor = computed(() => {
   return activeTool.value !== TOOL_VALUE_POLYGON
 })
 
-const brushCursorStyle = computed(() => {
+const brushCursorStyle = computed<CSSProperties>(() => {
   const point = previewPointerPoint.value
   if (!point) {
     return {
@@ -254,8 +256,8 @@ const brushCursorStyle = computed(() => {
   return {
     width: `${radius * 2}px`,
     height: `${radius * 2}px`,
-    left: `${point.x}px`,
-    top: `${point.y}px`,
+    left: `${point.x - radius}px`,
+    top: `${point.y - radius}px`,
   }
 })
 

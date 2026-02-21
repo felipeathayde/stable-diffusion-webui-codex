@@ -35,6 +35,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
 - `toInt` (function): Parses an integer from an `<input>` event with fallback.
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
+- `onInitImageRejected` (function): Surfaces dropzone reject reasons for img2vid init-image input.
 - `clearInit` (function): Clears init image fields.
 - `normalizeVideoBeforeSubmit` (function): Normalizes width/height/frames before Generate/Queue dispatch.
 - `onGenerateClick` (function): Starts a generation run for the current input mode (builds payload, submits, and wires streaming) (async).
@@ -86,18 +87,28 @@ Symbols (top-level; keep in sync; no ghosts):
             <span class="caption">Mode is set in QuickSettings.</span>
           </div>
           <div v-if="mode === 'img2vid'" id="wan-guided-init-image" class="mt-2">
-            <InitialImageCard
-              label="Image"
+            <Img2ImgInpaintParamsCard
+              embedded
               :disabled="isRunning"
-              :src="video.initImageData"
-              :hasImage="Boolean(video.initImageData)"
-              @set="onInitImageFile"
-              @clear="clearInit"
-            >
-              <template #footer>
-                <div v-if="video.initImageName" class="caption mt-1">{{ video.initImageName }}</div>
-              </template>
-            </InitialImageCard>
+              sectionTitle="Image Parameters"
+              sectionSubtitle="Initial image"
+              initImageLabel="Image"
+              :initImageData="video.initImageData"
+              :initImageName="video.initImageName"
+              :useMask="false"
+              maskImageData=""
+              maskImageName=""
+              maskEnforcement="post_blend"
+              :inpaintingFill="1"
+              :inpaintFullRes="false"
+              :inpaintFullResPadding="0"
+              :maskInvert="false"
+              :maskRound="false"
+              :maskBlur="0"
+              @set:initImage="onInitImageFile"
+              @clear:initImage="clearInit"
+              @reject:initImage="onInitImageRejected"
+            />
           </div>
           <div v-else id="wan-guided-init-video" class="mt-2">
             <InitialVideoCard
@@ -627,7 +638,7 @@ Symbols (top-level; keep in sync; no ghosts):
 	import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
 	import { fetchSamplers, fetchSchedulers, fetchModelInventory, fetchPaths } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
-import InitialImageCard from '../components/InitialImageCard.vue'
+import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
 import InitialVideoCard from '../components/InitialVideoCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
@@ -953,6 +964,11 @@ async function onInitImageFile(file: File): Promise<void> {
   setVideo({ initImageData: dataUrl, initImageName: file.name, useInitImage: true })
 }
 
+function onInitImageRejected(payload: { reason: string; files: File[] }): void {
+  const fileName = payload.files[0]?.name || 'file'
+  toast(`Init image rejected (${fileName}): ${payload.reason}`)
+}
+
 function clearInit(): void { setVideo({ initImageData: '', initImageName: '' }) }
 
 // Generation wiring (composable)
@@ -1264,6 +1280,7 @@ const guidedSteps = computed<GuidedStep[]>(() => {
       id: 'init_image',
       message: 'Image mode needs an input image. Upload one (or switch to Text mode).',
       selector: '#wan-guided-init-image',
+      focusSelector: '#wan-guided-init-image .cdx-dropzone',
     })
     return steps
   }

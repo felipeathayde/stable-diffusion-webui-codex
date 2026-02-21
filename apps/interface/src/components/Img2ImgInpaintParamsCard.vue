@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
 Groups img2img controls (initial image) and optional inpaint controls (mask source + enforcement/fill + mask toggles/sliders),
-including dropzone/thumb/zoom handling for init images and rejected-file pass-through emits for parent toasts.
+including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
+embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
@@ -17,15 +18,15 @@ Symbols (top-level; keep in sync; no ghosts):
 -->
 
 <template>
-  <div class="gen-card img2img-params-card">
-    <WanSubHeader title="Img2Img Parameters">
-      <template #subtitle>
-        <span class="caption">Initial image</span>
+  <div :class="['gen-card', { 'gen-card--embedded': embedded }, 'img2img-params-card']">
+    <WanSubHeader :title="sectionTitle">
+      <template v-if="sectionSubtitle" #subtitle>
+        <span class="caption">{{ sectionSubtitle }}</span>
       </template>
     </WanSubHeader>
 
     <InitialImageCard
-      label="Initial Image"
+      :label="initImageLabel"
       :src="initImageData"
       :has-image="Boolean(initImageData)"
       :disabled="disabled"
@@ -156,6 +157,10 @@ type MaskEnforcement = 'post_blend' | 'per_step_clamp'
 
 withDefaults(defineProps<{
   disabled?: boolean
+  embedded?: boolean
+  sectionTitle?: string
+  sectionSubtitle?: string
+  initImageLabel?: string
   initImageData?: string
   initImageName?: string
   useMask: boolean
@@ -170,6 +175,10 @@ withDefaults(defineProps<{
   maskBlur: number
 }>(), {
   disabled: false,
+  embedded: false,
+  sectionTitle: 'Img2Img Parameters',
+  sectionSubtitle: 'Initial image',
+  initImageLabel: 'Initial Image',
   initImageData: '',
   initImageName: '',
   maskImageData: '',

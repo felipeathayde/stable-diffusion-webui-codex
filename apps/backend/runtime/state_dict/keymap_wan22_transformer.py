@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 transformer key-style detection + remapping (Diffusers/WAN-export/Codex).
 Normalizes multiple upstream key layouts into the canonical Codex WAN22 runtime layout and fails loud on unknown/ambiguous inputs.
-Also owns WAN22 request-key allowlists used by generation routers, including img2vid temporal mode/window controls.
+Also owns WAN22 request-key allowlists used by generation routers, including img2vid temporal mode/window controls and canonical sampler keys (`*_sampler`, no legacy `*_sampling` aliases).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields).
@@ -182,7 +182,6 @@ class Wan22RequestKeys:
             "txt2vid_fps",
             "txt2vid_num_frames",
             "txt2vid_sampler",
-            "txt2vid_sampling",
             "txt2vid_scheduler",
             "txt2vid_seed",
             "txt2vid_cfg_scale",
@@ -199,7 +198,6 @@ class Wan22RequestKeys:
             "img2vid_fps",
             "img2vid_num_frames",
             "img2vid_sampler",
-            "img2vid_sampling",
             "img2vid_scheduler",
             "img2vid_seed",
             "img2vid_cfg_scale",

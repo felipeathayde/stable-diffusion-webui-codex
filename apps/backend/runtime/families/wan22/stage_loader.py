@@ -7,12 +7,12 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model loading.
-Validates stage GGUF paths and loads stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with device-targeted GGUF tensor loading.
+Validates stage GGUF paths and loads stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with CPU-first GGUF state loading to reduce transient VRAM residency.
 Optionally applies a per-stage LoRA file (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `pick_stage_gguf` (function): Validates and returns the stage GGUF file path (strict: must be an explicit `.gguf` file).
-- `load_stage_model_from_gguf` (function): Loads a stage GGUF into a runtime transformer (device-aware GGUF load + key remapping + ops wrapper).
+- `load_stage_model_from_gguf` (function): Loads a stage GGUF into a runtime transformer (CPU-first GGUF load + key remapping + ops wrapper on target device).
 """
 
 from __future__ import annotations
@@ -57,10 +57,11 @@ def load_stage_model_from_gguf(
     logger: Any,
 ):
     log = get_logger(logger)
-    state = load_gguf_state_dict(gguf_path, device=device)
+    state = load_gguf_state_dict(gguf_path, device=torch.device("cpu"))
     state = remap_wan22_gguf_state_dict(state)
     with using_codex_operations(device=device, dtype=dtype, weight_format="gguf"):
         model = load_wan_transformer_from_state_dict(state, config=None)
+    del state
     model.eval()
     apply_wan22_stage_lora(
         model,

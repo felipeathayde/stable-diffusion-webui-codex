@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
-Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events).
+Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PatchGeometry` (dataclass): Patch/tile geometry configuration used to infer latent/video shapes.
@@ -24,7 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `build_i2v_mask4` (function): Builds the 4-channel I2V first-frame mask (Diffusers-compatible; latent time scale=4).
 - `assemble_i2v_state` (function): Assembles I2V model state `[lat16 + mask4 + img16]` (order-aware, strict).
 - `sample_stage_latents` (function): Core latent sampling for a single WAN stage (high/low) using the selected scheduler/sampler.
-- `sample_stage_latents_generator` (function): Generator version of stage sampling for streaming progress (yields intermediate states).
+- `sample_stage_latents_generator` (function): Generator version of stage sampling for streaming progress (yields intermediate states; CFG path runs sequential cond/uncond passes).
 """
 
 from __future__ import annotations
@@ -179,9 +179,8 @@ def make_scheduler(
     if not class_name:
         raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
 
-    # Parse sampler hints from payload. WAN22 scheduler semantics are metadata-driven; when
-    # users pass a non-UniPC sampler name (e.g., "euler"), treat it as a legacy no-op and
-    # keep scheduler behavior defined by `scheduler_config.json`.
+    # Parse sampler hints from payload. WAN22 scheduler semantics are metadata-driven and
+    # currently support only UniPC semantics from `scheduler_config.json`.
     if raw_sampler:
         parts = raw_sampler.split()
         if len(parts) > 2:
@@ -191,28 +190,36 @@ def make_scheduler(
         sampler_name = parts[0]
         sampler_solver = parts[1] if len(parts) == 2 else None
 
+        if sampler_name != "uni-pc":
+            raise RuntimeError(
+                f"WAN22 GGUF: unsupported sampler override {sampler!r}; expected 'uni-pc' (optionally with solver type)."
+            )
+
         if class_name == "UniPCMultistepScheduler":
-            if sampler_name == "uni-pc":
-                config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
-                if sampler_solver is not None:
-                    if config_solver is None:
-                        raise RuntimeError(
-                            f"WAN22 GGUF: sampler={sampler!r} specifies solver_type={sampler_solver!r}, "
-                            f"but scheduler_config has no solver_type: {config_path}"
-                        )
-                    if sampler_solver != config_solver:
-                        raise RuntimeError(
-                            f"WAN22 GGUF: sampler={sampler!r} solver_type mismatch "
-                            f"(requested={sampler_solver!r} config={config_solver!r})."
-                        )
+            config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
+            if sampler_solver is not None:
+                if config_solver is None:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: sampler={sampler!r} specifies solver_type={sampler_solver!r}, "
+                        f"but scheduler_config has no solver_type: {config_path}"
+                    )
+                if sampler_solver != config_solver:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: sampler={sampler!r} solver_type mismatch "
+                        f"(requested={sampler_solver!r} config={config_solver!r})."
+                    )
         else:
             raise RuntimeError(
                 f"WAN22 GGUF: sampler override is not supported for metadata scheduler {class_name!r}. "
                 "Use the defaults from scheduler_config.json."
             )
 
-    # Note: `scheduler` is a legacy UI knob (sigma ladder families) in other engines.
-    # WAN22 stage sampling uses the diffusers `scheduler_config.json` as source of truth.
+    # `scheduler` remains a WAN UI field, but WAN22 GGUF currently supports only the
+    # metadata-driven "simple"/default lane.
+    if raw_scheduler and raw_scheduler != "simple":
+        raise RuntimeError(
+            f"WAN22 GGUF: unsupported scheduler override {scheduler!r}; expected 'simple' or default/auto."
+        )
 
     from .scheduler import build_wan_unipc_flow_scheduler
 
@@ -643,13 +650,22 @@ def sample_stage_latents_generator(
     last = t0
 
     order = resolve_i2v_order()
-    cfg_context: torch.Tensor | None = None
     if cfg_scale is not None:
-        cfg_context = torch.cat([prompt_embeds, negative_embeds], dim=0)
+        if int(prompt_embeds.shape[0]) != int(batch):
+            raise RuntimeError(
+                "WAN22 GGUF: prompt embeds batch does not match latent batch for CFG "
+                f"(prompt_B={int(prompt_embeds.shape[0])} latent_B={int(batch)})."
+            )
+        if int(negative_embeds.shape[0]) != int(batch):
+            raise RuntimeError(
+                "WAN22 GGUF: negative embeds batch does not match latent batch for CFG "
+                f"(negative_B={int(negative_embeds.shape[0])} latent_B={int(batch)})."
+            )
     cached_state_cond_model: torch.Tensor | None = None
     model_state_buffer: torch.Tensor | None = None
-    cfg_state_buffer: torch.Tensor | None = None
     cfg_timestep_buffer: torch.Tensor | None = None
+    state_lat_scaled_model_buffer: torch.Tensor | None = None
+    eps_scheduler_buffer: torch.Tensor | None = None
 
     for local_idx, idx in enumerate(range(start, end)):
         timestep = timesteps[idx]
@@ -712,7 +728,22 @@ def sample_stage_latents_generator(
                 timestep=timestep,
             )
 
-            state_lat_scaled_model = state_lat_scaled if state_lat_scaled.dtype == dtype else state_lat_scaled.to(dtype=dtype)
+            if state_lat_scaled.dtype == dtype:
+                state_lat_scaled_model = state_lat_scaled
+            else:
+                if (
+                    state_lat_scaled_model_buffer is None
+                    or tuple(state_lat_scaled_model_buffer.shape) != tuple(state_lat_scaled.shape)
+                    or state_lat_scaled_model_buffer.dtype != dtype
+                    or state_lat_scaled_model_buffer.device != state_lat_scaled.device
+                ):
+                    state_lat_scaled_model_buffer = torch.empty(
+                        tuple(state_lat_scaled.shape),
+                        device=state_lat_scaled.device,
+                        dtype=dtype,
+                    )
+                state_lat_scaled_model_buffer.copy_(state_lat_scaled)
+                state_lat_scaled_model = state_lat_scaled_model_buffer
             state_cond_model: torch.Tensor | None = None
             if state_cond is not None:
                 if state_cond.dtype == dtype:
@@ -763,46 +794,35 @@ def sample_stage_latents_generator(
                     timestep=timestep,
                 )
             else:
-                if cfg_context is None:
-                    raise RuntimeError("WAN22 GGUF: missing CFG context cache while cfg_scale is enabled.")
                 model_batch = int(model_state.shape[0])
-                cfg_batch = model_batch * 2
-                cfg_expected_shape = (
-                    cfg_batch,
-                    int(model_state.shape[1]),
-                    int(model_state.shape[2]),
-                    int(model_state.shape[3]),
-                    int(model_state.shape[4]),
-                )
-                if (
-                    cfg_state_buffer is None
-                    or tuple(cfg_state_buffer.shape) != cfg_expected_shape
-                    or cfg_state_buffer.dtype != model_state.dtype
-                    or cfg_state_buffer.device != model_state.device
-                ):
-                    cfg_state_buffer = torch.empty(cfg_expected_shape, device=model_state.device, dtype=model_state.dtype)
-                cfg_state_buffer[:model_batch, ...].copy_(model_state)
-                cfg_state_buffer[model_batch:, ...].copy_(model_state)
-
                 if (
                     cfg_timestep_buffer is None
-                    or int(cfg_timestep_buffer.shape[0]) != cfg_batch
+                    or int(cfg_timestep_buffer.shape[0]) != model_batch
                     or cfg_timestep_buffer.device != device
                 ):
-                    cfg_timestep_buffer = torch.empty((cfg_batch,), device=device, dtype=torch.float32)
+                    cfg_timestep_buffer = torch.empty((model_batch,), device=device, dtype=torch.float32)
                 cfg_timestep_buffer.fill_(float(di_timestep))
 
-                v_pred = model(cfg_state_buffer, cfg_timestep_buffer, cfg_context)
+                v_cond = model(model_state, cfg_timestep_buffer, prompt_embeds)
                 _assert_finite_tensor(
-                    v_pred,
-                    tensor_name="model_output_cfg_pair",
+                    v_cond,
+                    tensor_name="model_output_cfg_cond",
                     stage_name=stage_name,
                     local_step=step_number,
                     total_steps=total,
                     global_idx=idx,
                     timestep=timestep,
                 )
-                v_cond, v_uncond = v_pred.chunk(2, dim=0)
+                v_uncond = model(model_state, cfg_timestep_buffer, negative_embeds)
+                _assert_finite_tensor(
+                    v_uncond,
+                    tensor_name="model_output_cfg_uncond",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
                 eps_model = cfg_merge(v_uncond, v_cond, cfg_scale)
                 _assert_finite_tensor(
                     eps_model,
@@ -824,7 +844,22 @@ def sample_stage_latents_generator(
                 raise RuntimeError(
                     f"WAN22 GGUF: model output channels C={int(eps_model.shape[1])} does not match expected latent_channels={cout}."
                 )
-            eps = eps_model if eps_model.dtype == scheduler_state_dtype else eps_model.to(dtype=scheduler_state_dtype)
+            if eps_model.dtype == scheduler_state_dtype:
+                eps = eps_model
+            else:
+                if (
+                    eps_scheduler_buffer is None
+                    or tuple(eps_scheduler_buffer.shape) != tuple(eps_model.shape)
+                    or eps_scheduler_buffer.dtype != scheduler_state_dtype
+                    or eps_scheduler_buffer.device != eps_model.device
+                ):
+                    eps_scheduler_buffer = torch.empty(
+                        tuple(eps_model.shape),
+                        device=eps_model.device,
+                        dtype=scheduler_state_dtype,
+                    )
+                eps_scheduler_buffer.copy_(eps_model)
+                eps = eps_scheduler_buffer
 
             if state_cond is None:
                 out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)

@@ -25,7 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
 - `_extract_i2v_decode_latents` (function): Extract pure latent channels from I2V model state before VAE decode (order-aware `lat_first`/`lat_last`).
 - `_resolve_chunk_seed` (function): Resolve deterministic/random seed semantics for chunked img2vid generation.
-- `_blend_anchor_latent` (function): Blend previous chunk tail latent with base conditioning latent for chunk continuity without pixel-space decode.
+- `_blend_anchor_latent` (function): Blend previous chunk anchor latent window with base conditioning latent for chunk continuity without pixel-space decode.
 - `_sample_chunk_stage_with_progress` (function): Run a chunk stage sampler and remap local progress into a global phase percent.
 - `_resolve_stage_prompt_pairs` (function): Resolve high/low stage prompt+negative pairs (stage prompts required; negative falls back only when missing).
 - `_resolve_stage_text_embeddings` (function): Build stage-specific high/low embeddings from a single text-encoder load.
@@ -526,9 +526,9 @@ def _blend_anchor_latent(previous_latent: torch.Tensor, base_latent: torch.Tenso
             "WAN22 GGUF: anchor latent blend expects 5D tensors [B,C,T,H,W] "
             f"(prev={tuple(previous_latent.shape)} base={tuple(base_latent.shape)})."
         )
-    if int(previous_latent.shape[2]) != 1 or int(base_latent.shape[2]) != 1:
+    if int(previous_latent.shape[2]) < 1 or int(base_latent.shape[2]) < 1:
         raise RuntimeError(
-            "WAN22 GGUF: anchor latent blend expects single-frame temporal tensors "
+            "WAN22 GGUF: anchor latent blend expects non-empty temporal tensors "
             f"(prev_T={int(previous_latent.shape[2])} base_T={int(base_latent.shape[2])})."
         )
     if tuple(previous_latent.shape) != tuple(base_latent.shape):
@@ -1795,6 +1795,34 @@ def stream_img2vid_chunked(
             f"(got={int(latent_condition_base.shape[2])} expected={int(chunk_lat)})."
         )
     base_anchor_latent = latent_condition_base[:, :, :1, :, :].detach()
+    stride_latent_start_index = int(max(0, int(stride_frames)) // 4)
+    if stride_latent_start_index >= int(chunk_lat):
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: stride maps outside latent timeline "
+            f"(stride={int(stride_frames)} stride_lat_idx={int(stride_latent_start_index)} chunk_lat={int(chunk_lat)})."
+        )
+    commit_latent_frames = int((max(1, int(commit_frames_value)) - 1) // 4 + 1)
+    commit_latent_frames = max(1, min(int(chunk_lat), int(commit_latent_frames)))
+    anchor_latent_frames = int(commit_latent_frames) - int(stride_latent_start_index)
+    if anchor_latent_frames <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: invalid latent overlap window "
+            f"(commit_frames={int(commit_frames_value)} stride_frames={int(stride_frames)} "
+            f"commit_lat={int(commit_latent_frames)} stride_lat_start={int(stride_latent_start_index)} "
+            f"chunk_lat={int(chunk_lat)}). "
+            "Increase commit_frames or reduce stride_frames so commit_lat > stride_lat_start."
+        )
+    if int(stride_latent_start_index + anchor_latent_frames) > int(chunk_lat):
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: invalid anchor latent window "
+            f"(start={int(stride_latent_start_index)} len={int(anchor_latent_frames)} chunk_lat={int(chunk_lat)})."
+        )
+    log.info(
+        "[wan22.gguf] chunked img2vid continuity: stride_lat_start=%d commit_lat=%d anchor_lat=%d",
+        int(stride_latent_start_index),
+        int(commit_latent_frames),
+        int(anchor_latent_frames),
+    )
 
     high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds = _resolve_stage_text_embeddings(
         cfg=cfg,
@@ -1877,26 +1905,33 @@ def stream_img2vid_chunked(
         low_decode_ram: list[torch.Tensor] = []
         low_decode_paths: list[str] = []
         latent_channels_lo_value: int | None = None
-        prev_chunk_tail_latent_cpu: torch.Tensor | None = None
+        prev_chunk_anchor_latents_cpu: torch.Tensor | None = None
         chunk_condition_buffer: torch.Tensor | None = None
 
         for chunk_index, _chunk_start in enumerate(chunk_starts):
             chunk_condition = latent_condition_base
             if chunk_index > 0:
-                if prev_chunk_tail_latent_cpu is None:
+                if prev_chunk_anchor_latents_cpu is None:
                     raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: missing previous chunk low-stage tail latent for continuity "
+                        "WAN22 GGUF chunked img2vid: missing previous chunk anchor latent window for continuity "
                         f"(chunk={int(chunk_index) + 1}/{int(len(chunk_starts))})."
                     )
-                prev_chunk_tail_latent = prev_chunk_tail_latent_cpu.to(
+                prev_chunk_anchor_latents = prev_chunk_anchor_latents_cpu.to(
                     device=latent_condition_base.device,
                     dtype=latent_condition_base.dtype,
                 )
+                if int(prev_chunk_anchor_latents.shape[2]) != int(anchor_latent_frames):
+                    raise RuntimeError(
+                        "WAN22 GGUF chunked img2vid: continuity anchor latent window size mismatch "
+                        f"(expected_T={int(anchor_latent_frames)} got_T={int(prev_chunk_anchor_latents.shape[2])})."
+                    )
                 if chunk_condition_buffer is None:
                     chunk_condition_buffer = latent_condition_base.clone()
-                chunk_condition_buffer[:, :, :1, :, :] = _blend_anchor_latent(
-                    prev_chunk_tail_latent,
-                    base_anchor_latent,
+                anchor_base = prev_chunk_anchor_latents.clone()
+                anchor_base[:, :, :1, :, :] = base_anchor_latent
+                chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = _blend_anchor_latent(
+                    prev_chunk_anchor_latents,
+                    anchor_base,
                     alpha=anchor_alpha_value,
                 )
                 chunk_condition = chunk_condition_buffer
@@ -2085,12 +2120,18 @@ def stream_img2vid_chunked(
                         f"(decode_C={int(decode_chunk_latents.shape[1])} anchor_C={int(base_anchor_latent.shape[1])})."
                     )
                 decode_chunk_latents_cpu = decode_chunk_latents.detach().to(device="cpu")
+                anchor_slice_start = int(stride_latent_start_index)
+                anchor_slice_end = int(anchor_slice_start + anchor_latent_frames)
+                if anchor_slice_end > int(decode_chunk_latents_cpu.shape[2]):
+                    raise RuntimeError(
+                        "WAN22 GGUF chunked img2vid: anchor slice exceeds decoded latent timeline "
+                        f"(slice_end={int(anchor_slice_end)} decode_T={int(decode_chunk_latents_cpu.shape[2])})."
+                    )
+                prev_chunk_anchor_latents_cpu = decode_chunk_latents_cpu[:, :, anchor_slice_start:anchor_slice_end, :, :].clone()
 
                 if low_store_mode == "ram":
                     low_decode_ram.append(decode_chunk_latents_cpu)
-                    prev_chunk_tail_latent_cpu = low_decode_ram[-1][:, :, -1:, :, :]
                 else:
-                    prev_chunk_tail_latent_cpu = decode_chunk_latents_cpu[:, :, -1:, :, :].clone()
                     low_decode_path = os.path.join(spool_dir, f"low_decode_{chunk_index:05d}.pt")
                     _save_chunk_tensor(
                         low_decode_path,

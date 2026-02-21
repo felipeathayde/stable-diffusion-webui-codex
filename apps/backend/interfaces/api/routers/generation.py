@@ -22,6 +22,7 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
+Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
 Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|chunk|sliding`) with mode-scoped validation for chunk/window fields.
 Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
 missing vs explicit-empty semantics for downstream runtime fallback behavior.
@@ -1667,6 +1668,45 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             ensd_raw=ensd_raw,
         )
 
+    def _validate_wan22_sampler_field(*, field_name: str, value: str) -> str:
+        try:
+            from apps.backend.types.samplers import SamplerKind
+
+            parsed_sampler = SamplerKind.from_string(value)
+        except Exception as exc:
+            _router_log.warning("%s sampler validation failed: %s", field_name, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid WAN22 sampler configuration"),
+            ) from exc
+        if parsed_sampler.value not in {SamplerKind.UNI_PC.value, SamplerKind.UNI_PC_BH2.value}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{field_name}' must be 'uni-pc' or 'uni-pc bh2' for WAN22 requests; "
+                    f"got {parsed_sampler.value!r}."
+                ),
+            )
+        return parsed_sampler.value
+
+    def _validate_wan22_scheduler_field(*, field_name: str, value: str) -> str:
+        try:
+            from apps.backend.runtime.sampling.context import SchedulerName
+
+            parsed_scheduler = SchedulerName.from_string(value)
+        except Exception as exc:
+            _router_log.warning("%s scheduler validation failed: %s", field_name, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid WAN22 scheduler configuration"),
+            ) from exc
+        if parsed_scheduler.value != SchedulerName.SIMPLE.value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be 'simple' for WAN22 requests; got {parsed_scheduler.value!r}.",
+            )
+        return parsed_scheduler.value
+
     def _parse_video_core_dto(
         payload: Dict[str, Any],
         *,
@@ -1689,7 +1729,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         fps_key = f"{task_prefix}_fps"
         frames_key = f"{task_prefix}_num_frames"
         sampler_key = f"{task_prefix}_sampler"
-        sampler_legacy_key = f"{task_prefix}_sampling"
         scheduler_key = f"{task_prefix}_scheduler"
         seed_key = f"{task_prefix}_seed"
         cfg_key = f"{task_prefix}_cfg_scale"
@@ -1712,25 +1751,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=f"'{task_prefix}_num_frames' must satisfy 4n+1, got {frames_val}.",
             )
-        if sampler_key in payload:
-            sampler_name = _require_str_field(payload, sampler_key)
-        elif sampler_legacy_key in payload:
-            sampler_name = _require_str_field(payload, sampler_legacy_key)
-        else:
-            sampler_name = str(default_sampler)
+        sampler_name = _require_str_field(payload, sampler_key) if sampler_key in payload else str(default_sampler)
         scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else str(default_scheduler)
-        try:
-            from apps.backend.types.samplers import SamplerKind
-            from apps.backend.runtime.sampling.context import SchedulerName
-
-            SamplerKind.from_string(sampler_name)
-            SchedulerName.from_string(scheduler_name)
-        except Exception as exc:
-            _router_log.warning("%s sampler/scheduler validation failed: %s", task_prefix, exc)
-            raise HTTPException(
-                status_code=400,
-                detail=public_http_error_detail(exc, fallback="Invalid video sampler/scheduler configuration"),
-            ) from exc
+        sampler_name = _validate_wan22_sampler_field(field_name=sampler_key, value=sampler_name)
+        scheduler_name = _validate_wan22_scheduler_field(field_name=scheduler_key, value=scheduler_name)
         seed_val = _require_int_field(payload, seed_key) if seed_key in payload else int(default_seed)
         guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else float(default_cfg_scale)
 
@@ -2407,6 +2431,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if isinstance(raw_stage_negative_prompt, str)
                 else None
             )
+            raw_stage_sampler = out.get("sampler")
+            if raw_stage_sampler is not None:
+                if not isinstance(raw_stage_sampler, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{stage_key}.sampler' must be a string when provided",
+                    )
+                stage_sampler = raw_stage_sampler.strip()
+                if stage_sampler:
+                    out["sampler"] = _validate_wan22_sampler_field(
+                        field_name=f"{stage_key}.sampler",
+                        value=stage_sampler,
+                    )
+                else:
+                    out.pop("sampler", None)
+            raw_stage_scheduler = out.get("scheduler")
+            if raw_stage_scheduler is not None:
+                if not isinstance(raw_stage_scheduler, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{stage_key}.scheduler' must be a string when provided",
+                    )
+                stage_scheduler = raw_stage_scheduler.strip()
+                if stage_scheduler:
+                    out["scheduler"] = _validate_wan22_scheduler_field(
+                        field_name=f"{stage_key}.scheduler",
+                        value=stage_scheduler,
+                    )
+                else:
+                    out.pop("scheduler", None)
             if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
             if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
@@ -2621,6 +2675,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if isinstance(raw_stage_negative_prompt, str)
                 else None
             )
+            raw_stage_sampler = out.get("sampler")
+            if raw_stage_sampler is not None:
+                if not isinstance(raw_stage_sampler, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{stage_key}.sampler' must be a string when provided",
+                    )
+                stage_sampler = raw_stage_sampler.strip()
+                if stage_sampler:
+                    out["sampler"] = _validate_wan22_sampler_field(
+                        field_name=f"{stage_key}.sampler",
+                        value=stage_sampler,
+                    )
+                else:
+                    out.pop("sampler", None)
+            raw_stage_scheduler = out.get("scheduler")
+            if raw_stage_scheduler is not None:
+                if not isinstance(raw_stage_scheduler, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{stage_key}.scheduler' must be a string when provided",
+                    )
+                stage_scheduler = raw_stage_scheduler.strip()
+                if stage_scheduler:
+                    out["scheduler"] = _validate_wan22_scheduler_field(
+                        field_name=f"{stage_key}.scheduler",
+                        value=stage_scheduler,
+                    )
+                else:
+                    out.pop("scheduler", None)
             if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
             if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():

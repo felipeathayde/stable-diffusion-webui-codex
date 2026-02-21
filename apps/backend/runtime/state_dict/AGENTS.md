@@ -36,5 +36,6 @@ Notes:
 - 2026-02-17: `keymap_wan22_transformer.py` WAN22 request allowlists now include `gguf_attention_mode` and img2vid chunk-control keys (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`) for strict router passthrough ownership.
 - 2026-02-21: `keymap_wan22_transformer.py` WAN22 img2vid request allowlist now also includes `img2vid_chunk_buffer_mode` for strict passthrough ownership.
 - 2026-02-21: `keymap_wan22_transformer.py` WAN22 img2vid request allowlist now includes temporal-mode keys (`img2vid_mode`, `img2vid_window_frames`, `img2vid_window_stride`, `img2vid_window_commit_frames`) so router unknown-key checks remain strict with sliding-window mode.
+- 2026-02-21: Removed legacy WAN22 request aliases `txt2vid_sampling`/`img2vid_sampling` from transformer allowlists; canonical sampler fields are `txt2vid_sampler` and `img2vid_sampler` only (old aliases now fail unknown-key checks).
 
 Last Review: 2026-02-21

@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_load_pil_images` (function): Loads a list of image paths into PIL images (copies + closes file handles).
 - `_extract_vid2vid_options` (function): Extracts `vid2vid` dict options from request extras.
 - `_extract_flow_options` (function): Extracts `vid2vid_flow` dict options from request extras.
-- `_sanitize_img2vid_extras_for_flow_chunks` (function): Removes inner-img2vid chunk controls from vid2vid flow-chunk extras to prevent nested chunk recursion.
+- `_sanitize_img2vid_extras_for_flow_chunks` (function): Removes inner-img2vid temporal controls (mode/chunk/sliding) from vid2vid flow-chunk extras to prevent nested temporal recursion.
 - `_as_video_options` (function): Validates optional request `video_options` payload shape (mapping or `None`).
 - `_as_wan_animate_mode` (function): Normalizes/validates WAN animate mode string (`animate` vs `replace`).
 - `_validate_4n_plus_1` (function): Validates an integer is of the form `4N+1` (common WAN constraints).
@@ -90,11 +90,15 @@ def _extract_flow_options(extras: Dict[str, Any]) -> dict[str, Any]:
 def _sanitize_img2vid_extras_for_flow_chunks(extras: Dict[str, Any]) -> dict[str, Any]:
     sanitized = dict(extras)
     for key in (
+        "img2vid_mode",
         "img2vid_chunk_frames",
         "img2vid_overlap_frames",
         "img2vid_anchor_alpha",
         "img2vid_chunk_seed_mode",
         "img2vid_chunk_buffer_mode",
+        "img2vid_window_frames",
+        "img2vid_window_stride",
+        "img2vid_window_commit_frames",
     ):
         sanitized.pop(key, None)
     return sanitized
@@ -435,6 +439,26 @@ def _run_flow_chunks(
 ) -> list[Any]:
     extras = dict(getattr(request, "extras", {}) or {})
     inner_img2vid_extras = _sanitize_img2vid_extras_for_flow_chunks(extras)
+    residual_temporal_keys = sorted(
+        key
+        for key in (
+            "img2vid_mode",
+            "img2vid_chunk_frames",
+            "img2vid_overlap_frames",
+            "img2vid_anchor_alpha",
+            "img2vid_chunk_seed_mode",
+            "img2vid_chunk_buffer_mode",
+            "img2vid_window_frames",
+            "img2vid_window_stride",
+            "img2vid_window_commit_frames",
+        )
+        if key in inner_img2vid_extras
+    )
+    if residual_temporal_keys:
+        raise RuntimeError(
+            "vid2vid flow_chunks: inner img2vid extras still contain temporal chunk/sliding controls "
+            f"after sanitization ({', '.join(residual_temporal_keys)})."
+        )
 
     cfg = _extract_vid2vid_options(extras)
     flow_cfg = _extract_flow_options(extras)

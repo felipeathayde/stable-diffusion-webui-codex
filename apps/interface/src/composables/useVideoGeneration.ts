@@ -12,7 +12,7 @@ Required Notice: see NOTICE
 	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 	mode prompt fields from the High stage in payload builders for backend compatibility. Includes `output.returnFrames` and stage `flowShift` pass-through in
-	common WAN payload input.
+	common WAN payload input. Img2vid chunking payload fields are gated by explicit `img2vidChunkingEnabled` state (not by `chunkFrames=0` sentinel).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -271,7 +271,8 @@ function defaultVideo(): WanVideoParams {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
-    img2vidChunkFrames: 0,
+    img2vidChunkingEnabled: false,
+    img2vidChunkFrames: 9,
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
@@ -461,6 +462,7 @@ export function useVideoGeneration(tabId: string) {
       fps: v.fps,
       attentionMode: v.attentionMode,
       img2vid: {
+        enabled: v.img2vidChunkingEnabled,
         chunkFrames: v.img2vidChunkFrames,
         overlapFrames: v.img2vidOverlapFrames,
         anchorAlpha: v.img2vidAnchorAlpha,
@@ -632,7 +634,7 @@ export function useVideoGeneration(tabId: string) {
     }
 
     if (v.useInitImage) {
-      const img2vidChunkInput = v.img2vidChunkFrames > 0
+      const img2vidChunkInput = v.img2vidChunkingEnabled
         ? {
             chunkFrames: v.img2vidChunkFrames,
             overlapFrames: v.img2vidOverlapFrames,

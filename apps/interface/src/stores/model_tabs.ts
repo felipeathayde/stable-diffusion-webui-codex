@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
-- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init media + overrides).
+- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init media + chunking/vid2vid overrides).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
@@ -46,7 +46,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeSerializableForPersist` (function): Recursively unwraps reactive/proxy branches into plain clone-safe structures for persistence.
 - `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
-- `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/chunk/attention controls).
+- `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/chunk/attention controls) including explicit img2vid chunking enablement.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
@@ -126,6 +126,7 @@ export interface WanVideoParams {
   useInitImage: boolean
   initImageData: string
   initImageName: string
+  img2vidChunkingEnabled: boolean
   img2vidChunkFrames: number
   img2vidOverlapFrames: number
   img2vidAnchorAlpha: number
@@ -335,7 +336,8 @@ function defaultParams<T extends BaseTabType>(
       useInitImage: false,
       initImageData: '',
       initImageName: '',
-      img2vidChunkFrames: 0,
+      img2vidChunkingEnabled: false,
+      img2vidChunkFrames: 9,
       img2vidOverlapFrames: 4,
       img2vidAnchorAlpha: 0.2,
       img2vidChunkSeedMode: 'increment',
@@ -524,16 +526,24 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   const attnMode = String(merged.attentionMode || '').trim().toLowerCase()
   merged.attentionMode = attnMode === 'sliding' ? 'sliding' : 'global'
 
+  const rawChunkingEnabled = raw.img2vidChunkingEnabled
+  const rawChunkFrames = Number(raw.img2vidChunkFrames)
+  if (typeof rawChunkingEnabled === 'boolean') {
+    merged.img2vidChunkingEnabled = rawChunkingEnabled
+  } else {
+    merged.img2vidChunkingEnabled = Number.isFinite(rawChunkFrames) && rawChunkFrames > 0
+  }
+
   const chunkRaw = Number(merged.img2vidChunkFrames)
   if (!Number.isFinite(chunkRaw) || chunkRaw <= 0) {
-    merged.img2vidChunkFrames = 0
+    merged.img2vidChunkFrames = defaults.img2vidChunkFrames
   } else {
     merged.img2vidChunkFrames = normalizeWanFrameCount(chunkRaw, 9, 401)
   }
 
   const overlapRaw = Number(merged.img2vidOverlapFrames)
   const overlapInt = Number.isFinite(overlapRaw) ? Math.trunc(overlapRaw) : defaults.img2vidOverlapFrames
-  const overlapMax = merged.img2vidChunkFrames > 0 ? Math.max(0, merged.img2vidChunkFrames - 1) : 400
+  const overlapMax = Math.max(0, merged.img2vidChunkFrames - 1)
   merged.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
 
   const anchorRaw = Number(merged.img2vidAnchorAlpha)

@@ -34,6 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onLowFollowsHighChange` (function): Toggles low-follow behavior and applies an immediate sync.
 - `toggleHighPrompt` (function): Toggles High Prompt section visibility.
 - `toggleLowPrompt` (function): Toggles Low Prompt section visibility.
+- `toggleImg2VidChunking` (function): Toggles img2vid chunking enablement.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
 - `toInt` (function): Parses an integer from an `<input>` event with fallback.
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
@@ -261,34 +262,47 @@ Symbols (top-level; keep in sync; no ghosts):
               @update:frames="(v:number)=>setVideo({ frames: v })"
               @update:fps="(v:number)=>setVideo({ fps: v })"
             />
-            <div class="gc-row mt-2">
-              <div class="gc-col">
-                <label class="label-muted">Attention mode</label>
-                <select
-                  class="select-md"
-                  :disabled="isRunning"
-                  :value="video.attentionMode"
-                  @change="setVideo({ attentionMode: normalizeAttentionMode(($event.target as HTMLSelectElement).value) })"
-                >
-                  <option value="global">Global</option>
-                  <option value="sliding">Sliding</option>
-                </select>
-                <p class="caption mt-1">Global uses full temporal context. Sliding limits attention context to reduce memory/cost.</p>
-              </div>
-            </div>
             <div v-if="mode === 'img2vid'" class="mt-2">
               <div class="gen-card refiner-card refiner-card--dense">
-                <WanSubHeader title="Chunking" />
-                <div class="param-blocks">
+                <WanSubHeader
+                  title="Chunking"
+                  :clickable="true"
+                  :aria-pressed="video.img2vidChunkingEnabled"
+                  :aria-expanded="video.img2vidChunkingEnabled"
+                  @header-click="toggleImg2VidChunking"
+                >
+                  <button
+                    :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidChunkingEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                    type="button"
+                    :aria-pressed="video.img2vidChunkingEnabled"
+                    @click.stop="toggleImg2VidChunking"
+                  >
+                    {{ video.img2vidChunkingEnabled ? 'Enabled' : 'Disabled' }}
+                  </button>
+                </WanSubHeader>
+                <div v-if="video.img2vidChunkingEnabled" class="param-blocks">
                   <div class="param-grid" data-cols="4">
+                    <div class="field">
+                      <label class="label-muted">Attention Mode</label>
+                      <select
+                        class="select-md"
+                        :disabled="isRunning || !video.img2vidChunkingEnabled"
+                        :value="video.attentionMode"
+                        @change="setVideo({ attentionMode: normalizeAttentionMode(($event.target as HTMLSelectElement).value) })"
+                      >
+                        <option value="global">Global</option>
+                        <option value="sliding">Sliding</option>
+                      </select>
+                      <p class="caption mt-1">Global uses full temporal context. Sliding limits attention context to reduce memory/cost.</p>
+                    </div>
                     <div class="field">
                       <label class="label-muted">
                         <HoverTooltip
                           class="cdx-slider-field__label-tooltip"
                           title="Chunk Frames"
                           :content="[
-                            '0 disables chunking.',
-                            'Positive values split img2vid into overlapping chunks.',
+                            'Splits img2vid into overlapping chunks.',
+                            'Must satisfy 4n+1 (e.g. 9, 13, 17...).',
                           ]"
                         >
                           <span class="cdx-slider-field__label-trigger">
@@ -300,10 +314,10 @@ Symbols (top-level; keep in sync; no ghosts):
                       <input
                         class="ui-input"
                         type="number"
-                        min="0"
+                        min="9"
                         max="401"
                         step="1"
-                        :disabled="isRunning"
+                        :disabled="isRunning || !video.img2vidChunkingEnabled"
                         :value="video.img2vidChunkFrames"
                         @change="setVideo({ img2vidChunkFrames: toInt($event, video.img2vidChunkFrames) })"
                       />
@@ -330,7 +344,7 @@ Symbols (top-level; keep in sync; no ghosts):
                         min="0"
                         max="400"
                         step="1"
-                        :disabled="isRunning"
+                        :disabled="isRunning || !video.img2vidChunkingEnabled"
                         :value="video.img2vidOverlapFrames"
                         @change="setVideo({ img2vidOverlapFrames: toInt($event, video.img2vidOverlapFrames) })"
                       />
@@ -358,7 +372,7 @@ Symbols (top-level; keep in sync; no ghosts):
                         min="0"
                         max="1"
                         step="0.05"
-                        :disabled="isRunning"
+                        :disabled="isRunning || !video.img2vidChunkingEnabled"
                         :value="video.img2vidAnchorAlpha"
                         @change="setVideo({ img2vidAnchorAlpha: Number(($event.target as HTMLInputElement).value) })"
                       />
@@ -382,7 +396,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </label>
                       <select
                         class="select-md"
-                        :disabled="isRunning"
+                        :disabled="isRunning || !video.img2vidChunkingEnabled"
                         :value="video.img2vidChunkSeedMode"
                         @change="setVideo({ img2vidChunkSeedMode: normalizeChunkSeedMode(($event.target as HTMLSelectElement).value) })"
                       >
@@ -845,7 +859,8 @@ function defaultVideo(): WanVideoParams {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
-    img2vidChunkFrames: 0,
+    img2vidChunkingEnabled: false,
+    img2vidChunkFrames: 9,
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
@@ -934,10 +949,13 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkSeedMode')) {
     nextPatch.img2vidChunkSeedMode = normalizeChunkSeedMode(nextPatch.img2vidChunkSeedMode)
   }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkingEnabled')) {
+    nextPatch.img2vidChunkingEnabled = Boolean(nextPatch.img2vidChunkingEnabled)
+  }
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkFrames')) {
     const rawChunk = Number(nextPatch.img2vidChunkFrames)
     if (!Number.isFinite(rawChunk) || rawChunk <= 0) {
-      nextPatch.img2vidChunkFrames = 0
+      nextPatch.img2vidChunkFrames = current.img2vidChunkFrames > 0 ? current.img2vidChunkFrames : 9
     } else {
       nextPatch.img2vidChunkFrames = normalizeFrameCount(rawChunk)
     }
@@ -950,7 +968,7 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidOverlapFrames')) {
     const rawOverlap = Number(nextPatch.img2vidOverlapFrames)
     const overlapInt = Number.isFinite(rawOverlap) ? Math.trunc(rawOverlap) : current.img2vidOverlapFrames
-    const overlapMax = effectiveChunkFrames > 0 ? Math.max(0, effectiveChunkFrames - 1) : WAN_FRAMES_MAX - 1
+    const overlapMax = Math.max(0, effectiveChunkFrames - 1)
     nextPatch.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
   }
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidAnchorAlpha')) {
@@ -1022,6 +1040,11 @@ function onLowFollowsHighChange(enabled: boolean): void {
 
 function toggleLowNoise(): void {
   lowNoiseOpen.value = !lowNoiseOpen.value
+}
+
+function toggleImg2VidChunking(): void {
+  const enabled = Boolean(video.value.img2vidChunkingEnabled)
+  setVideo({ img2vidChunkingEnabled: !enabled })
 }
 
 function toggleHighPrompt(): void {
@@ -1562,6 +1585,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
     initVideoPath: video.value.initVideoPath || '',
     attentionMode: video.value.attentionMode,
     img2vid: {
+      enabled: video.value.img2vidChunkingEnabled,
       chunkFrames: video.value.img2vidChunkFrames,
       overlapFrames: video.value.img2vidOverlapFrames,
       anchorAlpha: video.value.img2vidAnchorAlpha,
@@ -1695,6 +1719,10 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const interpolation = isRecord(snap.interpolation) ? snap.interpolation : {}
   const i2v = isRecord(snap.img2vid) ? snap.img2vid : {}
   const v2v = isRecord(snap.vid2vid) ? snap.vid2vid : {}
+  const hasSnapshotChunkFrames = typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames)
+  const nextChunkingEnabled = typeof i2v.enabled === 'boolean'
+    ? Boolean(i2v.enabled)
+    : (hasSnapshotChunkFrames ? Number(i2v.chunkFrames) > 0 : video.value.img2vidChunkingEnabled)
 
   setVideo({
     width: Number(snap.width) || video.value.width,
@@ -1702,6 +1730,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     frames: Number(snap.frames) || video.value.frames,
     fps: Number(snap.fps) || video.value.fps,
     attentionMode: normalizeAttentionMode(snap.attentionMode),
+    img2vidChunkingEnabled: nextChunkingEnabled,
     initVideoName: String(snap.initVideoName || video.value.initVideoName),
     initVideoPath: String(snap.initVideoPath || video.value.initVideoPath),
     img2vidChunkFrames: typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) ? Number(i2v.chunkFrames) : video.value.img2vidChunkFrames,

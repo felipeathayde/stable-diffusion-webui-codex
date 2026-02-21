@@ -32,6 +32,7 @@ import math
 import threading
 from typing import Dict, Iterator, Mapping
 
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.runtime.logging import emit_backend_event
 
 
@@ -97,36 +98,45 @@ def smart_offload_enabled() -> bool:
     """Return True when smart offload is enabled (Codex options only)."""
     override = _get_override("smart_offload")
     if override is not None:
-        return bool(override)
-    try:
-        snap = _snapshot()
-        return bool(getattr(snap, "codex_smart_offload", False))
-    except Exception:
-        return False
+        if not isinstance(override, bool):
+            raise RuntimeError(f"Invalid smart override 'smart_offload': expected bool, got {type(override).__name__}.")
+        return override
+    snap = _snapshot()
+    return parse_bool_value(
+        getattr(snap, "codex_smart_offload", None),
+        field="options.codex_smart_offload",
+        default=False,
+    )
 
 
 def smart_fallback_enabled() -> bool:
     """Return True when smart CPU fallback on OOM is enabled (Codex options only)."""
     override = _get_override("smart_fallback")
     if override is not None:
-        return bool(override)
-    try:
-        snap = _snapshot()
-        return bool(getattr(snap, "codex_smart_fallback", False))
-    except Exception:
-        return False
+        if not isinstance(override, bool):
+            raise RuntimeError(f"Invalid smart override 'smart_fallback': expected bool, got {type(override).__name__}.")
+        return override
+    snap = _snapshot()
+    return parse_bool_value(
+        getattr(snap, "codex_smart_fallback", None),
+        field="options.codex_smart_fallback",
+        default=False,
+    )
 
 
 def smart_cache_enabled() -> bool:
     """Return True when SDXL smart caching (TE + embed_values) is enabled."""
     override = _get_override("smart_cache")
     if override is not None:
-        return bool(override)
-    try:
-        snap = _snapshot()
-        return bool(getattr(snap, "codex_smart_cache", False))
-    except Exception:
-        return False
+        if not isinstance(override, bool):
+            raise RuntimeError(f"Invalid smart override 'smart_cache': expected bool, got {type(override).__name__}.")
+        return override
+    snap = _snapshot()
+    return parse_bool_value(
+        getattr(snap, "codex_smart_cache", None),
+        field="options.codex_smart_cache",
+        default=False,
+    )
 
 
 def _bytes_to_mib(value: int) -> float:

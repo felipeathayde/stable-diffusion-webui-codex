@@ -275,7 +275,10 @@ def _assert_finite_tensor(
 def cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) -> torch.Tensor:
     if scale is None:
         return cond
-    return uncond + (cond - uncond) * float(scale)
+    guidance = float(scale)
+    uncond.mul_(1.0 - guidance)
+    uncond.add_(cond, alpha=guidance)
+    return uncond
 
 
 def time_snr_shift(alpha: float, t: float) -> float:
@@ -632,6 +635,13 @@ def sample_stage_latents_generator(
     last = t0
 
     order = resolve_i2v_order()
+    cfg_context: torch.Tensor | None = None
+    if cfg_scale is not None:
+        cfg_context = torch.cat([prompt_embeds, negative_embeds], dim=0)
+    cached_state_cond_model: torch.Tensor | None = None
+    model_state_buffer: torch.Tensor | None = None
+    cfg_state_buffer: torch.Tensor | None = None
+    cfg_timestep_buffer: torch.Tensor | None = None
 
     for local_idx, idx in enumerate(range(start, end)):
         timestep = timesteps[idx]
@@ -697,16 +707,41 @@ def sample_stage_latents_generator(
             state_lat_scaled_model = state_lat_scaled if state_lat_scaled.dtype == dtype else state_lat_scaled.to(dtype=dtype)
             state_cond_model: torch.Tensor | None = None
             if state_cond is not None:
-                state_cond_model = state_cond if state_cond.dtype == dtype else state_cond.to(dtype=dtype)
+                if state_cond.dtype == dtype:
+                    state_cond_model = state_cond
+                    cached_state_cond_model = None
+                else:
+                    if cached_state_cond_model is None:
+                        # I2V conditioning channels are invariant across steps in this loop; cache cast once.
+                        cached_state_cond_model = state_cond.to(dtype=dtype)
+                    state_cond_model = cached_state_cond_model
 
             if state_cond_model is None:
                 model_state = state_lat_scaled_model
             else:
-                model_state = (
-                    torch.cat([state_lat_scaled_model, state_cond_model], dim=1)
-                    if order == "lat_first"
-                    else torch.cat([state_cond_model, state_lat_scaled_model], dim=1)
+                expected_shape = (
+                    int(state_lat_scaled_model.shape[0]),
+                    int(state_lat_scaled_model.shape[1]) + int(state_cond_model.shape[1]),
+                    int(state_lat_scaled_model.shape[2]),
+                    int(state_lat_scaled_model.shape[3]),
+                    int(state_lat_scaled_model.shape[4]),
                 )
+                if (
+                    model_state_buffer is None
+                    or tuple(model_state_buffer.shape) != expected_shape
+                    or model_state_buffer.dtype != dtype
+                    or model_state_buffer.device != state_lat_scaled_model.device
+                ):
+                    model_state_buffer = torch.empty(expected_shape, device=state_lat_scaled_model.device, dtype=dtype)
+                if order == "lat_first":
+                    latent_channels = int(state_lat_scaled_model.shape[1])
+                    model_state_buffer[:, :latent_channels, ...].copy_(state_lat_scaled_model)
+                    model_state_buffer[:, latent_channels:, ...].copy_(state_cond_model)
+                else:
+                    cond_channels = int(state_cond_model.shape[1])
+                    model_state_buffer[:, :cond_channels, ...].copy_(state_cond_model)
+                    model_state_buffer[:, cond_channels:, ...].copy_(state_lat_scaled_model)
+                model_state = model_state_buffer
 
             if cfg_scale is None:
                 eps_model = model(model_state, di_timestep, prompt_embeds)
@@ -720,10 +755,36 @@ def sample_stage_latents_generator(
                     timestep=timestep,
                 )
             else:
-                x_in = torch.cat([model_state, model_state], dim=0)
-                ctx_in = torch.cat([prompt_embeds, negative_embeds], dim=0)
-                t_in = torch.full((x_in.shape[0],), float(di_timestep), device=device, dtype=torch.float32)
-                v_pred = model(x_in, t_in, ctx_in)
+                if cfg_context is None:
+                    raise RuntimeError("WAN22 GGUF: missing CFG context cache while cfg_scale is enabled.")
+                model_batch = int(model_state.shape[0])
+                cfg_batch = model_batch * 2
+                cfg_expected_shape = (
+                    cfg_batch,
+                    int(model_state.shape[1]),
+                    int(model_state.shape[2]),
+                    int(model_state.shape[3]),
+                    int(model_state.shape[4]),
+                )
+                if (
+                    cfg_state_buffer is None
+                    or tuple(cfg_state_buffer.shape) != cfg_expected_shape
+                    or cfg_state_buffer.dtype != model_state.dtype
+                    or cfg_state_buffer.device != model_state.device
+                ):
+                    cfg_state_buffer = torch.empty(cfg_expected_shape, device=model_state.device, dtype=model_state.dtype)
+                cfg_state_buffer[:model_batch, ...].copy_(model_state)
+                cfg_state_buffer[model_batch:, ...].copy_(model_state)
+
+                if (
+                    cfg_timestep_buffer is None
+                    or int(cfg_timestep_buffer.shape[0]) != cfg_batch
+                    or cfg_timestep_buffer.device != device
+                ):
+                    cfg_timestep_buffer = torch.empty((cfg_batch,), device=device, dtype=torch.float32)
+                cfg_timestep_buffer.fill_(float(di_timestep))
+
+                v_pred = model(cfg_state_buffer, cfg_timestep_buffer, cfg_context)
                 _assert_finite_tensor(
                     v_pred,
                     tensor_name="model_output_cfg_pair",
@@ -788,9 +849,9 @@ def sample_stage_latents_generator(
                     timestep=timestep,
                 )
                 if order == "lat_first":
-                    state = torch.cat([lat_next, state_cond], dim=1)
+                    state[:, :cout, ...] = lat_next
                 else:
-                    state = torch.cat([state_cond, lat_next], dim=1)
+                    state[:, -cout:, ...] = lat_next
                 _assert_finite_tensor(
                     state,
                     tensor_name="state_out",

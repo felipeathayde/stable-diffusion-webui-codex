@@ -8,8 +8,9 @@ Status: Active
 
 ## Key Files
 - `port-guard-dev.mjs` — Dev server launcher wrapper that enforces safe/available UI ports.
-- `ui-consistency-report.mjs` — Report-only scanner for frontend style-contract drift (inline/scoped styles, selector duplication, docs/toolchain drift).
+- `ui-consistency-report.mjs` — UI style-contract scanner (inline + dynamic + scoped + selector duplication + docs/toolchain drift), with strict mode (`--strict`) for fail-loud gating.
 
 ## Notes
 - Keep these scripts in sync with documentation in `.sangoi/frontend/` so developers know how to invoke them.
-- 2026-02-21: Added `ui-consistency-report.mjs`; `npm run verify` now runs report generation before typecheck/test/build (report-only, non-blocking).
+- 2026-02-21: Added `ui-consistency-report.mjs`; `npm run verify` now runs strict style-contract gating (`report:ui-consistency:strict`) before typecheck/test/build.
+- 2026-02-21: Dynamic style bindings are now scanned; strict mode fails on disallowed dynamic `:style` usage while docs/toolchain drift remains report-only.

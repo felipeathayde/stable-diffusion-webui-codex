@@ -528,10 +528,10 @@ def vae_encode_video_condition(
 
             # Diffusers-style I2V conditioning video: first frame is the init image; remaining frames are 0 (i.e., 0.5 gray).
             image = image.unsqueeze(2)  # [B,C,1,H,W]
-            video_condition = torch.cat(
-                [image, image.new_zeros((image.shape[0], image.shape[1], int(num_frames) - 1, int(height), int(width)))],
-                dim=2,
+            video_condition = image.new_zeros(
+                (image.shape[0], image.shape[1], int(num_frames), int(height), int(width))
             )
+            video_condition[:, :, :1, :, :] = image
             regulation = lambda posterior: posterior.mode()
             with torch.no_grad():
                 if lane == "2d_native":

@@ -28,6 +28,7 @@ Status: Draft
 - 2026-02-18: `EngineParamSurface` now includes optional `guidance_advanced` per-engine support flags (`apg_*`, `guidance_rescale`, `cfg_trunc_ratio`, `renorm_cfg`) so frontend CFG-Advanced UI can be gated by backend contract (including partial per-control support).
 - 2026-02-20: Removed semantic-engine map entry for `wan22_14b_native`; WAN22 14B semantic ownership is now single-key (`wan22_14b`).
 - 2026-02-20: WAN22 animate semantic/loader key was renamed to `wan22_14b_animate` (old `wan22_animate_14b` removed).
+- 2026-02-21: `capabilities.engine_supports_cfg(engine_id)` now resolves family from explicit `engine_id -> ModelFamily` mapping (including WAN22 variants) instead of semantic-primary-family fallback, removing hidden `wan22 -> WAN22_5B` drift at capability checks.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

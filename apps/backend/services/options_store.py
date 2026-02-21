@@ -13,6 +13,8 @@ source of truth without importing legacy/compat shims. Includes per-component st
 Symbols (top-level; keep in sync; no ghosts):
 - `SETTINGS_PATH` (constant): Absolute path to `apps/settings_values.json` under the repo root.
 - `OPTIONS_REVISION_KEY` (constant): Internal settings revision key persisted in `settings_values.json`.
+- `_coerce_revision` (function): Normalizes revision values into a non-negative integer.
+- `_coerce_bool` (function): Strict bool parser for persisted option values (fail-loud on invalid literals/types).
 - `load_values` (function): Reads the settings JSON from disk and returns a dict.
 - `save_values` (function): Writes the settings JSON to disk (atomic overwrite).
 - `get_revision` (function): Returns the normalized persisted options revision (non-negative int).
@@ -43,6 +45,26 @@ def _coerce_revision(value: object) -> int:
     except Exception:
         return 0
     return max(0, revision)
+
+
+def _coerce_bool(value: object, *, key: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value in (0, 1):
+            return bool(int(value))
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise RuntimeError(
+        f"Invalid boolean setting '{key}': expected bool or one of "
+        f"('true','false','1','0','yes','no','on','off'), got {value!r}."
+    )
 
 
 def load_values() -> Dict[str, Any]:
@@ -139,7 +161,7 @@ def get_snapshot() -> OptionsSnapshot:
 
     return OptionsSnapshot(
         codex_options_revision=get_revision(v),
-        codex_export_video=bool(v.get("codex_export_video", False)),
+        codex_export_video=_coerce_bool(v.get("codex_export_video"), key="codex_export_video", default=False),
         codex_core_device=_str_value("codex_core_device", "auto"),
         codex_core_dtype=_str_value("codex_core_dtype", "auto"),
         codex_core_compute_dtype=_str_value("codex_core_compute_dtype", "auto"),
@@ -149,10 +171,10 @@ def get_snapshot() -> OptionsSnapshot:
         codex_vae_device=_str_value("codex_vae_device", "auto"),
         codex_vae_dtype=_str_value("codex_vae_dtype", "auto"),
         codex_vae_compute_dtype=_str_value("codex_vae_compute_dtype", "auto"),
-        codex_smart_offload=bool(v.get("codex_smart_offload", False)),
-        codex_smart_fallback=bool(v.get("codex_smart_fallback", False)),
-        codex_smart_cache=bool(v.get("codex_smart_cache", True)),
-        codex_core_streaming=bool(v.get("codex_core_streaming", False)),
+        codex_smart_offload=_coerce_bool(v.get("codex_smart_offload"), key="codex_smart_offload", default=False),
+        codex_smart_fallback=_coerce_bool(v.get("codex_smart_fallback"), key="codex_smart_fallback", default=False),
+        codex_smart_cache=_coerce_bool(v.get("codex_smart_cache"), key="codex_smart_cache", default=True),
+        codex_core_streaming=_coerce_bool(v.get("codex_core_streaming"), key="codex_core_streaming", default=False),
     )
 
 

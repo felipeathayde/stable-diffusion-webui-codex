@@ -11,6 +11,8 @@ Builds per-task preview settings, encodes a resized preview image, and attaches 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LivePreviewImageFormat` (enum): Supported output formats for encoded preview images.
+- `_coerce_bool_option` (function): Strict bool parser for preview-related option values.
+- `_coerce_int_option` (function): Strict integer parser for preview-related option values.
 - `LivePreviewEncodedImage` (dataclass): Encoded preview payload (`format` + base64 `data`).
 - `LivePreviewTaskConfig` (dataclass): Preview config for a task; can apply per-task runtime overrides for the sampling runtime.
 - `LivePreviewService` (class): Builds preview config, encodes images, and attaches previews to progress events.
@@ -27,6 +29,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Iterator, Optional
 
+from apps.backend.core.strict_values import parse_bool_value, parse_int_value
 from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.live_preview import (
     LivePreviewMethod,
@@ -52,6 +55,20 @@ class LivePreviewImageFormat(str, Enum):
         if key == "webp":
             return LivePreviewImageFormat.WEBP
         return default
+
+
+def _coerce_bool_option(value: object, *, key: str, default: bool) -> bool:
+    try:
+        return parse_bool_value(value, field=f"options.{key}", default=default)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Invalid boolean option '{key}': {exc}") from exc
+
+
+def _coerce_int_option(value: object, *, key: str, default: int, minimum: int | None = None) -> int:
+    try:
+        return parse_int_value(value, field=f"options.{key}", default=default, minimum=minimum)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Invalid integer option '{key}': {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -85,17 +102,24 @@ class LivePreviewService:
     """Build live preview config and attach preview payloads to progress events."""
 
     def build_task_config(self, opts_get: Callable[[str, object], object]) -> LivePreviewTaskConfig:
-        enabled = bool(opts_get("live_previews_enable", True))
+        enabled = _coerce_bool_option(
+            opts_get("live_previews_enable", True),
+            key="live_previews_enable",
+            default=True,
+        )
         fmt_value = str(opts_get("live_previews_image_format", "png") or "png")
         image_format = LivePreviewImageFormat.from_string(fmt_value, default=LivePreviewImageFormat.PNG)
 
         period_raw = opts_get("show_progress_every_n_steps", 10)
-        try:
-            period = int(period_raw)
-        except Exception:
-            period = 0
+        period = _coerce_int_option(
+            period_raw,
+            key="show_progress_every_n_steps",
+            default=10,
+            minimum=-1,
+        )
 
-        # SSE preview payloads are gated by the explicit UI setting.
+        # `show_progress_every_n_steps=-1` is a supported persisted sentinel that disables previews.
+        # SSE preview payloads are gated by the explicit UI setting plus a positive period.
         sse_enabled = enabled and period > 0
 
         runtime_interval = period if sse_enabled else 0

@@ -17,7 +17,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import json
-import logging
 import os
 import time
 from datetime import datetime
@@ -38,7 +37,7 @@ def build_router(
     router = APIRouter()
 
     _ui_blocks_cache: Optional[Dict[str, Any]] = None
-    _ui_blocks_mtime: Optional[float] = None
+    _ui_blocks_mtime: Optional[str] = None
     _ui_presets_cache: Optional[Dict[str, Any]] = None
     _ui_presets_mtime: Optional[float] = None
     _tabs_cache: Optional[Dict[str, Any]] = None
@@ -51,34 +50,68 @@ def build_router(
     def _load_ui_blocks() -> Dict[str, Any]:
         nonlocal _ui_blocks_cache, _ui_blocks_mtime
         blocks_path = str(codex_root / "apps" / "interface" / "blocks.json")
-        # Simple mtime-based cache
-        try:
-            stat = os.stat(blocks_path)
-            mtime = stat.st_mtime
-        except Exception:
-            raise HTTPException(status_code=500, detail="ui blocks not found")
-        if _ui_blocks_cache is not None and _ui_blocks_mtime == mtime:
-            return _ui_blocks_cache
-        data = _load_json(blocks_path)
-        if not data or "blocks" not in data:
-            raise HTTPException(status_code=500, detail="invalid ui blocks json")
-        # Optional overrides in apps/interface/blocks.d/*.json (merged by id)
         overrides_root = str(codex_root / "apps" / "interface" / "blocks.d")
-        merged = {b.get("id"): b for b in (data.get("blocks") or []) if isinstance(b, dict)}
-        try:
+
+        def _blocks_cache_key() -> str:
+            parts: list[str] = []
+            try:
+                parts.append(f"base:{os.stat(blocks_path).st_mtime_ns}")
+            except Exception:
+                raise HTTPException(status_code=500, detail="ui blocks not found")
             if os.path.isdir(overrides_root):
-                for fn in os.listdir(overrides_root):
+                for fn in sorted(os.listdir(overrides_root)):
                     if not fn.endswith(".json"):
                         continue
-                    ov = _load_json(os.path.join(overrides_root, fn))
-                    if isinstance(ov, dict) and "blocks" in ov and isinstance(ov["blocks"], list):
-                        for blk in ov["blocks"]:
-                            if isinstance(blk, dict) and blk.get("id"):
-                                merged[blk["id"]] = blk
-        except Exception:
-            pass
+                    override_path = os.path.join(overrides_root, fn)
+                    try:
+                        parts.append(f"{fn}:{os.stat(override_path).st_mtime_ns}")
+                    except FileNotFoundError:
+                        continue
+                    except Exception as exc:
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"failed to stat ui blocks override '{override_path}': {exc}",
+                        ) from exc
+            return "|".join(parts)
+
+        # Simple mtime-based cache
+        cache_key = _blocks_cache_key()
+        if _ui_blocks_cache is not None and _ui_blocks_mtime == cache_key:
+            return _ui_blocks_cache
+        try:
+            data = _load_json(blocks_path)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to load ui blocks json: {exc}") from exc
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail="invalid ui blocks json: expected object")
+        if "blocks" not in data:
+            raise HTTPException(status_code=500, detail="invalid ui blocks json")
+        # Optional overrides in apps/interface/blocks.d/*.json (merged by id)
+        merged = {b.get("id"): b for b in (data.get("blocks") or []) if isinstance(b, dict)}
+        if os.path.isdir(overrides_root):
+            for fn in sorted(os.listdir(overrides_root)):
+                if not fn.endswith(".json"):
+                    continue
+                override_path = os.path.join(overrides_root, fn)
+                try:
+                    ov = _load_json(override_path)
+                except Exception as exc:
+                    raise HTTPException(status_code=500, detail=f"failed to load ui blocks override '{override_path}': {exc}") from exc
+                if not isinstance(ov, dict):
+                    raise HTTPException(status_code=500, detail=f"invalid ui blocks override json: {override_path}")
+                blocks = ov.get("blocks")
+                if blocks is None:
+                    continue
+                if not isinstance(blocks, list):
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"ui blocks override '{override_path}' must define 'blocks' as array",
+                    )
+                for blk in blocks:
+                    if isinstance(blk, dict) and blk.get("id"):
+                        merged[blk["id"]] = blk
         out = {"version": int(data.get("version", 1)), "blocks": list(merged.values())}
-        _ui_blocks_cache, _ui_blocks_mtime = out, mtime
+        _ui_blocks_cache, _ui_blocks_mtime = out, cache_key
         return out
 
     @router.get("/api/ui/blocks")
@@ -122,6 +155,26 @@ def build_router(
         if raw in _ALLOWED_TAB_TYPES:
             return raw
         raise ValueError(f"invalid tab type: {raw or '<empty>'}")
+
+    def _parse_bool_payload(value: object, *, field: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if value in (0, 1):
+                return bool(int(value))
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid '{field}': expected bool or one of "
+                f"('true','false','1','0','yes','no','on','off')."
+            ),
+        )
 
     def _tabs_path() -> str:
         return str(codex_root / "apps" / "interface" / "tabs.json")
@@ -170,43 +223,47 @@ def build_router(
         stat = os.stat(p)
         if _tabs_cache is not None and _tabs_mtime == stat.st_mtime:
             return _tabs_cache
-        data = _load_json(p)
-        if not isinstance(data, dict) or "tabs" not in data:
-            data = _default_tabs()
+        try:
+            data = _load_json(p)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to load tabs.json: {exc}") from exc
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail="tabs.json invalid: expected object")
+        tabs_in = data.get("tabs")
+        if not isinstance(tabs_in, list):
+            raise HTTPException(status_code=500, detail="tabs.json invalid: missing 'tabs' array")
 
         # Normalize/migrate tab payloads so the API never returns legacy identifiers.
         changed = False
-        tabs_in = data.get("tabs")
-        if isinstance(tabs_in, list):
-            for t in tabs_in:
-                if not isinstance(t, dict):
-                    continue
-                old_type = t.get("type")
-                try:
-                    new_type = _normalize_tab_type(old_type)
-                except ValueError as exc:
-                    raise HTTPException(status_code=500, detail=f"tabs.json contains {exc}") from exc
-                if new_type != old_type:
-                    t["type"] = new_type
+        for index, t in enumerate(tabs_in):
+            if not isinstance(t, dict):
+                raise HTTPException(status_code=500, detail=f"tabs.json invalid: entry #{index + 1} must be object")
+            old_type = t.get("type")
+            try:
+                new_type = _normalize_tab_type(old_type)
+            except ValueError as exc:
+                raise HTTPException(status_code=500, detail=f"tabs.json contains {exc}") from exc
+            if new_type != old_type:
+                t["type"] = new_type
+                changed = True
+            if new_type == "flux1":
+                title = str(t.get("title") or "")
+                if title.strip().lower() == "flux":
+                    t["title"] = "FLUX.1"
                     changed = True
-                if new_type == "flux1":
-                    title = str(t.get("title") or "")
-                    if title.strip().lower() == "flux":
-                        t["title"] = "FLUX.1"
-                        changed = True
-                    params = t.get("params")
-                    if isinstance(params, dict):
-                        raw_labels = params.get("textEncoders")
-                        if isinstance(raw_labels, list):
-                            migrated: list[str] = []
-                            for raw in raw_labels:
-                                s = str(raw or "").strip()
-                                if s.startswith("flux/"):
-                                    s = "flux1/" + s[len("flux/") :]
-                                    changed = True
-                                if s:
-                                    migrated.append(s)
-                            params["textEncoders"] = migrated
+                params = t.get("params")
+                if isinstance(params, dict):
+                    raw_labels = params.get("textEncoders")
+                    if isinstance(raw_labels, list):
+                        migrated: list[str] = []
+                        for raw in raw_labels:
+                            s = str(raw or "").strip()
+                            if s.startswith("flux/"):
+                                s = "flux1/" + s[len("flux/") :]
+                                changed = True
+                            if s:
+                                migrated.append(s)
+                        params["textEncoders"] = migrated
 
         if changed:
             _save_tabs(data)
@@ -233,9 +290,21 @@ def build_router(
         stat = os.stat(p)
         if _workflows_cache is not None and _workflows_mtime == stat.st_mtime:
             return _workflows_cache
-        data = _load_json(p)
-        if not isinstance(data, dict) or "workflows" not in data:
-            data = {"version": 1, "workflows": []}
+        try:
+            data = _load_json(p)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to load workflows.json: {exc}") from exc
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail="workflows.json invalid: expected object")
+        workflows = data.get("workflows")
+        if not isinstance(workflows, list):
+            raise HTTPException(status_code=500, detail="workflows.json invalid: missing 'workflows' array")
+        for index, workflow in enumerate(workflows):
+            if not isinstance(workflow, dict):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"workflows.json invalid: entry #{index + 1} must be object",
+                )
         _workflows_cache, _workflows_mtime = data, stat.st_mtime
         return data
 
@@ -295,7 +364,7 @@ def build_router(
                 if "title" in payload:
                     t["title"] = str(payload["title"])
                 if "enabled" in payload:
-                    t["enabled"] = bool(payload["enabled"])
+                    t["enabled"] = _parse_bool_payload(payload["enabled"], field="enabled")
                 if "params" in payload and isinstance(payload["params"], dict):
                     # shallow merge for now
                     t["params"] = payload["params"]
@@ -345,8 +414,19 @@ def build_router(
         wf_id = f"wf-{int(time.time()*1000)}"
         name = str(payload.get("name") or wf_id)
         source_tab_id = str(payload.get("source_tab_id") or "")
-        wtype = str(payload.get("type") or "sd15")
-        params_snapshot = payload.get("params_snapshot") or {}
+        raw_type = str(payload.get("type") or "").strip().lower()
+        if not raw_type:
+            raise HTTPException(status_code=400, detail="workflow type is required")
+        if raw_type == "flux":
+            raise HTTPException(status_code=400, detail="invalid workflow type: flux (use flux1)")
+        if raw_type not in _ALLOWED_TAB_TYPES and raw_type not in ("wan22", "wan22_14b", "wan22_5b", "wan22_14b_animate"):
+            raise HTTPException(status_code=400, detail=f"invalid workflow type: {raw_type}")
+        wtype = _normalize_tab_type(raw_type)
+        params_snapshot = payload.get("params_snapshot")
+        if params_snapshot is None:
+            params_snapshot = {}
+        if not isinstance(params_snapshot, dict):
+            raise HTTPException(status_code=400, detail="params_snapshot must be an object")
         now = datetime.utcnow().isoformat()
         wf = {
             "id": wf_id,
@@ -398,18 +478,22 @@ def build_router(
             stat = os.stat(presets_path)
             mtime = stat.st_mtime
         except Exception:
-            logging.getLogger("backend.api").warning("ui presets not found at %s; returning empty list", presets_path)
-            return {"version": 1, "presets": []}
+            raise HTTPException(status_code=500, detail="presets.json not found")
         if _ui_presets_cache is not None and _ui_presets_mtime == mtime:
             return _ui_presets_cache
-        data = _load_json(presets_path)
-        if not data or "presets" not in data:
-            logging.getLogger("backend.api").warning("ui presets invalid at %s; returning empty list", presets_path)
-            return {
-                "version": int(data.get("version", 1)) if isinstance(data, dict) else 1,
-                "presets": [],
-            }
-        out = {"version": int(data.get("version", 1)), "presets": list(data.get("presets") or [])}
+        try:
+            data = _load_json(presets_path)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to load presets.json: {exc}") from exc
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail="presets.json invalid: expected object")
+        presets = data.get("presets")
+        if not isinstance(presets, list):
+            raise HTTPException(status_code=500, detail="presets.json invalid: missing 'presets' array")
+        for index, preset in enumerate(presets):
+            if not isinstance(preset, dict):
+                raise HTTPException(status_code=500, detail=f"presets.json invalid: entry #{index + 1} must be object")
+        out = {"version": int(data.get("version", 1)), "presets": presets}
         _ui_presets_cache, _ui_presets_mtime = out, mtime
         return out
 
@@ -423,8 +507,7 @@ def build_router(
         presets = [
             p
             for p in (data.get("presets") or [])
-            if not isinstance(p, dict)
-            or not p.get("tabs")
+            if not p.get("tabs")
             or tab_norm in [str(t).lower() for t in (p.get("tabs") or [])]
         ]
         return {"version": data.get("version", 1), "presets": presets}

@@ -106,45 +106,10 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
                     )
                 except Exception:
                     pass
-            out_chunks = []
+            out_accum: torch.Tensor | None = None
             for start in range(0, q_length, ch):
                 end = min(q_length, start + ch)
-                out_chunks.append(
-                    attention_function_pre_shaped(
-                        q[:, :, start:end],
-                        k,
-                        v,
-                        is_causal=causal,
-                        backend=AttentionBackend.PYTORCH,
-                        sdpa_policy=pol,
-                    )
-                )
-            return torch.cat(out_chunks, dim=2)
-        _, _, length, _ = q.shape
-        out_chunks = []
-        for start in range(0, length, ch):
-            end = min(length, start + ch)
-            window_start = max(0, start - ch)
-            window_end = min(length, end + ch)
-            out_chunks.append(
-                attention_function_pre_shaped(
-                    q[:, :, start:end],
-                    k[:, :, window_start:window_end],
-                    v[:, :, window_start:window_end],
-                    is_causal=causal,
-                    backend=AttentionBackend.PYTORCH,
-                    sdpa_policy=pol,
-                )
-            )
-        return torch.cat(out_chunks, dim=2)
-
-    if mode == "global" and ch > 0:
-        _, _, length, _ = q.shape
-        out_chunks = []
-        for start in range(0, length, ch):
-            end = min(length, start + ch)
-            out_chunks.append(
-                attention_function_pre_shaped(
+                chunk_out = attention_function_pre_shaped(
                     q[:, :, start:end],
                     k,
                     v,
@@ -152,8 +117,79 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
                     backend=AttentionBackend.PYTORCH,
                     sdpa_policy=pol,
                 )
+                if out_accum is None:
+                    out_accum = torch.empty(
+                        (
+                            int(chunk_out.shape[0]),
+                            int(chunk_out.shape[1]),
+                            q_length,
+                            int(chunk_out.shape[3]),
+                        ),
+                        device=chunk_out.device,
+                        dtype=chunk_out.dtype,
+                    )
+                out_accum[:, :, start:end, :] = chunk_out
+            if out_accum is None:
+                raise RuntimeError("WAN22 SDPA: sliding cross-attention fallback produced no output chunks.")
+            return out_accum
+        _, _, length, _ = q.shape
+        out_accum: torch.Tensor | None = None
+        for start in range(0, length, ch):
+            end = min(length, start + ch)
+            window_start = max(0, start - ch)
+            window_end = min(length, end + ch)
+            chunk_out = attention_function_pre_shaped(
+                q[:, :, start:end],
+                k[:, :, window_start:window_end],
+                v[:, :, window_start:window_end],
+                is_causal=causal,
+                backend=AttentionBackend.PYTORCH,
+                sdpa_policy=pol,
             )
-        return torch.cat(out_chunks, dim=2)
+            if out_accum is None:
+                out_accum = torch.empty(
+                    (
+                        int(chunk_out.shape[0]),
+                        int(chunk_out.shape[1]),
+                        length,
+                        int(chunk_out.shape[3]),
+                    ),
+                    device=chunk_out.device,
+                    dtype=chunk_out.dtype,
+                )
+            out_accum[:, :, start:end, :] = chunk_out
+        if out_accum is None:
+            raise RuntimeError("WAN22 SDPA: sliding self-attention produced no output chunks.")
+        return out_accum
+
+    if mode == "global" and ch > 0:
+        _, _, length, _ = q.shape
+        out_accum: torch.Tensor | None = None
+        for start in range(0, length, ch):
+            end = min(length, start + ch)
+            chunk_out = attention_function_pre_shaped(
+                q[:, :, start:end],
+                k,
+                v,
+                is_causal=causal,
+                backend=AttentionBackend.PYTORCH,
+                sdpa_policy=pol,
+            )
+            if out_accum is None:
+                out_accum = torch.empty(
+                    (
+                        int(chunk_out.shape[0]),
+                        int(chunk_out.shape[1]),
+                        length,
+                        int(chunk_out.shape[3]),
+                    ),
+                    device=chunk_out.device,
+                    dtype=chunk_out.dtype,
+                )
+            out_accum[:, :, start:end, :] = chunk_out
+        if out_accum is None:
+            raise RuntimeError("WAN22 SDPA: global chunked attention produced no output chunks.")
+        return out_accum
     return attention_function_pre_shaped(
         q,
         k,

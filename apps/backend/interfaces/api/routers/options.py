@@ -51,11 +51,10 @@ def build_router(
 
     @router.get("/api/options")
     def get_options() -> Dict[str, Any]:
-        revision = 0
         try:
             revision = int(getattr(opts_snapshot(), "codex_options_revision", 0) or 0)
-        except Exception:
-            revision = 0
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to read options revision: {exc}") from exc
         return {"values": opts_load_native(), "revision": max(0, revision)}
 
     @router.get("/api/options/keys")
@@ -95,13 +94,33 @@ def build_router(
                 idx = field_index()
                 for k, f in idx.items():
                     defaults[k] = getattr(f, "default", None)
-            except Exception:
-                defaults = {}
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"failed to read registry defaults: {exc}") from exc
         try:
             snap = opts_snapshot().as_dict()
-        except Exception:
-            snap = {}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to read options snapshot: {exc}") from exc
         return {"defaults": defaults, "snapshot": snap}
+
+    def _parse_checkbox_value(key: str, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if value in (0, 1):
+                return bool(int(value))
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("1", "true", "yes", "on"):
+                return True
+            if normalized in ("0", "false", "no", "off"):
+                return False
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid value for {key}: expected bool or one of "
+                f"('true','false','1','0','yes','no','on','off')."
+            ),
+        )
 
     def _validate_options(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -124,19 +143,18 @@ def build_router(
                 if getattr(f, "choices", None) and isinstance(f.choices, list) and v not in f.choices:
                     raise HTTPException(status_code=400, detail=f"Invalid value for {k}: not in choices")
                 if getattr(f, "type", None) in (setting_type.SLIDER, setting_type.NUMBER):
+                    if isinstance(v, bool):
+                        raise HTTPException(status_code=400, detail=f"Invalid value for {k}: boolean is not a numeric value")
                     num = float(v)
                     lo = getattr(f, "min", None)
                     hi = getattr(f, "max", None)
                     if isinstance(lo, (int, float)) and num < lo:
-                        num = lo
+                        raise HTTPException(status_code=400, detail=f"Invalid value for {k}: below min {lo}")
                     if isinstance(hi, (int, float)) and num > hi:
-                        num = hi
+                        raise HTTPException(status_code=400, detail=f"Invalid value for {k}: above max {hi}")
                     out[k] = num
                 elif getattr(f, "type", None) == setting_type.CHECKBOX:
-                    if isinstance(v, str):
-                        out[k] = v.strip().lower() in ("1", "true", "yes", "on")
-                    else:
-                        out[k] = bool(v)
+                    out[k] = _parse_checkbox_value(k, v)
                 else:
                     out[k] = v
             except HTTPException:
@@ -201,8 +219,8 @@ def build_router(
             restart_required.append(f"{key}: not hot-applied; restart required.")
         try:
             revision = int(getattr(opts_snapshot(), "codex_options_revision", 0) or 0)
-        except Exception:
-            revision = 0
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to read updated options revision: {exc}") from exc
         return {
             "updated": updated,
             "revision": max(0, revision),
@@ -233,6 +251,9 @@ def build_router(
                     rejected[k] = "not in choices"
                     continue
                 if getattr(f, "type", None) in (setting_type.SLIDER, setting_type.NUMBER):
+                    if isinstance(v, bool):
+                        rejected[k] = "boolean is not a numeric value"
+                        continue
                     num = float(v)
                     lo = getattr(f, "min", None)
                     hi = getattr(f, "max", None)
@@ -244,12 +265,11 @@ def build_router(
                         continue
                     accepted[k] = num
                 elif getattr(f, "type", None) == setting_type.CHECKBOX:
-                    if isinstance(v, str):
-                        accepted[k] = v.strip().lower() in ("1", "true", "yes", "on")
-                    else:
-                        accepted[k] = bool(v)
+                    accepted[k] = _parse_checkbox_value(k, v)
                 else:
                     accepted[k] = v
+            except HTTPException as exc:
+                rejected[k] = str(exc.detail)
             except Exception:
                 rejected[k] = "invalid value"
         return {"accepted": accepted, "rejected": rejected}

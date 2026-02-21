@@ -1,7 +1,7 @@
 # apps/interface/src/components/quicksettings Overview
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
-Last Review: 2026-02-08
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -34,3 +34,4 @@ Status: Active
 - 2025-12-31: `QuickSettingsWan.vue` now declares `defineEmits(...)` for `browse*` + `update:*` events to avoid Vue “extraneous non-emits listeners” warnings with a fragment root template.
 - 2026-01-03: Added standardized file header blocks to quicksettings components (doc-only change; part of rollout).
 - 2026-02-20: VAE selectors now recognize canonical sentinel `built-in` across families; metadata buttons are disabled for sentinel values (`built-in`/`none`) to avoid invalid metadata lookups.
+- 2026-02-21: `QuickSettingsWan.vue` mode selector now exposes only `I2V/T2V` presets (`14B/5B`); `V2V 14B` was removed to align UI with the current backend vid2vid-disabled contract.

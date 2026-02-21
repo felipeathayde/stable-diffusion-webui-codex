@@ -35,7 +35,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `startImg2Img` (function): Starts an img2img task (`POST /img2img`).
 - `startTxt2Vid` (function): Starts a txt2vid task (`POST /txt2vid`).
 - `startImg2Vid` (function): Starts an img2vid task (`POST /img2vid`).
-- `startVid2Vid` (function): Starts a vid2vid task (`POST /vid2vid` multipart).
 - `fetchUpscalers` (function): Fetches the local upscalers list (`/upscalers`).
 - `refreshUpscalers` (function): Forces an upscalers re-fetch (clears cache, then calls `/upscalers`).
 - `fetchRemoteUpscalers` (function): Fetches curated HF upscalers list (`/upscalers/remote`).
@@ -379,10 +378,6 @@ export function startImg2Vid(payload: Record<string, unknown>): Promise<Txt2ImgS
     method: 'POST',
     body: JSON.stringify(withSettingsRevision(payload)),
   })
-}
-
-export function startVid2Vid(form: FormData): Promise<Txt2ImgStartResponse> {
-  return requestForm<Txt2ImgStartResponse>('/vid2vid', form)
 }
 
 export function fetchUpscalers(): Promise<UpscalersResponse> {

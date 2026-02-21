@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-	Purpose: Unified video generation composable for WAN (txt2vid/img2vid/vid2vid).
+	Purpose: Unified video generation composable for WAN (txt2vid/img2vid).
 	Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
 	to update UI state and fetch final results. Every start payload includes `settings_revision`, and stale-revision conflicts (`409` + `current_revision`)
 	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
@@ -17,14 +17,15 @@ Required Notice: see NOTICE
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
-- `VideoMode` (type): Supported video modes (`txt2vid|img2vid|vid2vid`).
+- `VideoMode` (type): Supported video modes (`txt2vid|img2vid`).
 - `VideoRunStatus` (type): Terminal status for history entries (`completed|error|cancelled`).
 - `VideoRunHistoryItem` (interface): Persisted run history entry (task id, status, summary, params snapshot, error message).
-- `PreparedWanRun` (type): Mode-discriminated prepared run payload (`txt2vid|img2vid|vid2vid`) with typed WAN request bodies.
+- `PreparedWanRun` (type): Mode-discriminated prepared run payload (`txt2vid|img2vid`) with typed WAN request bodies.
 - `VideoQueuedRun` (type): Queued run entry (`PreparedWanRun` + `id`) to support sequential submissions.
 - `VideoProgressState` (interface): Progress payload shape (stage/percent/eta/step/totalSteps).
 - `VideoGenerationState` (interface): Per-tab runtime state (status/progress/frames/video result/history/queue/cancel flags).
 - `ResumeState` (type): Persisted task resume marker (task id + last event id + params snapshot).
+- `ResumeStateLoad` (type): Parsed resume-state load result (`state` + optional fail-loud parse error message).
 - `freshState` (function): Creates a new `VideoGenerationState` with empty progress/history/queue.
 - `getTabState` (function): Returns (and initializes) the per-tab `VideoGenerationState` for a given tab id.
 - `defaultStage` (function): Creates default `WanStageParams` for UI state initialization.
@@ -32,6 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultAssets` (function): Creates default `WanAssetsParams`.
 - `resumeKey` (function): Returns the localStorage key used to persist a WAN task resume marker for a tab.
 - `isRecordObject` (function): Type guard for plain-object payloads used in resume-state parsing.
+- `parseResumeMode` (function): Strict parser for persisted WAN resume mode (`txt2vid|img2vid`), returns null for unsupported/legacy modes.
 - `assertRunPayloadObject` (function): Runtime invariant guard that fails loud when a prepared run carries a non-object payload.
 - `assertNeverMode` (function): Exhaustiveness guard for prepared-run dispatch by `mode`.
 - `useVideoGeneration` (function): Main composable API; wires payload building, task start/cancel, SSE handling, queued runs, and history updates
@@ -40,17 +42,14 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { computed, ref } from 'vue'
 
-import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, startVid2Vid, subscribeTask } from '../api/client'
+import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, subscribeTask } from '../api/client'
 import { formatZodError } from '../api/payloads'
 import {
   buildWanImg2VidPayload,
   buildWanTxt2VidPayload,
-  buildWanVid2VidPayload,
   type WanImg2VidPayload,
   type WanTxt2VidPayload,
   type WanVideoCommonInput,
-  type WanVid2VidPayload,
-  type WanVid2VidInput,
 } from '../api/payloads_video'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
@@ -58,7 +57,7 @@ import { useQuicksettingsStore } from '../stores/quicksettings'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
-type VideoMode = 'txt2vid' | 'img2vid' | 'vid2vid'
+type VideoMode = 'txt2vid' | 'img2vid'
 type VideoRunStatus = 'completed' | 'error' | 'cancelled'
 
 export interface VideoRunHistoryItem {
@@ -89,15 +88,6 @@ export type PreparedWanRun =
       promptPreview: string
       paramsSnapshot: Record<string, unknown>
       payload: WanImg2VidPayload
-    }
-  | {
-      mode: 'vid2vid'
-      createdAtMs: number
-      summary: string
-      promptPreview: string
-      paramsSnapshot: Record<string, unknown>
-      payload: WanVid2VidPayload
-      file?: File | null
     }
 
 export type VideoQueuedRun = PreparedWanRun & {
@@ -145,7 +135,6 @@ const MAX_QUEUE = 3
 // Per-tab generation state (keyed by tab ID)
 const tabStates = new Map<string, VideoGenerationState>()
 const unsubscribers = new Map<string, () => void>()
-const initVideos = new Map<string, File | null>()
 const resumeAttempts = new Set<string>()
 const resumeToastShown = new Set<string>()
 
@@ -159,6 +148,11 @@ type ResumeState = {
   paramsSnapshot: Record<string, unknown>
 }
 
+type ResumeStateLoad = {
+  state: ResumeState | null
+  error: string | null
+}
+
 function resumeKey(tabId: string): string {
   return `codex.resume.wan.${tabId}`
 }
@@ -167,13 +161,19 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function loadResumeState(key: string): ResumeState | null {
+function parseResumeMode(value: unknown): VideoMode | null {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'txt2vid' || normalized === 'img2vid') return normalized
+  return null
+}
+
+function loadResumeState(key: string): ResumeStateLoad {
   try {
     const raw = localStorage.getItem(key)
-    if (!raw) return null
+    if (!raw) return { state: null, error: null }
     const parsed: unknown = JSON.parse(raw)
-    if (!isRecordObject(parsed)) return null
-    if (typeof parsed.taskId !== 'string' || !parsed.taskId.trim()) return null
+    if (!isRecordObject(parsed)) return { state: null, error: null }
+    if (typeof parsed.taskId !== 'string' || !parsed.taskId.trim()) return { state: null, error: null }
     const taskId = String(parsed.taskId).trim()
 
     const lastEventId = typeof parsed.lastEventId === 'number' && Number.isFinite(parsed.lastEventId) ? Math.trunc(parsed.lastEventId) : 0
@@ -181,21 +181,29 @@ function loadResumeState(key: string): ResumeState | null {
     const summary = typeof parsed.summary === 'string' ? parsed.summary : ''
     const promptPreview = typeof parsed.promptPreview === 'string' ? parsed.promptPreview : ''
     const paramsSnapshot = isRecordObject(parsed.paramsSnapshot) ? parsed.paramsSnapshot : {}
-
-    const modeRaw = String(parsed.mode || '').trim()
-    const mode: VideoMode = modeRaw === 'vid2vid' || modeRaw === 'img2vid' ? modeRaw : 'txt2vid'
+    const mode = parseResumeMode(parsed.mode)
+    if (!mode) {
+      const modeLabel = String(parsed.mode ?? '').trim() || 'unknown'
+      return {
+        state: null,
+        error: `Unsupported resume mode '${modeLabel}'. Resume is disabled for this mode.`,
+      }
+    }
 
     return {
-      taskId,
-      lastEventId: Math.max(0, lastEventId),
-      createdAtMs,
-      mode,
-      summary,
-      promptPreview,
-      paramsSnapshot,
+      state: {
+        taskId,
+        lastEventId: Math.max(0, lastEventId),
+        createdAtMs,
+        mode,
+        summary,
+        promptPreview,
+        paramsSnapshot,
+      },
+      error: null,
     }
   } catch {
-    return null
+    return { state: null, error: null }
   }
 }
 
@@ -218,7 +226,7 @@ function clearResumeState(key: string): void {
 function updateResumeEventId(key: string, eventId: number): void {
   const v = Math.trunc(Number(eventId))
   if (!Number.isFinite(v) || v <= 0) return
-  const cur = loadResumeState(key)
+  const cur = loadResumeState(key).state
   if (!cur) return
   if (v <= cur.lastEventId) return
   saveResumeState(key, { ...cur, lastEventId: v })
@@ -277,19 +285,6 @@ function defaultVideo(): WanVideoParams {
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
-    useInitVideo: false,
-    initVideoPath: '',
-    initVideoName: '',
-    vid2vidStrength: 0.8,
-    vid2vidMethod: 'flow_chunks',
-    vid2vidUseSourceFps: true,
-    vid2vidUseSourceFrames: true,
-    vid2vidChunkFrames: 16,
-    vid2vidOverlapFrames: 4,
-    vid2vidPreviewFrames: 48,
-    vid2vidFlowEnabled: true,
-    vid2vidFlowUseLarge: false,
-    vid2vidFlowDownscale: 2,
     filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
@@ -330,7 +325,6 @@ export function useVideoGeneration(tabId: string) {
   const lightx2v = computed<boolean>(() => Boolean(params.value?.lightx2v))
   const assets = computed<WanAssetsParams>(() => params.value?.assets || defaultAssets())
   const mode = computed<VideoMode>(() => {
-    if (video.value.useInitVideo) return 'vid2vid'
     if (video.value.useInitImage) return 'img2vid'
     return 'txt2vid'
   })
@@ -347,7 +341,7 @@ export function useVideoGeneration(tabId: string) {
   function inferWanMetadataRepo(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): string {
     const hint = `${hi.modelDir || ''} ${lo.modelDir || ''}`.toLowerCase()
     if (hint.includes('ti2v') || hint.includes('5b')) return 'Wan-AI/Wan2.2-TI2V-5B-Diffusers'
-    if (v.useInitImage || v.useInitVideo) return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
+    if (v.useInitImage) return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
     return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
   }
 
@@ -359,7 +353,7 @@ export function useVideoGeneration(tabId: string) {
 
     const isKnown14b = repoLower.includes('wan2.2-i2v-a14b') || repoLower.includes('wan2.2-t2v-a14b')
     if (isKnown14b) {
-      if (v.useInitImage || v.useInitVideo) return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
+      if (v.useInitImage) return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
       return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
     }
 
@@ -369,17 +363,13 @@ export function useVideoGeneration(tabId: string) {
     return inferWanMetadataRepo(v, hi, lo)
   }
 
-  function blockedReasonFor(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, initVideo: File | null): string {
+  function blockedReasonFor(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): string {
     const highPrompt = String(hi.prompt || '').trim()
     if (!highPrompt) return 'High stage prompt must not be empty.'
     const lowPrompt = String(lo.prompt || '').trim()
     if (!lowPrompt) return 'Low stage prompt must not be empty.'
     if (v.useInitImage && !v.initImageData) {
       return 'Image mode requires an initial image; select a file or switch to Text mode.'
-    }
-    if (v.useInitVideo) {
-      const path = String(v.initVideoPath || '').trim()
-      if (!initVideo && !path) return 'Video mode requires an input video; upload a file or provide a path.'
     }
     if (!hi.modelDir || !lo.modelDir) {
       return 'WAN requires both High and Low stage models. Set them in QuickSettings.'
@@ -409,11 +399,7 @@ export function useVideoGeneration(tabId: string) {
     return ''
   }
 
-  function currentInitVideo(): File | null {
-    return initVideos.get(tabId) ?? null
-  }
-
-  const blockedReason = computed(() => blockedReasonFor(video.value, high.value, low.value, currentInitVideo()))
+  const blockedReason = computed(() => blockedReasonFor(video.value, high.value, low.value))
   const canGenerate = computed(() => blockedReason.value.length === 0)
 
   function uuid(): string {
@@ -446,17 +432,14 @@ export function useVideoGeneration(tabId: string) {
     const frames = Number(v.frames) || 0
     const fps = Number(v.fps) || 0
     const seconds = fps > 0 ? (frames / fps) : 0
-    const strength = v.useInitVideo ? ` · strength ${Number(v.vid2vidStrength).toFixed(2)}` : ''
     const loraTag = lightx2v.value ? ' · lightx2v' : ''
-    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${strength}${loraTag}`
+    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${loraTag}`
   }
 
   function buildParamsSnapshot(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): Record<string, unknown> {
     return {
-      mode: v.useInitVideo ? 'vid2vid' : (v.useInitImage ? 'img2vid' : 'txt2vid'),
+      mode: v.useInitImage ? 'img2vid' : 'txt2vid',
       initImageName: v.initImageName || '',
-      initVideoName: v.initVideoName || '',
-      initVideoPath: String(v.initVideoPath || ''),
       width: v.width,
       height: v.height,
       frames: v.frames,
@@ -468,18 +451,6 @@ export function useVideoGeneration(tabId: string) {
         overlapFrames: v.img2vidOverlapFrames,
         anchorAlpha: v.img2vidAnchorAlpha,
         chunkSeedMode: v.img2vidChunkSeedMode,
-      },
-      vid2vid: {
-        strength: v.vid2vidStrength,
-        method: v.vid2vidMethod,
-        useSourceFps: v.vid2vidUseSourceFps,
-        useSourceFrames: v.vid2vidUseSourceFrames,
-        chunkFrames: v.vid2vidChunkFrames,
-        overlapFrames: v.vid2vidOverlapFrames,
-        previewFrames: v.vid2vidPreviewFrames,
-        flowEnabled: v.vid2vidFlowEnabled,
-        flowUseLarge: v.vid2vidFlowUseLarge,
-        flowDownscale: v.vid2vidFlowDownscale,
       },
       lightx2v: lightx2v.value,
       assets: {
@@ -608,24 +579,6 @@ export function useVideoGeneration(tabId: string) {
 
     const common = buildCommonInput(v, hi, lo)
 
-    if (v.useInitVideo) {
-      const payload = buildWanVid2VidPayload({
-        ...common,
-        strength: v.vid2vidStrength,
-        method: v.vid2vidMethod,
-        useSourceFps: v.vid2vidUseSourceFps,
-        useSourceFrames: v.vid2vidUseSourceFrames,
-        chunkFrames: v.vid2vidChunkFrames,
-        overlapFrames: v.vid2vidOverlapFrames,
-        previewFrames: v.vid2vidPreviewFrames,
-        flowEnabled: v.vid2vidFlowEnabled,
-        flowUseLarge: v.vid2vidFlowUseLarge,
-        flowDownscale: v.vid2vidFlowDownscale,
-        videoPath: v.initVideoPath,
-      } satisfies WanVid2VidInput)
-      return { mode: 'vid2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload, file: currentInitVideo() }
-    }
-
     if (v.useInitImage) {
       const img2vidChunkInput = v.img2vidChunkingEnabled
         ? {
@@ -664,13 +617,6 @@ export function useVideoGeneration(tabId: string) {
       const res = await (async () => {
         const mode = run.mode
         switch (mode) {
-          case 'vid2vid': {
-            assertRunPayloadObject(run.payload, mode)
-            const form = new FormData()
-            form.append('payload', JSON.stringify(run.payload))
-            if (run.file) form.append('video', run.file)
-            return startVid2Vid(form)
-          }
           case 'img2vid':
             assertRunPayloadObject(run.payload, mode)
             return startImg2Vid(run.payload)
@@ -746,7 +692,7 @@ export function useVideoGeneration(tabId: string) {
     const hi = high.value
     const lo = low.value
 
-    const blocked = blockedReasonFor(v, hi, lo, currentInitVideo())
+    const blocked = blockedReasonFor(v, hi, lo)
     if (blocked) {
       setError(blocked)
       return
@@ -840,8 +786,15 @@ export function useVideoGeneration(tabId: string) {
     resumeAttempts.add(tabId)
 
     const key = resumeKey(tabId)
-    const saved = loadResumeState(key)
-    if (!saved) return
+    const loaded = loadResumeState(key)
+    const saved = loaded.state
+    if (!saved) {
+      if (loaded.error) {
+        clearResumeState(key)
+        resumeNotice.value = loaded.error
+      }
+      return
+    }
 
     let res
     try {
@@ -957,7 +910,7 @@ export function useVideoGeneration(tabId: string) {
     const v = video.value
     const hi = high.value
     const lo = low.value
-    const blocked = blockedReasonFor(v, hi, lo, currentInitVideo())
+    const blocked = blockedReasonFor(v, hi, lo)
     if (blocked) throw new Error(blocked)
 
     const run = prepareRunFromValues(v, hi, lo)
@@ -996,14 +949,6 @@ export function useVideoGeneration(tabId: string) {
   function clearHistory(): void {
     state.value.history = []
     state.value.selectedTaskId = ''
-  }
-
-  function setInitVideoFile(file: File): void {
-    initVideos.set(tabId, file)
-  }
-
-  function clearInitVideoFile(): void {
-    initVideos.delete(tabId)
   }
 
   function outputUrl(relPath: string): string {
@@ -1057,8 +1002,6 @@ export function useVideoGeneration(tabId: string) {
     clearHistory,
     enqueue,
     clearQueue,
-    setInitVideoFile,
-    clearInitVideoFile,
     resumeNotice,
   }
 }

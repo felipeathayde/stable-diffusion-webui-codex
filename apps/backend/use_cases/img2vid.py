@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.runtime.processing.datatypes import VideoPlan
 from apps.backend.runtime.pipeline_stages.video import (
@@ -52,14 +53,26 @@ def _build_result_payload(
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = dict(getattr(result, "metadata", {}) or {})
 
-    user_return_frames = bool(plan.extras.get("video_return_frames", False))
+    user_return_frames = parse_bool_value(
+        plan.extras.get("video_return_frames"),
+        field="extras.video_return_frames",
+        default=False,
+    )
     video_options = getattr(request, "video_options", None)
-    save_output = bool(isinstance(video_options, Mapping) and bool(video_options.get("save_output", False)))
+    save_output = parse_bool_value(
+        video_options.get("save_output") if isinstance(video_options, Mapping) else None,
+        field="video_options.save_output",
+        default=False,
+    )
 
-    video_saved = bool(isinstance(video_meta, dict) and bool(video_meta.get("saved")))
-    export_failed = bool(save_output and not video_saved)
+    video_saved = parse_bool_value(
+        video_meta.get("saved") if isinstance(video_meta, dict) else None,
+        field="video_meta.saved",
+        default=False,
+    )
+    export_failed = save_output and not video_saved
 
-    effective_return_frames = bool(user_return_frames or (not save_output) or export_failed)
+    effective_return_frames = user_return_frames or (not save_output) or export_failed
 
     warnings: list[str] = []
     if not save_output:
@@ -244,7 +257,18 @@ def run_img2vid(
                         yield pe
                     continue
                 if ev.get("type") == "result":
-                    frames = list(ev.get("frames", []) or [])
+                    raw_frames = ev.get("frames", [])
+                    if raw_frames is None:
+                        frames = []
+                    elif isinstance(raw_frames, list):
+                        frames = raw_frames
+                    elif isinstance(raw_frames, tuple):
+                        frames = list(raw_frames)
+                    else:
+                        raise RuntimeError(
+                            "WAN22 GGUF: invalid result payload for 'frames' "
+                            f"(expected sequence, got {type(raw_frames).__name__})"
+                        )
                     break
                 raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
         else:
@@ -282,7 +306,18 @@ def run_img2vid(
                         yield pe
                     continue
                 if ev.get("type") == "result":
-                    frames = list(ev.get("frames", []) or [])
+                    raw_frames = ev.get("frames", [])
+                    if raw_frames is None:
+                        frames = []
+                    elif isinstance(raw_frames, list):
+                        frames = raw_frames
+                    elif isinstance(raw_frames, tuple):
+                        frames = list(raw_frames)
+                    else:
+                        raise RuntimeError(
+                            "WAN22 GGUF: invalid result payload for 'frames' "
+                            f"(expected sequence, got {type(raw_frames).__name__})"
+                        )
                     break
                 raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
 
@@ -373,7 +408,7 @@ def run_img2vid(
     outcome_hi = configure_sampler(active_pipe_hi, plan, logger)
 
     yield ProgressEvent(stage="run_high", percent=5.0, message="Stage 1 (High Noise)")
-    frames_hi = _run_stage(
+    frames = _run_stage(
         active_pipe_hi,
         plan,
         prompt=high_prompt,
@@ -383,9 +418,8 @@ def run_img2vid(
 
     active_pipe_lo = low_model or pipe
     outcome_lo = None
-    frames = list(frames_hi)
 
-    if active_pipe_lo is not None and frames_hi:
+    if active_pipe_lo is not None and frames:
         wan_low_cfg = extras.get("wan_low")
         wan_opts = WanStageOptions.from_mapping(wan_low_cfg) if isinstance(wan_low_cfg, dict) else None
         if wan_opts is None or wan_opts.prompt is None:
@@ -410,7 +444,7 @@ def run_img2vid(
             plan,
             prompt=low_prompt,
             negative_prompt=low_negative_prompt,
-            init_image=frames_hi[-1],
+            init_image=frames[-1],
         )
 
     vfi_options = read_video_interpolation_options(extras)

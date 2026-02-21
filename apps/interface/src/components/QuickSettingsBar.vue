@@ -1223,7 +1223,7 @@ const wanLowDirChoices = computed(() => {
   return out
 })
 
-type WanModelMode = 'i2v_14b' | 't2v_14b' | 'i2v_5b' | 't2v_5b' | 'v2v_14b'
+type WanModelMode = 'i2v_14b' | 't2v_14b' | 'i2v_5b' | 't2v_5b'
 const WAN_LIGHTX2V_I2V_14B_FLOW_SHIFT = 5.0
 
 function resolveWanFlowShiftForMode(mode: WanModelMode, lightx2v: boolean): number | null {
@@ -1290,10 +1290,9 @@ const wanModelMode = computed<WanModelMode>(() => {
   const rawAssets = tab.params.assets || { metadata: '', textEncoder: '', vae: '' }
   const meta = String(rawAssets.metadata || '').trim().toLowerCase()
   const is5b = meta.includes('ti2v-5b') || meta.includes('5b')
-  const kind = video?.useInitVideo ? 'v2v' : (video?.useInitImage ? 'i2v' : 't2v')
+  const kind = video?.useInitImage ? 'i2v' : 't2v'
 
   if (is5b) return kind === 'i2v' ? 'i2v_5b' : 't2v_5b'
-  if (kind === 'v2v') return 'v2v_14b'
   if (kind === 'i2v') return 'i2v_14b'
   return 't2v_14b'
 })
@@ -1513,28 +1512,16 @@ async function onWanModeChange(value: string): Promise<void> {
         : raw === 't2v_14b' ? 't2v_14b'
           : raw === 'i2v_5b' ? 'i2v_5b'
             : raw === 't2v_5b' ? 't2v_5b'
-              : raw === 'v2v_14b' ? 'v2v_14b'
                 : 't2v_14b'
 
     const currentVideo = tab.params.video
     const videoPatch: Record<string, unknown> = {}
     if (nextMode === 't2v_14b' || nextMode === 't2v_5b') {
-      videoPatch.useInitVideo = false
-      videoPatch.initVideoName = ''
-      videoPatch.initVideoPath = ''
-      videoPatch.useInitImage = false
-      videoPatch.initImageData = ''
-      videoPatch.initImageName = ''
-    } else if (nextMode === 'v2v_14b') {
-      videoPatch.useInitVideo = true
       videoPatch.useInitImage = false
       videoPatch.initImageData = ''
       videoPatch.initImageName = ''
     } else {
       // i2v
-      videoPatch.useInitVideo = false
-      videoPatch.initVideoName = ''
-      videoPatch.initVideoPath = ''
       videoPatch.useInitImage = true
     }
 

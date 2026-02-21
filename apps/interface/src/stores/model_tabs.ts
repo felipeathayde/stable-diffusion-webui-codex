@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
-- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init media + chunking/vid2vid overrides).
+- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output/interpolation controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
@@ -131,21 +131,6 @@ export interface WanVideoParams {
   img2vidOverlapFrames: number
   img2vidAnchorAlpha: number
   img2vidChunkSeedMode: 'fixed' | 'increment' | 'random'
-  // Optional initial video (vid2vid)
-  useInitVideo: boolean
-  initVideoPath: string
-  initVideoName: string
-  // vid2vid controls
-  vid2vidStrength: number
-  vid2vidMethod: 'native' | 'flow_chunks'
-  vid2vidUseSourceFps: boolean
-  vid2vidUseSourceFrames: boolean
-  vid2vidChunkFrames: number
-  vid2vidOverlapFrames: number
-  vid2vidPreviewFrames: number
-  vid2vidFlowEnabled: boolean
-  vid2vidFlowUseLarge: boolean
-  vid2vidFlowDownscale: number
   // Export options
   filenamePrefix: string
   format: string
@@ -341,19 +326,6 @@ function defaultParams<T extends BaseTabType>(
       img2vidOverlapFrames: 4,
       img2vidAnchorAlpha: 0.2,
       img2vidChunkSeedMode: 'increment',
-      useInitVideo: false,
-      initVideoPath: '',
-      initVideoName: '',
-      vid2vidStrength: 0.8,
-      vid2vidMethod: 'flow_chunks',
-      vid2vidUseSourceFps: true,
-      vid2vidUseSourceFrames: true,
-      vid2vidChunkFrames: 16,
-      vid2vidOverlapFrames: 4,
-      vid2vidPreviewFrames: 48,
-      vid2vidFlowEnabled: true,
-      vid2vidFlowUseLarge: false,
-      vid2vidFlowDownscale: 2,
       filenamePrefix: 'wan22',
       format: 'video/h264-mp4',
       pixFmt: 'yuv420p',
@@ -556,7 +528,34 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     merged.img2vidChunkSeedMode = seedMode
   }
 
-  return merged
+  return {
+    width: merged.width,
+    height: merged.height,
+    fps: merged.fps,
+    frames: merged.frames,
+    attentionMode: merged.attentionMode,
+    useInitImage: merged.useInitImage,
+    initImageData: merged.initImageData,
+    initImageName: merged.initImageName,
+    img2vidChunkingEnabled: merged.img2vidChunkingEnabled,
+    img2vidChunkFrames: merged.img2vidChunkFrames,
+    img2vidOverlapFrames: merged.img2vidOverlapFrames,
+    img2vidAnchorAlpha: merged.img2vidAnchorAlpha,
+    img2vidChunkSeedMode: merged.img2vidChunkSeedMode,
+    filenamePrefix: merged.filenamePrefix,
+    format: merged.format,
+    pixFmt: merged.pixFmt,
+    crf: merged.crf,
+    loopCount: merged.loopCount,
+    pingpong: merged.pingpong,
+    trimToAudio: merged.trimToAudio,
+    saveMetadata: merged.saveMetadata,
+    saveOutput: merged.saveOutput,
+    returnFrames: merged.returnFrames,
+    rifeEnabled: merged.rifeEnabled,
+    rifeModel: merged.rifeModel,
+    rifeTimes: merged.rifeTimes,
+  }
 }
 
 function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): TabParamsByType['wan'] {

@@ -364,6 +364,11 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         allowed={"fused", "split"},
     )
     fused_enabled = cfg_batch_mode == "fused"
+    force_fused_retry = env_str(
+        "CODEX_CFG_FUSED_FORCE_RETRY",
+        default="0",
+        allowed={"0", "1"},
+    ) == "1"
     fused_disabled_logged = False
 
     to_run = [
@@ -520,8 +525,9 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                 to_batch = batch_amount
                 break
 
-        if fused_enabled and len(to_batch_temp) == 2 and len(to_batch) < 2:
+        if force_fused_retry and fused_enabled and len(to_batch_temp) == 2 and len(to_batch) < 2:
             # Best-effort fused CFG batch: try cond+uncond in one forward even when memory heuristics say "no".
+            # Disabled by default; enable only via CODEX_CFG_FUSED_FORCE_RETRY=1.
             # If it OOMs, fall back to the existing split path for this run.
             flags = {int(to_run[idx][1]) for idx in to_batch_temp}
             if flags == {COND, UNCOND}:

@@ -117,7 +117,7 @@ def _build_flow_sigmas(
     if final_sigmas_type == "zero":
         sigma_last = torch.zeros(1, dtype=torch.float32)
     elif final_sigmas_type == "sigma_min":
-        sigma_last = sigmas[-1:].clone()
+        sigma_last = sigmas[-1:]
     else:
         raise RuntimeError(
             f"WAN22 GGUF: unsupported final_sigmas_type={final_sigmas_type!r} (expected 'zero' or 'sigma_min')"
@@ -358,7 +358,6 @@ class WanUniPCFlowScheduler:
         lambda_si = torch.log(alpha_si) - torch.log(sigma_si)
         rk = (lambda_si - lambda_s0) / h
         D1 = (mi - m0) / rk
-        D1s = torch.stack([D1], dim=1)
 
         rks = torch.tensor([rk, 1.0], device=device, dtype=x.dtype)
         R = []
@@ -378,7 +377,7 @@ class WanUniPCFlowScheduler:
             bv = bv.to(dtype=solve_dtype)
         rhos_c = torch.linalg.solve(Rm, bv).to(dtype=x.dtype)
 
-        corr_res = torch.einsum("k,bkc...->bc...", rhos_c[:-1], D1s)
+        corr_res = rhos_c[0] * D1
         x_out = x_t_ - alpha_t * B_h * (corr_res + rhos_c[-1] * D1_t)
         return x_out.to(x.dtype)
 

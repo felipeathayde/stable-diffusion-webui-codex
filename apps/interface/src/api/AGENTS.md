@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-02-17
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -23,7 +23,7 @@ Status: Active
   - `engine_id_to_semantic_engine` (explicit key-space mapping; required by frontend taxonomy resolution)
   - `dependency_checks` (backend-owned readiness rows per semantic engine; strict `ready === all(check.ok)` contract)
 - 2026-01-06: `/api/samplers` DTO is now `{name,supported,default_scheduler,allowed_schedulers}` and WAN payload builders fail fast on non-canonical (uppercase) sampler/scheduler inputs.
-- 2025-12-16: Added `startVid2Vid(FormData)` for `/api/vid2vid` (multipart upload) and a typed builder `buildWanVid2VidPayload()`; video task events/results now include an optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
+- 2025-12-16: WAN video client helpers include task-event/result handling with optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
 - 2026-01-27: WAN payload builders now optionally emit `video_return_frames` (default off) to control whether txt2vid/img2vid results include frames (and whether vid2vid returns preview frames); video export remains controlled via `video_save_output`.
 - 2026-02-15: Image/video payload contracts now always include `settings_revision`; per-request `smart_offload`/`smart_fallback`/`smart_cache` fields were removed (runtime flags remain `/api/options`-owned).
 - 2026-02-15: `client.ts` now caches `/api/options` revision and preserves structured HTTP error payloads (`status/detail/body`) so composables can handle stale-revision `409` conflicts.
@@ -46,3 +46,4 @@ Status: Active
 - 2026-02-05: `ApiTab.type` now includes `anima` in `types.ts` so UI tab persistence contracts match backend tab allowlist updates.
 - 2026-02-08: `payloads.ts` now falls back `extras.hires.{prompt,negative_prompt}` to base prompts when hires prompt overrides are blank.
 - 2026-02-18: `types.ts` `EngineCapabilities` now includes optional `guidance_advanced` (`GuidanceAdvancedCapabilities`) so image tabs can render CFG Advanced/APG controls strictly from backend capability contract.
+- 2026-02-21: `client.ts` no longer exports `startVid2Vid`; frontend WAN generation dispatch is restricted to `startTxt2Vid`/`startImg2Vid` while backend vid2vid remains disabled (501).

@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_load_pil_images` (function): Loads a list of image paths into PIL images (copies + closes file handles).
 - `_extract_vid2vid_options` (function): Extracts `vid2vid` dict options from request extras.
 - `_extract_flow_options` (function): Extracts `vid2vid_flow` dict options from request extras.
+- `_as_video_options` (function): Validates optional request `video_options` payload shape (mapping or `None`).
 - `_as_wan_animate_mode` (function): Normalizes/validates WAN animate mode string (`animate` vs `replace`).
 - `_validate_4n_plus_1` (function): Validates an integer is of the form `4N+1` (common WAN constraints).
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional preview frames) and attaches warnings.
@@ -36,6 +37,7 @@ from typing import Any, Dict, Iterator, Optional, Sequence
 
 from apps.backend.core.engine_interface import TaskType
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent, Vid2VidRequest
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.infra.config.repo_root import repo_scratch_path
 from apps.backend.runtime.pipeline_stages.video import (
@@ -84,6 +86,17 @@ def _extract_flow_options(extras: Dict[str, Any]) -> dict[str, Any]:
     return dict(cfg) if isinstance(cfg, dict) else {}
 
 
+def _as_video_options(raw: object) -> Mapping[str, Any] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, Mapping):
+        return raw
+    raise RuntimeError(
+        "vid2vid request field 'video_options' must be an object when provided "
+        f"(got {type(raw).__name__})."
+    )
+
+
 def _as_wan_animate_mode(raw: str) -> str:
     v = str(raw or "").strip().lower()
     if v in {"animate", "animation"}:
@@ -111,15 +124,27 @@ def _build_result_payload(
 ) -> dict[str, Any]:
     extras_raw = getattr(request, "extras", {}) or {}
     extras: dict[str, Any] = dict(extras_raw) if isinstance(extras_raw, Mapping) else {}
-    user_return_frames = bool(extras.get("video_return_frames", False))
+    user_return_frames = parse_bool_value(
+        extras.get("video_return_frames"),
+        field="extras.video_return_frames",
+        default=False,
+    )
 
-    video_options = getattr(request, "video_options", None)
-    save_output = bool(isinstance(video_options, Mapping) and bool(video_options.get("save_output", False)))
+    video_options = _as_video_options(getattr(request, "video_options", None))
+    save_output = parse_bool_value(
+        video_options.get("save_output") if video_options is not None else None,
+        field="video_options.save_output",
+        default=False,
+    )
 
-    video_saved = bool(video_meta is not None and bool(getattr(video_meta, "saved", False)))
-    export_failed = bool(save_output and not video_saved)
+    video_saved = parse_bool_value(
+        (video_meta.get("saved") if isinstance(video_meta, Mapping) else getattr(video_meta, "saved", None)),
+        field="video_meta.saved",
+        default=False,
+    )
+    export_failed = save_output and not video_saved
 
-    effective_return_frames = bool(user_return_frames or (not save_output) or export_failed)
+    effective_return_frames = user_return_frames or (not save_output) or export_failed
 
     warnings: list[str] = []
     if not save_output:
@@ -138,7 +163,7 @@ def _build_result_payload(
         info["warnings"] = warnings
 
     if save_output:
-        video_export: dict[str, Any] = {"saved": bool(video_saved)}
+        video_export: dict[str, Any] = {"saved": video_saved}
         if video_saved:
             video_export.update(
                 {
@@ -238,7 +263,11 @@ def _run_wan_animate(
     if mode == "replace" and (not bg_path or not mask_path):
         raise RuntimeError("vid2vid wan_animate mode 'replace' requires background_video_path and mask_video_path")
 
-    yield_fps = bool(cfg.get("use_source_fps", False))
+    yield_fps = parse_bool_value(
+        cfg.get("use_source_fps"),
+        field="vid2vid.use_source_fps",
+        default=False,
+    )
     fps_val = int(getattr(request, "fps", 24) or 24)
     pose_probe = probe_video(pose_path)
     if yield_fps:
@@ -367,9 +396,15 @@ def _run_wan_animate(
         has_audio = False
         if audio_source:
             try:
-                has_audio = bool(probe_video(audio_source).has_audio)
+                audio_probe = probe_video(audio_source)
             except Exception:
                 has_audio = False
+            else:
+                has_audio = parse_bool_value(
+                    getattr(audio_probe, "has_audio", None),
+                    field="audio_probe.has_audio",
+                    default=False,
+                )
         return frames_out, fps_val, has_audio, audio_source
     finally:
         try:
@@ -405,12 +440,20 @@ def _run_flow_chunks(
     overlap = max(0, min(chunk_frames - 1, overlap))
     stride = max(1, chunk_frames - overlap)
 
-    flow_enabled = bool(flow_cfg.get("enabled", True))
+    flow_enabled = parse_bool_value(
+        flow_cfg.get("enabled"),
+        field="vid2vid_flow.enabled",
+        default=True,
+    )
     estimator: Optional[RaftFlowEstimator] = None
     if flow_enabled:
         estimator = RaftFlowEstimator(
             device=str(flow_cfg.get("device") or "cuda"),
-            use_large=bool(flow_cfg.get("use_large", False)),
+            use_large=parse_bool_value(
+                flow_cfg.get("use_large"),
+                field="vid2vid_flow.use_large",
+                default=False,
+            ),
             downscale=int(flow_cfg.get("downscale") or 2),
         )
 
@@ -520,8 +563,16 @@ def run_vid2vid(
             yield ProgressEvent(stage="probe", percent=0.0, message="Probing input video")
             probe = probe_video(video_path)
 
-            use_source_fps = bool(cfg.get("use_source_fps", False))
-            use_source_frames = bool(cfg.get("use_source_frames", True))
+            use_source_fps = parse_bool_value(
+                cfg.get("use_source_fps"),
+                field="vid2vid.use_source_fps",
+                default=False,
+            )
+            use_source_frames = parse_bool_value(
+                cfg.get("use_source_frames"),
+                field="vid2vid.use_source_frames",
+                default=True,
+            )
 
             fps_val = int(getattr(request, "fps", 24) or 24)
             if use_source_fps:
@@ -582,8 +633,12 @@ def run_vid2vid(
             else:
                 frames_out = _run_flow_chunks(engine=engine, request=request, frames_in=frames_in)
             frames_in_count = len(frames_in)
-            has_audio = bool(probe.has_audio)
-            audio_source = video_path if probe.has_audio else None
+            has_audio = parse_bool_value(
+                getattr(probe, "has_audio", None),
+                field="probe.has_audio",
+                default=False,
+            )
+            audio_source = video_path if has_audio else None
 
         vfi_options = read_video_interpolation_options(extras)
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
@@ -623,7 +678,7 @@ def run_vid2vid(
                 "frames_in": (frames_in_count if method != "wan_animate" else None),
                 "frames_out": len(frames_out),
                 "strength": request.strength,
-                "audio_in": bool(has_audio),
+                "audio_in": has_audio,
             }
         )
         if method == "wan_animate":
@@ -633,19 +688,25 @@ def run_vid2vid(
         if vfi_opts is not None:
             info["video_interpolation"] = vfi_opts
 
+        video_options = _as_video_options(getattr(request, "video_options", None))
         video_meta = export_video(
             frames_out,
             fps=fps_out,
-            options=getattr(request, "video_options", None),
+            options=video_options,
             task="vid2vid",
             audio_source_path=audio_source if has_audio else None,
-            extra_metadata=info if bool(getattr(request, "video_options", None)) else None,
+            extra_metadata=info if video_options else None,
         )
-        save_output = bool(
-            isinstance(getattr(request, "video_options", None), Mapping)
-            and bool(getattr(request, "video_options", {}).get("save_output", False))
+        save_output = parse_bool_value(
+            video_options.get("save_output") if video_options else None,
+            field="video_options.save_output",
+            default=False,
         )
-        if save_output and not bool(getattr(video_meta, "saved", False)):
+        if save_output and not parse_bool_value(
+            getattr(video_meta, "saved", None),
+            field="video_meta.saved",
+            default=False,
+        ):
             reason = str(getattr(video_meta, "reason", "") or "").strip()
             raise RuntimeError(
                 "vid2vid: video export failed with save_output=true"

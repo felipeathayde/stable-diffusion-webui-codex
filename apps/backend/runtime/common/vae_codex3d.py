@@ -285,7 +285,7 @@ class Codex3DResample(nn.Module):
                 idx = feat_idx[0]
                 cached = feat_cache[idx]
                 if cached is None:
-                    feat_cache[idx] = work.clone()
+                    feat_cache[idx] = work[:, :, -1:, :, :].clone()
                     feat_idx[0] += 1
                 else:
                     cache_x = work[:, :, -1:, :, :].clone()
@@ -591,17 +591,21 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
             )
         _, _, num_frame, _, _ = x.shape
         self.clear_cache()
+        encoded_chunks: list[torch.Tensor] = []
         for index in range(1 + (int(num_frame) - 1) // 4):
             self._enc_conv_idx = [0]
             if index == 0:
-                encoded = self.encoder(x[:, :, :1, :, :], feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
+                encoded_chunk = self.encoder(x[:, :, :1, :, :], feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
             else:
                 encoded_chunk = self.encoder(
                     x[:, :, 1 + 4 * (index - 1) : 1 + 4 * index, :, :],
                     feat_cache=self._enc_feat_map,
                     feat_idx=self._enc_conv_idx,
                 )
-                encoded = torch.cat([encoded, encoded_chunk], dim=2)
+            encoded_chunks.append(encoded_chunk)
+        if not encoded_chunks:
+            raise RuntimeError("AutoencoderCodex3D encode produced no chunks.")
+        encoded = encoded_chunks[0] if len(encoded_chunks) == 1 else torch.cat(encoded_chunks, dim=2)
         moments = self.conv1(encoded)
         self.clear_cache()
         posterior = DiagonalGaussianDistribution(moments)
@@ -625,13 +629,22 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
         _, _, num_frame, _, _ = z.shape
         x = self.conv2(z)
         self.clear_cache()
+        out_chunks: list[torch.Tensor] = []
         for index in range(int(num_frame)):
             self._conv_idx = [0]
             if index == 0:
-                out = self.decoder(x[:, :, index : index + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx, first_chunk=True)
+                out_chunk = self.decoder(
+                    x[:, :, index : index + 1, :, :],
+                    feat_cache=self._feat_map,
+                    feat_idx=self._conv_idx,
+                    first_chunk=True,
+                )
             else:
                 out_chunk = self.decoder(x[:, :, index : index + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx)
-                out = torch.cat([out, out_chunk], dim=2)
+            out_chunks.append(out_chunk)
+        if not out_chunks:
+            raise RuntimeError("AutoencoderCodex3D decode produced no chunks.")
+        out = out_chunks[0] if len(out_chunks) == 1 else torch.cat(out_chunks, dim=2)
         out = torch.clamp(out, min=-1.0, max=1.0)
         self.clear_cache()
         if squeeze_t and out.ndim == 5 and int(out.shape[2]) == 1:

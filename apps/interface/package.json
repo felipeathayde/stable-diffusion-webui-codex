@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "report:ui-consistency": "node tools/ui-consistency-report.mjs",
+    "report:ui-consistency:strict": "node tools/ui-consistency-report.mjs --strict",
     "typecheck": "vue-tsc -p tsconfig.json --noEmit",
     "dev": "npm run typecheck && node tools/port-guard-dev.mjs",
     "build": "vite build",
     "preview": "vite preview --port 8282",
     "test": "vitest run",
-    "verify": "npm run report:ui-consistency && npm run typecheck && npm test && npm run build"
+    "verify": "npm run report:ui-consistency:strict && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@tiptap/core": "2.26.3",

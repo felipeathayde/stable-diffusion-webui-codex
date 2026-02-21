@@ -20,6 +20,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from apps.backend.core.engine_interface import BaseInferenceEngine
+from apps.backend.core.strict_values import parse_bool_value
 
 
 class BaseVideoEngine(BaseInferenceEngine):
@@ -67,7 +68,12 @@ class BaseVideoEngine(BaseInferenceEngine):
         from apps.backend.video.export.ffmpeg_exporter import VideoExportError, export_video
 
         opts: Dict[str, Any] = dict(options or {})
-        if not bool(opts.get("save_output", False)):
+        save_output = parse_bool_value(
+            opts.get("save_output"),
+            field="video_options.save_output",
+            default=False,
+        )
+        if not save_output:
             return None
 
         frames_list = list(frames or [])
@@ -83,11 +89,11 @@ class BaseVideoEngine(BaseInferenceEngine):
                 extra_metadata=extra_metadata,
             )
         except VideoExportError as exc:
-            self._logger.warning("[video-export] failed: %s", exc)
-            return {"saved": False, "reason": str(exc), "fps": int(fps), "frames": len(frames_list)}
+            self._logger.error("[video-export] failed: %s", exc)
+            raise
         except Exception as exc:
-            self._logger.warning("[video-export] failed: %s", exc, exc_info=True)
-            return {"saved": False, "reason": str(exc), "fps": int(fps), "frames": len(frames_list)}
+            self._logger.error("[video-export] failed: %s", exc, exc_info=True)
+            raise VideoExportError(f"Unexpected exporter failure: {exc}") from exc
 
         if result is None:
             return None

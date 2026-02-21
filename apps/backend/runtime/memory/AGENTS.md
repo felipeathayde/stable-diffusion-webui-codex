@@ -1,6 +1,6 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
-Last Review: 2026-02-19
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -32,3 +32,4 @@ Status: Active
 - 2026-02-19: Smart-offload generic action telemetry is now globally enriched with best-effort memory residency fields. `CodexMemoryManager` emits `memory_before_*`/`memory_after_*` for `load`/`unload`/`unload_noop`; `smart_offload.log_smart_offload_action(...)` backfills `memory_current_*` from `memory_management.memory_snapshot()` when window fields are absent.
 - 2026-02-19: Attention runtime now logs explicit backend+SDPA state (`backend`, `sdpa_policy`, configured `flash/mem/math`, and runtime `flash/mem/math` flags) during manager initialization/reinitialize, so `mem_efficient` logs are not conflated with xformers backend selection.
 - 2026-02-19: Smart-offload memory telemetry payloads are MB-only (`*_mb` + `*_device`); byte-level fields and generic `bytes=` payload were removed from canonical smart-offload action events to reduce log noise.
+- 2026-02-21: `smart_offload.py` smart flag readers now enforce strict bool contracts for both thread overrides and options snapshot values (`codex_smart_offload`/`codex_smart_fallback`/`codex_smart_cache`) via shared strict parser (no permissive truthiness fallback).

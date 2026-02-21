@@ -6,17 +6,20 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Report-only UI consistency scan for frontend style-contract drift.
-Generates a deterministic markdown report with static inline/scoped style findings,
+Purpose: UI consistency scan for frontend style-contract drift.
+Generates a deterministic markdown report with static/dynamic style findings,
 selector duplication signals, and docs/toolchain reference drift checks.
+Supports strict mode (`--strict`) to fail loud on style-contract drift.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `main` (function): Runs the report scan and writes summary output.
 - `collectFiles` (function): Recursively collects files by extension.
 - `scanStaticInlineStyles` (function): Finds literal `style="..."` in Vue templates.
+- `scanDynamicStyleBindings` (function): Finds dynamic `:style`/`v-bind:style` bindings in Vue templates.
 - `scanScopedStyles` (function): Finds scoped style blocks in Vue SFCs.
 - `scanSelectorDuplicates` (function): Detects duplicated selectors across CSS files.
 - `scanDocsToolchainDrift` (function): Reports stale docs references against actual toolchain.
+- `parseFlags` (function): Parses CLI flags for strict/fail-loud execution mode.
 */
 
 import fs from 'node:fs'
@@ -36,6 +39,15 @@ const ARCH_GUIDE_PATH = path.join(REPO_ROOT, '.sangoi', 'frontend', 'guidelines'
 const PACKAGE_JSON_PATH = path.join(INTERFACE_ROOT, 'package.json')
 
 const SELECTOR_WATCHLIST = ['.viewer-card', '.viewer-empty', '.panel-stack', '.form-row']
+const DYNAMIC_STYLE_ALLOWLIST = new Set([
+  'batchMenuStyle',
+  'zoomStyle',
+  'previewStyle',
+  'contentTransformStyle',
+  'brushCursorStyle',
+  'props.bodyStyle',
+  'guidedTooltipStyle',
+])
 
 function collectFiles(root, extensions) {
   const out = []
@@ -79,6 +91,34 @@ function scanStaticInlineStyles(vueFiles) {
         line: index + 1,
         snippet: line.trim(),
       })
+    }
+  }
+  return findings
+}
+
+function scanDynamicStyleBindings(vueFiles) {
+  const findings = []
+  const regex = /(?:\:style|v-bind:style)\s*=\s*("([^"]+)"|'([^']+)')/g
+  for (const filePath of vueFiles) {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const lines = content.split('\n')
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      if (!line.includes(':style=') && !line.includes('v-bind:style=')) continue
+      regex.lastIndex = 0
+      let match = regex.exec(line)
+      while (match) {
+        const expression = String(match[2] || match[3] || '').trim()
+        const isAllowed = DYNAMIC_STYLE_ALLOWLIST.has(expression)
+        findings.push({
+          file: toRel(filePath),
+          line: index + 1,
+          expression,
+          allowed: isAllowed,
+          snippet: line.trim(),
+        })
+        match = regex.exec(line)
+      }
     }
   }
   return findings
@@ -210,6 +250,27 @@ function renderFindings(title, findings, limit = 20) {
   return `${lines.join('\n')}\n`
 }
 
+function renderDynamicStyleSection(findings) {
+  if (findings.length === 0) return '## Dynamic `:style` / `v-bind:style` Bindings\n- none\n'
+  const disallowed = findings.filter((finding) => !finding.allowed)
+  const lines = [
+    '## Dynamic `:style` / `v-bind:style` Bindings',
+    `- total: ${findings.length}`,
+    `- allowlisted: ${findings.length - disallowed.length}`,
+    `- disallowed: ${disallowed.length}`,
+  ]
+  for (const finding of findings.slice(0, 30)) {
+    const status = finding.allowed ? 'allowlisted' : 'disallowed'
+    lines.push(
+      `- [${status}] ${finding.file}:${finding.line} — expr=\`${finding.expression}\` — \`${finding.snippet}\``,
+    )
+  }
+  if (findings.length > 30) {
+    lines.push(`- ... ${findings.length - 30} more`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
 function renderDuplicateSection(result) {
   const { duplicates, watchlistHits } = result
   if (duplicates.length === 0) return '## Duplicated Selectors Across Files\n- none\n'
@@ -257,7 +318,13 @@ function renderSmokeSet() {
   ].join('\n')
 }
 
+function parseFlags(argv) {
+  const strict = argv.includes('--strict') || argv.includes('--fail-on-drift')
+  return { strict }
+}
+
 function main() {
+  const flags = parseFlags(process.argv.slice(2))
   const vueFiles = collectFiles(SRC_ROOT, ['.vue'])
   const cssFiles = [
     path.join(SRC_ROOT, 'styles.css'),
@@ -265,18 +332,22 @@ function main() {
   ].filter((filePath, index, array) => fs.existsSync(filePath) && array.indexOf(filePath) === index)
 
   const inlineFindings = scanStaticInlineStyles(vueFiles)
+  const dynamicStyleFindings = scanDynamicStyleBindings(vueFiles)
   const scopedFindings = scanScopedStyles(vueFiles)
   const duplicateResult = scanSelectorDuplicates(cssFiles)
   const docsChecks = scanDocsToolchainDrift()
+  const disallowedDynamicStyleFindings = dynamicStyleFindings.filter((finding) => !finding.allowed)
 
   const generatedAt = new Date().toISOString()
   const report = [
-    '# UI Consistency Report (report-only)',
+    '# UI Consistency Report',
     `- generated_at: ${generatedAt}`,
     `- source_root: ${toRel(SRC_ROOT)}`,
     `- css_root: ${toRel(STYLES_ROOT)}`,
+    `- strict_mode: ${flags.strict ? 'enabled' : 'disabled'}`,
     '',
     renderFindings('Static Inline Styles (`style="..."`)', inlineFindings),
+    renderDynamicStyleSection(dynamicStyleFindings),
     renderFindings('Scoped `<style>` Blocks', scopedFindings),
     renderDuplicateSection(duplicateResult),
     renderDocsDrift(docsChecks),
@@ -287,11 +358,27 @@ function main() {
   fs.writeFileSync(REPORT_PATH, report, 'utf-8')
 
   const driftCount = docsChecks.filter((check) => !check.ok).length
+  const styleDriftCount =
+    inlineFindings.length +
+    scopedFindings.length +
+    disallowedDynamicStyleFindings.length +
+    duplicateResult.duplicates.length
   console.log(`[ui-consistency-report] wrote ${path.relative(INTERFACE_ROOT, REPORT_PATH)}`)
   console.log(
-    `[ui-consistency-report] inline=${inlineFindings.length} scoped=${scopedFindings.length} duplicated_selectors=${duplicateResult.duplicates.length} docs_drift=${driftCount}`,
+    `[ui-consistency-report] inline=${inlineFindings.length} dynamic=${dynamicStyleFindings.length} dynamic_disallowed=${disallowedDynamicStyleFindings.length} scoped=${scopedFindings.length} duplicated_selectors=${duplicateResult.duplicates.length} docs_drift=${driftCount}`,
   )
-  console.log('[ui-consistency-report] report-only mode: exit 0 by design')
+  if (flags.strict) {
+    if (styleDriftCount > 0) {
+      console.error(
+        `[ui-consistency-report] strict mode failed: style_drift=${styleDriftCount} (docs_drift=${driftCount} is non-gating)`,
+      )
+      process.exitCode = 1
+      return
+    }
+    console.log(`[ui-consistency-report] strict mode passed: style_drift=${styleDriftCount}`)
+    return
+  }
+  console.log('[ui-consistency-report] report mode: non-strict exit 0')
 }
 
 main()

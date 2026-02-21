@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.runtime.processing.datatypes import VideoPlan
 from apps.backend.runtime.pipeline_stages.video import (
@@ -50,14 +51,26 @@ def _build_result_payload(
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = dict(getattr(result, "metadata", {}) or {})
 
-    user_return_frames = bool(plan.extras.get("video_return_frames", False))
+    user_return_frames = parse_bool_value(
+        plan.extras.get("video_return_frames"),
+        field="extras.video_return_frames",
+        default=False,
+    )
     video_options = getattr(request, "video_options", None)
-    save_output = bool(isinstance(video_options, Mapping) and bool(video_options.get("save_output", False)))
+    save_output = parse_bool_value(
+        video_options.get("save_output") if isinstance(video_options, Mapping) else None,
+        field="video_options.save_output",
+        default=False,
+    )
 
-    video_saved = bool(isinstance(video_meta, dict) and bool(video_meta.get("saved")))
-    export_failed = bool(save_output and not video_saved)
+    video_saved = parse_bool_value(
+        video_meta.get("saved") if isinstance(video_meta, dict) else None,
+        field="video_meta.saved",
+        default=False,
+    )
+    export_failed = save_output and not video_saved
 
-    effective_return_frames = bool(user_return_frames or (not save_output) or export_failed)
+    effective_return_frames = user_return_frames or (not save_output) or export_failed
 
     warnings: list[str] = []
     if not save_output:
@@ -165,7 +178,18 @@ def run_txt2vid(
                     yield pe
                 continue
             if ev.get("type") == "result":
-                frames = list(ev.get("frames", []) or [])
+                raw_frames = ev.get("frames", [])
+                if raw_frames is None:
+                    frames = []
+                elif isinstance(raw_frames, list):
+                    frames = raw_frames
+                elif isinstance(raw_frames, tuple):
+                    frames = list(raw_frames)
+                else:
+                    raise RuntimeError(
+                        "WAN22 GGUF: invalid result payload for 'frames' "
+                        f"(expected sequence, got {type(raw_frames).__name__})"
+                    )
                 break
             raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
 

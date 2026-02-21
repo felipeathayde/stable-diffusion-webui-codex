@@ -15,6 +15,7 @@ The upscalers download task verifies file integrity against the HF manifest (`up
 and returns a per-destination `sha256_by_path` mapping in the task result `info` payload.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_parse_bool_option` (function): Strict parser for bool-like option values used by upscale task settings.
 - `run_upscale_task` (function): Runs an upscale task worker (single-image v1).
 - `run_upscaler_download_task` (function): Runs an HF download task worker for curated upscaler weights.
 """
@@ -39,6 +40,26 @@ from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 logger = logging.getLogger("backend.api.tasks.upscale")
 
 _HF_MANIFEST_PATH = "upscalers/manifest.json"
+
+
+def _parse_bool_option(value: object, *, field: str, default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value in (0, 1):
+            return bool(int(value))
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):
+            return True
+        if normalized in ("0", "false", "no", "off"):
+            return False
+    raise RuntimeError(
+        f"Invalid '{field}': expected bool or one of "
+        f"('true','false','1','0','yes','no','on','off'), got {value!r}."
+    )
 
 
 @dataclass(slots=True)
@@ -162,7 +183,11 @@ def run_upscale_task(
                 **generation_provenance,
             }
 
-            if bool(opts_get("samples_save", True)):
+            if _parse_bool_option(
+                opts_get("samples_save", True),
+                field="options.samples_save",
+                default=True,
+            ):
                 save_generated_images(result_images, task=TaskType.UPSCALE, info=info_obj, metadata=generation_provenance)
 
             result = {

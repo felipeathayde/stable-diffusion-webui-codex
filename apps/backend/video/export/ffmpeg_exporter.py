@@ -35,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.infra.config.repo_root import get_repo_root, repo_scratch_path
 from apps.backend.video.runtime_dependencies import VideoDependencyResolutionError, resolve_ffmpeg_binary
 
@@ -133,7 +134,10 @@ def export_video(
     extra_metadata: Mapping[str, Any] | None = None,
 ) -> VideoExportResult | None:
     opts = _normalize_video_options(options)
-    save_output = bool(opts.get("save_output", False))
+    try:
+        save_output = parse_bool_value(opts.get("save_output"), field="video_options.save_output", default=False)
+    except RuntimeError as exc:
+        raise VideoExportError(str(exc)) from exc
     if not save_output:
         return None
 
@@ -163,7 +167,11 @@ def export_video(
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     # Optional ping-pong: append reverse frames (excluding endpoints to avoid duplicates).
-    if bool(opts.get("pingpong", False)) and len(frames_list) > 2:
+    try:
+        pingpong_enabled = parse_bool_value(opts.get("pingpong"), field="video_options.pingpong", default=False)
+    except RuntimeError as exc:
+        raise VideoExportError(str(exc)) from exc
+    if pingpong_enabled and len(frames_list) > 2:
         frames_list = list(frames_list) + list(reversed(frames_list[1:-1]))
 
     # Write frames as PNGs for ffmpeg.
@@ -185,7 +193,10 @@ def export_video(
     pix_fmt = str(opts.get("pix_fmt") or "yuv420p").strip() or "yuv420p"
     crf = int(opts.get("crf", 23) or 23)
     loop_count = int(opts.get("loop_count", 0) or 0)
-    trim_to_audio = bool(opts.get("trim_to_audio", False))
+    try:
+        trim_to_audio = parse_bool_value(opts.get("trim_to_audio"), field="video_options.trim_to_audio", default=False)
+    except RuntimeError as exc:
+        raise VideoExportError(str(exc)) from exc
 
     # Base encode command.
     cmd: list[str] = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-framerate", str(fps_i), "-i", str(frames_dir / "frame_%06d.png")]
@@ -270,7 +281,11 @@ def export_video(
     rel = os.path.relpath(out_path, root)
     mime = "video/mp4" if ext == "mp4" else ("video/webm" if ext == "webm" else "image/gif")
 
-    if bool(opts.get("save_metadata", False)):
+    try:
+        save_metadata = parse_bool_value(opts.get("save_metadata"), field="video_options.save_metadata", default=False)
+    except RuntimeError as exc:
+        raise VideoExportError(str(exc)) from exc
+    if save_metadata:
         meta_path = out_path.with_suffix(out_path.suffix + ".json")
         meta: dict[str, Any] = {
             "task": task,
@@ -280,7 +295,7 @@ def export_video(
             "pix_fmt": pix_fmt,
             "crf": crf,
             "loop_count": loop_count,
-            "pingpong": bool(opts.get("pingpong", False)),
+            "pingpong": pingpong_enabled,
             "trim_to_audio": trim_to_audio,
         }
         if extra_metadata:

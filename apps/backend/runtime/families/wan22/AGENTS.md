@@ -88,6 +88,9 @@ Status: Active
 - 2026-02-20: Removed legacy WAN TE FP8 modules (`wan_te_cuda.py`, `wan_te_loader.py`, `wan_te_encoder.py`) and legacy CUDA extension sources under `runtime/kernels/wan_t5`; no runtime callsite uses this lane.
 - 2026-02-20: `config.py` no longer accepts `wan22_14b_native` in `extras.wan_engine_variant`; WAN 14B variant identity is canonicalized as `wan22_14b`/`14b` only.
 - 2026-02-21: GGUF stage text conditioning now runs in a single text-encoder call for both stages (`prompt=[high,low]`, `negative=[high,low]`) and slices batched embeds per stage; stage prompts are required/non-empty, and stage negative fallback to request-level negative happens only when stage negative is missing (`None`), not when explicitly empty.
+- 2026-02-21: WAN22 VRAM pressure path hardening: chunked img2vid now reuses a single `chunk_condition` buffer across chunks (no per-chunk full latent clone); stage sampling reuses model/CFG assembly buffers and updates latent channels in-place instead of re-concatenating state every step; SDPA chunked modes now write into preallocated output tensors instead of accumulating lists + final `torch.cat`.
+- 2026-02-21: WAN22 I2V conditioning encode now preallocates `video_condition` and writes frame-0 in-place (replacing `cat + new_zeros`), and non-chunked img2vid high/low handoff now explicitly releases transient seed/latent tensors (`seed_hi`, `latents_hi`, `seed_lo`, `latents_lo`) right after use to reduce peak VRAM lifetime.
+- 2026-02-21: WAN22 sampling/scheduler now avoid two per-step temporaries: CFG merge updates the uncond half in-place (`cfg_merge`) and UniPC corrector order-2 now uses direct scalar-tensor accumulation (`rhos_c[0] * D1`) instead of `stack + einsum`.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

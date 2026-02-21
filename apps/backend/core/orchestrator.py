@@ -28,6 +28,7 @@ from .engine_interface import BaseInferenceEngine, TaskType
 from .exceptions import EngineExecutionError, EngineNotFoundError, EngineLoadError, UnsupportedTaskError
 from .registry import EngineRegistry, registry as global_registry
 from .requests import InferenceEvent, ProgressEvent
+from .strict_values import parse_bool_value
 
 
 logger = logging.getLogger(__name__)
@@ -88,12 +89,22 @@ class InferenceOrchestrator:
             dtype_value = None if dtype_normalized in {"", "auto"} else dtype_normalized
 
         # Normalize streaming option key to a single boolean or None.
-        streaming_val: object | None
+        streaming_val: bool | None = None
         if "codex_core_streaming" in engine_options:
-            streaming_val = bool(engine_options.get("codex_core_streaming"))
-        else:
-            streaming_val = engine_options.get("core_streaming_enabled")
-            streaming_val = None if streaming_val is None else bool(streaming_val)
+            streaming_val = parse_bool_value(
+                engine_options.get("codex_core_streaming"),
+                field="engine_options.codex_core_streaming",
+            )
+        elif "core_streaming_enabled" in engine_options:
+            core_streaming_value = engine_options.get("core_streaming_enabled")
+            streaming_val = (
+                None
+                if core_streaming_value is None
+                else parse_bool_value(
+                    core_streaming_value,
+                    field="engine_options.core_streaming_enabled",
+                )
+            )
 
         relevant = {
             "text_encoder_override": te_override,
@@ -160,12 +171,12 @@ class InferenceOrchestrator:
         relevant = {
             "engine_key": engine_key,
             "model_ref": model_ref,
-            "tenc_path": engine_options.get("tenc_path"),
-            "text_encoder_override": engine_options.get("text_encoder_override"),
+            "reload_fingerprint": self._reload_fingerprint(engine_options),
         }
         return InferenceOrchestrator._freeze_engine_options(relevant)
 
     def _purge_vram(self, *, reason: str, clear_engine_cache: bool = False) -> None:
+        purge_failures: list[str] = []
         for cached_engine in list(self._engine_cache.values()):
             if not clear_engine_cache and not getattr(cached_engine, "_is_loaded", False):
                 continue
@@ -173,7 +184,7 @@ class InferenceOrchestrator:
                 cached_engine.unload()
                 cached_engine.mark_unloaded()
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to unload cached engine during VRAM purge: %s", exc, exc_info=True)
+                purge_failures.append(f"cached_engine_unload:{exc}")
 
         if clear_engine_cache:
             self._engine_cache.clear()
@@ -188,7 +199,7 @@ class InferenceOrchestrator:
             _mem.manager.unload_all_models()
             _mem.manager.soft_empty_cache(force=True)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("VRAM purge via memory manager failed: %s", exc, exc_info=True)
+            purge_failures.append(f"memory_manager:{exc}")
 
         try:
             gc.collect()
@@ -202,6 +213,12 @@ class InferenceOrchestrator:
                 torch.cuda.ipc_collect()
         except Exception:  # pragma: no cover
             pass
+
+        if purge_failures:
+            detail = "; ".join(purge_failures[:3])
+            if len(purge_failures) > 3:
+                detail = f"{detail}; ... (+{len(purge_failures) - 3} more)"
+            raise RuntimeError(f"VRAM purge failed ({reason}): {detail}")
 
         logger.info("VRAM purge complete (%s).", reason)
 
@@ -238,11 +255,16 @@ class InferenceOrchestrator:
         normalized_key = engine_key.strip().lower()
         engine_opts = engine_options or {}
         if model_ref is not None:
-            self._maybe_purge_vram_for_generation(
-                engine_key=normalized_key,
-                model_ref=str(model_ref),
-                engine_options=engine_opts,
-            )
+            try:
+                self._maybe_purge_vram_for_generation(
+                    engine_key=normalized_key,
+                    model_ref=str(model_ref),
+                    engine_options=engine_opts,
+                )
+            except Exception as exc:
+                raise EngineLoadError(
+                    f"Failed load preflight for engine '{engine_key}' with model '{model_ref}': {exc}"
+                ) from exc
         engine = self._resolve_engine(engine_key, engine_opts)
 
         logger.info(
@@ -258,6 +280,10 @@ class InferenceOrchestrator:
         if model_ref is not None:
             needs_load = False
             device_mismatch = False
+            try:
+                reload_fingerprint = self._reload_fingerprint(engine_opts)
+            except Exception as exc:
+                raise EngineLoadError(f"Invalid load-affecting engine option(s): {exc}") from exc
             if not engine._is_loaded:  # noqa: SLF001 (intentional internal check)
                 needs_load = True
             else:
@@ -267,14 +293,9 @@ class InferenceOrchestrator:
                 except Exception:
                     needs_load = True
                 # Reload when load-affecting engine options changed.
-                try:
-                    fp = self._reload_fingerprint(engine_opts)
-                    prev = self._engine_options_fingerprint.get(normalized_key)
-                    if prev is not None and prev != fp:
-                        needs_load = True
-                except Exception:
-                    # Fingerprinting is best-effort; never block inference due to introspection.
-                    pass
+                prev = self._engine_options_fingerprint.get(normalized_key)
+                if prev is not None and prev != reload_fingerprint:
+                    needs_load = True
                 # Reload if the primary device changed since last load
                 try:
                     from apps.backend.runtime.memory import memory_management as _mem
@@ -299,16 +320,19 @@ class InferenceOrchestrator:
                             pass
                     engine.load(model_ref, **engine_opts)
                     engine.mark_loaded()
-                    try:
-                        self._engine_options_fingerprint[normalized_key] = self._reload_fingerprint(engine_opts)
-                    except Exception:
-                        self._engine_options_fingerprint.pop(normalized_key, None)
+                    self._engine_options_fingerprint[normalized_key] = reload_fingerprint
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Engine '%s' failed during load (model=%s).", engine_key, model_ref)
                     with contextlib.suppress(Exception):
                         engine.unload()
                         engine.mark_unloaded()
-                    self._purge_vram(reason="engine load failure", clear_engine_cache=True)
+                    try:
+                        self._purge_vram(reason="engine load failure", clear_engine_cache=True)
+                    except Exception as purge_exc:  # noqa: BLE001
+                        raise EngineLoadError(
+                            f"Failed to load engine '{engine_key}' for model '{model_ref}': {exc}. "
+                            f"Additional cleanup failure: {purge_exc}"
+                        ) from exc
                     raise EngineLoadError(
                         f"Failed to load engine '{engine_key}' for model '{model_ref}': {exc}"
                     ) from exc
@@ -328,8 +352,17 @@ class InferenceOrchestrator:
             with contextlib.suppress(Exception):
                 engine.unload()
                 engine.mark_unloaded()
-            self._purge_vram(reason="engine execution failure", clear_engine_cache=True)
-            raise EngineExecutionError(str(exc)) from exc
+            purge_failure: Exception | None = None
+            try:
+                self._purge_vram(reason="engine execution failure", clear_engine_cache=True)
+            except Exception as purge_exc:  # noqa: BLE001
+                purge_failure = purge_exc
+            if purge_failure is not None:
+                raise EngineExecutionError(
+                    f"Engine '{engine_key}' failed during '{task.value}': {exc}. "
+                    f"Additional cleanup failure: {purge_failure}"
+                ) from exc
+            raise EngineExecutionError(f"Engine '{engine_key}' failed during '{task.value}': {exc}") from exc
         finally:
             elapsed = time.perf_counter() - start
             yield ProgressEvent(stage="end", percent=100.0, message="Inference complete", data={"elapsed": elapsed})

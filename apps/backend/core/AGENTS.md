@@ -1,6 +1,6 @@
 # apps/backend/core Overview
 Date: 2025-10-28
-Last Review: 2026-02-17
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -19,6 +19,7 @@ Status: Active
 - `requests.py` — Typed request objects and validation helpers.
 - `registry.py` — Engine registration/lookup for orchestration.
 - `exceptions.py` — Core exception types surfaced by orchestration.
+- `strict_values.py` — Shared strict parsers for loose scalar values (strict boolean/integer parsing with fail-loud errors).
 
 ## Notes
 - New engine integrations must conform to `engine_interface.py` and register via `registry.py`.
@@ -39,3 +40,8 @@ Status: Active
 - 2026-02-16: `InferenceOrchestrator` primary-device drift checks now probe canonical `codex_objects.denoiser` residency (`load_device`/`device`/parameter-device seams) with legacy `codex_objects.unet` fallback, fixing contract drift where device reload checks could silently skip reloading.
 - 2026-02-17: `InferenceOrchestrator` reload fingerprint now also tracks `engine_options.dtype` (normalized string) so dtype override changes trigger a reload instead of reusing stale loaded engines.
 - 2026-02-21: `engine_loader.py` now resolves default diffusers attention backend from runtime memory config (launcher/bootstrap authority) instead of a potentially stale saved option snapshot.
+- 2026-02-21: Added `strict_values.parse_bool_value(...)` and wired orchestrator reload fingerprint streaming fields to strict bool parsing (`codex_core_streaming` / `core_streaming_enabled`) to remove permissive truthy coercion traps.
+- 2026-02-21: Added `strict_values.parse_int_value(...)` for fail-loud integer parsing (used by runtime/services paths that previously coerced malformed numeric settings silently).
+- 2026-02-21: `InferenceOrchestrator` generation-signature and reload-fingerprint surfaces are now aligned (`generation_signature` embeds `reload_fingerprint`), and invalid load-affecting engine options fail loud with `EngineLoadError` (no blanket swallow around fingerprint parsing).
+- 2026-02-21: `InferenceOrchestrator._purge_vram(...)` now fails loud on cleanup errors (cached-engine unload/memory-manager failures), and load-failure paths surface additive cleanup failure context instead of warning-only degradation.
+- 2026-02-21: `InferenceOrchestrator.run(...)` now preserves error taxonomy on strict preflight/cleanup paths: pre-load purge/preflight failures are wrapped as `EngineLoadError`, and execution-path purge failures still return `EngineExecutionError` with additive cleanup context.

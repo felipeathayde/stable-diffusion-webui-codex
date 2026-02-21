@@ -688,10 +688,12 @@ def _resolve_stage_text_embeddings(
             f"(prompt={tuple(prompt_embeds.shape)} negative={tuple(negative_embeds.shape)} expected_batch=2)."
         )
 
-    high_prompt_embeds = prompt_embeds[0:1].to(device=dev, dtype=dt)
-    high_negative_embeds = negative_embeds[0:1].to(device=dev, dtype=dt)
-    low_prompt_embeds = prompt_embeds[1:2].to(device=dev, dtype=dt)
-    low_negative_embeds = negative_embeds[1:2].to(device=dev, dtype=dt)
+    prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+    negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+    high_prompt_embeds = prompt_embeds[0:1]
+    high_negative_embeds = negative_embeds[0:1]
+    low_prompt_embeds = prompt_embeds[1:2]
+    low_negative_embeds = negative_embeds[1:2]
     return high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds
 
 
@@ -1356,6 +1358,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
                 f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
             )
+        del latents_hi
 
         memory_management.manager.load_model(lo_mm)
         latents_lo = sample_stage_latents(
@@ -1382,11 +1385,13 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             flow_multiplier=flow_multiplier,
             stage_name="low",
         )
+        del seed_lo
         latents_lo_decode = _extract_i2v_decode_latents(
             state=latents_lo,
             latent_channels=latent_channels_lo,
             logger=log,
         )
+        del latents_lo
     finally:
         lo_mm, lo_model = _teardown_stage(
             stage="low",
@@ -1560,6 +1565,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             stage_name="high",
             emit_logs=False,
         )
+        del seed_hi
     finally:
         hi_mm, hi_model = _teardown_stage(
             stage="high",
@@ -1595,6 +1601,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
                 "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
                 f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
             )
+        del latents_hi
 
         memory_management.manager.load_model(lo_mm)
         latents_lo = yield from sample_stage_latents_generator(
@@ -1621,11 +1628,13 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             stage_name="low",
             emit_logs=False,
         )
+        del seed_lo
         latents_lo_decode = _extract_i2v_decode_latents(
             state=latents_lo,
             latent_channels=latent_channels_lo,
             logger=log,
         )
+        del latents_lo
     finally:
         lo_mm, lo_model = _teardown_stage(
             stage="low",
@@ -1852,6 +1861,7 @@ def stream_img2vid_chunked(
         low_decode_paths: list[str] = []
         latent_channels_lo_value: int | None = None
         prev_chunk_tail_latent_cpu: torch.Tensor | None = None
+        chunk_condition_buffer: torch.Tensor | None = None
 
         for chunk_index, _chunk_start in enumerate(chunk_starts):
             chunk_condition = latent_condition_base
@@ -1865,12 +1875,16 @@ def stream_img2vid_chunked(
                     device=latent_condition_base.device,
                     dtype=latent_condition_base.dtype,
                 )
-                chunk_condition = latent_condition_base.clone()
-                chunk_condition[:, :, :1, :, :] = _blend_anchor_latent(
+                if chunk_condition_buffer is None:
+                    chunk_condition_buffer = latent_condition_base.clone()
+                else:
+                    chunk_condition_buffer.copy_(latent_condition_base)
+                chunk_condition_buffer[:, :, :1, :, :] = _blend_anchor_latent(
                     prev_chunk_tail_latent,
                     base_anchor_latent,
                     alpha=anchor_alpha_value,
                 )
+                chunk_condition = chunk_condition_buffer
 
             chunk_seed = _resolve_chunk_seed(getattr(cfg, "seed", None), chunk_index=chunk_index, mode=chunk_seed_mode)
             chunk_scheduler, chunk_total_steps = _build_shared_scheduler(
@@ -2055,21 +2069,23 @@ def stream_img2vid_chunked(
                         "WAN22 GGUF chunked img2vid: low-stage decode latent channel mismatch for anchor continuity "
                         f"(decode_C={int(decode_chunk_latents.shape[1])} anchor_C={int(base_anchor_latent.shape[1])})."
                     )
-                prev_chunk_tail_latent_cpu = decode_chunk_latents[:, :, -1:, :, :].detach().to(device="cpu")
+                decode_chunk_latents_cpu = decode_chunk_latents.detach().to(device="cpu")
+                prev_chunk_tail_latent_cpu = decode_chunk_latents_cpu[:, :, -1:, :, :].clone()
 
                 if low_store_mode == "ram":
-                    low_decode_ram.append(decode_chunk_latents.detach().to(device="cpu"))
+                    low_decode_ram.append(decode_chunk_latents_cpu)
                 else:
                     low_decode_path = os.path.join(spool_dir, f"low_decode_{chunk_index:05d}.pt")
                     _save_chunk_tensor(
                         low_decode_path,
-                        decode_chunk_latents,
+                        decode_chunk_latents_cpu,
                         label=f"low-decode chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}",
                     )
                     low_decode_paths.append(low_decode_path)
                 del seed_lo
                 del latents_lo
                 del decode_chunk_latents
+                del decode_chunk_latents_cpu
             finally:
                 lo_mm, lo_model = _teardown_stage(
                     stage="low",
@@ -2086,6 +2102,8 @@ def stream_img2vid_chunked(
 
         if latent_channels_lo_value is None:
             raise RuntimeError("WAN22 GGUF chunked img2vid: no low-stage chunks were processed.")
+        if chunk_condition_buffer is not None:
+            del chunk_condition_buffer
 
         from PIL import Image
 

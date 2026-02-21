@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22-specific quicksettings selectors.
-Renders WAN model-mode selection (t2v/i2v/v2v + size), LightX2V toggle, stage model dirs (high/low), text encoder, and VAE selectors with “Browse…” actions.
+Renders WAN model-mode selection (t2v/i2v + size), LightX2V toggle, stage model dirs (high/low), text encoder, and VAE selectors with “Browse…” actions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsWan` (component): WAN quicksettings row used by the main quicksettings bar.
@@ -24,7 +24,6 @@ Symbols (top-level; keep in sync; no ghosts):
         <option value="t2v_14b">T2V 14B</option>
         <option value="i2v_5b">I2V 5B</option>
         <option value="t2v_5b">T2V 5B</option>
-        <option value="v2v_14b">V2V 14B</option>
       </select>
     </div>
   </div>

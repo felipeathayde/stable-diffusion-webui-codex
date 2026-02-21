@@ -256,16 +256,23 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "hunyuan_video": SemanticEngine.HUNYUAN_VIDEO,
 }
 
-_SEMANTIC_ENGINE_PRIMARY_FAMILY: Dict[SemanticEngine, ModelFamily] = {
-    SemanticEngine.SD15: ModelFamily.SD15,
-    SemanticEngine.SDXL: ModelFamily.SDXL,
-    SemanticEngine.FLUX: ModelFamily.FLUX,
-    SemanticEngine.CHROMA: ModelFamily.CHROMA,
-    SemanticEngine.ZIMAGE: ModelFamily.ZIMAGE,
-    SemanticEngine.ANIMA: ModelFamily.ANIMA,
-    SemanticEngine.WAN22: ModelFamily.WAN22_5B,
-    SemanticEngine.HUNYUAN_VIDEO: ModelFamily.HUNYUAN,
-    SemanticEngine.SVD: ModelFamily.SVD,
+_ENGINE_ID_PRIMARY_FAMILY: Dict[str, ModelFamily] = {
+    "sd15": ModelFamily.SD15,
+    "sd20": ModelFamily.SD20,
+    "sdxl": ModelFamily.SDXL,
+    "sdxl_refiner": ModelFamily.SDXL_REFINER,
+    "sd35": ModelFamily.SD35,
+    "flux1": ModelFamily.FLUX,
+    "flux1_kontext": ModelFamily.FLUX_KONTEXT,
+    "flux1_fill": ModelFamily.FLUX,
+    "flux1_chroma": ModelFamily.CHROMA,
+    "zimage": ModelFamily.ZIMAGE,
+    "anima": ModelFamily.ANIMA,
+    "wan22_5b": ModelFamily.WAN22_5B,
+    "wan22_14b": ModelFamily.WAN22_14B,
+    "wan22_14b_animate": ModelFamily.WAN22_ANIMATE,
+    "hunyuan_video": ModelFamily.HUNYUAN,
+    "svd": ModelFamily.SVD,
 }
 
 
@@ -286,10 +293,12 @@ def semantic_engine_for_engine_id(engine_id: str) -> SemanticEngine:
 def engine_supports_cfg(engine_id: str) -> bool:
     from apps.backend.runtime.model_registry.family_runtime import get_family_spec
 
-    semantic = semantic_engine_for_engine_id(engine_id)
-    family = _SEMANTIC_ENGINE_PRIMARY_FAMILY.get(semantic)
+    normalized = str(engine_id or "").strip()
+    if normalized == "":
+        raise KeyError("Engine id is empty.")
+    family = _ENGINE_ID_PRIMARY_FAMILY.get(normalized)
     if family is None:
-        raise KeyError(f"No primary family mapping for semantic engine {semantic.value!r}.")
+        raise KeyError(f"No primary family mapping for engine id {normalized!r}.")
     spec = get_family_spec(family)
     return bool(spec.capabilities.supports_cfg)
 

@@ -11,7 +11,7 @@ Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
 Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`, `CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) from resolved runtime namespace values.
-Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid `codex_attention_backend`.
+Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid reliability-critical values (including `codex_attention_backend` and checkbox settings).
 Launcher/backend trace toggles (`--trace-contract`, `--trace-profiler`) are published via bootstrap env for runtime diagnostics modules.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -57,6 +57,7 @@ from apps.backend.infra.config import args as config_args
 from apps.backend.runtime.diagnostics.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.memory import memory_management as mem_management
 from apps.backend.runtime.models import api as model_api
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.logging import get_backend_logger
 
@@ -410,11 +411,13 @@ def build_app() -> FastAPI:
                     if isinstance(hi, (int, float)) and v > hi:
                         saved[k] = hi
                         changed = True
-                if getattr(f, 'type', None) == _SettingType.CHECKBOX and isinstance(saved[k], str):
-                    saved[k] = saved[k].lower() in ('1','true','yes','on')
-                    changed = True
+                if getattr(f, 'type', None) == _SettingType.CHECKBOX:
+                    parsed_checkbox = parse_bool_value(saved[k], field=f"settings_values.{k}")
+                    if not isinstance(saved[k], bool) or parsed_checkbox is not saved[k]:
+                        saved[k] = parsed_checkbox
+                        changed = True
             except Exception:
-                if k == "codex_attention_backend":
+                if k == "codex_attention_backend" or getattr(f, 'type', None) == _SettingType.CHECKBOX:
                     raise
                 dropped.append(k)
                 saved.pop(k, None)

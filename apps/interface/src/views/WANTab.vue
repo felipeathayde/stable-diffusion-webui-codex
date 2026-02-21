@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
+Purpose: WAN video generation tab (txt2vid/img2vid) UI.
 Owns per-stage prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
 renders progress/results via task events (frames and/or exported video), with Run progress shown through the shared
 `RunProgressStatus` block (`Stage/Progress/Step/ETA` + queue metadata).
@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
 - `AspectMode` (type): Aspect ratio mode presets for width/height controls.
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
-- `defaultVideo` (function): Returns default video params (dims/init media fields) for new tabs/resets.
+- `defaultVideo` (function): Returns default video params (dims/init-image/output/interpolation fields) for new tabs/resets.
 - `defaultAssets` (function): Returns default (empty) assets selection.
 - `normalizeFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes UI attention mode values (`global|sliding`).
@@ -43,8 +43,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `clearInit` (function): Clears init image fields.
 - `normalizeVideoBeforeSubmit` (function): Normalizes width/height/frames before Generate/Queue dispatch.
 - `onGenerateClick` (function): Starts a generation run for the current input mode (builds payload, submits, and wires streaming) (async).
-- `onInitVideoFile` (function): Handles vid2vid init-video selection and preview state.
-- `clearInitVideo` (function): Clears init video selection/preview state.
 - `clampNumber` (function): Clamps a numeric value to `[min, max]`.
 - `computeGuidedTooltipPosition` (function): Computes tooltip position for guided-generation overlay based on current highlight rect.
 - `isFocusable` (function): Type guard for focusable DOM elements.
@@ -76,6 +74,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `applyHeight` (function): Applies height updates (snapping + aspect-mode handling).
 - `sendToWorkflows` (function): Sends the current snapshot into the workflows subsystem (async).
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
+- `formatVideoModeLabel` (function): Returns a user-facing mode label, preserving unsupported/unknown modes explicitly.
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
 - `readHistorySnapshotText` (function): Reads legacy root-level prompt text from a history snapshot.
 - `readHistoryStageSnapshotText` (function): Reads stage-scoped prompt text (`high/low`) from a history snapshot.
@@ -131,12 +130,12 @@ Symbols (top-level; keep in sync; no ghosts):
             <LoraModal v-model="showLowPromptLoraModal" @insert="onLowPromptLoraInsert" />
           </div>
 
-        <div v-if="mode !== 'txt2vid'" class="gen-card">
+        <div v-if="mode === 'img2vid'" class="gen-card">
           <div class="row-split">
             <span class="label-muted">Input</span>
             <span class="caption">Mode is set in QuickSettings.</span>
           </div>
-          <div v-if="mode === 'img2vid'" id="wan-guided-init-image" class="mt-2">
+          <div id="wan-guided-init-image" class="mt-2">
             <Img2ImgInpaintParamsCard
               embedded
               :disabled="isRunning"
@@ -161,30 +160,6 @@ Symbols (top-level; keep in sync; no ghosts):
               @clear:initImage="clearInit"
               @reject:initImage="onInitImageRejected"
             />
-          </div>
-          <div v-else id="wan-guided-init-video" class="mt-2">
-            <InitialVideoCard
-              label="Video"
-              :disabled="isRunning"
-              :src="initVideoPreviewUrl"
-              :hasVideo="Boolean(initVideoPreviewUrl)"
-              @set="onInitVideoFile"
-              @clear="clearInitVideo"
-            >
-              <template #footer>
-                <div class="cdx-form-grid mt-2">
-                  <div>
-                    <label class="label-muted">Video path (optional)</label>
-                    <input class="ui-input" type="text" :disabled="isRunning" :value="video.initVideoPath" placeholder="relative/path/to/video.mp4" @change="setVideo({ initVideoPath: ($event.target as HTMLInputElement).value })" />
-                    <p class="caption mt-1">Paths are restricted server-side; upload is recommended.</p>
-                  </div>
-                  <div>
-                    <label class="label-muted">Selected file</label>
-                    <div class="caption break-words">{{ video.initVideoName || 'None' }}</div>
-                  </div>
-                </div>
-              </template>
-            </InitialVideoCard>
           </div>
         </div>
 
@@ -420,80 +395,6 @@ Symbols (top-level; keep in sync; no ghosts):
           <div class="gen-card">
             <WanSubHeader title="Video Output" />
             <WanVideoOutputPanel embedded :video="video" :disabled="isRunning" @update:video="setVideo" />
-          </div>
-
-          <div v-if="mode === 'vid2vid'" class="gen-card">
-            <WanSubHeader title="Video2Video" />
-            <div class="gc-row">
-              <div class="gc-col">
-                <label class="label-muted">Strength</label>
-                <input class="ui-input" type="number" min="0" max="1" step="0.05" :disabled="isRunning" :value="video.vid2vidStrength" @change="setVideo({ vid2vidStrength: Number(($event.target as HTMLInputElement).value) })" />
-                <p class="caption mt-1">Higher = more change. Lower = closer to source video.</p>
-              </div>
-              <div class="gc-col">
-                <label class="label-muted">Method</label>
-                <select class="select-md" :disabled="isRunning" :value="video.vid2vidMethod" @change="setVideo({ vid2vidMethod: (($event.target as HTMLSelectElement).value === 'native' ? 'native' : 'flow_chunks') })">
-                  <option value="flow_chunks">Flow chunks (GGUF-friendly)</option>
-                  <option value="native">Native (Diffusers video input)</option>
-                </select>
-              </div>
-              <div class="gc-col">
-                <label class="label-muted">Chunk Frames</label>
-                <input class="ui-input" type="number" min="2" max="128" :disabled="isRunning" :value="video.vid2vidChunkFrames" @change="setVideo({ vid2vidChunkFrames: toInt($event, video.vid2vidChunkFrames) })" />
-              </div>
-              <div class="gc-col">
-                <label class="label-muted">Overlap</label>
-                <input class="ui-input" type="number" min="0" max="127" :disabled="isRunning" :value="video.vid2vidOverlapFrames" @change="setVideo({ vid2vidOverlapFrames: toInt($event, video.vid2vidOverlapFrames) })" />
-              </div>
-            </div>
-            <div class="cdx-form-row">
-              <button
-                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.vid2vidUseSourceFps ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :disabled="isRunning"
-                :aria-pressed="video.vid2vidUseSourceFps"
-                @click="setVideo({ vid2vidUseSourceFps: !video.vid2vidUseSourceFps })"
-              >
-                Use source FPS
-              </button>
-              <button
-                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.vid2vidUseSourceFrames ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :disabled="isRunning"
-                :aria-pressed="video.vid2vidUseSourceFrames"
-                @click="setVideo({ vid2vidUseSourceFrames: !video.vid2vidUseSourceFrames })"
-              >
-                Use source length
-              </button>
-              <button
-                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.vid2vidFlowEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :disabled="isRunning"
-                :aria-pressed="video.vid2vidFlowEnabled"
-                @click="setVideo({ vid2vidFlowEnabled: !video.vid2vidFlowEnabled })"
-              >
-                Optical flow
-              </button>
-            </div>
-            <div v-if="video.vid2vidFlowEnabled" class="gc-row">
-              <div class="gc-col">
-                <label class="label-muted">Flow downscale</label>
-                <input class="ui-input" type="number" min="1" max="8" :disabled="isRunning" :value="video.vid2vidFlowDownscale" @change="setVideo({ vid2vidFlowDownscale: toInt($event, video.vid2vidFlowDownscale) })" />
-                <p class="caption mt-1">Higher = faster/rougher. 2 is a good default.</p>
-              </div>
-              <div class="gc-col">
-                <label class="label-muted">Model</label>
-                <select class="select-md" :disabled="isRunning" :value="video.vid2vidFlowUseLarge ? 'large' : 'small'" @change="setVideo({ vid2vidFlowUseLarge: (($event.target as HTMLSelectElement).value === 'large') })">
-                  <option value="small">RAFT small</option>
-                  <option value="large">RAFT large</option>
-                </select>
-              </div>
-              <div class="gc-col">
-                <label class="label-muted">Preview frames</label>
-                <input class="ui-input" type="number" min="1" max="512" :disabled="isRunning" :value="video.vid2vidPreviewFrames" @change="setVideo({ vid2vidPreviewFrames: toInt($event, video.vid2vidPreviewFrames) })" />
-                <p class="caption mt-1">UI preview only; full video is exported to disk.</p>
-              </div>
-            </div>
           </div>
 
           <div id="wan-guided-high-stage" class="gen-card">
@@ -764,10 +665,9 @@ Symbols (top-level; keep in sync; no ghosts):
 	import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
 	import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 	import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
-	import { fetchSamplers, fetchSchedulers } from '../api/client'
+import { fetchSamplers, fetchSchedulers } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
-import InitialVideoCard from '../components/InitialVideoCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'
@@ -839,19 +739,6 @@ function defaultVideo(): WanVideoParams {
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
-    useInitVideo: false,
-    initVideoPath: '',
-    initVideoName: '',
-    vid2vidStrength: 0.8,
-    vid2vidMethod: 'flow_chunks',
-    vid2vidUseSourceFps: true,
-    vid2vidUseSourceFrames: true,
-    vid2vidChunkFrames: 16,
-    vid2vidOverlapFrames: 4,
-    vid2vidPreviewFrames: 48,
-    vid2vidFlowEnabled: true,
-    vid2vidFlowUseLarge: false,
-    vid2vidFlowDownscale: 2,
     filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
@@ -1147,8 +1034,6 @@ const {
   queueMax,
   enqueue,
   clearQueue,
-  setInitVideoFile,
-  clearInitVideoFile,
   resumeNotice,
 } = useVideoGeneration(props.tabId)
 
@@ -1193,32 +1078,6 @@ async function onGenerateClick(): Promise<void> {
   await generate()
 }
 
-const initVideoPreviewUrl = ref('')
-
-function onInitVideoFile(file: File): void {
-  try {
-    if (initVideoPreviewUrl.value) URL.revokeObjectURL(initVideoPreviewUrl.value)
-  } catch { /* ignore */ }
-  initVideoPreviewUrl.value = URL.createObjectURL(file)
-  setInitVideoFile(file)
-  setVideo({ useInitVideo: true, initVideoName: file.name, initVideoPath: '' })
-}
-
-function clearInitVideo(): void {
-  clearInitVideoFile()
-  try {
-    if (initVideoPreviewUrl.value) URL.revokeObjectURL(initVideoPreviewUrl.value)
-  } catch { /* ignore */ }
-  initVideoPreviewUrl.value = ''
-  setVideo({ initVideoName: '', initVideoPath: '' })
-}
-
-onBeforeUnmount(() => {
-  try {
-    if (initVideoPreviewUrl.value) URL.revokeObjectURL(initVideoPreviewUrl.value)
-  } catch { /* ignore */ }
-})
-
 const { notice: copyNotice, toast, copyJson, formatJson } = useResultsCard()
 const historyDetailsOpen = ref(false)
 const historyDetailsItem = ref<VideoRunHistoryItem | null>(null)
@@ -1231,9 +1090,7 @@ const historyDetailsCreatedAtLabel = computed(() => {
 })
 const historyDetailsModeLabel = computed(() => {
   const mode = historyDetailsItem.value?.mode
-  if (mode === 'vid2vid') return 'Vid2Vid'
-  if (mode === 'img2vid') return 'Img2Vid'
-  return 'Txt2Vid'
+  return formatVideoModeLabel(mode)
 })
 const historyDetailsImageUrl = computed(() => {
   const thumbnail = historyDetailsItem.value?.thumbnail
@@ -1471,19 +1328,6 @@ const guidedSteps = computed<GuidedStep[]>(() => {
     return steps
   }
 
-  if (mode.value === 'vid2vid') {
-    const path = String(video.value.initVideoPath || '').trim()
-    const hasFile = Boolean(initVideoPreviewUrl.value) || Boolean(video.value.initVideoName)
-    if (!hasFile && !path) {
-      steps.push({
-        id: 'init_video',
-        message: 'Video mode needs an input video. Upload a file (or provide a path).',
-        selector: '#wan-guided-init-video',
-      })
-      return steps
-    }
-  }
-
   return steps
 })
 
@@ -1546,20 +1390,13 @@ onBeforeUnmount(() => {
   stopGuided()
 })
 
-function setInputMode(next: 'txt2vid' | 'img2vid' | 'vid2vid'): void {
+function setInputMode(next: 'txt2vid' | 'img2vid'): void {
   if (isRunning.value) return
   if (next === 'txt2vid') {
-    clearInitVideo()
-    setVideo({ useInitVideo: false, initVideoName: '', initVideoPath: '', useInitImage: false, initImageData: '', initImageName: '' })
+    setVideo({ useInitImage: false, initImageData: '', initImageName: '' })
     return
   }
-  if (next === 'img2vid') {
-    clearInitVideo()
-    setVideo({ useInitVideo: false, initVideoName: '', initVideoPath: '', useInitImage: true })
-    return
-  }
-  // vid2vid
-  setVideo({ useInitVideo: true, useInitImage: false, initImageData: '', initImageName: '' })
+  setVideo({ useInitImage: true })
 }
 
 const durationLabel = computed(() => {
@@ -1579,10 +1416,8 @@ const runSummary = computed(() => {
 
 function buildCurrentSnapshot(): Record<string, unknown> {
   return {
-    mode: video.value.useInitVideo ? 'vid2vid' : (video.value.useInitImage ? 'img2vid' : 'txt2vid'),
+    mode: video.value.useInitImage ? 'img2vid' : 'txt2vid',
     initImageName: video.value.initImageName || '',
-    initVideoName: video.value.initVideoName || '',
-    initVideoPath: video.value.initVideoPath || '',
     attentionMode: video.value.attentionMode,
     img2vid: {
       enabled: video.value.img2vidChunkingEnabled,
@@ -1590,18 +1425,6 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       overlapFrames: video.value.img2vidOverlapFrames,
       anchorAlpha: video.value.img2vidAnchorAlpha,
       chunkSeedMode: video.value.img2vidChunkSeedMode,
-    },
-    vid2vid: {
-      strength: video.value.vid2vidStrength,
-      method: video.value.vid2vidMethod,
-      useSourceFps: video.value.vid2vidUseSourceFps,
-      useSourceFrames: video.value.vid2vidUseSourceFrames,
-      chunkFrames: video.value.vid2vidChunkFrames,
-      overlapFrames: video.value.vid2vidOverlapFrames,
-      previewFrames: video.value.vid2vidPreviewFrames,
-      flowEnabled: video.value.vid2vidFlowEnabled,
-      flowUseLarge: video.value.vid2vidFlowUseLarge,
-      flowDownscale: video.value.vid2vidFlowDownscale,
     },
     width: video.value.width,
     height: video.value.height,
@@ -1708,13 +1531,16 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const snap = isRecord(item.paramsSnapshot) ? item.paramsSnapshot : {}
 
   const rawMode = String(snap.mode || '').toLowerCase()
-  const nextMode: 'txt2vid' | 'img2vid' | 'vid2vid' = rawMode === 'vid2vid' ? 'vid2vid' : (rawMode === 'img2vid' ? 'img2vid' : 'txt2vid')
+  if (rawMode !== '' && rawMode !== 'txt2vid' && rawMode !== 'img2vid') {
+    toast(`Unsupported history mode '${rawMode}'. This run cannot be applied.`)
+    return
+  }
+  const nextMode: 'txt2vid' | 'img2vid' = rawMode === 'img2vid' ? 'img2vid' : 'txt2vid'
   setInputMode(nextMode)
 
   const output = isRecord(snap.output) ? snap.output : {}
   const interpolation = isRecord(snap.interpolation) ? snap.interpolation : {}
   const i2v = isRecord(snap.img2vid) ? snap.img2vid : {}
-  const v2v = isRecord(snap.vid2vid) ? snap.vid2vid : {}
   const hasSnapshotChunkFrames = typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames)
   const nextChunkingEnabled = typeof i2v.enabled === 'boolean'
     ? Boolean(i2v.enabled)
@@ -1727,22 +1553,10 @@ function applyHistory(item: VideoRunHistoryItem): void {
     fps: Number(snap.fps) || video.value.fps,
     attentionMode: normalizeAttentionMode(snap.attentionMode),
     img2vidChunkingEnabled: nextChunkingEnabled,
-    initVideoName: String(snap.initVideoName || video.value.initVideoName),
-    initVideoPath: String(snap.initVideoPath || video.value.initVideoPath),
     img2vidChunkFrames: typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) ? Number(i2v.chunkFrames) : video.value.img2vidChunkFrames,
     img2vidOverlapFrames: typeof i2v.overlapFrames === 'number' && Number.isFinite(i2v.overlapFrames) ? Number(i2v.overlapFrames) : video.value.img2vidOverlapFrames,
     img2vidAnchorAlpha: typeof i2v.anchorAlpha === 'number' && Number.isFinite(i2v.anchorAlpha) ? Number(i2v.anchorAlpha) : video.value.img2vidAnchorAlpha,
     img2vidChunkSeedMode: normalizeChunkSeedMode(i2v.chunkSeedMode),
-    vid2vidStrength: typeof v2v.strength === 'number' && Number.isFinite(v2v.strength) ? Number(v2v.strength) : video.value.vid2vidStrength,
-    vid2vidMethod: (String(v2v.method || '').toLowerCase() === 'native' ? 'native' : 'flow_chunks'),
-    vid2vidUseSourceFps: typeof v2v.useSourceFps === 'boolean' ? Boolean(v2v.useSourceFps) : video.value.vid2vidUseSourceFps,
-    vid2vidUseSourceFrames: typeof v2v.useSourceFrames === 'boolean' ? Boolean(v2v.useSourceFrames) : video.value.vid2vidUseSourceFrames,
-    vid2vidChunkFrames: typeof v2v.chunkFrames === 'number' && Number.isFinite(v2v.chunkFrames) ? Number(v2v.chunkFrames) : video.value.vid2vidChunkFrames,
-    vid2vidOverlapFrames: typeof v2v.overlapFrames === 'number' && Number.isFinite(v2v.overlapFrames) ? Number(v2v.overlapFrames) : video.value.vid2vidOverlapFrames,
-    vid2vidPreviewFrames: typeof v2v.previewFrames === 'number' && Number.isFinite(v2v.previewFrames) ? Number(v2v.previewFrames) : video.value.vid2vidPreviewFrames,
-    vid2vidFlowEnabled: typeof v2v.flowEnabled === 'boolean' ? Boolean(v2v.flowEnabled) : video.value.vid2vidFlowEnabled,
-    vid2vidFlowUseLarge: typeof v2v.flowUseLarge === 'boolean' ? Boolean(v2v.flowUseLarge) : video.value.vid2vidFlowUseLarge,
-    vid2vidFlowDownscale: typeof v2v.flowDownscale === 'number' && Number.isFinite(v2v.flowDownscale) ? Number(v2v.flowDownscale) : video.value.vid2vidFlowDownscale,
     filenamePrefix: String(output.filenamePrefix || video.value.filenamePrefix),
     format: String(output.format || video.value.format),
     pixFmt: String(output.pixFmt || video.value.pixFmt),
@@ -2032,12 +1846,17 @@ async function sendToWorkflows(): Promise<void> {
 
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 
+function formatVideoModeLabel(mode: unknown): string {
+  const normalized = String(mode ?? '').trim().toLowerCase()
+  if (normalized === 'img2vid') return 'Img2Vid'
+  if (normalized === 'txt2vid') return 'Txt2Vid'
+  return `Unsupported (${normalized || 'unknown'})`
+}
+
 function formatHistoryTitle(item: VideoRunHistoryItem): string {
   const dt = new Date(item.createdAtMs || Date.now())
   const hh = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  const label = item.mode === 'vid2vid'
-    ? 'Vid2Vid'
-    : (item.mode === 'img2vid' ? 'Img2Vid' : 'Txt2Vid')
+  const label = formatVideoModeLabel(item.mode)
   return `${label} · ${hh}`
 }
 

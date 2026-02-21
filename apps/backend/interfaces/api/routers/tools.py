@@ -29,6 +29,8 @@ from typing import Any, Dict, Final
 
 from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 
+from apps.backend.core.strict_values import parse_bool_value
+
 
 def build_router(*, codex_root: Path) -> APIRouter:
     router = APIRouter()
@@ -282,7 +284,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
         config_path = payload.get("config_path", "")
         safetensors_path = payload.get("safetensors_path", "")
         output_path = payload.get("output_path", "")
-        overwrite = bool(payload.get("overwrite", False))
+        try:
+            overwrite = parse_bool_value(payload.get("overwrite"), field="overwrite", default=False)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         comfy_layout_raw = payload.get("comfy_layout", True)
         codexpack_v1_raw = payload.get("codexpack_v1", False)
         quant_str = payload.get("quantization", "F16")
@@ -690,7 +695,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
         src_gguf_path = str(payload.get("src_gguf_path") or "").strip()
         output_path = str(payload.get("output_path") or "").strip()
-        overwrite = bool(payload.get("overwrite", False))
+        try:
+            overwrite = parse_bool_value(payload.get("overwrite"), field="overwrite", default=False)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not src_gguf_path or not output_path:
             raise HTTPException(status_code=400, detail="Missing required paths")
 
@@ -714,7 +722,14 @@ def build_router(*, codex_root: Path) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Failed to read GGUF metadata: {exc}") from exc
 
-        comfy_layout = bool(meta.get("codex.converter.comfy_layout", False))
+        try:
+            comfy_layout = parse_bool_value(
+                meta.get("codex.converter.comfy_layout"),
+                field="metadata.codex.converter.comfy_layout",
+                default=False,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         variant = str(meta.get("codex.zimage.variant") or "").strip().lower()
         arch = str(meta.get("model.architecture") or "").strip().lower()
         quant = str(meta.get("gguf.quantization") or "").strip().upper()

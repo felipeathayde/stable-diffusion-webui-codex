@@ -37,6 +37,7 @@ from typing import Any, Callable, Mapping, Optional
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
 from apps.backend.interfaces.api.public_errors import public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, unregister_task
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.runtime.diagnostics.contract_trace import error_meta
 from apps.backend.runtime.diagnostics.contract_trace import emit_event as emit_contract_trace
 from apps.backend.runtime.diagnostics.contract_trace import hash_request_prompt
@@ -121,7 +122,12 @@ def build_engine_options(*, req: Any, opts_snapshot: Callable[[], Any]) -> dict[
 
     # Pass streaming option from settings to engine (no model-part fallbacks).
     snap = opts_snapshot()
-    if getattr(snap, "codex_core_streaming", False):
+    core_streaming_enabled = parse_bool_value(
+        getattr(snap, "codex_core_streaming", None),
+        field="options.codex_core_streaming",
+        default=False,
+    )
+    if core_streaming_enabled:
         engine_options["codex_core_streaming"] = True
 
     return engine_options
@@ -611,7 +617,11 @@ def run_image_task(
                             info_obj.setdefault(key, value)
                     png_metadata = _build_png_metadata(info_obj, generation_provenance=generation_provenance)
 
-                    if bool(opts_get("samples_save", True)):
+                    if parse_bool_value(
+                        opts_get("samples_save", True),
+                        field="options.samples_save",
+                        default=True,
+                    ):
                         save_generated_images(
                             payload_obj.get("images", []),
                             task=task_type,

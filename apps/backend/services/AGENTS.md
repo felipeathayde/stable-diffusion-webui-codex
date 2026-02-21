@@ -1,6 +1,6 @@
 # apps/backend/services Overview
 Date: 2025-10-28
-Last Review: 2026-02-15
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -22,3 +22,5 @@ Status: Active
 - 2026-01-24: `options_store.py` now only exposes the minimal, registry-backed options surface (global defaults + smart flags + memory overrides); unknown keys are pruned from `apps/settings_values.json` at backend startup.
 - 2026-01-24: `live_preview_service.py` no longer mutates `os.environ` to apply per-task preview settings; API worker threads use `LivePreviewTaskConfig.runtime_overrides()` (thread-local) around sampling.
 - 2026-02-15: `options_store.py` now maintains `codex_options_revision` as persisted source-of-truth for generation contract checks; revision increments on option writes and is surfaced through options snapshots/API.
+- 2026-02-21: `options_store.py` and `live_preview_service.py` now parse boolean options strictly (`true/false/1/0/yes/no/on/off`) and fail loud on invalid persisted values instead of permissive Python truthiness (e.g. `"false"` no longer coerces to `True`).
+- 2026-02-21: `live_preview_service.py` now parses `show_progress_every_n_steps` via shared strict integer parsing and raises on malformed/negative values (no silent fallback to `0` that disabled previews implicitly).

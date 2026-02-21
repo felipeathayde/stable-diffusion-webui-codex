@@ -276,6 +276,41 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=f"'{key}' must be a boolean")
         return value
 
+    def _optional_video_interpolation_field(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if "video_interpolation" not in payload:
+            return None
+        raw = payload.get("video_interpolation")
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="'video_interpolation' must be an object when provided")
+        _reject_unknown_keys(raw, {"enabled", "model", "times"}, "video_interpolation")
+
+        if "enabled" not in raw:
+            raise HTTPException(status_code=400, detail="'video_interpolation.enabled' is required when video_interpolation is provided")
+        enabled = raw.get("enabled")
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=400, detail="'video_interpolation.enabled' must be a boolean")
+
+        normalized: Dict[str, Any] = {"enabled": enabled}
+        model_raw = raw.get("model")
+        if model_raw is not None:
+            if not isinstance(model_raw, str):
+                raise HTTPException(status_code=400, detail="'video_interpolation.model' must be a string when provided")
+            model = model_raw.strip()
+            normalized["model"] = model if model else None
+
+        times_raw = raw.get("times")
+        if times_raw is not None:
+            if isinstance(times_raw, bool) or not isinstance(times_raw, int):
+                raise HTTPException(status_code=400, detail="'video_interpolation.times' must be an integer when provided")
+            times_value = int(times_raw)
+            if times_value < 2:
+                raise HTTPException(status_code=400, detail="'video_interpolation.times' must be >= 2 when provided")
+            normalized["times"] = times_value
+
+        return normalized
+
 
     def _require_options_bool(options_snapshot: Any, key: str) -> bool:
         value = getattr(options_snapshot, key, False)
@@ -1511,18 +1546,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _reject_not_implemented_engine(engine_key, field_name="engine")
         model_ref = model_override
 
-        prompt = _p.require(payload, 'img2img_prompt') or ''
-        negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
+        prompt = _require_str_field(payload, "img2img_prompt", allow_empty=True)
+        negative_prompt = _require_str_field(payload, "img2img_neg_prompt", allow_empty=True)
         _validate_prompt_sampler_controls(
             engine_key=engine_key,
             prompt=str(prompt),
             field_name="img2img_prompt",
         )
         styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
-        batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
-        batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
+        batch_count = _require_int_field(payload, "img2img_batch_count", minimum=1) if "img2img_batch_count" in payload else 1
+        batch_size = _require_int_field(payload, "img2img_batch_size", minimum=1) if "img2img_batch_size" in payload else 1
         if 'img2img_steps' in payload:
-            steps_val = _p.as_int(payload, 'img2img_steps')
+            steps_val = _require_int_field(payload, "img2img_steps", minimum=1)
         else:
             raise HTTPException(status_code=400, detail="'img2img_steps' is required")
 
@@ -1557,20 +1592,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             return int(((value + 4) // 8) * 8)
 
         if 'img2img_width' in payload:
-            width_val = _p.as_int(payload, 'img2img_width')
+            width_val = _require_int_field(payload, "img2img_width", minimum=8, maximum=8192)
         else:
             width_val = _snap_dim(int(init_w) if init_w else 0)
             if not width_val:
                 raise HTTPException(status_code=400, detail="'img2img_width' is required")
 
         if 'img2img_height' in payload:
-            height_val = _p.as_int(payload, 'img2img_height')
+            height_val = _require_int_field(payload, "img2img_height", minimum=8, maximum=8192)
         else:
             height_val = _snap_dim(int(init_h) if init_h else 0)
             if not height_val:
                 raise HTTPException(status_code=400, detail="'img2img_height' is required")
-        sampler_name = str(_p.require(payload, 'img2img_sampling'))
-        scheduler_name = str(_p.require(payload, 'img2img_scheduler'))
+        sampler_name = _require_str_field(payload, "img2img_sampling")
+        scheduler_name = _require_str_field(payload, "img2img_scheduler")
         _validate_er_sde_release_scope(
             engine_key=engine_key,
             sampler=sampler_name,
@@ -1603,11 +1638,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid sampler/scheduler configuration"),
             ) from exc
-        seed_val = _p.as_int(payload, 'img2img_seed')
-        clip_skip = _p.as_int(payload, 'img2img_clip_skip') if 'img2img_clip_skip' in payload else None
-        if clip_skip is not None:
-            if clip_skip < 0 or clip_skip > 12:
-                raise HTTPException(status_code=400, detail="'img2img_clip_skip' must be in [0, 12]")
+        seed_val = _require_int_field(payload, "img2img_seed")
+        clip_skip = _require_int_field(payload, "img2img_clip_skip", minimum=0, maximum=12) if "img2img_clip_skip" in payload else None
         noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
         ensd_raw = payload.get('img2img_eta_noise_seed_delta')
 
@@ -1648,14 +1680,27 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         default_seed: int,
         default_cfg_scale: float,
     ) -> _VideoCoreDTO:
-        prompt = payload.get(f'{task_prefix}_prompt', '')
-        negative_prompt = payload.get(f'{task_prefix}_neg_prompt', '')
-        width_val = int(payload.get(f'{task_prefix}_width', default_width))
-        height_val = int(payload.get(f'{task_prefix}_height', default_height))
+        prompt_key = f"{task_prefix}_prompt"
+        negative_prompt_key = f"{task_prefix}_neg_prompt"
+        width_key = f"{task_prefix}_width"
+        height_key = f"{task_prefix}_height"
+        steps_key = f"{task_prefix}_steps"
+        fps_key = f"{task_prefix}_fps"
+        frames_key = f"{task_prefix}_num_frames"
+        sampler_key = f"{task_prefix}_sampler"
+        sampler_legacy_key = f"{task_prefix}_sampling"
+        scheduler_key = f"{task_prefix}_scheduler"
+        seed_key = f"{task_prefix}_seed"
+        cfg_key = f"{task_prefix}_cfg_scale"
+
+        prompt = _require_str_field(payload, prompt_key, allow_empty=True) if prompt_key in payload else ""
+        negative_prompt = _require_str_field(payload, negative_prompt_key, allow_empty=True) if negative_prompt_key in payload else ""
+        width_val = _require_int_field(payload, width_key, minimum=16, maximum=8192) if width_key in payload else int(default_width)
+        height_val = _require_int_field(payload, height_key, minimum=16, maximum=8192) if height_key in payload else int(default_height)
         _wan_require_dims_multiple_of_16(task=task_prefix, width=width_val, height=height_val)
-        steps_val = int(payload.get(f'{task_prefix}_steps', default_steps))
-        fps_val = int(payload.get(f'{task_prefix}_fps', default_fps))
-        frames_val = int(payload.get(f'{task_prefix}_num_frames', default_frames))
+        steps_val = _require_int_field(payload, steps_key, minimum=1) if steps_key in payload else int(default_steps)
+        fps_val = _require_int_field(payload, fps_key, minimum=1) if fps_key in payload else int(default_fps)
+        frames_val = _require_int_field(payload, frames_key, minimum=9, maximum=401) if frames_key in payload else int(default_frames)
         if frames_val < 9 or frames_val > 401:
             raise HTTPException(
                 status_code=400,
@@ -1666,8 +1711,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=f"'{task_prefix}_num_frames' must satisfy 4n+1, got {frames_val}.",
             )
-        sampler_name = str(payload.get(f'{task_prefix}_sampler', payload.get(f'{task_prefix}_sampling', default_sampler)))
-        scheduler_name = str(payload.get(f'{task_prefix}_scheduler', default_scheduler))
+        if sampler_key in payload:
+            sampler_name = _require_str_field(payload, sampler_key)
+        elif sampler_legacy_key in payload:
+            sampler_name = _require_str_field(payload, sampler_legacy_key)
+        else:
+            sampler_name = str(default_sampler)
+        scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else str(default_scheduler)
         try:
             from apps.backend.types.samplers import SamplerKind
             from apps.backend.runtime.sampling.context import SchedulerName
@@ -1680,8 +1730,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid video sampler/scheduler configuration"),
             ) from exc
-        seed_val = int(payload.get(f'{task_prefix}_seed', default_seed))
-        guidance_scale = float(payload.get(f'{task_prefix}_cfg_scale', default_cfg_scale))
+        seed_val = _require_int_field(payload, seed_key) if seed_key in payload else int(default_seed)
+        guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else float(default_cfg_scale)
 
         return _VideoCoreDTO(
             prompt=prompt,
@@ -1929,30 +1979,30 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
 
             if "img2img_inpainting_fill" in payload:
-                inpainting_fill = _p.as_int(payload, "img2img_inpainting_fill")
+                inpainting_fill = _require_int_field(payload, "img2img_inpainting_fill")
             if inpainting_fill not in (0, 1, 2, 3):
                 raise HTTPException(status_code=400, detail="'img2img_inpainting_fill' must be 0,1,2,3")
 
             if "img2img_inpaint_full_res" in payload:
                 inpaint_full_res = _p.as_bool(payload, "img2img_inpaint_full_res")
             if "img2img_inpaint_full_res_padding" in payload:
-                inpaint_full_res_padding = _p.as_int(payload, "img2img_inpaint_full_res_padding")
+                inpaint_full_res_padding = _require_int_field(payload, "img2img_inpaint_full_res_padding")
             if inpaint_full_res_padding < 0:
                 raise HTTPException(status_code=400, detail="'img2img_inpaint_full_res_padding' must be >= 0")
 
             if "img2img_inpainting_mask_invert" in payload:
-                inpainting_mask_invert = _p.as_int(payload, "img2img_inpainting_mask_invert")
+                inpainting_mask_invert = _require_int_field(payload, "img2img_inpainting_mask_invert")
             if inpainting_mask_invert not in (0, 1):
                 raise HTTPException(status_code=400, detail="'img2img_inpainting_mask_invert' must be 0 or 1")
 
             if "img2img_mask_blur" in payload:
-                mask_blur = _p.as_int(payload, "img2img_mask_blur")
+                mask_blur = _require_int_field(payload, "img2img_mask_blur")
                 mask_blur_x = mask_blur
                 mask_blur_y = mask_blur
             if "img2img_mask_blur_x" in payload:
-                mask_blur_x = _p.as_int(payload, "img2img_mask_blur_x")
+                mask_blur_x = _require_int_field(payload, "img2img_mask_blur_x")
             if "img2img_mask_blur_y" in payload:
-                mask_blur_y = _p.as_int(payload, "img2img_mask_blur_y")
+                mask_blur_y = _require_int_field(payload, "img2img_mask_blur_y")
             if mask_blur_x < 0 or mask_blur_y < 0:
                 raise HTTPException(status_code=400, detail="'img2img_mask_blur' must be >= 0")
 
@@ -2040,9 +2090,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             hires_data = {
                 "enable": True,
                 "scale": _require_float_field(payload, 'img2img_hires_scale') if 'img2img_hires_scale' in payload else 1.0,
-                "resize_x": _p.as_int(payload, 'img2img_hires_resize_x') if 'img2img_hires_resize_x' in payload else 0,
-                "resize_y": _p.as_int(payload, 'img2img_hires_resize_y') if 'img2img_hires_resize_y' in payload else 0,
-                "steps": _p.as_int(payload, 'img2img_hires_steps') if 'img2img_hires_steps' in payload else 0,
+                "resize_x": _require_int_field(payload, "img2img_hires_resize_x", minimum=0) if "img2img_hires_resize_x" in payload else 0,
+                "resize_y": _require_int_field(payload, "img2img_hires_resize_y", minimum=0) if "img2img_hires_resize_y" in payload else 0,
+                "steps": _require_int_field(payload, "img2img_hires_steps", minimum=0) if "img2img_hires_steps" in payload else 0,
                 "denoise": _require_float_field(payload, 'img2img_hires_denoise') if 'img2img_hires_denoise' in payload else denoise,
                 "upscaler": payload.get('img2img_hires_upscaler', 'Latent'),
                 "tile": hr_tile,
@@ -2311,8 +2361,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "video_save_output": payload.get("video_save_output"),
                 "video_trim_to_audio": payload.get("video_trim_to_audio"),
             }
-        if isinstance(payload.get('video_interpolation'), dict):
-            extras['video_interpolation'] = payload.get('video_interpolation')
+        video_interpolation = _optional_video_interpolation_field(payload)
+        if video_interpolation is not None:
+            extras["video_interpolation"] = video_interpolation
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
@@ -2524,8 +2575,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "video_save_output": payload.get("video_save_output"),
                 "video_trim_to_audio": payload.get("video_trim_to_audio"),
             }
-        if isinstance(payload.get('video_interpolation'), dict):
-            extras['video_interpolation'] = payload.get('video_interpolation')
+        video_interpolation = _optional_video_interpolation_field(payload)
+        if video_interpolation is not None:
+            extras["video_interpolation"] = video_interpolation
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 

@@ -29,6 +29,7 @@ import logging
 from typing import Any, Mapping, Sequence
 
 from apps.backend.core.params.video import VideoInterpolationOptions
+from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.runtime.adapters.lora import selections as lora_selections
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
@@ -108,10 +109,34 @@ def read_video_interpolation_options(extras: Mapping[str, Any] | None) -> VideoI
     cfg = extras.get("video_interpolation")
     if not isinstance(cfg, Mapping):
         return None
+    model_raw = cfg.get("model")
+    if model_raw is None:
+        model = None
+    else:
+        if not isinstance(model_raw, str):
+            raise RuntimeError(
+                "video_interpolation.model must be a string when provided "
+                f"(got {type(model_raw).__name__})."
+            )
+        model = model_raw.strip() or None
+
+    times_raw = cfg.get("times")
+    if times_raw is None:
+        times = None
+    else:
+        if isinstance(times_raw, bool) or not isinstance(times_raw, int):
+            raise RuntimeError(
+                "video_interpolation.times must be an integer when provided "
+                f"(got {type(times_raw).__name__})."
+            )
+        times = int(times_raw)
+        if times < 2:
+            raise RuntimeError(f"video_interpolation.times must be >= 2 when provided (got {times}).")
+
     return VideoInterpolationOptions(
-        enabled=bool(cfg.get("enabled", False)),
-        model=str(cfg.get("model")) if cfg.get("model") is not None else None,
-        times=int(cfg.get("times")) if cfg.get("times") is not None else None,
+        enabled=parse_bool_value(cfg.get("enabled"), field="video_interpolation.enabled", default=False),
+        model=model,
+        times=times,
     )
 
 
@@ -121,21 +146,23 @@ def apply_video_interpolation(
     options: VideoInterpolationOptions | None,
     logger_: logging.Logger | None = None,
 ) -> tuple[list[Any], dict[str, Any] | None]:
+    frames_list = frames if isinstance(frames, list) else list(frames)
     if options is None:
-        return list(frames), None
+        return frames_list, None
 
     opts = options.as_dict()
     if options.enabled and (options.times or 0) > 1:
         out_frames, meta = maybe_interpolate(
-            frames,
+            frames_list,
             enabled=options.enabled,
             model=options.model,
             times=options.times or 2,
             logger=logger_ if logger_ is not None else logger,
         )
-        return list(out_frames), {**opts, "result": meta}
+        out_list = out_frames if isinstance(out_frames, list) else list(out_frames)
+        return out_list, {**opts, "result": meta}
 
-    return list(frames), opts
+    return frames_list, opts
 
 
 def resolve_video_output_fps(base_fps: int, interpolation_meta: Mapping[str, Any] | None) -> int:
@@ -158,7 +185,11 @@ def resolve_video_output_fps(base_fps: int, interpolation_meta: Mapping[str, Any
 
 
 def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_options: Any, *, task: str) -> Any:
-    save_output = bool(isinstance(video_options, Mapping) and bool(video_options.get("save_output", False)))
+    save_output = parse_bool_value(
+        video_options.get("save_output") if isinstance(video_options, Mapping) else None,
+        field="video_options.save_output",
+        default=False,
+    )
     if not hasattr(engine, "_maybe_export_video"):
         if save_output:
             raise RuntimeError(
@@ -168,7 +199,11 @@ def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_opti
 
     video_meta = engine._maybe_export_video(frames, fps=plan.fps, options=video_options, task=task)  # type: ignore[attr-defined]
     if save_output:
-        saved = bool(isinstance(video_meta, Mapping) and bool(video_meta.get("saved", False)))
+        saved = parse_bool_value(
+            video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
+            field="video_meta.saved",
+            default=False,
+        )
         if not saved:
             reason = ""
             if isinstance(video_meta, Mapping):
@@ -234,17 +269,18 @@ def build_video_result(
     extra: Mapping[str, Any] | None = None,
     video_meta: Any = None,
 ) -> VideoResult:
+    frames_list = frames if isinstance(frames, list) else list(frames)
     metadata = assemble_video_metadata(
         engine,
         plan,
         sampler_outcome,
         elapsed=elapsed,
-        frame_count=len(frames),
+        frame_count=len(frames_list),
         task=task,
         extra=extra,
         video_meta=video_meta,
     )
-    return VideoResult(frames=list(frames), metadata=metadata, video_meta=video_meta)
+    return VideoResult(frames=frames_list, metadata=metadata, video_meta=video_meta)
 
 
 __all__ = [

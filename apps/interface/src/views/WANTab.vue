@@ -229,66 +229,123 @@ Symbols (top-level; keep in sync; no ghosts):
                 <p class="caption mt-1">Global uses full temporal context. Sliding limits attention context to reduce memory/cost.</p>
               </div>
             </div>
-            <div v-if="mode === 'img2vid'" class="gc-row mt-2">
-              <div class="gc-col">
-                <label class="label-muted">Chunk Frames</label>
-                <input
-                  class="ui-input"
-                  type="number"
-                  min="0"
-                  max="401"
-                  step="1"
-                  :disabled="isRunning"
-                  :value="video.img2vidChunkFrames"
-                  @change="setVideo({ img2vidChunkFrames: toInt($event, video.img2vidChunkFrames) })"
-                />
-                <p class="caption mt-1">0 disables chunking. Positive values use overlapping img2vid segments.</p>
-              </div>
-              <div class="gc-col">
-                <label class="label-muted">Overlap</label>
-                <input
-                  class="ui-input"
-                  type="number"
-                  min="0"
-                  max="400"
-                  step="1"
-                  :disabled="isRunning"
-                  :value="video.img2vidOverlapFrames"
-                  @change="setVideo({ img2vidOverlapFrames: toInt($event, video.img2vidOverlapFrames) })"
-                />
-                <p class="caption mt-1">Crossfades chunk seams. Must stay smaller than Chunk Frames.</p>
-              </div>
-              <div class="gc-col">
-                <label class="label-muted" title="How much of the original init image is re-injected at each chunk boundary. 0 = continue from previous output only; 1 = force stronger re-anchor to init image.">
-                  Anchor Alpha
-                </label>
-                <input
-                  class="ui-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  :disabled="isRunning"
-                  :value="video.img2vidAnchorAlpha"
-                  @change="setVideo({ img2vidAnchorAlpha: Number(($event.target as HTMLInputElement).value) })"
-                />
-                <p class="caption mt-1">Controls re-anchoring strength to the init image between chunks.</p>
-              </div>
-              <div class="gc-col">
-                <label class="label-muted" title="How seeds evolve across chunks. Fixed keeps one seed for all chunks. Increment adds the chunk index. Random ignores fixed progression for chunk-level variation.">
-                  Chunk Seed Mode
-                </label>
-                <select
-                  class="select-md"
-                  :disabled="isRunning"
-                  :value="video.img2vidChunkSeedMode"
-                  @change="setVideo({ img2vidChunkSeedMode: normalizeChunkSeedMode(($event.target as HTMLSelectElement).value) })"
-                >
-                  <option value="increment">Increment</option>
-                  <option value="fixed">Fixed</option>
-                  <option value="random">Random</option>
-                </select>
-                <p class="caption mt-1">Defines deterministic seed progression for chunk stitching.</p>
+            <div v-if="mode === 'img2vid'" class="mt-2">
+              <div class="gen-card refiner-card refiner-card--dense">
+                <WanSubHeader title="Chunking" />
+                <div class="param-blocks">
+                  <div class="param-grid" data-cols="4">
+                    <div class="field">
+                      <label class="label-muted">
+                        <HoverTooltip
+                          class="cdx-slider-field__label-tooltip"
+                          title="Chunk Frames"
+                          :content="[
+                            '0 disables chunking.',
+                            'Positive values split img2vid into overlapping chunks.',
+                          ]"
+                        >
+                          <span class="cdx-slider-field__label-trigger">
+                            <span>Chunk Frames</span>
+                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                          </span>
+                        </HoverTooltip>
+                      </label>
+                      <input
+                        class="ui-input"
+                        type="number"
+                        min="0"
+                        max="401"
+                        step="1"
+                        :disabled="isRunning"
+                        :value="video.img2vidChunkFrames"
+                        @change="setVideo({ img2vidChunkFrames: toInt($event, video.img2vidChunkFrames) })"
+                      />
+                    </div>
+                    <div class="field">
+                      <label class="label-muted">
+                        <HoverTooltip
+                          class="cdx-slider-field__label-tooltip"
+                          title="Overlap"
+                          :content="[
+                            'Crossfades chunk seams.',
+                            'Keep overlap smaller than Chunk Frames.',
+                          ]"
+                        >
+                          <span class="cdx-slider-field__label-trigger">
+                            <span>Overlap</span>
+                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                          </span>
+                        </HoverTooltip>
+                      </label>
+                      <input
+                        class="ui-input"
+                        type="number"
+                        min="0"
+                        max="400"
+                        step="1"
+                        :disabled="isRunning"
+                        :value="video.img2vidOverlapFrames"
+                        @change="setVideo({ img2vidOverlapFrames: toInt($event, video.img2vidOverlapFrames) })"
+                      />
+                    </div>
+                    <div class="field">
+                      <label class="label-muted">
+                        <HoverTooltip
+                          class="cdx-slider-field__label-tooltip"
+                          title="Anchor Alpha"
+                          :content="[
+                            'Re-injects the init image at chunk boundaries.',
+                            '0 = continue from previous output only.',
+                            '1 = stronger re-anchor to init image.',
+                          ]"
+                        >
+                          <span class="cdx-slider-field__label-trigger">
+                            <span>Anchor Alpha</span>
+                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                          </span>
+                        </HoverTooltip>
+                      </label>
+                      <input
+                        class="ui-input"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        :disabled="isRunning"
+                        :value="video.img2vidAnchorAlpha"
+                        @change="setVideo({ img2vidAnchorAlpha: Number(($event.target as HTMLInputElement).value) })"
+                      />
+                    </div>
+                    <div class="field">
+                      <label class="label-muted">
+                        <HoverTooltip
+                          class="cdx-slider-field__label-tooltip"
+                          title="Chunk Seed Mode"
+                          :content="[
+                            'Fixed: same seed for every chunk.',
+                            'Increment: adds chunk index to the base seed.',
+                            'Random: independent seed per chunk.',
+                          ]"
+                        >
+                          <span class="cdx-slider-field__label-trigger">
+                            <span>Chunk Seed Mode</span>
+                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                          </span>
+                        </HoverTooltip>
+                      </label>
+                      <select
+                        class="select-md"
+                        :disabled="isRunning"
+                        :value="video.img2vidChunkSeedMode"
+                        @change="setVideo({ img2vidChunkSeedMode: normalizeChunkSeedMode(($event.target as HTMLSelectElement).value) })"
+                      >
+                        <option value="increment">Increment</option>
+                        <option value="fixed">Fixed</option>
+                        <option value="random">Random</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -645,6 +702,7 @@ import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'
 import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
+import HoverTooltip from '../components/ui/HoverTooltip.vue'
 import SliderField from '../components/ui/SliderField.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'

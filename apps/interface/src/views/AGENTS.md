@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-20
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -70,3 +70,4 @@ Status: Active
 - 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.
 - 2026-02-20: `ImageModelTab.vue` and `WANTab.vue` History strips now render square 1:1 thumbnail cards (image fit/contain, no inline metadata text); clicking a card opens a details modal with organized run metadata (mode/time/status/task), prompt/negative prompt, params snapshot, and explicit Load/Apply/Copy actions.
 - 2026-02-21: `WANTab.vue` `img2vid` init-image input now reuses `components/Img2ImgInpaintParamsCard.vue` (with `useMask=false`) instead of mounting `InitialImageCard.vue` directly, keeping shared init-image dropzone/thumb/zoom behavior and preserving the guided selector anchor `#wan-guided-init-image`.
+- 2026-02-21: `WANTab.vue` `img2vid` chunk controls now render inside a dense nested subcard (`Chunking`) and use Advanced-CFG-style hover tooltips (`?` + `HoverTooltip`) for `Chunk Frames`, `Overlap`, `Anchor Alpha`, and `Chunk Seed Mode`, with all controls aligned in a single 4-column row.

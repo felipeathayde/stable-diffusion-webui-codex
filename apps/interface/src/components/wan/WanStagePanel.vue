@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN stage parameter panel (High/Low).
-Renders sampler/scheduler/steps/cfg/seed controls for a WAN stage and emits a `stage` patch to the parent view; optionally shows stage LoRA controls when `LightX2V` is enabled.
+Renders sampler/scheduler/steps/cfg/seed controls for a WAN stage and emits a `stage` patch to the parent view.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanStagePanel` (component): High/Low stage panel for WAN generation parameters.
@@ -89,17 +89,6 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
     </div>
 
-    <div v-if="lightx2v">
-      <WanStageLoraField
-        :loraSha="stage.loraSha"
-        :loraWeight="stage.loraWeight"
-        :choices="loraChoices"
-        :disabled="disabled"
-        @update:loraSha="(v) => updateStage({ loraSha: v })"
-        @update:loraWeight="(v) => updateStage({ loraWeight: v })"
-      />
-    </div>
-
     <div v-if="showModelDir && !stage.modelDir" class="panel-error">{{ title }}: model directory is empty.</div>
   </div>
 </template>
@@ -113,26 +102,21 @@ import type { WanStageParams } from '../../stores/model_tabs'
 import SamplerSelector from '../SamplerSelector.vue'
 import SchedulerSelector from '../SchedulerSelector.vue'
 import SliderField from '../ui/SliderField.vue'
-import WanStageLoraField from './WanStageLoraField.vue'
 
 const props = withDefaults(defineProps<{
   title: string
   stage: WanStageParams
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
-  loraChoices?: Array<{ name: string; sha256: string }>
   showModelDir?: boolean
   embedded?: boolean
   disabled?: boolean
-  lightx2v?: boolean
   samplerLabel?: string
   schedulerLabel?: string
 }>(), {
-  loraChoices: () => [],
   showModelDir: false,
   embedded: false,
   disabled: false,
-  lightx2v: false,
   samplerLabel: 'Sampler',
   schedulerLabel: 'Scheduler',
 })
@@ -145,8 +129,6 @@ const lastSeed = ref<number | null>(null)
 
 const samplerLabel = computed(() => props.samplerLabel)
 const schedulerLabel = computed(() => props.schedulerLabel)
-const loraChoices = computed(() => props.loraChoices ?? [])
-const lightx2v = computed(() => Boolean(props.lightx2v))
 
 function updateStage(patch: Partial<WanStageParams>): void {
   emit('update:stage', patch)

@@ -2,6 +2,7 @@
   .viewer-card { border: 0.0625rem solid hsla(0,0%,100%,0.18); background: linear-gradient(180deg, hsla(0,0%,100%,0.03), hsla(0,0%,100%,0.02)); border-radius: 0.875rem; padding: 0.9rem; box-shadow: 0 0.625rem 2.25rem rgba(0,0,0,0.45), inset 0 0.0625rem 0 hsla(0,0%,100%,0.06); min-height: 16rem; }
   .viewer-empty { width: 100%; min-height: 12rem; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; opacity: .75; }
   .viewer-card .gallery-figure .result-image { width: auto; max-width: 100%; max-height: 30dvh; margin-inline: auto; object-fit: contain; }
+  .viewer-card .result-frame { display: block; width: auto; max-width: 100%; max-height: 30dvh; margin-inline: auto; border-radius: 0.5rem; object-fit: contain; }
 
   .image-zoom-overlay {
     position: fixed;

@@ -1,15 +1,15 @@
 <!-- tags: frontend, components, wan22, video -->
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
-Last Review: 2026-01-27
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
 - WAN22-specific, presentational components used by the WAN model tab (`WANTab.vue`).
 
 ## Key Files
-- `WanStagePanel.vue` — High/Low stage controls (sampler/scheduler/steps/cfg/seed + optional per-stage LoRA when `LightX2V` is enabled).
-- `WanStageLoraField.vue` — Stage-level LoRA select + weight (wan22-loras), used by `WanStagePanel.vue`.
+- `WanStagePanel.vue` — High/Low stage controls (sampler/scheduler/steps/cfg/seed + optional flow-shift), no stage-level LoRA controls.
+- `WanStageLoraField.vue` — Legacy stage-level LoRA selector component (currently not wired by `WanStagePanel.vue`).
 - `WanSubHeader.vue` — Small section sub-header used by `WANTab.vue` to keep “Video / High / Low” headers consistent.
 - `WanVideoOutputPanel.vue` — Video export + interpolation controls (format/crf/pix_fmt/loop/pingpong/save + return-frames + RIFE).
 
@@ -30,3 +30,4 @@ Status: Active
 - 2026-01-06: `WanStagePanel.vue` now labels empty sampler/scheduler selections as “Inherit” (stage overrides are optional; no automatic token).
 - 2026-01-27: Added a `Return frames` toggle to `WanVideoOutputPanel.vue` (default off) and an inline note when `Save output` is off (frames still returned so users can download them).
 - 2026-02-20: `WanSubHeader.vue` now supports opt-in full-row toggle behavior (`clickable` + `header-click`), with built-in interactive-target exclusion and Enter/Space keyboard parity for collapsible cards.
+- 2026-02-21: `WanStagePanel.vue` dropped stage-level LoRA UI; WAN LoRA insertion is now prompt-level in `WANTab.vue` using prompt token chips.

@@ -24,6 +24,15 @@
     min-height: 0;
   }
 
+  .wan-results-panel video {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    max-height: 30dvh;
+    margin-inline: auto;
+    object-fit: contain;
+  }
+
   .wan-results-summary {
     opacity: 0.85;
   }
@@ -85,6 +94,22 @@
     justify-content: flex-end;
     gap: 0.4rem;
     flex-shrink: 0;
+  }
+
+  .wan-badge-experimental {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999rem;
+    border: 0.0625rem solid hsla(13, 92%, 60%, 0.6);
+    background: linear-gradient(180deg, hsla(13, 96%, 56%, 0.28), hsla(7, 92%, 52%, 0.2));
+    color: hsla(15, 95%, 69%, 0.98);
+    padding: 0.15rem 0.5rem;
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    text-transform: uppercase;
+    white-space: nowrap;
   }
 
   .wan-results-empty {

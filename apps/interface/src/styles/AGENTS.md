@@ -111,3 +111,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-21: `generation-settings-card.css` now styles an active state for dimension action buttons (`.btn-swap--active`) used by the new aspect-ratio lock toggle in the basic parameter cards.
 - 2026-02-20: `styles/components/views-shared.css` now styles History as square 1:1 thumbnail cards (`.cdx-history-item` + `.cdx-history-thumb`, object-fit contain) and adds `cdx-history-modal*` layout rules for organized run-details dialogs.
 - 2026-02-21: Added `styles/components/inpaint-mask-editor.css` and imported it in `styles.css` for the new full-screen inpaint mask editor overlay (stage/content/cursor/toolbar semantics).
+- 2026-02-21: `styles/components/result-viewer.css` now constrains video frame previews to `max-height: 30dvh` with `object-fit: contain` and no forced full-width stretch; `styles/views/wan.css` applies the same contract to WAN exported-video previews inside Results.

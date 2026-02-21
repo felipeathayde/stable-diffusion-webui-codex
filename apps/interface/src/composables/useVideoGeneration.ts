@@ -12,7 +12,8 @@ Required Notice: see NOTICE
 	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 	mode prompt fields from the High stage in payload builders for backend compatibility. Includes `output.returnFrames` and stage `flowShift` pass-through in
-	common WAN payload input. Img2vid chunking payload fields are gated by explicit `img2vidChunkingEnabled` state (not by `chunkFrames=0` sentinel).
+	common WAN payload input. Img2vid chunking payload fields are gated by explicit `img2vidChunkingEnabled` state (not by `chunkFrames=0` sentinel), and stage-level
+	WAN LoRA fields are not emitted from this composable (LoRA control is prompt-level).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -446,7 +447,7 @@ export function useVideoGeneration(tabId: string) {
     const fps = Number(v.fps) || 0
     const seconds = fps > 0 ? (frames / fps) : 0
     const strength = v.useInitVideo ? ` · strength ${Number(v.vid2vidStrength).toFixed(2)}` : ''
-    const loraTag = lightx2v.value && String(hi.loraSha || '').trim() ? ' · lightx2v' : ''
+    const loraTag = lightx2v.value ? ' · lightx2v' : ''
     return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${strength}${loraTag}`
   }
 
@@ -495,8 +496,6 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
-        loraSha: lightx2v.value ? hi.loraSha : '',
-        loraWeight: hi.loraWeight,
         flowShift: hi.flowShift,
       },
       low: {
@@ -508,8 +507,6 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
-        loraSha: lightx2v.value ? lo.loraSha : '',
-        loraWeight: lo.loraWeight,
         flowShift: lo.flowShift,
       },
       output: {
@@ -564,8 +561,6 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
-        loraSha: lightx2v.value ? hi.loraSha : '',
-        loraWeight: hi.loraWeight,
         flowShift: hi.flowShift,
       },
       low: {
@@ -577,8 +572,6 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
-        loraSha: lightx2v.value ? lo.loraSha : '',
-        loraWeight: lo.loraWeight,
         flowShift: lo.flowShift,
       },
       format: 'auto' as const,

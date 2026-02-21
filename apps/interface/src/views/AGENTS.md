@@ -35,7 +35,7 @@ Status: Active
 - 2026-01-16: `ToolsTab.vue` GGUF converter presets include WAN22 denoisers (selectable via vendored model metadata).
 - 2026-01-29: `ToolsTab.vue` supports CodexPack v1 outputs: the GGUF converter can emit `*.codexpack.gguf` directly (`codexpack_v1=true`; base GGUF is temp-only and deleted on success), and a separate CodexPack packer can pack an existing base GGUF to `*.codexpack.gguf` (Z-Image Base only; Q4_K; Comfy Layout metadata required).
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.
-- 2026-01-21: WAN stage LoRA selection is sha-based (`loraSha` in params → payload `lora_sha`).
+- 2026-01-21: WAN stage LoRA selection became sha-based (`loraSha` in params → payload `lora_sha`) for the old stage-level control path.
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.
 - 2026-02-17: `WANTab.vue` Video Aspect selector now includes `Image` mode; when selected, width/height lock to the current init-image aspect ratio (auto-falls back to `Free` if no init image is available).
 - 2026-02-17: `WANTab.vue` now exposes WAN attention mode (`global|sliding`) and img2vid chunk controls with explicit tooltips for `anchor_alpha` and `chunk_seed_mode`; frame values normalize to nearest `4n+1` on blur and immediately before Generate (including direct click on Generate).
@@ -73,3 +73,4 @@ Status: Active
 - 2026-02-21: `WANTab.vue` `img2vid` chunk controls now render inside a dense nested subcard (`Chunking`) and use Advanced-CFG-style hover tooltips (`?` + `HoverTooltip`) for `Chunk Frames`, `Overlap`, `Anchor Alpha`, and `Chunk Seed Mode`, with all controls aligned in a single 4-column row.
 - 2026-02-21: `ImageModelTab.vue` now wires `Img2ImgInpaintParamsCard.vue` to the new mask editor apply/reset-notice events (`apply:maskImageData`, `notice:maskEditorReset`) and preserves existing fail-loud dimension validation on edited masks.
 - 2026-02-21: `WANTab.vue` Prompt UI is now stage-scoped: `High Prompt` and `Low Prompt` render as separate cards (Low is collapsible), guided-generation validation targets missing stage prompts explicitly, and history modal/apply paths read/write prompt fields under `high.*` and `low.*` (with legacy root-prompt fallback for old snapshots).
+- 2026-02-21: `WANTab.vue` now exposes SDXL-style LoRA modal insertion on both `High Prompt` and `Low Prompt` cards (token chips in prompt editors), and stage-level LoRA selector/weight controls were removed from `High Noise`/`Low Noise`.

@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Viewer for generated images/videos with zoom overlay.
 Displays generated outputs and provides an overlay viewer for zoom/pan actions, wheel/keyboard zoom controls, and per-item controls
-(including per-frame downloads when available). Image previews are constrained for card readability (`max-height: 30dvh`)
-while preserving click-to-zoom full-screen behavior.
+(including per-frame downloads when available). Result media previews are rendered with `object-fit: contain` and a visual height cap
+(`max-height: 30dvh`) to avoid stretch/zoom in cards while preserving click-to-zoom full-screen behavior for images.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ResultViewer` (component): Viewer component for generated outputs and overlay interactions.
@@ -56,7 +56,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <template v-if="frames && frames.length">
         <div class="grid gap-3 md:grid-cols-2">
           <figure v-for="(frame, index) in frames" :key="index" class="group relative space-y-1">
-            <img class="w-full rounded" :src="frameUrl(frame)" :alt="`Frame ${index + 1}`" />
+            <img class="result-frame" :src="frameUrl(frame)" :alt="`Frame ${index + 1}`" />
             <div v-if="canDownloadFrame(frame)" class="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100">
               <a
                 class="btn btn-sm btn-outline"

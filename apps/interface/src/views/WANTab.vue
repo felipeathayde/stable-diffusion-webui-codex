@@ -12,14 +12,12 @@ renders progress/results via task events (frames and/or exported video), with Ru
 `RunProgressStatus` block (`Stage/Progress/Step/ETA` + queue metadata).
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
-and surfaces a one-shot “Reconnected” toast.
+and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled at prompt level through the shared LoRA modal + prompt-token chips.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
 - `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
 - `AspectMode` (type): Aspect ratio mode presets for width/height controls.
-- `normalizePath` (function): Normalizes paths for stable comparisons (used by root filtering and UI label handling).
-- `fileInRoots` (function): Checks whether a file path is under any configured root (used to constrain selectable WAN assets).
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
 - `defaultVideo` (function): Returns default video params (dims/init media fields) for new tabs/resets.
 - `defaultAssets` (function): Returns default (empty) assets selection.
@@ -34,6 +32,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onLowFollowsHighChange` (function): Toggles low-follow behavior and applies an immediate sync.
 - `toggleHighPrompt` (function): Toggles High Prompt section visibility.
 - `toggleLowPrompt` (function): Toggles Low Prompt section visibility.
+- `appendPromptToken` (function): Appends a prompt token string with whitespace-safe formatting.
+- `onHighPromptLoraInsert` (function): Inserts a selected LoRA token into High prompt/negative prompt based on modal target.
+- `onLowPromptLoraInsert` (function): Inserts a selected LoRA token into Low prompt/negative prompt based on modal target.
 - `toggleImg2VidChunking` (function): Toggles img2vid chunking enablement.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
 - `toInt` (function): Parses an integer from an `<input>` event with fallback.
@@ -90,6 +91,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="panel-body">
           <div id="wan-guided-high-prompt" class="gen-card">
             <WanSubHeader title="High Prompt">
+              <button class="btn btn-sm btn-secondary" type="button" @click="showHighPromptLoraModal = true">LoRA</button>
               <button
                 id="wan-guided-high-prompt-toggle"
                 class="btn-icon"
@@ -105,10 +107,12 @@ Symbols (top-level; keep in sync; no ghosts):
             <div v-if="highPromptOpen" class="mt-2">
               <PromptFields v-model:prompt="highPrompt" v-model:negative="highNegative" token-engine="wan" />
             </div>
+            <LoraModal v-model="showHighPromptLoraModal" @insert="onHighPromptLoraInsert" />
           </div>
 
           <div class="gen-card">
             <WanSubHeader title="Low Prompt">
+              <button class="btn btn-sm btn-secondary" type="button" @click="showLowPromptLoraModal = true">LoRA</button>
               <button
                 id="wan-guided-low-prompt-toggle"
                 class="btn-icon"
@@ -124,6 +128,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <div v-if="lowPromptOpen" class="mt-2" id="wan-guided-low-prompt">
               <PromptFields v-model:prompt="lowPrompt" v-model:negative="lowNegative" token-engine="wan" />
             </div>
+            <LoraModal v-model="showLowPromptLoraModal" @insert="onLowPromptLoraInsert" />
           </div>
 
         <div v-if="mode !== 'txt2vid'" class="gen-card">
@@ -271,6 +276,7 @@ Symbols (top-level; keep in sync; no ghosts):
                   :aria-expanded="video.img2vidChunkingEnabled"
                   @header-click="toggleImg2VidChunking"
                 >
+                  <span class="wan-badge-experimental">EXPERIMENTAL</span>
                   <button
                     :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidChunkingEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
                     type="button"
@@ -498,8 +504,6 @@ Symbols (top-level; keep in sync; no ghosts):
               :stage="high"
               :samplers="samplers"
               :schedulers="schedulers"
-              :lightx2v="lightx2v"
-              :lora-choices="wanLoraChoices"
               :disabled="isRunning"
               @update:stage="setHigh"
             />
@@ -520,7 +524,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 <span aria-hidden="true">{{ lowNoiseOpen ? '▾' : '▸' }}</span>
               </button>
             </WanSubHeader>
-            <div v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed/LoRA).</div>
+            <div v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed).</div>
             <div v-if="lowNoiseOpen" class="mt-2" id="wan-guided-low-stage">
               <WanStagePanel
                 title="Low Noise"
@@ -528,8 +532,6 @@ Symbols (top-level; keep in sync; no ghosts):
                 :stage="low"
                 :samplers="samplers"
                 :schedulers="schedulers"
-                :lightx2v="lightx2v"
-                :lora-choices="wanLoraChoices"
                 :disabled="isRunning || lowFollowsHigh"
                 @update:stage="setLow"
               />
@@ -762,7 +764,7 @@ Symbols (top-level; keep in sync; no ghosts):
 	import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
 	import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 	import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
-	import { fetchSamplers, fetchSchedulers, fetchModelInventory, fetchPaths } from '../api/client'
+	import { fetchSamplers, fetchSchedulers } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
 import InitialVideoCard from '../components/InitialVideoCard.vue'
@@ -774,6 +776,7 @@ import RunSummaryChips from '../components/results/RunSummaryChips.vue'
 import HoverTooltip from '../components/ui/HoverTooltip.vue'
 import SliderField from '../components/ui/SliderField.vue'
 import PromptFields from '../components/prompt/PromptFields.vue'
+import LoraModal from '../components/modals/LoraModal.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
 import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
@@ -794,26 +797,16 @@ const bootstrap = useBootstrapStore()
 // Load option lists
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
-const wanLoras = ref<Array<{ name: string; path: string; sha256: string }>>([])
 
 onMounted(() => {
   bootstrap
     .runRequired('Failed to initialize WAN tab controls', async () => {
-      const [samp, sched, pathsRes, inv] = await Promise.all([
+      const [samp, sched] = await Promise.all([
         fetchSamplers(),
         fetchSchedulers(),
-        fetchPaths(),
-        fetchModelInventory(),
       ])
       samplers.value = samp.samplers
       schedulers.value = sched.schedulers
-
-      const rootsRaw = pathsRes.paths.wan22_loras
-      const roots = Array.isArray(rootsRaw) ? rootsRaw : []
-      wanLoras.value = inv.loras
-        .filter((lora) => fileInRoots(String(lora.path || ''), roots))
-        .filter((lora): lora is { name: string; path: string; sha256: string } => typeof lora.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(lora.sha256)))
-        .map((lora) => ({ name: String(lora.name || ''), path: String(lora.path || ''), sha256: String(lora.sha256 || '').toLowerCase() }))
     })
     .catch(() => {
       // Fatal state is already set by bootstrap store.
@@ -827,24 +820,6 @@ const tab = computed<TabByType<'wan'> | null>(() => {
 })
 const wanParams = computed<TabByType<'wan'>['params'] | null>(() => tab.value?.params || null)
 const lightx2v = computed<boolean>(() => Boolean(wanParams.value?.lightx2v))
-const wanLoraChoices = computed(() => wanLoras.value)
-
-function normalizePath(path: string): string {
-  return String(path || '').replace(/\\+/g, '/').replace(/\/+$/, '')
-}
-
-function fileInRoots(file: string, roots: string[]): boolean {
-  const fNorm = normalizePath(file)
-  if (!fNorm) return false
-  for (const root of roots || []) {
-    const rNorm = normalizePath(root)
-    if (!rNorm) continue
-    if (fNorm === rNorm || fNorm.startsWith(rNorm + '/')) return true
-    const rel = rNorm.startsWith('/') ? rNorm.slice(1) : rNorm
-    if (fNorm.includes('/' + rel + '/') || fNorm.endsWith('/' + rel)) return true
-  }
-  return false
-}
 
 function defaultStage(): WanStageParams {
   return { modelDir: '', prompt: '', negativePrompt: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraSha: '', loraWeight: 1.0, flowShift: undefined }
@@ -1008,8 +983,6 @@ function syncLowFromHighIfNeeded(): void {
     steps: high.value.steps,
     cfgScale: high.value.cfgScale,
     seed: high.value.seed,
-    loraSha: high.value.loraSha,
-    loraWeight: high.value.loraWeight,
     flowShift: high.value.flowShift,
   }
   const keys = Object.keys(patch) as Array<keyof WanStageParams>
@@ -1031,8 +1004,6 @@ function onLowFollowsHighChange(enabled: boolean): void {
     steps: high.value.steps,
     cfgScale: high.value.cfgScale,
     seed: high.value.seed,
-    loraSha: high.value.loraSha,
-    loraWeight: high.value.loraWeight,
     flowShift: high.value.flowShift,
   }
   store.updateParams(props.tabId, { lowFollowsHigh: true, low: { ...low.value, ...nextLow } }).catch(reportTabMutationError)
@@ -1063,8 +1034,6 @@ watch(
     high.value.steps,
     high.value.cfgScale,
     high.value.seed,
-    high.value.loraSha,
-    high.value.loraWeight,
     high.value.flowShift,
   ] as const),
   ([enabled]) => {
@@ -1081,8 +1050,6 @@ watch(
     low.value.steps,
     low.value.cfgScale,
     low.value.seed,
-    low.value.loraSha,
-    low.value.loraWeight,
     low.value.flowShift,
   ] as const),
   ([enabled]) => {
@@ -1110,6 +1077,39 @@ const lowNegative = computed({
   get: () => low.value.negativePrompt,
   set: (value: string) => setLow({ negativePrompt: value }),
 })
+
+const showHighPromptLoraModal = ref(false)
+const showLowPromptLoraModal = ref(false)
+
+type PromptTokenInsertPayload = {
+  token: string
+  target?: 'positive' | 'negative'
+}
+
+function appendPromptToken(current: string, token: string): string {
+  const trimmedToken = String(token || '').trim()
+  if (!trimmedToken) return String(current || '')
+  const base = String(current || '').trim()
+  return base ? `${base} ${trimmedToken}` : trimmedToken
+}
+
+function onHighPromptLoraInsert(payload: PromptTokenInsertPayload): void {
+  const target = payload.target === 'negative' ? 'negative' : 'positive'
+  if (target === 'negative') {
+    setHigh({ negativePrompt: appendPromptToken(high.value.negativePrompt, payload.token) })
+    return
+  }
+  setHigh({ prompt: appendPromptToken(high.value.prompt, payload.token) })
+}
+
+function onLowPromptLoraInsert(payload: PromptTokenInsertPayload): void {
+  const target = payload.target === 'negative' ? 'negative' : 'positive'
+  if (target === 'negative') {
+    setLow({ negativePrompt: appendPromptToken(low.value.negativePrompt, payload.token) })
+    return
+  }
+  setLow({ prompt: appendPromptToken(low.value.prompt, payload.token) })
+}
 
 function toInt(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? Math.trunc(v) : fallback }
 
@@ -1622,8 +1622,6 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: high.value.steps,
       cfgScale: high.value.cfgScale,
       seed: high.value.seed,
-      loraSha: lightx2v.value ? high.value.loraSha : '',
-      loraWeight: high.value.loraWeight,
       flowShift: high.value.flowShift,
     },
     low: {
@@ -1635,8 +1633,6 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: low.value.steps,
       cfgScale: low.value.cfgScale,
       seed: low.value.seed,
-      loraSha: lightx2v.value ? low.value.loraSha : '',
-      loraWeight: low.value.loraWeight,
       flowShift: low.value.flowShift,
     },
     output: {
@@ -1769,12 +1765,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const nextHighNegative = typeof hi.negativePrompt === 'string' ? hi.negativePrompt : legacyNegativePrompt
   const nextLowPrompt = typeof lo.prompt === 'string' ? lo.prompt : legacyPrompt
   const nextLowNegative = typeof lo.negativePrompt === 'string' ? lo.negativePrompt : legacyNegativePrompt
-  const hiLoraSha = String(hi.loraSha || '').trim()
-  const loLoraSha = String(lo.loraSha || '').trim()
-  const snapLightx2v =
-    typeof snap.lightx2v === 'boolean'
-      ? Boolean(snap.lightx2v)
-      : Boolean(hiLoraSha || loLoraSha)
+  const snapLightx2v = typeof snap.lightx2v === 'boolean' ? Boolean(snap.lightx2v) : lightx2v.value
   store.updateParams(props.tabId, { lightx2v: snapLightx2v }).catch(reportTabMutationError)
 
   const snapAssets = isRecord(snap.assets) ? snap.assets : null
@@ -1791,8 +1782,6 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(hi.steps) || high.value.steps,
     cfgScale: Number(hi.cfgScale) || high.value.cfgScale,
     seed: typeof hi.seed === 'number' && Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
-    loraSha: snapLightx2v ? String(hi.loraSha || '') : '',
-    loraWeight: typeof hi.loraWeight === 'number' && Number.isFinite(hi.loraWeight) ? Number(hi.loraWeight) : high.value.loraWeight,
     flowShift: typeof hi.flowShift === 'number' && Number.isFinite(hi.flowShift) ? Number(hi.flowShift) : high.value.flowShift,
   })
 
@@ -1805,8 +1794,6 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(lo.steps) || low.value.steps,
     cfgScale: Number(lo.cfgScale) || low.value.cfgScale,
     seed: typeof lo.seed === 'number' && Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
-    loraSha: snapLightx2v ? String(lo.loraSha || '') : '',
-    loraWeight: typeof lo.loraWeight === 'number' && Number.isFinite(lo.loraWeight) ? Number(lo.loraWeight) : low.value.loraWeight,
     flowShift: typeof lo.flowShift === 'number' && Number.isFinite(lo.flowShift) ? Number(lo.flowShift) : low.value.flowShift,
   })
 

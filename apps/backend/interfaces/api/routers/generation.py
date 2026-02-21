@@ -26,6 +26,7 @@ Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for v
 missing vs explicit-empty semantics for downstream runtime fallback behavior.
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
 resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
+Worker exception paths trigger shared runtime memory cleanup (`tasks/generation_tasks.py::force_runtime_memory_cleanup`) so task failures best-effort purge engine/runtime caches.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 Any cancel mode may abort while waiting on the inference gate; in-flight interruption remains `immediate`-only.
 
@@ -3077,6 +3078,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             engine_key,
                             err,
                         )
+                except Exception:
+                    pass
+                try:
+                    from apps.backend.interfaces.api.tasks.generation_tasks import (
+                        force_runtime_memory_cleanup as _force_runtime_memory_cleanup,
+                    )
+
+                    _force_runtime_memory_cleanup(
+                        reason=f"{mode}:worker_error",
+                        orch=_ORCH,
+                    )
                 except Exception:
                     pass
                 entry.error = public_task_error_message(err)

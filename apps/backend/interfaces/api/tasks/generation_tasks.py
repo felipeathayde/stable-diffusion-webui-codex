@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `encode_images` (function): Encode PIL images to base64 PNG payloads, optionally injecting PNG text metadata.
 - `build_engine_options` (function): Build `engine_options` dict from request extras + options snapshot (TE/VAE overrides, Z-Image variant, core streaming).
 - `resolve_request_smart_flags` (function): Parse/validate per-request smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) as strict booleans.
+- `force_runtime_memory_cleanup` (function): Best-effort runtime cleanup used on worker error paths (orchestrator cache + memory manager + GGUF cache + CUDA cache).
 - `_format_parameters_infotext` (function): Serializes generation `info` dicts into A1111-compatible infotext for PNG `parameters`.
 - `_build_png_metadata` (function): Builds PNG text chunks (`parameters` + provenance) for saved/API-encoded images.
 - `run_image_task` (function): Run a generic image task worker (txt2img/img2img) using a `prepare(payload)` callback and orchestrator event stream.
@@ -24,6 +25,8 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import base64
+import contextlib
+import gc
 import io
 import json
 import logging
@@ -134,6 +137,84 @@ def resolve_request_smart_flags(req: Any) -> tuple[bool, bool, bool]:
             )
         values[field_name] = field_value
     return values["smart_offload"], values["smart_fallback"], values["smart_cache"]
+
+
+def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> None:
+    clear_cache = getattr(orch, "clear_cache", None)
+    if callable(clear_cache):
+        try:
+            clear_cache()
+        except Exception as exc:
+            logger.warning(
+                "Failed to clear orchestrator cache during runtime cleanup (%s): %s",
+                reason,
+                exc,
+                exc_info=True,
+            )
+
+    try:
+        from apps.backend.runtime.memory import memory_management as memory_state
+    except Exception as exc:
+        logger.warning(
+            "Runtime memory-manager import failed during cleanup (%s): %s",
+            reason,
+            exc,
+            exc_info=True,
+        )
+    else:
+        try:
+            memory_state.manager.unload_all_models()
+        except Exception as exc:
+            logger.warning(
+                "Runtime unload_all_models failed during cleanup (%s): %s",
+                reason,
+                exc,
+                exc_info=True,
+            )
+        try:
+            memory_state.manager.soft_empty_cache(force=True)
+        except Exception as exc:
+            logger.warning(
+                "Runtime soft_empty_cache failed during cleanup (%s): %s",
+                reason,
+                exc,
+                exc_info=True,
+            )
+
+    gguf_clear_cache: Callable[[], None] | None = None
+    try:
+        from apps.backend.runtime.ops.operations_gguf import clear_cache as gguf_clear_cache
+    except Exception:
+        gguf_clear_cache = None
+
+    if callable(gguf_clear_cache):
+        try:
+            gguf_clear_cache()
+        except Exception as exc:
+            logger.warning(
+                "Failed to clear GGUF cache during runtime cleanup (%s): %s",
+                reason,
+                exc,
+                exc_info=True,
+            )
+
+    with contextlib.suppress(Exception):
+        gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception as exc:
+        logger.warning(
+            "Torch cache cleanup failed during runtime cleanup (%s): %s",
+            reason,
+            exc,
+            exc_info=True,
+        )
+
+    logger.info("Runtime memory cleanup completed (%s).", reason)
 
 
 def _as_text(value: object) -> str:
@@ -582,6 +663,10 @@ def run_image_task(
             except Exception:
                 pass
 
+            force_runtime_memory_cleanup(
+                reason=f"{mode}:worker_error",
+                orch=orch,
+            )
             entry.error = public_task_error_message(err)
             fallback_used = fallback_enabled and ("fallback" in str(err).lower())
             emit_contract_trace(

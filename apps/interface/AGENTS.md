@@ -34,3 +34,4 @@ Status: Active
 - 2026-01-27: `package-lock.json` updated to match npm 11 (used by the repo-local `.nodeenv` installer) to avoid lockfile churn on fresh installs.
 - 2026-02-06: Added `vue-tsc` typechecking (`npm run typecheck`) and gated `npm run dev` on typecheck to prevent “build passes, types broken” drift.
 - 2026-02-08: SDXL swap-model UI contract now uses explicit pointer semantics (`swapAtStep` in frontend state, serialized as `switch_at_step` in API payloads), replacing refiner step-count wording/behavior.
+- 2026-02-21: Added report-only UI consistency scanner (`tools/ui-consistency-report.mjs`) and wired `npm run verify` to run this report before typecheck/test/build.

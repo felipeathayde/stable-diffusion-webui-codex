@@ -9,11 +9,14 @@ Required Notice: see NOTICE
 Purpose: WAN22 GGUF scheduler helpers (Diffusers-free).
 Provides a strict reader for `scheduler_config.json` (vendored HF mirror) and a WAN-only scheduler implementation that
 matches the flow-sigmas schedule used by WAN2.2 (source-of-truth: `scheduler_config.json`), without importing Diffusers.
-Includes explicit mixed-precision stability guards for UniPC corrector linear solves.
+Includes explicit mixed-precision stability guards for UniPC corrector linear solves and an experimental FlowMatch-Euler
+lane for sampler experiments.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanSchedulerOutput` (dataclass): Minimal scheduler step output with `prev_sample` (Diffusers-compatible surface).
+- `WanFlowMatchEulerScheduler` (class): WAN flow-match Euler scheduler surface for experimental sampler overrides.
 - `WanUniPCFlowScheduler` (class): WAN-only UniPC multistep scheduler for flow-prediction models (BH1/BH2; order<=2).
+- `build_wan_flow_match_euler_scheduler` (function): Build the WAN FlowMatch-Euler scheduler from vendored scheduler config + resolved `flow_shift`.
 - `build_wan_unipc_flow_scheduler` (function): Build the WAN UniPC scheduler from vendored scheduler config and a resolved `flow_shift`.
 - `infer_high_steps_from_boundary_ratio` (function): Derive default High/Low stage step split from `boundary_ratio` and vendor metadata.
 - `load_wan_scheduler_config` (function): Read and validate a WAN `scheduler_config.json` mapping from a vendor dir.
@@ -129,6 +132,135 @@ def _build_flow_sigmas(
 @dataclass(frozen=True)
 class WanSchedulerOutput:
     prev_sample: torch.Tensor
+
+
+class WanFlowMatchEulerScheduler:
+    """WAN flow-match Euler scheduler surface used by the GGUF stage sampler."""
+
+    init_noise_sigma: float = 1.0
+    order: int = 1
+
+    def __init__(
+        self,
+        *,
+        sigmas: torch.Tensor,
+        timesteps: torch.Tensor,
+        stochastic_sampling: bool,
+    ) -> None:
+        if not isinstance(sigmas, torch.Tensor):
+            raise TypeError("sigmas must be a torch.Tensor")
+        if not isinstance(timesteps, torch.Tensor):
+            raise TypeError("timesteps must be a torch.Tensor")
+        if sigmas.ndim != 1:
+            raise RuntimeError(f"WAN22 GGUF: expected 1D sigmas, got shape={tuple(sigmas.shape)}")
+        if timesteps.ndim != 1:
+            raise RuntimeError(f"WAN22 GGUF: expected 1D timesteps, got shape={tuple(timesteps.shape)}")
+        if sigmas.numel() < 2:
+            raise RuntimeError("WAN22 GGUF: sigma ladder must have at least 2 elements")
+        if timesteps.numel() != sigmas.numel() - 1:
+            raise RuntimeError(
+                "WAN22 GGUF: timesteps must align with sigmas "
+                f"(timesteps={int(timesteps.numel())} sigmas={int(sigmas.numel())})."
+            )
+
+        self.sigmas = sigmas.detach().to(device="cpu", dtype=torch.float32)
+        self.timesteps = timesteps.detach().to(device="cpu", dtype=torch.float32)
+        self._stochastic_sampling = bool(stochastic_sampling)
+        self._step_index: int | None = None
+        self._begin_index: int | None = None
+        self.config = SimpleNamespace(
+            prediction_type="flow_prediction",
+            use_flow_sigmas=True,
+            stochastic_sampling=self._stochastic_sampling,
+        )
+
+    @property
+    def begin_index(self) -> int | None:
+        return self._begin_index
+
+    @property
+    def step_index(self) -> int | None:
+        return self._step_index
+
+    def set_begin_index(self, begin_index: int = 0) -> None:
+        self._begin_index = int(begin_index)
+
+    def index_for_timestep(self, timestep: int | float | torch.Tensor, schedule_timesteps: torch.Tensor | None = None) -> int:
+        schedule = self.timesteps if schedule_timesteps is None else schedule_timesteps
+        if not isinstance(schedule, torch.Tensor) or schedule.ndim != 1:
+            raise RuntimeError("WAN22 GGUF: schedule_timesteps must be a 1D tensor.")
+
+        ts = timestep
+        if not isinstance(ts, torch.Tensor):
+            ts = torch.tensor(ts, dtype=schedule.dtype, device=schedule.device)
+        elif ts.numel() != 1:
+            raise RuntimeError(f"WAN22 GGUF: expected scalar timestep, got shape={tuple(ts.shape)}")
+        else:
+            ts = ts.to(device=schedule.device, dtype=schedule.dtype)
+
+        indices = (schedule == ts).nonzero(as_tuple=False)
+        if indices.numel() == 0:
+            raise RuntimeError(f"WAN22 GGUF: timestep {float(ts.item())!r} is not present in scheduler.timesteps.")
+        pos = 1 if int(indices.shape[0]) > 1 else 0
+        return int(indices[pos].item())
+
+    def _init_step_index(self, timestep: int | float | torch.Tensor) -> None:
+        if self.begin_index is None:
+            self._step_index = self.index_for_timestep(timestep)
+        else:
+            self._step_index = int(self._begin_index or 0)
+
+    def scale_model_input(self, sample: torch.Tensor, timestep: Any) -> torch.Tensor:
+        return sample
+
+    def step(
+        self,
+        *,
+        model_output: torch.Tensor,
+        timestep: int | float | torch.Tensor,
+        sample: torch.Tensor,
+    ) -> WanSchedulerOutput:
+        if self._step_index is None:
+            self._init_step_index(timestep)
+
+        assert self._step_index is not None
+        if self._step_index < 0 or self._step_index >= int(self.timesteps.numel()):
+            raise RuntimeError(
+                "WAN22 GGUF: scheduler internal step_index out of range "
+                f"(step_index={self._step_index} timesteps={int(self.timesteps.numel())})."
+            )
+        if self._step_index + 1 >= int(self.sigmas.numel()):
+            raise RuntimeError(
+                "WAN22 GGUF: scheduler sigma index out of range "
+                f"(step_index={self._step_index} sigmas={int(self.sigmas.numel())})."
+            )
+
+        expected = float(self.timesteps[self._step_index].item())
+        try:
+            got = float(timestep.item()) if isinstance(timestep, torch.Tensor) else float(timestep)
+        except Exception as exc:  # noqa: BLE001 - strict input validation
+            raise RuntimeError(f"WAN22 GGUF: invalid timestep value: {timestep!r}") from exc
+        if not math.isclose(got, expected, rel_tol=0.0, abs_tol=1e-6):
+            raise RuntimeError(
+                "WAN22 GGUF: timestep mismatch for scheduler.step(). "
+                f"Expected timesteps[{self._step_index}]={expected}, got {got}."
+            )
+
+        sample_fp32 = sample.to(dtype=torch.float32)
+        model_output_fp32 = model_output.to(dtype=torch.float32)
+        sigma = self.sigmas[self._step_index].to(device=sample_fp32.device, dtype=sample_fp32.dtype)
+        sigma_next = self.sigmas[self._step_index + 1].to(device=sample_fp32.device, dtype=sample_fp32.dtype)
+
+        if self._stochastic_sampling:
+            x0 = sample_fp32 - sigma * model_output_fp32
+            noise = torch.randn_like(sample_fp32)
+            prev_sample = (1.0 - sigma_next) * x0 + sigma_next * noise
+        else:
+            dt = sigma_next - sigma
+            prev_sample = sample_fp32 + dt * model_output_fp32
+
+        self._step_index += 1
+        return WanSchedulerOutput(prev_sample=prev_sample.to(dtype=sample.dtype))
 
 
 class WanUniPCFlowScheduler:
@@ -589,8 +721,49 @@ def build_wan_unipc_flow_scheduler(
     )
 
 
+def build_wan_flow_match_euler_scheduler(
+    *,
+    steps: int,
+    vendor_dir: str,
+    flow_shift: float,
+    stochastic_sampling: bool = False,
+) -> WanFlowMatchEulerScheduler:
+    cfg = load_wan_scheduler_config(vendor_dir)
+    class_name = _require_str(cfg, "_class_name", label="scheduler_config.json")
+    if class_name not in {"UniPCMultistepScheduler", "FlowMatchEulerDiscreteScheduler"}:
+        raise RuntimeError(
+            "WAN22 GGUF: experimental FlowMatch-Euler lane requires metadata scheduler "
+            f"'UniPCMultistepScheduler' or 'FlowMatchEulerDiscreteScheduler', got {class_name!r}."
+        )
+    if _require_bool(cfg, "use_dynamic_shifting", label="scheduler_config.json", default=False):
+        raise RuntimeError(
+            "WAN22 GGUF: dynamic shifting is not supported in the GGUF runtime yet (use_dynamic_shifting=true)."
+        )
+    if _optional_str(cfg, "shift_terminal") is not None:
+        raise RuntimeError(
+            "WAN22 GGUF: scheduler_config.json uses shift_terminal, which is not supported in the GGUF runtime yet."
+        )
+
+    num_train_timesteps = _require_int(cfg, "num_train_timesteps", label="scheduler_config.json", default=1000)
+    final_sigmas_type = str(cfg.get("final_sigmas_type") or "zero").strip().lower() or "zero"
+    sigmas = _build_flow_sigmas(
+        steps=int(steps),
+        flow_shift=float(flow_shift),
+        num_train_timesteps=num_train_timesteps,
+        final_sigmas_type=final_sigmas_type,
+    )
+    timesteps = (sigmas[:-1] * float(num_train_timesteps)).to(device="cpu", dtype=torch.float32)
+    return WanFlowMatchEulerScheduler(
+        sigmas=sigmas,
+        timesteps=timesteps,
+        stochastic_sampling=bool(stochastic_sampling),
+    )
+
+
 __all__ = [
+    "WanFlowMatchEulerScheduler",
     "WanSchedulerOutput",
+    "build_wan_flow_match_euler_scheduler",
     "WanUniPCFlowScheduler",
     "build_wan_unipc_flow_scheduler",
     "infer_high_steps_from_boundary_ratio",

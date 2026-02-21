@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
 - `_parse_sampler` (function): Parse WAN sampler strings into `(name, solver_hint)` while tolerating non-UniPC multi-token inputs.
-- `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
+- `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity with fail-loud sampler/scheduler lane mismatch checks.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
 - `_infer_stage_variant` (function): Infer WAN model variant (`5b`/`14b`) from a stage GGUF filename.
 - `_resolve_stage_pair_variant` (function): Resolve a single variant for high/low stages with API variant authority and fail loud mismatches.
@@ -228,6 +228,8 @@ def _build_shared_scheduler(
             f"High={flow_shift_hi} Low={flow_shift_lo}. Schedule must be continuous."
         )
 
+    from apps.backend.types.samplers import SamplerKind
+
     hi_sampler_raw = sampler_hi.strip() if isinstance(sampler_hi, str) and sampler_hi.strip() else None
     lo_sampler_raw = sampler_lo.strip() if isinstance(sampler_lo, str) and sampler_lo.strip() else None
 
@@ -254,15 +256,59 @@ def _build_shared_scheduler(
     if scheduler_lo is not None and not isinstance(scheduler_lo, str):
         raise RuntimeError(f"WAN22 GGUF: low scheduler must be a string when provided, got {scheduler_lo!r}.")
 
-    if hi_is_unipc:
-        sampler_eff = f"uni-pc {hi_solver}" if hi_solver else "uni-pc"
-    elif lo_is_unipc:
-        sampler_eff = f"uni-pc {lo_solver}" if lo_solver else "uni-pc"
+    def _sampler_lane(raw: str | None) -> str | None:
+        if raw is None:
+            return None
+        try:
+            kind = SamplerKind.from_string(raw)
+        except Exception:
+            return "metadata"
+        if kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH1, SamplerKind.UNI_PC_BH2}:
+            return "uni-pc"
+        if kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+            return "euler"
+        if kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+            return "euler-a"
+        return "metadata"
+
+    hi_lane = _sampler_lane(hi_sampler_raw)
+    lo_lane = _sampler_lane(lo_sampler_raw)
+    if hi_lane and lo_lane and hi_lane != lo_lane:
+        raise RuntimeError(
+            "WAN22 GGUF: high/low sampler lane mismatch for shared scheduler continuity "
+            f"(high={sampler_hi!r} lane={hi_lane!r}, low={sampler_lo!r} lane={lo_lane!r})."
+        )
+    if (
+        hi_lane == "metadata"
+        and lo_lane == "metadata"
+        and hi_sampler_raw is not None
+        and lo_sampler_raw is not None
+        and hi_sampler_raw.lower() != lo_sampler_raw.lower()
+    ):
+        raise RuntimeError(
+            "WAN22 GGUF: high/low sampler mismatch for unsupported sampler lanes "
+            f"(high={sampler_hi!r}, low={sampler_lo!r}). Use the same sampler for both stages."
+        )
+
+    resolved_lane = hi_lane or lo_lane
+    if resolved_lane == "uni-pc":
+        solver = hi_solver or lo_solver
+        sampler_eff = f"uni-pc {solver}" if solver else "uni-pc"
     else:
         sampler_eff = hi_sampler_raw or lo_sampler_raw
-    scheduler_eff = scheduler_hi.strip() if isinstance(scheduler_hi, str) and scheduler_hi.strip() else (
-        scheduler_lo.strip() if isinstance(scheduler_lo, str) and scheduler_lo.strip() else None
-    )
+
+    hi_scheduler_raw = scheduler_hi.strip() if isinstance(scheduler_hi, str) and scheduler_hi.strip() else None
+    lo_scheduler_raw = scheduler_lo.strip() if isinstance(scheduler_lo, str) and scheduler_lo.strip() else None
+    if (
+        hi_scheduler_raw is not None
+        and lo_scheduler_raw is not None
+        and hi_scheduler_raw.lower() != lo_scheduler_raw.lower()
+    ):
+        raise RuntimeError(
+            "WAN22 GGUF: high/low scheduler mismatch for shared scheduler continuity "
+            f"(high={scheduler_hi!r}, low={scheduler_lo!r})."
+        )
+    scheduler_eff = hi_scheduler_raw or lo_scheduler_raw
 
     return make_scheduler(
         total_steps,

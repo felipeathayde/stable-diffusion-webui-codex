@@ -14,7 +14,7 @@ Status: Active
 - `config.py`: dataclasses/config do runtime GGUF (`RunConfig`, `StageConfig`) + parsing helpers (dtype/device).
 - `run.py`: entrypoints `run_txt2vid`/`run_img2vid` + versões streaming; orquestra TE, sampling por stage e VAE IO.
 - `sampling.py`: geometria + scheduler + loop de sampling por stage (`sample_stage_latents*`) e adaptação de shape/I2V channels.
-- `scheduler.py`: Diffusers-free scheduler helpers for WAN2.2 (vendor `scheduler_config.json` reader + UniPC flow-sigmas scheduler).
+- `scheduler.py`: Diffusers-free scheduler helpers for WAN2.2 (vendor `scheduler_config.json` reader + UniPC flow-sigmas scheduler + experimental FlowMatch-Euler lane).
 - `text_context.py`: tokenizer + text encoder (strict local-files-only) para embeddings de prompt/negative.
 - `vae_io.py`: VAE encode/decode + latent norms (I2V conditioning encode + decode frames), com offload.
 - `stage_loader.py`: validação de paths `.gguf` + load de weights em `WanTransformer2DModel` via `using_codex_operations(..., weight_format="gguf")` + remap de chaves.
@@ -93,7 +93,7 @@ Status: Active
 - 2026-02-21: WAN22 sampling/scheduler now avoid two per-step temporaries: CFG merge updates the uncond half in-place (`cfg_merge`) and UniPC corrector order-2 now uses direct scalar-tensor accumulation (`rhos_c[0] * D1`) instead of `stack + einsum`.
 - 2026-02-21: `sampling.py::sample_stage_latents_generator` CFG path now runs conditional/unconditional passes sequentially on batch `B` (instead of a single duplicated `2B` forward), removing per-step state duplication buffers and reducing denoise VRAM peaks at the cost of extra compute.
 - 2026-02-21: `sampling.py::sample_stage_latents_generator` now reuses persistent cast buffers for `state_lat_scaled -> model_dtype` and `eps_model -> scheduler_dtype` conversion paths, avoiding per-step temporary cast allocations during denoise.
-- 2026-02-21: `sampling.make_scheduler(...)` keeps scheduler construction metadata-driven and strict for scheduler overrides (`simple` lane), but now accepts arbitrary sampler strings and logs explicit warnings when non-UniPC sampler overrides are ignored by the runtime.
+- 2026-02-21: `sampling.make_scheduler(...)` keeps scheduler construction strict for scheduler overrides (`simple` lane), routes Euler-family sampler overrides to an experimental FlowMatch-Euler lane, and continues to log ignored unsupported sampler names in the metadata-driven UniPC lane.
 - 2026-02-21: `stage_loader.py::load_stage_model_from_gguf` now loads GGUF state_dict on CPU first, then materializes the runtime module on the target device via `using_codex_operations(...)`, reducing transient GPU double-residency during stage initialization.
 - 2026-02-21: WAN22 2D-native VAE conditioning encode now encodes only two frame-batch inputs (`first_frame` + one zero frame) and broadcasts zero-frame latents over `T-1` slots (instead of encoding full-`T` mostly-zero batches), reducing I2V encode VRAM/time in non-chunked paths.
 - 2026-02-21: WAN22 I2V sampling assembly (`sampling.py`) now preallocates mask/state tensors and fills channel/time slices in place (no `repeat_interleave`/`cat` materialization for mask4 expansion and no full `torch.cat` for `[lat+mask4+img16]` state assembly).
@@ -101,6 +101,8 @@ Status: Active
 - 2026-02-21: `run.py` adds `stream_img2vid_sliding_window(...)` (window/stride/commit controls) as a first-class temporal mode over the chunk runtime; chunked stitching now supports explicit `commit_frames` validation and fail-loud short-output detection.
 - 2026-02-21: `config.py` now keeps scheduler validation strict (`simple`) while sampler normalization accepts any non-empty string (canonicalizing known sampler names when possible) and no longer treats explicit empty strings as implicit fallback defaults.
 - 2026-02-21: `sampling.make_scheduler(...)` now rejects legacy scheduler aliases (`inherit|auto|default`) fail-loud; WAN22 scheduler override accepts only explicit `simple` or omitted value.
+- 2026-02-21: `scheduler.py` now includes an experimental FlowMatch-Euler scheduler lane (`WanFlowMatchEulerScheduler`), and `sampling.make_scheduler(...)` routes `euler`/`euler cfg++` and `euler a`/`euler a cfg++` sampler overrides to real Euler runtime schedulers (deterministic vs stochastic), while keeping UniPC as the metadata-default lane and retaining strict scheduler override validation (`simple` only).
+- 2026-02-21: `run.py::_build_shared_scheduler(...)` now validates high/low sampler lane equivalence and scheduler name equivalence fail-loud (single shared scheduler contract), preventing silent lane preference when stage sampler overrides diverge.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

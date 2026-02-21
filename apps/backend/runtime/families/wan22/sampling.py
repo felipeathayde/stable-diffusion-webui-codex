@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
-Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks and scheduler aliases are rejected fail-loud while unsupported sampler overrides are logged and ignored by metadata-driven scheduler construction.
+Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks and scheduler aliases are rejected fail-loud while unsupported sampler overrides are logged and ignored by metadata-driven scheduler construction, except for experimental FlowMatch-Euler sampler lanes.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PatchGeometry` (dataclass): Patch/tile geometry configuration used to infer latent/video shapes.
@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
-- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`); scheduler overrides stay strict while unsupported sampler overrides are accepted then ignored with warnings (Diffusers-free).
+- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`); scheduler overrides stay strict while sampler overrides route either to the UniPC metadata lane or experimental FlowMatch-Euler lanes.
 - `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
 - `_assert_finite_tensor` (function): Fail-loud finite check helper with stage/step context and numeric summaries.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
@@ -131,8 +131,8 @@ def make_scheduler(
     """Instantiate the WAN22 scheduler from vendored metadata (Diffusers-free).
 
     Source of truth is `model_index.json` + `scheduler/scheduler_config.json` shipped with the official repos.
-    Scheduler construction remains metadata-driven (WAN flow lane). Unsupported sampler overrides are accepted
-    at request level but ignored here with explicit warning logs.
+    Scheduler construction remains metadata-driven (WAN flow lane): UniPC is the default metadata lane, while
+    Euler-family sampler overrides can opt into an experimental FlowMatch-Euler runtime scheduler.
     """
 
     import json
@@ -181,9 +181,49 @@ def make_scheduler(
     if not class_name:
         raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
 
-    # Parse sampler hints from payload. WAN22 scheduler semantics stay metadata-driven.
-    # Keep accepting arbitrary sampler strings at API/runtime config layers, but do not pretend
-    # we can instantiate non-WAN schedulers here.
+    if raw_scheduler and raw_scheduler != "simple":
+        raise RuntimeError(
+            f"WAN22 GGUF: unsupported scheduler override {scheduler!r}; expected 'simple'."
+        )
+
+    from apps.backend.types.samplers import SamplerKind
+    from .scheduler import (
+        build_wan_flow_match_euler_scheduler,
+        build_wan_unipc_flow_scheduler,
+    )
+
+    sampler_kind: SamplerKind | None = None
+    if raw_sampler:
+        try:
+            sampler_kind = SamplerKind.from_string(raw_sampler)
+        except Exception:
+            sampler_kind = None
+
+    if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+        logging.getLogger("backend.runtime.wan22.sampling").warning(
+            "WAN22 GGUF: sampler=%r routed to experimental FlowMatch-Euler scheduler lane.",
+            sampler,
+        )
+        return build_wan_flow_match_euler_scheduler(
+            steps=max(1, int(steps)),
+            vendor_dir=vendor_dir,
+            flow_shift=float(flow_shift),
+            stochastic_sampling=False,
+        )
+
+    if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+        logging.getLogger("backend.runtime.wan22.sampling").warning(
+            "WAN22 GGUF: sampler=%r routed to experimental FlowMatch-Euler stochastic scheduler lane.",
+            sampler,
+        )
+        return build_wan_flow_match_euler_scheduler(
+            steps=max(1, int(steps)),
+            vendor_dir=vendor_dir,
+            flow_shift=float(flow_shift),
+            stochastic_sampling=True,
+        )
+
+    # Parse sampler hints for metadata UniPC lane. Non-Euler unsupported names remain accepted but ignored.
     if raw_sampler and class_name == "UniPCMultistepScheduler":
         parts = raw_sampler.split()
         sampler_name = parts[0] if parts else ""
@@ -215,15 +255,6 @@ def make_scheduler(
             sampler,
             class_name,
         )
-
-    # `scheduler` remains a WAN UI field, but WAN22 GGUF currently supports only the
-    # metadata-driven "simple" lane.
-    if raw_scheduler and raw_scheduler != "simple":
-        raise RuntimeError(
-            f"WAN22 GGUF: unsupported scheduler override {scheduler!r}; expected 'simple'."
-        )
-
-    from .scheduler import build_wan_unipc_flow_scheduler
 
     if class_name != "UniPCMultistepScheduler":
         raise RuntimeError(

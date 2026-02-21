@@ -33,7 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
 - `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state, with explicit VAE config-dir forwarding).
-- `stream_img2vid_chunked` (function): Chunked img2vid runner with phase batching (single text-conditioning pass, high-pass over all chunks, low-pass over all chunks, then decode/stitch).
+- `stream_img2vid_chunked` (function): Chunked img2vid runner with chunk-major sequencing (for each chunk: high pass -> low pass in latent space, then final decode/stitch pass).
 """
 
 from __future__ import annotations
@@ -1833,74 +1833,85 @@ def stream_img2vid_chunked(
             )
         return loaded
 
+    if int(total_steps) <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: invalid shared scheduler total steps "
+            f"(got {int(total_steps)})."
+        )
+    high_phase_ratio = max(0.0, min(1.0, float(steps_hi) / float(total_steps)))
+    chunk_sampling_span_pct = 85.0
+
     with tempfile.TemporaryDirectory(prefix="wan22_i2v_chunk_spool_") as spool_dir:
         log.info(
             "[wan22.gguf] chunked img2vid buffer mode requested: %s (spool dir=%s)",
             chunk_buffer_mode_value,
             spool_dir,
         )
-        high_store_mode = chunk_buffer_mode_value
         low_store_mode = chunk_buffer_mode_value
-        hi_states_ram: list[torch.Tensor] = []
-        hi_state_paths: list[str] = []
-        chunk_schedulers: list[Any] = []
-        hi_tail_latent: torch.Tensor | None = None
-        hi_model: torch.nn.Module | None = None
-        hi_mm: _MemoryManagedModule | None = None
-        try:
-            hi_model = load_stage_model_from_gguf(
-                hi_path,
-                stage="high",
-                device=dev,
-                dtype=dt,
-                lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-                lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
-                logger=log,
-            )
-            hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
-            geom_hi = infer_patch_geometry(hi_model, t=int(chunk_lat), h_lat=h_lat, w_lat=w_lat)
-            memory_management.manager.load_model(hi_mm)
-            estimated_high_total_mb = (
-                float(len(chunk_starts))
-                * float(max(1, int(geom_hi.in_channels)))
-                * float(int(chunk_lat))
-                * float(int(h_lat))
-                * float(int(w_lat))
-                * float(dtype_bytes)
-            ) / float(1024.0 * 1024.0)
-            high_store_mode = _resolve_hybrid_mode(estimated_total_mb=estimated_high_total_mb)
-            log.info(
-                "[wan22.gguf] chunked img2vid high buffer: mode=%s estimated_total_mb=%.2f",
-                high_store_mode,
-                float(estimated_high_total_mb),
-            )
+        low_decode_ram: list[torch.Tensor] = []
+        low_decode_paths: list[str] = []
+        latent_channels_lo_value: int | None = None
+        prev_chunk_tail_latent_cpu: torch.Tensor | None = None
 
-            for chunk_index, _chunk_start in enumerate(chunk_starts):
-                chunk_condition = latent_condition_base
-                if chunk_index > 0 and hi_tail_latent is not None:
-                    chunk_condition = latent_condition_base.clone()
-                    chunk_condition[:, :, :1, :, :] = _blend_anchor_latent(
-                        hi_tail_latent,
-                        base_anchor_latent,
-                        alpha=anchor_alpha_value,
-                    )
-                chunk_seed = _resolve_chunk_seed(getattr(cfg, "seed", None), chunk_index=chunk_index, mode=chunk_seed_mode)
-                chunk_scheduler, chunk_total_steps = _build_shared_scheduler(
-                    cfg,
-                    steps_hi=steps_hi,
-                    steps_lo=steps_lo,
-                    sampler_hi=sampler_hi,
-                    sampler_lo=sampler_lo,
-                    scheduler_hi=sched_hi,
-                    scheduler_lo=sched_lo,
-                    flow_shift_hi=flow_shift_hi_value,
-                    flow_shift_lo=flow_shift_lo_value,
-                )
-                if int(chunk_total_steps) != int(total_steps):
+        for chunk_index, _chunk_start in enumerate(chunk_starts):
+            chunk_condition = latent_condition_base
+            if chunk_index > 0:
+                if prev_chunk_tail_latent_cpu is None:
                     raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: scheduler total step mismatch across chunks "
-                        f"(expected={int(total_steps)} got={int(chunk_total_steps)} chunk={int(chunk_index) + 1})."
+                        "WAN22 GGUF chunked img2vid: missing previous chunk low-stage tail latent for continuity "
+                        f"(chunk={int(chunk_index) + 1}/{int(len(chunk_starts))})."
                     )
+                prev_chunk_tail_latent = prev_chunk_tail_latent_cpu.to(
+                    device=latent_condition_base.device,
+                    dtype=latent_condition_base.dtype,
+                )
+                chunk_condition = latent_condition_base.clone()
+                chunk_condition[:, :, :1, :, :] = _blend_anchor_latent(
+                    prev_chunk_tail_latent,
+                    base_anchor_latent,
+                    alpha=anchor_alpha_value,
+                )
+
+            chunk_seed = _resolve_chunk_seed(getattr(cfg, "seed", None), chunk_index=chunk_index, mode=chunk_seed_mode)
+            chunk_scheduler, chunk_total_steps = _build_shared_scheduler(
+                cfg,
+                steps_hi=steps_hi,
+                steps_lo=steps_lo,
+                sampler_hi=sampler_hi,
+                sampler_lo=sampler_lo,
+                scheduler_hi=sched_hi,
+                scheduler_lo=sched_lo,
+                flow_shift_hi=flow_shift_hi_value,
+                flow_shift_lo=flow_shift_lo_value,
+            )
+            if int(chunk_total_steps) != int(total_steps):
+                raise RuntimeError(
+                    "WAN22 GGUF chunked img2vid: scheduler total step mismatch across chunks "
+                    f"(expected={int(total_steps)} got={int(chunk_total_steps)} chunk={int(chunk_index) + 1})."
+                )
+
+            chunk_pct_span = float(chunk_sampling_span_pct) / float(len(chunk_starts))
+            chunk_pct_start = 5.0 + (chunk_pct_span * float(chunk_index))
+            high_phase_span_pct = chunk_pct_span * float(high_phase_ratio)
+            low_phase_span_pct = chunk_pct_span - high_phase_span_pct
+
+            latents_hi: torch.Tensor | None = None
+            hi_model: torch.nn.Module | None = None
+            hi_mm: _MemoryManagedModule | None = None
+            try:
+                hi_model = load_stage_model_from_gguf(
+                    hi_path,
+                    stage="high",
+                    device=dev,
+                    dtype=dt,
+                    lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+                    lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+                    logger=log,
+                )
+                hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
+                geom_hi = infer_patch_geometry(hi_model, t=int(chunk_lat), h_lat=h_lat, w_lat=w_lat)
+                memory_management.manager.load_model(hi_mm)
+
                 seed_hi = _build_i2v_seed_state(
                     cfg=cfg,
                     scheduler=chunk_scheduler,
@@ -1938,108 +1949,74 @@ def stream_img2vid_chunked(
                     flow_multiplier=flow_multiplier,
                     stage_name=f"high.chunk_{chunk_index + 1}",
                     phase_name="chunk.phase_high",
-                    phase_start_pct=5.0,
-                    phase_span_pct=50.0,
-                    chunk_index=chunk_index,
-                    chunk_total=len(chunk_starts),
+                    phase_start_pct=chunk_pct_start,
+                    phase_span_pct=high_phase_span_pct,
+                    chunk_index=0,
+                    chunk_total=1,
                 )
-                if high_store_mode == "ram":
-                    hi_states_ram.append(latents_hi.detach().to(device="cpu"))
-                else:
-                    hi_state_path = os.path.join(spool_dir, f"high_state_{chunk_index:05d}.pt")
-                    _save_chunk_tensor(
-                        hi_state_path,
-                        latents_hi,
-                        label=f"high-state chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}",
-                    )
-                    hi_state_paths.append(hi_state_path)
-                chunk_schedulers.append(chunk_scheduler)
-                hi_tail_latent = _extract_i2v_decode_latents(
-                    state=latents_hi,
-                    latent_channels=16,
-                    logger=log,
-                )[:, :, -1:, :, :].detach()
                 del seed_hi
-                del latents_hi
-                if chunk_condition is not latent_condition_base:
-                    del chunk_condition
-        finally:
-            hi_mm, hi_model = _teardown_stage(
-                stage="high",
-                mm=hi_mm,
-                model=hi_model,
-                offload_level=lvl,
-                logger=log,
-            )
-
-        low_decode_ram: list[torch.Tensor] = []
-        low_decode_paths: list[str] = []
-        lo_model: torch.nn.Module | None = None
-        lo_mm: _MemoryManagedModule | None = None
-        try:
-            lo_model = load_stage_model_from_gguf(
-                lo_path,
-                stage="low",
-                device=dev,
-                dtype=dt,
-                lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-                lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
-                logger=log,
-            )
-            latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
-            if latent_channels_lo <= 0:
-                raise RuntimeError(
-                    "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
-                    f"(got {latent_channels_lo})."
+            finally:
+                hi_mm, hi_model = _teardown_stage(
+                    stage="high",
+                    mm=hi_mm,
+                    model=hi_model,
+                    offload_level=lvl,
+                    logger=log,
                 )
-            lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
-            geom_lo = infer_patch_geometry(lo_model, t=int(chunk_lat), h_lat=h_lat, w_lat=w_lat)
-            memory_management.manager.load_model(lo_mm)
-            estimated_low_total_mb = (
-                float(len(chunk_starts))
-                * float(max(1, int(latent_channels_lo)))
-                * float(int(chunk_lat))
-                * float(int(h_lat))
-                * float(int(w_lat))
-                * float(dtype_bytes)
-            ) / float(1024.0 * 1024.0)
-            low_store_mode = _resolve_hybrid_mode(estimated_total_mb=estimated_low_total_mb)
-            log.info(
-                "[wan22.gguf] chunked img2vid low/decode buffer: mode=%s estimated_total_mb=%.2f",
-                low_store_mode,
-                float(estimated_low_total_mb),
-            )
 
-            for chunk_index, _chunk_start in enumerate(chunk_starts):
-                if chunk_index >= len(chunk_schedulers):
+            lo_model: torch.nn.Module | None = None
+            lo_mm: _MemoryManagedModule | None = None
+            try:
+                lo_model = load_stage_model_from_gguf(
+                    lo_path,
+                    stage="low",
+                    device=dev,
+                    dtype=dt,
+                    lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+                    lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+                    logger=log,
+                )
+                latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
+                if latent_channels_lo <= 0:
                     raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: missing scheduler state for low-stage chunk "
-                        f"{int(chunk_index) + 1}/{int(len(chunk_starts))}."
+                        "WAN22 GGUF: low-stage model is missing a valid latent_channels config for I2V decode "
+                        f"(got {latent_channels_lo})."
+                    )
+                if latent_channels_lo_value is None:
+                    latent_channels_lo_value = latent_channels_lo
+                    estimated_low_total_mb = (
+                        float(len(chunk_starts))
+                        * float(max(1, int(latent_channels_lo_value)))
+                        * float(int(chunk_lat))
+                        * float(int(h_lat))
+                        * float(int(w_lat))
+                        * float(dtype_bytes)
+                    ) / float(1024.0 * 1024.0)
+                    low_store_mode = _resolve_hybrid_mode(estimated_total_mb=estimated_low_total_mb)
+                    log.info(
+                        "[wan22.gguf] chunked img2vid low/decode buffer: mode=%s estimated_total_mb=%.2f",
+                        low_store_mode,
+                        float(estimated_low_total_mb),
+                    )
+                elif int(latent_channels_lo) != int(latent_channels_lo_value):
+                    raise RuntimeError(
+                        "WAN22 GGUF chunked img2vid: low-stage latent_channels changed across chunks "
+                        f"(first={int(latent_channels_lo_value)} now={int(latent_channels_lo)} chunk={int(chunk_index) + 1})."
                     )
 
-                if high_store_mode == "ram":
-                    if chunk_index >= len(hi_states_ram):
-                        raise RuntimeError(
-                            "WAN22 GGUF chunked img2vid: missing high-state tensor in RAM for low-stage chunk "
-                            f"{int(chunk_index) + 1}/{int(len(chunk_starts))}."
-                        )
-                    hi_state_cpu = hi_states_ram[chunk_index]
-                else:
-                    if chunk_index >= len(hi_state_paths):
-                        raise RuntimeError(
-                            "WAN22 GGUF chunked img2vid: missing high-state payload path for low-stage chunk "
-                            f"{int(chunk_index) + 1}/{int(len(chunk_starts))}."
-                        )
-                    hi_state_cpu = _load_chunk_tensor(
-                        hi_state_paths[chunk_index],
-                        label=f"high-state chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}",
+                lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
+                geom_lo = infer_patch_geometry(lo_model, t=int(chunk_lat), h_lat=h_lat, w_lat=w_lat)
+                memory_management.manager.load_model(lo_mm)
+                if latents_hi is None:
+                    raise RuntimeError(
+                        "WAN22 GGUF chunked img2vid: high-stage chunk latents are missing before low-stage handoff "
+                        f"(chunk={int(chunk_index) + 1}/{int(len(chunk_starts))})."
                     )
-                hi_state = hi_state_cpu.to(device=dev, dtype=dt)
-                seed_lo = prepare_stage_seed_latents(hi_state, geom_lo, logger=log)
-                if tuple(seed_lo.shape) != tuple(hi_state.shape):
+                seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+                if tuple(seed_lo.shape) != tuple(latents_hi.shape):
                     raise RuntimeError(
                         "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
-                        f"high={tuple(hi_state.shape)} low_init={tuple(seed_lo.shape)}"
+                        f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
                     )
                 latents_lo = yield from _sample_chunk_stage_with_progress(
                     model=lo_model,
@@ -2054,7 +2031,7 @@ def stream_img2vid_chunked(
                     sampler_name=sampler_lo,
                     scheduler_name=sched_lo,
                     metadata_dir=cfg.metadata_dir,
-                    scheduler_obj=chunk_schedulers[chunk_index],
+                    scheduler_obj=chunk_scheduler,
                     timestep_start=steps_hi,
                     timestep_end=total_steps,
                     state_init=seed_lo,
@@ -2063,16 +2040,23 @@ def stream_img2vid_chunked(
                     flow_multiplier=flow_multiplier,
                     stage_name=f"low.chunk_{chunk_index + 1}",
                     phase_name="chunk.phase_low",
-                    phase_start_pct=55.0,
-                    phase_span_pct=35.0,
-                    chunk_index=chunk_index,
-                    chunk_total=len(chunk_starts),
+                    phase_start_pct=(chunk_pct_start + high_phase_span_pct),
+                    phase_span_pct=low_phase_span_pct,
+                    chunk_index=0,
+                    chunk_total=1,
                 )
                 decode_chunk_latents = _extract_i2v_decode_latents(
                     state=latents_lo,
                     latent_channels=latent_channels_lo,
                     logger=log,
                 )
+                if int(decode_chunk_latents.shape[1]) != int(base_anchor_latent.shape[1]):
+                    raise RuntimeError(
+                        "WAN22 GGUF chunked img2vid: low-stage decode latent channel mismatch for anchor continuity "
+                        f"(decode_C={int(decode_chunk_latents.shape[1])} anchor_C={int(base_anchor_latent.shape[1])})."
+                    )
+                prev_chunk_tail_latent_cpu = decode_chunk_latents[:, :, -1:, :, :].detach().to(device="cpu")
+
                 if low_store_mode == "ram":
                     low_decode_ram.append(decode_chunk_latents.detach().to(device="cpu"))
                 else:
@@ -2083,26 +2067,25 @@ def stream_img2vid_chunked(
                         label=f"low-decode chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}",
                     )
                     low_decode_paths.append(low_decode_path)
-                if high_store_mode == "ram":
-                    hi_states_ram[chunk_index] = torch.empty((0,), dtype=dt, device="cpu")
-                else:
-                    hi_state_paths[chunk_index] = ""
-                del hi_state_cpu
-                del hi_state
                 del seed_lo
                 del latents_lo
                 del decode_chunk_latents
-        finally:
-            lo_mm, lo_model = _teardown_stage(
-                stage="low",
-                mm=lo_mm,
-                model=lo_model,
-                offload_level=lvl,
-                logger=log,
-            )
-        hi_states_ram.clear()
-        hi_state_paths.clear()
-        chunk_schedulers.clear()
+            finally:
+                lo_mm, lo_model = _teardown_stage(
+                    stage="low",
+                    mm=lo_mm,
+                    model=lo_model,
+                    offload_level=lvl,
+                    logger=log,
+                )
+
+            if chunk_condition is not latent_condition_base:
+                del chunk_condition
+            if latents_hi is not None:
+                del latents_hi
+
+        if latent_channels_lo_value is None:
+            raise RuntimeError("WAN22 GGUF chunked img2vid: no low-stage chunks were processed.")
 
         from PIL import Image
 

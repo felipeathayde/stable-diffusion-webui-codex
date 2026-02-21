@@ -86,7 +86,7 @@
     color: var(--color-foreground);
     font-family: "Source Sans Pro", ui-sans-serif, system-ui, sans-serif;
   }
-  html { overflow-y: auto; scrollbar-gutter: stable both-edges; }
+  html { overflow-y: auto; scrollbar-gutter: stable }
   button,
   [role="button"],
   .clickable,
@@ -278,6 +278,7 @@
   @import "./styles/components/hires-settings-card.css";
   @import "./styles/components/refiner-settings-card.css";
   @import "./styles/components/result-viewer.css";
+  @import "./styles/components/inpaint-mask-editor.css";
   @import "./styles/components/prompt-fields.css";
   @import "./styles/components/video-settings-card.css";
   @import "./styles/components/quicksettings.css";

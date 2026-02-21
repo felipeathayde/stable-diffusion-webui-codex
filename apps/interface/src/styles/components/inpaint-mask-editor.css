@@ -1,0 +1,123 @@
+@layer components {
+  .inpaint-mask-editor-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    background: rgba(0, 0, 0, 0.9);
+  }
+
+  .inpaint-mask-editor-main {
+    flex: 1;
+    display: flex;
+    min-width: 0;
+    align-items: stretch;
+  }
+
+  .inpaint-mask-editor-stage {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    touch-action: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: crosshair;
+    user-select: none;
+  }
+
+  .inpaint-mask-editor-content {
+    position: relative;
+    transform-origin: center center;
+    box-shadow: 0 0 0 0.0625rem hsla(0, 0%, 100%, 0.2), 0 0.625rem 1.75rem rgba(0, 0, 0, 0.45);
+  }
+
+  .inpaint-mask-editor-base-image,
+  .inpaint-mask-editor-mask-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .inpaint-mask-editor-base-image {
+    object-fit: contain;
+    pointer-events: none;
+  }
+
+  .inpaint-mask-editor-mask-canvas {
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+
+  .inpaint-mask-editor-cursor {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    border: 0.0625rem solid hsla(0, 0%, 100%, 0.95);
+    border-radius: 999rem;
+    background: hsla(0, 0%, 100%, 0.08);
+    pointer-events: none;
+  }
+
+  .inpaint-mask-editor-toolbar {
+    width: 18rem;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    border-left: 0.0625rem solid hsla(0, 0%, 100%, 0.12);
+    background: linear-gradient(180deg, hsla(220, 20%, 15%, 0.9), hsla(220, 20%, 11%, 0.92));
+    backdrop-filter: blur(0.75rem);
+    overflow-y: auto;
+  }
+
+  .inpaint-mask-editor-toolbar__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .inpaint-mask-editor-toolbar__tools,
+  .inpaint-mask-editor-toolbar__actions,
+  .inpaint-mask-editor-toolbar__footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .inpaint-mask-editor-toolbar__brush {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .inpaint-mask-editor-toolbar__shortcuts {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem;
+    border: 0.0625rem solid hsla(0, 0%, 100%, 0.1);
+    border-radius: 0.5rem;
+    background: hsla(0, 0%, 100%, 0.03);
+  }
+
+  .inpaint-mask-editor-toolbar__shortcuts p {
+    margin: 0;
+  }
+
+  @media (max-width: 72rem) {
+    .inpaint-mask-editor-overlay {
+      flex-direction: column;
+    }
+
+    .inpaint-mask-editor-toolbar {
+      width: 100%;
+      border-left: none;
+      border-top: 0.0625rem solid hsla(0, 0%, 100%, 0.12);
+      max-height: 40dvh;
+    }
+  }
+}

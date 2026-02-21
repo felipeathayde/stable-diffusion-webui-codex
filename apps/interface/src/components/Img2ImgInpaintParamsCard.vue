@@ -15,6 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
 - `onInpaintingFillChange` (function): Emits raw masked-content numeric updates for parent-side normalization.
+- `onMaskEditorApply` (function): Emits edited mask data URL produced by the inpaint mask editor overlay.
+- `onMaskEditorExternalReset` (function): Forwards editor reset notices for parent-side toasts.
 -->
 
 <template>
@@ -67,6 +69,17 @@ Symbols (top-level; keep in sync; no ghosts):
           <p v-if="maskImageName" class="caption img2img-caption">{{ maskImageName }}</p>
         </template>
       </InitialImageCard>
+
+      <div class="img2img-mask-editor-actions">
+        <button
+          class="btn btn-sm btn-secondary"
+          type="button"
+          :disabled="disabled || !initImageData"
+          @click="maskEditorOpen = true"
+        >
+          Edit mask
+        </button>
+      </div>
 
       <div class="gc-row img2img-mask-grid">
         <div class="field">
@@ -145,11 +158,23 @@ Symbols (top-level; keep in sync; no ghosts):
         @update:modelValue="(value) => emit('update:maskBlur', value)"
       />
     </div>
+
+    <InpaintMaskEditorOverlay
+      v-model="maskEditorOpen"
+      :init-image-data="initImageData"
+      :initial-mask-data="maskImageData"
+      :image-width="imageWidth"
+      :image-height="imageHeight"
+      @apply="onMaskEditorApply"
+      @external-reset="onMaskEditorExternalReset"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import InitialImageCard from './InitialImageCard.vue'
+import InpaintMaskEditorOverlay from './ui/InpaintMaskEditorOverlay.vue'
 import SliderField from './ui/SliderField.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
 
@@ -163,6 +188,8 @@ withDefaults(defineProps<{
   initImageLabel?: string
   initImageData?: string
   initImageName?: string
+  imageWidth: number
+  imageHeight: number
   useMask: boolean
   maskImageData?: string
   maskImageName?: string
@@ -193,6 +220,8 @@ const emit = defineEmits<{
   (e: 'set:maskImage', value: File): void
   (e: 'clear:maskImage'): void
   (e: 'reject:maskImage', payload: { reason: string; files: File[] }): void
+  (e: 'apply:maskImageData', value: string): void
+  (e: 'notice:maskEditorReset', message: string): void
   (e: 'update:maskEnforcement', value: string): void
   (e: 'update:inpaintingFill', value: number): void
   (e: 'toggle:inpaintFullRes'): void
@@ -202,12 +231,22 @@ const emit = defineEmits<{
   (e: 'update:maskBlur', value: number): void
 }>()
 
+const maskEditorOpen = ref(false)
+
 function onMaskEnforcementChange(event: Event): void {
   emit('update:maskEnforcement', (event.target as HTMLSelectElement).value)
 }
 
 function onInpaintingFillChange(event: Event): void {
   emit('update:inpaintingFill', Number((event.target as HTMLSelectElement).value))
+}
+
+function onMaskEditorApply(maskDataUrl: string): void {
+  emit('apply:maskImageData', maskDataUrl)
+}
+
+function onMaskEditorExternalReset(message: string): void {
+  emit('notice:maskEditorReset', message)
 }
 </script>
 

@@ -514,6 +514,17 @@ export function useGeneration(tabId: string) {
       return
     }
     const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
+    const selectedVaeLower = String(selectedVae || '').trim().toLowerCase()
+    const selectedVaeIsSentinel =
+      selectedVaeLower === 'automatic' ||
+      selectedVaeLower === 'built in' ||
+      selectedVaeLower === 'built-in' ||
+      selectedVaeLower === 'none'
+    if (!selectedVaeIsSentinel && !resolvedVaeSha) {
+      state.value.status = 'error'
+      state.value.errorMessage = 'Selected VAE is invalid or stale. Re-select a VAE and retry.'
+      return
+    }
     const needsVaeSha = Boolean(assetContract?.requires_vae)
     if (needsVaeSha) {
       if (!resolvedVaeSha) {

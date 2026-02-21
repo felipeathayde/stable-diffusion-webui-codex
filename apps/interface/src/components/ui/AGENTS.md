@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, ui, primitives -->
 # apps/interface/src/components/ui Overview
 Date: 2025-12-23
-Last Review: 2026-02-17
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -17,6 +17,8 @@ Status: Active
 - `apps/interface/src/components/ui/JsonTreeView.vue` — Collapsible JSON renderer used by the metadata modal (`<details>/<summary>` tree).
 - `apps/interface/src/components/ui/Dropzone.vue` — Drag-and-drop file picker primitive (presentational; emits `select`/`rejected`).
 - `apps/interface/src/components/ui/ImageZoomOverlay.vue` — Full-screen image zoom overlay with shared close semantics (Esc and outside-click).
+- `apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue` — Full-screen inpaint mask editor overlay (brush/eraser/circle/polygon + zoom/pan + undo/redo).
+- `apps/interface/src/components/ui/inpaint_mask_editor_engine.ts` — Pure mask-editing engine used by the inpaint editor overlay (draw ops + bounded history + mask helpers).
 
 ## Notes
 - Keep components presentational: props in, emits out; no store calls or API fetching.
@@ -28,3 +30,4 @@ Status: Active
 - 2026-02-08: `UpscalerTileControls.vue` now supports `presetVariant='resolution'` so hires tile preset buttons can match the Basic Parameters resolution-button pattern while keeping legacy toggle styling as default.
 - 2026-02-17: Added `ImageZoomOverlay.vue`; `ResultViewer.vue` and init-image previews now reuse the same zoom behavior and close path (`Esc` and outside-click call the same close handler).
 - 2026-02-18: `SliderField.vue` now supports optional rich label tooltips (hover/focus trigger with `?` badge) via shared `HoverTooltip.vue`.
+- 2026-02-21: Added `InpaintMaskEditorOverlay.vue` + `inpaint_mask_editor_engine.ts` for practical inpaint mask authoring (binary mask export, brush/eraser/circle/polygon, deep undo/redo, reset/apply contract).

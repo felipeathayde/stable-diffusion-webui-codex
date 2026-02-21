@@ -42,6 +42,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onMaskFileSet` (function): Reads a mask file into a data URL and stores it after validating dimensions (async).
 - `onMaskImageRejected` (function): Surfaces dropzone reject reasons for mask-image input.
 - `clearMask` (function): Clears mask fields.
+- `onMaskEditorApply` (function): Validates and stores an edited mask exported from the inpaint mask editor overlay.
+- `onMaskEditorResetNotice` (function): Surfaces inpaint mask editor source-reset notices as toasts.
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
 - `randomizeSeed` (function): Randomizes the seed field for the current tab params.
 - `reuseSeed` (function): Reuses the last seed from history/current run as the next seed.
@@ -80,6 +82,8 @@ Symbols (top-level; keep in sync; no ghosts):
             :disabled="isRunning"
             :initImageData="params.initImageData"
             :initImageName="params.initImageName"
+            :imageWidth="params.width"
+            :imageHeight="params.height"
             :useMask="params.useMask"
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"
@@ -96,6 +100,8 @@ Symbols (top-level; keep in sync; no ghosts):
             @set:maskImage="onMaskFileSet"
             @clear:maskImage="clearMask"
             @reject:maskImage="onMaskImageRejected"
+            @apply:maskImageData="onMaskEditorApply"
+            @notice:maskEditorReset="onMaskEditorResetNotice"
             @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
             @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
             @toggle:inpaintFullRes="setParams({ inpaintFullRes: !params.inpaintFullRes })"
@@ -1226,6 +1232,30 @@ async function onMaskFileSet(file: File): Promise<void> {
 
 function clearMask(): void {
   setParams({ maskImageData: '', maskImageName: '' })
+}
+
+async function onMaskEditorApply(maskDataUrl: string): Promise<void> {
+  if (!params.value.initImageData) {
+    toast('Select an initial image before editing a mask.')
+    return
+  }
+  try {
+    const { width, height } = await readImageDimensions(maskDataUrl)
+    if (width !== params.value.width || height !== params.value.height) {
+      toast(`Mask size must match init image size: expected ${params.value.width}×${params.value.height}, got ${width}×${height}.`)
+      return
+    }
+  } catch {
+    toast('Failed to load edited mask image.')
+    return
+  }
+  setParams({ useMask: true, maskImageData: maskDataUrl, maskImageName: 'edited-mask.png' })
+}
+
+function onMaskEditorResetNotice(message: string): void {
+  const text = String(message || '').trim()
+  if (!text) return
+  toast(text)
 }
 
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }

@@ -20,6 +20,11 @@
     min-width: 0;
   }
 
+  .img2img-params-card .img2img-mask-editor-actions {
+    display: flex;
+    justify-content: flex-start;
+  }
+
   .img2img-params-card .img2img-toggle-row {
     display: flex;
     flex-wrap: wrap;

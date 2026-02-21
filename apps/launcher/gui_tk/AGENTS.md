@@ -1,7 +1,7 @@
 # apps.launcher.gui_tk
 Date: 2026-01-25
 Status: Active
-Last Review: 2026-02-15
+Last Review: 2026-02-21
 
 ## Purpose
 - Modular Tk/ttk GUI implementation for the Codex launcher (services + settings + logs).
@@ -25,3 +25,4 @@ Last Review: 2026-02-15
 - 2026-01-31: `tabs/diagnostics.py` now exposes global profiling env flags (`CODEX_PROFILE*`) for backend torch-profiler runs.
 - 2026-02-15: `tabs/diagnostics.py` now exposes launcher trace toggles (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) alongside timeline/profile flags.
 - 2026-02-18: `tabs/runtime.py` now exposes task cancel default mode (`CODEX_TASK_CANCEL_DEFAULT_MODE`) with strict choices (`immediate`, `after_current`) alongside existing task/safety knobs.
+- 2026-02-21: `tabs/runtime.py` now exposes WAN img2vid chunk buffer mode (`CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE`) with strict choices (`hybrid`, `ram`, `ram+hd`).

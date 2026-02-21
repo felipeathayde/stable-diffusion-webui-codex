@@ -29,6 +29,7 @@ from apps.launcher.settings import (
     BoolSetting,
     DEVICE_CHOICES,
     IntSetting,
+    WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES,
     SettingValidationError,
     TASK_CANCEL_DEFAULT_MODE_CHOICES,
     TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
@@ -63,6 +64,7 @@ class RuntimeTab:
         self._var_gguf_exec = tk.StringVar()
         self._var_gguf_dequant_cache = tk.StringVar()
         self._var_gguf_dequant_cache_ratio = tk.StringVar()
+        self._var_wan_chunk_buffer_mode = tk.StringVar()
         self._var_lora_online_math = tk.StringVar()
         self._var_pytorch_alloc_conf = tk.StringVar()
         self._var_default_alloc_conf_enabled = tk.BooleanVar()
@@ -180,6 +182,23 @@ class RuntimeTab:
             "Env var: CODEX_GGUF_DEQUANT_CACHE_RATIO (float, >0 and <=1).\n"
             "Used only when GGUF dequant cache is enabled and no explicit LIMIT_MB is set.\n"
             "Example: 0.30 reserves ~30% of free VRAM/RAM at sampling start.",
+        )
+        row = self._add_choice_combo(
+            body,
+            row,
+            label="WAN img2vid chunk buffer mode (requires API restart):",
+            var=self._var_wan_chunk_buffer_mode,
+            choices=list(WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES),
+            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
+            width=10,
+        )
+        row = add_help(
+            body,
+            row,
+            "Env var: CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE\n"
+            "hybrid: auto-select RAM or RAM+disk by chunk memory estimate.\n"
+            "ram: keep chunk buffers only in RAM.\n"
+            "ram+hd: spool chunk buffers to RAM+disk (bounded RAM).",
         )
         row = self._add_choice_combo(
             body,
@@ -327,6 +346,7 @@ class RuntimeTab:
         self._var_gguf_exec.set(_get("CODEX_GGUF_EXEC", "dequant_forward"))
         self._var_gguf_dequant_cache.set(_get("CODEX_GGUF_DEQUANT_CACHE", "off"))
         self._var_gguf_dequant_cache_ratio.set(str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip())
+        self._var_wan_chunk_buffer_mode.set(_get("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"))
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
         try:
             default_alloc_enabled = BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True).get(env)
@@ -538,15 +558,19 @@ class RuntimeTab:
         env["CODEX_GGUF_DEQUANT_CACHE"] = str(self._var_gguf_dequant_cache.get() or "").strip().lower() or "off"
         env["CODEX_LORA_APPLY_MODE"] = str(self._var_lora_apply_mode.get() or "").strip().lower() or "merge"
         env["CODEX_LORA_ONLINE_MATH"] = str(self._var_lora_online_math.get() or "").strip().lower() or "weight_merge"
+        env["CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE"] = (
+            str(self._var_wan_chunk_buffer_mode.get() or "").strip().lower() or "hybrid"
+        )
         try:
-            gguf, gguf_cache, lora_apply, lora_math = normalize_gguf_lora_env(env)
+            gguf, gguf_cache, lora_apply, lora_math, chunk_buffer_mode = normalize_gguf_lora_env(env)
         except SettingValidationError as exc:
             env["CODEX_GGUF_EXEC"] = "dequant_forward"
             env["CODEX_GGUF_DEQUANT_CACHE"] = "off"
             env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
             env["CODEX_LORA_APPLY_MODE"] = "merge"
             env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
-            gguf, gguf_cache, lora_apply, lora_math = normalize_gguf_lora_env(env)
+            env["CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE"] = "hybrid"
+            gguf, gguf_cache, lora_apply, lora_math, chunk_buffer_mode = normalize_gguf_lora_env(env)
             messagebox.showerror("Invalid runtime setting", str(exc))
             mark_changed = True
 
@@ -555,6 +579,7 @@ class RuntimeTab:
         self._var_lora_apply_mode.set(lora_apply)
         self._var_gguf_dequant_cache_ratio.set(str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip())
         self._var_lora_online_math.set(lora_math)
+        self._var_wan_chunk_buffer_mode.set(chunk_buffer_mode)
 
         if self._gguf_dequant_cache_combo is not None:
             self._gguf_dequant_cache_combo.configure(state="readonly" if gguf == "dequant_forward" else "disabled")

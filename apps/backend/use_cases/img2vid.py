@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -130,6 +131,7 @@ class _Img2VidChunkOptions:
     overlap_frames: int
     anchor_alpha: float
     chunk_seed_mode: str
+    chunk_buffer_mode: str
 
 
 def _parse_img2vid_chunk_options(extras: Mapping[str, Any], *, total_frames: int) -> Optional[_Img2VidChunkOptions]:
@@ -176,12 +178,22 @@ def _parse_img2vid_chunk_options(extras: Mapping[str, Any], *, total_frames: int
         raise RuntimeError(
             f"img2vid_chunk_seed_mode must be one of ('fixed','increment','random'), got: {raw_seed_mode!r}"
         )
+    raw_buffer_mode = extras.get("img2vid_chunk_buffer_mode")
+    if raw_buffer_mode in (None, ""):
+        raw_buffer_mode = os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid")
+    chunk_buffer_mode = str(raw_buffer_mode or "").strip().lower()
+    if chunk_buffer_mode not in {"hybrid", "ram", "ram+hd"}:
+        raise RuntimeError(
+            "img2vid_chunk_buffer_mode must be one of ('hybrid','ram','ram+hd'), "
+            f"got: {raw_buffer_mode!r}"
+        )
 
     return _Img2VidChunkOptions(
         chunk_frames=chunk_frames,
         overlap_frames=overlap_frames,
         anchor_alpha=anchor_alpha,
         chunk_seed_mode=raw_seed_mode,
+        chunk_buffer_mode=chunk_buffer_mode,
     )
 
 
@@ -237,11 +249,12 @@ def run_img2vid(
         else:
             if logger:
                 logger.info(
-                    "[img2vid] chunk mode enabled (phase-batched): chunk_frames=%d overlap=%d anchor_alpha=%.3f seed_mode=%s",
+                    "[img2vid] chunk mode enabled (phase-batched): chunk_frames=%d overlap=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
                     chunk_opts.chunk_frames,
                     chunk_opts.overlap_frames,
                     chunk_opts.anchor_alpha,
                     chunk_opts.chunk_seed_mode,
+                    chunk_opts.chunk_buffer_mode,
                 )
 
             cfg = build_wan22_gguf_run_config(
@@ -257,6 +270,7 @@ def run_img2vid(
                 overlap_frames=int(chunk_opts.overlap_frames),
                 anchor_alpha=float(chunk_opts.anchor_alpha),
                 chunk_seed_mode=str(chunk_opts.chunk_seed_mode),
+                chunk_buffer_mode=str(chunk_opts.chunk_buffer_mode),
                 logger=logger,
             ):
                 if not isinstance(ev, dict):

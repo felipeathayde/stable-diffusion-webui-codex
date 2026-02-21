@@ -86,6 +86,7 @@ class RunConfig:
     # New: coarse-grained offload profile (takes precedence over aggressive_offload if provided)
     # 0 = off (keep resident), 1 = light (offload TE/VAE only), 2 = balanced (also clear between stages), 3 = aggressive (current behavior)
     offload_level: Optional[int] = None
+    chunk_buffer_mode: str = "hybrid"  # img2vid chunk buffering strategy: 'hybrid' | 'ram' | 'ram+hd'
 
 
 def as_torch_dtype(dtype: str) -> torch.dtype:
@@ -665,6 +666,16 @@ def build_wan22_gguf_run_config(
                 "'auto', 'mem_efficient', 'flash', or 'math' when provided, "
                 f"got {sdpa_policy_raw!r}."
             )
+    chunk_buffer_mode_raw = extras.get("img2vid_chunk_buffer_mode")
+    chunk_buffer_mode = "hybrid"
+    if chunk_buffer_mode_raw is not None:
+        chunk_buffer_mode = str(chunk_buffer_mode_raw).strip().lower()
+        if chunk_buffer_mode not in {"hybrid", "ram", "ram+hd"}:
+            raise RuntimeError(
+                "WAN22 GGUF: 'img2vid_chunk_buffer_mode' must be one of "
+                "('hybrid','ram','ram+hd') when provided, "
+                f"got {chunk_buffer_mode_raw!r}."
+            )
 
     return RunConfig(
         width=width,
@@ -696,6 +707,7 @@ def build_wan22_gguf_run_config(
         ),
         aggressive_offload=aggressive_offload,
         offload_level=offload_level,
+        chunk_buffer_mode=chunk_buffer_mode,
         te_device=(str(extras.get("gguf_te_device")).lower() if extras.get("gguf_te_device") is not None else None),
         high=StageConfig(
             model_dir=hi_dir,

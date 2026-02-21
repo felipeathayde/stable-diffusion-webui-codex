@@ -1,7 +1,7 @@
 # apps.launcher
 Date: 2025-10-28
 Status: Active
-Last Review: 2026-02-15
+Last Review: 2026-02-21
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -37,3 +37,4 @@ Last Review: 2026-02-15
 - 2026-01-31: Launcher profiles now persist global profiling env flags (`CODEX_PROFILE*`) and the GUI diagnostics tab exposes them for backend torch-profiler runs.
 - 2026-02-15: Launcher API arg forwarding now includes trace toggles (`CODEX_TRACE_CONTRACT` -> `--trace-contract`, `CODEX_TRACE_PROFILER` -> `--trace-profiler`) for backend bootstrap alignment.
 - 2026-02-18: Launcher task/runtime profile defaults now persist `CODEX_TASK_CANCEL_DEFAULT_MODE` (`immediate|after_current`) as a backend bootstrap knob for task cancel policy.
+- 2026-02-21: Launcher profiles/settings now persist and validate `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE` (`hybrid|ram|ram+hd`) as a runtime bootstrap knob used by WAN22 img2vid chunk buffering policy.

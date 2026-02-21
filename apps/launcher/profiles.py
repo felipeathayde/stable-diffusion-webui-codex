@@ -75,6 +75,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_VAE_DEVICE": "auto",
         "CODEX_GGUF_EXEC": "dequant_forward",
         "CODEX_GGUF_DEQUANT_CACHE": "off",
+        "CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE": os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"),
         "CODEX_LORA_APPLY_MODE": "merge",
         "CODEX_LORA_ONLINE_MATH": "weight_merge",
         ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY: "1",

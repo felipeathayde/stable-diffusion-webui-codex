@@ -2602,11 +2602,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         has_overlap_frames = payload.get('img2vid_overlap_frames') not in (None, '')
         has_anchor_alpha = payload.get('img2vid_anchor_alpha') not in (None, '')
         has_chunk_seed_mode = payload.get('img2vid_chunk_seed_mode') not in (None, '')
-        if not has_chunk_frames and (has_overlap_frames or has_anchor_alpha or has_chunk_seed_mode):
+        has_chunk_buffer_mode = payload.get('img2vid_chunk_buffer_mode') not in (None, '')
+        if not has_chunk_frames and (has_overlap_frames or has_anchor_alpha or has_chunk_seed_mode or has_chunk_buffer_mode):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "'img2vid_overlap_frames', 'img2vid_anchor_alpha', and 'img2vid_chunk_seed_mode' "
+                    "'img2vid_overlap_frames', 'img2vid_anchor_alpha', 'img2vid_chunk_seed_mode', "
+                    "and 'img2vid_chunk_buffer_mode' "
                     "require 'img2vid_chunk_frames'."
                 ),
             )
@@ -2642,6 +2644,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if seed_mode not in {'fixed', 'increment', 'random'}:
                 raise HTTPException(status_code=400, detail=f"Invalid img2vid_chunk_seed_mode: {payload.get('img2vid_chunk_seed_mode')!r}")
             extras['img2vid_chunk_seed_mode'] = seed_mode
+        if has_chunk_buffer_mode:
+            chunk_buffer_mode = str(payload.get('img2vid_chunk_buffer_mode') or '').strip().lower()
+            if chunk_buffer_mode not in {'hybrid', 'ram', 'ram+hd'}:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid img2vid_chunk_buffer_mode: {payload.get('img2vid_chunk_buffer_mode')!r}",
+                )
+            extras['img2vid_chunk_buffer_mode'] = chunk_buffer_mode
 
         engine_key, wan_engine_variant = _resolve_wan22_engine_key(
             payload,

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
 Runs high/low stages, configures sampler settings, applies LoRAs, runs the shared video interpolation stage when requested, exports video, and yields
 progress/result events.
+Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and `extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when missing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
@@ -354,6 +355,16 @@ def run_img2vid(
     extras = dict(plan.extras)
     wan_high_cfg = extras.get("wan_high")
     wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
+    if wan_hi_opts is None or wan_hi_opts.prompt is None:
+        raise RuntimeError("img2vid requires extras.wan_high.prompt to be set.")
+    high_prompt = str(wan_hi_opts.prompt).strip()
+    if not high_prompt:
+        raise RuntimeError("img2vid requires a non-empty high-stage prompt.")
+    high_negative_prompt = (
+        str(wan_hi_opts.negative_prompt).strip()
+        if wan_hi_opts and wan_hi_opts.negative_prompt is not None
+        else str(getattr(request, "negative_prompt", "") or "").strip()
+    )
     if wan_hi_opts and wan_hi_opts.lora_path and hasattr(active_pipe_hi, "load_lora_weights"):
         if logger:
             logger.info("[wan] loading high-stage LoRA: %s", wan_hi_opts.lora_path)
@@ -365,8 +376,8 @@ def run_img2vid(
     frames_hi = _run_stage(
         active_pipe_hi,
         plan,
-        prompt=request.prompt,
-        negative_prompt=getattr(request, "negative_prompt", None),
+        prompt=high_prompt,
+        negative_prompt=high_negative_prompt,
         init_image=getattr(request, "init_image", None),
     )
 
@@ -377,6 +388,16 @@ def run_img2vid(
     if active_pipe_lo is not None and frames_hi:
         wan_low_cfg = extras.get("wan_low")
         wan_opts = WanStageOptions.from_mapping(wan_low_cfg) if isinstance(wan_low_cfg, dict) else None
+        if wan_opts is None or wan_opts.prompt is None:
+            raise RuntimeError("img2vid requires extras.wan_low.prompt to be set.")
+        low_prompt = str(wan_opts.prompt).strip()
+        if not low_prompt:
+            raise RuntimeError("img2vid requires a non-empty low-stage prompt.")
+        low_negative_prompt = (
+            str(wan_opts.negative_prompt).strip()
+            if wan_opts and wan_opts.negative_prompt is not None
+            else str(getattr(request, "negative_prompt", "") or "").strip()
+        )
         if wan_opts and wan_opts.lora_path and hasattr(active_pipe_lo, "load_lora_weights"):
             if logger:
                 logger.info("[wan] loading low-stage LoRA: %s", wan_opts.lora_path)
@@ -387,8 +408,8 @@ def run_img2vid(
         frames = _run_stage(
             active_pipe_lo,
             plan,
-            prompt=request.prompt,
-            negative_prompt=getattr(request, "negative_prompt", None),
+            prompt=low_prompt,
+            negative_prompt=low_negative_prompt,
             init_image=frames_hi[-1],
         )
 

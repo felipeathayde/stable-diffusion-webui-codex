@@ -13,7 +13,7 @@ config-source contract checks (bundle dir or file+config), plus strict `gguf_sdp
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
-- `StageConfig` (dataclass): Stage-level configuration (stage model selection + sampler/scheduler/steps/cfg/flow_shift + optional LoRA).
+- `StageConfig` (dataclass): Stage-level configuration (stage model selection + prompt/negative + sampler/scheduler/steps/cfg/flow_shift + optional LoRA).
 - `RunConfig` (dataclass): Full run configuration (geometry, prompts, devices/dtypes, assets, and both stages).
 - `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
 - `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
@@ -43,6 +43,8 @@ WAN_FLOW_MULTIPLIER = 1000.0
 @dataclass(frozen=True)
 class StageConfig:
     model_dir: str
+    prompt: Optional[str]
+    negative_prompt: Optional[str]
     sampler: str
     scheduler: str
     steps: int
@@ -438,7 +440,7 @@ def build_wan22_gguf_run_config(
         *,
         stage: str,
         default_steps: int,
-    ) -> tuple[str, int, Optional[float], Optional[str], Optional[str], Optional[float], Optional[int], Optional[str], Optional[float]]:
+    ) -> tuple[str, Optional[str], Optional[str], int, Optional[float], Optional[str], Optional[str], Optional[float], Optional[int], Optional[str], Optional[float]]:
         if not isinstance(raw, dict):
             raise RuntimeError(f"WAN22 GGUF requires {stage}.model_dir (resolved from model_sha).")
         model_dir = str(raw.get("model_dir") or "").strip()
@@ -449,6 +451,24 @@ def build_wan22_gguf_run_config(
             raise RuntimeError(f"WAN22 GGUF: {stage} model must be a .gguf file, got: {model_dir}")
         if not os.path.isfile(model_dir):
             raise RuntimeError(f"WAN22 GGUF: {stage} model not found: {model_dir}")
+
+        raw_prompt = raw.get("prompt")
+        if raw_prompt is None:
+            stage_prompt = None
+        elif isinstance(raw_prompt, str):
+            stage_prompt = raw_prompt.strip() or None
+        else:
+            raise RuntimeError(f"WAN22 GGUF: {stage}.prompt must be a string, got: {raw_prompt!r}")
+
+        raw_negative_prompt = raw.get("negative_prompt")
+        if raw_negative_prompt is None:
+            stage_negative_prompt = None
+        elif isinstance(raw_negative_prompt, str):
+            stage_negative_prompt = raw_negative_prompt.strip()
+        else:
+            raise RuntimeError(
+                f"WAN22 GGUF: {stage}.negative_prompt must be a string, got: {raw_negative_prompt!r}"
+            )
 
         raw_steps = raw.get("steps")
         steps = _coerce_int(raw_steps)
@@ -516,12 +536,24 @@ def build_wan22_gguf_run_config(
                 raise RuntimeError(f"WAN22 GGUF: {stage}.lora_sha must resolve to a .safetensors file: {lora_sha}")
             if not os.path.isfile(lora_path):
                 raise RuntimeError(f"WAN22 GGUF: {stage} LoRA file not found: {lora_path}")
-        return model_dir, steps, cfg_scale, sampler, scheduler, flow_shift, seed, lora_path, lora_weight
+        return (
+            model_dir,
+            stage_prompt,
+            stage_negative_prompt,
+            steps,
+            cfg_scale,
+            sampler,
+            scheduler,
+            flow_shift,
+            seed,
+            lora_path,
+            lora_weight,
+        )
 
-    hi_dir, hi_steps, hi_cfg, hi_sampler, hi_scheduler, hi_flow_shift, hi_seed, hi_lora_path, hi_lora_weight = _stage_opts(
+    hi_dir, hi_prompt, hi_negative_prompt, hi_steps, hi_cfg, hi_sampler, hi_scheduler, hi_flow_shift, hi_seed, hi_lora_path, hi_lora_weight = _stage_opts(
         wh_raw, stage="wan_high", default_steps=default_steps_high
     )
-    lo_dir, lo_steps, lo_cfg, lo_sampler, lo_scheduler, lo_flow_shift, _lo_seed, lo_lora_path, lo_lora_weight = _stage_opts(
+    lo_dir, lo_prompt, lo_negative_prompt, lo_steps, lo_cfg, lo_sampler, lo_scheduler, lo_flow_shift, _lo_seed, lo_lora_path, lo_lora_weight = _stage_opts(
         wl_raw, stage="wan_low", default_steps=default_steps_low
     )
 
@@ -711,6 +743,8 @@ def build_wan22_gguf_run_config(
         te_device=(str(extras.get("gguf_te_device")).lower() if extras.get("gguf_te_device") is not None else None),
         high=StageConfig(
             model_dir=hi_dir,
+            prompt=hi_prompt,
+            negative_prompt=hi_negative_prompt,
             sampler=str(hi_sampler or sampler_fallback),
             scheduler=str(hi_scheduler or scheduler_fallback),
             steps=max(1, int(hi_steps)),
@@ -721,6 +755,8 @@ def build_wan22_gguf_run_config(
         ),
         low=StageConfig(
             model_dir=lo_dir,
+            prompt=lo_prompt,
+            negative_prompt=lo_negative_prompt,
             sampler=str(lo_sampler or sampler_fallback),
             scheduler=str(lo_scheduler or scheduler_fallback),
             steps=max(1, int(lo_steps)),

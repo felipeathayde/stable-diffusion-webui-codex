@@ -10,7 +10,7 @@ Purpose: WAN22 transformer key-style detection + remapping (Diffusers/WAN-export
 Normalizes multiple upstream key layouts into the canonical Codex WAN22 runtime layout and fails loud on unknown/ambiguous inputs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls.
+- `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields).
 - `WAN22_REQUEST_KEYS` (constant): Singleton request-key map used by WAN22 request validators.
 - `remap_wan22_transformer_state_dict` (function): Returns (detected_style, remapped_view) for WAN22 transformer keys.
 """
@@ -131,6 +131,8 @@ class Wan22RequestKeys:
         {
             "model_sha",
             "model_dir",
+            "prompt",
+            "negative_prompt",
             "sampler",
             "scheduler",
             "steps",

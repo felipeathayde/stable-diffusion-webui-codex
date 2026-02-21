@@ -10,7 +10,9 @@ Required Notice: see NOTICE
 	Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
 	to update UI state and fetch final results. Every start payload includes `settings_revision`, and stale-revision conflicts (`409` + `current_revision`)
 	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
-	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Includes `output.returnFrames` and stage `flowShift` pass-through in common WAN payload input.
+	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
+	mode prompt fields from the High stage in payload builders for backend compatibility. Includes `output.returnFrames` and stage `flowShift` pass-through in
+	common WAN payload input.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -247,6 +249,8 @@ function getTabState(tabId: string): VideoGenerationState {
 function defaultStage(): WanStageParams {
   return {
     modelDir: '',
+    prompt: '',
+    negativePrompt: '',
     sampler: '',
     scheduler: '',
     steps: 30,
@@ -259,8 +263,6 @@ function defaultStage(): WanStageParams {
 
 function defaultVideo(): WanVideoParams {
   return {
-    prompt: '',
-    negativePrompt: '',
     width: 768,
     height: 432,
     fps: 24,
@@ -366,8 +368,10 @@ export function useVideoGeneration(tabId: string) {
   }
 
   function blockedReasonFor(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, initVideo: File | null): string {
-    const prompt = String(v.prompt || '').trim()
-    if (!prompt) return 'Prompt must not be empty.'
+    const highPrompt = String(hi.prompt || '').trim()
+    if (!highPrompt) return 'High stage prompt must not be empty.'
+    const lowPrompt = String(lo.prompt || '').trim()
+    if (!lowPrompt) return 'Low stage prompt must not be empty.'
     if (v.useInitImage && !v.initImageData) {
       return 'Image mode requires an initial image; select a file or switch to Text mode.'
     }
@@ -451,8 +455,6 @@ export function useVideoGeneration(tabId: string) {
       initImageName: v.initImageName || '',
       initVideoName: v.initVideoName || '',
       initVideoPath: String(v.initVideoPath || ''),
-      prompt: String(v.prompt || ''),
-      negativePrompt: String(v.negativePrompt || ''),
       width: v.width,
       height: v.height,
       frames: v.frames,
@@ -484,6 +486,8 @@ export function useVideoGeneration(tabId: string) {
       },
       high: {
         modelDir: hi.modelDir,
+        prompt: hi.prompt,
+        negativePrompt: hi.negativePrompt,
         sampler: hi.sampler,
         scheduler: hi.scheduler,
         steps: hi.steps,
@@ -495,6 +499,8 @@ export function useVideoGeneration(tabId: string) {
       },
       low: {
         modelDir: lo.modelDir,
+        prompt: lo.prompt,
+        negativePrompt: lo.negativePrompt,
         sampler: lo.sampler,
         scheduler: lo.scheduler,
         steps: lo.steps,
@@ -542,8 +548,6 @@ export function useVideoGeneration(tabId: string) {
     return {
       device: quicksettings.currentDevice || 'cpu',
       settingsRevision: quicksettings.getSettingsRevision(),
-      prompt: v.prompt,
-      negativePrompt: v.negativePrompt,
       width: v.width,
       height: v.height,
       fps: v.fps,
@@ -551,6 +555,8 @@ export function useVideoGeneration(tabId: string) {
       attentionMode: v.attentionMode,
       high: {
         modelSha: hiSha,
+        prompt: hi.prompt,
+        negativePrompt: hi.negativePrompt,
         sampler: hi.sampler,
         scheduler: hi.scheduler,
         steps: hi.steps,
@@ -562,6 +568,8 @@ export function useVideoGeneration(tabId: string) {
       },
       low: {
         modelSha: loSha,
+        prompt: lo.prompt,
+        negativePrompt: lo.negativePrompt,
         sampler: lo.sampler,
         scheduler: lo.scheduler,
         steps: lo.steps,
@@ -598,7 +606,7 @@ export function useVideoGeneration(tabId: string) {
   }
 
   function prepareRunFromValues(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): PreparedWanRun {
-    const promptPreview = String(v.prompt || '').trim().slice(0, 120)
+    const promptPreview = String(hi.prompt || '').trim().slice(0, 120)
     const createdAtMs = Date.now()
     const summary = buildRunSummary(v, hi)
     const paramsSnapshot = buildParamsSnapshot(v, hi, lo)

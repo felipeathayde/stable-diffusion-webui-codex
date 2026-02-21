@@ -22,7 +22,7 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 	- `WanVideoOutputInput` (interface): Output options (filename prefix, output folder, format) mapped into payload.
 	- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
-- `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (prompt, dims, steps, seed, stage params, assets).
+- `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
 - `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with chunking controls.
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
@@ -85,6 +85,8 @@ const VideoInterpolationSchema = z
 const WanStageSchema = z
   .object({
     model_sha: Sha256Schema,
+    prompt: z.string().min(1),
+    negative_prompt: z.string().optional(),
     sampler: z.string().min(1).optional(),
     steps: z.number().int().min(1),
     cfg_scale: z.number(),
@@ -213,6 +215,8 @@ export type WanVid2VidPayload = z.infer<typeof WanVid2VidPayloadSchema>
 
 export interface WanStageInput {
   modelSha: string
+  prompt: string
+  negativePrompt: string
   sampler: string
   scheduler: string
   steps: number
@@ -252,8 +256,6 @@ export interface WanAssetsInput {
 export interface WanVideoCommonInput {
   device: string
   settingsRevision: number
-  prompt: string
-  negativePrompt: string
   width: number
   height: number
   fps: number
@@ -353,6 +355,13 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
     cfg_scale: stage.cfgScale,
     seed: stage.seed,
   }
+  const prompt = String(stage.prompt || '').trim()
+  if (!prompt) {
+    throw new Error('WAN stage prompt must not be empty.')
+  }
+  payload.prompt = prompt
+  const negativePrompt = String(stage.negativePrompt || '').trim()
+  payload.negative_prompt = negativePrompt
   const sampler = String(stage.sampler || '').trim()
   if (sampler) {
     if (sampler !== sampler.toLowerCase()) {
@@ -371,6 +380,15 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
   if (typeof stage.flowShift === 'number') payload.flow_shift = stage.flowShift
 
   return payload
+}
+
+function resolveTopLevelPrompts(input: WanVideoCommonInput): { prompt: string; negativePrompt: string } {
+  const prompt = String(input.high.prompt || '').trim()
+  if (!prompt) {
+    throw new Error('WAN high stage prompt must not be empty.')
+  }
+  const negativePrompt = String(input.high.negativePrompt || '').trim()
+  return { prompt, negativePrompt }
 }
 
 function isUnsetSentinel(raw: string): boolean {
@@ -424,11 +442,12 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
   const frames = normalizeWanFrameCount(input.frames)
+  const { prompt, negativePrompt } = resolveTopLevelPrompts(input)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
-    txt2vid_prompt: input.prompt,
-    txt2vid_neg_prompt: input.negativePrompt,
+    txt2vid_prompt: prompt,
+    txt2vid_neg_prompt: negativePrompt,
     txt2vid_width: width,
     txt2vid_height: height,
     txt2vid_fps: input.fps,
@@ -459,11 +478,12 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
   const frames = normalizeWanFrameCount(input.frames)
+  const { prompt, negativePrompt } = resolveTopLevelPrompts(input)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
-    img2vid_prompt: input.prompt,
-    img2vid_neg_prompt: input.negativePrompt,
+    img2vid_prompt: prompt,
+    img2vid_neg_prompt: negativePrompt,
     img2vid_width: width,
     img2vid_height: height,
     img2vid_fps: input.fps,
@@ -513,11 +533,12 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
   const frames = normalizeWanFrameCount(input.frames)
+  const { prompt, negativePrompt } = resolveTopLevelPrompts(input)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
-    vid2vid_prompt: input.prompt,
-    vid2vid_neg_prompt: input.negativePrompt,
+    vid2vid_prompt: prompt,
+    vid2vid_neg_prompt: negativePrompt,
     vid2vid_width: width,
     vid2vid_height: height,
     vid2vid_fps: input.fps,

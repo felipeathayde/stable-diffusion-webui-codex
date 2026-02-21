@@ -18,8 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
-- `WanStageParams` (interface): UI WAN stage params (high/low), including optional explicit `flowShift`, used by video tabs and payload builders.
-- `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
+- `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
+- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init media + overrides).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
@@ -103,6 +103,8 @@ export class ModelTabsStoreError extends Error {
 
 export interface WanStageParams {
   modelDir: string
+  prompt: string
+  negativePrompt: string
   sampler: string
   scheduler: string
   steps: number
@@ -115,8 +117,6 @@ export interface WanStageParams {
 
 export interface WanVideoParams {
   // Core generation fields (txt2vid/img2vid shared)
-  prompt: string
-  negativePrompt: string
   width: number
   height: number
   fps: number
@@ -316,6 +316,8 @@ function defaultParams<T extends BaseTabType>(
   if (type === 'wan') {
     const stage = (): WanStageParams => ({
       modelDir: '',
+      prompt: '',
+      negativePrompt: '',
       sampler: '',
       scheduler: '',
       steps: 30,
@@ -325,8 +327,6 @@ function defaultParams<T extends BaseTabType>(
       loraWeight: 1.0,
     })
     const video: WanVideoParams = {
-      prompt: '',
-      negativePrompt: '',
       width: 768,
       height: 432,
       fps: 24,

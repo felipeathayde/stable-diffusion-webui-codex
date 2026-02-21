@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-20
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -46,3 +46,5 @@ Status: Active
 - 2026-02-17: `useVideoGeneration(tabId)` now propagates WAN attention mode (`global|sliding`) and img2vid chunk controls (chunk/overlap/anchor/seed mode) into payload builders and run-history snapshots.
 - 2026-02-20: `useGeneration(tabId)` now fails loud on empty VAE selection before payload submission by using `quicksettings.requireVaeSelection()` (prevents blank VAE submits on SDXL/related tabs).
 - 2026-02-20: `useGeneration(tabId)` and `useVideoGeneration(tabId)` history entries now include optional `thumbnail` previews (`GeneratedImage`) updated during progress/result flow, enabling square thumbnail-only History cards with detail modal drill-down in views.
+- 2026-02-21: `useGeneration(tabId)` now fails loud when a non-sentinel VAE label cannot be resolved to `vae_sha` (`Selected VAE is invalid or stale`), preventing stale hidden selections from degrading into implicit built-in behavior.
+- 2026-02-21: `useVideoGeneration(tabId)` now treats WAN prompts as stage-owned (`high.prompt/negativePrompt`, `low.prompt/negativePrompt`), blocks generation if either stage prompt is empty, snapshots both stage prompts in history, and keeps top-level API prompt compatibility by deriving mode prompt from the High stage in payload builders.

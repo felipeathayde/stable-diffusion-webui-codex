@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Txt2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
 Configures sampler settings, applies LoRAs, runs the selected execution path, applies shared video interpolation when requested, exports the
 resulting video, and yields progress/result events.
+Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when provided and falls back to request negative only when missing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
@@ -85,10 +86,25 @@ def _build_result_payload(
     return payload
 
 
-def _run_pipeline(pipe: Any, plan: VideoPlan, request: Txt2VidRequest) -> list[Any]:
+def _run_pipeline(
+    pipe: Any,
+    plan: VideoPlan,
+    request: Txt2VidRequest,
+    *,
+    prompt: str | None = None,
+    negative_prompt: str | None = None,
+) -> list[Any]:
+    prompt_text = str(prompt if prompt is not None else request.prompt or "").strip()
+    if not prompt_text:
+        raise RuntimeError("txt2vid requires a non-empty prompt.")
+    negative_prompt_text = (
+        str(negative_prompt).strip()
+        if negative_prompt is not None
+        else str(getattr(request, "negative_prompt", None) or "").strip()
+    )
     output = pipe(
-        prompt=request.prompt,
-        negative_prompt=getattr(request, "negative_prompt", None),
+        prompt=prompt_text,
+        negative_prompt=negative_prompt_text,
         num_frames=plan.frames,
         num_inference_steps=plan.steps,
         height=plan.height,
@@ -214,6 +230,16 @@ def run_txt2vid(
     extras = dict(plan.extras)
     wan_high_cfg = extras.get("wan_high")
     wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
+    if wan_hi_opts is None or wan_hi_opts.prompt is None:
+        raise RuntimeError("txt2vid requires extras.wan_high.prompt to be set.")
+    prompt_text = str(wan_hi_opts.prompt).strip()
+    if not prompt_text:
+        raise RuntimeError("txt2vid requires a non-empty high-stage prompt.")
+    negative_prompt_text = (
+        str(wan_hi_opts.negative_prompt).strip()
+        if wan_hi_opts and wan_hi_opts.negative_prompt is not None
+        else str(getattr(request, "negative_prompt", None) or "").strip()
+    )
     if wan_hi_opts and wan_hi_opts.lora_path and hasattr(pipe, "load_lora_weights"):
         if logger:
             logger.info("[wan] loading stage LoRA: %s", wan_hi_opts.lora_path)
@@ -224,7 +250,13 @@ def run_txt2vid(
     sampler_outcome = configure_sampler(pipe, plan, logger)
 
     yield ProgressEvent(stage="run", percent=5.0, message="Running pipeline")
-    frames = _run_pipeline(pipe, plan, request)
+    frames = _run_pipeline(
+        pipe,
+        plan,
+        request,
+        prompt=prompt_text,
+        negative_prompt=negative_prompt_text,
+    )
 
     vfi_options = read_video_interpolation_options(plan.extras)
     if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:

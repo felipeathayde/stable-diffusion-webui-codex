@@ -17,7 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_prompt_clean` (function): Diffusers-style prompt cleaning (optional ftfy + HTML unescape + whitespace collapse).
 - `_resolve_max_sequence_length` (function): Chooses a safe tokenizer max length, clamped to `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH`.
 - `_place_gguf_non_quant_tensors` (function): Moves non-quantized TE params/buffers to target device and applies floating dtype casts while preserving integer buffers.
-- `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer with strict fail-loud text-encoder key validation, device-aware TE weight loading, and global GGUF dequant policy alignment.
+- `get_text_context` (function): Builds text conditioning/context (single or batched prompt + negative prompt inputs) for the WAN transformer with strict fail-loud text-encoder key validation, device-aware TE weight loading, and global GGUF dequant policy alignment.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from __future__ import annotations
 import html
 import os
 import re
+from collections.abc import Sequence
 from typing import Any, Optional, Tuple
 
 import torch
@@ -114,8 +115,8 @@ def _place_gguf_non_quant_tensors(
 
 def get_text_context(
     model_dir: str,
-    prompt: str,
-    negative: Optional[str],
+    prompt: str | Sequence[str],
+    negative: Optional[str | Sequence[str]],
     *,
     device: str,
     dtype: str,
@@ -178,8 +179,52 @@ def get_text_context(
         raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {exc}") from exc
 
     max_sequence_length = _resolve_max_sequence_length(tok)
-    prompt_cleaned = _prompt_clean(prompt)
-    negative_cleaned = _prompt_clean(negative or "")
+    if isinstance(prompt, str):
+        prompt_list = [_prompt_clean(prompt)]
+    elif isinstance(prompt, Sequence) and not isinstance(prompt, (bytes, bytearray)):
+        prompt_list = []
+        for item in prompt:
+            if not isinstance(item, str):
+                raise RuntimeError(
+                    "WAN22 GGUF: prompt sequence must contain only strings, "
+                    f"got {type(item).__name__}."
+                )
+            prompt_list.append(_prompt_clean(item))
+    else:
+        raise RuntimeError(
+            "WAN22 GGUF: prompt must be a string or sequence of strings, "
+            f"got {type(prompt).__name__}."
+        )
+    if not prompt_list:
+        raise RuntimeError("WAN22 GGUF: prompt sequence must not be empty.")
+
+    negative_list: list[str]
+    if negative is None:
+        negative_list = ["" for _ in prompt_list]
+    elif isinstance(negative, str):
+        negative_list = [_prompt_clean(negative)]
+    elif isinstance(negative, Sequence) and not isinstance(negative, (bytes, bytearray)):
+        negative_list = []
+        for item in negative:
+            if not isinstance(item, str):
+                raise RuntimeError(
+                    "WAN22 GGUF: negative prompt sequence must contain only strings, "
+                    f"got {type(item).__name__}."
+                )
+            negative_list.append(_prompt_clean(item))
+    else:
+        raise RuntimeError(
+            "WAN22 GGUF: negative prompt must be a string, sequence of strings, or None, "
+            f"got {type(negative).__name__}."
+        )
+
+    if len(negative_list) == 1 and len(prompt_list) > 1:
+        negative_list = negative_list * len(prompt_list)
+    if len(negative_list) != len(prompt_list):
+        raise RuntimeError(
+            "WAN22 GGUF: prompt and negative prompt batch sizes must match "
+            f"(prompt={len(prompt_list)} negative={len(negative_list)})."
+        )
 
     log.info(
         "[wan22.gguf] tokenizer loaded: dir=%s model_max_len=%s effective_max_len=%d",
@@ -300,9 +345,9 @@ def get_text_context(
         encoder_obj = getattr(enc, "encoder", None)
         _apply_compute_dtype(getattr(encoder_obj, "embed_tokens", None))
 
-    def _do(clean_txt: str) -> torch.Tensor:
+    def _do(clean_texts: Sequence[str]) -> torch.Tensor:
         inputs = tok(
-            [clean_txt],
+            list(clean_texts),
             padding="max_length",
             truncation=True,
             max_length=int(max_sequence_length),
@@ -318,8 +363,8 @@ def get_text_context(
                 out = out * mask.to(dtype=out.dtype).unsqueeze(-1)
             return out.to(as_torch_dtype(dtype))
 
-    p = _do(prompt_cleaned)
-    n = _do(negative_cleaned)
+    p = _do(prompt_list)
+    n = _do(negative_list)
 
     cfg_hidden = int(getattr(getattr(enc, "config", None), "hidden_size", p.shape[-1]))
     if int(p.shape[-1]) != cfg_hidden:

@@ -27,6 +27,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_chunk_seed` (function): Resolve deterministic/random seed semantics for chunked img2vid generation.
 - `_blend_anchor_latent` (function): Blend previous chunk tail latent with base conditioning latent for chunk continuity without pixel-space decode.
 - `_sample_chunk_stage_with_progress` (function): Run a chunk stage sampler and remap local progress into a global phase percent.
+- `_resolve_stage_prompt_pairs` (function): Resolve high/low stage prompt+negative pairs (stage prompts required; negative falls back only when missing).
+- `_resolve_stage_text_embeddings` (function): Build stage-specific high/low embeddings from a single text-encoder load.
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
@@ -614,6 +616,85 @@ def _sample_chunk_stage_with_progress(
         }
 
 
+def _resolve_stage_prompt_pairs(cfg: RunConfig) -> tuple[str, str, str, str]:
+    base_negative = str(getattr(cfg, "negative_prompt", "") or "").strip()
+
+    high_stage = getattr(cfg, "high", None)
+    low_stage = getattr(cfg, "low", None)
+
+    raw_high_prompt = getattr(high_stage, "prompt", None)
+    if not isinstance(raw_high_prompt, str):
+        raise RuntimeError("WAN22 GGUF: high stage prompt is required and must be a string.")
+    high_prompt = raw_high_prompt.strip()
+    if not high_prompt:
+        raise RuntimeError("WAN22 GGUF: high stage prompt must not be empty.")
+
+    raw_low_prompt = getattr(low_stage, "prompt", None)
+    if not isinstance(raw_low_prompt, str):
+        raise RuntimeError("WAN22 GGUF: low stage prompt is required and must be a string.")
+    low_prompt = raw_low_prompt.strip()
+    if not low_prompt:
+        raise RuntimeError("WAN22 GGUF: low stage prompt must not be empty.")
+
+    raw_high_negative = getattr(high_stage, "negative_prompt", None)
+    if raw_high_negative is None:
+        high_negative = base_negative
+    elif isinstance(raw_high_negative, str):
+        high_negative = raw_high_negative.strip()
+    else:
+        raise RuntimeError("WAN22 GGUF: high stage negative prompt must be a string when provided.")
+
+    raw_low_negative = getattr(low_stage, "negative_prompt", None)
+    if raw_low_negative is None:
+        low_negative = base_negative
+    elif isinstance(raw_low_negative, str):
+        low_negative = raw_low_negative.strip()
+    else:
+        raise RuntimeError("WAN22 GGUF: low stage negative prompt must be a string when provided.")
+
+    return high_prompt, high_negative, low_prompt, low_negative
+
+
+def _resolve_stage_text_embeddings(
+    *,
+    cfg: RunConfig,
+    model_dir: str,
+    model_key: str,
+    dev_name: str,
+    dev: torch.device,
+    dt: torch.dtype,
+    te_device: str,
+    logger: Any,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    high_prompt, high_negative, low_prompt, low_negative = _resolve_stage_prompt_pairs(cfg)
+    prompt_embeds, negative_embeds = get_text_context(
+        model_dir=model_dir,
+        prompt=[high_prompt, low_prompt],
+        negative=[high_negative, low_negative],
+        device=dev_name,
+        dtype=cfg.dtype,
+        text_encoder_dir=cfg.text_encoder_dir,
+        tokenizer_dir=cfg.tokenizer_dir,
+        vae_dir=cfg.vae_dir,
+        model_key=model_key,
+        metadata_dir=cfg.metadata_dir,
+        logger=logger,
+        offload_after=smart_offload_enabled(),
+        te_device=te_device,
+    )
+    if int(prompt_embeds.shape[0]) != 2 or int(negative_embeds.shape[0]) != 2:
+        raise RuntimeError(
+            "WAN22 GGUF: stage text context batch mismatch "
+            f"(prompt={tuple(prompt_embeds.shape)} negative={tuple(negative_embeds.shape)} expected_batch=2)."
+        )
+
+    high_prompt_embeds = prompt_embeds[0:1].to(device=dev, dtype=dt)
+    high_negative_embeds = negative_embeds[0:1].to(device=dev, dtype=dt)
+    low_prompt_embeds = prompt_embeds[1:2].to(device=dev, dtype=dt)
+    low_negative_embeds = negative_embeds[1:2].to(device=dev, dtype=dt)
+    return high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds
+
+
 def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
     log = get_logger(logger)
     hi_path = pick_stage_gguf(getattr(cfg.high, "model_dir", None) if cfg.high else None, stage="high")
@@ -683,23 +764,16 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         w_lat = max(8, int(cfg.width) // 8)
         t = int(t_lat)
 
-        prompt_embeds, negative_embeds = get_text_context(
+        high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds = _resolve_stage_text_embeddings(
+            cfg=cfg,
             model_dir=os.path.dirname(hi_path),
-            prompt=cfg.prompt or "",
-            negative=cfg.negative_prompt,
-            device=dev_name,
-            dtype=cfg.dtype,
-            text_encoder_dir=cfg.text_encoder_dir,
-            tokenizer_dir=cfg.tokenizer_dir,
-            vae_dir=cfg.vae_dir,
             model_key=model_key,
-            metadata_dir=cfg.metadata_dir,
-            logger=log,
-            offload_after=smart_offload_enabled(),
+            dev_name=dev_name,
+            dev=dev,
+            dt=dt,
             te_device=(cfg.te_device or te_dev_eff),
+            logger=log,
         )
-        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
         geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
         log.info(
@@ -756,8 +830,8 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             geom=geom_hi,
             steps=steps_hi,
             cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=high_prompt_embeds,
+            negative_embeds=high_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -831,8 +905,8 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             geom=geom_lo,
             steps=steps_lo,
             cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=low_prompt_embeds,
+            negative_embeds=low_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -917,23 +991,16 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
         te_dev_eff = getattr(cfg, "te_device", None) or dev_name
 
-        prompt_embeds, negative_embeds = get_text_context(
+        high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds = _resolve_stage_text_embeddings(
+            cfg=cfg,
             model_dir=os.path.dirname(hi_path),
-            prompt=cfg.prompt or "",
-            negative=cfg.negative_prompt,
-            device=dev_name,
-            dtype=cfg.dtype,
-            text_encoder_dir=cfg.text_encoder_dir,
-            tokenizer_dir=cfg.tokenizer_dir,
-            vae_dir=cfg.vae_dir,
             model_key=model_key,
-            metadata_dir=cfg.metadata_dir,
-            logger=log,
-            offload_after=smart_offload_enabled(),
+            dev_name=dev_name,
+            dev=dev,
+            dt=dt,
             te_device=(cfg.te_device or te_dev_eff),
+            logger=log,
         )
-        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
         t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
         log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
@@ -973,8 +1040,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             geom=geom_hi,
             steps=steps_hi,
             cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=high_prompt_embeds,
+            negative_embeds=high_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -1034,8 +1101,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             geom=geom_lo,
             steps=steps_lo,
             cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=low_prompt_embeds,
+            negative_embeds=low_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -1157,23 +1224,16 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             f"(got_T={int(latent_condition.shape[2])} expected_T_lat={int(t)})"
         )
 
-    prompt_embeds, negative_embeds = get_text_context(
+    high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds = _resolve_stage_text_embeddings(
+        cfg=cfg,
         model_dir=os.path.dirname(hi_path),
-        prompt=cfg.prompt or "",
-        negative=cfg.negative_prompt,
-        device=dev_name,
-        dtype=cfg.dtype,
-        text_encoder_dir=cfg.text_encoder_dir,
-        tokenizer_dir=cfg.tokenizer_dir,
-        vae_dir=cfg.vae_dir,
         model_key=model_key,
-        metadata_dir=cfg.metadata_dir,
-        logger=log,
-        offload_after=smart_offload_enabled(),
+        dev_name=dev_name,
+        dev=dev,
+        dt=dt,
         te_device=(cfg.te_device or te_dev_eff),
+        logger=log,
     )
-    prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-    negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
@@ -1242,8 +1302,8 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             geom=geom_hi,
             steps=steps_hi,
             cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=high_prompt_embeds,
+            negative_embeds=high_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -1303,8 +1363,8 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             geom=geom_lo,
             steps=steps_lo,
             cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=low_prompt_embeds,
+            negative_embeds=low_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -1410,23 +1470,16 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             f"(got_T={int(latent_condition.shape[2])} expected_T_lat={int(t)})"
         )
 
-    prompt_embeds, negative_embeds = get_text_context(
+    high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds = _resolve_stage_text_embeddings(
+        cfg=cfg,
         model_dir=os.path.dirname(hi_path),
-        prompt=cfg.prompt or "",
-        negative=cfg.negative_prompt,
-        device=dev_name,
-        dtype=cfg.dtype,
-        text_encoder_dir=cfg.text_encoder_dir,
-        tokenizer_dir=cfg.tokenizer_dir,
-        vae_dir=cfg.vae_dir,
         model_key=model_key,
-        metadata_dir=cfg.metadata_dir,
-        logger=log,
-        offload_after=smart_offload_enabled(),
+        dev_name=dev_name,
+        dev=dev,
+        dt=dt,
         te_device=(cfg.te_device or te_dev_eff),
+        logger=log,
     )
-    prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-    negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
@@ -1488,8 +1541,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             geom=geom_hi,
             steps=steps_hi,
             cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=high_prompt_embeds,
+            negative_embeds=high_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -1549,8 +1602,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             geom=geom_lo,
             steps=steps_lo,
             cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=prompt_embeds,
-            negative_embeds=negative_embeds,
+            prompt_embeds=low_prompt_embeds,
+            negative_embeds=low_negative_embeds,
             device=dev,
             dtype=dt,
             logger=log,
@@ -1717,23 +1770,16 @@ def stream_img2vid_chunked(
         )
     base_anchor_latent = latent_condition_base[:, :, :1, :, :].detach()
 
-    prompt_embeds, negative_embeds = get_text_context(
+    high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds = _resolve_stage_text_embeddings(
+        cfg=cfg,
         model_dir=os.path.dirname(hi_path),
-        prompt=cfg.prompt or "",
-        negative=cfg.negative_prompt,
-        device=dev_name,
-        dtype=cfg.dtype,
-        text_encoder_dir=cfg.text_encoder_dir,
-        tokenizer_dir=cfg.tokenizer_dir,
-        vae_dir=cfg.vae_dir,
         model_key=model_key,
-        metadata_dir=cfg.metadata_dir,
-        logger=log,
-        offload_after=smart_offload_enabled(),
+        dev_name=dev_name,
+        dev=dev,
+        dt=dt,
         te_device=(cfg.te_device or te_dev_eff),
+        logger=log,
     )
-    prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-    negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
     steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
@@ -1875,8 +1921,8 @@ def stream_img2vid_chunked(
                     geom=geom_hi,
                     steps=steps_hi,
                     cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-                    prompt_embeds=prompt_embeds,
-                    negative_embeds=negative_embeds,
+                    prompt_embeds=high_prompt_embeds,
+                    negative_embeds=high_negative_embeds,
                     device=dev,
                     dtype=dt,
                     logger=log,
@@ -2000,8 +2046,8 @@ def stream_img2vid_chunked(
                     geom=geom_lo,
                     steps=steps_lo,
                     cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-                    prompt_embeds=prompt_embeds,
-                    negative_embeds=negative_embeds,
+                    prompt_embeds=low_prompt_embeds,
+                    negative_embeds=low_negative_embeds,
                     device=dev,
                     dtype=dt,
                     logger=log,

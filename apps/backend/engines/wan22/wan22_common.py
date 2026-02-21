@@ -12,7 +12,7 @@ Defines dataclasses for engine/runtime wiring and strict resolution helpers for 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineOpts` (dataclass): Minimal WAN engine load options (device/dtype).
 - `WanComponents` (dataclass): Holder for instantiated WAN components/pipelines and resolved paths.
-- `WanStageOptions` (dataclass): Stage-specific overrides for WAN pipelines (sampler/scheduler/steps/cfg/LoRA/lightning).
+- `WanStageOptions` (dataclass): Stage-specific overrides for WAN pipelines (prompt/negative + sampler/scheduler/steps/cfg/LoRA/lightning).
 - `resolve_wan_repo_candidates` (function): Strict resolution of WAN Diffusers repo candidates (env override or known map; raises otherwise).
 - `resolve_user_supplied_assets` (function): Extracts user-supplied asset paths (high/low stage dirs, VAE/text encoder) from extras payload.
 """
@@ -54,6 +54,8 @@ class WanComponents:
 @dataclass
 class WanStageOptions:
     model_dir: Optional[str] = None
+    prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
     sampler: Optional[str] = None
     scheduler: Optional[str] = None
     steps: int = 12
@@ -101,6 +103,22 @@ class WanStageOptions:
         if steps < 1:
             raise ValueError("WAN stage 'steps' must be >= 1.")
 
+        raw_prompt = obj.get("prompt")
+        if raw_prompt is None:
+            prompt = None
+        elif isinstance(raw_prompt, str):
+            prompt = raw_prompt.strip() or None
+        else:
+            raise ValueError("WAN stage 'prompt' must be a string when provided.")
+
+        raw_negative_prompt = obj.get("negative_prompt")
+        if raw_negative_prompt is None:
+            negative_prompt = None
+        elif isinstance(raw_negative_prompt, str):
+            negative_prompt = raw_negative_prompt.strip()
+        else:
+            raise ValueError("WAN stage 'negative_prompt' must be a string when provided.")
+
         raw_lightning = obj.get("lightning", False)
         if raw_lightning is None:
             lightning = False
@@ -111,6 +129,8 @@ class WanStageOptions:
 
         return WanStageOptions(
             model_dir=str(obj.get("model_dir")) if obj.get("model_dir") else None,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
             sampler=str(obj.get("sampler")) if obj.get("sampler") else None,
             scheduler=str(obj.get("scheduler")) if obj.get("scheduler") else None,
             steps=steps,

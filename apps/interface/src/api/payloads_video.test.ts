@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Vitest coverage for WAN video payload builders (txt2vid/img2vid/vid2vid).
 Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields, including
-WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity), `settings_revision` propagation, and scheduler-override omission.
+WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity), `settings_revision` propagation, scheduler-override omission, and stage-owned prompt mapping.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `payloads_video.test` (module): WAN video payload builder tests (field mapping + defaults).
@@ -29,8 +29,6 @@ describe('WAN video payload builders', () => {
     const payload = buildWanTxt2VidPayload({
       device: 'CUDA',
       settingsRevision: 5,
-      prompt: '  test prompt  ',
-      negativePrompt: 'neg',
       width: 768,
       height: 432,
       fps: 24,
@@ -38,6 +36,8 @@ describe('WAN video payload builders', () => {
       attentionMode: 'global',
       high: {
         modelSha: hiSha,
+        prompt: '  test prompt  ',
+        negativePrompt: 'neg',
         sampler: 'euler a',
         scheduler: 'simple',
         steps: 4,
@@ -47,6 +47,8 @@ describe('WAN video payload builders', () => {
       },
       low: {
         modelSha: loSha,
+        prompt: 'low prompt',
+        negativePrompt: '',
         sampler: 'euler',
         scheduler: 'simple',
         steps: 2,
@@ -102,8 +104,6 @@ describe('WAN video payload builders', () => {
     const payload = buildWanImg2VidPayload({
       device: 'cpu',
       settingsRevision: 11,
-      prompt: 'p',
-      negativePrompt: '',
       width: 768,
       height: 432,
       fps: 24,
@@ -116,6 +116,8 @@ describe('WAN video payload builders', () => {
       chunkSeedMode: 'increment',
       high: {
         modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
         sampler: '',
         scheduler: '',
         steps: 12,
@@ -124,6 +126,8 @@ describe('WAN video payload builders', () => {
       },
       low: {
         modelSha: sha,
+        prompt: 'p low',
+        negativePrompt: '',
         sampler: '',
         scheduler: '',
         steps: 12,
@@ -156,6 +160,7 @@ describe('WAN video payload builders', () => {
 
     expect(payload.codex_device).toBe('cpu')
     expect(payload.settings_revision).toBe(11)
+    expect(payload.img2vid_prompt).toBe('p')
     expect(payload.img2vid_init_image).toBe('data:image/png;base64,AAAA')
     expect(payload.img2vid_steps).toBe(24)
     expect(payload.wan_tenc_sha).toBe(sha)
@@ -175,8 +180,6 @@ describe('WAN video payload builders', () => {
     const payload = buildWanImg2VidPayload({
       device: 'cpu',
       settingsRevision: 17,
-      prompt: 'p',
-      negativePrompt: '',
       width: 768,
       height: 432,
       fps: 24,
@@ -189,6 +192,8 @@ describe('WAN video payload builders', () => {
       chunkSeedMode: 'random',
       high: {
         modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
         sampler: '',
         scheduler: '',
         steps: 8,
@@ -197,6 +202,8 @@ describe('WAN video payload builders', () => {
       },
       low: {
         modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
         sampler: '',
         scheduler: '',
         steps: 8,
@@ -239,8 +246,6 @@ describe('WAN video payload builders', () => {
     const payload = buildWanVid2VidPayload({
       device: 'cuda',
       settingsRevision: 13,
-      prompt: '  v2v  ',
-      negativePrompt: '',
       width: 768,
       height: 432,
       fps: 24,
@@ -253,8 +258,8 @@ describe('WAN video payload builders', () => {
       flowEnabled: true,
       flowUseLarge: false,
       flowDownscale: 2,
-      high: { modelSha: sha, sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
-      low: { modelSha: sha, sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
+      high: { modelSha: sha, prompt: '  v2v  ', negativePrompt: '', sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
+      low: { modelSha: sha, prompt: 'v2v low', negativePrompt: '', sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
       format: 'gguf',
       assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
       output: {
@@ -290,15 +295,13 @@ describe('WAN video payload builders', () => {
     const payload = buildWanTxt2VidPayload({
       device: 'cuda',
       settingsRevision: 2,
-      prompt: 'p',
-      negativePrompt: '',
       width: 480,
       height: 360,
       fps: 24,
       frames: 17,
       attentionMode: 'global',
-      high: { modelSha: sha, sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
-      low: { modelSha: sha, sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
+      high: { modelSha: sha, prompt: 'p', negativePrompt: '', sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
+      low: { modelSha: sha, prompt: 'p', negativePrompt: '', sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
       format: 'auto',
       assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
       output: {
@@ -317,5 +320,38 @@ describe('WAN video payload builders', () => {
 
     expect(payload.txt2vid_width).toBe(480)
     expect(payload.txt2vid_height).toBe(368)
+  })
+
+  it('fails loud when a stage prompt is empty', () => {
+    const sha = '1'.repeat(64)
+    const metaRepo = 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
+
+    expect(() =>
+      buildWanTxt2VidPayload({
+        device: 'cuda',
+        settingsRevision: 2,
+        width: 480,
+        height: 360,
+        fps: 24,
+        frames: 17,
+        attentionMode: 'global',
+        high: { modelSha: sha, prompt: 'high prompt', negativePrompt: '', sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
+        low: { modelSha: sha, prompt: '   ', negativePrompt: '', sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
+        format: 'auto',
+        assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
+        output: {
+          filenamePrefix: '',
+          format: '',
+          pixFmt: '',
+          crf: 15,
+          loopCount: 0,
+          pingpong: false,
+          trimToAudio: false,
+          saveMetadata: true,
+          saveOutput: true,
+        },
+        interpolation: { enabled: false, model: '', times: 2 },
+      }),
+    ).toThrow('WAN stage prompt must not be empty.')
   })
 })

@@ -22,6 +22,8 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
+Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
+missing vs explicit-empty semantics for downstream runtime fallback behavior.
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
 resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
@@ -2334,6 +2336,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             out: dict[str, object] = dict(raw)
             out.pop("model_sha", None)
             out["model_dir"] = model_path
+            raw_stage_prompt = out.get("prompt")
+            if not isinstance(raw_stage_prompt, str):
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' is required and must be a string")
+            stage_prompt = str(raw_stage_prompt).strip()
+            if not stage_prompt:
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
+            out["prompt"] = stage_prompt
+            raw_stage_negative_prompt = out.get("negative_prompt")
+            if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{stage_key}.negative_prompt' must be a string when provided",
+                )
+            out["negative_prompt"] = (
+                str(raw_stage_negative_prompt).strip()
+                if isinstance(raw_stage_negative_prompt, str)
+                else None
+            )
             if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
             if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
@@ -2529,6 +2549,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             out: dict[str, object] = dict(raw)
             out.pop("model_sha", None)
             out["model_dir"] = model_path
+            raw_stage_prompt = out.get("prompt")
+            if not isinstance(raw_stage_prompt, str):
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' is required and must be a string")
+            stage_prompt = str(raw_stage_prompt).strip()
+            if not stage_prompt:
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
+            out["prompt"] = stage_prompt
+            raw_stage_negative_prompt = out.get("negative_prompt")
+            if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{stage_key}.negative_prompt' must be a string when provided",
+                )
+            out["negative_prompt"] = (
+                str(raw_stage_negative_prompt).strip()
+                if isinstance(raw_stage_negative_prompt, str)
+                else None
+            )
             if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
             if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
@@ -2745,6 +2783,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(stage, dict):
             return stage
         out: dict[str, object] = dict(stage)
+        if not isinstance(out.get("prompt"), str):
+            raise HTTPException(status_code=400, detail=f"'{field}.prompt' is required and must be a string")
+        if out.get("negative_prompt") is not None and not isinstance(out.get("negative_prompt"), str):
+            raise HTTPException(status_code=400, detail=f"'{field}.negative_prompt' must be a string when provided")
+        prompt_value = str(out.get("prompt") or "").strip()
+        if not prompt_value:
+            raise HTTPException(status_code=400, detail=f"'{field}.prompt' must be a non-empty string")
+        out["prompt"] = prompt_value
+        raw_negative_prompt = out.get("negative_prompt")
+        out["negative_prompt"] = (
+            str(raw_negative_prompt).strip()
+            if isinstance(raw_negative_prompt, str)
+            else None
+        )
         if isinstance(out.get("model_dir"), str) and str(out.get("model_dir")).strip():
             # model_dir may refer to a GGUF file or a diffusers directory; enforce repo-root scoping either way.
             raw_model_dir = str(out.get("model_dir") or "")

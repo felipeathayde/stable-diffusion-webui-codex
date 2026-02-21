@@ -7,10 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
-Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
+Owns per-stage prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
 renders progress/results via task events (frames and/or exported video), with Run progress shown through the shared
 `RunProgressStatus` block (`Stage/Progress/Step/ETA` + queue metadata).
-Passes explicit `token-engine="wan"` context to `PromptCard` so prompt token counting uses the WAN tokenizer contract.
+Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast.
 
@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizePath` (function): Normalizes paths for stable comparisons (used by root filtering and UI label handling).
 - `fileInRoots` (function): Checks whether a file path is under any configured root (used to constrain selectable WAN assets).
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
-- `defaultVideo` (function): Returns default video params (prompt/dims/init media fields) for new tabs/resets.
+- `defaultVideo` (function): Returns default video params (dims/init media fields) for new tabs/resets.
 - `defaultAssets` (function): Returns default (empty) assets selection.
 - `normalizeFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes UI attention mode values (`global|sliding`).
@@ -32,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setLow` (function): Applies partial updates to the low stage.
 - `syncLowFromHighIfNeeded` (function): Keeps low stage params aligned with high stage when the “low follows high” toggle is enabled.
 - `onLowFollowsHighChange` (function): Toggles low-follow behavior and applies an immediate sync.
+- `toggleLowPrompt` (function): Toggles Low Prompt section visibility.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
 - `toInt` (function): Parses an integer from an `<input>` event with fallback.
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
@@ -59,7 +60,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `copyInfo` (function): Copies current run info/metadata to clipboard (async).
 - `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
 - `queueNext` (function): Queues a next run based on current params/history (async).
-- `applyHistory` (function): Applies a history entry back into current state (prompt/params/assets).
+- `applyHistory` (function): Applies a history entry back into current state (stage prompts/params/assets).
 - `reuseLast` (function): Convenience helper to reuse the most recent history entry.
 - `isRecord` (function): Type guard for `Record<string, unknown>`.
 - `formatDiffValue` (function): Formats values for the “params diff” UI.
@@ -73,6 +74,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `sendToWorkflows` (function): Sends the current snapshot into the workflows subsystem (async).
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
+- `readHistorySnapshotText` (function): Reads legacy root-level prompt text from a history snapshot.
+- `readHistoryStageSnapshotText` (function): Reads stage-scoped prompt text (`high/low`) from a history snapshot.
 - `readFileAsDataURL` (function): Reads a File into a data URL (used by init-image handling).
 - `readImageDimensions` (function): Reads image width/height from an image source URL (used for init-image aspect locking).
 -->
@@ -80,7 +83,35 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <section v-if="tab" class="panels wan-panels">
     <div class="panel-stack">
-      <PromptCard v-model:prompt="videoPrompt" v-model:negative="videoNegative" token-engine="wan" fieldsId="wan-guided-prompt">
+      <div class="panel">
+        <div class="panel-header">Prompt</div>
+        <div class="panel-body">
+          <div id="wan-guided-high-prompt" class="gen-card">
+            <WanSubHeader title="High Prompt" />
+            <div class="mt-2">
+              <PromptFields v-model:prompt="highPrompt" v-model:negative="highNegative" token-engine="wan" />
+            </div>
+          </div>
+
+          <div class="gen-card">
+            <WanSubHeader title="Low Prompt">
+              <button
+                id="wan-guided-low-prompt-toggle"
+                class="btn-icon"
+                type="button"
+                :aria-expanded="lowPromptOpen ? 'true' : 'false'"
+                :title="lowPromptOpen ? 'Collapse' : 'Expand'"
+                aria-label="Toggle Low Prompt"
+                @click="toggleLowPrompt"
+              >
+                <span aria-hidden="true">{{ lowPromptOpen ? '▾' : '▸' }}</span>
+              </button>
+            </WanSubHeader>
+            <div v-if="lowPromptOpen" class="mt-2" id="wan-guided-low-prompt">
+              <PromptFields v-model:prompt="lowPrompt" v-model:negative="lowNegative" token-engine="wan" />
+            </div>
+          </div>
+
         <div v-if="mode !== 'txt2vid'" class="gen-card">
           <div class="row-split">
             <span class="label-muted">Input</span>
@@ -95,6 +126,8 @@ Symbols (top-level; keep in sync; no ghosts):
               initImageLabel="Image"
               :initImageData="video.initImageData"
               :initImageName="video.initImageName"
+              :imageWidth="video.width"
+              :imageHeight="video.height"
               :useMask="false"
               maskImageData=""
               maskImageName=""
@@ -137,7 +170,8 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <div v-if="errorMessage" class="panel-error">{{ errorMessage }}</div>
-      </PromptCard>
+        </div>
+      </div>
 
       <div class="panel">
         <div class="panel-header">Generation Parameters</div>
@@ -633,13 +667,21 @@ Symbols (top-level; keep in sync; no ghosts):
             <p class="cdx-history-modal__summary">{{ historyDetailsItem.summary }}</p>
           </div>
 
-          <div v-if="historyDetailsPrompt" class="cdx-history-modal__section">
-            <p class="label-muted">Prompt</p>
-            <pre class="text-xs break-words">{{ historyDetailsPrompt }}</pre>
+          <div v-if="historyDetailsHighPrompt" class="cdx-history-modal__section">
+            <p class="label-muted">High Prompt</p>
+            <pre class="text-xs break-words">{{ historyDetailsHighPrompt }}</pre>
           </div>
-          <div v-if="historyDetailsNegativePrompt" class="cdx-history-modal__section">
-            <p class="label-muted">Negative Prompt</p>
-            <pre class="text-xs break-words">{{ historyDetailsNegativePrompt }}</pre>
+          <div v-if="historyDetailsHighNegativePrompt" class="cdx-history-modal__section">
+            <p class="label-muted">High Negative Prompt</p>
+            <pre class="text-xs break-words">{{ historyDetailsHighNegativePrompt }}</pre>
+          </div>
+          <div v-if="historyDetailsLowPrompt" class="cdx-history-modal__section">
+            <p class="label-muted">Low Prompt</p>
+            <pre class="text-xs break-words">{{ historyDetailsLowPrompt }}</pre>
+          </div>
+          <div v-if="historyDetailsLowNegativePrompt" class="cdx-history-modal__section">
+            <p class="label-muted">Low Negative Prompt</p>
+            <pre class="text-xs break-words">{{ historyDetailsLowNegativePrompt }}</pre>
           </div>
           <div v-if="historyDetailsItem.errorMessage" class="cdx-history-modal__section">
             <p class="label-muted">Error</p>
@@ -704,7 +746,7 @@ import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
 import HoverTooltip from '../components/ui/HoverTooltip.vue'
 import SliderField from '../components/ui/SliderField.vue'
-import PromptCard from '../components/prompt/PromptCard.vue'
+import PromptFields from '../components/prompt/PromptFields.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
 import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
@@ -778,12 +820,10 @@ function fileInRoots(file: string, roots: string[]): boolean {
 }
 
 function defaultStage(): WanStageParams {
-  return { modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraSha: '', loraWeight: 1.0, flowShift: undefined }
+  return { modelDir: '', prompt: '', negativePrompt: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraSha: '', loraWeight: 1.0, flowShift: undefined }
 }
 function defaultVideo(): WanVideoParams {
   return {
-    prompt: '',
-    negativePrompt: '',
     width: 768,
     height: 432,
     fps: 24,
@@ -927,6 +967,7 @@ function setLow(patch: Partial<WanStageParams>): void {
 
 const lowFollowsHigh = computed<boolean>(() => Boolean(wanParams.value?.lowFollowsHigh))
 const lowNoiseOpen = ref(true)
+const lowPromptOpen = ref(true)
 
 function syncLowFromHighIfNeeded(): void {
   const patch: Partial<WanStageParams> = {
@@ -969,6 +1010,10 @@ function toggleLowNoise(): void {
   lowNoiseOpen.value = !lowNoiseOpen.value
 }
 
+function toggleLowPrompt(): void {
+  lowPromptOpen.value = !lowPromptOpen.value
+}
+
 watch(
   () => ([
     lowFollowsHigh.value,
@@ -1005,14 +1050,24 @@ watch(
   },
 )
 
-const videoPrompt = computed({
-  get: () => video.value.prompt,
-  set: (value: string) => setVideo({ prompt: value }),
+const highPrompt = computed({
+  get: () => high.value.prompt,
+  set: (value: string) => setHigh({ prompt: value }),
 })
 
-const videoNegative = computed({
-  get: () => video.value.negativePrompt,
-  set: (value: string) => setVideo({ negativePrompt: value }),
+const highNegative = computed({
+  get: () => high.value.negativePrompt,
+  set: (value: string) => setHigh({ negativePrompt: value }),
+})
+
+const lowPrompt = computed({
+  get: () => low.value.prompt,
+  set: (value: string) => setLow({ prompt: value }),
+})
+
+const lowNegative = computed({
+  get: () => low.value.negativePrompt,
+  set: (value: string) => setLow({ negativePrompt: value }),
 })
 
 function toInt(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? Math.trunc(v) : fallback }
@@ -1143,16 +1198,37 @@ const historyDetailsImageUrl = computed(() => {
   const thumbnail = historyDetailsItem.value?.thumbnail
   return thumbnail ? toDataUrl(thumbnail) : ''
 })
-const historyDetailsPrompt = computed(() => {
+const historyDetailsHighPrompt = computed(() => {
   const item = historyDetailsItem.value
   if (!item) return ''
-  const prompt = readHistorySnapshotText(item, 'prompt')
+  const prompt = readHistoryStageSnapshotText(item, 'high', 'prompt')
   if (prompt) return prompt
+  const legacyPrompt = readHistorySnapshotText(item, 'prompt')
+  if (legacyPrompt) return legacyPrompt
   return item.promptPreview || ''
 })
-const historyDetailsNegativePrompt = computed(() => {
+
+const historyDetailsHighNegativePrompt = computed(() => {
   const item = historyDetailsItem.value
   if (!item) return ''
+  const negative = readHistoryStageSnapshotText(item, 'high', 'negativePrompt')
+  if (negative) return negative
+  return readHistorySnapshotText(item, 'negativePrompt')
+})
+
+const historyDetailsLowPrompt = computed(() => {
+  const item = historyDetailsItem.value
+  if (!item) return ''
+  const prompt = readHistoryStageSnapshotText(item, 'low', 'prompt')
+  if (prompt) return prompt
+  return readHistorySnapshotText(item, 'prompt')
+})
+
+const historyDetailsLowNegativePrompt = computed(() => {
+  const item = historyDetailsItem.value
+  if (!item) return ''
+  const negative = readHistoryStageSnapshotText(item, 'low', 'negativePrompt')
+  if (negative) return negative
   return readHistorySnapshotText(item, 'negativePrompt')
 })
 
@@ -1313,13 +1389,24 @@ function startGuided(): void {
 const guidedSteps = computed<GuidedStep[]>(() => {
   const steps: GuidedStep[] = []
 
-  const prompt = String(video.value.prompt || '').trim()
-  if (!prompt) {
+  const highStagePrompt = String(high.value.prompt || '').trim()
+  if (!highStagePrompt) {
     steps.push({
-      id: 'prompt',
-      message: 'Write a prompt to generate.',
-      selector: '#wan-guided-prompt',
-      focusSelector: '#wan-guided-prompt [contenteditable=\"true\"]',
+      id: 'high_prompt',
+      message: 'Write the High stage prompt to generate.',
+      selector: '#wan-guided-high-prompt',
+      focusSelector: '#wan-guided-high-prompt [contenteditable=\"true\"]',
+    })
+    return steps
+  }
+
+  const lowStagePrompt = String(low.value.prompt || '').trim()
+  if (!lowStagePrompt) {
+    steps.push({
+      id: 'low_prompt',
+      message: 'Write the Low stage prompt to generate.',
+      selector: '#wan-guided-low-prompt',
+      focusSelector: '#wan-guided-low-prompt [contenteditable=\"true\"]',
     })
     return steps
   }
@@ -1391,6 +1478,10 @@ watch([guidedActive, guidedSteps], async ([active, steps]) => {
   }
 
   const step = steps[0]!
+  if (step.id === 'low_prompt' && !lowPromptOpen.value) {
+    lowPromptOpen.value = true
+    await nextTick()
+  }
   if (step.id === guidedCurrentId.value && guidedRect.value) return
   focusGuided(step)
 }, { deep: true })
@@ -1466,8 +1557,6 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       flowUseLarge: video.value.vid2vidFlowUseLarge,
       flowDownscale: video.value.vid2vidFlowDownscale,
     },
-    prompt: String(video.value.prompt || ''),
-    negativePrompt: String(video.value.negativePrompt || ''),
     width: video.value.width,
     height: video.value.height,
     frames: video.value.frames,
@@ -1480,6 +1569,8 @@ function buildCurrentSnapshot(): Record<string, unknown> {
     },
     high: {
       modelDir: high.value.modelDir,
+      prompt: String(high.value.prompt || ''),
+      negativePrompt: String(high.value.negativePrompt || ''),
       sampler: high.value.sampler,
       scheduler: high.value.scheduler,
       steps: high.value.steps,
@@ -1491,6 +1582,8 @@ function buildCurrentSnapshot(): Record<string, unknown> {
     },
     low: {
       modelDir: low.value.modelDir,
+      prompt: String(low.value.prompt || ''),
+      negativePrompt: String(low.value.negativePrompt || ''),
       sampler: low.value.sampler,
       scheduler: low.value.scheduler,
       steps: low.value.steps,
@@ -1582,8 +1675,6 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const v2v = isRecord(snap.vid2vid) ? snap.vid2vid : {}
 
   setVideo({
-    prompt: String(snap.prompt || ''),
-    negativePrompt: String(snap.negativePrompt || ''),
     width: Number(snap.width) || video.value.width,
     height: Number(snap.height) || video.value.height,
     frames: Number(snap.frames) || video.value.frames,
@@ -1621,6 +1712,12 @@ function applyHistory(item: VideoRunHistoryItem): void {
 
   const hi = isRecord(snap.high) ? snap.high : {}
   const lo = isRecord(snap.low) ? snap.low : {}
+  const legacyPrompt = String(snap.prompt || '')
+  const legacyNegativePrompt = String(snap.negativePrompt || '')
+  const nextHighPrompt = typeof hi.prompt === 'string' ? hi.prompt : legacyPrompt
+  const nextHighNegative = typeof hi.negativePrompt === 'string' ? hi.negativePrompt : legacyNegativePrompt
+  const nextLowPrompt = typeof lo.prompt === 'string' ? lo.prompt : legacyPrompt
+  const nextLowNegative = typeof lo.negativePrompt === 'string' ? lo.negativePrompt : legacyNegativePrompt
   const hiLoraSha = String(hi.loraSha || '').trim()
   const loLoraSha = String(lo.loraSha || '').trim()
   const snapLightx2v =
@@ -1636,6 +1733,8 @@ function applyHistory(item: VideoRunHistoryItem): void {
 
   setHigh({
     modelDir: String(hi.modelDir || ''),
+    prompt: String(nextHighPrompt || ''),
+    negativePrompt: String(nextHighNegative || ''),
     sampler: String(hi.sampler || ''),
     scheduler: String(hi.scheduler || ''),
     steps: Number(hi.steps) || high.value.steps,
@@ -1648,6 +1747,8 @@ function applyHistory(item: VideoRunHistoryItem): void {
 
   setLow({
     modelDir: String(lo.modelDir || ''),
+    prompt: String(nextLowPrompt || ''),
+    negativePrompt: String(nextLowNegative || ''),
     sampler: String(lo.sampler || ''),
     scheduler: String(lo.scheduler || ''),
     steps: Number(lo.steps) || low.value.steps,
@@ -1906,6 +2007,16 @@ function readHistorySnapshotText(item: VideoRunHistoryItem, key: string): string
   const snapshot = item.paramsSnapshot
   if (!snapshot || typeof snapshot !== 'object') return ''
   const value = (snapshot as Record<string, unknown>)[key]
+  if (typeof value !== 'string') return ''
+  return value.trim()
+}
+
+function readHistoryStageSnapshotText(item: VideoRunHistoryItem, stageKey: 'high' | 'low', key: 'prompt' | 'negativePrompt'): string {
+  const snapshot = item.paramsSnapshot
+  if (!snapshot || typeof snapshot !== 'object') return ''
+  const stage = (snapshot as Record<string, unknown>)[stageKey]
+  if (!stage || typeof stage !== 'object' || Array.isArray(stage)) return ''
+  const value = (stage as Record<string, unknown>)[key]
   if (typeof value !== 'string') return ''
   return value.trim()
 }

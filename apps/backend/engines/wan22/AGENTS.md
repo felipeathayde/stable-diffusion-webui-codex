@@ -46,6 +46,7 @@ Status: Active
 - 2026-02-20: Renamed animate engine key to `wan22_14b_animate` (no compatibility alias for `wan22_animate_14b`).
 - 2026-02-20: 14B canonical module path is `wan22_14b.py`; no `_gguf` lane naming in engine/module IDs.
 - 2026-02-18: `wan22_14b` first-stage VAE encode/decode now load/unload using base canonical VAE memory target (`self._vae_memory_target()`, patcher when present) to keep memory-manager identity consistent with shared unload cleanup.
+- 2026-02-21: `wan22_common.WanStageOptions` now carries stage prompt/negative fields (in addition to sampler/scheduler/steps/LoRA) with strict type normalization so stage prompt contracts are preserved across router/use-case/runtime boundaries.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

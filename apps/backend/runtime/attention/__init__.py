@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `attention_split` (function): Splits attention computation into chunks to reduce peak memory.
 - `attention_xformers` (function): xFormers attention path (when available and not broken).
 - `attention_pytorch` (function): PyTorch SDPA attention path with optional per-call SDPA policy (`auto|flash|mem_efficient|math`) and flash fallback warning behavior.
+- `_flash_sdpa_ineligibility_reason` (function): Validates hard flash-kernel constraints (shape/head-dim/device/dtype) so known-ineligible flash calls skip direct flash attempts and enter deterministic fallback with explicit reason.
 - `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`) with optional SDPA policy forwarding for PyTorch backend.
 - `attention_function_pre_shaped` (function): Dispatcher wrapper for pre-shaped Q/K/V tensors (`[B,H,S,D]` -> `[B,H,S,D]`), including optional SDPA policy forwarding.
 - `attention_function_single_head_spatial` (function): Runtime-selected single-head spatial attention dispatcher (VAE; driven by runtime config).
@@ -174,6 +175,36 @@ def _log_sdpa_flash_fallback_once(
     )
 
 
+def _flash_sdpa_ineligibility_reason(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+) -> str | None:
+    if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
+        return (
+            "flash precheck expects q/k/v tensors with shape [B,H,S,D]; "
+            f"got q={tuple(q.shape)} k={tuple(k.shape)} v={tuple(v.shape)}."
+        )
+    q_dim = int(q.shape[-1])
+    k_dim = int(k.shape[-1])
+    v_dim = int(v.shape[-1])
+    if q_dim != k_dim or q_dim != v_dim:
+        return (
+            "flash requires q/k/v to share the same last dimension; "
+            f"got q={q_dim}, k={k_dim}, v={v_dim}."
+        )
+    if q_dim > 256:
+        return (
+            "flash requires head_dim <= 256; "
+            f"got head_dim={q_dim}."
+        )
+    if q.device.type != "cuda":
+        return f"flash requires CUDA tensors (got device={q.device})."
+    if q.dtype not in {torch.float16, torch.bfloat16}:
+        return f"flash requires fp16/bf16 dtype (got dtype={q.dtype})."
+    return None
+
+
 def _run_pytorch_sdpa(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -199,6 +230,25 @@ def _run_pytorch_sdpa(
 
     if normalized_policy != "flash":
         return _run_once(normalized_policy)
+
+    precheck_failure = _flash_sdpa_ineligibility_reason(q, k, v)
+    if precheck_failure is not None:
+        for fallback_policy in ("mem_efficient", "math"):
+            try:
+                _log_sdpa_flash_fallback_once(
+                    device=q.device,
+                    dtype=q.dtype,
+                    fallback_policy=fallback_policy,
+                    reason=precheck_failure,
+                )
+                return _run_once(fallback_policy)
+            except Exception:
+                continue
+        raise RuntimeError(
+            "SDPA policy flash precheck failed and no fallback policy succeeded "
+            "(tried mem_efficient, math). "
+            f"Reason: {precheck_failure}"
+        )
 
     try:
         return _run_once("flash")

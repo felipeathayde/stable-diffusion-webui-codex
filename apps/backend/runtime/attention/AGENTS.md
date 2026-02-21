@@ -12,3 +12,4 @@ Status: Active
 - 2026-02-20: Added `attention_function_pre_shaped(...)` and causal-aware dispatcher signatures so pre-shaped `[B,H,S,D]` callsites can route through the central runtime backend selector without bypassing dispatcher contracts.
 - 2026-02-20: PyTorch SDPA paths now support strict per-call policy forwarding (`auto|flash|mem_efficient|math`) through `attention_function(...)` / `attention_function_pre_shaped(...)`; non-PyTorch backend + policy combinations fail loud.
 - 2026-02-21: Flash-only SDPA requests now warn and fallback deterministically (`mem_efficient` then `math`) when flash kernels are unavailable at runtime, instead of silently degrading.
+- 2026-02-21: Flash policy now performs a precheck before attempting flash kernels (including head-dim constraint `D <= 256`); ineligible calls skip direct flash attempt and enter deterministic fallback immediately with explicit reason.

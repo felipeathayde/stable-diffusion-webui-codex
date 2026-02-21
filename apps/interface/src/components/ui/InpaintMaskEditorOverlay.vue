@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Full-screen inpaint mask editor overlay for img2img/inpaint workflows.
 Provides practical mask tools (brush, eraser, circle, polygon), zoom/pan viewport controls,
-undo/redo with deep history, and apply/close semantics while keeping state presentational (props/emits only).
+undo/redo with deep history, mask upload import (auto-stretched to init-image dimensions), and apply/close semantics while
+keeping state presentational (props/emits only).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InpaintMaskEditorOverlay` (component): Full-screen inpaint mask editor overlay.
@@ -17,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onStagePointerDown` (function): Handles drawing/panning pointer-down interactions.
 - `onStagePointerMove` (function): Handles drawing/panning pointer-move interactions.
 - `onStagePointerUp` (function): Commits or ends active interactions on pointer-up.
+- `onMaskUploadInputChange` (function): Imports an uploaded mask image, stretches it to canvas dimensions, and commits it to history.
 - `applyDraftMask` (function): Exports current draft mask and emits `apply`.
 - `resetDraftFromSource` (function): Discards local draft and reloads source-derived baseline.
 -->
@@ -116,6 +118,14 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
 
       <div class="toolbar-group inpaint-mask-editor-toolbar__actions">
+        <input
+          ref="maskUploadInputEl"
+          class="inpaint-mask-editor-upload-input"
+          type="file"
+          accept="image/*"
+          @change="onMaskUploadInputChange"
+        >
+        <button class="btn btn-sm btn-outline" type="button" :disabled="!engine || loadingSource || uploadInFlight" @click="triggerMaskUpload">Upload mask</button>
         <button class="btn btn-sm btn-outline" type="button" :disabled="!canUndo" @click="undo">Undo</button>
         <button class="btn btn-sm btn-outline" type="button" :disabled="!canRedo" @click="redo">Redo</button>
         <button class="btn btn-sm btn-outline" type="button" @click="clearMask">Clear</button>
@@ -203,6 +213,7 @@ const stageEl = ref<HTMLElement | null>(null)
 const contentEl = ref<HTMLElement | null>(null)
 const initImageEl = ref<HTMLImageElement | null>(null)
 const maskCanvasEl = ref<HTMLCanvasElement | null>(null)
+const maskUploadInputEl = ref<HTMLInputElement | null>(null)
 
 const zoom = ref(1)
 const offsetX = ref(0)
@@ -216,6 +227,8 @@ const loadedSourceFingerprint = ref('')
 
 const canUndo = ref(false)
 const canRedo = ref(false)
+const uploadInFlight = ref(false)
+const uploadRequestToken = ref(0)
 
 const previewPointerPoint = ref<MaskPoint | null>(null)
 const panState = ref<PanState | null>(null)
@@ -750,6 +763,75 @@ function clearMask(): void {
   polygonPoints.value = []
   syncHistoryFlags()
   renderMaskCanvas()
+}
+
+function triggerMaskUpload(): void {
+  const input = maskUploadInputEl.value
+  if (!input || !engine.value) return
+  input.click()
+}
+
+async function onMaskUploadInputChange(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (input) input.value = ''
+  if (!file) return
+  if (!engine.value) return
+  const requestToken = uploadRequestToken.value + 1
+  uploadRequestToken.value = requestToken
+  uploadInFlight.value = true
+  const sourceFingerprintBeforeUpload = buildSourceFingerprint()
+  try {
+    const uploadedMask = await loadMaskPlaneFromFile(file)
+    if (requestToken !== uploadRequestToken.value) return
+    if (!engine.value) return
+    if (buildSourceFingerprint() !== sourceFingerprintBeforeUpload) {
+      emit('external-reset', 'Mask import canceled: init image source changed during upload.')
+      return
+    }
+    resetInteractionState(true)
+    engine.value.replaceMask(uploadedMask)
+    syncHistoryFlags()
+    renderMaskCanvas()
+  } catch (error) {
+    if (requestToken !== uploadRequestToken.value) return
+    const message = error instanceof Error ? error.message : String(error)
+    emit('external-reset', `Mask import failed: ${message}`)
+  } finally {
+    if (requestToken === uploadRequestToken.value) {
+      uploadInFlight.value = false
+    }
+  }
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function loadMaskPlaneFromFile(file: File): Promise<Uint8Array> {
+  const width = Math.trunc(props.imageWidth)
+  const height = Math.trunc(props.imageHeight)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error('Mask upload requires positive image dimensions.')
+  }
+  const src = await readFileAsDataUrl(file)
+  const image = await loadImage(src)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) {
+    throw new Error('Failed to create canvas context for mask import.')
+  }
+  context.clearRect(0, 0, width, height)
+  context.drawImage(image, 0, 0, width, height)
+  const rgba = context.getImageData(0, 0, width, height).data
+  return rgbaToMaskPlane(rgba, width, height)
 }
 
 function resetDraftFromSource(): void {

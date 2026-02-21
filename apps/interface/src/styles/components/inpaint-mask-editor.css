@@ -86,6 +86,10 @@
     gap: 0.5rem;
   }
 
+  .inpaint-mask-editor-upload-input {
+    display: none;
+  }
+
   .inpaint-mask-editor-toolbar__brush {
     display: grid;
     grid-template-columns: 1fr auto;

@@ -32,3 +32,4 @@ Status: Active
 - 2026-02-18: `SliderField.vue` now supports optional rich label tooltips (hover/focus trigger with `?` badge) via shared `HoverTooltip.vue`.
 - 2026-02-21: Added `InpaintMaskEditorOverlay.vue` + `inpaint_mask_editor_engine.ts` for practical inpaint mask authoring (binary mask export, brush/eraser/circle/polygon, deep undo/redo, reset/apply contract).
 - 2026-02-21: `ImageZoomOverlay.vue` and `InpaintMaskEditorOverlay.vue` now apply pan offsets with explicit `left/top` values plus scale-only transforms, removing `transform: translate...` usage; inpaint brush cursor centering now uses top-left coordinate math instead of translate offsets.
+- 2026-02-21: `InpaintMaskEditorOverlay.vue` now includes `Upload mask` in-toolbar import; uploaded masks are stretched to init-image dimensions and committed through engine history (`replaceMask`) so undo/redo reverts/restores imports.

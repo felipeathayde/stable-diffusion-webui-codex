@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (mask source + enforcement/fill + mask toggles/sliders),
+Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + mask toggles/sliders),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 
@@ -41,45 +41,38 @@ Symbols (top-level; keep in sync; no ghosts):
     >
       <template #footer>
         <p v-if="initImageName" class="caption img2img-caption">{{ initImageName }}</p>
+        <div v-if="useMask" class="img2img-mask-inline-tools">
+          <div class="img2img-mask-editor-actions">
+            <button
+              class="btn btn-sm btn-secondary"
+              type="button"
+              :disabled="disabled || !initImageData"
+              @click="maskEditorOpen = true"
+            >
+              Edit mask
+            </button>
+            <button
+              class="btn btn-sm btn-outline"
+              type="button"
+              :disabled="disabled || !maskImageData"
+              @click="emit('clear:maskImage')"
+            >
+              Clear mask
+            </button>
+          </div>
+          <p class="caption img2img-caption">
+            {{ maskImageData ? (maskImageName || 'Mask ready') : 'No mask applied. Open the editor to draw or upload.' }}
+          </p>
+        </div>
       </template>
     </InitialImageCard>
 
     <div v-if="useMask" class="img2img-mask-stack">
       <WanSubHeader title="Inpaint Parameters">
         <template #subtitle>
-          <span class="caption">Mask controls</span>
+          <span class="caption">Canvas mask tools + runtime parameters</span>
         </template>
       </WanSubHeader>
-
-      <InitialImageCard
-        label="Mask"
-        accept="image/*"
-        :src="maskImageData"
-        :has-image="Boolean(maskImageData)"
-        :disabled="disabled"
-        :dropzone="true"
-        :thumbnail="true"
-        :zoomable="true"
-        placeholder="Select a mask image (RGBA/alpha supported)."
-        @set="(file) => emit('set:maskImage', file)"
-        @clear="() => emit('clear:maskImage')"
-        @rejected="(payload) => emit('reject:maskImage', payload)"
-      >
-        <template #footer>
-          <p v-if="maskImageName" class="caption img2img-caption">{{ maskImageName }}</p>
-        </template>
-      </InitialImageCard>
-
-      <div class="img2img-mask-editor-actions">
-        <button
-          class="btn btn-sm btn-secondary"
-          type="button"
-          :disabled="disabled || !initImageData"
-          @click="maskEditorOpen = true"
-        >
-          Edit mask
-        </button>
-      </div>
 
       <div class="gc-row img2img-mask-grid">
         <div class="field">
@@ -217,9 +210,7 @@ const emit = defineEmits<{
   (e: 'set:initImage', value: File): void
   (e: 'clear:initImage'): void
   (e: 'reject:initImage', payload: { reason: string; files: File[] }): void
-  (e: 'set:maskImage', value: File): void
   (e: 'clear:maskImage'): void
-  (e: 'reject:maskImage', payload: { reason: string; files: File[] }): void
   (e: 'apply:maskImageData', value: string): void
   (e: 'notice:maskEditorReset', message: string): void
   (e: 'update:maskEnforcement', value: string): void

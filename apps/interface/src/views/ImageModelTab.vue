@@ -39,8 +39,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for init-image input.
 - `clearInit` (function): Clears init image fields.
-- `onMaskFileSet` (function): Reads a mask file into a data URL and stores it after validating dimensions (async).
-- `onMaskImageRejected` (function): Surfaces dropzone reject reasons for mask-image input.
 - `clearMask` (function): Clears mask fields.
 - `onMaskEditorApply` (function): Validates and stores an edited mask exported from the inpaint mask editor overlay.
 - `onMaskEditorResetNotice` (function): Surfaces inpaint mask editor source-reset notices as toasts.
@@ -97,9 +95,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @set:initImage="onInitFileSet"
             @clear:initImage="clearInit"
             @reject:initImage="onInitImageRejected"
-            @set:maskImage="onMaskFileSet"
             @clear:maskImage="clearMask"
-            @reject:maskImage="onMaskImageRejected"
             @apply:maskImageData="onMaskEditorApply"
             @notice:maskEditorReset="onMaskEditorResetNotice"
             @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
@@ -1204,30 +1200,6 @@ function clearInit(): void {
     maskImageData: '',
     maskImageName: '',
   })
-}
-
-function onMaskImageRejected(payload: { reason: string; files: File[] }): void {
-  const fileName = payload.files[0]?.name || 'file'
-  toast(`Mask image rejected (${fileName}): ${payload.reason}`)
-}
-
-async function onMaskFileSet(file: File): Promise<void> {
-  if (!params.value.initImageData) {
-    toast('Select an initial image before setting a mask.')
-    return
-  }
-  const dataUrl = await readFileAsDataURL(file)
-  try {
-    const { width, height } = await readImageDimensions(dataUrl)
-    if (width !== params.value.width || height !== params.value.height) {
-      toast(`Mask size must match init image size: expected ${params.value.width}×${params.value.height}, got ${width}×${height}.`)
-      return
-    }
-  } catch {
-    toast('Failed to load mask image.')
-    return
-  }
-  setParams({ useMask: true, maskImageData: dataUrl, maskImageName: file.name })
 }
 
 function clearMask(): void {

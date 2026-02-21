@@ -20,9 +20,18 @@
     min-width: 0;
   }
 
+  .img2img-params-card .img2img-mask-inline-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+
   .img2img-params-card .img2img-mask-editor-actions {
     display: flex;
     justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 0.6rem;
   }
 
   .img2img-params-card .img2img-toggle-row {

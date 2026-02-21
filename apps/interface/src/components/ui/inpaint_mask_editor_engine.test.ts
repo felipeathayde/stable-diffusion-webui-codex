@@ -133,6 +133,25 @@ describe('inpaint_mask_editor_engine', () => {
     expect(pixel(afterUndo, 8, 3, 3)).toBe(MASK_VALUE_FILLED)
   })
 
+  it('replaceMask is undoable and redoable', () => {
+    const engine = new InpaintMaskEditorEngine({ width: 4, height: 4 })
+    const uploadedMask = new Uint8Array(16)
+    uploadedMask[(1 * 4) + 1] = MASK_VALUE_FILLED
+    uploadedMask[(2 * 4) + 2] = MASK_VALUE_FILLED
+
+    engine.replaceMask(uploadedMask)
+    expect(pixel(engine.currentMask, 4, 1, 1)).toBe(MASK_VALUE_FILLED)
+    expect(pixel(engine.currentMask, 4, 2, 2)).toBe(MASK_VALUE_FILLED)
+
+    expect(engine.undo()).toBe(true)
+    expect(pixel(engine.currentMask, 4, 1, 1)).toBe(MASK_VALUE_EMPTY)
+    expect(pixel(engine.currentMask, 4, 2, 2)).toBe(MASK_VALUE_EMPTY)
+
+    expect(engine.redo()).toBe(true)
+    expect(pixel(engine.currentMask, 4, 1, 1)).toBe(MASK_VALUE_FILLED)
+    expect(pixel(engine.currentMask, 4, 2, 2)).toBe(MASK_VALUE_FILLED)
+  })
+
   it('uses alpha channel precedence when rgba has transparency', () => {
     const rgba = new Uint8ClampedArray([
       0, 0, 0, 0,

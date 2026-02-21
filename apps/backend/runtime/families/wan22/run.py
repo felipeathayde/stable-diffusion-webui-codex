@@ -1877,8 +1877,6 @@ def stream_img2vid_chunked(
                 )
                 if chunk_condition_buffer is None:
                     chunk_condition_buffer = latent_condition_base.clone()
-                else:
-                    chunk_condition_buffer.copy_(latent_condition_base)
                 chunk_condition_buffer[:, :, :1, :, :] = _blend_anchor_latent(
                     prev_chunk_tail_latent,
                     base_anchor_latent,

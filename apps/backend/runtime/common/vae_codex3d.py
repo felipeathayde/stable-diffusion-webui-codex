@@ -116,7 +116,10 @@ class Codex3DRMSNorm(nn.Module):
 
 class Codex3DUpsample(nn.Upsample):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return super().forward(x.float()).type_as(x)
+        try:
+            return super().forward(x)
+        except Exception:
+            return super().forward(x.float()).to(dtype=x.dtype)
 
 
 class Codex3DResidualBlock(nn.Module):
@@ -155,7 +158,7 @@ class Codex3DResidualBlock(nn.Module):
             cache_x = x[:, :, -_CACHE_T:, :, :].clone()
             cached = feat_cache[idx]
             if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
-                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                cache_x = torch.cat([cached[:, :, -1:, :, :], cache_x], dim=2)
             x = self.residual[2](x, cached if torch.is_tensor(cached) else None)
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
@@ -171,7 +174,7 @@ class Codex3DResidualBlock(nn.Module):
             cache_x = x[:, :, -_CACHE_T:, :, :].clone()
             cached = feat_cache[idx]
             if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
-                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                cache_x = torch.cat([cached[:, :, -1:, :, :], cache_x], dim=2)
             x = self.residual[6](x, cached if torch.is_tensor(cached) else None)
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
@@ -209,7 +212,7 @@ class Codex3DAttentionBlock(nn.Module):
         attn = torch.matmul(q, k) * (channels ** -0.5)
         attn = torch.softmax(attn, dim=-1)
         out = torch.matmul(attn, v).transpose(1, 2).reshape(batch * frames, channels, height, width)
-        out = self.proj(out).view(batch, frames, channels, height, width).permute(0, 2, 1, 3, 4).contiguous()
+        out = self.proj(out).view(batch, frames, channels, height, width).permute(0, 2, 1, 3, 4)
         return residual + out
 
 
@@ -261,9 +264,9 @@ class Codex3DResample(nn.Module):
                 else:
                     cache_x = work[:, :, -_CACHE_T:, :, :].clone()
                     if cache_x.shape[2] < _CACHE_T and cached != "Rep" and torch.is_tensor(cached):
-                        cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                        cache_x = torch.cat([cached[:, :, -1:, :, :], cache_x], dim=2)
                     if cache_x.shape[2] < _CACHE_T and cached == "Rep":
-                        cache_x = torch.cat([torch.zeros_like(cache_x).to(cache_x.device), cache_x], dim=2)
+                        cache_x = torch.cat([torch.zeros_like(cache_x), cache_x], dim=2)
                     if cached == "Rep":
                         work = self.time_conv(work)
                     else:
@@ -278,7 +281,7 @@ class Codex3DResample(nn.Module):
         out_channels = int(flat.shape[1])
         out_height = int(flat.shape[2])
         out_width = int(flat.shape[3])
-        work = flat.reshape(batch, int(work.shape[2]), out_channels, out_height, out_width).permute(0, 2, 1, 3, 4).contiguous()
+        work = flat.reshape(batch, int(work.shape[2]), out_channels, out_height, out_width).permute(0, 2, 1, 3, 4)
 
         if self.mode == "downsample3d":
             if feat_cache is not None:
@@ -356,7 +359,7 @@ class Codex3DEncoder(nn.Module):
             cache_x = x[:, :, -_CACHE_T:, :, :].clone()
             cached = feat_cache[idx]
             if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
-                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                cache_x = torch.cat([cached[:, :, -1:, :, :], cache_x], dim=2)
             x = self.conv1(x, cached if torch.is_tensor(cached) else None)
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
@@ -383,7 +386,7 @@ class Codex3DEncoder(nn.Module):
             cache_x = x[:, :, -_CACHE_T:, :, :].clone()
             cached = feat_cache[idx]
             if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
-                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                cache_x = torch.cat([cached[:, :, -1:, :, :], cache_x], dim=2)
             x = conv_out(x, cached if torch.is_tensor(cached) else None)
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
@@ -452,7 +455,7 @@ class Codex3DDecoder(nn.Module):
             cache_x = x[:, :, -_CACHE_T:, :, :].clone()
             cached = feat_cache[idx]
             if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
-                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                cache_x = torch.cat([cached[:, :, -1:, :, :], cache_x], dim=2)
             x = self.conv1(x, cached if torch.is_tensor(cached) else None)
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
@@ -479,7 +482,7 @@ class Codex3DDecoder(nn.Module):
             cache_x = x[:, :, -_CACHE_T:, :, :].clone()
             cached = feat_cache[idx]
             if cache_x.shape[2] < _CACHE_T and torch.is_tensor(cached):
-                cache_x = torch.cat([cached[:, :, -1:, :, :].to(cache_x.device), cache_x], dim=2)
+                cache_x = torch.cat([cached[:, :, -1:, :, :], cache_x], dim=2)
             x = conv_out(x, cached if torch.is_tensor(cached) else None)
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
@@ -591,8 +594,9 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
             )
         _, _, num_frame, _, _ = x.shape
         self.clear_cache()
-        encoded_chunks: list[torch.Tensor] = []
-        for index in range(1 + (int(num_frame) - 1) // 4):
+        chunk_count = 1 + (int(num_frame) - 1) // 4
+        encoded: torch.Tensor | None = None
+        for index in range(int(chunk_count)):
             self._enc_conv_idx = [0]
             if index == 0:
                 encoded_chunk = self.encoder(x[:, :, :1, :, :], feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
@@ -602,10 +606,40 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                     feat_cache=self._enc_feat_map,
                     feat_idx=self._enc_conv_idx,
                 )
-            encoded_chunks.append(encoded_chunk)
-        if not encoded_chunks:
+            if encoded_chunk.ndim != 5:
+                raise RuntimeError(
+                    "AutoencoderCodex3D encoder produced non-5D chunk "
+                    f"(chunk={index} shape={tuple(encoded_chunk.shape)})."
+                )
+            if int(encoded_chunk.shape[2]) != 1:
+                raise RuntimeError(
+                    "AutoencoderCodex3D encode expected chunk temporal size of 1 "
+                    f"(chunk={index} got={int(encoded_chunk.shape[2])})."
+                )
+            if encoded is None:
+                encoded = encoded_chunk.new_empty(
+                    (
+                        int(encoded_chunk.shape[0]),
+                        int(encoded_chunk.shape[1]),
+                        int(chunk_count),
+                        int(encoded_chunk.shape[3]),
+                        int(encoded_chunk.shape[4]),
+                    )
+                )
+            elif (
+                int(encoded_chunk.shape[0]) != int(encoded.shape[0])
+                or int(encoded_chunk.shape[1]) != int(encoded.shape[1])
+                or int(encoded_chunk.shape[3]) != int(encoded.shape[3])
+                or int(encoded_chunk.shape[4]) != int(encoded.shape[4])
+            ):
+                raise RuntimeError(
+                    "AutoencoderCodex3D encode chunk shape mismatch; refusing to assemble heterogeneous chunks "
+                    f"(chunk={index} shape={tuple(encoded_chunk.shape)} expected=(B={int(encoded.shape[0])},"
+                    f" C={int(encoded.shape[1])}, T=1, H={int(encoded.shape[3])}, W={int(encoded.shape[4])}))."
+                )
+            encoded[:, :, index : index + 1, :, :] = encoded_chunk
+        if encoded is None:
             raise RuntimeError("AutoencoderCodex3D encode produced no chunks.")
-        encoded = encoded_chunks[0] if len(encoded_chunks) == 1 else torch.cat(encoded_chunks, dim=2)
         moments = self.conv1(encoded)
         self.clear_cache()
         posterior = DiagonalGaussianDistribution(moments)

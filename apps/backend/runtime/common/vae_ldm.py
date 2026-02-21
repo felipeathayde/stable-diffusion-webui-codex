@@ -56,10 +56,15 @@ class DiagonalGaussianDistribution:
         self.std = torch.exp(0.5 * self.logvar)
         self.var = torch.exp(self.logvar)
         if self.deterministic:
-            self.var = self.std = torch.zeros_like(self.mean).to(device=self.parameters.device)
+            self.var = self.std = torch.zeros_like(self.mean)
 
     def sample(self):
-        x = self.mean + self.std * torch.randn(self.mean.shape).to(device=self.parameters.device)
+        noise = torch.randn(
+            self.mean.shape,
+            device=self.parameters.device,
+            dtype=self.mean.dtype,
+        )
+        x = self.mean + self.std * noise
         return x
 
     def mode(self):

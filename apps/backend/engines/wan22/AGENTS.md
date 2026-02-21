@@ -40,6 +40,7 @@ Status: Active
 - 2026-02-09: WAN22 prompt conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-10: `diffusers_loader.py` no longer swallows attention/accelerator hook or logger emit exceptions; hook import/apply and log emit failures now surface as contextual `RuntimeError`.
 - 2026-02-11: `diffusers_loader.py` now wraps native WAN VAE instances with a strict diffusers-compat adapter (`encode/decode` contract), including 5D video batch adaptation and explicit `dtype` exposure, so pipeline calls consume `latents`/`sample` outputs without fallback shims.
+- 2026-02-21: `diffusers_loader.py` native VAE adapter now avoids unconditional `.contiguous()` on 4D->5D restore, preventing an unnecessary full-tensor copy on WAN video-latent paths.
 - 2026-02-16: `WanEngineSpec.family` now uses explicit WAN22 variant families (`WAN22_14B`/`WAN22_5B`) and runtime VAE wrapper ownership follows `spec.family` (no shared WAN family alias).
 - 2026-02-17: `wan22_14b` canonical registration now points to a dedicated GGUF 14B lane with no inheritance from `wan22_5b`; 14B/5B routing remains explicit per engine id.
 - 2026-02-20: Removed explicit `wan22_14b_native` lane registration; WAN22 14B ownership is single-key (`wan22_14b`) and class export name is `Wan2214BEngine`.

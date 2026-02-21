@@ -348,18 +348,11 @@ def build_i2v_mask4(
             f"(latent_frames={int(latent_frames)} expected={expected_latent} from num_frames={num_frames} scale={scale_factor_temporal})"
         )
 
-    # mask_lat_size: [B,1,T_out,H_lat,W_lat]
-    mask_lat_size = torch.ones((int(batch), 1, int(num_frames), int(height), int(width)), device=device, dtype=dtype)
-    # I2V: only first frame is conditioned
-    if int(num_frames) > 1:
-        mask_lat_size[:, :, 1:int(num_frames)] = 0
-
-    # Expand first frame to cover the first latent-time chunk
-    first_frame_mask = mask_lat_size[:, :, 0:1]
-    first_frame_mask = torch.repeat_interleave(first_frame_mask, dim=2, repeats=int(scale_factor_temporal))
-    mask_lat_size = torch.cat([first_frame_mask, mask_lat_size[:, :, 1:, ...]], dim=2)
-
     expected_frames = int(latent_frames) * int(scale_factor_temporal)
+    # mask_lat_size: [B,1,T_out_expanded,H_lat,W_lat]
+    # Expanded timeline matches Diffusers semantics: first frame is repeated over the first latent-time chunk.
+    mask_lat_size = torch.zeros((int(batch), 1, expected_frames, int(height), int(width)), device=device, dtype=dtype)
+    mask_lat_size[:, :, : int(scale_factor_temporal), :, :] = 1
     if int(mask_lat_size.shape[2]) != expected_frames:
         raise RuntimeError(
             "build_i2v_mask4: internal frame count mismatch after expansion "
@@ -368,7 +361,7 @@ def build_i2v_mask4(
 
     # Reshape and transpose to `[B,4,T_lat,H_lat,W_lat]`
     mask_lat_size = mask_lat_size.view(int(batch), -1, int(scale_factor_temporal), int(height), int(width))
-    mask_lat_size = mask_lat_size.transpose(1, 2).contiguous()
+    mask_lat_size = mask_lat_size.transpose(1, 2)
     if tuple(mask_lat_size.shape) != (int(batch), int(scale_factor_temporal), int(latent_frames), int(height), int(width)):
         raise RuntimeError(
             "build_i2v_mask4: unexpected output shape "
@@ -399,6 +392,16 @@ def assemble_i2v_state(
         raise RuntimeError(f"assemble_i2v_state: expected 5D mask4 [B,4,T,H,W], got {tuple(mask4.shape)}")
     if image_latents.ndim != 5:
         raise RuntimeError(f"assemble_i2v_state: expected 5D image_latents [B,16,T,H,W], got {tuple(image_latents.shape)}")
+    if latents.dtype != mask4.dtype or latents.dtype != image_latents.dtype:
+        raise RuntimeError(
+            "assemble_i2v_state: dtype mismatch between latents/mask4/image_latents "
+            f"(latents={latents.dtype} mask4={mask4.dtype} image_latents={image_latents.dtype})."
+        )
+    if latents.device != mask4.device or latents.device != image_latents.device:
+        raise RuntimeError(
+            "assemble_i2v_state: device mismatch between latents/mask4/image_latents "
+            f"(latents={latents.device} mask4={mask4.device} image_latents={image_latents.device})."
+        )
 
     b, c_lat, t, h, w = latents.shape
     if mask4.shape[0] != b or mask4.shape[2:] != (t, h, w):
@@ -426,11 +429,16 @@ def assemble_i2v_state(
         )
 
     order = resolve_i2v_order()
+    assembled = latents.new_empty((int(b), int(expected_cin), int(t), int(h), int(w)))
     if order == "lat_first":
-        assembled = torch.cat([latents, mask4, image_latents], dim=1)
+        assembled[:, : int(c_lat), ...] = latents
+        assembled[:, int(c_lat) : int(c_lat) + 4, ...] = mask4
+        assembled[:, int(c_lat) + 4 :, ...] = image_latents
         layout = f"[lat{int(c_lat)} + mask4 + img16]"
     else:
-        assembled = torch.cat([mask4, image_latents, latents], dim=1)
+        assembled[:, :4, ...] = mask4
+        assembled[:, 4:20, ...] = image_latents
+        assembled[:, 20:, ...] = latents
         layout = f"[mask4 + img16 + lat{int(c_lat)}]"
     if int(assembled.shape[1]) != int(expected_cin):
         raise RuntimeError(

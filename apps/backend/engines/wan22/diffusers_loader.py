@@ -149,7 +149,6 @@ class _DiffusersNativeVaeAdapter(nn.Module):
         return (
             sample.view(int(batch), int(frames), int(channels), int(height), int(width))
             .permute(0, 2, 1, 3, 4)
-            .contiguous()
         )
 
     def encode(self, sample: torch.Tensor, return_dict: bool = True, **_kwargs: Any) -> Any:

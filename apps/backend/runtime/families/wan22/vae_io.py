@@ -465,7 +465,7 @@ def _from_frame_batch_4d(frame_tensor: torch.Tensor, *, batch: int, frames: int)
             "WAN22 GGUF: frame-batch reshape mismatch "
             f"(B*T={expected} expected, got {int(bt)})."
         )
-    return frame_tensor.view(int(batch), int(frames), int(c), int(h), int(w)).permute(0, 2, 1, 3, 4).contiguous()
+    return frame_tensor.view(int(batch), int(frames), int(c), int(h), int(w)).permute(0, 2, 1, 3, 4)
 
 
 def vae_encode_video_condition(
@@ -528,29 +528,65 @@ def vae_encode_video_condition(
 
             # Diffusers-style I2V conditioning video: first frame is the init image; remaining frames are 0 (i.e., 0.5 gray).
             image = image.unsqueeze(2)  # [B,C,1,H,W]
-            video_condition = image.new_zeros(
-                (image.shape[0], image.shape[1], int(num_frames), int(height), int(width))
-            )
-            video_condition[:, :, :1, :, :] = image
             regulation = lambda posterior: posterior.mode()
             with torch.no_grad():
                 if lane == "2d_native":
-                    video_batched, batch_size, frame_count = _to_frame_batch_4d(video_condition)
+                    batch_size = int(image.shape[0])
+                    first_frame_batch = image[:, :, 0, :, :]
+                    if int(num_frames) > 1:
+                        zero_frame_batch = first_frame_batch.new_zeros(first_frame_batch.shape)
+                        encode_input = torch.cat((first_frame_batch, zero_frame_batch), dim=0)
+                    else:
+                        encode_input = first_frame_batch
                     try:
-                        encoded_out = vae.encode(video_batched, regulation=regulation)
+                        encoded_out = vae.encode(encode_input, regulation=regulation)
                     except TypeError:
-                        encoded_out = vae.encode(video_batched)
+                        encoded_out = vae.encode(encode_input)
                     encoded_raw = _retrieve_latents(encoded_out, sample_mode="mode")
                     if encoded_raw.ndim == 4:
-                        encoded = _from_frame_batch_4d(encoded_raw, batch=batch_size, frames=frame_count)
-                    elif encoded_raw.ndim == 5:
-                        encoded = encoded_raw
+                        first_latents = encoded_raw[:batch_size]
+                        if int(num_frames) > 1:
+                            expected = int(batch_size) * 2
+                            if int(encoded_raw.shape[0]) != expected:
+                                raise RuntimeError(
+                                    "WAN22 GGUF: 2d_native encode expected 2*B outputs for first+zero frames "
+                                    f"(expected={expected} got={int(encoded_raw.shape[0])})."
+                                )
+                            zero_latents = encoded_raw[batch_size:]
+                            encoded = first_latents.new_empty(
+                                (
+                                    int(batch_size),
+                                    int(first_latents.shape[1]),
+                                    int(num_frames),
+                                    int(first_latents.shape[2]),
+                                    int(first_latents.shape[3]),
+                                )
+                            )
+                            encoded[:, :, :1, :, :] = first_latents.unsqueeze(2)
+                            encoded[:, :, 1:, :, :] = zero_latents.unsqueeze(2).expand(
+                                -1,
+                                -1,
+                                int(num_frames) - 1,
+                                -1,
+                                -1,
+                            )
+                        else:
+                            if int(encoded_raw.shape[0]) != int(batch_size):
+                                raise RuntimeError(
+                                    "WAN22 GGUF: 2d_native encode expected B outputs for single-frame conditioning "
+                                    f"(expected={int(batch_size)} got={int(encoded_raw.shape[0])})."
+                                )
+                            encoded = first_latents.unsqueeze(2)
                     else:
                         raise RuntimeError(
                             "WAN22 GGUF: VAE encode produced unsupported tensor rank "
                             f"(lane=2d_native shape={tuple(encoded_raw.shape)})."
                         )
                 else:
+                    video_condition = image.new_zeros(
+                        (image.shape[0], image.shape[1], int(num_frames), int(height), int(width))
+                    )
+                    video_condition[:, :, :1, :, :] = image
                     try:
                         encoded_out = vae.encode(video_condition, regulation=regulation)
                     except TypeError:

@@ -2068,11 +2068,12 @@ def stream_img2vid_chunked(
                         f"(decode_C={int(decode_chunk_latents.shape[1])} anchor_C={int(base_anchor_latent.shape[1])})."
                     )
                 decode_chunk_latents_cpu = decode_chunk_latents.detach().to(device="cpu")
-                prev_chunk_tail_latent_cpu = decode_chunk_latents_cpu[:, :, -1:, :, :].clone()
 
                 if low_store_mode == "ram":
                     low_decode_ram.append(decode_chunk_latents_cpu)
+                    prev_chunk_tail_latent_cpu = low_decode_ram[-1][:, :, -1:, :, :]
                 else:
+                    prev_chunk_tail_latent_cpu = decode_chunk_latents_cpu[:, :, -1:, :, :].clone()
                     low_decode_path = os.path.join(spool_dir, f"low_decode_{chunk_index:05d}.pt")
                     _save_chunk_tensor(
                         low_decode_path,

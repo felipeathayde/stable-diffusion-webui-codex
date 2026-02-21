@@ -8,13 +8,13 @@ Required Notice: see NOTICE
 
 Purpose: Shared streaming controller core (segment device placement + transfer stats).
 Implements a generic controller used by multiple runtime families (e.g., Flux and WAN22) to keep streaming semantics identical and avoid
-copy/paste drift.
+copy/paste drift, including deterministic state reset between generations.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `StreamingPolicy` (enum): Streaming policy (`naive`/`window`/`aggressive`) controlling segment residency.
 - `TransferStats` (dataclass): Tracks CPU↔GPU transfer bytes/counts/time for streaming telemetry.
 - `StreamingSegment` (protocol): Minimal runtime protocol for a streamable segment (name/bytes/to_device).
-- `StreamingController` (dataclass): Streaming controller operating on `StreamingSegment` objects.
+- `StreamingController` (dataclass): Streaming controller operating on `StreamingSegment` objects (reset clears residency/access/segment maps).
 """
 
 from __future__ import annotations
@@ -117,6 +117,7 @@ class StreamingController(Generic[SegmentT]):
         """Reset controller state between generations."""
         self._on_gpu.clear()
         self._access_order.clear()
+        self._segments_by_name.clear()
         self._prefetch_segment = None
         self.logger.debug("Controller state reset")
 

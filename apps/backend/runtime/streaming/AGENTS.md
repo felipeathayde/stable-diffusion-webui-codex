@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/streaming Overview
 Date: 2026-02-03
-Last Review: 2026-02-03
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - When updating streaming semantics, ensure both family wrappers keep their public import paths stable:
   - Flux: `apps/backend/runtime/families/flux/streaming/controller.py`
   - WAN22: `apps/backend/runtime/families/wan22/streaming/controller.py`
+- 2026-02-21: `controller.py::StreamingController.reset()` now clears `_segments_by_name` in addition to access/on-device state to avoid stale segment retention across generations.

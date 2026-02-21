@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
-Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks.
+Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks and scheduler aliases are rejected fail-loud.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PatchGeometry` (dataclass): Patch/tile geometry configuration used to infer latent/video shapes.
@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
-- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`) and validates sampler strings (Diffusers-free).
+- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`) and validates sampler/scheduler overrides strictly (Diffusers-free).
 - `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
 - `_assert_finite_tensor` (function): Fail-loud finite check helper with stage/step context and numeric summaries.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
@@ -142,10 +142,16 @@ def make_scheduler(
 
     raw_sampler = str(sampler or "").strip().lower()
     raw_scheduler = str(scheduler or "").strip().lower()
-    if raw_sampler in {"", "inherit", "auto", "default"}:
-        raw_sampler = ""
-    if raw_scheduler in {"", "inherit", "auto", "default"}:
-        raw_scheduler = ""
+    if raw_sampler in {"inherit", "auto", "default"}:
+        raise RuntimeError(
+            "WAN22 GGUF: scheduler aliases for sampler ('inherit'/'auto'/'default') are not supported; "
+            "use 'uni-pc' or 'uni-pc bh2'."
+        )
+    if raw_scheduler in {"inherit", "auto", "default"}:
+        raise RuntimeError(
+            "WAN22 GGUF: scheduler aliases ('inherit'/'auto'/'default') are not supported; "
+            "use 'simple'."
+        )
 
     vendor_dir = os.path.expanduser(str(metadata_dir))
     scheduler_dir = os.path.join(vendor_dir, "scheduler")
@@ -215,10 +221,10 @@ def make_scheduler(
             )
 
     # `scheduler` remains a WAN UI field, but WAN22 GGUF currently supports only the
-    # metadata-driven "simple"/default lane.
+    # metadata-driven "simple" lane.
     if raw_scheduler and raw_scheduler != "simple":
         raise RuntimeError(
-            f"WAN22 GGUF: unsupported scheduler override {scheduler!r}; expected 'simple' or default/auto."
+            f"WAN22 GGUF: unsupported scheduler override {scheduler!r}; expected 'simple'."
         )
 
     from .scheduler import build_wan_unipc_flow_scheduler

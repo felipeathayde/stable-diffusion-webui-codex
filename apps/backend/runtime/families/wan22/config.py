@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
 geometry validation (e.g. `height/width % 16 == 0`), metadata-derived sampler/scheduler defaults, and strict WAN VAE
-config-source contract checks (bundle dir or file+config), plus strict `gguf_sdpa_policy` validation.
+config-source contract checks (bundle dir or file+config), plus strict `gguf_sdpa_policy` validation and WAN sampler/scheduler contract validation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -18,6 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
 - `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
 - `_coerce_bool` (function): Best-effort coercion of optional values to `bool` (returns `None` on failure).
+- `_normalize_wan22_sampler_value` (function): Validates/canonicalizes WAN22 sampler values (`uni-pc` / `uni-pc bh2`) fail-loud.
+- `_normalize_wan22_scheduler_value` (function): Validates/canonicalizes WAN22 scheduler values (`simple`) fail-loud.
 - `as_torch_dtype` (function): Parses dtype strings into torch dtypes (with validation).
 - `resolve_device_name` (function): Normalizes device names (`cuda`/`cpu`/etc) into runtime-compatible values.
 - `resolve_i2v_order` (function): Resolves the image-to-video conditioning channel order policy.
@@ -161,6 +163,32 @@ def _coerce_bool(value: Any) -> Optional[bool]:
     if isinstance(value, bool):
         return value
     return None
+
+
+def _normalize_wan22_sampler_value(*, field_name: str, value: Any) -> str:
+    if not isinstance(value, str):
+        raise RuntimeError(f"WAN22 GGUF: {field_name} must be a string, got: {value!r}")
+    normalized = value.strip().lower()
+    if not normalized:
+        raise RuntimeError(f"WAN22 GGUF: {field_name} must not be empty when provided.")
+    if normalized not in {"uni-pc", "uni-pc bh2"}:
+        raise RuntimeError(
+            f"WAN22 GGUF: {field_name} must be 'uni-pc' or 'uni-pc bh2', got: {value!r}."
+        )
+    return normalized
+
+
+def _normalize_wan22_scheduler_value(*, field_name: str, value: Any) -> str:
+    if not isinstance(value, str):
+        raise RuntimeError(f"WAN22 GGUF: {field_name} must be a string, got: {value!r}")
+    normalized = value.strip().lower()
+    if not normalized:
+        raise RuntimeError(f"WAN22 GGUF: {field_name} must not be empty when provided.")
+    if normalized != "simple":
+        raise RuntimeError(
+            f"WAN22 GGUF: {field_name} must be 'simple', got: {value!r}."
+        )
+    return normalized
 
 
 def resolve_wan_flow_multiplier(metadata_dir: str) -> float:
@@ -489,18 +517,14 @@ def build_wan22_gguf_run_config(
         raw_sampler = raw.get("sampler")
         if raw_sampler is None:
             sampler = None
-        elif isinstance(raw_sampler, str):
-            sampler = raw_sampler.strip() or None
         else:
-            raise RuntimeError(f"WAN22 GGUF: {stage}.sampler must be a string, got: {raw_sampler!r}")
+            sampler = _normalize_wan22_sampler_value(field_name=f"{stage}.sampler", value=raw_sampler)
 
         raw_scheduler = raw.get("scheduler")
         if raw_scheduler is None:
             scheduler = None
-        elif isinstance(raw_scheduler, str):
-            scheduler = raw_scheduler.strip() or None
         else:
-            raise RuntimeError(f"WAN22 GGUF: {stage}.scheduler must be a string, got: {raw_scheduler!r}")
+            scheduler = _normalize_wan22_scheduler_value(field_name=f"{stage}.scheduler", value=raw_scheduler)
 
         raw_flow_shift = raw.get("flow_shift")
         if raw_flow_shift is None:
@@ -603,22 +627,24 @@ def build_wan22_gguf_run_config(
 
     metadata_sampler_default, metadata_scheduler_default = _metadata_sampler_scheduler_defaults()
 
+    metadata_sampler_default = _normalize_wan22_sampler_value(
+        field_name="metadata.scheduler_config.sampler_default",
+        value=metadata_sampler_default,
+    )
+    metadata_scheduler_default = _normalize_wan22_scheduler_value(
+        field_name="metadata.scheduler_config.scheduler_default",
+        value=metadata_scheduler_default,
+    )
     request_sampler = getattr(request, "sampler", None)
-    if request_sampler in (None, ""):
+    if request_sampler is None:
         sampler_fallback = metadata_sampler_default
-    elif isinstance(request_sampler, str):
-        sampler_fallback = request_sampler.strip() or metadata_sampler_default
     else:
-        raise RuntimeError(f"WAN22 GGUF: request.sampler must be a string when provided, got: {request_sampler!r}")
+        sampler_fallback = _normalize_wan22_sampler_value(field_name="request.sampler", value=request_sampler)
     request_scheduler = getattr(request, "scheduler", None)
-    if request_scheduler in (None, ""):
+    if request_scheduler is None:
         scheduler_fallback = metadata_scheduler_default
-    elif isinstance(request_scheduler, str):
-        scheduler_fallback = request_scheduler.strip() or metadata_scheduler_default
     else:
-        raise RuntimeError(
-            f"WAN22 GGUF: request.scheduler must be a string when provided, got: {request_scheduler!r}"
-        )
+        scheduler_fallback = _normalize_wan22_scheduler_value(field_name="request.scheduler", value=request_scheduler)
 
     tokenizer_dir = str(extras.get("wan_tokenizer_dir") or "").strip() or None
 

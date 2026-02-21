@@ -10,12 +10,13 @@ Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
 Runs high/low stages, configures sampler settings, applies LoRAs, runs the shared video interpolation stage when requested, exports video, and yields
 progress/result events.
 Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and `extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when missing.
+Temporal routing requires explicit `extras.img2vid_mode` (`solo|chunk|sliding`) and rejects implicit mode fallbacks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
-- `_parse_img2vid_temporal_options` (function): Parses and validates img2vid temporal controls from request extras (`solo|chunk|sliding`).
+- `_parse_img2vid_temporal_options` (function): Parses and validates explicit img2vid temporal controls from request extras (`solo|chunk|sliding`).
 - `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
 """
 
@@ -166,7 +167,12 @@ class _Img2VidTemporalOptions:
 
 
 def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: int) -> _Img2VidTemporalOptions:
-    mode = str(extras.get("img2vid_mode", "solo") or "").strip().lower()
+    raw_mode = extras.get("img2vid_mode")
+    if raw_mode is None:
+        raise RuntimeError("img2vid_mode is required and must be one of ('solo','chunk','sliding').")
+    mode = str(raw_mode or "").strip().lower()
+    if not mode:
+        raise RuntimeError("img2vid_mode must not be empty.")
     if mode not in {"solo", "chunk", "sliding"}:
         raise RuntimeError(f"img2vid_mode must be one of ('solo','chunk','sliding'), got: {mode!r}")
 

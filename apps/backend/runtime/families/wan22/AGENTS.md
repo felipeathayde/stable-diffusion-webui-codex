@@ -99,6 +99,8 @@ Status: Active
 - 2026-02-21: WAN22 I2V sampling assembly (`sampling.py`) now preallocates mask/state tensors and fills channel/time slices in place (no `repeat_interleave`/`cat` materialization for mask4 expansion and no full `torch.cat` for `[lat+mask4+img16]` state assembly).
 - 2026-02-21: `stream_img2vid_chunked(...)` continuity now captures an overlap-aligned latent anchor window (`stride_lat_start..commit_lat`) for chunk `N+1`, blending only the first anchor slot with the base init-image latent while preserving remaining carried slots; this removes strict single-tail-frame anchoring and reduces temporal reset loops after the first second.
 - 2026-02-21: `run.py` adds `stream_img2vid_sliding_window(...)` (window/stride/commit controls) as a first-class temporal mode over the chunk runtime; chunked stitching now supports explicit `commit_frames` validation and fail-loud short-output detection.
+- 2026-02-21: `config.py` now enforces strict WAN22 sampler/scheduler contracts for request + stage fields (`uni-pc|uni-pc bh2` and `simple`) and no longer treats explicit empty strings as implicit fallback defaults.
+- 2026-02-21: `sampling.make_scheduler(...)` now rejects legacy scheduler aliases (`inherit|auto|default`) fail-loud; WAN22 scheduler override accepts only explicit `simple` or omitted value.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

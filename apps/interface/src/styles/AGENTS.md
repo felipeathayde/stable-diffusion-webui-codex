@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
-Last Review: 2026-02-20  
+Last Review: 2026-02-21  
 Status: Active
 
 ## Purpose
@@ -107,4 +107,5 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-20: `styles/views/wan.css` adds opt-in clickable `wan-subheader` states (`--clickable` hover/focus) for full-row header toggles; `xyz-sweep-card.css` adds `.xyz-card-body` for collapsed-body layout grouping.
 - 2026-02-20: `styles.css` sets `.btn-destructive` height to `2rem` for size parity with adjacent `.btn-outline` controls in compact toolbars.
 - 2026-02-20: `generation-settings-card.css` now defines `cfg-advanced-row--secondary` and `gc-col--cfg-advanced-apg-eta` to keep the lower CFG-advanced row left-anchored (`APG Eta` first) while grouping `Guidance Rescale`, `CFG Trunc Ratio`, and `Renorm CFG` on the same row.
+- 2026-02-21: `generation-settings-card.css` now styles an active state for dimension action buttons (`.btn-swap--active`) used by the new aspect-ratio lock toggle in the basic parameter cards.
 - 2026-02-20: `styles/components/views-shared.css` now styles History as square 1:1 thumbnail cards (`.cdx-history-item` + `.cdx-history-thumb`, object-fit contain) and adds `cdx-history-modal*` layout rules for organized run-details dialogs.

@@ -16,6 +16,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `clampFloat` (function): Clamps a numeric value to a `[min,max]` range.
 - `clampInt` (function): Clamps and truncates a numeric value to an integer range.
 - `clampIntToStep` (function): Clamps and snaps an integer value to a step size (used for width/height constraints).
+- `aspectRatioLocked` (ref): Local lock state for Width/Height proportional editing.
+- `toggleAspectRatioLock` (function): Toggles aspect-ratio lock and captures current ratio anchor.
+- `onWidthDimensionChange` (function): Handles width updates and keeps height in sync when lock is enabled.
+- `onHeightDimensionChange` (function): Handles height updates and keeps width in sync when lock is enabled.
 - `onSeedChange` (function): Handles manual seed input changes and emits a normalized integer seed.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
 - `toggleGuidanceAdvanced` (function): Toggles Advanced guidance mode and auto-syncs APG/CFG trunc activation flags when supported.
@@ -75,7 +79,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :nudgeStep="widthInputStep"
           inputClass="cdx-input-w-md"
           :disabled="disabled"
-          @update:modelValue="(v) => emit('update:width', clampIntToStep(v, minWidth, maxWidth, widthInputStep))"
+          @update:modelValue="onWidthDimensionChange"
         >
           <template #right>
             <NumberStepperInput
@@ -86,10 +90,21 @@ Symbols (top-level; keep in sync; no ghosts):
               :nudgeStep="widthInputStep"
               inputClass="cdx-input-w-md"
               :disabled="disabled"
-              @update:modelValue="(v) => emit('update:width', clampIntToStep(v, minWidth, maxWidth, widthInputStep))"
+              @update:modelValue="onWidthDimensionChange"
             />
             <button class="btn-swap" type="button" :disabled="disabled" title="Swap width/height" @click="swapWH">
               <span class="btn-swap-icon" aria-hidden="true">⇵</span>
+            </button>
+            <button
+              class="btn-swap"
+              :class="{ 'btn-swap--active': aspectRatioLocked }"
+              type="button"
+              :disabled="disabled"
+              :title="aspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'"
+              :aria-label="aspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'"
+              @click="toggleAspectRatioLock"
+            >
+              <span aria-hidden="true">{{ aspectRatioLocked ? '🔒' : '🔓' }}</span>
             </button>
             <button
               v-if="showInitImageDims"
@@ -115,7 +130,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :nudgeStep="heightInputStep"
           inputClass="cdx-input-w-md"
           :disabled="disabled"
-          @update:modelValue="(v) => emit('update:height', clampIntToStep(v, minHeight, maxHeight, heightInputStep))"
+          @update:modelValue="onHeightDimensionChange"
         />
 
         <div v-if="resolutionPresets.length" class="gc-col gc-col--presets">
@@ -350,7 +365,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { GuidanceAdvancedCapabilities, SamplerInfo, SchedulerInfo } from '../api/types'
 import type { GuidanceAdvancedParams } from '../stores/model_tabs'
 
@@ -589,6 +604,8 @@ const showGuidanceAdvancedToggle = computed(() => {
   return Object.values(support).some((flag) => flag === true)
 })
 const showGuidanceAdvancedRow = computed(() => showGuidanceAdvancedToggle.value && guidanceAdvanced.value.enabled)
+const aspectRatioLocked = ref(false)
+const aspectRatio = ref(1)
 
 function clampFloat(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
@@ -607,10 +624,65 @@ function clampIntToStep(value: number, min: number, max: number, step: number): 
   return Math.min(max, Math.max(min, snapped))
 }
 
+function syncAspectRatioFromValues(widthValue: number, heightValue: number): void {
+  const safeWidth = Math.max(1, clampInt(Number(widthValue), 1, Number.MAX_SAFE_INTEGER))
+  const safeHeight = Math.max(1, clampInt(Number(heightValue), 1, Number.MAX_SAFE_INTEGER))
+  aspectRatio.value = safeWidth / safeHeight
+}
+
+watch(
+  () => [props.width, props.height] as const,
+  ([nextWidth, nextHeight]) => {
+    if (aspectRatioLocked.value) return
+    syncAspectRatioFromValues(nextWidth, nextHeight)
+  },
+  { immediate: true },
+)
+
 function onSeedChange(event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value)
   if (!Number.isFinite(raw)) return
   emit('update:seed', Math.trunc(raw))
+}
+
+function emitDimensions(widthValue: number, heightValue: number): void {
+  emit('update:width', widthValue)
+  emit('update:height', heightValue)
+}
+
+function deriveLockedDimensions(nextValue: number, axis: 'width' | 'height'): { width: number; height: number } {
+  const ratio = Number.isFinite(aspectRatio.value) && aspectRatio.value > 0 ? aspectRatio.value : 1
+  if (axis === 'width') {
+    const widthValue = clampIntToStep(nextValue, minWidth.value, maxWidth.value, widthInputStep.value)
+    const heightValue = clampIntToStep(Math.round(widthValue / ratio), minHeight.value, maxHeight.value, heightInputStep.value)
+    return { width: widthValue, height: heightValue }
+  }
+  const heightValue = clampIntToStep(nextValue, minHeight.value, maxHeight.value, heightInputStep.value)
+  const widthValue = clampIntToStep(Math.round(heightValue * ratio), minWidth.value, maxWidth.value, widthInputStep.value)
+  return { width: widthValue, height: heightValue }
+}
+
+function toggleAspectRatioLock(): void {
+  aspectRatioLocked.value = !aspectRatioLocked.value
+  if (aspectRatioLocked.value) syncAspectRatioFromValues(props.width, props.height)
+}
+
+function onWidthDimensionChange(value: number): void {
+  if (!aspectRatioLocked.value) {
+    emit('update:width', clampIntToStep(value, minWidth.value, maxWidth.value, widthInputStep.value))
+    return
+  }
+  const next = deriveLockedDimensions(value, 'width')
+  emitDimensions(next.width, next.height)
+}
+
+function onHeightDimensionChange(value: number): void {
+  if (!aspectRatioLocked.value) {
+    emit('update:height', clampIntToStep(value, minHeight.value, maxHeight.value, heightInputStep.value))
+    return
+  }
+  const next = deriveLockedDimensions(value, 'height')
+  emitDimensions(next.width, next.height)
 }
 
 function hasGuidanceSupport(control: keyof GuidanceAdvancedCapabilities): boolean {
@@ -630,14 +702,16 @@ function toggleGuidanceAdvanced(): void {
 }
 
 function swapWH(): void {
-  emit('update:width', clampIntToStep(props.height, minWidth.value, maxWidth.value, widthInputStep.value))
-  emit('update:height', clampIntToStep(props.width, minHeight.value, maxHeight.value, heightInputStep.value))
+  const nextWidth = clampIntToStep(props.height, minWidth.value, maxWidth.value, widthInputStep.value)
+  const nextHeight = clampIntToStep(props.width, minHeight.value, maxHeight.value, heightInputStep.value)
+  syncAspectRatioFromValues(nextWidth, nextHeight)
+  emitDimensions(nextWidth, nextHeight)
 }
 
 function applyResolutionPreset(pair: [number, number]): void {
   const w = clampIntToStep(pair[0], minWidth.value, maxWidth.value, widthInputStep.value)
   const h = clampIntToStep(pair[1], minHeight.value, maxHeight.value, heightInputStep.value)
-  emit('update:width', w)
-  emit('update:height', h)
+  syncAspectRatioFromValues(w, h)
+  emitDimensions(w, h)
 }
 </script>

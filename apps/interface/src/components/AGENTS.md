@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-02-20
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -77,4 +77,6 @@ Status: Active
 - 2026-02-20: `WanSubHeader` now supports opt-in full-row click toggles (`header-click`), and `HiresSettingsCard.vue` / `RefinerSettingsCard.vue` / `XyzSweepCard.vue` wire header-area click parity for enable/disable collapse behavior.
 - 2026-02-20: `XyzSweepCard.vue` now collapses body content when disabled (same visible pattern as Hires/Swap cards) instead of always rendering controls/results.
 - 2026-02-20: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now keep CFG advanced controls split into two rows: primary (`APG Start/Momentum/Rescale/Norm`) and secondary (`APG Eta` left-anchored + `Guidance Rescale` + `CFG Trunc Ratio` + `Renorm CFG`).
+- 2026-02-21: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now include a Width-row aspect-ratio lock toggle (`🔒/🔓`) beside swap/init-dims buttons; when locked, editing Width or Height emits synchronized proportional updates for both dimensions.
 - 2026-02-21: `Img2ImgInpaintParamsCard.vue` now supports context reuse via optional `embedded`, `sectionTitle`, `sectionSubtitle`, and `initImageLabel` props so non-image tabs (e.g., WAN `img2vid`) can reuse the same init-image/inpaint card without duplicate outer card chrome or hard-coded labels.
+- 2026-02-21: `QuickSettingsBar.vue` now canonicalizes `currentVae` against active-family `filteredVaeChoices` (including path/name legacy formats via SHA match) and auto-falls back to `built-in` when the stored value is stale, but only after component-local inventory/paths init completes (`isQuicksettingsReady`) to avoid mount-time stale overwrite.

@@ -34,6 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
 - `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state, with explicit VAE config-dir forwarding).
 - `stream_img2vid_chunked` (function): Chunked img2vid runner with chunk-major sequencing (for each chunk: high pass -> low pass in latent space, then final decode/stitch pass).
+- `stream_img2vid_sliding_window` (function): Sliding-window img2vid runner built on the chunked runtime with explicit window/stride/commit controls.
 """
 
 from __future__ import annotations
@@ -1664,6 +1665,7 @@ def stream_img2vid_chunked(
     overlap_frames: int,
     anchor_alpha: float,
     chunk_seed_mode: str,
+    commit_frames: int | None = None,
     chunk_buffer_mode: str | None = None,
     logger: Any = None,
 ):
@@ -1744,15 +1746,30 @@ def stream_img2vid_chunked(
     chunk_starts = list(range(0, int(total_out), int(stride_frames)))
     if not chunk_starts:
         raise RuntimeError("WAN22 GGUF chunked img2vid: chunk plan produced no chunk starts.")
+    if commit_frames is None:
+        commit_frames_value = int(chunk_out)
+    else:
+        commit_frames_value = int(commit_frames)
+        if commit_frames_value < 1 or commit_frames_value > int(chunk_out):
+            raise RuntimeError(
+                "WAN22 GGUF chunked img2vid: commit_frames must be within [1, chunk_frames] "
+                f"(commit={int(commit_frames_value)} chunk={int(chunk_out)})."
+            )
+        if commit_frames_value < int(stride_frames):
+            raise RuntimeError(
+                "WAN22 GGUF chunked img2vid: commit_frames must be >= effective stride to avoid output gaps "
+                f"(commit={int(commit_frames_value)} stride={int(stride_frames)})."
+            )
 
     h_lat = max(8, int(cfg.height) // 8)
     w_lat = max(8, int(cfg.width) // 8)
     log.info(
-        "[wan22.gguf] chunked img2vid: total_frames=%d chunk_frames=%d overlap=%d stride=%d chunks=%d seed_mode=%s",
+        "[wan22.gguf] chunked img2vid: total_frames=%d chunk_frames=%d overlap=%d stride=%d commit=%d chunks=%d seed_mode=%s",
         int(total_out),
         int(chunk_out),
         int(overlap_frames),
         int(stride_frames),
+        int(commit_frames_value),
         int(len(chunk_starts)),
         str(chunk_seed_mode),
     )
@@ -2148,9 +2165,13 @@ def stream_img2vid_chunked(
                     f"WAN22 GGUF chunked img2vid: chunk {int(chunk_index) + 1}/{int(len(chunk_starts))} produced no frames."
                 )
 
+            needed = int(total_out) - int(chunk_start)
+            is_last_chunk = chunk_index >= int(len(chunk_starts)) - 1
+            commit_limit = int(needed) if is_last_chunk else int(commit_frames_value)
+            commit_limit = max(0, min(len(frames_chunk), int(commit_limit), int(needed)))
             overlap_count = min(
                 int(overlap_frames),
-                len(frames_chunk),
+                int(commit_limit),
                 max(0, len(stitched) - int(chunk_start)),
             )
             for overlap_index in range(overlap_count):
@@ -2161,8 +2182,7 @@ def stream_img2vid_chunked(
                     alpha=blend_alpha,
                 )
 
-            needed = int(total_out) - int(chunk_start)
-            for frame_index in range(overlap_count, min(len(frames_chunk), needed)):
+            for frame_index in range(overlap_count, int(commit_limit)):
                 absolute_index = int(chunk_start) + int(frame_index)
                 if absolute_index < len(stitched):
                     stitched[absolute_index] = frames_chunk[frame_index]
@@ -2186,7 +2206,60 @@ def stream_img2vid_chunked(
         low_decode_ram.clear()
         low_decode_paths.clear()
         frames = stitched[: int(total_out)]
+        if len(frames) < int(total_out):
+            raise RuntimeError(
+                "WAN22 GGUF chunked img2vid: stitched output produced fewer frames than requested "
+                f"(got={len(frames)} expected={int(total_out)})."
+            )
         _try_clear_cache()
         if not frames:
             raise RuntimeError("WAN22 GGUF chunked img2vid: produced no frames.")
         yield {"type": "result", "frames": frames}
+
+
+def stream_img2vid_sliding_window(
+    cfg: RunConfig,
+    *,
+    window_frames: int,
+    window_stride: int,
+    window_commit_frames: int,
+    anchor_alpha: float,
+    chunk_seed_mode: str,
+    chunk_buffer_mode: str | None = None,
+    logger: Any = None,
+):
+    log = get_logger(logger)
+    if int(window_frames) < 9 or (int(window_frames) - 1) % 4 != 0:
+        raise RuntimeError(
+            "WAN22 GGUF sliding img2vid: window_frames must satisfy 4n+1 and be >= 9 "
+            f"(got {int(window_frames)})."
+        )
+    if int(window_stride) < 1 or int(window_stride) >= int(window_frames):
+        raise RuntimeError(
+            "WAN22 GGUF sliding img2vid: window_stride must be >= 1 and < window_frames "
+            f"(stride={int(window_stride)} window={int(window_frames)})."
+        )
+    if int(window_commit_frames) < int(window_stride) or int(window_commit_frames) > int(window_frames):
+        raise RuntimeError(
+            "WAN22 GGUF sliding img2vid: window_commit_frames must be within [window_stride, window_frames] "
+            f"(commit={int(window_commit_frames)} stride={int(window_stride)} window={int(window_frames)})."
+        )
+
+    overlap_frames = int(window_frames) - int(window_stride)
+    log.info(
+        "[wan22.gguf] sliding img2vid: window=%d stride=%d commit=%d overlap=%d",
+        int(window_frames),
+        int(window_stride),
+        int(window_commit_frames),
+        int(overlap_frames),
+    )
+    yield from stream_img2vid_chunked(
+        cfg,
+        chunk_frames=int(window_frames),
+        overlap_frames=int(overlap_frames),
+        anchor_alpha=float(anchor_alpha),
+        chunk_seed_mode=str(chunk_seed_mode),
+        commit_frames=int(window_commit_frames),
+        chunk_buffer_mode=chunk_buffer_mode,
+        logger=logger,
+    )

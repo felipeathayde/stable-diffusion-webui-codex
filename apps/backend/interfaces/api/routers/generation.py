@@ -22,6 +22,7 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
+Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|chunk|sliding`) with mode-scoped validation for chunk/window fields.
 Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
 missing vs explicit-empty semantics for downstream runtime fallback behavior.
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
@@ -2686,24 +2687,53 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if sdpa_policy not in {'auto', 'mem_efficient', 'flash', 'math'}:
                 raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
             extras['gguf_sdpa_policy'] = sdpa_policy
-        raw_chunk_frames = payload.get('img2vid_chunk_frames')
-        if isinstance(raw_chunk_frames, str):
-            raw_chunk_frames = raw_chunk_frames.strip()
-        has_chunk_frames = raw_chunk_frames not in (None, '', 0, '0')
+        img2vid_mode = str(payload.get('img2vid_mode') or '').strip().lower()
+        if img2vid_mode not in {'solo', 'chunk', 'sliding'}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid img2vid_mode: {payload.get('img2vid_mode')!r} (expected 'solo'|'chunk'|'sliding').",
+            )
+        extras['img2vid_mode'] = img2vid_mode
+
+        has_chunk_frames = payload.get('img2vid_chunk_frames') not in (None, '')
         has_overlap_frames = payload.get('img2vid_overlap_frames') not in (None, '')
         has_anchor_alpha = payload.get('img2vid_anchor_alpha') not in (None, '')
         has_chunk_seed_mode = payload.get('img2vid_chunk_seed_mode') not in (None, '')
         has_chunk_buffer_mode = payload.get('img2vid_chunk_buffer_mode') not in (None, '')
-        if not has_chunk_frames and (has_overlap_frames or has_anchor_alpha or has_chunk_seed_mode or has_chunk_buffer_mode):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "'img2vid_overlap_frames', 'img2vid_anchor_alpha', 'img2vid_chunk_seed_mode', "
-                    "and 'img2vid_chunk_buffer_mode' "
-                    "require 'img2vid_chunk_frames'."
-                ),
+        has_window_frames = payload.get('img2vid_window_frames') not in (None, '')
+        has_window_stride = payload.get('img2vid_window_stride') not in (None, '')
+        has_window_commit = payload.get('img2vid_window_commit_frames') not in (None, '')
+
+        has_temporal_fields = any(
+            (
+                has_chunk_frames,
+                has_overlap_frames,
+                has_anchor_alpha,
+                has_chunk_seed_mode,
+                has_chunk_buffer_mode,
+                has_window_frames,
+                has_window_stride,
+                has_window_commit,
             )
-        if has_chunk_frames:
+        )
+
+        if img2vid_mode == 'solo':
+            if has_temporal_fields:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "img2vid_mode='solo' does not allow temporal fields "
+                        "(chunk/window/anchor/seed/buffer)."
+                    ),
+                )
+        elif img2vid_mode == 'chunk':
+            if not has_chunk_frames:
+                raise HTTPException(status_code=400, detail="img2vid_mode='chunk' requires 'img2vid_chunk_frames'.")
+            if has_window_frames or has_window_stride or has_window_commit:
+                raise HTTPException(
+                    status_code=400,
+                    detail="img2vid_mode='chunk' does not allow 'img2vid_window_*' fields.",
+                )
             chunk_frames = _require_int_field(payload, 'img2vid_chunk_frames', minimum=9, maximum=401)
             if (chunk_frames - 1) % 4 != 0:
                 raise HTTPException(status_code=400, detail=f"'img2vid_chunk_frames' must satisfy 4n+1, got {chunk_frames}.")
@@ -2716,26 +2746,66 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     ),
                 )
             extras['img2vid_chunk_frames'] = chunk_frames
-        if has_overlap_frames:
-            overlap_frames = _require_int_field(payload, 'img2vid_overlap_frames', minimum=0, maximum=400)
-            extras['img2vid_overlap_frames'] = overlap_frames
-        if (
-            extras.get('img2vid_chunk_frames') is not None
-            and extras.get('img2vid_overlap_frames') is not None
-            and int(extras['img2vid_overlap_frames']) >= int(extras['img2vid_chunk_frames'])
-        ):
-            raise HTTPException(status_code=400, detail="'img2vid_overlap_frames' must be smaller than 'img2vid_chunk_frames'.")
-        if has_anchor_alpha:
+            if has_overlap_frames:
+                overlap_frames = _require_int_field(payload, 'img2vid_overlap_frames', minimum=0, maximum=400)
+                if int(overlap_frames) >= int(chunk_frames):
+                    raise HTTPException(status_code=400, detail="'img2vid_overlap_frames' must be smaller than 'img2vid_chunk_frames'.")
+                extras['img2vid_overlap_frames'] = overlap_frames
+        else:
+            if has_chunk_frames or has_overlap_frames:
+                raise HTTPException(
+                    status_code=400,
+                    detail="img2vid_mode='sliding' does not allow 'img2vid_chunk_frames'/'img2vid_overlap_frames'.",
+                )
+            if not (has_window_frames and has_window_stride and has_window_commit):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "img2vid_mode='sliding' requires 'img2vid_window_frames', "
+                        "'img2vid_window_stride', and 'img2vid_window_commit_frames'."
+                    ),
+                )
+            window_frames = _require_int_field(payload, 'img2vid_window_frames', minimum=9, maximum=401)
+            if (window_frames - 1) % 4 != 0:
+                raise HTTPException(status_code=400, detail=f"'img2vid_window_frames' must satisfy 4n+1, got {window_frames}.")
+            if int(window_frames) >= int(frames_val):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "'img2vid_window_frames' must be smaller than 'img2vid_num_frames' "
+                        f"(window={int(window_frames)} total={int(frames_val)})."
+                    ),
+                )
+            window_stride = _require_int_field(payload, 'img2vid_window_stride', minimum=1, maximum=400)
+            if int(window_stride) >= int(window_frames):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2vid_window_stride' must be smaller than 'img2vid_window_frames'.",
+                )
+            window_commit = _require_int_field(payload, 'img2vid_window_commit_frames', minimum=1, maximum=401)
+            if int(window_commit) < int(window_stride) or int(window_commit) > int(window_frames):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "'img2vid_window_commit_frames' must be within "
+                        "[img2vid_window_stride, img2vid_window_frames]."
+                    ),
+                )
+            extras['img2vid_window_frames'] = window_frames
+            extras['img2vid_window_stride'] = window_stride
+            extras['img2vid_window_commit_frames'] = window_commit
+
+        if img2vid_mode in {'chunk', 'sliding'} and has_anchor_alpha:
             anchor_alpha = _require_float_field(payload, 'img2vid_anchor_alpha')
             if anchor_alpha < 0.0 or anchor_alpha > 1.0:
                 raise HTTPException(status_code=400, detail="'img2vid_anchor_alpha' must be within [0, 1].")
             extras['img2vid_anchor_alpha'] = anchor_alpha
-        if has_chunk_seed_mode:
+        if img2vid_mode in {'chunk', 'sliding'} and has_chunk_seed_mode:
             seed_mode = str(payload.get('img2vid_chunk_seed_mode') or '').strip().lower()
             if seed_mode not in {'fixed', 'increment', 'random'}:
                 raise HTTPException(status_code=400, detail=f"Invalid img2vid_chunk_seed_mode: {payload.get('img2vid_chunk_seed_mode')!r}")
             extras['img2vid_chunk_seed_mode'] = seed_mode
-        if has_chunk_buffer_mode:
+        if img2vid_mode in {'chunk', 'sliding'} and has_chunk_buffer_mode:
             chunk_buffer_mode = str(payload.get('img2vid_chunk_buffer_mode') or '').strip().lower()
             if chunk_buffer_mode not in {'hybrid', 'ram', 'ram+hd'}:
                 raise HTTPException(

@@ -23,7 +23,7 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 	- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
-- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with chunking controls.
+- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|chunk|sliding`).
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
@@ -51,11 +51,14 @@ const PromptSchema = z
 
 const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
 const WanAttentionModeEnum = z.enum(['global', 'sliding'])
+const Img2VidModeEnum = z.enum(['solo', 'chunk', 'sliding'])
 const Img2VidChunkSeedModeEnum = z.enum(['fixed', 'increment', 'random'])
 
 const WAN_DIM_STEP = 16
 const WAN_FRAMES_MIN = 9
 const WAN_FRAMES_MAX = 401
+const Img2VidWindowStrideSchema = z.number().int().min(1).max(WAN_FRAMES_MAX - 1)
+const Img2VidWindowCommitSchema = z.number().int().min(1).max(WAN_FRAMES_MAX)
 
 const WanFrameCountSchema = z
   .number()
@@ -154,15 +157,109 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   img2vid_seed: z.number().int().optional(),
   img2vid_cfg_scale: z.number().optional(),
   img2vid_init_image: z.string().min(1),
+  img2vid_mode: Img2VidModeEnum,
   img2vid_chunk_frames: WanFrameCountSchema.optional(),
   img2vid_overlap_frames: z.number().int().min(0).max(WAN_FRAMES_MAX - 1).optional(),
   img2vid_anchor_alpha: z.number().min(0).max(1).optional(),
   img2vid_chunk_seed_mode: Img2VidChunkSeedModeEnum.optional(),
+  img2vid_window_frames: WanFrameCountSchema.optional(),
+  img2vid_window_stride: Img2VidWindowStrideSchema.optional(),
+  img2vid_window_commit_frames: Img2VidWindowCommitSchema.optional(),
 })
   .strict()
   .superRefine((payload, ctx) => {
+    const mode = payload.img2vid_mode
     const chunkFrames = payload.img2vid_chunk_frames
     const overlapFrames = payload.img2vid_overlap_frames
+    const anchorAlpha = payload.img2vid_anchor_alpha
+    const chunkSeedMode = payload.img2vid_chunk_seed_mode
+    const windowFrames = payload.img2vid_window_frames
+    const windowStride = payload.img2vid_window_stride
+    const windowCommitFrames = payload.img2vid_window_commit_frames
+
+    if (mode === 'solo') {
+      if (chunkFrames !== undefined || overlapFrames !== undefined || anchorAlpha !== undefined || chunkSeedMode !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "img2vid_mode='solo' does not allow chunking fields",
+          path: ['img2vid_mode'],
+        })
+      }
+      if (windowFrames !== undefined || windowStride !== undefined || windowCommitFrames !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "img2vid_mode='solo' does not allow sliding-window fields",
+          path: ['img2vid_mode'],
+        })
+      }
+      return
+    }
+
+    if (mode === 'chunk') {
+      if (chunkFrames === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "img2vid_mode='chunk' requires img2vid_chunk_frames",
+          path: ['img2vid_chunk_frames'],
+        })
+      }
+      if (chunkFrames !== undefined && chunkFrames >= payload.img2vid_num_frames) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'img2vid_chunk_frames must be smaller than img2vid_num_frames',
+          path: ['img2vid_chunk_frames'],
+        })
+      }
+      if (windowFrames !== undefined || windowStride !== undefined || windowCommitFrames !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "img2vid_mode='chunk' does not allow sliding-window fields",
+          path: ['img2vid_mode'],
+        })
+      }
+    }
+
+    if (mode === 'sliding') {
+      if (windowFrames === undefined || windowStride === undefined || windowCommitFrames === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "img2vid_mode='sliding' requires img2vid_window_frames, img2vid_window_stride, and img2vid_window_commit_frames",
+          path: ['img2vid_mode'],
+        })
+        return
+      }
+      if (windowFrames >= payload.img2vid_num_frames) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'img2vid_window_frames must be smaller than img2vid_num_frames',
+          path: ['img2vid_window_frames'],
+        })
+      }
+      if (windowStride >= windowFrames) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'img2vid_window_stride must be smaller than img2vid_window_frames',
+          path: ['img2vid_window_stride'],
+        })
+      }
+      if (windowCommitFrames < windowStride || windowCommitFrames > windowFrames) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'img2vid_window_commit_frames must be within [img2vid_window_stride, img2vid_window_frames]',
+          path: ['img2vid_window_commit_frames'],
+        })
+      }
+      if (chunkFrames !== undefined || overlapFrames !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "img2vid_mode='sliding' does not allow img2vid_chunk_frames/img2vid_overlap_frames",
+          path: ['img2vid_mode'],
+        })
+      }
+      return
+    }
+
     if (overlapFrames !== undefined && chunkFrames === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -271,10 +368,14 @@ export interface WanVideoCommonInput {
 
 export interface WanImg2VidInput extends WanVideoCommonInput {
   initImageData: string
+  img2vidMode: 'solo' | 'chunk' | 'sliding'
   chunkFrames?: number
   overlapFrames?: number
   anchorAlpha?: number
   chunkSeedMode?: 'fixed' | 'increment' | 'random'
+  windowFrames?: number
+  windowStride?: number
+  windowCommitFrames?: number
 }
 
 export interface WanVid2VidInput extends WanVideoCommonInput {
@@ -339,6 +440,12 @@ function normalizeWanFrameCount(rawValue: number): number {
 
 function normalizeAttentionMode(value: 'global' | 'sliding' | string): 'global' | 'sliding' {
   return String(value || '').trim().toLowerCase() === 'sliding' ? 'sliding' : 'global'
+}
+
+function normalizeImg2VidMode(value: unknown): 'solo' | 'chunk' | 'sliding' {
+  const mode = String(value || '').trim().toLowerCase()
+  if (mode === 'chunk' || mode === 'sliding') return mode
+  return 'solo'
 }
 
 function stageToPayload(stage: WanStageInput): Record<string, unknown> {
@@ -494,26 +601,46 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
     img2vid_cfg_scale: input.high.cfgScale,
     img2vid_seed: input.high.seed,
     img2vid_init_image: input.initImageData,
+    img2vid_mode: normalizeImg2VidMode(input.img2vidMode),
   }
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.img2vid_sampler = sampler
-  const rawChunkFrames = Number(input.chunkFrames)
-  const normalizedChunkFrames =
-    Number.isFinite(rawChunkFrames) && rawChunkFrames > 0 ? normalizeWanFrameCount(rawChunkFrames) : undefined
-  if (normalizedChunkFrames !== undefined) {
-    payload.img2vid_chunk_frames = normalizedChunkFrames
-    if (typeof input.overlapFrames === 'number' && Number.isFinite(input.overlapFrames)) {
-      payload.img2vid_overlap_frames = Math.max(0, Math.trunc(input.overlapFrames))
+  const img2vidMode = normalizeImg2VidMode(input.img2vidMode)
+  if (typeof input.anchorAlpha === 'number' && Number.isFinite(input.anchorAlpha)) {
+    payload.img2vid_anchor_alpha = Math.min(1, Math.max(0, input.anchorAlpha))
+  }
+  if (typeof input.chunkSeedMode === 'string') {
+    const chunkSeedMode = String(input.chunkSeedMode || '').trim().toLowerCase()
+    if (chunkSeedMode === 'fixed' || chunkSeedMode === 'increment' || chunkSeedMode === 'random') {
+      payload.img2vid_chunk_seed_mode = chunkSeedMode
     }
-    if (typeof input.anchorAlpha === 'number' && Number.isFinite(input.anchorAlpha)) {
-      payload.img2vid_anchor_alpha = Math.min(1, Math.max(0, input.anchorAlpha))
-    }
-    if (typeof input.chunkSeedMode === 'string') {
-      const chunkSeedMode = String(input.chunkSeedMode || '').trim().toLowerCase()
-      if (chunkSeedMode === 'fixed' || chunkSeedMode === 'increment' || chunkSeedMode === 'random') {
-        payload.img2vid_chunk_seed_mode = chunkSeedMode
+  }
+  if (img2vidMode === 'chunk') {
+    const rawChunkFrames = Number(input.chunkFrames)
+    const normalizedChunkFrames =
+      Number.isFinite(rawChunkFrames) && rawChunkFrames > 0 ? normalizeWanFrameCount(rawChunkFrames) : undefined
+    if (normalizedChunkFrames !== undefined) {
+      payload.img2vid_chunk_frames = normalizedChunkFrames
+      if (typeof input.overlapFrames === 'number' && Number.isFinite(input.overlapFrames)) {
+        payload.img2vid_overlap_frames = Math.max(0, Math.trunc(input.overlapFrames))
       }
+    }
+  } else if (img2vidMode === 'sliding') {
+    const rawWindowFrames = Number(input.windowFrames)
+    if (Number.isFinite(rawWindowFrames) && rawWindowFrames > 0) {
+      payload.img2vid_window_frames = normalizeWanFrameCount(rawWindowFrames)
+    }
+    const effectiveWindowFrames = Number(payload.img2vid_window_frames)
+    if (typeof input.windowStride === 'number' && Number.isFinite(input.windowStride)) {
+      const maxStride = Number.isFinite(effectiveWindowFrames) ? Math.max(1, Math.trunc(effectiveWindowFrames) - 1) : WAN_FRAMES_MAX - 1
+      payload.img2vid_window_stride = Math.min(maxStride, Math.max(1, Math.trunc(input.windowStride)))
+    }
+    if (typeof input.windowCommitFrames === 'number' && Number.isFinite(input.windowCommitFrames)) {
+      const fallbackStride = Number(payload.img2vid_window_stride)
+      const minCommit = Number.isFinite(fallbackStride) ? Math.max(1, Math.trunc(fallbackStride)) : 1
+      const maxCommit = Number.isFinite(effectiveWindowFrames) ? Math.max(minCommit, Math.trunc(effectiveWindowFrames)) : WAN_FRAMES_MAX
+      payload.img2vid_window_commit_frames = Math.min(maxCommit, Math.max(minCommit, Math.trunc(input.windowCommitFrames)))
     }
   }
   addWanOutput(payload, input.output)

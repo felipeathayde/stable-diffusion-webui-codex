@@ -19,6 +19,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
+- `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|chunk|sliding`).
+- `WanChunkSeedMode` (type): WAN chunk/sliding per-window seed strategy (`fixed|increment|random`).
 - `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output/interpolation controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
@@ -46,7 +48,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeSerializableForPersist` (function): Recursively unwraps reactive/proxy branches into plain clone-safe structures for persistence.
 - `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
-- `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/chunk/attention controls) including explicit img2vid chunking enablement.
+- `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/chunk/sliding/attention controls) with `img2vidMode` as source of truth.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
@@ -115,6 +117,9 @@ export interface WanStageParams {
   flowShift?: number
 }
 
+export type WanImg2VidMode = 'solo' | 'chunk' | 'sliding'
+export type WanChunkSeedMode = 'fixed' | 'increment' | 'random'
+
 export interface WanVideoParams {
   // Core generation fields (txt2vid/img2vid shared)
   width: number
@@ -126,11 +131,14 @@ export interface WanVideoParams {
   useInitImage: boolean
   initImageData: string
   initImageName: string
-  img2vidChunkingEnabled: boolean
+  img2vidMode: WanImg2VidMode
   img2vidChunkFrames: number
   img2vidOverlapFrames: number
   img2vidAnchorAlpha: number
-  img2vidChunkSeedMode: 'fixed' | 'increment' | 'random'
+  img2vidChunkSeedMode: WanChunkSeedMode
+  img2vidWindowFrames: number
+  img2vidWindowStride: number
+  img2vidWindowCommitFrames: number
   // Export options
   filenamePrefix: string
   format: string
@@ -321,11 +329,14 @@ function defaultParams<T extends BaseTabType>(
       useInitImage: false,
       initImageData: '',
       initImageName: '',
-      img2vidChunkingEnabled: false,
-      img2vidChunkFrames: 9,
+      img2vidMode: 'solo',
+      img2vidChunkFrames: 13,
       img2vidOverlapFrames: 4,
       img2vidAnchorAlpha: 0.2,
       img2vidChunkSeedMode: 'increment',
+      img2vidWindowFrames: 13,
+      img2vidWindowStride: 6,
+      img2vidWindowCommitFrames: 7,
       filenamePrefix: 'wan22',
       format: 'video/h264-mp4',
       pixFmt: 'yuv420p',
@@ -498,12 +509,25 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   const attnMode = String(merged.attentionMode || '').trim().toLowerCase()
   merged.attentionMode = attnMode === 'sliding' ? 'sliding' : 'global'
 
-  const rawChunkingEnabled = raw.img2vidChunkingEnabled
-  const rawChunkFrames = Number(raw.img2vidChunkFrames)
-  if (typeof rawChunkingEnabled === 'boolean') {
-    merged.img2vidChunkingEnabled = rawChunkingEnabled
+  const rawRecord = raw as Record<string, unknown>
+  const rawMode = String(merged.img2vidMode || '').trim().toLowerCase()
+  if (rawMode === 'solo' || rawMode === 'chunk' || rawMode === 'sliding') {
+    merged.img2vidMode = rawMode
   } else {
-    merged.img2vidChunkingEnabled = Number.isFinite(rawChunkFrames) && rawChunkFrames > 0
+    const legacyEnabled = rawRecord.img2vidChunkingEnabled
+    const hasLegacyChunkToggle = typeof legacyEnabled === 'boolean'
+    const legacyChunkEnabled = hasLegacyChunkToggle ? Boolean(legacyEnabled) : false
+    const hasSlidingWindow = Number.isFinite(Number(rawRecord.img2vidWindowFrames)) && Number(rawRecord.img2vidWindowFrames) > 0
+    const hasChunkFrames = Number.isFinite(Number(rawRecord.img2vidChunkFrames)) && Number(rawRecord.img2vidChunkFrames) > 0
+    if (hasLegacyChunkToggle) {
+      merged.img2vidMode = legacyChunkEnabled ? 'chunk' : 'solo'
+    } else if (hasSlidingWindow) {
+      merged.img2vidMode = 'sliding'
+    } else if (hasChunkFrames) {
+      merged.img2vidMode = 'chunk'
+    } else {
+      merged.img2vidMode = 'solo'
+    }
   }
 
   const chunkRaw = Number(merged.img2vidChunkFrames)
@@ -512,11 +536,6 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   } else {
     merged.img2vidChunkFrames = normalizeWanFrameCount(chunkRaw, 9, 401)
   }
-
-  const overlapRaw = Number(merged.img2vidOverlapFrames)
-  const overlapInt = Number.isFinite(overlapRaw) ? Math.trunc(overlapRaw) : defaults.img2vidOverlapFrames
-  const overlapMax = Math.max(0, merged.img2vidChunkFrames - 1)
-  merged.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
 
   const anchorRaw = Number(merged.img2vidAnchorAlpha)
   merged.img2vidAnchorAlpha = Number.isFinite(anchorRaw) ? Math.min(1, Math.max(0, anchorRaw)) : defaults.img2vidAnchorAlpha
@@ -528,6 +547,40 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     merged.img2vidChunkSeedMode = seedMode
   }
 
+  const windowRaw = Number(merged.img2vidWindowFrames)
+  if (!Number.isFinite(windowRaw) || windowRaw <= 0) {
+    merged.img2vidWindowFrames = defaults.img2vidWindowFrames
+  } else {
+    merged.img2vidWindowFrames = normalizeWanFrameCount(windowRaw, 9, 401)
+  }
+
+  const temporalUpperBound = normalizeWanFrameCount(Math.max(9, merged.frames - 4), 9, 401)
+  if (temporalUpperBound < merged.frames) {
+    if (merged.img2vidChunkFrames >= merged.frames) {
+      merged.img2vidChunkFrames = temporalUpperBound
+    }
+    if (merged.img2vidWindowFrames >= merged.frames) {
+      merged.img2vidWindowFrames = temporalUpperBound
+    }
+  }
+
+  const overlapRaw = Number(merged.img2vidOverlapFrames)
+  const overlapInt = Number.isFinite(overlapRaw) ? Math.trunc(overlapRaw) : defaults.img2vidOverlapFrames
+  const overlapMax = Math.max(0, merged.img2vidChunkFrames - 1)
+  merged.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
+
+  const maxStride = Math.max(1, Number(merged.img2vidWindowFrames) - 1)
+  const strideRaw = Number(merged.img2vidWindowStride)
+  const strideInt = Number.isFinite(strideRaw) ? Math.trunc(strideRaw) : defaults.img2vidWindowStride
+  merged.img2vidWindowStride = Math.min(maxStride, Math.max(1, strideInt))
+
+  const commitRaw = Number(merged.img2vidWindowCommitFrames)
+  const commitInt = Number.isFinite(commitRaw) ? Math.trunc(commitRaw) : defaults.img2vidWindowCommitFrames
+  merged.img2vidWindowCommitFrames = Math.min(
+    merged.img2vidWindowFrames,
+    Math.max(merged.img2vidWindowStride, commitInt),
+  )
+
   return {
     width: merged.width,
     height: merged.height,
@@ -537,11 +590,14 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     useInitImage: merged.useInitImage,
     initImageData: merged.initImageData,
     initImageName: merged.initImageName,
-    img2vidChunkingEnabled: merged.img2vidChunkingEnabled,
+    img2vidMode: merged.img2vidMode,
     img2vidChunkFrames: merged.img2vidChunkFrames,
     img2vidOverlapFrames: merged.img2vidOverlapFrames,
     img2vidAnchorAlpha: merged.img2vidAnchorAlpha,
     img2vidChunkSeedMode: merged.img2vidChunkSeedMode,
+    img2vidWindowFrames: merged.img2vidWindowFrames,
+    img2vidWindowStride: merged.img2vidWindowStride,
+    img2vidWindowCommitFrames: merged.img2vidWindowCommitFrames,
     filenamePrefix: merged.filenamePrefix,
     format: merged.format,
     pixFmt: merged.pixFmt,

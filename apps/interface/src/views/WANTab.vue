@@ -23,7 +23,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultAssets` (function): Returns default (empty) assets selection.
 - `normalizeFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes UI attention mode values (`global|sliding`).
+- `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|chunk|sliding`).
 - `normalizeChunkSeedMode` (function): Normalizes UI img2vid chunk-seed mode values.
+- `img2vidTemporalStorageKey` (function): Returns localStorage key for per-mode temporal UI snapshots.
+- `readImg2VidTemporalSnapshot` (function): Loads per-mode temporal UI snapshot from localStorage.
+- `writeImg2VidTemporalSnapshot` (function): Persists per-mode temporal UI snapshot to localStorage.
 - `normalizeVideoPatch` (function): Sanitizes WAN video patch updates before persisting tab params.
 - `setVideo` (function): Applies partial updates to the video params in state (triggers dependent sync where needed).
 - `setHigh` (function): Applies partial updates to the high stage (and can drive low-stage sync when enabled).
@@ -35,7 +39,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `appendPromptToken` (function): Appends a prompt token string with whitespace-safe formatting.
 - `onHighPromptLoraInsert` (function): Inserts a selected LoRA token into High prompt/negative prompt based on modal target.
 - `onLowPromptLoraInsert` (function): Inserts a selected LoRA token into Low prompt/negative prompt based on modal target.
-- `toggleImg2VidChunking` (function): Toggles img2vid chunking enablement.
+- `setImg2VidTemporalMode` (function): Switches img2vid temporal mode and restores per-mode UI snapshot.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for img2vid init-image input.
@@ -243,25 +247,24 @@ Symbols (top-level; keep in sync; no ghosts):
             />
             <div v-if="mode === 'img2vid'" class="mt-2">
               <div class="gen-card refiner-card refiner-card--dense">
-                <WanSubHeader
-                  title="Chunking"
-                  :clickable="true"
-                  :aria-pressed="video.img2vidChunkingEnabled"
-                  :aria-expanded="video.img2vidChunkingEnabled"
-                  @header-click="toggleImg2VidChunking"
-                >
+                <WanSubHeader title="Temporal">
                   <span class="wan-badge-experimental">EXPERIMENTAL</span>
-                  <button
-                    :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidChunkingEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                    type="button"
-                    :aria-pressed="video.img2vidChunkingEnabled"
-                    @click.stop="toggleImg2VidChunking"
-                  >
-                    {{ video.img2vidChunkingEnabled ? 'Enabled' : 'Disabled' }}
-                  </button>
                 </WanSubHeader>
-                <div v-if="video.img2vidChunkingEnabled" class="param-blocks">
-                  <div class="param-grid" data-cols="5">
+                <div class="param-blocks wan-temporal-controls">
+                  <div class="param-grid wan-temporal-row" data-cols="3">
+                    <div class="field">
+                      <label class="label-muted">Mode</label>
+                      <select
+                        class="select-md"
+                        :disabled="isRunning"
+                        :value="video.img2vidMode"
+                        @change="setImg2VidTemporalMode(normalizeImg2VidMode(($event.target as HTMLSelectElement).value))"
+                      >
+                        <option value="solo">Solo</option>
+                        <option value="chunk">Chunk</option>
+                        <option value="sliding">Sliding Window</option>
+                      </select>
+                    </div>
                     <div class="field">
                       <label class="label-muted">
                         <HoverTooltip
@@ -280,7 +283,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </label>
                       <select
                         class="select-md"
-                        :disabled="isRunning || !video.img2vidChunkingEnabled"
+                        :disabled="isRunning"
                         :value="video.attentionMode"
                         @change="setVideo({ attentionMode: normalizeAttentionMode(($event.target as HTMLSelectElement).value) })"
                       >
@@ -288,61 +291,6 @@ Symbols (top-level; keep in sync; no ghosts):
                         <option value="sliding">Sliding</option>
                       </select>
                     </div>
-                    <SliderField
-                      class="field"
-                      label="Chunk Frames"
-                      :modelValue="video.img2vidChunkFrames"
-                      :min="9"
-                      :max="401"
-                      :step="4"
-                      :inputStep="1"
-                      :nudgeStep="4"
-                      :disabled="isRunning || !video.img2vidChunkingEnabled"
-                      inputClass="cdx-input-w-sm"
-                      tooltipTitle="Chunk Frames"
-                      :tooltip="[
-                        'Splits img2vid into overlapping chunks.',
-                        'Must satisfy 4n+1 (e.g. 9, 13, 17...).',
-                      ]"
-                      @update:modelValue="(value: number) => setVideo({ img2vidChunkFrames: value })"
-                    />
-                    <SliderField
-                      class="field"
-                      label="Overlap"
-                      :modelValue="video.img2vidOverlapFrames"
-                      :min="0"
-                      :max="400"
-                      :step="1"
-                      :inputStep="1"
-                      :nudgeStep="1"
-                      :disabled="isRunning || !video.img2vidChunkingEnabled"
-                      inputClass="cdx-input-w-sm"
-                      tooltipTitle="Overlap"
-                      :tooltip="[
-                        'Crossfades chunk seams.',
-                        'Keep overlap smaller than Chunk Frames.',
-                      ]"
-                      @update:modelValue="(value: number) => setVideo({ img2vidOverlapFrames: value })"
-                    />
-                    <SliderField
-                      class="field"
-                      label="Anchor Alpha"
-                      :modelValue="video.img2vidAnchorAlpha"
-                      :min="0"
-                      :max="1"
-                      :step="0.05"
-                      :inputStep="0.05"
-                      :nudgeStep="0.05"
-                      :disabled="isRunning || !video.img2vidChunkingEnabled"
-                      inputClass="cdx-input-w-sm"
-                      tooltipTitle="Anchor Alpha"
-                      :tooltip="[
-                        'Re-injects the init image at chunk boundaries.',
-                        '0 = continue from previous output only.',
-                        '1 = stronger re-anchor to init image.',
-                      ]"
-                      @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
-                    />
                     <div class="field">
                       <label class="label-muted">
                         <HoverTooltip
@@ -362,7 +310,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </label>
                       <select
                         class="select-md"
-                        :disabled="isRunning || !video.img2vidChunkingEnabled"
+                        :disabled="isRunning"
                         :value="video.img2vidChunkSeedMode"
                         @change="setVideo({ img2vidChunkSeedMode: normalizeChunkSeedMode(($event.target as HTMLSelectElement).value) })"
                       >
@@ -372,6 +320,120 @@ Symbols (top-level; keep in sync; no ghosts):
                       </select>
                     </div>
                   </div>
+                  <div v-if="video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="3">
+                    <SliderField
+                      class="field"
+                      label="Chunk Frames"
+                      :modelValue="video.img2vidChunkFrames"
+                      :min="9"
+                      :max="401"
+                      :step="4"
+                      :inputStep="1"
+                      :nudgeStep="4"
+                      :disabled="isRunning"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Chunk Frames"
+                      :tooltip="[
+                        'Splits img2vid into overlapping chunks.',
+                        'Must satisfy 4n+1 (e.g. 9, 13, 17...).',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidChunkFrames: value })"
+                    />
+                    <SliderField
+                      class="field"
+                      label="Overlap"
+                      :modelValue="video.img2vidOverlapFrames"
+                      :min="0"
+                      :max="400"
+                      :step="1"
+                      :inputStep="1"
+                      :nudgeStep="1"
+                      :disabled="isRunning"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Overlap"
+                      :tooltip="[
+                        'Crossfades chunk seams.',
+                        'Keep overlap smaller than Chunk Frames.',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidOverlapFrames: value })"
+                    />
+                    <SliderField
+                      class="field"
+                      label="Anchor Alpha"
+                      :modelValue="video.img2vidAnchorAlpha"
+                      :min="0"
+                      :max="1"
+                      :step="0.05"
+                      :inputStep="0.05"
+                      :nudgeStep="0.05"
+                      :disabled="isRunning"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Anchor Alpha"
+                      :tooltip="[
+                        'Re-injects the init image at chunk boundaries.',
+                        '0 = continue from previous output only.',
+                        '1 = stronger re-anchor to init image.',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
+                    />
+                  </div>
+                  <div v-else-if="video.img2vidMode === 'sliding'" class="param-grid wan-temporal-row" data-cols="3">
+                    <SliderField
+                      class="field"
+                      label="Window Frames"
+                      :modelValue="video.img2vidWindowFrames"
+                      :min="9"
+                      :max="401"
+                      :step="4"
+                      :inputStep="1"
+                      :nudgeStep="4"
+                      :disabled="isRunning"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Window Frames"
+                      :tooltip="[
+                        'Temporal context size per window.',
+                        'Must satisfy 4n+1.',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidWindowFrames: value })"
+                    />
+                    <SliderField
+                      class="field"
+                      label="Window Stride"
+                      :modelValue="video.img2vidWindowStride"
+                      :min="1"
+                      :max="Math.max(1, video.img2vidWindowFrames - 1)"
+                      :step="1"
+                      :inputStep="1"
+                      :nudgeStep="1"
+                      :disabled="isRunning"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Window Stride"
+                      :tooltip="[
+                        'How far the window slides each iteration.',
+                        'Smaller stride increases temporal continuity and compute.',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidWindowStride: value })"
+                    />
+                    <SliderField
+                      class="field"
+                      label="Commit Frames"
+                      :modelValue="video.img2vidWindowCommitFrames"
+                      :min="Math.max(1, video.img2vidWindowStride)"
+                      :max="video.img2vidWindowFrames"
+                      :step="1"
+                      :inputStep="1"
+                      :nudgeStep="1"
+                      :disabled="isRunning"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Commit Frames"
+                      :tooltip="[
+                        'Frames committed from each window before advancing.',
+                        'Must stay within [stride, window].',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidWindowCommitFrames: value })"
+                    />
+                  </div>
+                  <div v-else class="caption">Solo mode runs img2vid without temporal chunk/window partitioning.</div>
                 </div>
               </div>
             </div>
@@ -719,11 +781,14 @@ function defaultVideo(): WanVideoParams {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
-    img2vidChunkingEnabled: false,
-    img2vidChunkFrames: 9,
+    img2vidMode: 'solo',
+    img2vidChunkFrames: 13,
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
+    img2vidWindowFrames: 13,
+    img2vidWindowStride: 6,
+    img2vidWindowCommitFrames: 7,
     filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
@@ -778,10 +843,94 @@ function normalizeAttentionMode(rawValue: unknown): 'global' | 'sliding' {
   return String(rawValue || '').trim().toLowerCase() === 'sliding' ? 'sliding' : 'global'
 }
 
+function normalizeImg2VidMode(rawValue: unknown): WanVideoParams['img2vidMode'] {
+  const value = String(rawValue || '').trim().toLowerCase()
+  if (value === 'chunk' || value === 'sliding') return value
+  return 'solo'
+}
+
 function normalizeChunkSeedMode(rawValue: unknown): 'fixed' | 'increment' | 'random' {
   const v = String(rawValue || '').trim().toLowerCase()
   if (v === 'fixed' || v === 'random') return v
   return 'increment'
+}
+
+function img2vidTemporalStorageKey(mode: WanVideoParams['img2vidMode']): string {
+  return `codex.wan.img2vid.temporal.${props.tabId}.${mode}`
+}
+
+function readImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode']): Partial<WanVideoParams> | null {
+  const key = img2vidTemporalStorageKey(mode)
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const record = parsed as Record<string, unknown>
+    const patch: Partial<WanVideoParams> = {}
+    if (record.attentionMode !== undefined) {
+      patch.attentionMode = normalizeAttentionMode(record.attentionMode)
+    }
+    if (record.img2vidChunkSeedMode !== undefined) {
+      patch.img2vidChunkSeedMode = normalizeChunkSeedMode(record.img2vidChunkSeedMode)
+    }
+    if (record.img2vidAnchorAlpha !== undefined) {
+      const anchor = Number(record.img2vidAnchorAlpha)
+      if (Number.isFinite(anchor)) {
+        patch.img2vidAnchorAlpha = Math.min(1, Math.max(0, anchor))
+      }
+    }
+    if (mode === 'chunk') {
+      if (record.img2vidChunkFrames !== undefined) {
+        const chunkFrames = Number(record.img2vidChunkFrames)
+        if (Number.isFinite(chunkFrames) && chunkFrames > 0) patch.img2vidChunkFrames = chunkFrames
+      }
+      if (record.img2vidOverlapFrames !== undefined) {
+        const overlap = Number(record.img2vidOverlapFrames)
+        if (Number.isFinite(overlap)) patch.img2vidOverlapFrames = Math.trunc(overlap)
+      }
+    }
+    if (mode === 'sliding') {
+      if (record.img2vidWindowFrames !== undefined) {
+        const windowFrames = Number(record.img2vidWindowFrames)
+        if (Number.isFinite(windowFrames) && windowFrames > 0) patch.img2vidWindowFrames = windowFrames
+      }
+      if (record.img2vidWindowStride !== undefined) {
+        const windowStride = Number(record.img2vidWindowStride)
+        if (Number.isFinite(windowStride) && windowStride > 0) patch.img2vidWindowStride = Math.trunc(windowStride)
+      }
+      if (record.img2vidWindowCommitFrames !== undefined) {
+        const commitFrames = Number(record.img2vidWindowCommitFrames)
+        if (Number.isFinite(commitFrames) && commitFrames > 0) patch.img2vidWindowCommitFrames = Math.trunc(commitFrames)
+      }
+    }
+    return patch
+  } catch {
+    return null
+  }
+}
+
+function writeImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode'], source: WanVideoParams): void {
+  const key = img2vidTemporalStorageKey(mode)
+  const payload: Record<string, unknown> = {
+    attentionMode: source.attentionMode,
+    img2vidChunkSeedMode: source.img2vidChunkSeedMode,
+    img2vidAnchorAlpha: source.img2vidAnchorAlpha,
+  }
+  if (mode === 'chunk') {
+    payload.img2vidChunkFrames = source.img2vidChunkFrames
+    payload.img2vidOverlapFrames = source.img2vidOverlapFrames
+  }
+  if (mode === 'sliding') {
+    payload.img2vidWindowFrames = source.img2vidWindowFrames
+    payload.img2vidWindowStride = source.img2vidWindowStride
+    payload.img2vidWindowCommitFrames = source.img2vidWindowCommitFrames
+  }
+  try {
+    localStorage.setItem(key, JSON.stringify(payload))
+  } catch {
+    // ignore localStorage failures
+  }
 }
 
 function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoParams): Partial<WanVideoParams> {
@@ -793,35 +942,106 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'attentionMode')) {
     nextPatch.attentionMode = normalizeAttentionMode(nextPatch.attentionMode)
   }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidMode')) {
+    nextPatch.img2vidMode = normalizeImg2VidMode(nextPatch.img2vidMode)
+  }
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkSeedMode')) {
     nextPatch.img2vidChunkSeedMode = normalizeChunkSeedMode(nextPatch.img2vidChunkSeedMode)
   }
-  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkingEnabled')) {
-    nextPatch.img2vidChunkingEnabled = Boolean(nextPatch.img2vidChunkingEnabled)
-  }
+  const effectiveTotalFrames = Number(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'frames')
+      ? nextPatch.frames
+      : current.frames,
+  )
+  const normalizedTotalFrames = Number.isFinite(effectiveTotalFrames)
+    ? Math.max(WAN_FRAMES_MIN, Math.trunc(effectiveTotalFrames))
+    : WAN_FRAMES_MIN
+  const temporalUpperBound = normalizeFrameCount(Math.max(WAN_FRAMES_MIN, normalizedTotalFrames - 4))
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkFrames')) {
     const rawChunk = Number(nextPatch.img2vidChunkFrames)
     if (!Number.isFinite(rawChunk) || rawChunk <= 0) {
-      nextPatch.img2vidChunkFrames = current.img2vidChunkFrames > 0 ? current.img2vidChunkFrames : 9
+      nextPatch.img2vidChunkFrames = current.img2vidChunkFrames > 0 ? current.img2vidChunkFrames : 13
     } else {
       nextPatch.img2vidChunkFrames = normalizeFrameCount(rawChunk)
     }
   }
-  const effectiveChunkFrames = Number(
+  let effectiveChunkFrames = Number(
     Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkFrames')
       ? nextPatch.img2vidChunkFrames
       : current.img2vidChunkFrames,
   )
-  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidOverlapFrames')) {
-    const rawOverlap = Number(nextPatch.img2vidOverlapFrames)
-    const overlapInt = Number.isFinite(rawOverlap) ? Math.trunc(rawOverlap) : current.img2vidOverlapFrames
-    const overlapMax = Math.max(0, effectiveChunkFrames - 1)
-    nextPatch.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
+  if (temporalUpperBound < normalizedTotalFrames && effectiveChunkFrames >= normalizedTotalFrames) {
+    effectiveChunkFrames = temporalUpperBound
+    nextPatch.img2vidChunkFrames = temporalUpperBound
+  }
+  const didAdjustChunkFrames = effectiveChunkFrames !== Number(current.img2vidChunkFrames)
+  const overlapSource = Number(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidOverlapFrames')
+      ? nextPatch.img2vidOverlapFrames
+      : current.img2vidOverlapFrames,
+  )
+  const overlapInt = Number.isFinite(overlapSource) ? Math.trunc(overlapSource) : Math.trunc(Number(current.img2vidOverlapFrames))
+  const overlapMax = Math.max(0, effectiveChunkFrames - 1)
+  const normalizedOverlap = Math.min(overlapMax, Math.max(0, overlapInt))
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidOverlapFrames') || didAdjustChunkFrames) {
+    nextPatch.img2vidOverlapFrames = normalizedOverlap
   }
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidAnchorAlpha')) {
     const rawAnchor = Number(nextPatch.img2vidAnchorAlpha)
     const fallback = Number(current.img2vidAnchorAlpha)
     nextPatch.img2vidAnchorAlpha = Number.isFinite(rawAnchor) ? Math.min(1, Math.max(0, rawAnchor)) : fallback
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowFrames')) {
+    const rawWindow = Number(nextPatch.img2vidWindowFrames)
+    if (!Number.isFinite(rawWindow) || rawWindow <= 0) {
+      nextPatch.img2vidWindowFrames = current.img2vidWindowFrames > 0 ? current.img2vidWindowFrames : 13
+    } else {
+      nextPatch.img2vidWindowFrames = normalizeFrameCount(rawWindow)
+    }
+  }
+  let effectiveWindowFrames = Number(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowFrames')
+      ? nextPatch.img2vidWindowFrames
+      : current.img2vidWindowFrames,
+  )
+  if (temporalUpperBound < normalizedTotalFrames && effectiveWindowFrames >= normalizedTotalFrames) {
+    effectiveWindowFrames = temporalUpperBound
+    nextPatch.img2vidWindowFrames = temporalUpperBound
+  }
+  const didAdjustWindowFrames = effectiveWindowFrames !== Number(current.img2vidWindowFrames)
+  const strideSource = Number(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowStride')
+      ? nextPatch.img2vidWindowStride
+      : current.img2vidWindowStride,
+  )
+  const strideInt = Number.isFinite(strideSource) ? Math.trunc(strideSource) : Math.trunc(Number(current.img2vidWindowStride))
+  const strideMax = Math.max(1, effectiveWindowFrames - 1)
+  const normalizedStride = Math.min(strideMax, Math.max(1, strideInt))
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowStride') || didAdjustWindowFrames) {
+    nextPatch.img2vidWindowStride = normalizedStride
+  }
+  const effectiveWindowStride = Number(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowStride')
+      ? nextPatch.img2vidWindowStride
+      : normalizedStride,
+  )
+  const didAdjustWindowStride = effectiveWindowStride !== Number(current.img2vidWindowStride)
+  const commitSource = Number(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowCommitFrames')
+      ? nextPatch.img2vidWindowCommitFrames
+      : current.img2vidWindowCommitFrames,
+  )
+  const commitInt = Number.isFinite(commitSource) ? Math.trunc(commitSource) : Math.trunc(Number(current.img2vidWindowCommitFrames))
+  const normalizedCommit = Math.min(
+    effectiveWindowFrames,
+    Math.max(Math.max(1, effectiveWindowStride), commitInt),
+  )
+  if (
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowCommitFrames')
+    || didAdjustWindowFrames
+    || didAdjustWindowStride
+  ) {
+    nextPatch.img2vidWindowCommitFrames = normalizedCommit
   }
   return nextPatch
 }
@@ -885,9 +1105,13 @@ function toggleLowNoise(): void {
   lowNoiseOpen.value = !lowNoiseOpen.value
 }
 
-function toggleImg2VidChunking(): void {
-  const enabled = Boolean(video.value.img2vidChunkingEnabled)
-  setVideo({ img2vidChunkingEnabled: !enabled })
+function setImg2VidTemporalMode(nextMode: WanVideoParams['img2vidMode']): void {
+  const currentMode = normalizeImg2VidMode(video.value.img2vidMode)
+  const targetMode = normalizeImg2VidMode(nextMode)
+  if (currentMode === targetMode) return
+  writeImg2VidTemporalSnapshot(currentMode, video.value)
+  const restoredPatch = readImg2VidTemporalSnapshot(targetMode)
+  setVideo({ img2vidMode: targetMode, ...(restoredPatch ?? {}) })
 }
 
 function toggleHighPrompt(): void {
@@ -911,6 +1135,23 @@ watch(
   ([enabled]) => {
     if (!enabled) return
     syncLowFromHighIfNeeded()
+  },
+)
+
+watch(
+  () => ([
+    video.value.img2vidMode,
+    video.value.attentionMode,
+    video.value.img2vidChunkSeedMode,
+    video.value.img2vidChunkFrames,
+    video.value.img2vidOverlapFrames,
+    video.value.img2vidAnchorAlpha,
+    video.value.img2vidWindowFrames,
+    video.value.img2vidWindowStride,
+    video.value.img2vidWindowCommitFrames,
+  ] as const),
+  () => {
+    writeImg2VidTemporalSnapshot(normalizeImg2VidMode(video.value.img2vidMode), video.value)
   },
 )
 
@@ -1398,16 +1639,20 @@ const runSummary = computed(() => {
 })
 
 function buildCurrentSnapshot(): Record<string, unknown> {
+  const img2vidMode = normalizeImg2VidMode(video.value.img2vidMode)
   return {
     mode: video.value.useInitImage ? 'img2vid' : 'txt2vid',
     initImageName: video.value.initImageName || '',
     attentionMode: video.value.attentionMode,
     img2vid: {
-      enabled: video.value.img2vidChunkingEnabled,
+      mode: img2vidMode,
       chunkFrames: video.value.img2vidChunkFrames,
       overlapFrames: video.value.img2vidOverlapFrames,
       anchorAlpha: video.value.img2vidAnchorAlpha,
       chunkSeedMode: video.value.img2vidChunkSeedMode,
+      windowFrames: video.value.img2vidWindowFrames,
+      windowStride: video.value.img2vidWindowStride,
+      windowCommitFrames: video.value.img2vidWindowCommitFrames,
     },
     width: video.value.width,
     height: video.value.height,
@@ -1451,6 +1696,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       trimToAudio: video.value.trimToAudio,
       saveMetadata: video.value.saveMetadata,
       saveOutput: video.value.saveOutput,
+      returnFrames: video.value.returnFrames,
     },
     interpolation: {
       enabled: video.value.rifeEnabled,
@@ -1524,10 +1770,16 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const output = isRecord(snap.output) ? snap.output : {}
   const interpolation = isRecord(snap.interpolation) ? snap.interpolation : {}
   const i2v = isRecord(snap.img2vid) ? snap.img2vid : {}
-  const hasSnapshotChunkFrames = typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames)
-  const nextChunkingEnabled = typeof i2v.enabled === 'boolean'
-    ? Boolean(i2v.enabled)
-    : (hasSnapshotChunkFrames ? Number(i2v.chunkFrames) > 0 : video.value.img2vidChunkingEnabled)
+  const i2vModeRaw = typeof i2v.mode === 'string' ? i2v.mode : ''
+  const hasSnapshotWindowFrames = typeof i2v.windowFrames === 'number' && Number.isFinite(i2v.windowFrames) && Number(i2v.windowFrames) > 0
+  const hasSnapshotChunkFrames = typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) && Number(i2v.chunkFrames) > 0
+  const nextImg2VidMode = i2vModeRaw
+    ? normalizeImg2VidMode(i2vModeRaw)
+    : (hasSnapshotWindowFrames
+      ? 'sliding'
+      : (typeof i2v.enabled === 'boolean'
+        ? (Boolean(i2v.enabled) ? 'chunk' : 'solo')
+        : (hasSnapshotChunkFrames ? 'chunk' : normalizeImg2VidMode(video.value.img2vidMode))))
 
   setVideo({
     width: Number(snap.width) || video.value.width,
@@ -1535,11 +1787,14 @@ function applyHistory(item: VideoRunHistoryItem): void {
     frames: Number(snap.frames) || video.value.frames,
     fps: Number(snap.fps) || video.value.fps,
     attentionMode: normalizeAttentionMode(snap.attentionMode),
-    img2vidChunkingEnabled: nextChunkingEnabled,
+    img2vidMode: nextImg2VidMode,
     img2vidChunkFrames: typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) ? Number(i2v.chunkFrames) : video.value.img2vidChunkFrames,
     img2vidOverlapFrames: typeof i2v.overlapFrames === 'number' && Number.isFinite(i2v.overlapFrames) ? Number(i2v.overlapFrames) : video.value.img2vidOverlapFrames,
     img2vidAnchorAlpha: typeof i2v.anchorAlpha === 'number' && Number.isFinite(i2v.anchorAlpha) ? Number(i2v.anchorAlpha) : video.value.img2vidAnchorAlpha,
     img2vidChunkSeedMode: normalizeChunkSeedMode(i2v.chunkSeedMode),
+    img2vidWindowFrames: typeof i2v.windowFrames === 'number' && Number.isFinite(i2v.windowFrames) ? Number(i2v.windowFrames) : video.value.img2vidWindowFrames,
+    img2vidWindowStride: typeof i2v.windowStride === 'number' && Number.isFinite(i2v.windowStride) ? Number(i2v.windowStride) : video.value.img2vidWindowStride,
+    img2vidWindowCommitFrames: typeof i2v.windowCommitFrames === 'number' && Number.isFinite(i2v.windowCommitFrames) ? Number(i2v.windowCommitFrames) : video.value.img2vidWindowCommitFrames,
     filenamePrefix: String(output.filenamePrefix || video.value.filenamePrefix),
     format: String(output.format || video.value.format),
     pixFmt: String(output.pixFmt || video.value.pixFmt),
@@ -1549,6 +1804,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     trimToAudio: Boolean(output.trimToAudio),
     saveMetadata: Boolean(output.saveMetadata),
     saveOutput: Boolean(output.saveOutput),
+    returnFrames: typeof output.returnFrames === 'boolean' ? output.returnFrames : video.value.returnFrames,
     rifeEnabled: Boolean(interpolation.enabled),
     rifeModel: String(interpolation.model || ''),
     rifeTimes: typeof interpolation.times === 'number' && Number.isFinite(interpolation.times) ? Number(interpolation.times) : video.value.rifeTimes,

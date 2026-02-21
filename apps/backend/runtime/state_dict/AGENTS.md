@@ -35,5 +35,6 @@ Notes:
 - 2026-02-16: Split WAN VAE ownership into model-specific modules (`keymap_wan21_vae.py`, `keymap_wan22_vae.py`), removed WAN VAE remap ownership from `keymap_anima.py`, and wired WAN22 VAE lanes to model keymap modules only.
 - 2026-02-17: `keymap_wan22_transformer.py` WAN22 request allowlists now include `gguf_attention_mode` and img2vid chunk-control keys (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`) for strict router passthrough ownership.
 - 2026-02-21: `keymap_wan22_transformer.py` WAN22 img2vid request allowlist now also includes `img2vid_chunk_buffer_mode` for strict passthrough ownership.
+- 2026-02-21: `keymap_wan22_transformer.py` WAN22 img2vid request allowlist now includes temporal-mode keys (`img2vid_mode`, `img2vid_window_frames`, `img2vid_window_stride`, `img2vid_window_commit_frames`) so router unknown-key checks remain strict with sliding-window mode.
 
 Last Review: 2026-02-21

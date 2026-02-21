@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Vitest coverage for model-tab normalization, params persistence serialization invariants,
+Purpose: Vitest coverage for model-tab normalization (including WAN legacy img2vid migration), params persistence serialization invariants,
 and localStorage persistence guardrails (light payload + quota handling) in the model-tabs store.
 Locks fail-loud behavior for unknown tab types, validates capability-driven Anima tab auto-inclusion, and ensures
 `updateParams` persistence handles nested reactive payload branches while still rejecting non-serializable payloads
@@ -29,6 +29,17 @@ vi.mock('../api/client', () => ({
   updateTabApi: vi.fn(),
   reorderTabsApi: vi.fn(),
   deleteTabApi: vi.fn(),
+}))
+
+vi.mock('./engine_capabilities', () => ({
+  useEngineCapabilitiesStore: () => ({
+    init: async () => {},
+    engines: {},
+    resolveSamplingDefaults: (
+      _type: string,
+      opts: { fallbackSampler: string; fallbackScheduler: string },
+    ) => ({ sampler: opts.fallbackSampler, scheduler: opts.fallbackScheduler }),
+  }),
 }))
 
 const mockedFetchTabs = vi.mocked(fetchTabs)
@@ -196,6 +207,46 @@ describe('defaultImageParamsForType', () => {
     expect(defaults.hires.resizeY).toBe(0)
     expect(defaults.img2imgResizeMode).toBe('just_resize')
     expect(defaults.img2imgUpscaler).toBe('latent:bicubic-aa')
+  })
+})
+
+describe('WAN legacy migration', () => {
+  it('keeps img2vidChunkingEnabled=false as solo even when legacy chunk frames exist', async () => {
+    const iso = '2026-02-21T00:00:00.000Z'
+    mockedFetchTabs.mockResolvedValueOnce({
+      tabs: [
+        { id: 'sd15-1', type: 'sd15', title: 'SD 1.5', order: 0, enabled: true, params: {}, meta: { createdAt: iso, updatedAt: iso } },
+        { id: 'sdxl-1', type: 'sdxl', title: 'SDXL', order: 1, enabled: true, params: {}, meta: { createdAt: iso, updatedAt: iso } },
+        { id: 'flux1-1', type: 'flux1', title: 'FLUX.1', order: 2, enabled: true, params: {}, meta: { createdAt: iso, updatedAt: iso } },
+        { id: 'chroma-1', type: 'chroma', title: 'Chroma', order: 3, enabled: true, params: {}, meta: { createdAt: iso, updatedAt: iso } },
+        { id: 'zimage-1', type: 'zimage', title: 'Z-Image', order: 4, enabled: true, params: {}, meta: { createdAt: iso, updatedAt: iso } },
+        {
+          id: 'wan-1',
+          type: 'wan',
+          title: 'WAN 2.2',
+          order: 5,
+          enabled: true,
+          params: {
+            video: {
+              frames: 17,
+              img2vidChunkingEnabled: false,
+              img2vidChunkFrames: 17,
+              img2vidWindowFrames: 25,
+              img2vidOverlapFrames: 4,
+            },
+          },
+          meta: { createdAt: iso, updatedAt: iso },
+        },
+      ],
+    } as any)
+
+    const store = useModelTabsStore()
+    await store.load()
+
+    const wan = store.tabs.find((tab) => tab.type === 'wan') as any
+    expect(wan).toBeTruthy()
+    expect(wan.params.video.img2vidMode).toBe('solo')
+    expect(wan.params.video.img2vidChunkFrames).toBe(13)
   })
 })
 

@@ -12,7 +12,7 @@ Required Notice: see NOTICE
 	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 	mode prompt fields from the High stage in payload builders for backend compatibility. Includes `output.returnFrames` and stage `flowShift` pass-through in
-	common WAN payload input. Img2vid chunking payload fields are gated by explicit `img2vidChunkingEnabled` state (not by `chunkFrames=0` sentinel), and stage-level
+	common WAN payload input. Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding`), and stage-level
 	WAN LoRA fields are not emitted from this composable (LoRA control is prompt-level).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -47,6 +47,7 @@ import { formatZodError } from '../api/payloads'
 import {
   buildWanImg2VidPayload,
   buildWanTxt2VidPayload,
+  type WanImg2VidInput,
   type WanImg2VidPayload,
   type WanTxt2VidPayload,
   type WanVideoCommonInput,
@@ -280,11 +281,14 @@ function defaultVideo(): WanVideoParams {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
-    img2vidChunkingEnabled: false,
-    img2vidChunkFrames: 9,
+    img2vidMode: 'solo',
+    img2vidChunkFrames: 13,
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
+    img2vidWindowFrames: 13,
+    img2vidWindowStride: 6,
+    img2vidWindowCommitFrames: 7,
     filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
@@ -303,6 +307,12 @@ function defaultVideo(): WanVideoParams {
 
 function defaultAssets(): WanAssetsParams {
   return { metadata: '', textEncoder: '', vae: '' }
+}
+
+function normalizeImg2VidMode(rawValue: unknown): WanVideoParams['img2vidMode'] {
+  const normalized = String(rawValue ?? '').trim().toLowerCase()
+  if (normalized === 'chunk' || normalized === 'sliding') return normalized
+  return 'solo'
 }
 
 export function useVideoGeneration(tabId: string) {
@@ -437,6 +447,7 @@ export function useVideoGeneration(tabId: string) {
   }
 
   function buildParamsSnapshot(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): Record<string, unknown> {
+    const img2vidMode = normalizeImg2VidMode(v.img2vidMode)
     return {
       mode: v.useInitImage ? 'img2vid' : 'txt2vid',
       initImageName: v.initImageName || '',
@@ -446,11 +457,14 @@ export function useVideoGeneration(tabId: string) {
       fps: v.fps,
       attentionMode: v.attentionMode,
       img2vid: {
-        enabled: v.img2vidChunkingEnabled,
+        mode: img2vidMode,
         chunkFrames: v.img2vidChunkFrames,
         overlapFrames: v.img2vidOverlapFrames,
         anchorAlpha: v.img2vidAnchorAlpha,
         chunkSeedMode: v.img2vidChunkSeedMode,
+        windowFrames: v.img2vidWindowFrames,
+        windowStride: v.img2vidWindowStride,
+        windowCommitFrames: v.img2vidWindowCommitFrames,
       },
       lightx2v: lightx2v.value,
       assets: {
@@ -580,18 +594,25 @@ export function useVideoGeneration(tabId: string) {
     const common = buildCommonInput(v, hi, lo)
 
     if (v.useInitImage) {
-      const img2vidChunkInput = v.img2vidChunkingEnabled
-        ? {
-            chunkFrames: v.img2vidChunkFrames,
-            overlapFrames: v.img2vidOverlapFrames,
-            anchorAlpha: v.img2vidAnchorAlpha,
-            chunkSeedMode: v.img2vidChunkSeedMode,
-          }
-        : {}
+      const img2vidMode = normalizeImg2VidMode(v.img2vidMode)
+      const img2vidTemporalInput: Partial<WanImg2VidInput> = {}
+      if (img2vidMode === 'chunk') {
+        img2vidTemporalInput.chunkFrames = v.img2vidChunkFrames
+        img2vidTemporalInput.overlapFrames = v.img2vidOverlapFrames
+        img2vidTemporalInput.anchorAlpha = v.img2vidAnchorAlpha
+        img2vidTemporalInput.chunkSeedMode = v.img2vidChunkSeedMode
+      } else if (img2vidMode === 'sliding') {
+        img2vidTemporalInput.windowFrames = v.img2vidWindowFrames
+        img2vidTemporalInput.windowStride = v.img2vidWindowStride
+        img2vidTemporalInput.windowCommitFrames = v.img2vidWindowCommitFrames
+        img2vidTemporalInput.anchorAlpha = v.img2vidAnchorAlpha
+        img2vidTemporalInput.chunkSeedMode = v.img2vidChunkSeedMode
+      }
       const payload = buildWanImg2VidPayload({
         ...common,
         initImageData: v.initImageData,
-        ...img2vidChunkInput,
+        img2vidMode,
+        ...img2vidTemporalInput,
       })
       return { mode: 'img2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
     }

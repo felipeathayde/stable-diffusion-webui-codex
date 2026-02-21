@@ -69,3 +69,4 @@ Status: Active
 - 2026-02-20: `quicksettings.ts` now defaults VAE selection to canonical `built-in` when nothing is persisted and exposes `requireVaeSelection()` for fail-loud request preflight on empty VAE selections.
 - 2026-02-20: `xyz.ts` run preflight now blocks sweeps when VAE selection is empty (shared fail-loud guard via `quicksettings.requireVaeSelection()`).
 - 2026-02-21: `model_tabs.ts` WAN `video` params were reduced to `txt2vid/img2vid` surface only (removed `useInitVideo` + `vid2vid*` fields) and normalization now returns a schema-sanitized object to drop legacy persisted vid2vid keys.
+- 2026-02-21: `model_tabs.ts` WAN img2vid temporal controls now use `img2vidMode` (`solo|chunk|sliding`) as source-of-truth; chunk and sliding window params (`img2vid_chunk*`, `img2vid_window*`) are persisted together with strict normalization/migration from legacy `img2vidChunkingEnabled`.

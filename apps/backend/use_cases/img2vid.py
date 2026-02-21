@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
-- `_parse_img2vid_chunk_options` (function): Parses and validates optional img2vid chunk controls from request extras.
+- `_parse_img2vid_temporal_options` (function): Parses and validates img2vid temporal controls from request extras (`solo|chunk|sliding`).
 - `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
 """
 
@@ -148,66 +148,187 @@ class _Img2VidChunkOptions:
     chunk_buffer_mode: str
 
 
-def _parse_img2vid_chunk_options(extras: Mapping[str, Any], *, total_frames: int) -> Optional[_Img2VidChunkOptions]:
-    raw_chunk = extras.get("img2vid_chunk_frames")
-    if raw_chunk in (None, "", 0):
-        return None
+@dataclass(frozen=True)
+class _Img2VidSlidingOptions:
+    window_frames: int
+    window_stride: int
+    window_commit_frames: int
+    anchor_alpha: float
+    chunk_seed_mode: str
+    chunk_buffer_mode: str
+
+
+@dataclass(frozen=True)
+class _Img2VidTemporalOptions:
+    mode: str
+    chunk: _Img2VidChunkOptions | None = None
+    sliding: _Img2VidSlidingOptions | None = None
+
+
+def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: int) -> _Img2VidTemporalOptions:
+    mode = str(extras.get("img2vid_mode", "solo") or "").strip().lower()
+    if mode not in {"solo", "chunk", "sliding"}:
+        raise RuntimeError(f"img2vid_mode must be one of ('solo','chunk','sliding'), got: {mode!r}")
+
+    has_chunk = extras.get("img2vid_chunk_frames") not in (None, "")
+    has_overlap = extras.get("img2vid_overlap_frames") not in (None, "")
+    has_anchor = extras.get("img2vid_anchor_alpha") not in (None, "")
+    has_seed_mode = extras.get("img2vid_chunk_seed_mode") not in (None, "")
+    has_buffer_mode = extras.get("img2vid_chunk_buffer_mode") not in (None, "")
+    has_window_frames = extras.get("img2vid_window_frames") not in (None, "")
+    has_window_stride = extras.get("img2vid_window_stride") not in (None, "")
+    has_window_commit = extras.get("img2vid_window_commit_frames") not in (None, "")
+
+    def _parse_anchor_alpha() -> float:
+        raw_anchor = extras.get("img2vid_anchor_alpha", 0.2)
+        try:
+            anchor_alpha = float(raw_anchor)
+        except Exception as exc:  # noqa: BLE001 - fail loud contract
+            raise RuntimeError(f"img2vid_anchor_alpha must be a float, got: {raw_anchor!r}") from exc
+        if anchor_alpha < 0.0 or anchor_alpha > 1.0:
+            raise RuntimeError(f"img2vid_anchor_alpha must be within [0, 1], got: {anchor_alpha}")
+        return anchor_alpha
+
+    def _parse_seed_mode() -> str:
+        raw_seed_mode = str(extras.get("img2vid_chunk_seed_mode", "increment") or "").strip().lower()
+        if raw_seed_mode not in {"fixed", "increment", "random"}:
+            raise RuntimeError(
+                "img2vid_chunk_seed_mode must be one of ('fixed','increment','random'), "
+                f"got: {raw_seed_mode!r}"
+            )
+        return raw_seed_mode
+
+    def _parse_buffer_mode() -> str:
+        raw_buffer_mode = extras.get("img2vid_chunk_buffer_mode")
+        if raw_buffer_mode in (None, ""):
+            raw_buffer_mode = os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid")
+        chunk_buffer_mode = str(raw_buffer_mode or "").strip().lower()
+        if chunk_buffer_mode not in {"hybrid", "ram", "ram+hd"}:
+            raise RuntimeError(
+                "img2vid_chunk_buffer_mode must be one of ('hybrid','ram','ram+hd'), "
+                f"got: {raw_buffer_mode!r}"
+            )
+        return chunk_buffer_mode
+
+    if mode == "solo":
+        has_temporal_fields = any(
+            (
+                has_chunk,
+                has_overlap,
+                has_anchor,
+                has_seed_mode,
+                has_buffer_mode,
+                has_window_frames,
+                has_window_stride,
+                has_window_commit,
+            )
+        )
+        if has_temporal_fields:
+            raise RuntimeError("img2vid_mode='solo' does not allow temporal controls (chunk/window/anchor/seed/buffer).")
+        return _Img2VidTemporalOptions(mode="solo")
+
+    if mode == "chunk":
+        if not has_chunk:
+            raise RuntimeError("img2vid_mode='chunk' requires img2vid_chunk_frames.")
+        if has_window_frames or has_window_stride or has_window_commit:
+            raise RuntimeError("img2vid_mode='chunk' does not allow img2vid_window_* controls.")
+        raw_chunk = extras.get("img2vid_chunk_frames")
+        try:
+            chunk_frames = int(raw_chunk)
+        except Exception as exc:  # noqa: BLE001 - fail loud contract
+            raise RuntimeError(f"img2vid_chunk_frames must be an integer, got: {raw_chunk!r}") from exc
+        if chunk_frames < 9 or chunk_frames > 401:
+            raise RuntimeError(f"img2vid_chunk_frames must be within [9, 401], got: {chunk_frames}")
+        if (chunk_frames - 1) % 4 != 0:
+            raise RuntimeError(f"img2vid_chunk_frames must satisfy 4n+1, got: {chunk_frames}")
+        if chunk_frames >= int(total_frames):
+            raise RuntimeError(
+                "img2vid_chunk_frames must be smaller than the requested total frame count "
+                f"(chunk={chunk_frames} total={int(total_frames)})"
+            )
+
+        raw_overlap = extras.get("img2vid_overlap_frames", max(1, chunk_frames // 4))
+        try:
+            overlap_frames = int(raw_overlap)
+        except Exception as exc:  # noqa: BLE001 - fail loud contract
+            raise RuntimeError(f"img2vid_overlap_frames must be an integer, got: {raw_overlap!r}") from exc
+        if overlap_frames < 0:
+            raise RuntimeError(f"img2vid_overlap_frames must be >= 0, got: {overlap_frames}")
+        if overlap_frames >= chunk_frames:
+            raise RuntimeError(
+                "img2vid_overlap_frames must be smaller than img2vid_chunk_frames "
+                f"(overlap={overlap_frames} chunk={chunk_frames})"
+            )
+
+        return _Img2VidTemporalOptions(
+            mode="chunk",
+            chunk=_Img2VidChunkOptions(
+                chunk_frames=chunk_frames,
+                overlap_frames=overlap_frames,
+                anchor_alpha=_parse_anchor_alpha(),
+                chunk_seed_mode=_parse_seed_mode(),
+                chunk_buffer_mode=_parse_buffer_mode(),
+            ),
+        )
+
+    if has_chunk or has_overlap:
+        raise RuntimeError("img2vid_mode='sliding' does not allow img2vid_chunk_frames/img2vid_overlap_frames.")
+    if not (has_window_frames and has_window_stride and has_window_commit):
+        raise RuntimeError(
+            "img2vid_mode='sliding' requires img2vid_window_frames, img2vid_window_stride, "
+            "and img2vid_window_commit_frames."
+        )
+
+    raw_window_frames = extras.get("img2vid_window_frames")
     try:
-        chunk_frames = int(raw_chunk)
+        window_frames = int(raw_window_frames)
     except Exception as exc:  # noqa: BLE001 - fail loud contract
-        raise RuntimeError(f"img2vid_chunk_frames must be an integer, got: {raw_chunk!r}") from exc
-    if chunk_frames < 9 or chunk_frames > 401:
-        raise RuntimeError(f"img2vid_chunk_frames must be within [9, 401], got: {chunk_frames}")
-    if (chunk_frames - 1) % 4 != 0:
-        raise RuntimeError(f"img2vid_chunk_frames must satisfy 4n+1, got: {chunk_frames}")
-    if chunk_frames >= int(total_frames):
+        raise RuntimeError(f"img2vid_window_frames must be an integer, got: {raw_window_frames!r}") from exc
+    if window_frames < 9 or window_frames > 401:
+        raise RuntimeError(f"img2vid_window_frames must be within [9, 401], got: {window_frames}")
+    if (window_frames - 1) % 4 != 0:
+        raise RuntimeError(f"img2vid_window_frames must satisfy 4n+1, got: {window_frames}")
+    if window_frames >= int(total_frames):
         raise RuntimeError(
-            "img2vid_chunk_frames must be smaller than the requested total frame count "
-            f"(chunk={chunk_frames} total={int(total_frames)})"
+            "img2vid_window_frames must be smaller than the requested total frame count "
+            f"(window={window_frames} total={int(total_frames)})"
         )
 
-    raw_overlap = extras.get("img2vid_overlap_frames", max(1, chunk_frames // 4))
+    raw_window_stride = extras.get("img2vid_window_stride")
     try:
-        overlap_frames = int(raw_overlap)
+        window_stride = int(raw_window_stride)
     except Exception as exc:  # noqa: BLE001 - fail loud contract
-        raise RuntimeError(f"img2vid_overlap_frames must be an integer, got: {raw_overlap!r}") from exc
-    if overlap_frames < 0:
-        raise RuntimeError(f"img2vid_overlap_frames must be >= 0, got: {overlap_frames}")
-    if overlap_frames >= chunk_frames:
+        raise RuntimeError(f"img2vid_window_stride must be an integer, got: {raw_window_stride!r}") from exc
+    if window_stride < 1:
+        raise RuntimeError(f"img2vid_window_stride must be >= 1, got: {window_stride}")
+    if window_stride >= window_frames:
         raise RuntimeError(
-            "img2vid_overlap_frames must be smaller than img2vid_chunk_frames "
-            f"(overlap={overlap_frames} chunk={chunk_frames})"
+            "img2vid_window_stride must be smaller than img2vid_window_frames "
+            f"(stride={window_stride} window={window_frames})"
         )
 
-    raw_anchor = extras.get("img2vid_anchor_alpha", 0.2)
+    raw_window_commit = extras.get("img2vid_window_commit_frames")
     try:
-        anchor_alpha = float(raw_anchor)
+        window_commit_frames = int(raw_window_commit)
     except Exception as exc:  # noqa: BLE001 - fail loud contract
-        raise RuntimeError(f"img2vid_anchor_alpha must be a float, got: {raw_anchor!r}") from exc
-    if anchor_alpha < 0.0 or anchor_alpha > 1.0:
-        raise RuntimeError(f"img2vid_anchor_alpha must be within [0, 1], got: {anchor_alpha}")
-
-    raw_seed_mode = str(extras.get("img2vid_chunk_seed_mode", "increment") or "").strip().lower()
-    if raw_seed_mode not in {"fixed", "increment", "random"}:
+        raise RuntimeError(f"img2vid_window_commit_frames must be an integer, got: {raw_window_commit!r}") from exc
+    if window_commit_frames < window_stride or window_commit_frames > window_frames:
         raise RuntimeError(
-            f"img2vid_chunk_seed_mode must be one of ('fixed','increment','random'), got: {raw_seed_mode!r}"
-        )
-    raw_buffer_mode = extras.get("img2vid_chunk_buffer_mode")
-    if raw_buffer_mode in (None, ""):
-        raw_buffer_mode = os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid")
-    chunk_buffer_mode = str(raw_buffer_mode or "").strip().lower()
-    if chunk_buffer_mode not in {"hybrid", "ram", "ram+hd"}:
-        raise RuntimeError(
-            "img2vid_chunk_buffer_mode must be one of ('hybrid','ram','ram+hd'), "
-            f"got: {raw_buffer_mode!r}"
+            "img2vid_window_commit_frames must be within "
+            "[img2vid_window_stride, img2vid_window_frames] "
+            f"(commit={window_commit_frames} stride={window_stride} window={window_frames})"
         )
 
-    return _Img2VidChunkOptions(
-        chunk_frames=chunk_frames,
-        overlap_frames=overlap_frames,
-        anchor_alpha=anchor_alpha,
-        chunk_seed_mode=raw_seed_mode,
-        chunk_buffer_mode=chunk_buffer_mode,
+    return _Img2VidTemporalOptions(
+        mode="sliding",
+        sliding=_Img2VidSlidingOptions(
+            window_frames=window_frames,
+            window_stride=window_stride,
+            window_commit_frames=window_commit_frames,
+            anchor_alpha=_parse_anchor_alpha(),
+            chunk_seed_mode=_parse_seed_mode(),
+            chunk_buffer_mode=_parse_buffer_mode(),
+        ),
     )
 
 
@@ -235,12 +356,12 @@ def run_img2vid(
         from apps.backend.runtime.families.wan22 import wan22 as gguf
 
         extras = dict(plan.extras) if isinstance(plan.extras, dict) else {}
-        chunk_opts = _parse_img2vid_chunk_options(extras, total_frames=plan.frames)
+        temporal_opts = _parse_img2vid_temporal_options(extras, total_frames=plan.frames)
 
         cfg = None
         frames: list[Any] | None = None
 
-        if chunk_opts is None:
+        if temporal_opts.mode == "solo":
             cfg = build_wan22_gguf_run_config(
                 request=request,
                 device=getattr(comp, "device", "auto"),
@@ -271,7 +392,10 @@ def run_img2vid(
                         )
                     break
                 raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
-        else:
+        elif temporal_opts.mode == "chunk":
+            if temporal_opts.chunk is None:
+                raise RuntimeError("img2vid_mode='chunk' selected but chunk options are missing.")
+            chunk_opts = temporal_opts.chunk
             if logger:
                 logger.info(
                     "[img2vid] chunk mode enabled (phase-batched): chunk_frames=%d overlap=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
@@ -296,6 +420,60 @@ def run_img2vid(
                 anchor_alpha=float(chunk_opts.anchor_alpha),
                 chunk_seed_mode=str(chunk_opts.chunk_seed_mode),
                 chunk_buffer_mode=str(chunk_opts.chunk_buffer_mode),
+                logger=logger,
+            ):
+                if not isinstance(ev, dict):
+                    raise RuntimeError(f"WAN22 GGUF: invalid stream event type: {type(ev)}")
+                if ev.get("type") == "progress":
+                    pe = _yield_wan22_gguf_progress(ev)
+                    if pe is not None:
+                        yield pe
+                    continue
+                if ev.get("type") == "result":
+                    raw_frames = ev.get("frames", [])
+                    if raw_frames is None:
+                        frames = []
+                    elif isinstance(raw_frames, list):
+                        frames = raw_frames
+                    elif isinstance(raw_frames, tuple):
+                        frames = list(raw_frames)
+                    else:
+                        raise RuntimeError(
+                            "WAN22 GGUF: invalid result payload for 'frames' "
+                            f"(expected sequence, got {type(raw_frames).__name__})"
+                        )
+                    break
+                raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
+        else:
+            if temporal_opts.sliding is None:
+                raise RuntimeError("img2vid_mode='sliding' selected but sliding options are missing.")
+            sliding_opts = temporal_opts.sliding
+            if logger:
+                logger.info(
+                    "[img2vid] sliding mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
+                    sliding_opts.window_frames,
+                    sliding_opts.window_stride,
+                    sliding_opts.window_commit_frames,
+                    sliding_opts.anchor_alpha,
+                    sliding_opts.chunk_seed_mode,
+                    sliding_opts.chunk_buffer_mode,
+                )
+
+            cfg = build_wan22_gguf_run_config(
+                request=request,
+                device=getattr(comp, "device", "auto"),
+                dtype=getattr(comp, "dtype", "fp16"),
+                logger=logger,
+            )
+
+            for ev in gguf.stream_img2vid_sliding_window(
+                cfg,
+                window_frames=int(sliding_opts.window_frames),
+                window_stride=int(sliding_opts.window_stride),
+                window_commit_frames=int(sliding_opts.window_commit_frames),
+                anchor_alpha=float(sliding_opts.anchor_alpha),
+                chunk_seed_mode=str(sliding_opts.chunk_seed_mode),
+                chunk_buffer_mode=str(sliding_opts.chunk_buffer_mode),
                 logger=logger,
             ):
                 if not isinstance(ev, dict):

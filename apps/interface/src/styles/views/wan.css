@@ -112,6 +112,16 @@
     white-space: nowrap;
   }
 
+  .wan-temporal-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .wan-temporal-controls .wan-temporal-row {
+    align-items: end;
+  }
+
   .wan-results-empty {
     display: flex;
     flex-direction: column;

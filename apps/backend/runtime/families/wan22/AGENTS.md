@@ -94,6 +94,7 @@ Status: Active
 - 2026-02-21: WAN22 2D-native VAE conditioning encode now encodes only two frame-batch inputs (`first_frame` + one zero frame) and broadcasts zero-frame latents over `T-1` slots (instead of encoding full-`T` mostly-zero batches), reducing I2V encode VRAM/time in non-chunked paths.
 - 2026-02-21: WAN22 I2V sampling assembly (`sampling.py`) now preallocates mask/state tensors and fills channel/time slices in place (no `repeat_interleave`/`cat` materialization for mask4 expansion and no full `torch.cat` for `[lat+mask4+img16]` state assembly).
 - 2026-02-21: `stream_img2vid_chunked(...)` now avoids per-chunk tail-latent clone when low decode storage mode is RAM (continuity tail reuses the persisted RAM chunk tensor view); `ram+hd` path keeps explicit tail clone to avoid retaining full chunk payloads in memory.
+- 2026-02-21: `run.py` adds `stream_img2vid_sliding_window(...)` (window/stride/commit controls) as a first-class temporal mode over the chunk runtime; chunked stitching now supports explicit `commit_frames` validation and fail-loud short-output detection.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

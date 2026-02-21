@@ -35,6 +35,7 @@ from apps.backend.runtime.live_preview import (
     debug_preview_factors_enabled,
     live_preview_method,
     maybe_log_preview_factors,
+    preview_interval_steps,
 )
 from apps.backend.runtime.processing.conditioners import txt2img_conditioning
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext, SamplingPlan
@@ -156,13 +157,19 @@ def execute_sampling(
         processing.modified_noise = None
 
     preview_method = live_preview_method(default=LivePreviewMethod.FULL)
+    preview_interval = int(preview_interval_steps(default=0))
     debug_factors = debug_preview_factors_enabled()
+    preview_emitted = False
 
     def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
-        # Skip preview decode on the final step; the engine will decode once
-        # for the actual output, avoiding redundant VAE work at the tail.
+        nonlocal preview_emitted
+        if preview_interval <= 0:
+            return
+        # Skip preview decode on the final step only when at least one preview
+        # was already emitted; this preserves low-overhead long runs while still
+        # allowing short runs to emit one terminal preview.
         try:
-            if total is not None and int(total) > 0 and int(step) >= int(total):
+            if total is not None and int(total) > 0 and int(step) >= int(total) and preview_emitted:
                 if debug_factors:
                     maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total))
                 return
@@ -173,6 +180,7 @@ def execute_sampling(
         if preview is None:
             return
         backend_state.set_current_image(preview, sampling_step=int(step))
+        preview_emitted = True
         if debug_factors:
             maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total or 0))
 

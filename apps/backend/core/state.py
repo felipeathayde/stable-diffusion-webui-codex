@@ -60,6 +60,7 @@ class BackendState:
             self.current_image = None
             self.current_latent = None
             self.id_live_preview = 0
+            self.current_image_sampling_step = 0
             self.job = ""
             self.job_timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
             self.processing_has_refined_job_count = False
@@ -82,15 +83,23 @@ class BackendState:
 
     def end(self) -> None:
         with self._lock:
+            # Preserve final sampling/progress snapshots until the next `start()`
+            # so task-stream polling can emit the terminal progress update.
             self.job = ""
             self.job_no = 0
             self.job_count = 0
-            self.sampling_step = 0
-            self.sampling_steps = 0
             self.textinfo = ""
-            self.current_image = None
             self.current_latent = None
             self.processing_has_refined_job_count = False
+
+    def clear_progress_snapshot(self) -> None:
+        with self._lock:
+            self.sampling_step = 0
+            self.sampling_steps = 0
+            self.current_image = None
+            self.current_latent = None
+            self.current_image_sampling_step = 0
+            self.id_live_preview = 0
 
     def next_job(self) -> None:
         with self._lock:

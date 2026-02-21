@@ -73,6 +73,11 @@ def _run_inference_worker(
     import threading
     import time
 
+    from apps.backend.runtime.live_preview import (
+        live_preview_method,
+        preview_interval_steps,
+        preview_runtime_overrides,
+    )
     from apps.backend.runtime.memory.smart_offload import (
         current_smart_runtime_overrides,
     )
@@ -104,14 +109,20 @@ def _run_inference_worker(
 
     outcome = _WorkerOutcome()
     done = threading.Event()
+    effective_preview_interval = int(preview_interval_steps(default=0))
+    effective_preview_method = live_preview_method()
 
     def _worker() -> None:
         from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
 
         try:
             with smart_runtime_overrides(**effective_runtime_overrides):
-                outcome.sampling_start = time.perf_counter()
-                outcome.output = fn()
+                with preview_runtime_overrides(
+                    interval_steps=effective_preview_interval,
+                    method=effective_preview_method,
+                ):
+                    outcome.sampling_start = time.perf_counter()
+                    outcome.output = fn()
         except BaseException as exc:  # noqa: BLE001
             outcome.error = exc
         finally:
@@ -133,7 +144,7 @@ def _iter_sampling_progress(
 
     t0 = time.perf_counter()
     last_step = -1
-    while not done.is_set():
+    while True:
         try:
             step = int(getattr(backend_state, "sampling_step", 0) or 0)
             total = int(getattr(backend_state, "sampling_steps", 0) or 0)
@@ -145,6 +156,9 @@ def _iter_sampling_progress(
             eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
             yield step, total, eta
             last_step = step
+
+        if done.is_set():
+            break
 
         time.sleep(float(poll_interval_s))
 

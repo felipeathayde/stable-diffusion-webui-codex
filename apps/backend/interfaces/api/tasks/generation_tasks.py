@@ -458,9 +458,11 @@ def run_image_task(
             engine_options = build_engine_options(req=req, opts_snapshot=opts_snapshot)
 
             from apps.backend.core.requests import ProgressEvent, ResultEvent
+            from apps.backend.core.state import state as backend_state
             from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
 
             cancelled_immediate = False
+            backend_state.clear_progress_snapshot()
             with preview_cfg.runtime_overrides(), smart_runtime_overrides(
                 smart_offload=smart_offload,
                 smart_fallback=smart_fallback,

@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_ensure_registry_ready` (function): Ensures the engine registry has the default engines registered (idempotent).
 - `_instantiate_engine` (function): Creates an engine instance for a resolved diffusion bundle (family → engine key).
 - `_options_to_kwargs` (function): Converts `EngineLoadOptions` into `engine.load(...)` keyword arguments.
-- `_apply_runtime_options` (function): Applies runtime options (attention backend, accelerator) to diffusers-backed engines.
+- `_apply_runtime_options` (function): Applies runtime options (attention backend from explicit load options or runtime memory config, plus accelerator) to diffusers-backed engines.
 - `load_engine` (function): Loads and initializes a diffusion engine for direct use (best-effort cleanup on failures).
 """
 
@@ -30,7 +30,7 @@ from apps.backend.core.registry import create_engine
 from apps.backend.engines import register_default_engines
 from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as _apply_accel
 from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as _apply_attn
-from apps.backend.services import options_store
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import (
     DiffusionModelBundle,
     FAMILY_TO_ENGINE_KEY,
@@ -87,7 +87,10 @@ def _apply_runtime_options(engine: Any, opts: EngineLoadOptions | None) -> Any:
     if opts and opts.attention_backend is not None:
         attention_backend = opts.attention_backend
     else:
-        attention_backend = str(options_store.get_value("codex_attention_backend", "pytorch") or "pytorch")
+        try:
+            attention_backend = str(memory_management.manager.config.attention.backend.value)
+        except Exception:
+            attention_backend = "pytorch"
 
     if attention_backend is not None:
         _apply_attn(pipe, backend=attention_backend)

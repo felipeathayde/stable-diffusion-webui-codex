@@ -10,7 +10,7 @@ Purpose: Launcher profile persistence (meta + env areas + per-model env overlays
 Implements the profile store used by the TUI/GUI launchers to load/save settings under `.sangoi/launcher/` (meta/areas/models) and to
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 Defines defaults for performance-related env keys (GGUF exec/cache knobs, CFG batching, profiling flags) and task/runtime safety knobs (single-flight,
-task cancel mode, task SSE buffer caps, safeweights) so runs are reproducible.
+task cancel mode, task SSE buffer caps, safeweights), plus attention bootstrap policy keys, so runs are reproducible.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Dict, Iterator, Tuple
 
 from apps.backend.infra.config.repo_root import get_repo_root
+from apps.launcher.settings import SettingValidationError, normalize_attention_env
 
 LOGGER = logging.getLogger("codex.launcher.profiles")
 
@@ -75,6 +76,8 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_VAE_DEVICE": "auto",
         "CODEX_GGUF_EXEC": "dequant_forward",
         "CODEX_GGUF_DEQUANT_CACHE": "off",
+        "CODEX_ATTENTION_BACKEND": "pytorch",
+        "CODEX_ATTENTION_SDPA_POLICY": "mem_efficient",
         "CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE": os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"),
         "CODEX_LORA_APPLY_MODE": "merge",
         "CODEX_LORA_ONLINE_MATH": "weight_merge",
@@ -242,7 +245,6 @@ class LauncherProfileStore:
                 if key.startswith("WAN_"):
                     container.pop(key, None)
                 if key in {
-                    "CODEX_ATTENTION_BACKEND",
                     "CODEX_ATTN_CHUNK_SIZE",
                     "CODEX_GGUF_CACHE_POLICY",
                     "CODEX_GGUF_CACHE_LIMIT_MB",
@@ -257,8 +259,41 @@ class LauncherProfileStore:
                     "CODEX_PIN_SHARED_MEMORY",
                 }:
                     container.pop(key, None)
+        core_env = self.areas.setdefault("core", {})
+        try:
+            normalize_attention_env(core_env)
+        except SettingValidationError as exc:
+            raise RuntimeError(f"Invalid launcher attention setting in area 'core': {exc}") from exc
+        for area_name, container in self.areas.items():
+            if area_name == "core":
+                continue
+            removed_keys: list[str] = []
+            for key in ("CODEX_ATTENTION_BACKEND", "CODEX_ATTENTION_SDPA_POLICY"):
+                if key in container:
+                    container.pop(key, None)
+                    removed_keys.append(key)
+            if removed_keys:
+                LOGGER.warning(
+                    "Dropped non-core launcher attention override(s) from area '%s': %s. "
+                    "Attention backend is a launcher runtime-global setting in area 'core'.",
+                    area_name,
+                    ", ".join(removed_keys),
+                )
+        for model_name, container in self.models.items():
+            removed_keys: list[str] = []
+            for key in ("CODEX_ATTENTION_BACKEND", "CODEX_ATTENTION_SDPA_POLICY"):
+                if key in container:
+                    container.pop(key, None)
+                    removed_keys.append(key)
+            if removed_keys:
+                LOGGER.warning(
+                    "Dropped model-scoped launcher attention override(s) for model '%s': %s. "
+                    "Attention backend is a launcher runtime-global setting.",
+                    model_name,
+                    ", ".join(removed_keys),
+                )
         self.areas.pop("wan", None)
-        # Device/dtype/attention/cache settings are configured via WebUI options.
+        # Device/dtype bootstrap settings live in launcher env and are forwarded as API CLI flags.
 
 def _default_root() -> Path:
     return get_repo_root() / ".sangoi" / "launcher"

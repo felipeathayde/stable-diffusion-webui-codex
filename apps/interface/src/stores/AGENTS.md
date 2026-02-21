@@ -22,6 +22,7 @@ Status: Active
 - 2026-01-24: `quicksettings.ts` stopped persisting UI-only globals via `/api/options` (`codex_engine`, `codex_mode`, `codex_device`, `sd_vae`); device + VAE + non-tab TE overrides now persist in localStorage (payload builders remain strict).
 - 2026-01-24: Removed the global checkpoint default (`sd_model_checkpoint`); checkpoint selection is per-tab (`tab.params.checkpoint`) and request-driven (`model`/`extras.model_sha`).
 - 2026-01-24: Attention backend QuickSettings no longer offers the unported `sage` option; backend enforces strict choices via `/api/settings/schema`.
+- 2026-02-21: `quicksettings.ts` no longer owns attention backend selection state/mutation for the header Advanced row; launcher runtime bootstrap now owns attention backend/SDPA policy configuration.
 - 2026-01-24: `xyz.ts` no longer tries to set `codex_engine` via `/api/options`; XYZ runs include `engine`/`model` per job payload.
 - 2025-12-14: `model_tabs.ts` treats tab `type` as a UI tab kind (`sd15|sdxl|flux1|chroma|zimage|wan`) and normalizes legacy WAN types (`wan22_*` → `wan`); removed the legacy video Pinia store (`stores/video.ts`) now that WAN video runs exclusively via model tabs + typed payload builders.
 - 2025-12-27: Image tabs now persist their checkpoint + text encoders in tab params (`checkpoint`, `textEncoders`) and `model_tabs.normalizeTab()` fills missing params with defaults at load time (so backend-saved tabs with partial `params` don’t render blank/undefined fields).

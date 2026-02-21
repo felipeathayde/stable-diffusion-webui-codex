@@ -32,3 +32,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to `infra/__init__.py`, `infra/accelerators/*`, `infra/config/*`, and `infra/registry/*` modules (doc-only change; part of rollout).
 - 2026-02-10: Added global structural-conversion policy reader `config/weight_structural_conversion.py` (`CODEX_WEIGHT_STRUCTURAL_CONVERSION=auto|convert`) so runtime/keymap/parser seams can enforce fail-loud no-conversion behavior in `auto`.
 - 2026-02-18: Added `infra/stdio.py` as the shared low-level stdout/stderr emission seam used by CLI prompts and contract-sensitive console notices, centralizing primitive stream writes in one module.
+- 2026-02-21: `config/args.py` now accepts `--attention-sdpa-policy` (`auto|flash|mem_efficient|math`) for PyTorch attention backend bootstrap, with strict fail-loud validation for incompatible backend/policy combinations.

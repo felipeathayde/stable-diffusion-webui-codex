@@ -116,13 +116,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const vaeShaMap = ref<Map<string, string>>(new Map())
   const loraShaMap = ref<Map<string, string>>(new Map())
   const wanGgufShaMap = ref<Map<string, string>>(new Map())
-  const attentionChoices = ref<{ value: string; label: string }[]>([
-    { value: 'pytorch', label: 'PyTorch (SDPA)' },
-    { value: 'xformers', label: 'xFormers' },
-    { value: 'split', label: 'Split (Chunked)' },
-    { value: 'quad', label: 'Quad (Sub-Quadratic)' },
-  ])
-  const currentAttention = ref<string>('pytorch')
   const deviceChoices = ref<{ value: string; label: string }[]>([
     { value: 'cuda', label: 'CUDA' },
     { value: 'cpu', label: 'CPU' },
@@ -344,9 +337,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     const opts = res.values
     applySettingsRevision((res as any).revision ?? (opts as any)?.codex_options_revision)
     syncSettingsRevisionFromCache()
-    if (typeof (opts as any).codex_attention_backend === 'string') {
-      currentAttention.value = (opts as any).codex_attention_backend
-    }
     if (typeof (opts as any).codex_core_device === 'string') {
       coreDevice.value = (opts as any).codex_core_device
       currentDevice.value = coreDevice.value === 'auto' ? currentDevice.value : coreDevice.value
@@ -662,11 +652,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     saveTextEncoderOverridesToStorage(labels)
   }
 
-  async function setAttentionBackend(value: string): Promise<void> {
-    currentAttention.value = value
-    await applyOptionUpdate({ codex_attention_backend: value })
-  }
-
   async function setDevice(value: string): Promise<void> {
     currentDevice.value = value
     saveDeviceToStorage(value)
@@ -748,8 +733,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     currentVae,
     textEncoderChoices,
     currentTextEncoders,
-    attentionChoices,
-    currentAttention,
     deviceChoices,
     currentDevice,
     init,
@@ -757,7 +740,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     setModel,
     setVae,
     setTextEncoders,
-    setAttentionBackend,
     setDevice,
     coreDevice,
     teDevice,

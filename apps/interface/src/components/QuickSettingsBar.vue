@@ -28,13 +28,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fileInPaths` (function): Checks whether a file path belongs to the configured roots for a key from `/api/paths` (drives selector filtering).
 - `isVaeForFamily` (function): Filters VAE entries to those relevant for the current family.
 - `withBuiltInVaeChoice` (function): Prepends canonical `built-in` to filtered VAE choices and removes legacy aliases/duplicates.
+- `canonicalizeVaeChoiceForActiveFamily` (function): Normalizes `currentVae` to an active-family option (direct match, sentinel alias, or SHA-equivalent fallback).
+- `isQuicksettingsReady` (ref): Becomes true only after component-local inventory/paths initialization completes; gates mount-time VAE canonicalization.
 - `normalizeTextEncoderLabels` (function): Normalizes raw TE values into a stable label list (used for Flux/WAN multi-TE cases).
 - `WanAssetsParams` (type): Minimal WAN assets triple used for payload building (metadata dir + TE + VAE).
 - `currentWanAssets` (function): Builds `WanAssetsParams` from current UI selections (used by WAN payload generation).
 - `textEncoderLabel` (function): Converts raw TE selector values into a canonical label (handles WAN-style prefixes).
 - `onPrimaryTextEncoderChange` (function): Applies primary text-encoder selection changes (and triggers dependent updates).
 - `onSecondaryTextEncoderChange` (function): Applies secondary text-encoder selection changes (Flux/Kontext dual-encoder workflows).
-- `onAttentionChange` (function): Updates attention implementation selection (backend/runtime policy).
 - `onSmartOffloadChange` (function): Updates Smart Offload toggle (impacts per-request memory behavior).
 - `onSmartFallbackChange` (function): Updates Smart Fallback toggle (best-effort OOM fallback behavior).
 - `onSmartCacheChange` (function): Updates Smart Cache toggle (conditioning caching behavior).
@@ -330,15 +331,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <div ref="advancedRowEl" class="quicksettings-advanced-collapse" :data-state="advancedOpen ? 'open' : 'closed'">
       <div ref="advancedRowInnerEl" class="quicksettings-row quicksettings-row--advanced-inner">
-        <div class="quicksettings-group qs-group-attention">
-          <label class="label-muted">Attention Backend</label>
-          <div class="qs-row">
-            <select class="select-md" :value="store.currentAttention" @change="onAttentionChange(($event.target as HTMLSelectElement).value)">
-              <option v-for="opt in store.attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-            </select>
-          </div>
-        </div>
-
         <QuickSettingsPerf
           :smart-offload="store.smartOffload"
           :smart-fallback="store.smartFallback"
@@ -440,6 +432,7 @@ const pathInputEl = ref<HTMLInputElement | null>(null)
 let pathInputApply: ((value: string) => Promise<void>) | null = null
 const { notice: qsNotice, toast: qsToast } = useResultsCard({ noticeDurationMs: 4000 })
 const isLoadingQuicksettings = ref(false)
+const isQuicksettingsReady = ref(false)
 const advancedOpen = ref(true)
 const advancedRowEl = ref<HTMLElement | null>(null)
 const advancedRowInnerEl = ref<HTMLElement | null>(null)
@@ -928,6 +921,38 @@ function withBuiltInVaeChoice(values: string[]): string[] {
   return out
 }
 
+function canonicalizeVaeChoiceForActiveFamily(current: string, choices: readonly string[]): string | null {
+  if (!Array.isArray(choices) || choices.length === 0) return null
+
+  const rawCurrent = String(current || '').trim()
+  if (!rawCurrent) {
+    return choices.includes('built-in') ? 'built-in' : String(choices[0] || '')
+  }
+  if (choices.includes(rawCurrent)) return rawCurrent
+
+  const currentLower = rawCurrent.toLowerCase()
+  if (currentLower === 'automatic' || currentLower === 'built in' || currentLower === 'built-in') {
+    return choices.includes('built-in') ? 'built-in' : String(choices[0] || '')
+  }
+  if (currentLower === 'none' && choices.includes('none')) {
+    return 'none'
+  }
+
+  const currentSha = store.resolveVaeSha(rawCurrent)
+  if (currentSha) {
+    const normalizedCurrentSha = String(currentSha).trim().toLowerCase()
+    for (const choice of choices) {
+      const candidateSha = store.resolveVaeSha(choice)
+      if (!candidateSha) continue
+      if (String(candidateSha).trim().toLowerCase() === normalizedCurrentSha) {
+        return choice
+      }
+    }
+  }
+
+  return choices.includes('built-in') ? 'built-in' : String(choices[0] || '')
+}
+
 const filteredVaeChoices = computed(() => {
   const fam = activeFamily.value
   if (fam === 'flux1' || fam === 'chroma') {
@@ -950,6 +975,21 @@ const filteredVaeChoices = computed(() => {
   })
   return withBuiltInVaeChoice(familyChoices)
 })
+
+watch(
+  () => [activeFamily.value, store.currentVae, filteredVaeChoices.value, isQuicksettingsReady.value] as const,
+  ([family, currentVae, choices, quicksettingsReady]) => {
+    if (family === 'wan') return
+    if (!quicksettingsReady) return
+    const nextVae = canonicalizeVaeChoiceForActiveFamily(String(currentVae || ''), choices)
+    if (!nextVae) return
+    if (String(currentVae || '') === nextVae) return
+    store.setVae(nextVae).catch((error) => {
+      toastQuicksettingsError(error)
+    })
+  },
+  { immediate: true },
+)
 
 const filteredTextEncoderChoices = computed(() => {
   const fam = activeFamily.value
@@ -1132,6 +1172,7 @@ async function initQuicksettings(
   options?: { forceInventoryRefresh?: boolean; forceModelsRefresh?: boolean },
   controls?: { includeStoreInit?: boolean },
 ): Promise<void> {
+  isQuicksettingsReady.value = false
   isLoadingQuicksettings.value = true
   try {
     if (controls?.includeStoreInit !== false) {
@@ -1144,6 +1185,7 @@ async function initQuicksettings(
       loadPaths(),
       loadInventory({ forceRefresh: options?.forceInventoryRefresh === true }),
     ])
+    isQuicksettingsReady.value = true
   } finally {
     isLoadingQuicksettings.value = false
   }
@@ -1432,12 +1474,6 @@ function onSecondaryTextEncoderChange(value: string): void {
   const primary = flux1TextEncoderPrimary.value || ''
   const secondary = value || ''
   updateFlux1TextEncoders(primary, secondary).catch((error) => {
-    qsToast(error instanceof Error ? error.message : String(error))
-  })
-}
-
-function onAttentionChange(value: string): void {
-  store.setAttentionBackend(value).catch((error) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }

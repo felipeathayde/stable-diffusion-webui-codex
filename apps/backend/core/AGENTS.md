@@ -38,3 +38,4 @@ Status: Active
 - 2026-02-15: `BaseRequest` now carries `settings_revision` for strict generation contract propagation (routers validate revision against persisted options revision before dispatch).
 - 2026-02-16: `InferenceOrchestrator` primary-device drift checks now probe canonical `codex_objects.denoiser` residency (`load_device`/`device`/parameter-device seams) with legacy `codex_objects.unet` fallback, fixing contract drift where device reload checks could silently skip reloading.
 - 2026-02-17: `InferenceOrchestrator` reload fingerprint now also tracks `engine_options.dtype` (normalized string) so dtype override changes trigger a reload instead of reusing stale loaded engines.
+- 2026-02-21: `engine_loader.py` now resolves default diffusers attention backend from runtime memory config (launcher/bootstrap authority) instead of a potentially stale saved option snapshot.

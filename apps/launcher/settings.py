@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Typed launcher settings and validation helpers.
 Provides typed env-backed wrappers (no Tk dependency) so UI/service code avoids stringly-typed lookups and scattered
 normalization rules, and so this module is unit-testable.
-Includes strict normalization for task cancel default mode (`CODEX_TASK_CANCEL_DEFAULT_MODE`) alongside task buffer/safety knobs.
+Includes strict normalization for attention bootstrap keys (`CODEX_ATTENTION_BACKEND`, `CODEX_ATTENTION_SDPA_POLICY`) and
+task cancel default mode (`CODEX_TASK_CANCEL_DEFAULT_MODE`) alongside task buffer/safety knobs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SettingValidationError` (exception): Raised when a launcher setting value is invalid.
@@ -21,11 +22,17 @@ Symbols (top-level; keep in sync; no ghosts):
 - `TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT` (constant): Default max SSE events buffered per task.
 - `TASK_EVENT_BUFFER_MAX_MB_DEFAULT` (constant): Default max SSE MB buffered per task.
 - `TASK_CANCEL_DEFAULT_MODE_CHOICES` (constant): Allowed values for `CODEX_TASK_CANCEL_DEFAULT_MODE`.
+- `ATTENTION_BACKEND_CHOICES` (constant): Allowed values for `CODEX_ATTENTION_BACKEND`.
+- `ATTENTION_SDPA_POLICY_CHOICES` (constant): Allowed values for `CODEX_ATTENTION_SDPA_POLICY`.
+- `LAUNCHER_ATTENTION_MODE_CHOICES` (constant): Allowed launcher UI attention mode values.
 - `GGUF_EXEC_CHOICES` (constant): Allowed values for `CODEX_GGUF_EXEC`.
 - `GGUF_DEQUANT_CACHE_CHOICES` (constant): Allowed values for `CODEX_GGUF_DEQUANT_CACHE`.
 - `WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES` (constant): Allowed values for `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE`.
 - `LORA_APPLY_CHOICES` (constant): Allowed values for `CODEX_LORA_APPLY_MODE`.
 - `LORA_ONLINE_MATH_CHOICES` (constant): Allowed values for `CODEX_LORA_ONLINE_MATH`.
+- `attention_mode_to_backend_policy` (function): Maps launcher UI attention mode (`sdpa_*|xformers|split|quad`) to backend + SDPA policy.
+- `backend_policy_to_attention_mode` (function): Maps normalized backend + SDPA policy to launcher UI attention mode.
+- `normalize_attention_env` (function): Normalizes attention env keys (`CODEX_ATTENTION_BACKEND`, `CODEX_ATTENTION_SDPA_POLICY`) enforcing cross-setting invariants.
 - `normalize_gguf_lora_env` (function): Normalizes GGUF/LoRA/WAN img2vid chunk-buffer env keys enforcing cross-setting invariants.
 - `normalize_task_runtime_env` (function): Normalizes task/runtime env keys (single-flight, safeweights, task SSE buffer caps).
 """
@@ -45,6 +52,17 @@ CFG_BATCH_MODE_CHOICES: tuple[str, ...] = ("fused", "split")
 TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT = 5000
 TASK_EVENT_BUFFER_MAX_MB_DEFAULT = 64
 TASK_CANCEL_DEFAULT_MODE_CHOICES: tuple[str, ...] = ("immediate", "after_current")
+ATTENTION_BACKEND_CHOICES: tuple[str, ...] = ("pytorch", "xformers", "split", "quad")
+ATTENTION_SDPA_POLICY_CHOICES: tuple[str, ...] = ("auto", "flash", "mem_efficient", "math")
+LAUNCHER_ATTENTION_MODE_CHOICES: tuple[str, ...] = (
+    "sdpa_auto",
+    "sdpa_flash",
+    "sdpa_mem_efficient",
+    "sdpa_math",
+    "xformers",
+    "split",
+    "quad",
+)
 GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
 GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off", "lvl1", "lvl2")
 WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES: tuple[str, ...] = ("hybrid", "ram", "ram+hd")
@@ -138,6 +156,65 @@ class IntSetting:
         if self.maximum is not None and value > self.maximum:
             raise SettingValidationError(f"{self.key} must be <= {self.maximum} (got {value}).")
         env[self.key] = str(value)
+
+
+def attention_mode_to_backend_policy(mode: str) -> tuple[str, str]:
+    normalized_mode = ChoiceSetting(
+        "CODEX_ATTENTION_MODE",
+        default="sdpa_mem_efficient",
+        choices=LAUNCHER_ATTENTION_MODE_CHOICES,
+    ).parse(mode)
+    if normalized_mode == "sdpa_auto":
+        return "pytorch", "auto"
+    if normalized_mode == "sdpa_flash":
+        return "pytorch", "flash"
+    if normalized_mode == "sdpa_mem_efficient":
+        return "pytorch", "mem_efficient"
+    if normalized_mode == "sdpa_math":
+        return "pytorch", "math"
+    if normalized_mode in {"xformers", "split", "quad"}:
+        return normalized_mode, "auto"
+    raise SettingValidationError(f"CODEX_ATTENTION_MODE must be one of: {', '.join(LAUNCHER_ATTENTION_MODE_CHOICES)}.")
+
+
+def backend_policy_to_attention_mode(backend: str, sdpa_policy: str) -> str:
+    normalized_backend = ChoiceSetting(
+        "CODEX_ATTENTION_BACKEND",
+        default="pytorch",
+        choices=ATTENTION_BACKEND_CHOICES,
+    ).parse(backend)
+    normalized_policy = ChoiceSetting(
+        "CODEX_ATTENTION_SDPA_POLICY",
+        default="auto",
+        choices=ATTENTION_SDPA_POLICY_CHOICES,
+    ).parse(sdpa_policy)
+    if normalized_backend == "pytorch":
+        if normalized_policy == "flash":
+            return "sdpa_flash"
+        if normalized_policy == "mem_efficient":
+            return "sdpa_mem_efficient"
+        if normalized_policy == "math":
+            return "sdpa_math"
+        return "sdpa_auto"
+    return normalized_backend
+
+
+def normalize_attention_env(env: MutableMapping[str, str]) -> tuple[str, str]:
+    backend = ChoiceSetting(
+        "CODEX_ATTENTION_BACKEND",
+        default="pytorch",
+        choices=ATTENTION_BACKEND_CHOICES,
+    ).get(env)
+    sdpa_policy = ChoiceSetting(
+        "CODEX_ATTENTION_SDPA_POLICY",
+        default="auto",
+        choices=ATTENTION_SDPA_POLICY_CHOICES,
+    ).get(env)
+    if backend != "pytorch":
+        sdpa_policy = "auto"
+    env["CODEX_ATTENTION_BACKEND"] = backend
+    env["CODEX_ATTENTION_SDPA_POLICY"] = sdpa_policy
+    return backend, sdpa_policy
 
 
 def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, str, str, str]:

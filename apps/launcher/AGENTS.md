@@ -38,3 +38,4 @@ Last Review: 2026-02-21
 - 2026-02-15: Launcher API arg forwarding now includes trace toggles (`CODEX_TRACE_CONTRACT` -> `--trace-contract`, `CODEX_TRACE_PROFILER` -> `--trace-profiler`) for backend bootstrap alignment.
 - 2026-02-18: Launcher task/runtime profile defaults now persist `CODEX_TASK_CANCEL_DEFAULT_MODE` (`immediate|after_current`) as a backend bootstrap knob for task cancel policy.
 - 2026-02-21: Launcher profiles/settings now persist and validate `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE` (`hybrid|ram|ram+hd`) as a runtime bootstrap knob used by WAN22 img2vid chunk buffering policy.
+- 2026-02-21: Launcher Runtime now owns attention bootstrap policy via `CODEX_ATTENTION_BACKEND` + `CODEX_ATTENTION_SDPA_POLICY`, forwarding `--attention-backend` and `--attention-sdpa-policy` to backend startup.

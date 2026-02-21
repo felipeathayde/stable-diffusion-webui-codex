@@ -66,7 +66,6 @@
   .quicksettings .qs-group-wan-text-encoder { flex: 2 1 18rem; min-width: 14rem; }
   .quicksettings .qs-group-wan-vae { flex: 1.2 1 12rem; min-width: 10rem; }
   .quicksettings .qs-group-zimage-turbo { flex: 0 0 auto; }
-  .quicksettings .qs-group-attention { flex: 0 0 auto; min-width: 85px; }
   .quicksettings .qs-group-models { flex: 0 0 auto; }
   .quicksettings .qs-group-mode-toggle { flex: 0 0 auto; }
   .quicksettings .qs-group-mode-toggle .qs-row { gap: 0.35rem; }

@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_apply_component_device_overrides` (function): Applies per-component device overrides (core/vae/text encoders) to `RuntimeMemoryConfig`.
 - `_apply_env_overrides` (function): Applies environment-variable overrides onto parsed args.
 - `_resolve_attention_backend` (function): Resolves attention backend selection into `AttentionBackend`.
+- `_resolve_attention_sdpa_policy` (function): Resolves SDPA policy selection (`auto|flash|mem_efficient|math`) for PyTorch attention backend.
 - `build_runtime_memory_config` (function): Builds a `RuntimeMemoryConfig` from parsed args (includes validation + defaults).
 - `initialize` (function): Entry-point helper; parses argv/env and returns the built runtime config (used by launchers).
 """
@@ -108,6 +109,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "Attention backend selection (restart required). "
             "Use 'pytorch' for Torch SDPA, 'xformers' for xFormers attention, "
             "'split' for chunked attention, or 'quad' for sub-quadratic attention."
+        ),
+    )
+    parser.add_argument(
+        "--attention-sdpa-policy",
+        choices=["auto", "flash", "mem_efficient", "math"],
+        default=None,
+        help=(
+            "SDPA policy for PyTorch attention backend. "
+            "Explicit policies ('flash', 'mem_efficient', 'math') require '--attention-backend=pytorch'; "
+            "'auto' is treated as neutral for non-pytorch backends. "
+            "'auto' lets PyTorch choose; 'flash' forces flash; "
+            "'mem_efficient' forces efficient attention; 'math' forces math kernel."
         ),
     )
 
@@ -483,6 +496,7 @@ def _validate_runtime_flags(ns: argparse.Namespace) -> None:
             raise RuntimeError("--gguf-dequant-cache-ratio must be > 0 and <= 1 when provided.")
 
     attn_backend = _resolve_attention_backend(ns)
+    _resolve_attention_sdpa_policy(ns, backend=attn_backend)
     if attn_backend == AttentionBackend.XFORMERS:
         if getattr(ns, "disable_xformers", False):
             raise RuntimeError("xformers attention backend is incompatible with --disable-xformers.")
@@ -667,6 +681,15 @@ def _apply_component_device_overrides(config: RuntimeMemoryConfig, ns: argparse.
 
 
 def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None:
+    if not _has_value(getattr(ns, "attention_backend", None)):
+        raw_attention_backend = str(env.get("CODEX_ATTENTION_BACKEND", "") or "").strip().lower()
+        if raw_attention_backend:
+            ns.attention_backend = raw_attention_backend
+    if not _has_value(getattr(ns, "attention_sdpa_policy", None)):
+        raw_attention_sdpa_policy = str(env.get("CODEX_ATTENTION_SDPA_POLICY", "") or "").strip().lower()
+        if raw_attention_sdpa_policy:
+            ns.attention_sdpa_policy = raw_attention_sdpa_policy
+
     def _set_core_dtype(val: str | None) -> None:
         ns.core_in_fp16 = False
         ns.core_in_bf16 = False
@@ -850,6 +873,23 @@ def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:
     return AttentionBackend.PYTORCH
 
 
+def _resolve_attention_sdpa_policy(
+    ns: argparse.Namespace,
+    *,
+    backend: AttentionBackend,
+) -> str:
+    explicit = getattr(ns, "attention_sdpa_policy", None)
+    if not isinstance(explicit, str) or not explicit.strip():
+        return "auto"
+    normalized = explicit.strip().lower()
+    if normalized not in {"auto", "flash", "mem_efficient", "math"}:
+        allowed = "auto, flash, mem_efficient, math"
+        raise RuntimeError(f"Unsupported attention SDPA policy '{explicit}'. Allowed: {allowed}.")
+    if backend != AttentionBackend.PYTORCH and normalized != "auto":
+        raise RuntimeError("--attention-sdpa-policy requires '--attention-backend=pytorch'.")
+    return normalized
+
+
 def build_runtime_memory_config(ns: argparse.Namespace) -> RuntimeMemoryConfig:
     precision = PrecisionFlags(
         all_fp16=ns.all_in_fp16,
@@ -869,14 +909,15 @@ def build_runtime_memory_config(ns: argparse.Namespace) -> RuntimeMemoryConfig:
     )
 
     attention_backend = _resolve_attention_backend(ns)
+    sdpa_policy = _resolve_attention_sdpa_policy(ns, backend=attention_backend)
     force_upcast = bool(ns.force_upcast_attention)
     if getattr(ns, "disable_attention_upcast", False):
         force_upcast = False
 
     attention = AttentionConfig(
         backend=attention_backend,
-        enable_flash=attention_backend == AttentionBackend.PYTORCH,
-        enable_mem_efficient=attention_backend == AttentionBackend.PYTORCH,
+        enable_flash=attention_backend == AttentionBackend.PYTORCH and sdpa_policy in {"auto", "flash"},
+        enable_mem_efficient=attention_backend == AttentionBackend.PYTORCH and sdpa_policy in {"auto", "mem_efficient"},
         force_upcast=force_upcast,
         allow_split_fallback=True,
         allow_quad_fallback=True,

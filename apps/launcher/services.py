@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
 - `_env_truthy` (function): Normalizes launcher env booleans (`1/true/yes/on`) for CLI flag forwarding.
-- `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings.
+- `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles).
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
 - `_windows_no_activate` (function): Windows startupinfo helper to open consoles without stealing focus.
@@ -398,6 +398,23 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     raw_vae_device = str(env.get("CODEX_VAE_DEVICE", "") or "").strip().lower()
     if raw_vae_device:
         args.append(f"--vae-device={raw_vae_device}")
+
+    raw_attention_backend = str(env.get("CODEX_ATTENTION_BACKEND", "") or "").strip().lower()
+    if raw_attention_backend:
+        if raw_attention_backend not in {"pytorch", "xformers", "split", "quad"}:
+            raise ValueError(
+                "CODEX_ATTENTION_BACKEND must be one of: pytorch, xformers, split, quad "
+                f"(got {raw_attention_backend!r}).",
+            )
+        args.append(f"--attention-backend={raw_attention_backend}")
+        raw_sdpa_policy = str(env.get("CODEX_ATTENTION_SDPA_POLICY", "") or "").strip().lower()
+        if raw_attention_backend == "pytorch" and raw_sdpa_policy:
+            if raw_sdpa_policy not in {"auto", "flash", "mem_efficient", "math"}:
+                raise ValueError(
+                    "CODEX_ATTENTION_SDPA_POLICY must be one of: auto, flash, mem_efficient, math "
+                    f"(got {raw_sdpa_policy!r}).",
+                )
+            args.append(f"--attention-sdpa-policy={raw_sdpa_policy}")
 
     raw_exec = str(env.get("CODEX_GGUF_EXEC", "") or "").strip().lower()
     if raw_exec:

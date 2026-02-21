@@ -11,7 +11,7 @@ Edits bootstrap-critical device defaults and global runtime/task knobs that must
 task cancel default mode, task SSE buffer caps, upscaler safeweights).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RuntimeTab` (class): Runtime settings tab (devices + GGUF/LoRA + PyTorch alloc conf/cuda-malloc toggles).
+- `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + GGUF/LoRA + PyTorch alloc conf/cuda-malloc toggles).
 """
 
 from __future__ import annotations
@@ -34,12 +34,28 @@ from apps.launcher.settings import (
     TASK_CANCEL_DEFAULT_MODE_CHOICES,
     TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
     TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
+    attention_mode_to_backend_policy,
+    backend_policy_to_attention_mode,
     normalize_gguf_lora_env,
+    normalize_attention_env,
     normalize_task_runtime_env,
 )
 
 from ..controller import LauncherController
 from ..widgets import ScrollableFrame, add_help, add_section_header
+
+
+_ATTENTION_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("SDPA - Auto", "sdpa_auto"),
+    ("SDPA - Flash", "sdpa_flash"),
+    ("SDPA - Mem Efficient", "sdpa_mem_efficient"),
+    ("SDPA - Math", "sdpa_math"),
+    ("xFormers", "xformers"),
+    ("Split (Chunked)", "split"),
+    ("Quad (Sub-Quadratic)", "quad"),
+)
+_ATTENTION_LABEL_TO_MODE = {label: mode for label, mode in _ATTENTION_MODE_OPTIONS}
+_ATTENTION_MODE_TO_LABEL = {mode: label for label, mode in _ATTENTION_MODE_OPTIONS}
 
 
 class RuntimeTab:
@@ -59,6 +75,7 @@ class RuntimeTab:
         self._var_core_device = tk.StringVar()
         self._var_te_device = tk.StringVar()
         self._var_vae_device = tk.StringVar()
+        self._var_attention_mode = tk.StringVar()
 
         self._var_lora_apply_mode = tk.StringVar()
         self._var_gguf_exec = tk.StringVar()
@@ -111,10 +128,27 @@ class RuntimeTab:
             choices=list(DEVICE_CHOICES),
             on_change=lambda: self._set_env_lower("CODEX_VAE_DEVICE", self._var_vae_device.get()),
         )
+        row = self._add_choice_combo(
+            body,
+            row,
+            label="Attention mode (requires API restart):",
+            var=self._var_attention_mode,
+            choices=[label for label, _mode in _ATTENTION_MODE_OPTIONS],
+            on_change=self._on_attention_mode_changed,
+            width=20,
+        )
+        row = add_help(
+            body,
+            row,
+            "sdpa_auto lets PyTorch pick the best SDPA kernel.\n"
+            "sdpa_flash/sdpa_mem_efficient/sdpa_math force a specific SDPA policy.\n"
+            "xformers/split/quad select non-SDPA attention backends.",
+        )
         row = add_help(
             body,
             row,
             "These values are passed as backend CLI flags (`--core-device/--te-device/--vae-device`).\n"
+            "Attention mode is passed via `--attention-backend` + optional `--attention-sdpa-policy`.\n"
             "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks.",
         )
 
@@ -255,7 +289,7 @@ class RuntimeTab:
         _ = add_help(
             body,
             row,
-            "Runtime settings (dtype/attention/cache/offload) are configured via the Web UI.\n"
+            "Runtime settings (dtype/cache/offload) are configured via the Web UI.\n"
             "This launcher focuses on bootstrap + global runtime knobs that must exist before the API starts.",
         )
 
@@ -341,6 +375,15 @@ class RuntimeTab:
         self._var_core_device.set(_get("CODEX_CORE_DEVICE", "auto"))
         self._var_te_device.set(_get("CODEX_TE_DEVICE", "auto"))
         self._var_vae_device.set(_get("CODEX_VAE_DEVICE", "auto"))
+        try:
+            attn_backend, attn_sdpa_policy = normalize_attention_env(env)
+        except SettingValidationError as exc:
+            self._controller.store.env["CODEX_ATTENTION_BACKEND"] = "pytorch"
+            self._controller.store.env["CODEX_ATTENTION_SDPA_POLICY"] = "mem_efficient"
+            attn_backend, attn_sdpa_policy = normalize_attention_env(self._controller.store.env)
+            messagebox.showerror("Invalid runtime setting", str(exc))
+        attention_mode = backend_policy_to_attention_mode(attn_backend, attn_sdpa_policy)
+        self._var_attention_mode.set(_ATTENTION_MODE_TO_LABEL.get(attention_mode, "SDPA - Mem Efficient"))
 
         self._var_lora_apply_mode.set(_get("CODEX_LORA_APPLY_MODE", "merge"))
         self._var_gguf_exec.set(_get("CODEX_GGUF_EXEC", "dequant_forward"))
@@ -477,6 +520,21 @@ class RuntimeTab:
 
     def _set_env_lower(self, key: str, value: str) -> None:
         self._controller.store.env[key] = str(value).strip().lower()
+        self._mark_changed()
+
+    def _on_attention_mode_changed(self) -> None:
+        env = self._controller.store.env
+        try:
+            raw_mode = str(self._var_attention_mode.get() or "").strip()
+            attention_mode = _ATTENTION_LABEL_TO_MODE.get(raw_mode, raw_mode)
+            backend, sdpa_policy = attention_mode_to_backend_policy(attention_mode)
+        except SettingValidationError as exc:
+            messagebox.showerror("Invalid runtime setting", str(exc))
+            backend, sdpa_policy = "pytorch", "mem_efficient"
+        env["CODEX_ATTENTION_BACKEND"] = backend
+        env["CODEX_ATTENTION_SDPA_POLICY"] = sdpa_policy
+        attention_mode = backend_policy_to_attention_mode(backend, sdpa_policy)
+        self._var_attention_mode.set(_ATTENTION_MODE_TO_LABEL.get(attention_mode, "SDPA - Mem Efficient"))
         self._mark_changed()
 
     def _on_alloc_conf_changed(self) -> None:

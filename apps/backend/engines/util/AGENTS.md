@@ -18,3 +18,4 @@ Status: Active
 - 2026-01-06: `schedulers.py` now expects canonical sampler/scheduler strings (lowercase; spaces/`++` preserved); empty/unknown values raise immediately.
 - 2026-02-08: `build_{txt2img,img2img}_processing` now copies `extras.er_sde` mappings before storing overrides, preserving request-local ER-SDE options without shared mutable aliasing.
 - 2026-02-08: `adapters._build_refiner_config` now uses swap-pointer semantics (`switch_at_step` → `RefinerConfig.swap_at_step`) instead of refiner step-count semantics.
+- 2026-02-21: `attention_backend.py` now sources defaults from runtime memory config and applies diffusers SDPA flags from effective attention policy (with explicit warning fallback when flash appears unavailable).

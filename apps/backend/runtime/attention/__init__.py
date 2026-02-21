@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Attention backend implementations (basic / chunked / xFormers / PyTorch SDPA) + diffusers processor adapter.
 Provides multiple attention implementations for different memory/performance tradeoffs, plus helpers for precision upcasting and
 single-head spatial attention variants used by legacy SD/UNet code paths.
+PyTorch SDPA flash-policy requests warn and fall back deterministically when flash kernels are unavailable.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `get_attn_precision` (function): Resolves attention precision policy (handles global upcast and disable flags).
@@ -17,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `attention_sub_quad` (function): Memory-saving attention variant (sub-quadratic/chunked) for long sequences.
 - `attention_split` (function): Splits attention computation into chunks to reduce peak memory.
 - `attention_xformers` (function): xFormers attention path (when available and not broken).
-- `attention_pytorch` (function): PyTorch SDPA attention path with optional per-call SDPA policy (`auto|flash|mem_efficient|math`).
+- `attention_pytorch` (function): PyTorch SDPA attention path with optional per-call SDPA policy (`auto|flash|mem_efficient|math`) and flash fallback warning behavior.
 - `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`) with optional SDPA policy forwarding for PyTorch backend.
 - `attention_function_pre_shaped` (function): Dispatcher wrapper for pre-shaped Q/K/V tensors (`[B,H,S,D]` -> `[B,H,S,D]`), including optional SDPA policy forwarding.
 - `attention_function_single_head_spatial` (function): Runtime-selected single-head spatial attention dispatcher (VAE; driven by runtime config).
@@ -51,6 +52,7 @@ _XFORMERS_BROKEN = None
 _XFORMERS_VERSION = None
 _XFORMERS_IMPORT_ERROR: Exception | None = None
 _SDPA_POLICY_LOGGED: set[tuple[str, str, str]] = set()
+_SDPA_FLASH_FALLBACK_LOGGED: set[tuple[str, str, str, str]] = set()
 
 
 def _require_xformers_ops():
@@ -151,6 +153,27 @@ def _log_sdpa_policy_once(*, sdpa_policy: _SDPAPolicy, device: torch.device, dty
     )
 
 
+def _log_sdpa_flash_fallback_once(
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    fallback_policy: _SDPAPolicy,
+    reason: str,
+) -> None:
+    key = (str(device), str(dtype), fallback_policy, reason)
+    if key in _SDPA_FLASH_FALLBACK_LOGGED:
+        return
+    _SDPA_FLASH_FALLBACK_LOGGED.add(key)
+    _LOGGER.warning(
+        "[attention] requested sdpa policy=flash but flash is unavailable; "
+        "falling back to policy=%s device=%s dtype=%s reason=%s",
+        fallback_policy,
+        str(device),
+        str(dtype),
+        reason,
+    )
+
+
 def _run_pytorch_sdpa(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -161,16 +184,39 @@ def _run_pytorch_sdpa(
     sdpa_policy: str | None,
 ) -> torch.Tensor:
     normalized_policy = _normalize_sdpa_policy(sdpa_policy)
-    _log_sdpa_policy_once(sdpa_policy=normalized_policy, device=q.device, dtype=q.dtype)
-    with _sdpa_context(sdpa_policy=normalized_policy, device=q.device):
-        return torch.nn.functional.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=mask,
-            dropout_p=0.0,
-            is_causal=is_causal,
-        )
+
+    def _run_once(policy: _SDPAPolicy) -> torch.Tensor:
+        _log_sdpa_policy_once(sdpa_policy=policy, device=q.device, dtype=q.dtype)
+        with _sdpa_context(sdpa_policy=policy, device=q.device):
+            return torch.nn.functional.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=mask,
+                dropout_p=0.0,
+                is_causal=is_causal,
+            )
+
+    if normalized_policy != "flash":
+        return _run_once(normalized_policy)
+
+    try:
+        return _run_once("flash")
+    except Exception as flash_exc:
+        for fallback_policy in ("mem_efficient", "math"):
+            try:
+                _log_sdpa_flash_fallback_once(
+                    device=q.device,
+                    dtype=q.dtype,
+                    fallback_policy=fallback_policy,
+                    reason=str(flash_exc),
+                )
+                return _run_once(fallback_policy)
+            except Exception:
+                continue
+        raise RuntimeError(
+            "SDPA policy flash failed and no fallback policy succeeded (tried mem_efficient, math)."
+        ) from flash_exc
 
 
 def get_attn_precision(attn_precision=torch.float32):
@@ -633,7 +679,6 @@ def attention_function(
             attn_precision=attn_precision,
             skip_reshape=skip_reshape,
             is_causal=is_causal,
-            sdpa_policy=normalized_sdpa_policy,
         )
     if backend_selected == AttentionBackend.PYTORCH:
         return attention_pytorch(
@@ -645,6 +690,7 @@ def attention_function(
             attn_precision=attn_precision,
             skip_reshape=skip_reshape,
             is_causal=is_causal,
+            sdpa_policy=normalized_sdpa_policy,
         )
     if backend_selected == AttentionBackend.SPLIT:
         return attention_split(

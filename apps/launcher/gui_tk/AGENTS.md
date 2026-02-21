@@ -14,7 +14,7 @@ Last Review: 2026-02-21
 - `styles.py` – Palette + ttk styling.
 - `widgets.py` – Scrollable container + small layout helpers.
 - `tabs/services.py` – API/UI supervision tab.
-- `tabs/runtime.py` – Device defaults + GGUF/LoRA + PyTorch alloc conf.
+- `tabs/runtime.py` – Device defaults + attention mode + GGUF/LoRA + PyTorch alloc conf.
 - `tabs/diagnostics.py` – Preflight checks + debug/logging env flags.
 - `tabs/logs.py` – Log viewer (filter/search/export).
 
@@ -26,3 +26,4 @@ Last Review: 2026-02-21
 - 2026-02-15: `tabs/diagnostics.py` now exposes launcher trace toggles (`CODEX_TRACE_CONTRACT`, `CODEX_TRACE_PROFILER`) alongside timeline/profile flags.
 - 2026-02-18: `tabs/runtime.py` now exposes task cancel default mode (`CODEX_TASK_CANCEL_DEFAULT_MODE`) with strict choices (`immediate`, `after_current`) alongside existing task/safety knobs.
 - 2026-02-21: `tabs/runtime.py` now exposes WAN img2vid chunk buffer mode (`CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE`) with strict choices (`hybrid`, `ram`, `ram+hd`).
+- 2026-02-21: `tabs/runtime.py` now exposes attention mode selection (`sdpa_*|xformers|split|quad`) and persists it as launcher bootstrap env (`CODEX_ATTENTION_BACKEND`, `CODEX_ATTENTION_SDPA_POLICY`).

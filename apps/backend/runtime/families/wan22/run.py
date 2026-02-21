@@ -17,7 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
-- `_parse_sampler` (function): Parse canonical WAN sampler strings (e.g. 'uni-pc bh2').
+- `_parse_sampler` (function): Parse WAN sampler strings into `(name, solver_hint)` while tolerating non-UniPC multi-token inputs.
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
 - `_infer_stage_variant` (function): Infer WAN model variant (`5b`/`14b`) from a stage GGUF filename.
@@ -205,9 +205,9 @@ def _parse_sampler(value: object | None) -> tuple[str | None, str | None]:
     parts = raw.split()
     if len(parts) == 1:
         return parts[0], None
-    if len(parts) == 2:
+    if parts[0] == "uni-pc":
         return parts[0], parts[1]
-    raise RuntimeError(f"WAN22 GGUF: invalid sampler={value!r} (expected e.g. 'uni-pc' or 'uni-pc bh2').")
+    return parts[0], None
 
 
 def _build_shared_scheduler(
@@ -228,13 +228,15 @@ def _build_shared_scheduler(
             f"High={flow_shift_hi} Low={flow_shift_lo}. Schedule must be continuous."
         )
 
-    hi_name, hi_solver = _parse_sampler(sampler_hi)
-    lo_name, lo_solver = _parse_sampler(sampler_lo)
-    if hi_name and lo_name and hi_name != lo_name:
-        raise RuntimeError(
-            f"WAN22 GGUF: high/low sampler mismatch (high={sampler_hi!r} low={sampler_lo!r})."
-        )
-    if hi_solver and lo_solver and hi_solver != lo_solver:
+    hi_sampler_raw = sampler_hi.strip() if isinstance(sampler_hi, str) and sampler_hi.strip() else None
+    lo_sampler_raw = sampler_lo.strip() if isinstance(sampler_lo, str) and sampler_lo.strip() else None
+
+    hi_name, hi_solver = _parse_sampler(hi_sampler_raw)
+    lo_name, lo_solver = _parse_sampler(lo_sampler_raw)
+    hi_is_unipc = hi_name == "uni-pc"
+    lo_is_unipc = lo_name == "uni-pc"
+
+    if hi_is_unipc and lo_is_unipc and hi_solver and lo_solver and hi_solver != lo_solver:
         raise RuntimeError(
             f"WAN22 GGUF: high/low UniPC solver_type mismatch (high={sampler_hi!r} low={sampler_lo!r})."
         )
@@ -252,9 +254,12 @@ def _build_shared_scheduler(
     if scheduler_lo is not None and not isinstance(scheduler_lo, str):
         raise RuntimeError(f"WAN22 GGUF: low scheduler must be a string when provided, got {scheduler_lo!r}.")
 
-    sampler_eff = sampler_hi.strip() if isinstance(sampler_hi, str) and sampler_hi.strip() else (
-        sampler_lo.strip() if isinstance(sampler_lo, str) and sampler_lo.strip() else None
-    )
+    if hi_is_unipc:
+        sampler_eff = f"uni-pc {hi_solver}" if hi_solver else "uni-pc"
+    elif lo_is_unipc:
+        sampler_eff = f"uni-pc {lo_solver}" if lo_solver else "uni-pc"
+    else:
+        sampler_eff = hi_sampler_raw or lo_sampler_raw
     scheduler_eff = scheduler_hi.strip() if isinstance(scheduler_hi, str) and scheduler_hi.strip() else (
         scheduler_lo.strip() if isinstance(scheduler_lo, str) and scheduler_lo.strip() else None
     )

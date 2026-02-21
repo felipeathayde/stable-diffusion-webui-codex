@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
 geometry validation (e.g. `height/width % 16 == 0`), metadata-derived sampler/scheduler defaults, and strict WAN VAE
-config-source contract checks (bundle dir or file+config), plus strict `gguf_sdpa_policy` validation and WAN sampler/scheduler contract validation.
+config-source contract checks (bundle dir or file+config), plus strict `gguf_sdpa_policy` validation and WAN scheduler contract validation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
 - `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
 - `_coerce_bool` (function): Best-effort coercion of optional values to `bool` (returns `None` on failure).
-- `_normalize_wan22_sampler_value` (function): Validates/canonicalizes WAN22 sampler values (`uni-pc` / `uni-pc bh2`) fail-loud.
+- `_normalize_wan22_sampler_value` (function): Canonicalizes WAN22 sampler strings when known and preserves unknown sampler strings for runtime handling.
 - `_normalize_wan22_scheduler_value` (function): Validates/canonicalizes WAN22 scheduler values (`simple`) fail-loud.
 - `as_torch_dtype` (function): Parses dtype strings into torch dtypes (with validation).
 - `resolve_device_name` (function): Normalizes device names (`cuda`/`cpu`/etc) into runtime-compatible values.
@@ -171,11 +171,12 @@ def _normalize_wan22_sampler_value(*, field_name: str, value: Any) -> str:
     normalized = value.strip().lower()
     if not normalized:
         raise RuntimeError(f"WAN22 GGUF: {field_name} must not be empty when provided.")
-    if normalized not in {"uni-pc", "uni-pc bh2"}:
-        raise RuntimeError(
-            f"WAN22 GGUF: {field_name} must be 'uni-pc' or 'uni-pc bh2', got: {value!r}."
-        )
-    return normalized
+    try:
+        from apps.backend.types.samplers import SamplerKind
+
+        return SamplerKind.from_string(normalized).value
+    except Exception:
+        return normalized
 
 
 def _normalize_wan22_scheduler_value(*, field_name: str, value: Any) -> str:

@@ -13,7 +13,8 @@ Required Notice: see NOTICE
 	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 	mode prompt fields from the High stage in payload builders for backend compatibility. Includes `output.returnFrames` and stage `flowShift` pass-through in
 	common WAN payload input. Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding`), and stage-level
-	WAN LoRA fields are not emitted from this composable (LoRA control is prompt-level).
+	WAN LoRA fields are not emitted from this composable (LoRA control is prompt-level). Start failures now log structured diagnostics to the browser console
+	(status/detail/body/message + mode/tab) before surfacing UI error text.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -42,7 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { computed, ref } from 'vue'
 
-import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, subscribeTask } from '../api/client'
+import { cancelTask, fetchTaskResult, getApiErrorStatus, startImg2Vid, startTxt2Vid, subscribeTask } from '../api/client'
 import { formatZodError } from '../api/payloads'
 import {
   buildWanImg2VidPayload,
@@ -436,6 +437,21 @@ export function useVideoGeneration(tabId: string) {
     state.value.errorMessage = message
   }
 
+  function logRunStartError(run: PreparedWanRun, err: unknown): void {
+    const status = getApiErrorStatus(err)
+    const message = err instanceof Error ? err.message : String(err)
+    const detail = isRecordObject(err) ? err.detail : undefined
+    const body = isRecordObject(err) ? err.body : undefined
+    console.error('[useVideoGeneration] failed to start WAN run', {
+      tabId,
+      mode: run.mode,
+      status,
+      message,
+      detail,
+      body,
+    })
+  }
+
   function buildRunSummary(v: WanVideoParams, hi: WanStageParams): string {
     const w = Number(v.width) || 0
     const h = Number(v.height) || 0
@@ -677,6 +693,7 @@ export function useVideoGeneration(tabId: string) {
       })
       unsubscribers.set(tabId, unsub)
     } catch (err) {
+      logRunStartError(run, err)
       clearResumeState(resumeKey(tabId))
       const conflictRevision = resolveSettingsRevisionConflict(err)
       if (conflictRevision !== null) {

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
-Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks and scheduler aliases are rejected fail-loud.
+Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks and scheduler aliases are rejected fail-loud while unsupported sampler overrides are logged and ignored by metadata-driven scheduler construction.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PatchGeometry` (dataclass): Patch/tile geometry configuration used to infer latent/video shapes.
@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
-- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`) and validates sampler/scheduler overrides strictly (Diffusers-free).
+- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`); scheduler overrides stay strict while unsupported sampler overrides are accepted then ignored with warnings (Diffusers-free).
 - `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
 - `_assert_finite_tensor` (function): Fail-loud finite check helper with stage/step context and numeric summaries.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
@@ -131,7 +131,8 @@ def make_scheduler(
     """Instantiate the WAN22 scheduler from vendored metadata (Diffusers-free).
 
     Source of truth is `model_index.json` + `scheduler/scheduler_config.json` shipped with the official repos.
-    We do **not** silently fall back to unrelated schedulers (e.g., SD-style Euler) because WAN uses flow prediction.
+    Scheduler construction remains metadata-driven (WAN flow lane). Unsupported sampler overrides are accepted
+    at request level but ignored here with explicit warning logs.
     """
 
     import json
@@ -142,11 +143,6 @@ def make_scheduler(
 
     raw_sampler = str(sampler or "").strip().lower()
     raw_scheduler = str(scheduler or "").strip().lower()
-    if raw_sampler in {"inherit", "auto", "default"}:
-        raise RuntimeError(
-            "WAN22 GGUF: scheduler aliases for sampler ('inherit'/'auto'/'default') are not supported; "
-            "use 'uni-pc' or 'uni-pc bh2'."
-        )
     if raw_scheduler in {"inherit", "auto", "default"}:
         raise RuntimeError(
             "WAN22 GGUF: scheduler aliases ('inherit'/'auto'/'default') are not supported; "
@@ -185,40 +181,40 @@ def make_scheduler(
     if not class_name:
         raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
 
-    # Parse sampler hints from payload. WAN22 scheduler semantics are metadata-driven and
-    # currently support only UniPC semantics from `scheduler_config.json`.
-    if raw_sampler:
+    # Parse sampler hints from payload. WAN22 scheduler semantics stay metadata-driven.
+    # Keep accepting arbitrary sampler strings at API/runtime config layers, but do not pretend
+    # we can instantiate non-WAN schedulers here.
+    if raw_sampler and class_name == "UniPCMultistepScheduler":
         parts = raw_sampler.split()
-        if len(parts) > 2:
-            raise RuntimeError(
-                f"WAN22 GGUF: invalid sampler={sampler!r} (expected e.g. 'uni-pc' or 'uni-pc bh2')."
-            )
-        sampler_name = parts[0]
-        sampler_solver = parts[1] if len(parts) == 2 else None
-
-        if sampler_name != "uni-pc":
-            raise RuntimeError(
-                f"WAN22 GGUF: unsupported sampler override {sampler!r}; expected 'uni-pc' (optionally with solver type)."
-            )
-
-        if class_name == "UniPCMultistepScheduler":
+        sampler_name = parts[0] if parts else ""
+        sampler_solver = parts[1] if len(parts) >= 2 else None
+        if sampler_name == "uni-pc":
             config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
             if sampler_solver is not None:
                 if config_solver is None:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: sampler={sampler!r} specifies solver_type={sampler_solver!r}, "
-                        f"but scheduler_config has no solver_type: {config_path}"
+                    logging.getLogger("backend.runtime.wan22.sampling").warning(
+                        "WAN22 GGUF: sampler=%r requested solver_type=%r, but metadata has no solver_type; using metadata defaults.",
+                        sampler,
+                        sampler_solver,
                     )
-                if sampler_solver != config_solver:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: sampler={sampler!r} solver_type mismatch "
-                        f"(requested={sampler_solver!r} config={config_solver!r})."
+                elif sampler_solver != config_solver:
+                    logging.getLogger("backend.runtime.wan22.sampling").warning(
+                        "WAN22 GGUF: sampler=%r solver_type mismatch (requested=%r metadata=%r); using metadata defaults.",
+                        sampler,
+                        sampler_solver,
+                        config_solver,
                     )
         else:
-            raise RuntimeError(
-                f"WAN22 GGUF: sampler override is not supported for metadata scheduler {class_name!r}. "
-                "Use the defaults from scheduler_config.json."
+            logging.getLogger("backend.runtime.wan22.sampling").warning(
+                "WAN22 GGUF: sampler override %r is accepted but ignored; runtime scheduler remains metadata-driven UniPC.",
+                sampler,
             )
+    elif raw_sampler:
+        logging.getLogger("backend.runtime.wan22.sampling").warning(
+            "WAN22 GGUF: sampler override %r is accepted but ignored for metadata scheduler %r.",
+            sampler,
+            class_name,
+        )
 
     # `scheduler` remains a WAN UI field, but WAN22 GGUF currently supports only the
     # metadata-driven "simple" lane.

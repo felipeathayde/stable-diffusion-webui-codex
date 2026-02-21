@@ -23,6 +23,7 @@ Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wa
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
+WAN sampler fields accept any non-empty string at API parse-time (known names canonicalized when possible); scheduler fields remain strict (`simple`) for WAN22 requests.
 Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|chunk|sliding`) with mode-scoped validation for chunk/window fields.
 Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
 missing vs explicit-empty semantics for downstream runtime fallback behavior.
@@ -1669,25 +1670,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def _validate_wan22_sampler_field(*, field_name: str, value: str) -> str:
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be a string.",
+            )
+        normalized = value.strip().lower()
+        if not normalized:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must not be empty when provided.",
+            )
         try:
             from apps.backend.types.samplers import SamplerKind
 
-            parsed_sampler = SamplerKind.from_string(value)
-        except Exception as exc:
-            _router_log.warning("%s sampler validation failed: %s", field_name, exc)
-            raise HTTPException(
-                status_code=400,
-                detail=public_http_error_detail(exc, fallback="Invalid WAN22 sampler configuration"),
-            ) from exc
-        if parsed_sampler.value not in {SamplerKind.UNI_PC.value, SamplerKind.UNI_PC_BH2.value}:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{field_name}' must be 'uni-pc' or 'uni-pc bh2' for WAN22 requests; "
-                    f"got {parsed_sampler.value!r}."
-                ),
-            )
-        return parsed_sampler.value
+            return SamplerKind.from_string(normalized).value
+        except Exception:
+            return normalized
 
     def _validate_wan22_scheduler_field(*, field_name: str, value: str) -> str:
         try:

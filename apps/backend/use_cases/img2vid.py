@@ -15,8 +15,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
 - `_parse_img2vid_chunk_options` (function): Parses and validates optional img2vid chunk controls from request extras.
-- `_resolve_chunk_seed` (function): Resolves per-chunk seed semantics from base seed + selected chunk mode.
-- `_blend_anchor_frame` (function): Blends previous chunk tail frame with init image for chunk re-anchoring.
 - `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
 """
 
@@ -187,33 +185,6 @@ def _parse_img2vid_chunk_options(extras: Mapping[str, Any], *, total_frames: int
     )
 
 
-def _resolve_chunk_seed(base_seed: Any, *, chunk_index: int, mode: str) -> Optional[int]:
-    if not isinstance(base_seed, int) or base_seed < 0:
-        return None
-    if mode == "fixed":
-        return int(base_seed)
-    if mode == "increment":
-        return int(base_seed) + int(chunk_index)
-    if mode == "random":
-        return None
-    raise RuntimeError(f"Unsupported img2vid_chunk_seed_mode: {mode!r}")
-
-
-def _blend_anchor_frame(previous_frame: Any, init_image: Any, *, alpha: float) -> Any:
-    from PIL import Image  # type: ignore
-
-    if not isinstance(previous_frame, Image.Image):
-        return init_image
-    if not isinstance(init_image, Image.Image):
-        return previous_frame
-
-    a = previous_frame.convert("RGB")
-    b = init_image.convert("RGB")
-    if a.size != b.size:
-        b = b.resize(a.size)
-    return Image.blend(a, b, max(0.0, min(1.0, float(alpha))))
-
-
 def run_img2vid(
     *,
     engine,
@@ -266,137 +237,39 @@ def run_img2vid(
         else:
             if logger:
                 logger.info(
-                    "[img2vid] chunk mode enabled: chunk_frames=%d overlap=%d anchor_alpha=%.3f seed_mode=%s",
+                    "[img2vid] chunk mode enabled (phase-batched): chunk_frames=%d overlap=%d anchor_alpha=%.3f seed_mode=%s",
                     chunk_opts.chunk_frames,
                     chunk_opts.overlap_frames,
                     chunk_opts.anchor_alpha,
                     chunk_opts.chunk_seed_mode,
                 )
 
-            chunk_starts = list(
-                range(
-                    0,
-                    int(plan.frames),
-                    max(1, int(chunk_opts.chunk_frames - chunk_opts.overlap_frames)),
-                )
+            cfg = build_wan22_gguf_run_config(
+                request=request,
+                device=getattr(comp, "device", "auto"),
+                dtype=getattr(comp, "dtype", "fp16"),
+                logger=logger,
             )
-            if not chunk_starts:
-                raise RuntimeError("img2vid chunk plan produced no chunk starts.")
 
-            stitched: list[Any] = []
-            base_seed = getattr(request, "seed", None)
-            for chunk_index, chunk_start in enumerate(chunk_starts):
-                yield ProgressEvent(
-                    stage=f"run_chunk_{chunk_index + 1}",
-                    percent=((float(chunk_index) / float(len(chunk_starts))) * 100.0),
-                    message=f"Preparing chunk {chunk_index + 1}/{len(chunk_starts)}",
-                )
-                chunk_seed = _resolve_chunk_seed(base_seed, chunk_index=chunk_index, mode=chunk_opts.chunk_seed_mode)
-                if chunk_index == 0:
-                    chunk_init = getattr(request, "init_image", None)
-                else:
-                    if chunk_start <= 0 or chunk_start > len(stitched):
-                        raise RuntimeError(
-                            f"img2vid chunk stitching invariant failed at chunk {chunk_index + 1}: "
-                            f"start={chunk_start} stitched={len(stitched)}"
-                        )
-                    chunk_init = _blend_anchor_frame(
-                        stitched[chunk_start - 1],
-                        getattr(request, "init_image", None),
-                        alpha=chunk_opts.anchor_alpha,
-                    )
-
-                chunk_request = Img2VidRequest(
-                    task=request.task,
-                    prompt=request.prompt,
-                    negative_prompt=request.negative_prompt,
-                    sampler=request.sampler,
-                    scheduler=request.scheduler,
-                    seed=chunk_seed,
-                    guidance_scale=request.guidance_scale,
-                    batch_size=request.batch_size,
-                    loras=request.loras,
-                    extra_networks=request.extra_networks,
-                    clip_skip=request.clip_skip,
-                    metadata=request.metadata,
-                    settings_revision=request.settings_revision,
-                    smart_offload=request.smart_offload,
-                    smart_fallback=request.smart_fallback,
-                    smart_cache=request.smart_cache,
-                    init_image=chunk_init,
-                    width=request.width,
-                    height=request.height,
-                    steps=request.steps,
-                    num_frames=chunk_opts.chunk_frames,
-                    fps=request.fps,
-                    motion_strength=request.motion_strength,
-                    video_options=request.video_options,
-                    extras=request.extras,
-                )
-                cfg = build_wan22_gguf_run_config(
-                    request=chunk_request,
-                    device=getattr(comp, "device", "auto"),
-                    dtype=getattr(comp, "dtype", "fp16"),
-                    logger=logger,
-                )
-
-                frames_chunk: list[Any] | None = None
-                for ev in gguf.stream_img2vid(cfg, logger=logger):
-                    if not isinstance(ev, dict):
-                        raise RuntimeError(f"WAN22 GGUF: invalid stream event type: {type(ev)}")
-                    if ev.get("type") == "progress":
-                        pe = _yield_wan22_gguf_progress(ev)
-                        if pe is not None:
-                            local = (
-                                (float(pe.percent) / 100.0)
-                                if pe.percent is not None
-                                else 0.0
-                            )
-                            overall = ((float(chunk_index) + local) / float(len(chunk_starts))) * 100.0
-                            yield ProgressEvent(
-                                stage=f"run_chunk_{chunk_index + 1}",
-                                percent=overall,
-                                step=pe.step,
-                                total_steps=pe.total_steps,
-                                eta_seconds=pe.eta_seconds,
-                            )
-                        continue
-                    if ev.get("type") == "result":
-                        frames_chunk = list(ev.get("frames", []) or [])
-                        break
-                    raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
-
-                if not frames_chunk:
-                    raise RuntimeError(f"WAN22 GGUF: chunk {chunk_index + 1}/{len(chunk_starts)} produced no frames")
-
-                overlap_count = min(
-                    int(chunk_opts.overlap_frames),
-                    len(frames_chunk),
-                    max(0, len(stitched) - chunk_start),
-                )
-                for overlap_index in range(overlap_count):
-                    blend_alpha = float(overlap_index + 1) / float(overlap_count)
-                    stitched[chunk_start + overlap_index] = _blend_anchor_frame(
-                        stitched[chunk_start + overlap_index],
-                        frames_chunk[overlap_index],
-                        alpha=blend_alpha,
-                    )
-
-                needed = int(plan.frames) - int(chunk_start)
-                for frame_index in range(overlap_count, min(len(frames_chunk), needed)):
-                    absolute_index = int(chunk_start) + int(frame_index)
-                    if absolute_index < len(stitched):
-                        stitched[absolute_index] = frames_chunk[frame_index]
-                    else:
-                        stitched.append(frames_chunk[frame_index])
-
-                yield ProgressEvent(
-                    stage="run_chunks",
-                    percent=((float(chunk_index + 1) / float(len(chunk_starts))) * 100.0),
-                    message=f"Chunk {chunk_index + 1}/{len(chunk_starts)} complete",
-                )
-
-            frames = stitched[: int(plan.frames)]
+            for ev in gguf.stream_img2vid_chunked(
+                cfg,
+                chunk_frames=int(chunk_opts.chunk_frames),
+                overlap_frames=int(chunk_opts.overlap_frames),
+                anchor_alpha=float(chunk_opts.anchor_alpha),
+                chunk_seed_mode=str(chunk_opts.chunk_seed_mode),
+                logger=logger,
+            ):
+                if not isinstance(ev, dict):
+                    raise RuntimeError(f"WAN22 GGUF: invalid stream event type: {type(ev)}")
+                if ev.get("type") == "progress":
+                    pe = _yield_wan22_gguf_progress(ev)
+                    if pe is not None:
+                        yield pe
+                    continue
+                if ev.get("type") == "result":
+                    frames = list(ev.get("frames", []) or [])
+                    break
+                raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
 
         if not frames:
             raise RuntimeError("WAN22 GGUF: produced no frames")

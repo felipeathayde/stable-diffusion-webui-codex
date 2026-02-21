@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-18
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -39,4 +39,5 @@ Status: Active
 - 2026-02-15: `txt2img_pipeline/runner.py` no longer embeds raw negative prompt text in zero-uncond fail-loud errors; message now keeps only technical context (`count`) to avoid prompt leakage through downstream task/log surfaces.
 - 2026-02-16: img2img now emits truthful `GenerationResult.metadata["conditioning_cache_hit"]` across classic + Flux Kontext paths (derived from per-call Smart Cache bucket deltas when conditioning is computed, or `True` when conditioning is fully pre-supplied), so shared decode cleanup applies the same warm-vs-unload policy parity already used by txt2img.
 - 2026-02-17: `img2vid.py` GGUF path now supports optional chunked generation with overlap stitching, anchor blending (`img2vid_anchor_alpha`), and deterministic/per-chunk seed policies (`img2vid_chunk_seed_mode=fixed|increment|random`) while preserving the legacy non-chunk execution path.
-- 2026-02-20: `img2vid.py` chunk parser now fails loud when `img2vid_chunk_frames >= total_frames` (no silent chunk-disable), and chunk mode emits an explicit pre-chunk progress event before each chunk setup to surface long pre-step prepare work.
+- 2026-02-20: `img2vid.py` chunk parser now fails loud when `img2vid_chunk_frames >= total_frames` (no silent chunk-disable); legacy per-chunk prepare progress was replaced by phase-batched runtime progress (`chunk.prepare`, `chunk.phase_high`, `chunk.phase_low`, `chunk.phase_decode`).
+- 2026-02-21: `img2vid.py` chunked GGUF path is now delegated to `wan22.stream_img2vid_chunked(...)`; use-case no longer loops per chunk with full pipeline reruns. Runtime now performs one text-conditioning pass and phase-batched chunk execution (`high` for all chunks -> `low` for all chunks -> decode/stitch).

@@ -16,13 +16,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `stream_txt2vid` (function): Streaming txt2vid generator yielding progress events and final frames.
 - `run_img2vid` (function): Batch img2vid runner (encode I2V conditioning video → seeded noise state → stages → VAE decode).
 - `stream_img2vid` (function): Streaming img2vid generator yielding progress events and final frames.
+- `stream_img2vid_chunked` (function): Chunked img2vid streaming runner (single text-conditioning pass + phase-batched high/low over chunks).
 - `__all__` (constant): Export list for the WAN22 GGUF runtime facade.
 """
 
 from __future__ import annotations
 
 from .config import RunConfig, StageConfig
-from .run import run_img2vid, run_txt2vid, stream_img2vid, stream_txt2vid
+from .run import run_img2vid, run_txt2vid, stream_img2vid, stream_img2vid_chunked, stream_txt2vid
 
 __all__ = [
     "RunConfig",
@@ -31,4 +32,5 @@ __all__ = [
     "run_img2vid",
     "stream_txt2vid",
     "stream_img2vid",
+    "stream_img2vid_chunked",
 ]

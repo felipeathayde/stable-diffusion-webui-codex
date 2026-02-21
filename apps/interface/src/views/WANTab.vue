@@ -32,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setLow` (function): Applies partial updates to the low stage.
 - `syncLowFromHighIfNeeded` (function): Keeps low stage params aligned with high stage when the “low follows high” toggle is enabled.
 - `onLowFollowsHighChange` (function): Toggles low-follow behavior and applies an immediate sync.
+- `toggleHighPrompt` (function): Toggles High Prompt section visibility.
 - `toggleLowPrompt` (function): Toggles Low Prompt section visibility.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
 - `toInt` (function): Parses an integer from an `<input>` event with fallback.
@@ -87,8 +88,20 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="panel-header">Prompt</div>
         <div class="panel-body">
           <div id="wan-guided-high-prompt" class="gen-card">
-            <WanSubHeader title="High Prompt" />
-            <div class="mt-2">
+            <WanSubHeader title="High Prompt">
+              <button
+                id="wan-guided-high-prompt-toggle"
+                class="btn-icon"
+                type="button"
+                :aria-expanded="highPromptOpen ? 'true' : 'false'"
+                :title="highPromptOpen ? 'Collapse' : 'Expand'"
+                aria-label="Toggle High Prompt"
+                @click="toggleHighPrompt"
+              >
+                <span aria-hidden="true">{{ highPromptOpen ? '▾' : '▸' }}</span>
+              </button>
+            </WanSubHeader>
+            <div v-if="highPromptOpen" class="mt-2">
               <PromptFields v-model:prompt="highPrompt" v-model:negative="highNegative" token-engine="wan" />
             </div>
           </div>
@@ -967,6 +980,7 @@ function setLow(patch: Partial<WanStageParams>): void {
 
 const lowFollowsHigh = computed<boolean>(() => Boolean(wanParams.value?.lowFollowsHigh))
 const lowNoiseOpen = ref(true)
+const highPromptOpen = ref(true)
 const lowPromptOpen = ref(true)
 
 function syncLowFromHighIfNeeded(): void {
@@ -1008,6 +1022,10 @@ function onLowFollowsHighChange(enabled: boolean): void {
 
 function toggleLowNoise(): void {
   lowNoiseOpen.value = !lowNoiseOpen.value
+}
+
+function toggleHighPrompt(): void {
+  highPromptOpen.value = !highPromptOpen.value
 }
 
 function toggleLowPrompt(): void {
@@ -1478,6 +1496,10 @@ watch([guidedActive, guidedSteps], async ([active, steps]) => {
   }
 
   const step = steps[0]!
+  if (step.id === 'high_prompt' && !highPromptOpen.value) {
+    highPromptOpen.value = true
+    await nextTick()
+  }
   if (step.id === 'low_prompt' && !lowPromptOpen.value) {
     lowPromptOpen.value = true
     await nextTick()

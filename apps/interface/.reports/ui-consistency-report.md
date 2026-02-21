@@ -1,5 +1,5 @@
 # UI Consistency Report
-- generated_at: 2026-02-21T18:04:32.504Z
+- generated_at: 2026-02-21T18:16:01.261Z
 - source_root: apps/interface/src
 - css_root: apps/interface/src/styles
 - strict_mode: enabled
@@ -17,7 +17,7 @@
 - [allowlisted] apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue:44 — expr=`contentTransformStyle` — `:style="contentTransformStyle"`
 - [allowlisted] apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue:64 — expr=`brushCursorStyle` — `:style="brushCursorStyle"`
 - [allowlisted] apps/interface/src/views/ImageModelTab.vue:368 — expr=`previewStyle` — `:style="previewStyle"`
-- [allowlisted] apps/interface/src/views/WANTab.vue:649 — expr=`guidedTooltipStyle` — `:style="guidedTooltipStyle"`
+- [allowlisted] apps/interface/src/views/WANTab.vue:634 — expr=`guidedTooltipStyle` — `:style="guidedTooltipStyle"`
 
 ## Scoped `<style>` Blocks
 - none

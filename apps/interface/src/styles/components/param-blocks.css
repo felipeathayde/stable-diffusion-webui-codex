@@ -9,6 +9,7 @@
   .param-blocks .param-grid[data-cols="2"] { grid-template-columns: repeat(2, minmax(12rem, 1fr)); }
   .param-blocks .param-grid[data-cols="3"] { grid-template-columns: repeat(3, minmax(12rem, 1fr)); }
   .param-blocks .param-grid[data-cols="4"] { grid-template-columns: repeat(4, minmax(12rem, 1fr)); }
+  .param-blocks .param-grid[data-cols="5"] { grid-template-columns: repeat(5, minmax(12rem, 1fr)); }
 
   .param-blocks .field {
     display: flex;
@@ -23,4 +24,3 @@
     gap: 0.5rem;
   }
 }
-

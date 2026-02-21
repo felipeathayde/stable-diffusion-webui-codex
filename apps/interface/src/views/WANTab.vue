@@ -37,7 +37,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onLowPromptLoraInsert` (function): Inserts a selected LoRA token into Low prompt/negative prompt based on modal target.
 - `toggleImg2VidChunking` (function): Toggles img2vid chunking enablement.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
-- `toInt` (function): Parses an integer from an `<input>` event with fallback.
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for img2vid init-image input.
 - `clearInit` (function): Clears init image fields.
@@ -262,9 +261,23 @@ Symbols (top-level; keep in sync; no ghosts):
                   </button>
                 </WanSubHeader>
                 <div v-if="video.img2vidChunkingEnabled" class="param-blocks">
-                  <div class="param-grid" data-cols="4">
+                  <div class="param-grid" data-cols="5">
                     <div class="field">
-                      <label class="label-muted">Attention Mode</label>
+                      <label class="label-muted">
+                        <HoverTooltip
+                          class="cdx-slider-field__label-tooltip"
+                          title="Attention Mode"
+                          :content="[
+                            'Global uses full temporal context.',
+                            'Sliding limits attention context to reduce memory/cost.',
+                          ]"
+                        >
+                          <span class="cdx-slider-field__label-trigger">
+                            <span>Attention Mode</span>
+                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                          </span>
+                        </HoverTooltip>
+                      </label>
                       <select
                         class="select-md"
                         :disabled="isRunning || !video.img2vidChunkingEnabled"
@@ -274,90 +287,62 @@ Symbols (top-level; keep in sync; no ghosts):
                         <option value="global">Global</option>
                         <option value="sliding">Sliding</option>
                       </select>
-                      <p class="caption mt-1">Global uses full temporal context. Sliding limits attention context to reduce memory/cost.</p>
                     </div>
-                    <div class="field">
-                      <label class="label-muted">
-                        <HoverTooltip
-                          class="cdx-slider-field__label-tooltip"
-                          title="Chunk Frames"
-                          :content="[
-                            'Splits img2vid into overlapping chunks.',
-                            'Must satisfy 4n+1 (e.g. 9, 13, 17...).',
-                          ]"
-                        >
-                          <span class="cdx-slider-field__label-trigger">
-                            <span>Chunk Frames</span>
-                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
-                          </span>
-                        </HoverTooltip>
-                      </label>
-                      <input
-                        class="ui-input"
-                        type="number"
-                        min="9"
-                        max="401"
-                        step="1"
-                        :disabled="isRunning || !video.img2vidChunkingEnabled"
-                        :value="video.img2vidChunkFrames"
-                        @change="setVideo({ img2vidChunkFrames: toInt($event, video.img2vidChunkFrames) })"
-                      />
-                    </div>
-                    <div class="field">
-                      <label class="label-muted">
-                        <HoverTooltip
-                          class="cdx-slider-field__label-tooltip"
-                          title="Overlap"
-                          :content="[
-                            'Crossfades chunk seams.',
-                            'Keep overlap smaller than Chunk Frames.',
-                          ]"
-                        >
-                          <span class="cdx-slider-field__label-trigger">
-                            <span>Overlap</span>
-                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
-                          </span>
-                        </HoverTooltip>
-                      </label>
-                      <input
-                        class="ui-input"
-                        type="number"
-                        min="0"
-                        max="400"
-                        step="1"
-                        :disabled="isRunning || !video.img2vidChunkingEnabled"
-                        :value="video.img2vidOverlapFrames"
-                        @change="setVideo({ img2vidOverlapFrames: toInt($event, video.img2vidOverlapFrames) })"
-                      />
-                    </div>
-                    <div class="field">
-                      <label class="label-muted">
-                        <HoverTooltip
-                          class="cdx-slider-field__label-tooltip"
-                          title="Anchor Alpha"
-                          :content="[
-                            'Re-injects the init image at chunk boundaries.',
-                            '0 = continue from previous output only.',
-                            '1 = stronger re-anchor to init image.',
-                          ]"
-                        >
-                          <span class="cdx-slider-field__label-trigger">
-                            <span>Anchor Alpha</span>
-                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
-                          </span>
-                        </HoverTooltip>
-                      </label>
-                      <input
-                        class="ui-input"
-                        type="number"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        :disabled="isRunning || !video.img2vidChunkingEnabled"
-                        :value="video.img2vidAnchorAlpha"
-                        @change="setVideo({ img2vidAnchorAlpha: Number(($event.target as HTMLInputElement).value) })"
-                      />
-                    </div>
+                    <SliderField
+                      class="field"
+                      label="Chunk Frames"
+                      :modelValue="video.img2vidChunkFrames"
+                      :min="9"
+                      :max="401"
+                      :step="4"
+                      :inputStep="1"
+                      :nudgeStep="4"
+                      :disabled="isRunning || !video.img2vidChunkingEnabled"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Chunk Frames"
+                      :tooltip="[
+                        'Splits img2vid into overlapping chunks.',
+                        'Must satisfy 4n+1 (e.g. 9, 13, 17...).',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidChunkFrames: value })"
+                    />
+                    <SliderField
+                      class="field"
+                      label="Overlap"
+                      :modelValue="video.img2vidOverlapFrames"
+                      :min="0"
+                      :max="400"
+                      :step="1"
+                      :inputStep="1"
+                      :nudgeStep="1"
+                      :disabled="isRunning || !video.img2vidChunkingEnabled"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Overlap"
+                      :tooltip="[
+                        'Crossfades chunk seams.',
+                        'Keep overlap smaller than Chunk Frames.',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidOverlapFrames: value })"
+                    />
+                    <SliderField
+                      class="field"
+                      label="Anchor Alpha"
+                      :modelValue="video.img2vidAnchorAlpha"
+                      :min="0"
+                      :max="1"
+                      :step="0.05"
+                      :inputStep="0.05"
+                      :nudgeStep="0.05"
+                      :disabled="isRunning || !video.img2vidChunkingEnabled"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Anchor Alpha"
+                      :tooltip="[
+                        'Re-injects the init image at chunk boundaries.',
+                        '0 = continue from previous output only.',
+                        '1 = stronger re-anchor to init image.',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
+                    />
                     <div class="field">
                       <label class="label-muted">
                         <HoverTooltip
@@ -997,8 +982,6 @@ function onLowPromptLoraInsert(payload: PromptTokenInsertPayload): void {
   }
   setLow({ prompt: appendPromptToken(low.value.prompt, payload.token) })
 }
-
-function toInt(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? Math.trunc(v) : fallback }
 
 async function onInitImageFile(file: File): Promise<void> {
   const dataUrl = await readFileAsDataURL(file)

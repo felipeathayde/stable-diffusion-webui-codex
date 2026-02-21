@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Masked img2img (“inpaint”) helpers for SD-family pipelines.
 Normalizes masks (RGBA alpha semantics), applies invert/blur/round options, optionally builds an inpaint-full-res crop plan
 (Forge-style zoom-crop + paste-back overlay), and produces latent-space masks for sampler enforcement.
+When init/mask dimensions differ from target `processing.width/height`, normalizes both to target before latent encode.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InpaintFullResPlan` (dataclass): Full-res inpaint plan (crop region + overlay composite inputs).
@@ -31,6 +32,7 @@ from PIL import Image, ImageFilter, ImageOps
 from apps.backend.runtime.pipeline_stages.image_io import pil_to_tensor
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+_RESAMPLE_NEAREST = Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST
 
 MaskEnforcementMode = str
 MASK_ENFORCEMENT_POST_BLEND = "post_blend"
@@ -281,7 +283,7 @@ def prepare_masked_img2img_bundle(
 
     Notes:
     - Requires `processing.init_image` and `processing.mask`.
-    - For full-res inpaint, requires `processing.width/height` to match init image size (UI has a sync button).
+    - If init image size differs from `processing.width/height`, init image + mask are resized to target before latent encode.
     """
     init_image = getattr(processing, "init_image", None)
     if init_image is None:
@@ -298,17 +300,24 @@ def prepare_masked_img2img_bundle(
     if width <= 0 or height <= 0:
         raise ValueError("processing.width/height must be set for img2img")
 
-    init_w, init_h = init_image.size
-    if int(getattr(processing, "inpaint_full_res", True)):
-        if (init_w, init_h) != (width, height):
-            raise ValueError(
-                f"inpaint_full_res requires width/height match init image dims; got init={init_w}x{init_h} req={width}x{height}"
-            )
-
     if raw_mask.size != init_image.size:
         raise ValueError(
             f"Mask size must match init image size; got mask={raw_mask.size} init={init_image.size}"
         )
+
+    init_w, init_h = init_image.size
+    if (init_w, init_h) != (width, height):
+        original_width, original_height = init_w, init_h
+        init_image = init_image.convert("RGB").resize((width, height), resample=_RESAMPLE_LANCZOS)
+        raw_mask = raw_mask.resize((width, height), resample=_RESAMPLE_NEAREST)
+
+        setattr(processing, "init_image", init_image)
+        if hasattr(processing, "mask") and getattr(processing, "mask", None) is not None:
+            setattr(processing, "mask", raw_mask)
+        if hasattr(processing, "image_mask") and getattr(processing, "image_mask", None) is not None:
+            setattr(processing, "image_mask", raw_mask)
+        if hasattr(processing, "update_extra_param") and callable(getattr(processing, "update_extra_param")):
+            processing.update_extra_param("Init resize", f"{original_width}x{original_height} -> {width}x{height}")
 
     mask_round = bool(getattr(processing, "mask_round", True))
     invert = bool(int(getattr(processing, "inpainting_mask_invert", 0) or 0))

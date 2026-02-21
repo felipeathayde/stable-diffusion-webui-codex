@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-02-18
+Last Review: 2026-02-21
 Status: Active
 
 ## Purpose
@@ -45,3 +45,5 @@ Status: Active
 - 2026-02-18: `prompt_context.py` now merges request override `lora_path` entries into `PromptContext.loras` (dedup by path, prompt-tag LoRAs keep precedence/weight) so API-resolved LoRA SHA selections can flow into sampling without exposing SHA tokens in prompt/UI.
 - 2026-02-18: `image_io.py::maybe_decode_for_hr(...)` now gates base decode by hires upscaler id (`latent:*` skips decode; pixel-space upscalers decode), replacing the stale `latent_scale_mode` sentinel that forced redundant decode in latent hires paths.
 - 2026-02-18: `image_io.py::maybe_decode_for_hr(...)` no longer hardcasts decoded tensors to fp32; decode dtype now follows the engine VAE output so runtime compute/storage policy remains authoritative.
+- 2026-02-21: `image_init.py::prepare_init_bundle(...)` now resizes non-masked img2img init images to `processing.width/height` (when provided) before VAE encode, preventing oversized source images from forcing full-resolution encode memory usage when output dims are smaller.
+- 2026-02-21: `masked_img2img.py::prepare_masked_img2img_bundle(...)` now normalizes init-image + mask dimensions to `processing.width/height` before latent encode, so inpaint/full-res paths no longer require pre-matched source dimensions and avoid oversized encode memory spikes.

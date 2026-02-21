@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Init-image preparation helpers for img2img-style pipelines.
 Encodes an init image into tensors/latents and returns a structured `InitImageBundle` for downstream pipelines.
+When `processing.width/height` are provided, the init image is resized to target output resolution before VAE encode.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `prepare_init_bundle` (function): Converts a processing init image into a tensor/latent bundle (optionally includes a mask).
@@ -20,6 +21,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from PIL import Image
 
 from apps.backend.core import devices
 from apps.backend.runtime.processing.datatypes import InitImageBundle
@@ -31,7 +33,22 @@ def prepare_init_bundle(processing: Any) -> InitImageBundle:
     if image is None:
         raise ValueError("img2img requires processing.init_image")
 
-    array = np.array(image).astype(np.float32) / 255.0
+    if not isinstance(image, Image.Image):
+        raise TypeError(
+            "img2img requires processing.init_image to be a PIL.Image.Image; "
+            f"got {type(image).__name__}."
+        )
+
+    target_width = int(getattr(processing, "width", 0) or 0)
+    target_height = int(getattr(processing, "height", 0) or 0)
+
+    prepared_image = image.convert("RGB")
+    if target_width > 0 and target_height > 0 and prepared_image.size != (target_width, target_height):
+        resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+        prepared_image = prepared_image.resize((target_width, target_height), resample=resample)
+    setattr(processing, "init_image", prepared_image)
+
+    array = np.array(prepared_image).astype(np.float32) / 255.0
     array = array * 2.0 - 1.0
     array = np.moveaxis(array, 2, 0)
     tensor = torch.from_numpy(np.expand_dims(array, axis=0)).to(

@@ -11,6 +11,7 @@ Owns per-tab generation state (progress/live preview/gallery/history), builds re
 starts `/api/txt2img` and `/api/img2img` (txt2img can include hires settings; img2img stays hires-free),
 includes `settings_revision` in payloads, handles
 stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
+Exposes task cancellation for active runs (`/api/tasks/:id/cancel`).
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -26,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
   `vae_sha`/`tenc_sha` (core-only checkpoints) and enforcing engine-level external asset requirements via backend `asset_contracts`.
+- `cancel` (function): Requests cancellation for the current in-flight image task (`/api/tasks/:id/cancel`).
 */
 
 import { computed, reactive, ref } from 'vue'
@@ -35,7 +37,7 @@ import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useUpscalersStore } from '../stores/upscalers'
 import { getEngineConfig, type EngineType } from '../stores/engine_config'
 import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
-import { fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
+import { cancelTask, fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '../api/types'
 import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
@@ -866,6 +868,12 @@ export function useGeneration(tabId: string) {
     }
   }
 
+  async function cancel(mode: 'immediate' | 'after_current' = 'immediate'): Promise<void> {
+    const taskId = state.value.taskId
+    if (!taskId || state.value.status !== 'running') return
+    await cancelTask(taskId, mode)
+  }
+
   function clearHistory(): void {
     state.value.history = []
     state.value.selectedTaskId = ''
@@ -900,6 +908,7 @@ export function useGeneration(tabId: string) {
     
     // Actions
     generate,
+    cancel,
     stopStream,
     loadHistory,
     clearHistory,

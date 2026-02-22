@@ -10,6 +10,7 @@ Purpose: Upscale route view.
 Standalone upscaling workspace (Spandrel SR) with tile controls (tile/overlap/min_tile), explicit OOM fallback toggle, HF-backed weight downloads, and task streaming.
 Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight upscale tasks after reload (SSE replay via `after` / `lastEventId`).
 Run status rendering is standardized through the shared `RunProgressStatus` panel (`progress/error/info` variants + Stage/Progress/Step/ETA metadata).
+Run cancellation is owned by the `RunCard` center CTA (destructive two-click confirm), so the Results header no longer carries a separate cancel button.
 The remote download modal:
 - surfaces backend safeweights mode (`CODEX_SAFE_WEIGHTS`) and allowed suffixes,
 - shows manifest issues explicitly, and
@@ -120,6 +121,7 @@ Symbols (top-level; keep in sync; no ghosts):
         runningLabel="Upscaling…"
         :generateTitle="generateTitle"
         @generate="start"
+        @cancel="cancel"
       >
         <RunProgressStatus
           v-if="errorMessage"
@@ -147,7 +149,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <ResultsCard :showGenerate="false" headerClass="three-cols results-sticky" headerRightClass="results-actions">
         <template #header-right>
-          <button class="btn btn-sm btn-secondary" type="button" :disabled="!isRunning || !taskId" @click="cancel">Cancel</button>
           <input class="ui-input" list="upscale-preset-list" v-model="presetName" placeholder="Preset" />
           <datalist id="upscale-preset-list"><option v-for="p in presetNames" :key="p" :value="p" /></datalist>
           <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="savePreset(presetName)">Save</button>

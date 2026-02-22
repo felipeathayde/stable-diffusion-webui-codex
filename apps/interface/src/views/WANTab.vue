@@ -9,13 +9,13 @@ Required Notice: see NOTICE
 Purpose: WAN video generation tab (txt2vid/img2vid) UI.
 Owns per-stage prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
 renders progress/results via task events (frames and/or exported video), with Run status shown through the shared
-`RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` + queue metadata in progress mode).
+`RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` metadata in progress mode).
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled at prompt level through the shared LoRA modal + prompt-token chips.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
+- `WANTab` (component): WAN video tab view; handles input modes, generation start/cancel, history apply/reuse, and guided-generation UX.
 - `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
 - `AspectMode` (type): Aspect ratio mode presets for width/height controls.
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
@@ -44,7 +44,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for img2vid init-image input.
 - `clearInit` (function): Clears init image fields.
-- `normalizeVideoBeforeSubmit` (function): Normalizes width/height/frames before Generate/Queue dispatch.
+- `normalizeVideoBeforeSubmit` (function): Normalizes width/height/frames before Generate dispatch.
 - `onGenerateClick` (function): Starts a generation run for the current input mode (builds payload, submits, and wires streaming) (async).
 - `clampNumber` (function): Clamps a numeric value to `[min, max]`.
 - `computeGuidedTooltipPosition` (function): Computes tooltip position for guided-generation overlay based on current highlight rect.
@@ -63,7 +63,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
 - `copyInfo` (function): Copies current run info/metadata to clipboard (async).
 - `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
-- `queueNext` (function): Queues a next run based on current params/history (async).
 - `applyHistory` (function): Applies a history entry back into current state (stage prompts/params/assets).
 - `reuseLast` (function): Convenience helper to reuse the most recent history entry.
 - `isRecord` (function): Type guard for `Record<string, unknown>`.
@@ -321,7 +320,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </select>
                     </div>
                   </div>
-                  <div v-if="video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="3">
+                  <div v-if="video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="4">
                     <SliderField
                       class="field"
                       label="Chunk Frames"
@@ -377,8 +376,34 @@ Symbols (top-level; keep in sync; no ghosts):
                       ]"
                       @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
                     />
+                    <div class="field">
+                      <label class="label-muted">
+                        <HoverTooltip
+                          class="cdx-slider-field__label-tooltip"
+                          title="Reset Anchor to Base"
+                          :content="[
+                            'When enabled, the first overlap slot resets to init-image anchor every boundary.',
+                            'When disabled, overlap follows previous chunk output and uses anchor_alpha blend.',
+                          ]"
+                        >
+                          <span class="cdx-slider-field__label-trigger">
+                            <span>Reset Anchor</span>
+                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                          </span>
+                        </HoverTooltip>
+                      </label>
+                      <button
+                        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                        type="button"
+                        :disabled="isRunning"
+                        :aria-pressed="video.img2vidResetAnchorToBase"
+                        @click="setVideo({ img2vidResetAnchorToBase: !video.img2vidResetAnchorToBase })"
+                      >
+                        {{ video.img2vidResetAnchorToBase ? 'Enabled' : 'Disabled' }}
+                      </button>
+                    </div>
                   </div>
-                  <div v-else-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="3">
+                  <div v-else-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
                     <SliderField
                       class="field"
                       label="Window Frames"
@@ -433,6 +458,56 @@ Symbols (top-level; keep in sync; no ghosts):
                       ]"
                       @update:modelValue="(value: number) => setVideo({ img2vidWindowCommitFrames: value })"
                     />
+                    <SliderField
+                      class="field"
+                      label="Anchor Alpha"
+                      :modelValue="video.img2vidAnchorAlpha"
+                      :min="0"
+                      :max="1"
+                      :step="0.05"
+                      :inputStep="0.05"
+                      :nudgeStep="0.05"
+                      :disabled="isRunning"
+                      inputClass="cdx-input-w-sm"
+                      tooltipTitle="Anchor Alpha"
+                      :tooltip="[
+                        'Controls base-anchor influence at window handoff.',
+                        '0 = continue from previous output only.',
+                        '1 = stronger re-anchor to init image.',
+                      ]"
+                      @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
+                    />
+                    <div class="field">
+                      <label class="label-muted">
+                        <HoverTooltip
+                          class="cdx-slider-field__label-tooltip"
+                          title="Reset Anchor to Base"
+                          :content="[
+                            'Enabled: hard reset anchor at every window handoff.',
+                            'Disabled: keeps temporal carry-over and only applies soft anchor blend.',
+                            'SVI 2.0 / Pro force this option off by design.',
+                          ]"
+                        >
+                          <span class="cdx-slider-field__label-trigger">
+                            <span>Reset Anchor</span>
+                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                          </span>
+                        </HoverTooltip>
+                      </label>
+                      <button
+                        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                        type="button"
+                        :disabled="isRunning || video.img2vidMode === 'svi2' || video.img2vidMode === 'svi2_pro'"
+                        :aria-pressed="video.img2vidResetAnchorToBase"
+                        @click="setVideo({ img2vidResetAnchorToBase: !video.img2vidResetAnchorToBase })"
+                      >
+                        {{
+                          video.img2vidMode === 'svi2' || video.img2vidMode === 'svi2_pro'
+                            ? 'Forced Off (SVI)'
+                            : (video.img2vidResetAnchorToBase ? 'Enabled' : 'Disabled')
+                        }}
+                      </button>
+                    </div>
                   </div>
                   <div v-else class="caption">Solo mode runs img2vid without temporal chunk/window partitioning.</div>
                 </div>
@@ -499,24 +574,12 @@ Symbols (top-level; keep in sync; no ghosts):
         generateId="wan-guided-generate"
         :showBatchControls="false"
         @generate="onGenerateClick"
+        @cancel="cancel()"
       >
         <template #header-right>
           <div class="wan-header-actions">
-            <button
-              v-if="isRunning"
-              class="btn btn-sm btn-secondary"
-              type="button"
-              :disabled="queue.length >= queueMax || !canRunGeneration"
-              :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canRunGeneration ? generateTitle : '')"
-              @click="queueNext"
-            >
-              Queue ({{ queue.length }}/{{ queueMax }})
-            </button>
-            <button v-else-if="history.length" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
+            <button v-if="history.length && !isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
               Reuse last
-            </button>
-            <button v-if="isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="cancelRequested" @click="cancel()">
-              {{ cancelRequested ? 'Cancelling…' : 'Cancel' }}
             </button>
           </div>
         </template>
@@ -531,12 +594,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :total-steps="progress.totalSteps"
           :eta-seconds="progress.etaSeconds"
           :show-progress-bar="true"
-          :queue-label="queue.length ? `Queued: ${queue.length} / ${queueMax}` : ''"
-        >
-          <template #extra>
-            <button v-if="queue.length" class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
-          </template>
-        </RunProgressStatus>
+        />
         <RunProgressStatus
           v-else-if="errorMessage"
           variant="error"
@@ -801,6 +859,7 @@ function defaultVideo(): WanVideoParams {
     img2vidChunkFrames: 13,
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
+    img2vidResetAnchorToBase: false,
     img2vidChunkSeedMode: 'increment',
     img2vidWindowFrames: 13,
     img2vidWindowStride: 8,
@@ -867,6 +926,11 @@ function isWindowedTemporalMode(rawValue: unknown): boolean {
   return isWanWindowedImg2VidMode(normalizeImg2VidMode(rawValue))
 }
 
+function defaultResetAnchorToBase(mode: WanVideoParams['img2vidMode']): boolean {
+  const normalizedMode = normalizeImg2VidMode(mode)
+  return normalizedMode === 'chunk'
+}
+
 function maxAlignedWindowStride(windowFrames: number): number {
   return normalizeWanWindowStride(
     Number(windowFrames) - WAN_WINDOW_COMMIT_OVERLAP_MIN,
@@ -906,6 +970,9 @@ function readImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode']): Parti
         patch.img2vidAnchorAlpha = Math.min(1, Math.max(0, anchor))
       }
     }
+    if (typeof record.img2vidResetAnchorToBase === 'boolean') {
+      patch.img2vidResetAnchorToBase = Boolean(record.img2vidResetAnchorToBase)
+    }
     if (mode === 'chunk') {
       if (record.img2vidChunkFrames !== undefined) {
         const chunkFrames = Number(record.img2vidChunkFrames)
@@ -942,6 +1009,7 @@ function writeImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode'], sourc
     attentionMode: source.attentionMode,
     img2vidChunkSeedMode: source.img2vidChunkSeedMode,
     img2vidAnchorAlpha: source.img2vidAnchorAlpha,
+    img2vidResetAnchorToBase: source.img2vidResetAnchorToBase,
   }
   if (mode === 'chunk') {
     payload.img2vidChunkFrames = source.img2vidChunkFrames
@@ -971,8 +1039,23 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidMode')) {
     nextPatch.img2vidMode = normalizeImg2VidMode(nextPatch.img2vidMode)
   }
+  const effectiveMode = normalizeImg2VidMode(
+    Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidMode')
+      ? nextPatch.img2vidMode
+      : current.img2vidMode,
+  )
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkSeedMode')) {
     nextPatch.img2vidChunkSeedMode = normalizeChunkSeedMode(nextPatch.img2vidChunkSeedMode)
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidResetAnchorToBase')) {
+    nextPatch.img2vidResetAnchorToBase = Boolean(nextPatch.img2vidResetAnchorToBase)
+  }
+  if (effectiveMode === 'svi2' || effectiveMode === 'svi2_pro') {
+    nextPatch.img2vidResetAnchorToBase = false
+  } else if (!Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidResetAnchorToBase')) {
+    if (typeof current.img2vidResetAnchorToBase !== 'boolean') {
+      nextPatch.img2vidResetAnchorToBase = defaultResetAnchorToBase(effectiveMode)
+    }
   }
   const effectiveTotalFrames = Number(
     Object.prototype.hasOwnProperty.call(nextPatch, 'frames')
@@ -1140,7 +1223,12 @@ function setImg2VidTemporalMode(nextMode: WanVideoParams['img2vidMode']): void {
   if (currentMode === targetMode) return
   writeImg2VidTemporalSnapshot(currentMode, video.value)
   const restoredPatch = readImg2VidTemporalSnapshot(targetMode)
-  setVideo({ img2vidMode: targetMode, ...(restoredPatch ?? {}) })
+  const restoredResetAnchor = restoredPatch?.img2vidResetAnchorToBase
+  const nextResetAnchorToBase =
+    typeof restoredResetAnchor === 'boolean'
+      ? restoredResetAnchor
+      : defaultResetAnchorToBase(targetMode)
+  setVideo({ img2vidMode: targetMode, img2vidResetAnchorToBase: nextResetAnchorToBase, ...(restoredPatch ?? {}) })
 }
 
 function toggleHighPrompt(): void {
@@ -1175,6 +1263,7 @@ watch(
     video.value.img2vidChunkFrames,
     video.value.img2vidOverlapFrames,
     video.value.img2vidAnchorAlpha,
+    video.value.img2vidResetAnchorToBase,
     video.value.img2vidWindowFrames,
     video.value.img2vidWindowStride,
     video.value.img2vidWindowCommitFrames,
@@ -1271,7 +1360,6 @@ const {
   isRunning,
   canGenerate,
   cancel,
-  cancelRequested,
   progress,
   frames: framesResult,
   info,
@@ -1283,10 +1371,6 @@ const {
   historyLoadingTaskId,
   loadHistory,
   clearHistory,
-  queue,
-  queueMax,
-  enqueue,
-  clearQueue,
   resumeNotice,
 } = useVideoGeneration(props.tabId)
 
@@ -1678,6 +1762,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       chunkFrames: video.value.img2vidChunkFrames,
       overlapFrames: video.value.img2vidOverlapFrames,
       anchorAlpha: video.value.img2vidAnchorAlpha,
+      resetAnchorToBase: video.value.img2vidResetAnchorToBase,
       chunkSeedMode: video.value.img2vidChunkSeedMode,
       windowFrames: video.value.img2vidWindowFrames,
       windowStride: video.value.img2vidWindowStride,
@@ -1770,21 +1855,6 @@ async function onCopyHistoryDetails(): Promise<void> {
   await copyHistoryParams(item)
 }
 
-async function queueNext(): Promise<void> {
-  try {
-    const activeElement = document.activeElement
-    if (activeElement instanceof HTMLElement) {
-      activeElement.blur()
-      await nextTick()
-    }
-    normalizeVideoBeforeSubmit()
-    await enqueue()
-    toast('Queued next run.')
-  } catch (err) {
-    toast(err instanceof Error ? err.message : String(err))
-  }
-}
-
 function applyHistory(item: VideoRunHistoryItem): void {
   const snap = isRecord(item.paramsSnapshot) ? item.paramsSnapshot : {}
 
@@ -1820,6 +1890,9 @@ function applyHistory(item: VideoRunHistoryItem): void {
     img2vidChunkFrames: typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) ? Number(i2v.chunkFrames) : video.value.img2vidChunkFrames,
     img2vidOverlapFrames: typeof i2v.overlapFrames === 'number' && Number.isFinite(i2v.overlapFrames) ? Number(i2v.overlapFrames) : video.value.img2vidOverlapFrames,
     img2vidAnchorAlpha: typeof i2v.anchorAlpha === 'number' && Number.isFinite(i2v.anchorAlpha) ? Number(i2v.anchorAlpha) : video.value.img2vidAnchorAlpha,
+    img2vidResetAnchorToBase: typeof i2v.resetAnchorToBase === 'boolean'
+      ? Boolean(i2v.resetAnchorToBase)
+      : defaultResetAnchorToBase(nextImg2VidMode),
     img2vidChunkSeedMode: normalizeChunkSeedMode(i2v.chunkSeedMode),
     img2vidWindowFrames: typeof i2v.windowFrames === 'number' && Number.isFinite(i2v.windowFrames) ? Number(i2v.windowFrames) : video.value.img2vidWindowFrames,
     img2vidWindowStride: typeof i2v.windowStride === 'number' && Number.isFinite(i2v.windowStride) ? Number(i2v.windowStride) : video.value.img2vidWindowStride,

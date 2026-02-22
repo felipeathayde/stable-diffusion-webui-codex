@@ -8,11 +8,15 @@ Required Notice: see NOTICE
 
 Purpose: Results run card wrapper (Generate button + batch controls popover).
 Renders a `ResultsCard` with a Generate CTA and an optional batch settings panel (count/size) that can be reused across image/video views.
+When `isRunning=true`, the center CTA switches to a destructive cancel-confirm flow (click once -> `Are you sure?`, click again within timeout -> emit `cancel`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RunCard` (component): Run/results card with generate CTA and optional batch controls.
 - `setBatchCount` (function): Emits a clamped batch-count update.
 - `setBatchSize` (function): Emits a clamped batch-size update.
+- `onPrimaryAction` (function): Handles the center CTA click (generate or two-click cancel confirm while running).
+- `armCancelConfirm` (function): Enables temporary cancel-confirm mode and schedules auto-reset.
+- `clearCancelConfirm` (function): Resets cancel-confirm mode and clears pending timeout.
 - `toggleBatchMenu` (function): Toggles the batch settings popover.
 - `openBatchMenu` (function): Opens the batch settings popover and schedules positioning.
 - `closeBatchMenu` (function): Closes the batch settings popover and clears handlers.
@@ -31,13 +35,13 @@ Symbols (top-level; keep in sync; no ghosts):
     headerRightClass="run-controls"
     :showGenerate="true"
     :generateId="props.generateId"
-    :generateButtonClass="props.generateButtonClass"
+    :generateButtonClass="primaryButtonClass"
     :generateLabel="props.generateLabel"
-    :runningLabel="props.runningLabel"
-    :generateDisabled="props.generateDisabled"
-    :generateTitle="props.generateTitle"
+    :runningLabel="runningButtonLabel"
+    :generateDisabled="primaryButtonDisabled"
+    :generateTitle="primaryButtonTitle"
     :isRunning="props.isRunning"
-    @generate="emit('generate')"
+    @generate="onPrimaryAction"
   >
     <template #header-right>
       <template v-if="props.showBatchControls">
@@ -120,10 +124,16 @@ const props = withDefaults(defineProps<{
   title?: string
   generateId?: string
   generateButtonClass?: string
+  cancelButtonClass?: string
   generateLabel?: string
   runningLabel?: string
+  cancelLabel?: string
+  cancelConfirmLabel?: string
+  cancelConfirmWindowMs?: number
   generateDisabled?: boolean
+  cancelDisabled?: boolean
   generateTitle?: string
+  cancelTitle?: string
   isRunning?: boolean
   showBatchControls?: boolean
   batchCount?: number
@@ -137,10 +147,16 @@ const props = withDefaults(defineProps<{
   title: 'Run',
   generateId: '',
   generateButtonClass: 'btn btn-md btn-primary results-generate',
+  cancelButtonClass: 'btn btn-md btn-destructive results-generate',
   generateLabel: 'Generate',
   runningLabel: 'Running…',
+  cancelLabel: 'Cancel',
+  cancelConfirmLabel: 'Are you sure?',
+  cancelConfirmWindowMs: 4000,
   generateDisabled: false,
+  cancelDisabled: false,
   generateTitle: '',
+  cancelTitle: 'Click to cancel the current run.',
   isRunning: false,
   showBatchControls: true,
   batchCount: 1,
@@ -154,6 +170,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'generate'): void
+  (e: 'cancel'): void
   (e: 'update:batchCount', value: number): void
   (e: 'update:batchSize', value: number): void
 }>()
@@ -171,6 +188,9 @@ const isBatchMenuOpen = ref(false)
 const batchMenuStyle = ref<Record<string, string> | undefined>(undefined)
 let batchMenuRAF: number | null = null
 
+const isCancelConfirmArmed = ref(false)
+let cancelConfirmTimerId: number | null = null
+
 watch(() => props.showBatchControls, (show) => {
   if (!show) closeBatchMenu()
 })
@@ -178,6 +198,65 @@ watch(() => props.showBatchControls, (show) => {
 watch(inputsDisabled, (disabled) => {
   if (disabled) closeBatchMenu()
 })
+
+watch(() => props.isRunning, (running) => {
+  if (!running) clearCancelConfirm()
+})
+
+const primaryButtonClass = computed(() => {
+  if (props.isRunning) return props.cancelButtonClass
+  return props.generateButtonClass
+})
+
+const runningButtonLabel = computed(() => {
+  if (!props.isRunning) return props.runningLabel
+  return isCancelConfirmArmed.value ? props.cancelConfirmLabel : props.cancelLabel
+})
+
+const primaryButtonDisabled = computed(() => {
+  if (!props.isRunning) return Boolean(props.generateDisabled)
+  return Boolean(props.cancelDisabled)
+})
+
+const primaryButtonTitle = computed(() => {
+  if (!props.isRunning) return props.generateTitle
+  if (isCancelConfirmArmed.value) return 'Click again to confirm cancellation.'
+  return props.cancelTitle
+})
+const cancelConfirmWindowMs = computed(() => {
+  const value = Number(props.cancelConfirmWindowMs)
+  if (!Number.isFinite(value)) return 4000
+  return Math.max(500, Math.trunc(value))
+})
+
+function onPrimaryAction(): void {
+  if (!props.isRunning) {
+    emit('generate')
+    return
+  }
+  if (primaryButtonDisabled.value) return
+  if (!isCancelConfirmArmed.value) {
+    armCancelConfirm()
+    return
+  }
+  clearCancelConfirm()
+  emit('cancel')
+}
+
+function armCancelConfirm(): void {
+  clearCancelConfirm()
+  isCancelConfirmArmed.value = true
+  cancelConfirmTimerId = window.setTimeout(() => {
+    isCancelConfirmArmed.value = false
+    cancelConfirmTimerId = null
+  }, cancelConfirmWindowMs.value)
+}
+
+function clearCancelConfirm(): void {
+  isCancelConfirmArmed.value = false
+  if (cancelConfirmTimerId !== null) window.clearTimeout(cancelConfirmTimerId)
+  cancelConfirmTimerId = null
+}
 
 function setBatchCount(value: number): void {
   emit('update:batchCount', clampInt(value, minBatchCount.value, maxBatchCount.value))
@@ -282,6 +361,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', scheduleBatchMenuPositionUpdate)
   window.removeEventListener('scroll', scheduleBatchMenuPositionUpdate, true)
   if (batchMenuRAF !== null) window.cancelAnimationFrame(batchMenuRAF)
+  clearCancelConfirm()
 })
 
 function clampInt(value: number, min: number, max: number): number {

@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
 - `sendToWorkflows` (function): Sends the current params snapshot to the workflows subsystem (async).
 - `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
+- `onCancelRun` (function): Cancels the active run (XYZ sweep immediate stop or current image task cancel).
 - `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
 - `applyHistory` (function): Applies a history entry back into current state (prompt/params/assets).
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
@@ -289,6 +290,7 @@ Symbols (top-level; keep in sync; no ghosts):
         :batchSize="params.batchSize"
         :disabled="isRunBusy"
         @generate="onGenerate"
+        @cancel="onCancelRun"
         @update:batchCount="(v) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
         @update:batchSize="(v) => setParams({ batchSize: Math.max(1, Math.trunc(v)) })"
       >
@@ -512,6 +514,7 @@ const { upscalers, loading: upscalersLoading, error: upscalersError, fallbackOnO
 // Use unified generation composable
 const {
   generate: generateBase,
+  cancel: cancelBase,
   stopStream,
   gallery,
   progress,
@@ -907,6 +910,18 @@ async function onGenerate(): Promise<void> {
     return
   }
   await generateBase()
+}
+
+async function onCancelRun(): Promise<void> {
+  try {
+    if (xyzRunning.value) {
+      await xyzStore.stop('immediate')
+      return
+    }
+    await cancelBase()
+  } catch (err) {
+    toast(err instanceof Error ? err.message : String(err))
+  }
 }
 
 async function sendToWorkflows(): Promise<void> {

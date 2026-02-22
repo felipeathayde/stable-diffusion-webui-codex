@@ -12,11 +12,14 @@ Includes strict finite checks and explicit dtype/device retry logic (no silent f
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22VAEContractError` (exception): Deterministic WAN VAE path/config contract failure (non-retryable by dtype fallback loops).
+- `WanVAEDecodeSession` (dataclass): Reusable loaded WAN VAE decode session (device/dtype/lane) for multi-chunk decode passes.
 - `_detect_wan_vae_lane` (function): Resolves canonical WAN VAE lane (`2d_native`/`3d_native`) from core convolution weights.
 - `_normalize_vae_state_dict_keys` (function): Normalizes wrapper prefixes in VAE checkpoints before style-specific load paths.
 - `load_vae` (function): Loads the WAN VAE component (from directory bundles or single-file weights with sibling/override config dir).
 - `_cuda_bf16_supported` (function): Best-effort BF16 support probe for CUDA (used for dtype fallbacks).
 - `_vae_dtype_candidates` (function): Ordered dtype candidates for VAE encode/decode attempts (requested dtype first).
+- `open_vae_decode_session` (function): Loads WAN VAE once with fallback dtype candidates for repeated decode calls.
+- `close_vae_decode_session` (function): Offloads and tears down a decode session loaded by `open_vae_decode_session`.
 - `vae_encode_video_condition` (function): Encodes the Diffusers-style I2V conditioning video into latents (deterministic mode).
 - `vae_decode_video` (function): Decodes video latents to frames; can validate the expected output frame count.
 - `decode_latents_to_frames` (function): Validates strict WAN latent-channel decode input (no implicit slicing) and returns frames (optional frame-count validation).
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
@@ -56,6 +60,14 @@ _VAE_WRAPPER_PREFIXES = ("module.", "vae.", "first_stage_model.")
 
 class WAN22VAEContractError(RuntimeError):
     """Deterministic WAN22 VAE path/config contract failure."""
+
+
+@dataclass
+class WanVAEDecodeSession:
+    vae: Any
+    lane: str
+    decode_device: str
+    decode_dtype: torch.dtype
 
 
 def _detect_wan_vae_lane(state_dict: Mapping[str, Any]) -> str:
@@ -468,6 +480,73 @@ def _from_frame_batch_4d(frame_tensor: torch.Tensor, *, batch: int, frames: int)
     return frame_tensor.view(int(batch), int(frames), int(c), int(h), int(w)).permute(0, 2, 1, 3, 4)
 
 
+def open_vae_decode_session(
+    *,
+    device: str,
+    dtype: str,
+    vae_dir: str | None = None,
+    vae_config_dir: str | None = None,
+    logger: Any = None,
+) -> WanVAEDecodeSession:
+    log = get_logger(logger)
+    dev_name = resolve_device_name(device)
+    target_device = "cuda" if dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
+    preferred = as_torch_dtype(dtype)
+    dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
+    last_exc: Exception | None = None
+
+    for attempt_index, torch_dtype in enumerate(dtypes):
+        if attempt_index > 0:
+            warn_fallback(
+                logger,
+                component="VAE decode session",
+                detail=f"retrying session load with dtype={torch_dtype} device={target_device}",
+                reason=str(last_exc) if last_exc is not None else "previous attempt failed",
+            )
+        try:
+            vae = load_vae(
+                vae_dir,
+                torch_dtype=torch_dtype,
+                enable_tiling=bool(memory_management.manager.vae_always_tiled),
+                config_dir_override=vae_config_dir,
+            )
+            vae = vae.to(device=target_device, dtype=torch_dtype)
+            lane = _resolve_loaded_vae_lane(vae)
+            log.info(
+                "[wan22.gguf] VAE decode session loaded: device=%s dtype=%s lane=%s",
+                target_device,
+                str(torch_dtype),
+                lane,
+            )
+            return WanVAEDecodeSession(
+                vae=vae,
+                lane=lane,
+                decode_device=str(target_device),
+                decode_dtype=torch_dtype,
+            )
+        except WAN22VAEContractError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            continue
+
+    raise RuntimeError("WAN22 GGUF: failed to initialize VAE decode session.") from last_exc
+
+
+def close_vae_decode_session(session: WanVAEDecodeSession | None, *, logger: Any = None) -> None:
+    if session is None:
+        return
+    try:
+        session.vae.to("cpu")
+    except Exception:
+        pass
+    try:
+        del session.vae
+    except Exception:
+        pass
+    cuda_empty_cache(logger, label="after-vae-decode-session")
+
+
 def vae_encode_video_condition(
     init_image: Any,
     *,
@@ -664,6 +743,7 @@ def vae_decode_video(
     logger: Any = None,
     offload_after: bool = True,
     expected_frames: int | None = None,
+    decode_session: WanVAEDecodeSession | None = None,
 ) -> list[object]:
     _ = model_dir  # kept for signature symmetry (callers pass stage dir; current VAE loads from explicit path)
     log = get_logger(logger)
@@ -690,15 +770,30 @@ def vae_decode_video(
     dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
     last_exc: Exception | None = None
 
-    def _decode_attempt(*, attempt_device: str, torch_dtype: torch.dtype) -> torch.Tensor:
-        vae = load_vae(
-            vae_dir,
-            torch_dtype=torch_dtype,
-            enable_tiling=bool(memory_management.manager.vae_always_tiled),
-            config_dir_override=vae_config_dir,
-        )
-        vae = vae.to(device=attempt_device, dtype=torch_dtype)
-        lane = _resolve_loaded_vae_lane(vae)
+    def _decode_attempt(
+        *,
+        attempt_device: str,
+        torch_dtype: torch.dtype,
+        session: WanVAEDecodeSession | None = None,
+    ) -> torch.Tensor:
+        vae: Any
+        lane: str
+        local_vae_loaded = False
+        if session is not None:
+            vae = session.vae
+            lane = str(session.lane)
+            attempt_device = str(session.decode_device)
+            torch_dtype = session.decode_dtype
+        else:
+            vae = load_vae(
+                vae_dir,
+                torch_dtype=torch_dtype,
+                enable_tiling=bool(memory_management.manager.vae_always_tiled),
+                config_dir_override=vae_config_dir,
+            )
+            vae = vae.to(device=attempt_device, dtype=torch_dtype)
+            lane = _resolve_loaded_vae_lane(vae)
+            local_vae_loaded = True
         lat_in = video_latents.to(device=attempt_device, dtype=torch_dtype)
         lat = norm.process_out(lat_in)
         if not torch.isfinite(lat).all():
@@ -735,7 +830,7 @@ def vae_decode_video(
                     "WAN22 GGUF: VAE decode produced unsupported tensor rank "
                     f"(lane={lane} shape={tuple(img.shape)})."
                 )
-        if offload_after:
+        if local_vae_loaded and offload_after:
             try:
                 vae.to("cpu")
             except Exception:
@@ -745,47 +840,67 @@ def vae_decode_video(
         return img
 
     img = None
-    for attempt_idx, torch_dtype in enumerate(dtypes):
-        if attempt_idx > 0:
-            warn_fallback(
-                logger,
-                component="VAE decode",
-                detail=f"retrying with dtype={torch_dtype} device={target}",
-                reason=str(last_exc) if last_exc is not None else "previous attempt failed",
-            )
+    if decode_session is not None:
         try:
-            img = _decode_attempt(attempt_device=target, torch_dtype=torch_dtype)
-            bad = int((~torch.isfinite(img)).sum().item()) if isinstance(img, torch.Tensor) else -1
-            if bad > 0:
-                raise RuntimeError(
-                    "WAN22 GGUF: VAE decode produced non-finite outputs "
-                    f"(bad={bad} dtype={torch_dtype} device={target}; {summarize_numerics(img, name='vae_out')})."
-                )
-            break
-        except torch.OutOfMemoryError as exc:
-            last_exc = exc
-            if target == "cuda" and smart_fallback_enabled():
-                warn_fallback(
-                    logger,
-                    component="VAE decode",
-                    detail=f"OOM on CUDA at dtype={torch_dtype}; will retry other dtypes and then CPU fp32",
-                    reason="cuda_oom",
-                )
-                cuda_empty_cache(logger, label="vae-decode-oom")
-                continue
-            raise
+            img = _decode_attempt(
+                attempt_device=decode_session.decode_device,
+                torch_dtype=decode_session.decode_dtype,
+                session=decode_session,
+            )
         except WAN22VAEContractError:
             raise
         except Exception as exc:
-            last_exc = exc
-            # Continue to next dtype.
-            continue
+            raise RuntimeError(
+                "WAN22 GGUF: VAE decode failed with an active decode session "
+                f"(device={decode_session.decode_device} dtype={decode_session.decode_dtype} lane={decode_session.lane})."
+            ) from exc
+    else:
+        for attempt_idx, torch_dtype in enumerate(dtypes):
+            if attempt_idx > 0:
+                warn_fallback(
+                    logger,
+                    component="VAE decode",
+                    detail=f"retrying with dtype={torch_dtype} device={target}",
+                    reason=str(last_exc) if last_exc is not None else "previous attempt failed",
+                )
+            try:
+                img = _decode_attempt(attempt_device=target, torch_dtype=torch_dtype)
+                bad = int((~torch.isfinite(img)).sum().item()) if isinstance(img, torch.Tensor) else -1
+                if bad > 0:
+                    raise RuntimeError(
+                        "WAN22 GGUF: VAE decode produced non-finite outputs "
+                        f"(bad={bad} dtype={torch_dtype} device={target}; {summarize_numerics(img, name='vae_out')})."
+                    )
+                break
+            except torch.OutOfMemoryError as exc:
+                last_exc = exc
+                if target == "cuda" and smart_fallback_enabled():
+                    warn_fallback(
+                        logger,
+                        component="VAE decode",
+                        detail=f"OOM on CUDA at dtype={torch_dtype}; will retry other dtypes and then CPU fp32",
+                        reason="cuda_oom",
+                    )
+                    cuda_empty_cache(logger, label="vae-decode-oom")
+                    continue
+                raise
+            except WAN22VAEContractError:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                # Continue to next dtype.
+                continue
 
     if img is None or not isinstance(img, torch.Tensor):
         raise RuntimeError("WAN22 GGUF: VAE decode failed (no tensor output).") from last_exc
 
     # Last-resort: if CUDA path fails, try CPU fp32 (only when smart fallback is enabled).
-    if not torch.isfinite(img).all() and target == "cuda" and smart_fallback_enabled():
+    if (
+        decode_session is None
+        and not torch.isfinite(img).all()
+        and target == "cuda"
+        and smart_fallback_enabled()
+    ):
         warn_fallback(
             logger,
             component="VAE decode",
@@ -847,6 +962,7 @@ def decode_latents_to_frames(
     logger: Any = None,
     debug_preview: bool = False,
     expected_frames: int | None = None,
+    decode_session: WanVAEDecodeSession | None = None,
 ) -> list[object]:
     log = get_logger(logger)
     x = latents
@@ -875,4 +991,5 @@ def decode_latents_to_frames(
         vae_config_dir=cfg.vae_config_dir,
         logger=logger,
         expected_frames=expected_frames,
+        decode_session=decode_session,
     )

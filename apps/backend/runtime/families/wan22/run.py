@@ -33,7 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
 - `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state, with explicit VAE config-dir forwarding).
-- `stream_img2vid_chunked` (function): Chunked img2vid runner with chunk-major sequencing (for each chunk: high pass -> low pass in latent space, then final decode/stitch pass) and configurable anchor-reset continuity policy.
+- `stream_img2vid_chunked` (function): Chunked img2vid runner with chunk-major sequencing (for each chunk: high pass -> low pass in latent space, then final decode/stitch pass), configurable anchor-reset continuity policy, and shared VAE decode-session reuse.
 - `stream_img2vid_sliding_window` (function): Sliding-window img2vid runner built on the chunked runtime with explicit window/stride/commit controls.
 """
 
@@ -72,7 +72,13 @@ from .sampling import (
 from .sdpa import set_sdpa_settings
 from .stage_loader import load_stage_model_from_gguf, pick_stage_gguf
 from .text_context import get_text_context
-from .vae_io import decode_latents_to_frames, vae_encode_video_condition
+from .vae_io import (
+    WAN22VAEContractError,
+    close_vae_decode_session,
+    decode_latents_to_frames,
+    open_vae_decode_session,
+    vae_encode_video_condition,
+)
 
 _USE_CFG_SEED = object()
 
@@ -259,11 +265,14 @@ def _build_shared_scheduler(
     def _sampler_lane(raw: str | None) -> str | None:
         if raw is None:
             return None
+        raw_norm = str(raw).strip().lower()
+        if raw_norm.startswith("uni-pc"):
+            return "uni-pc"
         try:
-            kind = SamplerKind.from_string(raw)
+            kind = SamplerKind.from_string(raw_norm)
         except Exception:
             return "metadata"
-        if kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH1, SamplerKind.UNI_PC_BH2}:
+        if kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
             return "uni-pc"
         if kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
             return "euler"
@@ -2244,74 +2253,117 @@ def stream_img2vid_chunked(
                 nxt = nxt.resize(src.size)
             return Image.blend(src, nxt, max(0.0, min(1.0, float(alpha))))
 
-        stitched: list[Any] = []
-        for chunk_index, chunk_start in enumerate(chunk_starts):
-            if low_store_mode == "ram":
-                if chunk_index >= len(low_decode_ram):
-                    raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: missing low decode tensor in RAM for decode phase "
-                        f"chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}."
-                    )
-                chunk_latents = low_decode_ram[chunk_index]
-            else:
-                if chunk_index >= len(low_decode_paths):
-                    raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: missing low decode payload for decode phase "
-                        f"chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}."
-                    )
-                chunk_latents = _load_chunk_tensor(
-                    low_decode_paths[chunk_index],
-                    label=f"low-decode chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}",
+        decode_session = None
+        try:
+            try:
+                decode_session = open_vae_decode_session(
+                    device=cfg.device,
+                    dtype=cfg.dtype,
+                    vae_dir=cfg.vae_dir,
+                    vae_config_dir=cfg.vae_config_dir,
+                    logger=log,
                 )
-            frames_chunk = decode_latents_to_frames(
-                latents=chunk_latents,
-                model_dir=os.path.dirname(lo_path),
-                cfg=cfg,
-                logger=log,
-                expected_frames=int(chunk_out),
-            )
-            if not frames_chunk:
-                raise RuntimeError(
-                    f"WAN22 GGUF chunked img2vid: chunk {int(chunk_index) + 1}/{int(len(chunk_starts))} produced no frames."
+            except WAN22VAEContractError:
+                raise
+            except Exception as exc:
+                log.warning(
+                    "[wan22.gguf] chunked img2vid: could not open shared VAE decode session; "
+                    "falling back to per-chunk load/unload (%s).",
+                    exc,
                 )
+                decode_session = None
 
-            needed = int(total_out) - int(chunk_start)
-            is_last_chunk = chunk_index >= int(len(chunk_starts)) - 1
-            commit_limit = int(needed) if is_last_chunk else int(commit_frames_value)
-            commit_limit = max(0, min(len(frames_chunk), int(commit_limit), int(needed)))
-            overlap_count = min(
-                int(overlap_frames),
-                int(commit_limit),
-                max(0, len(stitched) - int(chunk_start)),
-            )
-            for overlap_index in range(overlap_count):
-                blend_alpha = float(overlap_index + 1) / float(overlap_count)
-                stitched[int(chunk_start) + overlap_index] = _blend_frames(
-                    stitched[int(chunk_start) + overlap_index],
-                    frames_chunk[overlap_index],
-                    alpha=blend_alpha,
-                )
-
-            for frame_index in range(overlap_count, int(commit_limit)):
-                absolute_index = int(chunk_start) + int(frame_index)
-                if absolute_index < len(stitched):
-                    stitched[absolute_index] = frames_chunk[frame_index]
+            stitched: list[Any] = []
+            for chunk_index, chunk_start in enumerate(chunk_starts):
+                if low_store_mode == "ram":
+                    if chunk_index >= len(low_decode_ram):
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: missing low decode tensor in RAM for decode phase "
+                            f"chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}."
+                        )
+                    chunk_latents = low_decode_ram[chunk_index]
                 else:
-                    stitched.append(frames_chunk[frame_index])
+                    if chunk_index >= len(low_decode_paths):
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: missing low decode payload for decode phase "
+                            f"chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}."
+                        )
+                    chunk_latents = _load_chunk_tensor(
+                        low_decode_paths[chunk_index],
+                        label=f"low-decode chunk {int(chunk_index) + 1}/{int(len(chunk_starts))}",
+                    )
+                try:
+                    frames_chunk = decode_latents_to_frames(
+                        latents=chunk_latents,
+                        model_dir=os.path.dirname(lo_path),
+                        cfg=cfg,
+                        logger=log,
+                        expected_frames=int(chunk_out),
+                        decode_session=decode_session,
+                    )
+                except Exception as exc:
+                    if decode_session is None:
+                        raise
+                    log.warning(
+                        "[wan22.gguf] chunked img2vid: shared VAE decode session failed at chunk %d/%d; "
+                        "switching to per-chunk load/unload (%s).",
+                        int(chunk_index) + 1,
+                        int(len(chunk_starts)),
+                        exc,
+                    )
+                    close_vae_decode_session(decode_session, logger=log)
+                    decode_session = None
+                    frames_chunk = decode_latents_to_frames(
+                        latents=chunk_latents,
+                        model_dir=os.path.dirname(lo_path),
+                        cfg=cfg,
+                        logger=log,
+                        expected_frames=int(chunk_out),
+                    )
+                if not frames_chunk:
+                    raise RuntimeError(
+                        f"WAN22 GGUF chunked img2vid: chunk {int(chunk_index) + 1}/{int(len(chunk_starts))} produced no frames."
+                    )
 
-            yield {
-                "type": "progress",
-                "stage": "chunk.phase_decode",
-                "step": int(chunk_index + 1),
-                "total": int(len(chunk_starts)),
-                "percent": 90.0 + (10.0 * (float(chunk_index + 1) / float(len(chunk_starts)))),
-            }
-            if low_store_mode == "ram":
-                low_decode_ram[chunk_index] = torch.empty((0,), dtype=dt, device="cpu")
-            else:
-                low_decode_paths[chunk_index] = ""
-            del chunk_latents
-            del frames_chunk
+                needed = int(total_out) - int(chunk_start)
+                is_last_chunk = chunk_index >= int(len(chunk_starts)) - 1
+                commit_limit = int(needed) if is_last_chunk else int(commit_frames_value)
+                commit_limit = max(0, min(len(frames_chunk), int(commit_limit), int(needed)))
+                overlap_count = min(
+                    int(overlap_frames),
+                    int(commit_limit),
+                    max(0, len(stitched) - int(chunk_start)),
+                )
+                for overlap_index in range(overlap_count):
+                    blend_alpha = float(overlap_index + 1) / float(overlap_count)
+                    stitched[int(chunk_start) + overlap_index] = _blend_frames(
+                        stitched[int(chunk_start) + overlap_index],
+                        frames_chunk[overlap_index],
+                        alpha=blend_alpha,
+                    )
+
+                for frame_index in range(overlap_count, int(commit_limit)):
+                    absolute_index = int(chunk_start) + int(frame_index)
+                    if absolute_index < len(stitched):
+                        stitched[absolute_index] = frames_chunk[frame_index]
+                    else:
+                        stitched.append(frames_chunk[frame_index])
+
+                yield {
+                    "type": "progress",
+                    "stage": "chunk.phase_decode",
+                    "step": int(chunk_index + 1),
+                    "total": int(len(chunk_starts)),
+                    "percent": 90.0 + (10.0 * (float(chunk_index + 1) / float(len(chunk_starts)))),
+                }
+                if low_store_mode == "ram":
+                    low_decode_ram[chunk_index] = torch.empty((0,), dtype=dt, device="cpu")
+                else:
+                    low_decode_paths[chunk_index] = ""
+                del chunk_latents
+                del frames_chunk
+        finally:
+            close_vae_decode_session(decode_session, logger=log)
 
         low_decode_ram.clear()
         low_decode_paths.clear()

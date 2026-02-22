@@ -2781,6 +2781,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         has_chunk_frames = payload.get('img2vid_chunk_frames') not in (None, '')
         has_overlap_frames = payload.get('img2vid_overlap_frames') not in (None, '')
         has_anchor_alpha = payload.get('img2vid_anchor_alpha') not in (None, '')
+        has_reset_anchor_to_base = payload.get('img2vid_reset_anchor_to_base') not in (None, '')
         has_chunk_seed_mode = payload.get('img2vid_chunk_seed_mode') not in (None, '')
         has_chunk_buffer_mode = payload.get('img2vid_chunk_buffer_mode') not in (None, '')
         has_window_frames = payload.get('img2vid_window_frames') not in (None, '')
@@ -2792,6 +2793,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 has_chunk_frames,
                 has_overlap_frames,
                 has_anchor_alpha,
+                has_reset_anchor_to_base,
                 has_chunk_seed_mode,
                 has_chunk_buffer_mode,
                 has_window_frames,
@@ -2806,7 +2808,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     status_code=400,
                     detail=(
                         "img2vid_mode='solo' does not allow temporal fields "
-                        "(chunk/window/anchor/seed/buffer)."
+                        "(chunk/window/anchor/reset/seed/buffer)."
                     ),
                 )
         elif img2vid_mode == 'chunk':
@@ -2905,6 +2907,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if anchor_alpha < 0.0 or anchor_alpha > 1.0:
                 raise HTTPException(status_code=400, detail="'img2vid_anchor_alpha' must be within [0, 1].")
             extras['img2vid_anchor_alpha'] = anchor_alpha
+        if img2vid_mode in {'chunk', 'sliding'} and has_reset_anchor_to_base:
+            extras['img2vid_reset_anchor_to_base'] = _require_bool_field(payload, 'img2vid_reset_anchor_to_base')
+        if img2vid_mode in {'svi2', 'svi2_pro'} and has_reset_anchor_to_base:
+            reset_anchor_to_base = _require_bool_field(payload, 'img2vid_reset_anchor_to_base')
+            if reset_anchor_to_base:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"img2vid_mode='{img2vid_mode}' requires 'img2vid_reset_anchor_to_base=false'.",
+                )
+            extras['img2vid_reset_anchor_to_base'] = False
         if img2vid_mode in {'chunk', 'sliding', 'svi2', 'svi2_pro'} and has_chunk_seed_mode:
             seed_mode = str(payload.get('img2vid_chunk_seed_mode') or '').strip().lower()
             if seed_mode not in {'fixed', 'increment', 'random'}:

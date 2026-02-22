@@ -206,6 +206,7 @@ class Wan22RequestKeys:
             "img2vid_chunk_frames",
             "img2vid_overlap_frames",
             "img2vid_anchor_alpha",
+            "img2vid_reset_anchor_to_base",
             "img2vid_chunk_seed_mode",
             "img2vid_chunk_buffer_mode",
             "img2vid_mode",

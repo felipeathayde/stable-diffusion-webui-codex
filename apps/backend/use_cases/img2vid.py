@@ -145,6 +145,7 @@ class _Img2VidChunkOptions:
     chunk_frames: int
     overlap_frames: int
     anchor_alpha: float
+    reset_anchor_to_base: bool
     chunk_seed_mode: str
     chunk_buffer_mode: str
 
@@ -155,6 +156,7 @@ class _Img2VidSlidingOptions:
     window_stride: int
     window_commit_frames: int
     anchor_alpha: float
+    reset_anchor_to_base: bool
     chunk_seed_mode: str
     chunk_buffer_mode: str
 
@@ -181,6 +183,7 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
     has_chunk = extras.get("img2vid_chunk_frames") not in (None, "")
     has_overlap = extras.get("img2vid_overlap_frames") not in (None, "")
     has_anchor = extras.get("img2vid_anchor_alpha") not in (None, "")
+    has_reset_anchor_to_base = extras.get("img2vid_reset_anchor_to_base") not in (None, "")
     has_seed_mode = extras.get("img2vid_chunk_seed_mode") not in (None, "")
     has_buffer_mode = extras.get("img2vid_chunk_buffer_mode") not in (None, "")
     has_window_frames = extras.get("img2vid_window_frames") not in (None, "")
@@ -196,6 +199,35 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
         if anchor_alpha < 0.0 or anchor_alpha > 1.0:
             raise RuntimeError(f"img2vid_anchor_alpha must be within [0, 1], got: {anchor_alpha}")
         return anchor_alpha
+
+    def _parse_reset_anchor_to_base(*, temporal_mode: str) -> bool:
+        mode_value = str(temporal_mode).strip().lower()
+        default_reset = mode_value == "chunk"
+        raw_value = extras.get("img2vid_reset_anchor_to_base", default_reset)
+        if isinstance(raw_value, bool):
+            reset_anchor = raw_value
+        elif isinstance(raw_value, str):
+            parsed = raw_value.strip().lower()
+            if parsed in {"true", "1"}:
+                reset_anchor = True
+            elif parsed in {"false", "0"}:
+                reset_anchor = False
+            else:
+                raise RuntimeError(
+                    "img2vid_reset_anchor_to_base must be a boolean literal ('true'/'false'/'1'/'0'), "
+                    f"got: {raw_value!r}"
+                )
+        elif isinstance(raw_value, (int, float)) and float(raw_value) in {0.0, 1.0}:
+            reset_anchor = bool(int(raw_value))
+        else:
+            raise RuntimeError(f"img2vid_reset_anchor_to_base must be a boolean, got: {raw_value!r}")
+
+        if mode_value in {"svi2", "svi2_pro"} and reset_anchor:
+            raise RuntimeError(
+                f"img2vid_mode='{mode_value}' requires img2vid_reset_anchor_to_base=false "
+                "(SVI continuity profile is slot-locked)."
+            )
+        return bool(reset_anchor)
 
     def _parse_seed_mode(*, temporal_mode: str) -> str:
         if str(temporal_mode) == "sliding":
@@ -230,6 +262,7 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
                 has_chunk,
                 has_overlap,
                 has_anchor,
+                has_reset_anchor_to_base,
                 has_seed_mode,
                 has_buffer_mode,
                 has_window_frames,
@@ -286,6 +319,7 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
                 chunk_frames=chunk_frames,
                 overlap_frames=overlap_frames,
                 anchor_alpha=_parse_anchor_alpha(),
+                reset_anchor_to_base=_parse_reset_anchor_to_base(temporal_mode="chunk"),
                 chunk_seed_mode=_parse_seed_mode(temporal_mode="chunk"),
                 chunk_buffer_mode=_parse_buffer_mode(),
             ),
@@ -355,6 +389,7 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
         window_stride=window_stride,
         window_commit_frames=window_commit_frames,
         anchor_alpha=_parse_anchor_alpha(),
+        reset_anchor_to_base=_parse_reset_anchor_to_base(temporal_mode=mode_label),
         chunk_seed_mode=_parse_seed_mode(temporal_mode=mode_label),
         chunk_buffer_mode=_parse_buffer_mode(),
     )
@@ -431,10 +466,11 @@ def run_img2vid(
             chunk_opts = temporal_opts.chunk
             if logger:
                 logger.info(
-                    "[img2vid] chunk mode enabled (phase-batched): chunk_frames=%d overlap=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
+                    "[img2vid] chunk mode enabled (phase-batched): chunk_frames=%d overlap=%d anchor_alpha=%.3f reset_anchor_to_base=%s seed_mode=%s buffer_mode=%s",
                     chunk_opts.chunk_frames,
                     chunk_opts.overlap_frames,
                     chunk_opts.anchor_alpha,
+                    bool(chunk_opts.reset_anchor_to_base),
                     chunk_opts.chunk_seed_mode,
                     chunk_opts.chunk_buffer_mode,
                 )
@@ -457,6 +493,7 @@ def run_img2vid(
                 chunk_frames=int(chunk_opts.chunk_frames),
                 overlap_frames=int(chunk_opts.overlap_frames),
                 anchor_alpha=float(chunk_opts.anchor_alpha),
+                reset_anchor_to_base=bool(chunk_opts.reset_anchor_to_base),
                 chunk_seed_mode=str(chunk_opts.chunk_seed_mode),
                 chunk_buffer_mode=str(chunk_opts.chunk_buffer_mode),
                 logger=logger,
@@ -489,11 +526,12 @@ def run_img2vid(
             sliding_opts = temporal_opts.sliding
             if logger:
                 logger.info(
-                    "[img2vid] sliding mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
+                    "[img2vid] sliding mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f reset_anchor_to_base=%s seed_mode=%s buffer_mode=%s",
                     sliding_opts.window_frames,
                     sliding_opts.window_stride,
                     sliding_opts.window_commit_frames,
                     sliding_opts.anchor_alpha,
+                    bool(sliding_opts.reset_anchor_to_base),
                     sliding_opts.chunk_seed_mode,
                     sliding_opts.chunk_buffer_mode,
                 )
@@ -517,6 +555,7 @@ def run_img2vid(
                 window_stride=int(sliding_opts.window_stride),
                 window_commit_frames=int(sliding_opts.window_commit_frames),
                 anchor_alpha=float(sliding_opts.anchor_alpha),
+                reset_anchor_to_base=bool(sliding_opts.reset_anchor_to_base),
                 chunk_seed_mode=str(sliding_opts.chunk_seed_mode),
                 chunk_buffer_mode=str(sliding_opts.chunk_buffer_mode),
                 logger=logger,
@@ -549,11 +588,12 @@ def run_img2vid(
             svi_opts = temporal_opts.svi2
             if logger:
                 logger.info(
-                    "[img2vid] svi2 mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
+                    "[img2vid] svi2 mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f reset_anchor_to_base=%s seed_mode=%s buffer_mode=%s",
                     svi_opts.window_frames,
                     svi_opts.window_stride,
                     svi_opts.window_commit_frames,
                     svi_opts.anchor_alpha,
+                    bool(svi_opts.reset_anchor_to_base),
                     svi_opts.chunk_seed_mode,
                     svi_opts.chunk_buffer_mode,
                 )
@@ -609,11 +649,12 @@ def run_img2vid(
             svi_opts = temporal_opts.svi2_pro
             if logger:
                 logger.info(
-                    "[img2vid] svi2_pro mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
+                    "[img2vid] svi2_pro mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f reset_anchor_to_base=%s seed_mode=%s buffer_mode=%s",
                     svi_opts.window_frames,
                     svi_opts.window_stride,
                     svi_opts.window_commit_frames,
                     svi_opts.anchor_alpha,
+                    bool(svi_opts.reset_anchor_to_base),
                     svi_opts.chunk_seed_mode,
                     svi_opts.chunk_buffer_mode,
                 )

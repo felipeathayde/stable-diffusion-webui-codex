@@ -287,6 +287,7 @@ function defaultVideo(): WanVideoParams {
     img2vidChunkFrames: 13,
     img2vidOverlapFrames: 4,
     img2vidAnchorAlpha: 0.2,
+    img2vidResetAnchorToBase: false,
     img2vidChunkSeedMode: 'increment',
     img2vidWindowFrames: 13,
     img2vidWindowStride: 8,
@@ -476,6 +477,7 @@ export function useVideoGeneration(tabId: string) {
         chunkFrames: v.img2vidChunkFrames,
         overlapFrames: v.img2vidOverlapFrames,
         anchorAlpha: v.img2vidAnchorAlpha,
+        resetAnchorToBase: v.img2vidResetAnchorToBase,
         chunkSeedMode: v.img2vidChunkSeedMode,
         windowFrames: v.img2vidWindowFrames,
         windowStride: v.img2vidWindowStride,
@@ -615,12 +617,14 @@ export function useVideoGeneration(tabId: string) {
         img2vidTemporalInput.chunkFrames = v.img2vidChunkFrames
         img2vidTemporalInput.overlapFrames = v.img2vidOverlapFrames
         img2vidTemporalInput.anchorAlpha = v.img2vidAnchorAlpha
+        img2vidTemporalInput.resetAnchorToBase = v.img2vidResetAnchorToBase
         img2vidTemporalInput.chunkSeedMode = v.img2vidChunkSeedMode
       } else if (isWanWindowedImg2VidMode(img2vidMode)) {
         img2vidTemporalInput.windowFrames = v.img2vidWindowFrames
         img2vidTemporalInput.windowStride = v.img2vidWindowStride
         img2vidTemporalInput.windowCommitFrames = v.img2vidWindowCommitFrames
         img2vidTemporalInput.anchorAlpha = v.img2vidAnchorAlpha
+        img2vidTemporalInput.resetAnchorToBase = v.img2vidResetAnchorToBase
         img2vidTemporalInput.chunkSeedMode = v.img2vidChunkSeedMode
       }
       const payload = buildWanImg2VidPayload({

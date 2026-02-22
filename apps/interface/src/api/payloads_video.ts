@@ -171,6 +171,7 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   img2vid_chunk_frames: WanFrameCountSchema.optional(),
   img2vid_overlap_frames: z.number().int().min(0).max(WAN_FRAMES_MAX - 1).optional(),
   img2vid_anchor_alpha: z.number().min(0).max(1).optional(),
+  img2vid_reset_anchor_to_base: z.boolean().optional(),
   img2vid_chunk_seed_mode: Img2VidChunkSeedModeEnum.optional(),
   img2vid_window_frames: WanFrameCountSchema.optional(),
   img2vid_window_stride: Img2VidWindowStrideSchema.optional(),
@@ -182,13 +183,20 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
     const chunkFrames = payload.img2vid_chunk_frames
     const overlapFrames = payload.img2vid_overlap_frames
     const anchorAlpha = payload.img2vid_anchor_alpha
+    const resetAnchorToBase = payload.img2vid_reset_anchor_to_base
     const chunkSeedMode = payload.img2vid_chunk_seed_mode
     const windowFrames = payload.img2vid_window_frames
     const windowStride = payload.img2vid_window_stride
     const windowCommitFrames = payload.img2vid_window_commit_frames
 
     if (mode === 'solo') {
-      if (chunkFrames !== undefined || overlapFrames !== undefined || anchorAlpha !== undefined || chunkSeedMode !== undefined) {
+      if (
+        chunkFrames !== undefined
+        || overlapFrames !== undefined
+        || anchorAlpha !== undefined
+        || resetAnchorToBase !== undefined
+        || chunkSeedMode !== undefined
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "img2vid_mode='solo' does not allow chunking fields",
@@ -280,6 +288,13 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
           code: z.ZodIssueCode.custom,
           message: `img2vid_mode='${modeLabel}' does not allow img2vid_chunk_frames/img2vid_overlap_frames`,
           path: ['img2vid_mode'],
+        })
+      }
+      if ((mode === 'svi2' || mode === 'svi2_pro') && resetAnchorToBase === true) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `img2vid_mode='${modeLabel}' requires img2vid_reset_anchor_to_base=false`,
+          path: ['img2vid_reset_anchor_to_base'],
         })
       }
       return
@@ -410,6 +425,7 @@ export interface WanImg2VidInput extends WanVideoCommonInput {
   chunkFrames?: number
   overlapFrames?: number
   anchorAlpha?: number
+  resetAnchorToBase?: boolean
   chunkSeedMode?: 'fixed' | 'increment' | 'random'
   windowFrames?: number
   windowStride?: number
@@ -645,6 +661,9 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
   const img2vidMode = normalizeImg2VidMode(input.img2vidMode)
   if (typeof input.anchorAlpha === 'number' && Number.isFinite(input.anchorAlpha)) {
     payload.img2vid_anchor_alpha = Math.min(1, Math.max(0, input.anchorAlpha))
+  }
+  if (typeof input.resetAnchorToBase === 'boolean') {
+    payload.img2vid_reset_anchor_to_base = input.resetAnchorToBase
   }
   if (typeof input.chunkSeedMode === 'string') {
     const chunkSeedMode = String(input.chunkSeedMode || '').trim().toLowerCase()

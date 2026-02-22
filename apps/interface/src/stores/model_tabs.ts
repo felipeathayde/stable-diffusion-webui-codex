@@ -141,6 +141,7 @@ export interface WanVideoParams {
   img2vidChunkFrames: number
   img2vidOverlapFrames: number
   img2vidAnchorAlpha: number
+  img2vidResetAnchorToBase: boolean
   img2vidChunkSeedMode: WanChunkSeedMode
   img2vidWindowFrames: number
   img2vidWindowStride: number
@@ -339,6 +340,7 @@ function defaultParams<T extends BaseTabType>(
       img2vidChunkFrames: 13,
       img2vidOverlapFrames: 4,
       img2vidAnchorAlpha: 0.2,
+      img2vidResetAnchorToBase: false,
       img2vidChunkSeedMode: 'increment',
       img2vidWindowFrames: 13,
       img2vidWindowStride: 8,
@@ -546,6 +548,16 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   const anchorRaw = Number(merged.img2vidAnchorAlpha)
   merged.img2vidAnchorAlpha = Number.isFinite(anchorRaw) ? Math.min(1, Math.max(0, anchorRaw)) : defaults.img2vidAnchorAlpha
 
+  const modeDefaultResetAnchor = merged.img2vidMode === 'chunk'
+  const hasExplicitResetAnchor = Object.prototype.hasOwnProperty.call(rawRecord, 'img2vidResetAnchorToBase')
+  if (merged.img2vidMode === 'svi2' || merged.img2vidMode === 'svi2_pro') {
+    merged.img2vidResetAnchorToBase = false
+  } else if (hasExplicitResetAnchor) {
+    merged.img2vidResetAnchorToBase = Boolean(rawRecord.img2vidResetAnchorToBase)
+  } else {
+    merged.img2vidResetAnchorToBase = modeDefaultResetAnchor
+  }
+
   const seedMode = String(merged.img2vidChunkSeedMode || '').trim().toLowerCase()
   const modeDefaultSeed = merged.img2vidMode === 'sliding' ? 'fixed' : 'increment'
   if (seedMode !== 'fixed' && seedMode !== 'increment' && seedMode !== 'random') {
@@ -606,6 +618,7 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     img2vidChunkFrames: merged.img2vidChunkFrames,
     img2vidOverlapFrames: merged.img2vidOverlapFrames,
     img2vidAnchorAlpha: merged.img2vidAnchorAlpha,
+    img2vidResetAnchorToBase: merged.img2vidResetAnchorToBase,
     img2vidChunkSeedMode: merged.img2vidChunkSeedMode,
     img2vidWindowFrames: merged.img2vidWindowFrames,
     img2vidWindowStride: merged.img2vidWindowStride,

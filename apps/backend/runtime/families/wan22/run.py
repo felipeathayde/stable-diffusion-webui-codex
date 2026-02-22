@@ -1886,8 +1886,9 @@ def stream_img2vid_chunked(
         )
     if continuity_profile_value == _WAN_CONTINUITY_PROFILE_OVERLAP and (not anchor_reset_to_base) and float(anchor_alpha_value) > 0.0:
         log.info(
-            "[wan22.gguf] chunked img2vid continuity: reset_anchor_to_base=false, "
-            "carried latent anchors override base reset (anchor_alpha applies only when reset is enabled)."
+            "[wan22.gguf] chunked img2vid continuity: reset_anchor_to_base=false with anchor_alpha=%.3f; "
+            "applying soft first-slot reanchor against the base init anchor to reduce long-horizon drift.",
+            float(anchor_alpha_value),
         )
     raw_chunk_buffer_mode = chunk_buffer_mode
     if raw_chunk_buffer_mode is None:
@@ -2152,7 +2153,17 @@ def stream_img2vid_chunked(
                             alpha=anchor_alpha_value,
                         )
                     else:
-                        chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = prev_chunk_anchor_latents
+                        if float(anchor_alpha_value) > 0.0:
+                            soft_anchor = prev_chunk_anchor_latents.clone()
+                            soft_anchor[:, :, :1, :, :] = _blend_anchor_latent(
+                                prev_chunk_anchor_latents[:, :, :1, :, :],
+                                base_anchor_latent,
+                                alpha=anchor_alpha_value,
+                            )
+                            chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = soft_anchor
+                            del soft_anchor
+                        else:
+                            chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = prev_chunk_anchor_latents
                     chunk_condition = chunk_condition_buffer
                 else:
                     if prev_chunk_tail_latent_cpu is None:
@@ -2594,6 +2605,7 @@ def stream_img2vid_sliding_window(
     window_commit_frames: int,
     anchor_alpha: float,
     chunk_seed_mode: str,
+    reset_anchor_to_base: bool = False,
     chunk_buffer_mode: str | None = None,
     logger: Any = None,
 ):
@@ -2607,11 +2619,12 @@ def stream_img2vid_sliding_window(
 
     overlap_frames = int(window_frames) - int(window_stride)
     log.info(
-        "[wan22.gguf] sliding img2vid: window=%d stride=%d commit=%d overlap=%d",
+        "[wan22.gguf] sliding img2vid: window=%d stride=%d commit=%d overlap=%d reset_anchor_to_base=%s",
         int(window_frames),
         int(window_stride),
         int(window_commit_frames),
         int(overlap_frames),
+        bool(reset_anchor_to_base),
     )
     yield from stream_img2vid_chunked(
         cfg,
@@ -2621,7 +2634,7 @@ def stream_img2vid_sliding_window(
         chunk_seed_mode=str(chunk_seed_mode),
         commit_frames=int(window_commit_frames),
         chunk_buffer_mode=chunk_buffer_mode,
-        reset_anchor_to_base=False,
+        reset_anchor_to_base=bool(reset_anchor_to_base),
         continuity_profile=_WAN_CONTINUITY_PROFILE_OVERLAP,
         logger=logger,
     )

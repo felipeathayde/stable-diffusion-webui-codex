@@ -47,13 +47,14 @@ from __future__ import annotations
 import gc
 import os
 import re
+import sys
 import tempfile
 from typing import Any, Optional
 
 import torch
 
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled, smart_offload_enabled
 
 from .config import (
     RunConfig,
@@ -120,6 +121,9 @@ class _MemoryManagedModule:
     def codex_unpatch_model(self, target_device: torch.device | None = None):  # noqa: ANN001 - protocol
         if target_device is None:
             return self.model
+        if target_device.type == "cpu" and not smart_fallback_enabled():
+            # No smart-fallback means OOM should fail loud; teardown must not try GPU->CPU migration.
+            return self.model
         try:
             self.model.to(target_device, non_blocking=True)
         except TypeError:
@@ -166,9 +170,21 @@ def _teardown_stage(
 ) -> tuple[None, None]:
     """Finalize a stage deterministically, even when sampling raises/cancels."""
 
+    has_upstream_error = sys.exc_info()[0] is not None
     try:
         if mm is not None:
-            memory_management.manager.unload_model(mm)
+            try:
+                memory_management.manager.unload_model(mm)
+            except Exception as exc:
+                if not has_upstream_error:
+                    raise
+                get_logger(logger).warning(
+                    "[wan22.gguf] stage teardown suppressed unload failure after upstream error "
+                    "(stage=%s): %s",
+                    str(stage),
+                    str(exc),
+                    exc_info=True,
+                )
     finally:
         del mm
         del model

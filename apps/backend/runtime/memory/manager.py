@@ -1501,10 +1501,12 @@ class CodexMemoryManager:
             action_memory_before = self._smart_offload_memory_fields(prefix="memory_before")
         try:
             if hasattr(loader, "codex_unpatch_model"):
-                if force_cpu_target:
+                if avoid_model_moving:
+                    target_device = None
+                elif force_cpu_target:
                     target_device = self._cpu_device
                 else:
-                    target_device = record.offload_device if not avoid_model_moving else self._cpu_device
+                    target_device = record.offload_device
                 loader.codex_unpatch_model(target_device)
             elif hasattr(loader, "to") and not avoid_model_moving:
                 target_device = self._cpu_device

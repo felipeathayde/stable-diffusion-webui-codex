@@ -109,6 +109,7 @@ Status: Active
 - 2026-02-22: `run.py` now exposes dedicated temporal entrypoints `stream_img2vid_svi2(...)` and `stream_img2vid_svi2_pro(...)` (`img2vid_mode='svi2'|'svi2_pro'`), enforcing the same fail-loud window contracts as sliding (`window_stride % 4 == 0`, `window_commit_frames - window_stride >= 4`) and routing through chunked runtime with `reset_anchor_to_base=false` for continuity-preserving handoff.
 - 2026-02-22: `stream_img2vid_chunked(...)` now accepts explicit `continuity_profile` (`overlap|svi2|svi2_pro`), fails loud on unknown profiles, and rejects invalid `continuity_profile in {'svi2','svi2_pro'} + reset_anchor_to_base=true`; SVI2/SVI2 Pro profile assembly is slot-locked to their conditioning contracts, while sliding dispatch is pinned to `overlap`.
 - 2026-02-22: `stream_img2vid_sliding_window(...)` now receives explicit `reset_anchor_to_base` (no hidden hardcode), logs the resolved reset mode, and forwards it to `stream_img2vid_chunked(...)` so UI/API can toggle hard reset vs soft carry-over in overlap continuity.
+- 2026-02-22: `_MemoryManagedModule.codex_unpatch_model(...)` now skips CPU migration when `smart_fallback` is disabled (teardown no longer attempts GPU→CPU move after OOM), and `_teardown_stage(...)` suppresses unload failures only when unwinding an upstream sampling exception so the original denoise OOM remains the primary failure.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

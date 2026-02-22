@@ -268,10 +268,29 @@
     gap: var(--space-sm);
     flex-wrap: wrap;
   }
+  .run-progress-status__meta-left {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+  .run-progress-status__meta-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
   .run-progress-status__meta-item {
     font-size: 0.78rem;
     color: hsl(var(--muted-foreground));
     font-variant-numeric: tabular-nums;
+  }
+  .run-progress-status__meta-item--elapsed {
+    white-space: nowrap;
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    letter-spacing: 0.01em;
   }
 
   .run-progress-status--error .run-progress-status__icon,

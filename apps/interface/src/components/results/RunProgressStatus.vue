@@ -14,6 +14,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `RunProgressStatus` (component): Shared status panel for run progress and run notices/errors.
 - `normalizeStatusVariant` (function): Normalizes incoming status variants into the supported union.
 - `resolvedVariant` (const): Normalized status variant that drives panel styling and icon selection.
+- `formatElapsedSeconds` (function): Formats elapsed seconds into `mm:ss` or `hh:mm:ss`.
+- `displayElapsedSeconds` (const): Resolved elapsed seconds value (external prop or internal run timer).
+- `elapsedLabel` (const): Formatted elapsed time string rendered on the progress meta row.
 - `normalizedPercent` (const): Safe normalized percent value for display/progress bar.
 -->
 
@@ -98,20 +101,22 @@ Symbols (top-level; keep in sync; no ghosts):
       max="100"
     ></progress>
 
-    <div
-      v-if="isProgressVariant && (step !== null && totalSteps !== null || etaSeconds !== null || queueLabel || $slots.extra)"
-      class="run-progress-status__meta"
-    >
-      <span v-if="step !== null && totalSteps !== null" class="run-progress-status__meta-item">Step {{ step }} / {{ totalSteps }}</span>
-      <span v-if="etaSeconds !== null" class="run-progress-status__meta-item">ETA ~ {{ etaSeconds.toFixed(0) }}s</span>
-      <span v-if="queueLabel" class="run-progress-status__meta-item">{{ queueLabel }}</span>
-      <slot name="extra" />
+    <div v-if="isProgressVariant" class="run-progress-status__meta">
+      <div class="run-progress-status__meta-left">
+        <span v-if="step !== null && totalSteps !== null" class="run-progress-status__meta-item">Step {{ step }} / {{ totalSteps }}</span>
+        <span v-if="etaSeconds !== null" class="run-progress-status__meta-item">ETA ~ {{ etaSeconds.toFixed(0) }}s</span>
+        <span v-if="queueLabel" class="run-progress-status__meta-item">{{ queueLabel }}</span>
+        <slot name="extra" />
+      </div>
+      <div class="run-progress-status__meta-right">
+        <span class="run-progress-status__meta-item run-progress-status__meta-item--elapsed">Elapsed {{ elapsedLabel }}</span>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 type RunStatusVariant = 'progress' | 'error' | 'warning' | 'info' | 'success'
 
@@ -124,6 +129,7 @@ const props = withDefaults(defineProps<{
   step?: number | null
   totalSteps?: number | null
   etaSeconds?: number | null
+  elapsedSeconds?: number | null
   queueLabel?: string
   showProgressBar?: boolean
 }>(), {
@@ -135,6 +141,7 @@ const props = withDefaults(defineProps<{
   step: null,
   totalSteps: null,
   etaSeconds: null,
+  elapsedSeconds: null,
   queueLabel: '',
   showProgressBar: true,
 })
@@ -143,6 +150,17 @@ function normalizeStatusVariant(rawVariant: string): RunStatusVariant {
   const variant = String(rawVariant || '').trim().toLowerCase()
   if (variant === 'error' || variant === 'warning' || variant === 'info' || variant === 'success') return variant
   return 'progress'
+}
+
+function formatElapsedSeconds(totalSeconds: number): string {
+  const safeSeconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.trunc(totalSeconds)) : 0
+  const hours = Math.trunc(safeSeconds / 3600)
+  const minutes = Math.trunc((safeSeconds % 3600) / 60)
+  const seconds = safeSeconds % 60
+  const mm = String(minutes).padStart(2, '0')
+  const ss = String(seconds).padStart(2, '0')
+  if (hours > 0) return `${String(hours).padStart(2, '0')}:${mm}:${ss}`
+  return `${mm}:${ss}`
 }
 
 const resolvedVariant = computed<RunStatusVariant>(() => normalizeStatusVariant(String(props.variant || 'progress')))
@@ -166,8 +184,55 @@ const normalizedPercent = computed(() => {
 const step = computed(() => props.step)
 const totalSteps = computed(() => props.totalSteps)
 const etaSeconds = computed(() => props.etaSeconds)
+const externalElapsedSeconds = computed(() => {
+  if (props.elapsedSeconds === null || props.elapsedSeconds === undefined) return null
+  if (!Number.isFinite(props.elapsedSeconds)) return null
+  return Math.max(0, Math.trunc(props.elapsedSeconds))
+})
 const queueLabel = computed(() => String(props.queueLabel || '').trim())
 const showProgressBar = computed(() => Boolean(props.showProgressBar))
 const ariaRole = computed(() => (resolvedVariant.value === 'error' ? 'alert' : 'status'))
 const ariaLive = computed(() => (resolvedVariant.value === 'error' ? 'assertive' : 'polite'))
+
+const internalElapsedSeconds = ref(0)
+let internalTimerId: number | null = null
+let internalStartAtMs = 0
+
+function startInternalTimer(): void {
+  if (internalTimerId !== null) return
+  internalTimerId = window.setInterval(() => {
+    const elapsedMs = Date.now() - internalStartAtMs
+    internalElapsedSeconds.value = Math.max(0, Math.trunc(elapsedMs / 1000))
+  }, 1000)
+}
+
+function stopInternalTimer(): void {
+  if (internalTimerId !== null) window.clearInterval(internalTimerId)
+  internalTimerId = null
+}
+
+const shouldUseInternalTimer = computed(() => isProgressVariant.value && externalElapsedSeconds.value === null)
+
+watch(shouldUseInternalTimer, (next) => {
+  if (!next) {
+    stopInternalTimer()
+    return
+  }
+  internalElapsedSeconds.value = 0
+  internalStartAtMs = Date.now()
+  startInternalTimer()
+}, {
+  immediate: true,
+})
+
+onBeforeUnmount(() => {
+  stopInternalTimer()
+})
+
+const displayElapsedSeconds = computed(() => {
+  if (externalElapsedSeconds.value !== null) return externalElapsedSeconds.value
+  return internalElapsedSeconds.value
+})
+
+const elapsedLabel = computed(() => formatElapsedSeconds(displayElapsedSeconds.value))
 </script>

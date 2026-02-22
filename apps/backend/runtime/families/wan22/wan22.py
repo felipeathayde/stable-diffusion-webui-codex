@@ -18,6 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `stream_img2vid` (function): Streaming img2vid generator yielding progress events and final frames.
 - `stream_img2vid_chunked` (function): Chunked img2vid streaming runner (single text-conditioning pass + phase-batched high/low over chunks).
 - `stream_img2vid_sliding_window` (function): Sliding-window img2vid streaming runner (window/stride/commit controls over chunk runtime).
+- `stream_img2vid_svi2` (function): SVI 2.0 img2vid streaming runner (anchor-padded conditioning profile).
+- `stream_img2vid_svi2_pro` (function): SVI 2.0 Pro img2vid streaming runner (anchor+motion+zero latent profile).
 - `__all__` (constant): Export list for the WAN22 GGUF runtime facade.
 """
 
@@ -30,6 +32,8 @@ from .run import (
     stream_img2vid,
     stream_img2vid_chunked,
     stream_img2vid_sliding_window,
+    stream_img2vid_svi2,
+    stream_img2vid_svi2_pro,
     stream_txt2vid,
 )
 
@@ -42,4 +46,6 @@ __all__ = [
     "stream_img2vid",
     "stream_img2vid_chunked",
     "stream_img2vid_sliding_window",
+    "stream_img2vid_svi2",
+    "stream_img2vid_svi2_pro",
 ]

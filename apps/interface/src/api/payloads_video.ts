@@ -23,7 +23,7 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 	- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
-- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|chunk|sliding`).
+- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|chunk|sliding|svi2|svi2_pro`).
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
@@ -40,6 +40,16 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 */
 
 import { z } from 'zod'
+import {
+  isWanWindowedImg2VidMode,
+  normalizeWanChunkOverlap,
+  normalizeWanImg2VidMode,
+  normalizeWanWindowCommit,
+  normalizeWanWindowStride,
+  WAN_WINDOW_COMMIT_OVERLAP_MIN,
+  WAN_WINDOW_STRIDE_ALIGNMENT,
+  type WanImg2VidMode,
+} from '../utils/wan_img2vid_temporal'
 
 const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
@@ -51,7 +61,7 @@ const PromptSchema = z
 
 const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
 const WanAttentionModeEnum = z.enum(['global', 'sliding'])
-const Img2VidModeEnum = z.enum(['solo', 'chunk', 'sliding'])
+const Img2VidModeEnum = z.enum(['solo', 'chunk', 'sliding', 'svi2', 'svi2_pro'])
 const Img2VidChunkSeedModeEnum = z.enum(['fixed', 'increment', 'random'])
 
 const WAN_DIM_STEP = 16
@@ -219,12 +229,13 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
       }
     }
 
-    if (mode === 'sliding') {
+    if (isWanWindowedImg2VidMode(mode)) {
+      const modeLabel = String(mode)
       if (windowFrames === undefined || windowStride === undefined || windowCommitFrames === undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            "img2vid_mode='sliding' requires img2vid_window_frames, img2vid_window_stride, and img2vid_window_commit_frames",
+            `img2vid_mode='${modeLabel}' requires img2vid_window_frames, img2vid_window_stride, and img2vid_window_commit_frames`,
           path: ['img2vid_mode'],
         })
         return
@@ -243,6 +254,13 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
           path: ['img2vid_window_stride'],
         })
       }
+      if (windowStride % WAN_WINDOW_STRIDE_ALIGNMENT !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `img2vid_window_stride must be aligned to temporal scale=${WAN_WINDOW_STRIDE_ALIGNMENT}`,
+          path: ['img2vid_window_stride'],
+        })
+      }
       if (windowCommitFrames < windowStride || windowCommitFrames > windowFrames) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -250,10 +268,17 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
           path: ['img2vid_window_commit_frames'],
         })
       }
+      if ((windowCommitFrames - windowStride) < WAN_WINDOW_COMMIT_OVERLAP_MIN) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `img2vid_window_commit_frames must keep at least ${WAN_WINDOW_COMMIT_OVERLAP_MIN} committed overlap frames beyond stride`,
+          path: ['img2vid_window_commit_frames'],
+        })
+      }
       if (chunkFrames !== undefined || overlapFrames !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "img2vid_mode='sliding' does not allow img2vid_chunk_frames/img2vid_overlap_frames",
+          message: `img2vid_mode='${modeLabel}' does not allow img2vid_chunk_frames/img2vid_overlap_frames`,
           path: ['img2vid_mode'],
         })
       }
@@ -272,6 +297,19 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'img2vid_overlap_frames must be smaller than img2vid_chunk_frames',
+        path: ['img2vid_overlap_frames'],
+      })
+    }
+    if (
+      mode === 'chunk'
+      && chunkFrames !== undefined
+      && overlapFrames !== undefined
+      && ((chunkFrames - overlapFrames) % WAN_WINDOW_STRIDE_ALIGNMENT !== 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `img2vid_overlap_frames must keep (img2vid_chunk_frames - img2vid_overlap_frames) aligned to temporal scale=${WAN_WINDOW_STRIDE_ALIGNMENT}`,
         path: ['img2vid_overlap_frames'],
       })
     }
@@ -368,7 +406,7 @@ export interface WanVideoCommonInput {
 
 export interface WanImg2VidInput extends WanVideoCommonInput {
   initImageData: string
-  img2vidMode: 'solo' | 'chunk' | 'sliding'
+  img2vidMode: 'solo' | 'chunk' | 'sliding' | 'svi2' | 'svi2_pro'
   chunkFrames?: number
   overlapFrames?: number
   anchorAlpha?: number
@@ -442,10 +480,8 @@ function normalizeAttentionMode(value: 'global' | 'sliding' | string): 'global' 
   return String(value || '').trim().toLowerCase() === 'sliding' ? 'sliding' : 'global'
 }
 
-function normalizeImg2VidMode(value: unknown): 'solo' | 'chunk' | 'sliding' {
-  const mode = String(value || '').trim().toLowerCase()
-  if (mode === 'chunk' || mode === 'sliding') return mode
-  return 'solo'
+function normalizeImg2VidMode(value: unknown): WanImg2VidMode {
+  return normalizeWanImg2VidMode(value)
 }
 
 function stageToPayload(stage: WanStageInput): Record<string, unknown> {
@@ -622,26 +658,38 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
       Number.isFinite(rawChunkFrames) && rawChunkFrames > 0 ? normalizeWanFrameCount(rawChunkFrames) : undefined
     if (normalizedChunkFrames !== undefined) {
       payload.img2vid_chunk_frames = normalizedChunkFrames
-      if (typeof input.overlapFrames === 'number' && Number.isFinite(input.overlapFrames)) {
-        payload.img2vid_overlap_frames = Math.max(0, Math.trunc(input.overlapFrames))
-      }
+      const rawOverlap = Number(input.overlapFrames)
+      const fallbackOverlap = Math.max(1, Math.trunc(normalizedChunkFrames / 4))
+      payload.img2vid_overlap_frames = normalizeWanChunkOverlap(
+        rawOverlap,
+        normalizedChunkFrames,
+        fallbackOverlap,
+      )
     }
-  } else if (img2vidMode === 'sliding') {
+  } else if (isWanWindowedImg2VidMode(img2vidMode)) {
     const rawWindowFrames = Number(input.windowFrames)
     if (Number.isFinite(rawWindowFrames) && rawWindowFrames > 0) {
       payload.img2vid_window_frames = normalizeWanFrameCount(rawWindowFrames)
     }
-    const effectiveWindowFrames = Number(payload.img2vid_window_frames)
-    if (typeof input.windowStride === 'number' && Number.isFinite(input.windowStride)) {
-      const maxStride = Number.isFinite(effectiveWindowFrames) ? Math.max(1, Math.trunc(effectiveWindowFrames) - 1) : WAN_FRAMES_MAX - 1
-      payload.img2vid_window_stride = Math.min(maxStride, Math.max(1, Math.trunc(input.windowStride)))
-    }
-    if (typeof input.windowCommitFrames === 'number' && Number.isFinite(input.windowCommitFrames)) {
-      const fallbackStride = Number(payload.img2vid_window_stride)
-      const minCommit = Number.isFinite(fallbackStride) ? Math.max(1, Math.trunc(fallbackStride)) : 1
-      const maxCommit = Number.isFinite(effectiveWindowFrames) ? Math.max(minCommit, Math.trunc(effectiveWindowFrames)) : WAN_FRAMES_MAX
-      payload.img2vid_window_commit_frames = Math.min(maxCommit, Math.max(minCommit, Math.trunc(input.windowCommitFrames)))
-    }
+    const effectiveWindowFrames = Number.isFinite(Number(payload.img2vid_window_frames))
+      ? Math.trunc(Number(payload.img2vid_window_frames))
+      : WAN_FRAMES_MIN
+    const strideRaw = Number(input.windowStride)
+    const fallbackStrideRaw = Number(input.windowFrames)
+    const normalizedStride = normalizeWanWindowStride(
+      strideRaw,
+      effectiveWindowFrames,
+      Number.isFinite(fallbackStrideRaw) ? fallbackStrideRaw : effectiveWindowFrames - WAN_WINDOW_COMMIT_OVERLAP_MIN,
+    )
+    payload.img2vid_window_stride = normalizedStride
+    const commitRaw = Number(input.windowCommitFrames)
+    const fallbackCommitRaw = normalizedStride + WAN_WINDOW_COMMIT_OVERLAP_MIN
+    payload.img2vid_window_commit_frames = normalizeWanWindowCommit(
+      commitRaw,
+      effectiveWindowFrames,
+      normalizedStride,
+      fallbackCommitRaw,
+    )
   }
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation)

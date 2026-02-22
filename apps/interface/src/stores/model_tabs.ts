@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
-- `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|chunk|sliding`).
+- `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|chunk|sliding|svi2|svi2_pro`).
 - `WanChunkSeedMode` (type): WAN chunk/sliding per-window seed strategy (`fixed|increment|random`).
 - `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output/interpolation controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
@@ -69,6 +69,12 @@ import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_co
 import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, type TabFamily } from '../utils/engine_taxonomy'
 import { DEFAULT_IMG2IMG_RESIZE_MODE, normalizeImg2ImgResizeMode, type Img2ImgResizeMode } from '../utils/img2img_resize'
+import {
+  normalizeWanChunkOverlap,
+  normalizeWanWindowCommit,
+  normalizeWanWindowStride,
+  type WanImg2VidMode as WanImg2VidModeInternal,
+} from '../utils/wan_img2vid_temporal'
 
 export type BaseTabType = ApiTab['type']
 export type ImageTabType = Exclude<BaseTabType, 'wan'>
@@ -117,7 +123,7 @@ export interface WanStageParams {
   flowShift?: number
 }
 
-export type WanImg2VidMode = 'solo' | 'chunk' | 'sliding'
+export type WanImg2VidMode = WanImg2VidModeInternal
 export type WanChunkSeedMode = 'fixed' | 'increment' | 'random'
 
 export interface WanVideoParams {
@@ -335,8 +341,8 @@ function defaultParams<T extends BaseTabType>(
       img2vidAnchorAlpha: 0.2,
       img2vidChunkSeedMode: 'increment',
       img2vidWindowFrames: 13,
-      img2vidWindowStride: 6,
-      img2vidWindowCommitFrames: 7,
+      img2vidWindowStride: 8,
+      img2vidWindowCommitFrames: 12,
       filenamePrefix: 'wan22',
       format: 'video/h264-mp4',
       pixFmt: 'yuv420p',
@@ -511,7 +517,7 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
 
   const rawRecord = raw as Record<string, unknown>
   const rawMode = String(merged.img2vidMode || '').trim().toLowerCase()
-  if (rawMode === 'solo' || rawMode === 'chunk' || rawMode === 'sliding') {
+  if (rawMode === 'solo' || rawMode === 'chunk' || rawMode === 'sliding' || rawMode === 'svi2' || rawMode === 'svi2_pro') {
     merged.img2vidMode = rawMode
   } else {
     const legacyEnabled = rawRecord.img2vidChunkingEnabled
@@ -541,8 +547,9 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   merged.img2vidAnchorAlpha = Number.isFinite(anchorRaw) ? Math.min(1, Math.max(0, anchorRaw)) : defaults.img2vidAnchorAlpha
 
   const seedMode = String(merged.img2vidChunkSeedMode || '').trim().toLowerCase()
+  const modeDefaultSeed = merged.img2vidMode === 'sliding' ? 'fixed' : 'increment'
   if (seedMode !== 'fixed' && seedMode !== 'increment' && seedMode !== 'random') {
-    merged.img2vidChunkSeedMode = defaults.img2vidChunkSeedMode
+    merged.img2vidChunkSeedMode = modeDefaultSeed
   } else {
     merged.img2vidChunkSeedMode = seedMode
   }
@@ -565,20 +572,25 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   }
 
   const overlapRaw = Number(merged.img2vidOverlapFrames)
-  const overlapInt = Number.isFinite(overlapRaw) ? Math.trunc(overlapRaw) : defaults.img2vidOverlapFrames
-  const overlapMax = Math.max(0, merged.img2vidChunkFrames - 1)
-  merged.img2vidOverlapFrames = Math.min(overlapMax, Math.max(0, overlapInt))
+  merged.img2vidOverlapFrames = normalizeWanChunkOverlap(
+    overlapRaw,
+    merged.img2vidChunkFrames,
+    defaults.img2vidOverlapFrames,
+  )
 
-  const maxStride = Math.max(1, Number(merged.img2vidWindowFrames) - 1)
   const strideRaw = Number(merged.img2vidWindowStride)
-  const strideInt = Number.isFinite(strideRaw) ? Math.trunc(strideRaw) : defaults.img2vidWindowStride
-  merged.img2vidWindowStride = Math.min(maxStride, Math.max(1, strideInt))
+  merged.img2vidWindowStride = normalizeWanWindowStride(
+    strideRaw,
+    merged.img2vidWindowFrames,
+    defaults.img2vidWindowStride,
+  )
 
   const commitRaw = Number(merged.img2vidWindowCommitFrames)
-  const commitInt = Number.isFinite(commitRaw) ? Math.trunc(commitRaw) : defaults.img2vidWindowCommitFrames
-  merged.img2vidWindowCommitFrames = Math.min(
+  merged.img2vidWindowCommitFrames = normalizeWanWindowCommit(
+    commitRaw,
     merged.img2vidWindowFrames,
-    Math.max(merged.img2vidWindowStride, commitInt),
+    merged.img2vidWindowStride,
+    defaults.img2vidWindowCommitFrames,
   )
 
   return {

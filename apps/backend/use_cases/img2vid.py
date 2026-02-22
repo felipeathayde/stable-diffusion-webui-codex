@@ -10,13 +10,13 @@ Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
 Runs high/low stages, configures sampler settings, applies LoRAs, runs the shared video interpolation stage when requested, exports video, and yields
 progress/result events.
 Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and `extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when missing.
-Temporal routing requires explicit `extras.img2vid_mode` (`solo|chunk|sliding`) and rejects implicit mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity, and result metadata includes frame-count diagnostics across generation/interpolation/export stages.
+Temporal routing requires explicit `extras.img2vid_mode` (`solo|chunk|sliding|svi2|svi2_pro`) and rejects implicit mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity while SVI modes default to incremented per-window seeding, and result metadata includes frame-count diagnostics across generation/interpolation/export stages.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
-- `_parse_img2vid_temporal_options` (function): Parses and validates explicit img2vid temporal controls from request extras (`solo|chunk|sliding`).
+- `_parse_img2vid_temporal_options` (function): Parses and validates explicit img2vid temporal controls from request extras (`solo|chunk|sliding|svi2|svi2_pro`).
 - `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
 """
 
@@ -164,17 +164,19 @@ class _Img2VidTemporalOptions:
     mode: str
     chunk: _Img2VidChunkOptions | None = None
     sliding: _Img2VidSlidingOptions | None = None
+    svi2: _Img2VidSlidingOptions | None = None
+    svi2_pro: _Img2VidSlidingOptions | None = None
 
 
 def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: int) -> _Img2VidTemporalOptions:
     raw_mode = extras.get("img2vid_mode")
     if raw_mode is None:
-        raise RuntimeError("img2vid_mode is required and must be one of ('solo','chunk','sliding').")
+        raise RuntimeError("img2vid_mode is required and must be one of ('solo','chunk','sliding','svi2','svi2_pro').")
     mode = str(raw_mode or "").strip().lower()
     if not mode:
         raise RuntimeError("img2vid_mode must not be empty.")
-    if mode not in {"solo", "chunk", "sliding"}:
-        raise RuntimeError(f"img2vid_mode must be one of ('solo','chunk','sliding'), got: {mode!r}")
+    if mode not in {"solo", "chunk", "sliding", "svi2", "svi2_pro"}:
+        raise RuntimeError(f"img2vid_mode must be one of ('solo','chunk','sliding','svi2','svi2_pro'), got: {mode!r}")
 
     has_chunk = extras.get("img2vid_chunk_frames") not in (None, "")
     has_overlap = extras.get("img2vid_overlap_frames") not in (None, "")
@@ -196,7 +198,12 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
         return anchor_alpha
 
     def _parse_seed_mode(*, temporal_mode: str) -> str:
-        default_seed_mode = "fixed" if str(temporal_mode) == "sliding" else "increment"
+        if str(temporal_mode) == "sliding":
+            default_seed_mode = "fixed"
+        elif str(temporal_mode) in {"svi2", "svi2_pro"}:
+            default_seed_mode = "increment"
+        else:
+            default_seed_mode = "increment"
         raw_seed_mode = str(extras.get("img2vid_chunk_seed_mode", default_seed_mode) or "").strip().lower()
         if raw_seed_mode not in {"fixed", "increment", "random"}:
             raise RuntimeError(
@@ -266,6 +273,12 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
                 "img2vid_overlap_frames must be smaller than img2vid_chunk_frames "
                 f"(overlap={overlap_frames} chunk={chunk_frames})"
             )
+        chunk_stride = int(chunk_frames) - int(overlap_frames)
+        if int(chunk_stride) % 4 != 0:
+            raise RuntimeError(
+                "img2vid_overlap_frames must keep (img2vid_chunk_frames - img2vid_overlap_frames) aligned to temporal scale=4 "
+                f"(chunk_frames={int(chunk_frames)} overlap_frames={int(overlap_frames)} stride={int(chunk_stride)})."
+            )
 
         return _Img2VidTemporalOptions(
             mode="chunk",
@@ -278,11 +291,12 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
             ),
         )
 
+    mode_label = str(mode)
     if has_chunk or has_overlap:
-        raise RuntimeError("img2vid_mode='sliding' does not allow img2vid_chunk_frames/img2vid_overlap_frames.")
+        raise RuntimeError(f"img2vid_mode='{mode_label}' does not allow img2vid_chunk_frames/img2vid_overlap_frames.")
     if not (has_window_frames and has_window_stride and has_window_commit):
         raise RuntimeError(
-            "img2vid_mode='sliding' requires img2vid_window_frames, img2vid_window_stride, "
+            f"img2vid_mode='{mode_label}' requires img2vid_window_frames, img2vid_window_stride, "
             "and img2vid_window_commit_frames."
         )
 
@@ -313,6 +327,11 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
             "img2vid_window_stride must be smaller than img2vid_window_frames "
             f"(stride={window_stride} window={window_frames})"
         )
+    if window_stride % 4 != 0:
+        raise RuntimeError(
+            "img2vid_window_stride must be aligned to temporal scale=4 "
+            f"(stride={window_stride})."
+        )
 
     raw_window_commit = extras.get("img2vid_window_commit_frames")
     try:
@@ -325,18 +344,25 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
             "[img2vid_window_stride, img2vid_window_frames] "
             f"(commit={window_commit_frames} stride={window_stride} window={window_frames})"
         )
+    if (window_commit_frames - window_stride) < 4:
+        raise RuntimeError(
+            "img2vid_window_commit_frames must keep at least 4 committed overlap frames beyond stride "
+            f"(commit={window_commit_frames} stride={window_stride})."
+        )
 
-    return _Img2VidTemporalOptions(
-        mode="sliding",
-        sliding=_Img2VidSlidingOptions(
-            window_frames=window_frames,
-            window_stride=window_stride,
-            window_commit_frames=window_commit_frames,
-            anchor_alpha=_parse_anchor_alpha(),
-            chunk_seed_mode=_parse_seed_mode(temporal_mode="sliding"),
-            chunk_buffer_mode=_parse_buffer_mode(),
-        ),
+    window_opts = _Img2VidSlidingOptions(
+        window_frames=window_frames,
+        window_stride=window_stride,
+        window_commit_frames=window_commit_frames,
+        anchor_alpha=_parse_anchor_alpha(),
+        chunk_seed_mode=_parse_seed_mode(temporal_mode=mode_label),
+        chunk_buffer_mode=_parse_buffer_mode(),
     )
+    if mode_label == "sliding":
+        return _Img2VidTemporalOptions(mode="sliding", sliding=window_opts)
+    if mode_label == "svi2":
+        return _Img2VidTemporalOptions(mode="svi2", svi2=window_opts)
+    return _Img2VidTemporalOptions(mode="svi2_pro", svi2_pro=window_opts)
 
 
 def run_img2vid(
@@ -412,6 +438,12 @@ def run_img2vid(
                     chunk_opts.chunk_seed_mode,
                     chunk_opts.chunk_buffer_mode,
                 )
+                if str(chunk_opts.chunk_seed_mode) == "fixed":
+                    logger.warning(
+                        "[img2vid] chunk mode continuity risk: chunk_seed_mode=%s can lock repeated temporal motifs; "
+                        "prefer 'increment' for long-form variation.",
+                        str(chunk_opts.chunk_seed_mode),
+                    )
 
             cfg = build_wan22_gguf_run_config(
                 request=request,
@@ -451,7 +483,7 @@ def run_img2vid(
                         )
                     break
                 raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
-        else:
+        elif temporal_opts.mode == "sliding":
             if temporal_opts.sliding is None:
                 raise RuntimeError("img2vid_mode='sliding' selected but sliding options are missing.")
             sliding_opts = temporal_opts.sliding
@@ -511,6 +543,128 @@ def run_img2vid(
                         )
                     break
                 raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
+        elif temporal_opts.mode == "svi2":
+            if temporal_opts.svi2 is None:
+                raise RuntimeError("img2vid_mode='svi2' selected but svi2 options are missing.")
+            svi_opts = temporal_opts.svi2
+            if logger:
+                logger.info(
+                    "[img2vid] svi2 mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
+                    svi_opts.window_frames,
+                    svi_opts.window_stride,
+                    svi_opts.window_commit_frames,
+                    svi_opts.anchor_alpha,
+                    svi_opts.chunk_seed_mode,
+                    svi_opts.chunk_buffer_mode,
+                )
+                if str(svi_opts.chunk_seed_mode) == "fixed":
+                    logger.warning(
+                        "[img2vid] svi2 mode continuity risk: chunk_seed_mode=%s can lock per-window motion diversity; "
+                        "prefer 'increment' or 'random' for long-form variation.",
+                        str(svi_opts.chunk_seed_mode),
+                    )
+
+            cfg = build_wan22_gguf_run_config(
+                request=request,
+                device=getattr(comp, "device", "auto"),
+                dtype=getattr(comp, "dtype", "fp16"),
+                logger=logger,
+            )
+
+            for ev in gguf.stream_img2vid_svi2(
+                cfg,
+                window_frames=int(svi_opts.window_frames),
+                window_stride=int(svi_opts.window_stride),
+                window_commit_frames=int(svi_opts.window_commit_frames),
+                anchor_alpha=float(svi_opts.anchor_alpha),
+                chunk_seed_mode=str(svi_opts.chunk_seed_mode),
+                chunk_buffer_mode=str(svi_opts.chunk_buffer_mode),
+                logger=logger,
+                ):
+                if not isinstance(ev, dict):
+                    raise RuntimeError(f"WAN22 GGUF: invalid stream event type: {type(ev)}")
+                if ev.get("type") == "progress":
+                    pe = _yield_wan22_gguf_progress(ev)
+                    if pe is not None:
+                        yield pe
+                    continue
+                if ev.get("type") == "result":
+                    raw_frames = ev.get("frames", [])
+                    if raw_frames is None:
+                        frames = []
+                    elif isinstance(raw_frames, list):
+                        frames = raw_frames
+                    elif isinstance(raw_frames, tuple):
+                        frames = list(raw_frames)
+                    else:
+                        raise RuntimeError(
+                            "WAN22 GGUF: invalid result payload for 'frames' "
+                            f"(expected sequence, got {type(raw_frames).__name__})"
+                        )
+                    break
+                raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
+        elif temporal_opts.mode == "svi2_pro":
+            if temporal_opts.svi2_pro is None:
+                raise RuntimeError("img2vid_mode='svi2_pro' selected but svi2_pro options are missing.")
+            svi_opts = temporal_opts.svi2_pro
+            if logger:
+                logger.info(
+                    "[img2vid] svi2_pro mode enabled: window=%d stride=%d commit=%d anchor_alpha=%.3f seed_mode=%s buffer_mode=%s",
+                    svi_opts.window_frames,
+                    svi_opts.window_stride,
+                    svi_opts.window_commit_frames,
+                    svi_opts.anchor_alpha,
+                    svi_opts.chunk_seed_mode,
+                    svi_opts.chunk_buffer_mode,
+                )
+                if str(svi_opts.chunk_seed_mode) == "fixed":
+                    logger.warning(
+                        "[img2vid] svi2_pro mode continuity risk: chunk_seed_mode=%s can lock per-window motion diversity; "
+                        "prefer 'increment' or 'random' for long-form variation.",
+                        str(svi_opts.chunk_seed_mode),
+                    )
+
+            cfg = build_wan22_gguf_run_config(
+                request=request,
+                device=getattr(comp, "device", "auto"),
+                dtype=getattr(comp, "dtype", "fp16"),
+                logger=logger,
+            )
+
+            for ev in gguf.stream_img2vid_svi2_pro(
+                cfg,
+                window_frames=int(svi_opts.window_frames),
+                window_stride=int(svi_opts.window_stride),
+                window_commit_frames=int(svi_opts.window_commit_frames),
+                anchor_alpha=float(svi_opts.anchor_alpha),
+                chunk_seed_mode=str(svi_opts.chunk_seed_mode),
+                chunk_buffer_mode=str(svi_opts.chunk_buffer_mode),
+                logger=logger,
+            ):
+                if not isinstance(ev, dict):
+                    raise RuntimeError(f"WAN22 GGUF: invalid stream event type: {type(ev)}")
+                if ev.get("type") == "progress":
+                    pe = _yield_wan22_gguf_progress(ev)
+                    if pe is not None:
+                        yield pe
+                    continue
+                if ev.get("type") == "result":
+                    raw_frames = ev.get("frames", [])
+                    if raw_frames is None:
+                        frames = []
+                    elif isinstance(raw_frames, list):
+                        frames = raw_frames
+                    elif isinstance(raw_frames, tuple):
+                        frames = list(raw_frames)
+                    else:
+                        raise RuntimeError(
+                            "WAN22 GGUF: invalid result payload for 'frames' "
+                            f"(expected sequence, got {type(raw_frames).__name__})"
+                        )
+                    break
+                raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
+        else:
+            raise RuntimeError(f"Unsupported img2vid_mode: {temporal_opts.mode!r}")
 
         if not frames:
             raise RuntimeError("WAN22 GGUF: produced no frames")

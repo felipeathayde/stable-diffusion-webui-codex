@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -42,10 +42,11 @@ Status: Active
 - 2026-02-20: `img2vid.py` chunk parser now fails loud when `img2vid_chunk_frames >= total_frames` (no silent chunk-disable); legacy per-chunk prepare progress was replaced by phase-batched runtime progress (`chunk.prepare`, `chunk.phase_high`, `chunk.phase_low`, `chunk.phase_decode`).
 - 2026-02-21: `img2vid.py` chunked GGUF path is now delegated to `wan22.stream_img2vid_chunked(...)`; use-case no longer loops per chunk with full pipeline reruns. Runtime now performs one text-conditioning pass and chunk-major execution (per chunk: `high` -> `low` -> decode/stitch).
 - 2026-02-21: `img2vid.py` chunk parser now accepts `img2vid_chunk_buffer_mode` (`hybrid|ram|ram+hd`) and also honors launcher env default `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE` when payload omits the field.
-- 2026-02-21: `img2vid.py` now parses img2vid temporal controls via explicit `img2vid_mode` (`solo|chunk|sliding`) and dispatches GGUF runtime accordingly (`stream_img2vid`, `stream_img2vid_chunked`, `stream_img2vid_sliding_window`) with fail-loud mode-specific validation.
+- 2026-02-21: `img2vid.py` now parses img2vid temporal controls via explicit `img2vid_mode` (`solo|chunk|sliding|svi2|svi2_pro`) and dispatches GGUF runtime accordingly (`stream_img2vid`, `stream_img2vid_chunked`, `stream_img2vid_sliding_window`, `stream_img2vid_svi2`, `stream_img2vid_svi2_pro`) with fail-loud mode-specific validation.
 - 2026-02-21: `img2vid.py` temporal parser now requires explicit `img2vid_mode` in `extras` (no implicit `'solo'` fallback for non-router callers), keeping use-case semantics aligned with API boundary contract.
 - 2026-02-21: `vid2vid.py` flow-chunks now sanitizes inner `Img2VidRequest.extras` by removing img2vid temporal controls (`img2vid_mode`, `img2vid_chunk_*`, `img2vid_window_*`) and fails loud if any survive, preventing nested chunk/sliding recursion inside each flow chunk call.
 - 2026-02-21: WAN video Diffusers orchestration now requires explicit stage prompts in `extras.wan_high.prompt`/`extras.wan_low.prompt` (no fallback to request prompt inside use-cases); stage negatives preserve explicit empty string and only fallback to request negative when stage negative is missing.
 - 2026-02-21: WAN video result/export booleans in `txt2vid.py`, `img2vid.py`, and `vid2vid.py` now use shared strict parsing (`core.strict_values.parse_bool_value`) for `video_return_frames`, `video_options.save_output`, and export/probe flags (no permissive `bool("false")==True` coercion).
 - 2026-02-21: `txt2vid.py`/`img2vid.py` WAN22 GGUF result handling now avoids unconditional `list(...)` copies when `frames` is already a list, and Diffusers `img2vid` high→low transition now reuses the high-stage frame list instead of duplicating it before stage-2 seed extraction.
 - 2026-02-21: `img2vid.py` temporal parser now defaults `img2vid_chunk_seed_mode` to `fixed` in `img2vid_mode='sliding'` (chunk mode keeps `increment` default), emits continuity warnings when sliding uses non-fixed seed mode, and records `frame_counts {requested, generated, after_interpolation, after_export}` in result metadata for clearer frame-stage diagnostics.
+- 2026-02-22: `img2vid.py` extends explicit temporal mode routing to `img2vid_mode='svi2'|'svi2_pro'`, reusing windowed controls with fail-loud stride/commit continuity guards (`stride % 4 == 0`, `commit - stride >= 4`), dispatching `wan22.stream_img2vid_svi2(...)`/`wan22.stream_img2vid_svi2_pro(...)`, and defaulting `img2vid_chunk_seed_mode` to `increment` for SVI window progression.

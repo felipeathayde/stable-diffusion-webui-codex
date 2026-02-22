@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -105,6 +105,8 @@ Status: Active
 - 2026-02-21: `sampling.make_scheduler(...)` now rejects legacy scheduler aliases (`inherit|auto|default`) fail-loud; WAN22 scheduler override accepts only explicit `simple` or omitted value.
 - 2026-02-21: `scheduler.py` now includes an experimental FlowMatch-Euler scheduler lane (`WanFlowMatchEulerScheduler`), and `sampling.make_scheduler(...)` routes `euler`/`euler cfg++` and `euler a`/`euler a cfg++` sampler overrides to real Euler runtime schedulers (deterministic vs stochastic), while keeping UniPC as the metadata-default lane and retaining strict scheduler override validation (`simple` only).
 - 2026-02-21: `run.py::_build_shared_scheduler(...)` now validates high/low sampler lane equivalence and scheduler name equivalence fail-loud (single shared scheduler contract), preventing silent lane preference when stage sampler overrides diverge.
+- 2026-02-22: `run.py` now exposes dedicated temporal entrypoints `stream_img2vid_svi2(...)` and `stream_img2vid_svi2_pro(...)` (`img2vid_mode='svi2'|'svi2_pro'`), enforcing the same fail-loud window contracts as sliding (`window_stride % 4 == 0`, `window_commit_frames - window_stride >= 4`) and routing through chunked runtime with `reset_anchor_to_base=false` for continuity-preserving handoff.
+- 2026-02-22: `stream_img2vid_chunked(...)` now accepts explicit `continuity_profile` (`overlap|svi2|svi2_pro`), fails loud on unknown profiles, and rejects invalid `continuity_profile in {'svi2','svi2_pro'} + reset_anchor_to_base=true`; SVI2/SVI2 Pro profile assembly is slot-locked to their conditioning contracts, while sliding dispatch is pinned to `overlap`.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -49,6 +49,7 @@ Status: Active
 - 2026-02-21: `useGeneration(tabId)` now fails loud when a non-sentinel VAE label cannot be resolved to `vae_sha` (`Selected VAE is invalid or stale`), preventing stale hidden selections from degrading into implicit built-in behavior.
 - 2026-02-21: `useVideoGeneration(tabId)` now treats WAN prompts as stage-owned (`high.prompt/negativePrompt`, `low.prompt/negativePrompt`), blocks generation if either stage prompt is empty, snapshots both stage prompts in history, and keeps top-level API prompt compatibility by deriving mode prompt from the High stage in payload builders.
 - 2026-02-21: `useVideoGeneration(tabId)` now dispatches only `txt2vid|img2vid`; frontend `vid2vid` run preparation/dispatch and init-video file state were removed to match current backend contract exposure.
-- 2026-02-21: `useVideoGeneration(tabId)` img2vid temporal dispatch now uses explicit `img2vidMode` (`solo|chunk|sliding`) and forwards mode-scoped controls (`chunk*` vs `window*`) to WAN payload builders; run-history snapshots persist `img2vid.mode` + window controls.
+- 2026-02-21: `useVideoGeneration(tabId)` img2vid temporal dispatch now uses explicit `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`) and forwards mode-scoped controls (`chunk*` vs `window*`) to WAN payload builders; run-history snapshots persist `img2vid.mode` + window controls.
+- 2026-02-22: `useVideoGeneration(tabId)` now treats `img2vidMode='svi2'|'svi2_pro'` as windowed modes alongside sliding and forwards shared window controls (`img2vid_window_*`) with normalized defaults (`stride=8`, `commit=12`) to keep continuity contracts aligned across UI/store/payload.
 - 2026-02-21: `useVideoGeneration(tabId)` resume-state parsing is now strict for mode (`txt2vid|img2vid` only): unsupported legacy values (e.g. `vid2vid`) are rejected fail-loud, the stale resume marker is cleared, and UI surfaces a clear resume notice instead of silently downgrading mode.
 - 2026-02-21: `useVideoGeneration(tabId)` now logs structured start-failure diagnostics to browser console (`status`, backend `detail`, parsed `body`, message, mode/tab) before surfacing UI error text, improving visibility for hidden request-contract failures.

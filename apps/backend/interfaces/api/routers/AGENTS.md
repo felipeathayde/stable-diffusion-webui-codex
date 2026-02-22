@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -79,6 +79,7 @@ Status: Active
 - 2026-02-20: `generation.py` img2vid chunk validation now also enforces `img2vid_chunk_frames < img2vid_num_frames` at API parse time (HTTP 400), avoiding silent non-chunk fallback paths later in use-case execution.
 - 2026-02-21: `generation.py` now validates/forwards optional `img2vid_chunk_buffer_mode` (`hybrid|ram|ram+hd`) for `img2vid_mode in {'chunk','sliding'}` and fails loud when provided in `solo` mode.
 - 2026-02-21: `generation.py` img2vid temporal parser now requires explicit `img2vid_mode` (`solo|chunk|sliding`) as source-of-truth; chunk mode keeps `img2vid_chunk_*`, sliding mode validates/forwards `img2vid_window_frames/stride/commit_frames`, and solo mode rejects temporal controls fail-loud.
+- 2026-02-22: `generation.py` extends WAN img2vid temporal contract to `img2vid_mode='svi2'|'svi2_pro'`; both reuse windowed validation/forwarding with fail-loud continuity checks (`img2vid_window_stride` aligned to temporal scale `4`, `img2vid_window_commit_frames` keeps at least 4 overlap frames beyond stride), and accept `img2vid_anchor_alpha`/`img2vid_chunk_seed_mode`/`img2vid_chunk_buffer_mode` for windowed modes.
 - 2026-02-21: `generation.py` video core parser removed legacy sampler aliases (`txt2vid_sampling`/`img2vid_sampling`); canonical request keys are `*_sampler` only, and old aliases now fail strict unknown-key validation.
 - 2026-02-20: `generation.py` WAN video parsing now validates `gguf_sdpa_policy` strictly (`auto|mem_efficient|flash|math`) and normalizes accepted values to lowercase before request dispatch.
 - 2026-02-21: `generation.py` WAN stage parsing now requires non-empty `wan_high.prompt` and `wan_low.prompt` (txt2vid/img2vid + strict stage normalizer); `negative_prompt` remains optional and preserves `None` vs explicit empty-string semantics for downstream stage-level fallback logic.
@@ -101,4 +102,4 @@ Status: Active
 - 2026-02-21: `generation.py` img2img masked/hires integer controls (`img2img_inpainting_*`, `img2img_mask_blur*`, `img2img_hires_resize_*`, `img2img_hires_steps`) now also use strict integer validators instead of permissive `_p.as_int(...)`.
 - 2026-02-21: `tools.py` now parses `overwrite` via shared strict bool parsing for both GGUF conversion and CodexPack packing endpoints (no fail-open `bool(\"false\") == True` overwrite bypass).
 - 2026-02-21: `ui.py` blocks cache key now includes `blocks.d/*.json` mtimes (not only `blocks.json`), and tabs/workflows/presets loaders now convert JSON-store read failures into deterministic fail-loud HTTP 500 details.
-- 2026-02-22: `system.py` adds `POST /api/obliterate-vram` for aggressive VRAM cleanup: runtime unload/empty-cache + optional external compute-process termination via `nvidia-smi`, with structured result payload (`ok/message/internal/external/warnings`) and protected PID skip (`self`/`parent`).
+- 2026-02-22: `system.py` adds `POST /api/obliterate-vram` for fail-loud VRAM cleanup with safe defaults: runtime unload/empty-cache always runs, while external compute-process termination is **disabled by default** (`external_kill_mode='disabled'`) and only runs when explicitly requested (`'all'`), with guarded skips (`protected_pid`, `critical_process_name`) and structured status payload.

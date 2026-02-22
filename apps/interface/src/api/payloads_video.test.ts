@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Vitest coverage for WAN video payload builders (txt2vid/img2vid/vid2vid).
 Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields, including
 WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity), `settings_revision` propagation, scheduler-override omission, stage-owned prompt mapping,
-and img2vid temporal mode contracts (`solo|chunk|sliding`).
+and img2vid temporal mode contracts (`solo|chunk|sliding|svi2|svi2_pro`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `payloads_video.test` (module): WAN video payload builder tests (field mapping + defaults).
@@ -259,7 +259,7 @@ describe('WAN video payload builders', () => {
       img2vidMode: 'sliding',
       windowFrames: 25,
       windowStride: 12,
-      windowCommitFrames: 13,
+      windowCommitFrames: 16,
       anchorAlpha: 0.5,
       chunkSeedMode: 'increment',
       high: {
@@ -309,11 +309,145 @@ describe('WAN video payload builders', () => {
     expect(payload.img2vid_mode).toBe('sliding')
     expect(payload.img2vid_window_frames).toBe(25)
     expect(payload.img2vid_window_stride).toBe(12)
-    expect(payload.img2vid_window_commit_frames).toBe(13)
+    expect(payload.img2vid_window_commit_frames).toBe(16)
     expect(payload.img2vid_anchor_alpha).toBe(0.5)
     expect(payload.img2vid_chunk_seed_mode).toBe('increment')
     expect(payload).not.toHaveProperty('img2vid_chunk_frames')
     expect(payload).not.toHaveProperty('img2vid_overlap_frames')
+  })
+
+  it('builds an img2vid svi2 payload with window controls', () => {
+    const sha = '6'.repeat(64)
+    const payload = buildWanImg2VidPayload({
+      device: 'cuda',
+      settingsRevision: 31,
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 81,
+      attentionMode: 'sliding',
+      initImageData: 'data:image/png;base64,BBBB',
+      img2vidMode: 'svi2',
+      windowFrames: 25,
+      windowStride: 12,
+      windowCommitFrames: 16,
+      anchorAlpha: 0.5,
+      chunkSeedMode: 'increment',
+      high: {
+        modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      low: {
+        modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      format: 'auto',
+      assets: {
+        metadataRepo: 'Wan-AI/Wan2.2-I2V-A14B-Diffusers',
+        textEncoderSha: sha,
+        vaeSha: sha,
+      },
+      output: {
+        filenamePrefix: '',
+        format: '',
+        pixFmt: '',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+        trimToAudio: false,
+        saveMetadata: true,
+        saveOutput: true,
+      },
+      interpolation: {
+        enabled: false,
+        model: '',
+        times: 2,
+      },
+    })
+
+    expect(payload.img2vid_mode).toBe('svi2')
+    expect(payload.img2vid_window_frames).toBe(25)
+    expect(payload.img2vid_window_stride).toBe(12)
+    expect(payload.img2vid_window_commit_frames).toBe(16)
+    expect(payload.img2vid_chunk_seed_mode).toBe('increment')
+  })
+
+  it('normalizes window stride/commit for windowed img2vid modes', () => {
+    const sha = '5'.repeat(64)
+    const payload = buildWanImg2VidPayload({
+      device: 'cuda',
+      settingsRevision: 35,
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 81,
+      attentionMode: 'sliding',
+      initImageData: 'data:image/png;base64,BBBB',
+      img2vidMode: 'svi2_pro',
+      windowFrames: 25,
+      windowStride: 11,
+      windowCommitFrames: 10,
+      anchorAlpha: 0.5,
+      chunkSeedMode: 'increment',
+      high: {
+        modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      low: {
+        modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      format: 'auto',
+      assets: {
+        metadataRepo: 'Wan-AI/Wan2.2-I2V-A14B-Diffusers',
+        textEncoderSha: sha,
+        vaeSha: sha,
+      },
+      output: {
+        filenamePrefix: '',
+        format: '',
+        pixFmt: '',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+        trimToAudio: false,
+        saveMetadata: true,
+        saveOutput: true,
+      },
+      interpolation: {
+        enabled: false,
+        model: '',
+        times: 2,
+      },
+    })
+
+    expect(payload.img2vid_mode).toBe('svi2_pro')
+    expect(payload.img2vid_window_stride).toBe(8)
+    expect(payload.img2vid_window_commit_frames).toBe(12)
   })
 
   it('fails loud when chunk/window frames are not smaller than total frames', () => {

@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultAssets` (function): Returns default (empty) assets selection.
 - `normalizeFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes UI attention mode values (`global|sliding`).
-- `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|chunk|sliding`).
+- `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|chunk|sliding|svi2|svi2_pro`).
 - `normalizeChunkSeedMode` (function): Normalizes UI img2vid chunk-seed mode values.
 - `img2vidTemporalStorageKey` (function): Returns localStorage key for per-mode temporal UI snapshots.
 - `readImg2VidTemporalSnapshot` (function): Loads per-mode temporal UI snapshot from localStorage.
@@ -262,6 +262,8 @@ Symbols (top-level; keep in sync; no ghosts):
                         <option value="solo">Solo</option>
                         <option value="chunk">Chunk</option>
                         <option value="sliding">Sliding Window</option>
+                        <option value="svi2">SVI 2.0</option>
+                        <option value="svi2_pro">SVI 2.0 Pro</option>
                       </select>
                     </div>
                     <div class="field">
@@ -376,7 +378,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
                     />
                   </div>
-                  <div v-else-if="video.img2vidMode === 'sliding'" class="param-grid wan-temporal-row" data-cols="3">
+                  <div v-else-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="3">
                     <SliderField
                       class="field"
                       label="Window Frames"
@@ -399,17 +401,17 @@ Symbols (top-level; keep in sync; no ghosts):
                       class="field"
                       label="Window Stride"
                       :modelValue="video.img2vidWindowStride"
-                      :min="1"
-                      :max="Math.max(1, video.img2vidWindowFrames - 1)"
-                      :step="1"
+                      :min="WAN_WINDOW_STRIDE_ALIGNMENT"
+                      :max="maxAlignedWindowStride(video.img2vidWindowFrames)"
+                      :step="WAN_WINDOW_STRIDE_ALIGNMENT"
                       :inputStep="1"
-                      :nudgeStep="1"
+                      :nudgeStep="WAN_WINDOW_STRIDE_ALIGNMENT"
                       :disabled="isRunning"
                       inputClass="cdx-input-w-sm"
                       tooltipTitle="Window Stride"
                       :tooltip="[
                         'How far the window slides each iteration.',
-                        'Smaller stride increases temporal continuity and compute.',
+                        'Must be aligned to temporal scale=4.',
                       ]"
                       @update:modelValue="(value: number) => setVideo({ img2vidWindowStride: value })"
                     />
@@ -417,7 +419,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       class="field"
                       label="Commit Frames"
                       :modelValue="video.img2vidWindowCommitFrames"
-                      :min="Math.max(1, video.img2vidWindowStride)"
+                      :min="Math.min(video.img2vidWindowFrames, video.img2vidWindowStride + WAN_WINDOW_COMMIT_OVERLAP_MIN)"
                       :max="video.img2vidWindowFrames"
                       :step="1"
                       :inputStep="1"
@@ -427,7 +429,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       tooltipTitle="Commit Frames"
                       :tooltip="[
                         'Frames committed from each window before advancing.',
-                        'Must stay within [stride, window].',
+                        'Must stay within [stride + 4, window].',
                       ]"
                       @update:modelValue="(value: number) => setVideo({ img2vidWindowCommitFrames: value })"
                     />
@@ -740,6 +742,14 @@ import { useWorkflowsStore } from '../stores/workflows'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
 import NumberStepperInput from '../components/ui/NumberStepperInput.vue'
+import {
+  isWanWindowedImg2VidMode,
+  normalizeWanImg2VidMode,
+  normalizeWanWindowCommit,
+  normalizeWanWindowStride,
+  WAN_WINDOW_COMMIT_OVERLAP_MIN,
+  WAN_WINDOW_STRIDE_ALIGNMENT,
+} from '../utils/wan_img2vid_temporal'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
@@ -793,8 +803,8 @@ function defaultVideo(): WanVideoParams {
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
     img2vidWindowFrames: 13,
-    img2vidWindowStride: 6,
-    img2vidWindowCommitFrames: 7,
+    img2vidWindowStride: 8,
+    img2vidWindowCommitFrames: 12,
     filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
@@ -850,9 +860,19 @@ function normalizeAttentionMode(rawValue: unknown): 'global' | 'sliding' {
 }
 
 function normalizeImg2VidMode(rawValue: unknown): WanVideoParams['img2vidMode'] {
-  const value = String(rawValue || '').trim().toLowerCase()
-  if (value === 'chunk' || value === 'sliding') return value
-  return 'solo'
+  return normalizeWanImg2VidMode(rawValue)
+}
+
+function isWindowedTemporalMode(rawValue: unknown): boolean {
+  return isWanWindowedImg2VidMode(normalizeImg2VidMode(rawValue))
+}
+
+function maxAlignedWindowStride(windowFrames: number): number {
+  return normalizeWanWindowStride(
+    Number(windowFrames) - WAN_WINDOW_COMMIT_OVERLAP_MIN,
+    Number(windowFrames),
+    Number(windowFrames) - WAN_WINDOW_COMMIT_OVERLAP_MIN,
+  )
 }
 
 function normalizeChunkSeedMode(rawValue: unknown): 'fixed' | 'increment' | 'random' {
@@ -896,7 +916,7 @@ function readImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode']): Parti
         if (Number.isFinite(overlap)) patch.img2vidOverlapFrames = Math.trunc(overlap)
       }
     }
-    if (mode === 'sliding') {
+    if (isWindowedTemporalMode(mode)) {
       if (record.img2vidWindowFrames !== undefined) {
         const windowFrames = Number(record.img2vidWindowFrames)
         if (Number.isFinite(windowFrames) && windowFrames > 0) patch.img2vidWindowFrames = windowFrames
@@ -927,7 +947,7 @@ function writeImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode'], sourc
     payload.img2vidChunkFrames = source.img2vidChunkFrames
     payload.img2vidOverlapFrames = source.img2vidOverlapFrames
   }
-  if (mode === 'sliding') {
+  if (isWindowedTemporalMode(mode)) {
     payload.img2vidWindowFrames = source.img2vidWindowFrames
     payload.img2vidWindowStride = source.img2vidWindowStride
     payload.img2vidWindowCommitFrames = source.img2vidWindowCommitFrames
@@ -1020,9 +1040,11 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
       ? nextPatch.img2vidWindowStride
       : current.img2vidWindowStride,
   )
-  const strideInt = Number.isFinite(strideSource) ? Math.trunc(strideSource) : Math.trunc(Number(current.img2vidWindowStride))
-  const strideMax = Math.max(1, effectiveWindowFrames - 1)
-  const normalizedStride = Math.min(strideMax, Math.max(1, strideInt))
+  const normalizedStride = normalizeWanWindowStride(
+    strideSource,
+    effectiveWindowFrames,
+    Number(current.img2vidWindowStride),
+  )
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowStride') || didAdjustWindowFrames) {
     nextPatch.img2vidWindowStride = normalizedStride
   }
@@ -1037,10 +1059,11 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
       ? nextPatch.img2vidWindowCommitFrames
       : current.img2vidWindowCommitFrames,
   )
-  const commitInt = Number.isFinite(commitSource) ? Math.trunc(commitSource) : Math.trunc(Number(current.img2vidWindowCommitFrames))
-  const normalizedCommit = Math.min(
+  const normalizedCommit = normalizeWanWindowCommit(
+    commitSource,
     effectiveWindowFrames,
-    Math.max(Math.max(1, effectiveWindowStride), commitInt),
+    Math.trunc(Math.max(WAN_WINDOW_STRIDE_ALIGNMENT, effectiveWindowStride)),
+    Number(current.img2vidWindowCommitFrames),
   )
   if (
     Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidWindowCommitFrames')

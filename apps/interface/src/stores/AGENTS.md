@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -69,4 +69,5 @@ Status: Active
 - 2026-02-20: `quicksettings.ts` now defaults VAE selection to canonical `built-in` when nothing is persisted and exposes `requireVaeSelection()` for fail-loud request preflight on empty VAE selections.
 - 2026-02-20: `xyz.ts` run preflight now blocks sweeps when VAE selection is empty (shared fail-loud guard via `quicksettings.requireVaeSelection()`).
 - 2026-02-21: `model_tabs.ts` WAN `video` params were reduced to `txt2vid/img2vid` surface only (removed `useInitVideo` + `vid2vid*` fields) and normalization now returns a schema-sanitized object to drop legacy persisted vid2vid keys.
-- 2026-02-21: `model_tabs.ts` WAN img2vid temporal controls now use `img2vidMode` (`solo|chunk|sliding`) as source-of-truth; chunk and sliding window params (`img2vid_chunk*`, `img2vid_window*`) are persisted together with strict normalization/migration from legacy `img2vidChunkingEnabled`.
+- 2026-02-21: `model_tabs.ts` WAN img2vid temporal controls now use `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`) as source-of-truth; chunk and window params (`img2vid_chunk*`, `img2vid_window*`) are persisted together with strict normalization/migration from legacy `img2vidChunkingEnabled`.
+- 2026-02-22: `model_tabs.ts` WAN img2vid temporal mode now includes `svi2` and `svi2_pro`, with shared window normalization via `utils/wan_img2vid_temporal.ts`; default window params were tightened to `stride=8` and `commit=12` so persisted values satisfy the continuity guards (`stride % 4 == 0`, `commit - stride >= 4`).

@@ -25,7 +25,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
 - `_extract_i2v_decode_latents` (function): Extract pure latent channels from I2V model state before VAE decode (order-aware `lat_first`/`lat_last`).
 - `_resolve_chunk_seed` (function): Resolve deterministic/random seed semantics for chunked img2vid generation.
+- `_normalize_chunk_continuity_profile` (function): Validate chunk continuity profile selection (`overlap`/`svi2`/`svi2_pro`) with fail-loud mode errors.
 - `_blend_anchor_latent` (function): Blend previous chunk anchor latent window with base conditioning latent for chunk continuity without pixel-space decode.
+- `_assemble_svi2_condition_latents` (function): Build SVI 2.0 conditioning latents (`slot0=prev_tail`, `slot1..=anchor`).
+- `_assemble_svi2_pro_condition_latents` (function): Build SVI 2.0 Pro conditioning latents (`slot0=anchor`, `slot1=prev_tail`, `slot2..=zero`).
 - `_sample_chunk_stage_with_progress` (function): Run a chunk stage sampler and remap local progress into a global phase percent.
 - `_resolve_stage_prompt_pairs` (function): Resolve high/low stage prompt+negative pairs (stage prompts required; negative falls back only when missing).
 - `_resolve_stage_text_embeddings` (function): Build stage-specific high/low embeddings from a single text-encoder load.
@@ -35,6 +38,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state, with explicit VAE config-dir forwarding).
 - `stream_img2vid_chunked` (function): Chunked img2vid runner with chunk-major sequencing (for each chunk: high pass -> low pass in latent space, then final decode/stitch pass), configurable anchor-reset continuity policy, and shared VAE decode-session reuse.
 - `stream_img2vid_sliding_window` (function): Sliding-window img2vid runner built on the chunked runtime with explicit window/stride/commit controls.
+- `stream_img2vid_svi2` (function): SVI 2.0 img2vid runner with anchor-padded conditioning semantics.
+- `stream_img2vid_svi2_pro` (function): SVI 2.0 Pro img2vid runner with anchor+motion+zero latent conditioning semantics.
 """
 
 from __future__ import annotations
@@ -81,6 +86,11 @@ from .vae_io import (
 )
 
 _USE_CFG_SEED = object()
+_WAN_TEMPORAL_SCALE = 4
+_WAN_WINDOW_COMMIT_OVERLAP_MIN = 4
+_WAN_CONTINUITY_PROFILE_OVERLAP = "overlap"
+_WAN_CONTINUITY_PROFILE_SVI2 = "svi2"
+_WAN_CONTINUITY_PROFILE_SVI2_PRO = "svi2_pro"
 
 
 class _MemoryManagedModule:
@@ -580,6 +590,21 @@ def _resolve_chunk_seed(base_seed: Any, *, chunk_index: int, mode: str) -> int |
     raise RuntimeError(f"WAN22 GGUF: unsupported chunk seed mode {mode!r}.")
 
 
+def _normalize_chunk_continuity_profile(profile: str | None) -> str:
+    normalized = str(profile or _WAN_CONTINUITY_PROFILE_OVERLAP).strip().lower()
+    if normalized not in {
+        _WAN_CONTINUITY_PROFILE_OVERLAP,
+        _WAN_CONTINUITY_PROFILE_SVI2,
+        _WAN_CONTINUITY_PROFILE_SVI2_PRO,
+    }:
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: continuity_profile must be one of "
+            f"('{_WAN_CONTINUITY_PROFILE_OVERLAP}','{_WAN_CONTINUITY_PROFILE_SVI2}','{_WAN_CONTINUITY_PROFILE_SVI2_PRO}'), "
+            f"got {profile!r}."
+        )
+    return normalized
+
+
 def _blend_anchor_latent(previous_latent: torch.Tensor, base_latent: torch.Tensor, *, alpha: float) -> torch.Tensor:
     if previous_latent.ndim != 5 or base_latent.ndim != 5:
         raise RuntimeError(
@@ -598,6 +623,93 @@ def _blend_anchor_latent(previous_latent: torch.Tensor, base_latent: torch.Tenso
         )
     a = max(0.0, min(1.0, float(alpha)))
     return (previous_latent * (1.0 - a)) + (base_latent * a)
+
+
+def _validate_svi_condition_shape(
+    *,
+    latent_condition_base: torch.Tensor,
+    base_anchor_latent: torch.Tensor,
+    prev_chunk_tail_latent: torch.Tensor | None,
+    chunk_condition_buffer: torch.Tensor | None,
+) -> tuple[int, int, int, int, int]:
+    if latent_condition_base.ndim != 5:
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: SVI conditioning expects a 5D base latent tensor [B,C,T,H,W] "
+            f"(got={tuple(latent_condition_base.shape)})."
+        )
+    if int(latent_condition_base.shape[2]) < 2:
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: SVI conditioning requires at least 2 latent slots "
+            f"(got_T={int(latent_condition_base.shape[2])})."
+        )
+
+    expected_slot_shape = (
+        int(latent_condition_base.shape[0]),
+        int(latent_condition_base.shape[1]),
+        1,
+        int(latent_condition_base.shape[3]),
+        int(latent_condition_base.shape[4]),
+    )
+    if tuple(base_anchor_latent.shape) != tuple(expected_slot_shape):
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: SVI base anchor latent shape mismatch "
+            f"(expected={expected_slot_shape} got={tuple(base_anchor_latent.shape)})."
+        )
+    if prev_chunk_tail_latent is not None and tuple(prev_chunk_tail_latent.shape) != tuple(expected_slot_shape):
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: SVI previous chunk tail latent shape mismatch "
+            f"(expected={expected_slot_shape} got={tuple(prev_chunk_tail_latent.shape)})."
+        )
+    if chunk_condition_buffer is not None and tuple(chunk_condition_buffer.shape) != tuple(latent_condition_base.shape):
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: SVI chunk condition buffer shape mismatch "
+            f"(buffer={tuple(chunk_condition_buffer.shape)} base={tuple(latent_condition_base.shape)})."
+        )
+    return expected_slot_shape
+
+
+def _assemble_svi2_condition_latents(
+    *,
+    latent_condition_base: torch.Tensor,
+    base_anchor_latent: torch.Tensor,
+    prev_chunk_tail_latent: torch.Tensor,
+    chunk_condition_buffer: torch.Tensor | None,
+) -> torch.Tensor:
+    _validate_svi_condition_shape(
+        latent_condition_base=latent_condition_base,
+        base_anchor_latent=base_anchor_latent,
+        prev_chunk_tail_latent=prev_chunk_tail_latent,
+        chunk_condition_buffer=chunk_condition_buffer,
+    )
+    if chunk_condition_buffer is None:
+        chunk_condition_buffer = base_anchor_latent.expand_as(latent_condition_base).clone()
+    else:
+        chunk_condition_buffer.copy_(base_anchor_latent.expand_as(latent_condition_base))
+    chunk_condition_buffer[:, :, :1, :, :] = prev_chunk_tail_latent
+    return chunk_condition_buffer
+
+
+def _assemble_svi2_pro_condition_latents(
+    *,
+    latent_condition_base: torch.Tensor,
+    base_anchor_latent: torch.Tensor,
+    prev_chunk_tail_latent: torch.Tensor | None,
+    chunk_condition_buffer: torch.Tensor | None,
+) -> torch.Tensor:
+    _validate_svi_condition_shape(
+        latent_condition_base=latent_condition_base,
+        base_anchor_latent=base_anchor_latent,
+        prev_chunk_tail_latent=prev_chunk_tail_latent,
+        chunk_condition_buffer=chunk_condition_buffer,
+    )
+    if chunk_condition_buffer is None:
+        chunk_condition_buffer = torch.zeros_like(latent_condition_base)
+    else:
+        chunk_condition_buffer.zero_()
+    chunk_condition_buffer[:, :, :1, :, :] = base_anchor_latent
+    if prev_chunk_tail_latent is not None:
+        chunk_condition_buffer[:, :, 1:2, :, :] = prev_chunk_tail_latent
+    return chunk_condition_buffer
 
 
 def _sample_chunk_stage_with_progress(
@@ -1728,6 +1840,7 @@ def stream_img2vid_chunked(
     commit_frames: int | None = None,
     chunk_buffer_mode: str | None = None,
     reset_anchor_to_base: bool = True,
+    continuity_profile: str = _WAN_CONTINUITY_PROFILE_OVERLAP,
     logger: Any = None,
 ):
     log = get_logger(logger)
@@ -1758,6 +1871,23 @@ def stream_img2vid_chunked(
         raise RuntimeError(
             "WAN22 GGUF chunked img2vid: chunk_seed_mode must be one of "
             f"('fixed','increment','random'), got {chunk_seed_mode!r}."
+        )
+    continuity_profile_value = _normalize_chunk_continuity_profile(continuity_profile)
+    anchor_reset_to_base = bool(reset_anchor_to_base)
+    if continuity_profile_value in {_WAN_CONTINUITY_PROFILE_SVI2, _WAN_CONTINUITY_PROFILE_SVI2_PRO} and anchor_reset_to_base:
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: continuity_profile in {'svi2','svi2_pro'} requires reset_anchor_to_base=False."
+        )
+    if continuity_profile_value in {_WAN_CONTINUITY_PROFILE_SVI2, _WAN_CONTINUITY_PROFILE_SVI2_PRO} and float(anchor_alpha_value) > 0.0:
+        log.info(
+            "[wan22.gguf] chunked img2vid continuity: profile=%s ignores anchor_alpha=%.3f (slot-locked assembly).",
+            str(continuity_profile_value),
+            float(anchor_alpha_value),
+        )
+    if continuity_profile_value == _WAN_CONTINUITY_PROFILE_OVERLAP and (not anchor_reset_to_base) and float(anchor_alpha_value) > 0.0:
+        log.info(
+            "[wan22.gguf] chunked img2vid continuity: reset_anchor_to_base=false, "
+            "carried latent anchors override base reset (anchor_alpha applies only when reset is enabled)."
         )
     raw_chunk_buffer_mode = chunk_buffer_mode
     if raw_chunk_buffer_mode is None:
@@ -1804,6 +1934,11 @@ def stream_img2vid_chunked(
         )
 
     stride_frames = max(1, int(chunk_out) - int(overlap_frames))
+    if int(stride_frames) % int(_WAN_TEMPORAL_SCALE) != 0:
+        raise RuntimeError(
+            "WAN22 GGUF chunked img2vid: effective stride (chunk_frames - overlap_frames) must be aligned to temporal scale=4 "
+            f"(chunk_frames={int(chunk_out)} overlap_frames={int(overlap_frames)} stride={int(stride_frames)})."
+        )
     chunk_starts = list(range(0, int(total_out), int(stride_frames)))
     if not chunk_starts:
         raise RuntimeError("WAN22 GGUF chunked img2vid: chunk plan produced no chunk starts.")
@@ -1825,7 +1960,7 @@ def stream_img2vid_chunked(
     h_lat = max(8, int(cfg.height) // 8)
     w_lat = max(8, int(cfg.width) // 8)
     log.info(
-        "[wan22.gguf] chunked img2vid: total_frames=%d chunk_frames=%d overlap=%d stride=%d commit=%d chunks=%d seed_mode=%s reset_anchor_to_base=%s",
+        "[wan22.gguf] chunked img2vid: total_frames=%d chunk_frames=%d overlap=%d stride=%d commit=%d chunks=%d seed_mode=%s continuity_profile=%s reset_anchor_to_base=%s",
         int(total_out),
         int(chunk_out),
         int(overlap_frames),
@@ -1833,6 +1968,7 @@ def stream_img2vid_chunked(
         int(commit_frames_value),
         int(len(chunk_starts)),
         str(chunk_seed_mode),
+        str(continuity_profile_value),
         bool(reset_anchor_to_base),
     )
     yield {"type": "progress", "stage": "chunk.prepare", "step": 0, "total": int(len(chunk_starts)), "percent": 0.0}
@@ -1858,13 +1994,6 @@ def stream_img2vid_chunked(
         )
     base_anchor_latent = latent_condition_base[:, :, :1, :, :].detach()
     stride_latent_start_index = int(max(0, int(stride_frames)) // 4)
-    if int(stride_frames) % 4 != 0:
-        log.warning(
-            "[wan22.gguf] chunked img2vid: stride_frames=%d is not aligned to temporal scale=4 "
-            "(effective latent stride start=%d). Temporal continuity can jitter.",
-            int(stride_frames),
-            int(stride_latent_start_index),
-        )
     if stride_latent_start_index >= int(chunk_lat):
         raise RuntimeError(
             "WAN22 GGUF chunked img2vid: stride maps outside latent timeline "
@@ -1975,44 +2104,86 @@ def stream_img2vid_chunked(
         low_decode_paths: list[str] = []
         latent_channels_lo_value: int | None = None
         prev_chunk_anchor_latents_cpu: torch.Tensor | None = None
+        prev_chunk_tail_latent_cpu: torch.Tensor | None = None
         chunk_condition_buffer: torch.Tensor | None = None
-        anchor_reset_to_base = bool(reset_anchor_to_base)
-        if (not anchor_reset_to_base) and float(anchor_alpha_value) > 0.0:
-            log.info(
-                "[wan22.gguf] chunked img2vid continuity: reset_anchor_to_base=false, "
-                "carried latent anchors override base reset (anchor_alpha applies only when reset is enabled)."
-            )
 
         for chunk_index, _chunk_start in enumerate(chunk_starts):
             chunk_condition = latent_condition_base
-            if chunk_index > 0:
-                if prev_chunk_anchor_latents_cpu is None:
-                    raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: missing previous chunk anchor latent window for continuity "
-                        f"(chunk={int(chunk_index) + 1}/{int(len(chunk_starts))})."
-                    )
-                prev_chunk_anchor_latents = prev_chunk_anchor_latents_cpu.to(
-                    device=latent_condition_base.device,
-                    dtype=latent_condition_base.dtype,
+            if continuity_profile_value == _WAN_CONTINUITY_PROFILE_SVI2 and chunk_index == 0:
+                chunk_condition_buffer = _assemble_svi2_condition_latents(
+                    latent_condition_base=latent_condition_base,
+                    base_anchor_latent=base_anchor_latent,
+                    prev_chunk_tail_latent=base_anchor_latent,
+                    chunk_condition_buffer=chunk_condition_buffer,
                 )
-                if int(prev_chunk_anchor_latents.shape[2]) != int(anchor_latent_frames):
-                    raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: continuity anchor latent window size mismatch "
-                        f"(expected_T={int(anchor_latent_frames)} got_T={int(prev_chunk_anchor_latents.shape[2])})."
-                    )
-                if chunk_condition_buffer is None:
-                    chunk_condition_buffer = latent_condition_base.clone()
-                if anchor_reset_to_base:
-                    anchor_base = prev_chunk_anchor_latents.clone()
-                    anchor_base[:, :, :1, :, :] = base_anchor_latent
-                    chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = _blend_anchor_latent(
-                        prev_chunk_anchor_latents,
-                        anchor_base,
-                        alpha=anchor_alpha_value,
-                    )
-                else:
-                    chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = prev_chunk_anchor_latents
                 chunk_condition = chunk_condition_buffer
+            elif continuity_profile_value == _WAN_CONTINUITY_PROFILE_SVI2_PRO and chunk_index == 0:
+                chunk_condition_buffer = _assemble_svi2_pro_condition_latents(
+                    latent_condition_base=latent_condition_base,
+                    base_anchor_latent=base_anchor_latent,
+                    prev_chunk_tail_latent=None,
+                    chunk_condition_buffer=chunk_condition_buffer,
+                )
+                chunk_condition = chunk_condition_buffer
+            elif chunk_index > 0:
+                if continuity_profile_value == _WAN_CONTINUITY_PROFILE_OVERLAP:
+                    if prev_chunk_anchor_latents_cpu is None:
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: missing previous chunk anchor latent window for continuity "
+                            f"(chunk={int(chunk_index) + 1}/{int(len(chunk_starts))})."
+                        )
+                    prev_chunk_anchor_latents = prev_chunk_anchor_latents_cpu.to(
+                        device=latent_condition_base.device,
+                        dtype=latent_condition_base.dtype,
+                    )
+                    if int(prev_chunk_anchor_latents.shape[2]) != int(anchor_latent_frames):
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: continuity anchor latent window size mismatch "
+                            f"(expected_T={int(anchor_latent_frames)} got_T={int(prev_chunk_anchor_latents.shape[2])})."
+                        )
+                    if chunk_condition_buffer is None:
+                        chunk_condition_buffer = latent_condition_base.clone()
+                    if anchor_reset_to_base:
+                        anchor_base = prev_chunk_anchor_latents.clone()
+                        anchor_base[:, :, :1, :, :] = base_anchor_latent
+                        chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = _blend_anchor_latent(
+                            prev_chunk_anchor_latents,
+                            anchor_base,
+                            alpha=anchor_alpha_value,
+                        )
+                    else:
+                        chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = prev_chunk_anchor_latents
+                    chunk_condition = chunk_condition_buffer
+                else:
+                    if prev_chunk_tail_latent_cpu is None:
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: SVI continuity requires previous chunk tail latent, "
+                            f"but none was captured (chunk={int(chunk_index) + 1}/{int(len(chunk_starts))})."
+                        )
+                    prev_chunk_tail_latent = prev_chunk_tail_latent_cpu.to(
+                        device=latent_condition_base.device,
+                        dtype=latent_condition_base.dtype,
+                    )
+                    if continuity_profile_value == _WAN_CONTINUITY_PROFILE_SVI2:
+                        chunk_condition_buffer = _assemble_svi2_condition_latents(
+                            latent_condition_base=latent_condition_base,
+                            base_anchor_latent=base_anchor_latent,
+                            prev_chunk_tail_latent=prev_chunk_tail_latent,
+                            chunk_condition_buffer=chunk_condition_buffer,
+                        )
+                    elif continuity_profile_value == _WAN_CONTINUITY_PROFILE_SVI2_PRO:
+                        chunk_condition_buffer = _assemble_svi2_pro_condition_latents(
+                            latent_condition_base=latent_condition_base,
+                            base_anchor_latent=base_anchor_latent,
+                            prev_chunk_tail_latent=prev_chunk_tail_latent,
+                            chunk_condition_buffer=chunk_condition_buffer,
+                        )
+                    else:
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: unsupported continuity profile at runtime "
+                            f"(profile={continuity_profile_value!r})."
+                        )
+                    chunk_condition = chunk_condition_buffer
 
             chunk_seed = _resolve_chunk_seed(getattr(cfg, "seed", None), chunk_index=chunk_index, mode=chunk_seed_mode)
             chunk_scheduler, chunk_total_steps = _build_shared_scheduler(
@@ -2198,14 +2369,16 @@ def stream_img2vid_chunked(
                         f"(decode_C={int(decode_chunk_latents.shape[1])} anchor_C={int(base_anchor_latent.shape[1])})."
                     )
                 decode_chunk_latents_cpu = decode_chunk_latents.detach().to(device="cpu")
-                anchor_slice_start = int(stride_latent_start_index)
-                anchor_slice_end = int(anchor_slice_start + anchor_latent_frames)
-                if anchor_slice_end > int(decode_chunk_latents_cpu.shape[2]):
-                    raise RuntimeError(
-                        "WAN22 GGUF chunked img2vid: anchor slice exceeds decoded latent timeline "
-                        f"(slice_end={int(anchor_slice_end)} decode_T={int(decode_chunk_latents_cpu.shape[2])})."
-                    )
-                prev_chunk_anchor_latents_cpu = decode_chunk_latents_cpu[:, :, anchor_slice_start:anchor_slice_end, :, :].clone()
+                prev_chunk_tail_latent_cpu = decode_chunk_latents_cpu[:, :, -1:, :, :].clone()
+                if continuity_profile_value == _WAN_CONTINUITY_PROFILE_OVERLAP:
+                    anchor_slice_start = int(stride_latent_start_index)
+                    anchor_slice_end = int(anchor_slice_start + anchor_latent_frames)
+                    if anchor_slice_end > int(decode_chunk_latents_cpu.shape[2]):
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: anchor slice exceeds decoded latent timeline "
+                            f"(slice_end={int(anchor_slice_end)} decode_T={int(decode_chunk_latents_cpu.shape[2])})."
+                        )
+                    prev_chunk_anchor_latents_cpu = decode_chunk_latents_cpu[:, :, anchor_slice_start:anchor_slice_end, :, :].clone()
 
                 if low_store_mode == "ram":
                     low_decode_ram.append(decode_chunk_latents_cpu)
@@ -2379,6 +2552,40 @@ def stream_img2vid_chunked(
         yield {"type": "result", "frames": frames}
 
 
+def _validate_windowed_temporal_contract(
+    *,
+    mode_label: str,
+    window_frames: int,
+    window_stride: int,
+    window_commit_frames: int,
+) -> None:
+    if int(window_frames) < 9 or (int(window_frames) - 1) % 4 != 0:
+        raise RuntimeError(
+            f"WAN22 GGUF {mode_label} img2vid: window_frames must satisfy 4n+1 and be >= 9 "
+            f"(got {int(window_frames)})."
+        )
+    if int(window_stride) < 1 or int(window_stride) >= int(window_frames):
+        raise RuntimeError(
+            f"WAN22 GGUF {mode_label} img2vid: window_stride must be >= 1 and < window_frames "
+            f"(stride={int(window_stride)} window={int(window_frames)})."
+        )
+    if int(window_stride) % int(_WAN_TEMPORAL_SCALE) != 0:
+        raise RuntimeError(
+            f"WAN22 GGUF {mode_label} img2vid: window_stride must be aligned to temporal scale=4 "
+            f"(stride={int(window_stride)})."
+        )
+    if int(window_commit_frames) < int(window_stride) or int(window_commit_frames) > int(window_frames):
+        raise RuntimeError(
+            f"WAN22 GGUF {mode_label} img2vid: window_commit_frames must be within [window_stride, window_frames] "
+            f"(commit={int(window_commit_frames)} stride={int(window_stride)} window={int(window_frames)})."
+        )
+    if int(window_commit_frames) - int(window_stride) < int(_WAN_WINDOW_COMMIT_OVERLAP_MIN):
+        raise RuntimeError(
+            f"WAN22 GGUF {mode_label} img2vid: window_commit_frames must keep at least 4 committed overlap frames "
+            f"beyond stride (commit={int(window_commit_frames)} stride={int(window_stride)})."
+        )
+
+
 def stream_img2vid_sliding_window(
     cfg: RunConfig,
     *,
@@ -2391,21 +2598,12 @@ def stream_img2vid_sliding_window(
     logger: Any = None,
 ):
     log = get_logger(logger)
-    if int(window_frames) < 9 or (int(window_frames) - 1) % 4 != 0:
-        raise RuntimeError(
-            "WAN22 GGUF sliding img2vid: window_frames must satisfy 4n+1 and be >= 9 "
-            f"(got {int(window_frames)})."
-        )
-    if int(window_stride) < 1 or int(window_stride) >= int(window_frames):
-        raise RuntimeError(
-            "WAN22 GGUF sliding img2vid: window_stride must be >= 1 and < window_frames "
-            f"(stride={int(window_stride)} window={int(window_frames)})."
-        )
-    if int(window_commit_frames) < int(window_stride) or int(window_commit_frames) > int(window_frames):
-        raise RuntimeError(
-            "WAN22 GGUF sliding img2vid: window_commit_frames must be within [window_stride, window_frames] "
-            f"(commit={int(window_commit_frames)} stride={int(window_stride)} window={int(window_frames)})."
-        )
+    _validate_windowed_temporal_contract(
+        mode_label="sliding",
+        window_frames=int(window_frames),
+        window_stride=int(window_stride),
+        window_commit_frames=int(window_commit_frames),
+    )
 
     overlap_frames = int(window_frames) - int(window_stride)
     log.info(
@@ -2424,5 +2622,90 @@ def stream_img2vid_sliding_window(
         commit_frames=int(window_commit_frames),
         chunk_buffer_mode=chunk_buffer_mode,
         reset_anchor_to_base=False,
+        continuity_profile=_WAN_CONTINUITY_PROFILE_OVERLAP,
+        logger=logger,
+    )
+
+
+def stream_img2vid_svi2(
+    cfg: RunConfig,
+    *,
+    window_frames: int,
+    window_stride: int,
+    window_commit_frames: int,
+    anchor_alpha: float,
+    chunk_seed_mode: str,
+    chunk_buffer_mode: str | None = None,
+    logger: Any = None,
+):
+    log = get_logger(logger)
+    _validate_windowed_temporal_contract(
+        mode_label="svi2",
+        window_frames=int(window_frames),
+        window_stride=int(window_stride),
+        window_commit_frames=int(window_commit_frames),
+    )
+
+    overlap_frames = int(window_frames) - int(window_stride)
+    log.info(
+        "[wan22.gguf] svi2 img2vid: window=%d stride=%d commit=%d overlap=%d seed_mode=%s",
+        int(window_frames),
+        int(window_stride),
+        int(window_commit_frames),
+        int(overlap_frames),
+        str(chunk_seed_mode),
+    )
+    yield from stream_img2vid_chunked(
+        cfg,
+        chunk_frames=int(window_frames),
+        overlap_frames=int(overlap_frames),
+        anchor_alpha=float(anchor_alpha),
+        chunk_seed_mode=str(chunk_seed_mode),
+        commit_frames=int(window_commit_frames),
+        chunk_buffer_mode=chunk_buffer_mode,
+        reset_anchor_to_base=False,
+        continuity_profile=_WAN_CONTINUITY_PROFILE_SVI2,
+        logger=logger,
+    )
+
+
+def stream_img2vid_svi2_pro(
+    cfg: RunConfig,
+    *,
+    window_frames: int,
+    window_stride: int,
+    window_commit_frames: int,
+    anchor_alpha: float,
+    chunk_seed_mode: str,
+    chunk_buffer_mode: str | None = None,
+    logger: Any = None,
+):
+    log = get_logger(logger)
+    _validate_windowed_temporal_contract(
+        mode_label="svi2_pro",
+        window_frames=int(window_frames),
+        window_stride=int(window_stride),
+        window_commit_frames=int(window_commit_frames),
+    )
+
+    overlap_frames = int(window_frames) - int(window_stride)
+    log.info(
+        "[wan22.gguf] svi2_pro img2vid: window=%d stride=%d commit=%d overlap=%d seed_mode=%s",
+        int(window_frames),
+        int(window_stride),
+        int(window_commit_frames),
+        int(overlap_frames),
+        str(chunk_seed_mode),
+    )
+    yield from stream_img2vid_chunked(
+        cfg,
+        chunk_frames=int(window_frames),
+        overlap_frames=int(overlap_frames),
+        anchor_alpha=float(anchor_alpha),
+        chunk_seed_mode=str(chunk_seed_mode),
+        commit_frames=int(window_commit_frames),
+        chunk_buffer_mode=chunk_buffer_mode,
+        reset_anchor_to_base=False,
+        continuity_profile=_WAN_CONTINUITY_PROFILE_SVI2_PRO,
         logger=logger,
     )

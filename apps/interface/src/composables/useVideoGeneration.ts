@@ -12,7 +12,7 @@ Required Notice: see NOTICE
 	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 	mode prompt fields from the High stage in payload builders for backend compatibility. Includes `output.returnFrames` and stage `flowShift` pass-through in
-	common WAN payload input. Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding`), and stage-level
+	common WAN payload input. Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`), and stage-level
 	WAN LoRA fields are not emitted from this composable (LoRA control is prompt-level). Start failures now log structured diagnostics to the browser console
 	(status/detail/body/message + mode/tab) before surfacing UI error text.
 
@@ -57,6 +57,7 @@ import type { GeneratedImage, TaskEvent } from '../api/types'
 import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
+import { isWanWindowedImg2VidMode, normalizeWanImg2VidMode } from '../utils/wan_img2vid_temporal'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
 type VideoMode = 'txt2vid' | 'img2vid'
@@ -288,8 +289,8 @@ function defaultVideo(): WanVideoParams {
     img2vidAnchorAlpha: 0.2,
     img2vidChunkSeedMode: 'increment',
     img2vidWindowFrames: 13,
-    img2vidWindowStride: 6,
-    img2vidWindowCommitFrames: 7,
+    img2vidWindowStride: 8,
+    img2vidWindowCommitFrames: 12,
     filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
@@ -311,9 +312,7 @@ function defaultAssets(): WanAssetsParams {
 }
 
 function normalizeImg2VidMode(rawValue: unknown): WanVideoParams['img2vidMode'] {
-  const normalized = String(rawValue ?? '').trim().toLowerCase()
-  if (normalized === 'chunk' || normalized === 'sliding') return normalized
-  return 'solo'
+  return normalizeWanImg2VidMode(rawValue)
 }
 
 export function useVideoGeneration(tabId: string) {
@@ -617,7 +616,7 @@ export function useVideoGeneration(tabId: string) {
         img2vidTemporalInput.overlapFrames = v.img2vidOverlapFrames
         img2vidTemporalInput.anchorAlpha = v.img2vidAnchorAlpha
         img2vidTemporalInput.chunkSeedMode = v.img2vidChunkSeedMode
-      } else if (img2vidMode === 'sliding') {
+      } else if (isWanWindowedImg2VidMode(img2vidMode)) {
         img2vidTemporalInput.windowFrames = v.img2vidWindowFrames
         img2vidTemporalInput.windowStride = v.img2vidWindowStride
         img2vidTemporalInput.windowCommitFrames = v.img2vidWindowCommitFrames

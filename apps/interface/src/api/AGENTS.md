@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -31,7 +31,8 @@ Status: Active
 - 2026-02-17: `payloads_video.ts` now normalizes WAN frame counts to the `4n+1` domain within `[9,401]`, emits `gguf_attention_mode` (`global|sliding`), and supports img2vid chunk controls (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`).
 - 2026-02-21: `payloads_video.ts` stage payload schema now accepts stage-scoped prompt fields (`wan_high.prompt/negative_prompt`, `wan_low.prompt/negative_prompt`); top-level mode prompt fields are derived from the High stage prompt at build time (fail-loud when High prompt is empty), and test fixtures in `payloads_video.test.ts` were updated accordingly.
 - 2026-02-21: `payloads_video.ts` img2vid temporal contract now requires `img2vid_mode` (`solo|chunk|sliding`), with mode-scoped validation for chunk fields (`img2vid_chunk_*`) versus sliding-window fields (`img2vid_window_frames/stride/commit_frames`); `payloads_video.test.ts` covers chunk, solo, and sliding payload builds.
-- 2026-02-22: `client.ts` adds `fetchObliterateVram()` for `POST /api/obliterate-vram`, and `types.ts` now defines `ObliterateVramResponse` + nested process/failure DTOs so quick settings can render fail-loud VRAM cleanup status.
+- 2026-02-22: `payloads_video.ts` now supports `img2vid_mode='svi2'|'svi2_pro'` with the same windowed contract as sliding, and `payloads_video.test.ts` adds SVI2/SVI2 Pro window-normalization regressions; temporal normalization is centralized in `utils/wan_img2vid_temporal.ts` (`stride % 4 == 0`, `commit >= stride + 4`).
+- 2026-02-22: `client.ts` adds `fetchObliterateVram(payload?)` for `POST /api/obliterate-vram` with default `external_kill_mode='disabled'`; `types.ts` defines request/response DTOs (including external kill mode + skip/failure rows) so quick settings can report safe-default cleanup status fail-loud.
 - Inventory helpers (`InventoryResponse`) are served by `/api/models/inventory`; the client exposes both a cached fetch (`fetchModelInventory`) and a rescan path (`refreshModelInventory`) that posts to `/api/models/inventory/refresh` (assets like VAEs/Text Encoders/metadata roots).
 - `ModelsResponse` is served by `/api/models`; the client exposes a rescan path (`refreshModels`) that calls `/api/models?refresh=1` so the UI can pick up newly copied checkpoints without restarting the backend.
 - 2026-01-13: Added `fetchCheckpointMetadata()` for `/api/models/checkpoint-metadata` so the metadata modal payload can be fetched without constructing `file.*` keys client-side.

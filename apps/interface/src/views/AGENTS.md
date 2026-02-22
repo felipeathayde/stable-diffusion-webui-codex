@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -76,7 +76,8 @@ Status: Active
 - 2026-02-21: `WANTab.vue` Prompt UI is now stage-scoped: `High Prompt` and `Low Prompt` render as separate cards (Low is collapsible), guided-generation validation targets missing stage prompts explicitly, and history modal/apply paths read/write prompt fields under `high.*` and `low.*` (with legacy root-prompt fallback for old snapshots).
 - 2026-02-21: `WANTab.vue` now exposes SDXL-style LoRA modal insertion on both `High Prompt` and `Low Prompt` cards (token chips in prompt editors), and stage-level LoRA selector/weight controls were removed from `High Noise`/`Low Noise`.
 - 2026-02-21: `WANTab.vue` now exposes WAN generation modes as `txt2vid|img2vid` only; vid2vid input cards/controls and vid2vid history apply branches were removed.
-- 2026-02-21: `WANTab.vue` img2vid temporal controls now use an explicit mode select (`solo|chunk|sliding window`) in a two-row layout (row-1 selects, row-2 sliders), with per-mode localStorage snapshots and history/snapshot migration to `img2vid.mode` + `img2vid.window*`.
+- 2026-02-21: `WANTab.vue` img2vid temporal controls now use an explicit mode select (`solo|chunk|sliding|svi2|svi2_pro`) in a two-row layout (row-1 selects, row-2 sliders), with per-mode localStorage snapshots and history/snapshot migration to `img2vid.mode` + `img2vid.window*`.
+- 2026-02-22: `WANTab.vue` adds `SVI 2.0` and `SVI 2.0 Pro` to img2vid temporal mode options, reuses window controls for all windowed modes (`sliding|svi2|svi2_pro`), and tightens slider contracts (`stride` nudge/step `=4`, `commit` minimum `= stride + 4`) to keep temporal handoff settings valid at input time.
 - 2026-02-21: `Settings.vue` renamed the inner content layout hook from `.layout` to `.settings-layout` to avoid collisions with the global app-shell `.layout` contract.
 - 2026-02-21: `WANTab.vue` history apply/details/title mode labeling is now strict for legacy snapshots: unsupported modes no longer silently coerce to `txt2vid`; apply fails loud with toast (`Unsupported history mode ...`) and labels render explicit `Unsupported (<mode>)`.
 - 2026-02-22: `ImageModelTab.vue`, `WANTab.vue`, and `Upscale.vue` now render run errors/notices inside `RunCard` through `RunProgressStatus` variants (error/info/progress). `panel-error` was removed from Prompt/caption regions so run status always appears in the RUN panel.

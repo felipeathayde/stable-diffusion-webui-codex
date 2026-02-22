@@ -22,7 +22,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_to_pil_rgb` (function): Converts a tensor image into a PIL RGB image.
 - `_PreviewProjectionSpec` (dataclass): Internal latent->RGB projection contract for cheap preview profiles.
 - `_preview_family_id` (function): Resolves normalized model family id from runtime processing/model metadata.
+- `_preview_profile_from_family_or_engine` (function): Resolves canonical preview profile id for a model family/engine id.
 - `_preview_profile_id` (function): Resolves preview profile id from family + latent channel count.
+- `_canonical_preview_profile_id` (function): Normalizes legacy/alias profile ids to canonical profile ids.
 - `_projection_for_profile` (function): Returns internal projection spec for a profile/channels pair when available.
 - `_projection_is_valid` (function): Validates projection shape and finiteness contract.
 - `_warn_projection_skip_once` (function): Emits deduplicated skip warnings for missing/invalid cheap projections.
@@ -45,6 +47,7 @@ from typing import Any, Iterator, Optional
 
 from apps.backend.core.state import state as backend_state
 from apps.backend.infra.config.env_flags import env_flag, env_int
+from apps.backend.runtime.model_registry.specs import ModelFamily
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +65,12 @@ _LATENT_RGB_FACTORS_SDXL: tuple[tuple[float, float, float], ...] = (
     (-0.3112, -0.2359, -0.2076),
 )
 
+_PREVIEW_PROFILE_SD15 = "sd15"
+_PREVIEW_PROFILE_SDXL = "sdxl"
+_PREVIEW_PROFILE_FLOW16 = "flow16"
+
 _PREVIEW_ZERO_BIAS: tuple[float, float, float] = (0.0, 0.0, 0.0)
-_LATENT_RGB_FACTORS_ANIMA16_BOOTSTRAP: tuple[tuple[float, float, float], ...] = (
+_LATENT_RGB_FACTORS_FLOW16_BOOTSTRAP: tuple[tuple[float, float, float], ...] = (
     (0.3920, 0.4054, 0.4549),
     (-0.2634, -0.0196, 0.0653),
     (0.0568, 0.1687, -0.0755),
@@ -82,6 +89,34 @@ _LATENT_RGB_FACTORS_ANIMA16_BOOTSTRAP: tuple[tuple[float, float, float], ...] = 
     (-0.0389, -0.0294875, -0.02595),
 )
 
+_PREVIEW_PROFILE_BY_FAMILY_OR_ENGINE_ID: dict[str, str] = {
+    ModelFamily.SD15.value: _PREVIEW_PROFILE_SD15,
+    ModelFamily.SD20.value: _PREVIEW_PROFILE_SD15,
+    ModelFamily.SDXL.value: _PREVIEW_PROFILE_SDXL,
+    ModelFamily.SDXL_REFINER.value: _PREVIEW_PROFILE_SDXL,
+    ModelFamily.SD3.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.SD35.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.FLUX.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.FLUX_KONTEXT.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.CHROMA.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.ZIMAGE.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.ANIMA.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.AURA.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.WAN22_5B.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.WAN22_14B.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.WAN22_ANIMATE.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.QWEN_IMAGE.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.HUNYUAN.value: _PREVIEW_PROFILE_FLOW16,
+    ModelFamily.SVD.value: _PREVIEW_PROFILE_FLOW16,
+    "flux1_fill": _PREVIEW_PROFILE_FLOW16,
+    "flux1_chroma": _PREVIEW_PROFILE_FLOW16,
+    "hunyuan_video": _PREVIEW_PROFILE_FLOW16,
+}
+
+_PREVIEW_PROFILE_ALIASES: dict[str, str] = {
+    "anima": _PREVIEW_PROFILE_FLOW16,
+}
+
 _DEBUG_PREVIEW_FACTORS_LAST_JOB_TS: str | None = None
 
 _THREAD_OVERRIDES = threading.local()
@@ -96,9 +131,21 @@ class _PreviewProjectionSpec:
 
 
 _PREVIEW_PROJECTIONS: dict[tuple[str, int], _PreviewProjectionSpec] = {
-    ("sd15", 4): _PreviewProjectionSpec(profile_id="sd15", channels=4, factors=_LATENT_RGB_FACTORS_SD15),
-    ("sdxl", 4): _PreviewProjectionSpec(profile_id="sdxl", channels=4, factors=_LATENT_RGB_FACTORS_SDXL),
-    ("anima", 16): _PreviewProjectionSpec(profile_id="anima", channels=16, factors=_LATENT_RGB_FACTORS_ANIMA16_BOOTSTRAP),
+    (_PREVIEW_PROFILE_SD15, 4): _PreviewProjectionSpec(
+        profile_id=_PREVIEW_PROFILE_SD15,
+        channels=4,
+        factors=_LATENT_RGB_FACTORS_SD15,
+    ),
+    (_PREVIEW_PROFILE_SDXL, 4): _PreviewProjectionSpec(
+        profile_id=_PREVIEW_PROFILE_SDXL,
+        channels=4,
+        factors=_LATENT_RGB_FACTORS_SDXL,
+    ),
+    (_PREVIEW_PROFILE_FLOW16, 16): _PreviewProjectionSpec(
+        profile_id=_PREVIEW_PROFILE_FLOW16,
+        channels=16,
+        factors=_LATENT_RGB_FACTORS_FLOW16_BOOTSTRAP,
+    ),
 }
 
 
@@ -200,29 +247,51 @@ def _preview_family_id(processing: Any) -> str | None:
     if expected_family is not None:
         expected_value = getattr(expected_family, "value", expected_family)
         key = str(expected_value).strip().lower()
-        if key in {"sdxl", "sdxl_refiner"} or key.startswith("sdxl"):
-            return "sdxl"
-        return key
+        return key or None
 
     engine_id = str(getattr(model, "engine_id", "") or "").strip().lower()
     if engine_id:
-        if engine_id in {"sdxl", "sdxl_refiner"}:
-            return "sdxl"
         return engine_id
     return None
 
 
+def _preview_profile_from_family_or_engine(family_or_engine_id: str | None) -> str | None:
+    if family_or_engine_id is None:
+        return None
+    key = str(family_or_engine_id).strip().lower()
+    if key == "":
+        return None
+    return _PREVIEW_PROFILE_BY_FAMILY_OR_ENGINE_ID.get(key, key)
+
+
 def _preview_profile_id(processing: Any, *, channels: int) -> str:
-    family_id = _preview_family_id(processing)
-    if int(channels) == 4:
-        if family_id == "sdxl" or bool(getattr(getattr(processing, "sd_model", None), "is_sdxl", False)):
-            return "sdxl"
-        return "sd15"
-    return family_id or "unknown"
+    resolved_channels = int(channels)
+    family_profile = _preview_profile_from_family_or_engine(_preview_family_id(processing))
+    if resolved_channels == 4:
+        if family_profile == _PREVIEW_PROFILE_SDXL or bool(getattr(getattr(processing, "sd_model", None), "is_sdxl", False)):
+            return _PREVIEW_PROFILE_SDXL
+        return _PREVIEW_PROFILE_SD15
+    if family_profile is not None:
+        return family_profile
+    if resolved_channels == 16:
+        return _PREVIEW_PROFILE_FLOW16
+    return "unknown"
+
+
+def _canonical_preview_profile_id(profile_id: str | None) -> str | None:
+    if profile_id is None:
+        return None
+    normalized = str(profile_id).strip().lower()
+    if normalized == "":
+        return None
+    return _PREVIEW_PROFILE_ALIASES.get(normalized, normalized)
 
 
 def _projection_for_profile(profile_id: str, *, channels: int) -> _PreviewProjectionSpec | None:
-    return _PREVIEW_PROJECTIONS.get((str(profile_id).strip().lower(), int(channels)))
+    canonical_profile_id = _canonical_preview_profile_id(profile_id)
+    if canonical_profile_id is None:
+        return None
+    return _PREVIEW_PROJECTIONS.get((canonical_profile_id, int(channels)))
 
 
 def _projection_is_valid(spec: _PreviewProjectionSpec) -> bool:

@@ -62,3 +62,4 @@ Status: Active
 - 2026-01-03: Standardized upstream references in runtime docs/comments to prefer Hugging Face Diffusers as the behaviour baseline.
 - 2026-02-09: Version-counter mitigation is handled at engine conditioning entrypoints (`torch.no_grad()`); runtime no longer carries inference-tensor materialization shims for this class of failure.
 - 2026-02-22: `runtime/live_preview.py` now resolves cheap-preview projections by `(profile, channels)` and includes an initial Anima 16-channel bootstrap projection path (no VAE fallback in `Approx cheap`; missing/invalid projections skip preview with deduplicated warnings).
+- 2026-02-22: Live preview profile resolution now maps known image-family engines to canonical profiles (`sd15`/`sdxl`/`flow16`) so `Approx cheap` can run on image pipelines that emit 4D 16-channel latents (for example SD3/SD3.5/Flux/ZImage/Anima) using a shared bootstrap projection when applicable.

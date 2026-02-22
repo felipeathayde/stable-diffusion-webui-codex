@@ -14,8 +14,8 @@ task cancel mode, task SSE buffer caps, safeweights), plus attention bootstrap p
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
-- `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
-- `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_CUDA_ALLOC_CONF` is unset.
+- `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_ALLOC_CONF` applied by launchers when unset.
+- `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_ALLOC_CONF` is unset.
 - `CODEX_CUDA_MALLOC_KEY` (constant): Env key toggling backend `--cuda-malloc` forwarding in launcher-managed runs.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
@@ -184,8 +184,8 @@ class LauncherProfileStore:
         env.update(self.models.get(active_model, {}))
         raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "1") or "").strip().lower()
         default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
-        if default_alloc_enabled and not str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip():
-            env["PYTORCH_CUDA_ALLOC_CONF"] = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
+        if default_alloc_enabled and not str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip():
+            env["PYTORCH_ALLOC_CONF"] = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
         return env
 
     def lookup_env(self, key: str) -> str | None:
@@ -241,6 +241,9 @@ class LauncherProfileStore:
         # Keep bootstrap-critical device defaults (CODEX_*_DEVICE) in launcher env so
         # the API can start in non-interactive spawns without prompting/fallbacks.
         for container in list(self.areas.values()) + list(self.models.values()):
+            legacy_alloc_conf = str(container.pop("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
+            if legacy_alloc_conf and not str(container.get("PYTORCH_ALLOC_CONF", "") or "").strip():
+                container["PYTORCH_ALLOC_CONF"] = legacy_alloc_conf
             for key in list(container.keys()):
                 if key.startswith("WAN_"):
                     container.pop(key, None)

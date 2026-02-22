@@ -26,9 +26,9 @@ Backend args:
   - Any extra args are forwarded to the backend entrypoint (e.g. '--gguf-exec=dequant_upfront', '--lora-apply-mode online').
 
 Launcher args:
-  - '--pytorch-cuda-alloc-conf <value>': sets 'PYTORCH_CUDA_ALLOC_CONF' for the backend process (requires restart).
+  - '--pytorch-cuda-alloc-conf <value>': sets 'PYTORCH_ALLOC_CONF' for the backend process (requires restart).
   - '--enable-default-pytorch-cuda-alloc-conf' / '--disable-default-pytorch-cuda-alloc-conf':
-      toggles default allocator tuning when 'PYTORCH_CUDA_ALLOC_CONF' is unset.
+      toggles default allocator tuning when 'PYTORCH_ALLOC_CONF' is unset.
   - '--enable-cuda-malloc' / '--disable-cuda-malloc':
       toggles backend '--cuda-malloc' forwarding (cudaMallocAsync backend).
 
@@ -41,7 +41,7 @@ Environment overrides:
   - CODEX_LORA_APPLY_MODE (merge|online; default: merge)
   - CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF (1|0; default: 1)
   - CODEX_CUDA_MALLOC (1|0; default: 0)
-  - PYTORCH_CUDA_ALLOC_CONF (PyTorch CUDA allocator tuning; optional)
+  - PYTORCH_ALLOC_CONF (PyTorch allocator tuning; optional)
   - API_PORT_OVERRIDE / API_PORT / WEB_PORT (advanced; ports are auto-paired when unset)
 EOF
   exit 0
@@ -103,7 +103,7 @@ export PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export FORCE_COLOR="${FORCE_COLOR:-1}"
 
-DEFAULT_PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:256,garbage_collection_threshold:0.8"
+DEFAULT_PYTORCH_ALLOC_CONF="max_split_size_mb:256,garbage_collection_threshold:0.8"
 
 # Launcher-only arg parsing (strip args that are not backend CLI flags).
 api_args=()
@@ -114,11 +114,11 @@ while [[ $# -gt 0 ]]; do
         echo "Error: --pytorch-cuda-alloc-conf requires a value." >&2
         exit 2
       fi
-      export PYTORCH_CUDA_ALLOC_CONF="$2"
+      export PYTORCH_ALLOC_CONF="$2"
       shift 2
       ;;
     --pytorch-cuda-alloc-conf=*)
-      export PYTORCH_CUDA_ALLOC_CONF="${1#*=}"
+      export PYTORCH_ALLOC_CONF="${1#*=}"
       shift
       ;;
     --enable-default-pytorch-cuda-alloc-conf)
@@ -348,8 +348,16 @@ if [[ -n "${vae_device}" ]] && ! has_backend_flag "--vae-device" "$@"; then
 fi
 
 default_alloc_conf_enabled="${CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF:-1}"
-if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]] && is_truthy "${default_alloc_conf_enabled}"; then
-  export PYTORCH_CUDA_ALLOC_CONF="${DEFAULT_PYTORCH_CUDA_ALLOC_CONF}"
+if [[ -n "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
+  if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]]; then
+    export PYTORCH_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF}"
+  fi
+  unset PYTORCH_CUDA_ALLOC_CONF
+  echo "[webui] warning: PYTORCH_CUDA_ALLOC_CONF is deprecated; using PYTORCH_ALLOC_CONF." >&2
+fi
+
+if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]] && is_truthy "${default_alloc_conf_enabled}"; then
+  export PYTORCH_ALLOC_CONF="${DEFAULT_PYTORCH_ALLOC_CONF}"
 fi
 
 if is_truthy "${CODEX_CUDA_MALLOC:-0}" && ! has_backend_flag "--cuda-malloc" "$@"; then

@@ -1,7 +1,7 @@
 # apps.launcher.gui_tk
 Date: 2026-01-25
 Status: Active
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 
 ## Purpose
 - Modular Tk/ttk GUI implementation for the Codex launcher (services + settings + logs).
@@ -27,3 +27,4 @@ Last Review: 2026-02-21
 - 2026-02-18: `tabs/runtime.py` now exposes task cancel default mode (`CODEX_TASK_CANCEL_DEFAULT_MODE`) with strict choices (`immediate`, `after_current`) alongside existing task/safety knobs.
 - 2026-02-21: `tabs/runtime.py` now exposes WAN img2vid chunk buffer mode (`CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE`) with strict choices (`hybrid`, `ram`, `ram+hd`).
 - 2026-02-21: `tabs/runtime.py` now exposes attention mode selection (`sdpa_*|xformers|split|quad`) and persists it as launcher bootstrap env (`CODEX_ATTENTION_BACKEND`, `CODEX_ATTENTION_SDPA_POLICY`).
+- 2026-02-22: `tabs/runtime.py` now uses `PYTORCH_ALLOC_CONF` (instead of deprecated `PYTORCH_CUDA_ALLOC_CONF`) for allocator tuning.

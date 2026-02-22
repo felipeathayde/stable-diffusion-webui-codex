@@ -458,6 +458,54 @@ function Check-NodeenvOnly {
   return $tools
 }
 
+function Install-NodeenvWithWindowsLinkFallback {
+  param(
+    [Parameter(Mandatory = $true)][string]$UvBin,
+    [Parameter(Mandatory = $true)][string]$NodeVersion,
+    [Parameter(Mandatory = $true)][string]$NodeenvDir
+  )
+
+  $args = @("tool", "run", "--from", "nodeenv", "nodeenv", "-n", $NodeVersion, $NodeenvDir)
+  $rawOutput = @(& $UvBin @args 2>&1)
+  $exitCode = $LASTEXITCODE
+
+  $hasNodejsLinkWarning = $false
+  foreach ($entry in $rawOutput) {
+    $line = [string]$entry
+    if ($line -match "(?i)Failed to create nodejs\.exe link") {
+      $hasNodejsLinkWarning = $true
+      break
+    }
+  }
+
+  $suppressedLinkNoisePatterns = @(
+    "(?i)^Error:\s*Failed to create nodejs\.exe link$",
+    "(?i)^You do not have sufficient privileges to perform this operation\.?$",
+    "(?i)^Voc.{0,3}\s*n.{0,3}o\s*tem\s*privil.{0,64}opera.{0,64}$"
+  )
+
+  foreach ($entry in $rawOutput) {
+    $line = [string]$entry
+    if ([string]::IsNullOrWhiteSpace($line)) {
+      continue
+    }
+
+    if ($hasNodejsLinkWarning -and (Test-MatchAny -Value $line -Patterns $suppressedLinkNoisePatterns)) {
+      continue
+    }
+
+    Write-Host $line
+  }
+
+  if ($exitCode -ne 0) {
+    Fail "Error: nodeenv install failed."
+  }
+
+  if ($hasNodejsLinkWarning) {
+    Write-InstallWarning "nodeenv could not create nodejs.exe link (insufficient Windows privileges). Continuing; node/npm availability will be validated next."
+  }
+}
+
 function Ensure-Nodeenv {
   param(
     [Parameter(Mandatory = $true)][string]$UvBin,
@@ -480,7 +528,7 @@ function Ensure-Nodeenv {
   }
 
   Write-Install "Installing Node.js $NodeVersion into $NodeenvDir ..."
-  Invoke-Checked -Executable $UvBin -Arguments @("tool", "run", "--from", "nodeenv", "nodeenv", "-n", $NodeVersion, $NodeenvDir) -FailureMessage "Error: nodeenv install failed."
+  Install-NodeenvWithWindowsLinkFallback -UvBin $UvBin -NodeVersion $NodeVersion -NodeenvDir $NodeenvDir
 
   Prepend-NodeenvPath -NodeenvDir $NodeenvDir
   $installed = Get-NodeenvTools -NodeenvDir $NodeenvDir
@@ -1013,6 +1061,14 @@ while ($true) {
   $env:XDG_DATA_HOME = $xdgDataHome
   $env:XDG_CACHE_HOME = $xdgCacheHome
   $env:CODEX_FFMPEG_VERSION = $script:Config.FFmpegVersion
+
+  if (-not [string]::IsNullOrWhiteSpace($env:PYTORCH_CUDA_ALLOC_CONF)) {
+    if ([string]::IsNullOrWhiteSpace($env:PYTORCH_ALLOC_CONF)) {
+      $env:PYTORCH_ALLOC_CONF = $env:PYTORCH_CUDA_ALLOC_CONF
+      Write-InstallWarning "migrated PYTORCH_CUDA_ALLOC_CONF -> PYTORCH_ALLOC_CONF for this install process."
+    }
+    Remove-Item Env:PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
+  }
 
   Write-Install "Repo: $root"
   Write-Install "uv: $uvBin  version pin: $($script:Config.UvVersion)"

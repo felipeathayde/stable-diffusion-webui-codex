@@ -1,7 +1,7 @@
 # apps.launcher
 Date: 2025-10-28
 Status: Active
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -39,3 +39,4 @@ Last Review: 2026-02-21
 - 2026-02-18: Launcher task/runtime profile defaults now persist `CODEX_TASK_CANCEL_DEFAULT_MODE` (`immediate|after_current`) as a backend bootstrap knob for task cancel policy.
 - 2026-02-21: Launcher profiles/settings now persist and validate `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE` (`hybrid|ram|ram+hd`) as a runtime bootstrap knob used by WAN22 img2vid chunk buffering policy.
 - 2026-02-21: Launcher Runtime now owns attention bootstrap policy via `CODEX_ATTENTION_BACKEND` + `CODEX_ATTENTION_SDPA_POLICY`, forwarding `--attention-backend` and `--attention-sdpa-policy` to backend startup.
+- 2026-02-22: Launcher profiles now write `PYTORCH_ALLOC_CONF` (replacing deprecated `PYTORCH_CUDA_ALLOC_CONF`) for allocator tuning defaults.

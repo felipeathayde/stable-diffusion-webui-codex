@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: WAN video generation tab (txt2vid/img2vid) UI.
 Owns per-stage prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
-renders progress/results via task events (frames and/or exported video), with Run progress shown through the shared
-`RunProgressStatus` block (`Stage/Progress/Step/ETA` + queue metadata).
+renders progress/results via task events (frames and/or exported video), with Run status shown through the shared
+`RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` + queue metadata in progress mode).
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled at prompt level through the shared LoRA modal + prompt-token chips.
@@ -166,7 +166,6 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
         </div>
 
-        <div v-if="errorMessage" class="panel-error">{{ errorMessage }}</div>
         </div>
       </div>
 
@@ -536,6 +535,13 @@ Symbols (top-level; keep in sync; no ghosts):
             <button v-if="queue.length" class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
           </template>
         </RunProgressStatus>
+        <RunProgressStatus
+          v-else-if="errorMessage"
+          variant="error"
+          title="Run failed"
+          :message="errorMessage"
+          :show-progress-bar="false"
+        />
       </RunCard>
 
       <ResultsCard

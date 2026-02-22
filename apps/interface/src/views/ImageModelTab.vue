@@ -15,6 +15,7 @@ Hires settings list upscalers from `/api/upscalers` and share tile controls + ex
 Also shares the global `min_tile` preference (tiled OOM fallback lower bound) with `/upscale`.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
+Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), so errors are visible even when Prompt is off-screen.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
@@ -71,10 +72,6 @@ Symbols (top-level; keep in sync; no ghosts):
         :toolbarLabel="toolbarLabel"
         :fieldsId="`image-modeltab-prompt-${tabId}`"
       >
-        <div v-if="errorMessage" class="panel-error">
-          {{ errorMessage }}
-        </div>
-
         <div v-if="supportsImg2Img && params.useInitImage" class="panel-section">
           <Img2ImgInpaintParamsCard
             :disabled="isRunning"
@@ -303,12 +300,23 @@ Symbols (top-level; keep in sync; no ghosts):
           :total-steps="progress.totalSteps"
           :eta-seconds="progress.etaSeconds"
         />
-        <div v-else-if="xyzRunning" class="run-progress-status">
-          <p class="run-progress-status__line"><strong>Stage:</strong> xyz sweep</p>
-          <p v-if="xyzStore.progress.total" class="run-progress-status__line">Progress: {{ xyzProgressPercentLabel }}</p>
-          <p v-if="xyzStore.progress.total" class="run-progress-status__line">Step {{ xyzStore.progress.completed }} / {{ xyzStore.progress.total }}</p>
-          <p v-if="xyzStore.progress.current" class="run-progress-status__line">Current: {{ xyzStore.progress.current }}</p>
-        </div>
+        <RunProgressStatus
+          v-else-if="xyzRunning"
+          stage="xyz sweep"
+          title="XYZ sweep"
+          :message="xyzStore.progress.current || ''"
+          :percent="xyzProgressPercent"
+          :step="xyzStore.progress.total ? xyzStore.progress.completed : null"
+          :total-steps="xyzStore.progress.total || null"
+          :show-progress-bar="Boolean(xyzStore.progress.total)"
+        />
+        <RunProgressStatus
+          v-else-if="errorMessage"
+          variant="error"
+          title="Run failed"
+          :message="errorMessage"
+          :show-progress-bar="false"
+        />
         <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
         <RunSummaryChips :text="runSummary" />
       </RunCard>
@@ -649,10 +657,6 @@ const generateLabel = computed(() => (xyzStore.enabled ? 'Generate xyz' : 'Gener
 const xyzProgressPercent = computed(() => {
   if (!xyzStore.progress.total) return null
   return (xyzStore.progress.completed / xyzStore.progress.total) * 100
-})
-const xyzProgressPercentLabel = computed(() => {
-  if (xyzProgressPercent.value === null) return '—'
-  return `${xyzProgressPercent.value.toFixed(1)}%`
 })
 const runGenerateDisabled = computed(() => {
   if (isRunBusy.value) return true

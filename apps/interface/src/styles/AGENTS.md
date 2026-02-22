@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
-Last Review: 2026-02-21  
+Last Review: 2026-02-22  
 Status: Active
 
 ## Purpose
@@ -104,6 +104,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-17: Added shared `run-progress-status*` rules in `styles/components/views-shared.css` and removed duplicated WAN-only progress styles from `styles/views/wan.css`.
 - 2026-02-17: `quicksettings.css` flex sizing was adjusted for wide monitors (reduced right-side dead space in the top row).
 - 2026-02-21: `quicksettings.css` removed the obsolete `.qs-group-attention` layout hook after attention backend control moved from QuickSettings to Launcher Runtime.
+- 2026-02-22: `quicksettings.css` adds `.qs-group-perf-obliterate` to the perf-group flex layout so the new `Obliterate VRAM` quicksettings action aligns with other Smart toggles.
 - 2026-02-17: `result-viewer.css` removed zoom legend styles; zoom UI now relies on icon-only controls in the shared overlay.
 - 2026-02-20: `styles/views/wan.css` adds opt-in clickable `wan-subheader` states (`--clickable` hover/focus) for full-row header toggles; `xyz-sweep-card.css` adds `.xyz-card-body` for collapsed-body layout grouping.
 - 2026-02-20: `styles.css` sets `.btn-destructive` height to `2rem` for size parity with adjacent `.btn-outline` controls in compact toolbars.
@@ -121,3 +122,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-21: `styles/components/settings-form.css` now uses namespaced `settings-*` selectors to prevent collisions with global `.form-*` hooks used by other views.
 - 2026-02-21: Added `styles/components/bootstrap-screen.css` and `styles/components/dependency-check-panel.css`, migrating remaining scoped style blocks from `App.vue` and `DependencyCheckPanel.vue` into shared style modules.
 - 2026-02-21: Removed every `transform: translate...` usage from active UI styles (and the `EXAMPLE-dashboard-surface-base.css` reference sheet), replacing those offsets with `top/left`, `inset`, margin-based centering, and non-translate transitions.
+- 2026-02-22: `styles/components/views-shared.css` now defines a richer `run-progress-status` system under shared `panel-status` semantics (variant colors, icon animation, structured header/meta) so Run panels can host progress/error/warning/info/success in one container.

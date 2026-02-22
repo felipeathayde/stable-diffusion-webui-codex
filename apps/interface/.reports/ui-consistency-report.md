@@ -1,5 +1,5 @@
 # UI Consistency Report
-- generated_at: 2026-02-21T18:16:01.261Z
+- generated_at: 2026-02-22T01:14:09.933Z
 - source_root: apps/interface/src
 - css_root: apps/interface/src/styles
 - strict_mode: enabled
@@ -14,10 +14,10 @@
 - [allowlisted] apps/interface/src/components/results/ResultsCard.vue:44 — expr=`props.bodyStyle` — `<div class="panel-body" :class="props.bodyClass" :style="props.bodyStyle">`
 - [allowlisted] apps/interface/src/components/results/RunCard.vue:63 — expr=`batchMenuStyle` — `:style="batchMenuStyle"`
 - [allowlisted] apps/interface/src/components/ui/ImageZoomOverlay.vue:31 — expr=`zoomStyle` — `:style="zoomStyle"`
-- [allowlisted] apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue:44 — expr=`contentTransformStyle` — `:style="contentTransformStyle"`
-- [allowlisted] apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue:64 — expr=`brushCursorStyle` — `:style="brushCursorStyle"`
-- [allowlisted] apps/interface/src/views/ImageModelTab.vue:368 — expr=`previewStyle` — `:style="previewStyle"`
-- [allowlisted] apps/interface/src/views/WANTab.vue:634 — expr=`guidedTooltipStyle` — `:style="guidedTooltipStyle"`
+- [allowlisted] apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue:46 — expr=`contentTransformStyle` — `:style="contentTransformStyle"`
+- [allowlisted] apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue:66 — expr=`brushCursorStyle` — `:style="brushCursorStyle"`
+- [allowlisted] apps/interface/src/views/ImageModelTab.vue:372 — expr=`previewStyle` — `:style="previewStyle"`
+- [allowlisted] apps/interface/src/views/WANTab.vue:702 — expr=`guidedTooltipStyle` — `:style="guidedTooltipStyle"`
 
 ## Scoped `<style>` Blocks
 - none

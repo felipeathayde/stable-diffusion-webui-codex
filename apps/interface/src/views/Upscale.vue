@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Upscale route view.
 Standalone upscaling workspace (Spandrel SR) with tile controls (tile/overlap/min_tile), explicit OOM fallback toggle, HF-backed weight downloads, and task streaming.
 Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight upscale tasks after reload (SSE replay via `after` / `lastEventId`).
-Run status rendering is standardized through the shared `RunProgressStatus` block (`Stage/Progress/Step/ETA`).
+Run status rendering is standardized through the shared `RunProgressStatus` panel (`progress/error/info` variants + Stage/Progress/Step/ETA metadata).
 The remote download modal:
 - surfaces backend safeweights mode (`CODEX_SAFE_WEIGHTS`) and allowed suffixes,
 - shows manifest issues explicitly, and
@@ -121,16 +121,28 @@ Symbols (top-level; keep in sync; no ghosts):
         :generateTitle="generateTitle"
         @generate="start"
       >
-        <div v-if="notice" class="caption">{{ notice }}</div>
         <RunProgressStatus
-          v-if="isRunning && progress"
-          :stage="progress.stage"
-          :percent="progress.percent"
-          :step="progress.step"
-          :total-steps="progress.totalSteps"
-          :eta-seconds="progress.etaSeconds"
+          v-if="errorMessage"
+          variant="error"
+          title="Upscale failed"
+          :message="errorMessage"
+          :show-progress-bar="false"
         />
-        <div v-if="errorMessage" class="caption">Error: {{ errorMessage }}</div>
+        <RunProgressStatus
+          v-else-if="isRunning"
+          :stage="progress?.stage || 'starting'"
+          :percent="progress?.percent ?? null"
+          :step="progress?.step ?? null"
+          :total-steps="progress?.totalSteps ?? null"
+          :eta-seconds="progress?.etaSeconds ?? null"
+        />
+        <RunProgressStatus
+          v-if="notice"
+          variant="info"
+          title="Notice"
+          :message="notice"
+          :show-progress-bar="false"
+        />
       </RunCard>
 
       <ResultsCard :showGenerate="false" headerClass="three-cols results-sticky" headerRightClass="results-actions">
@@ -661,6 +673,8 @@ function handleTaskEvent(event: TaskEvent): void {
       break
     case 'error':
       errorMessage.value = event.message
+      isRunning.value = false
+      stopStreams()
       clearResumeState()
       break
     case 'end':

@@ -85,6 +85,6 @@ Status: Active
 - 2026-02-21: `Img2ImgInpaintParamsCard.vue` no longer renders a separate mask dropzone selector; when `useMask=true`, mask tools are attached to the init-image section (open editor / clear mask), and mask import happens inside the editor canvas flow.
 - 2026-02-21: `QuickSettingsBar.vue` no longer exposes Attention Backend controls; attention backend/SDPA policy bootstrap ownership moved to Launcher Runtime tab.
 - 2026-02-21: `QuickSettingsBar.vue` WAN mode handling is now `txt2vid|img2vid` only; legacy `v2v_14b` mapping and `useInitVideo` patching were removed to keep mode semantics aligned with the disabled vid2vid contract.
-- 2026-02-22: `QuickSettingsBar.vue` now wires the performance action `Obliterate VRAM` to `POST /api/obliterate-vram`, with in-flight lock (`isObliteratingVram`) and fail-loud toast/console feedback for cleanup failures.
+- 2026-02-22: `QuickSettingsBar.vue` wires `Obliterate VRAM` to `POST /api/obliterate-vram` with in-flight lock (`isObliteratingVram`) and fail-loud toast/console feedback; UI now surfaces the safe-default behavior (`external_kill_mode='disabled'`) when external GPU processes are only detected (not terminated).
 - 2026-02-21: `BaseTabHeader.vue` removed inline style attributes in favor of semantic classes backed by `styles/components/base-tab-header.css`.
 - 2026-02-21: `DependencyCheckPanel.vue` moved local `<style scoped>` rules into shared stylesheet `styles/components/dependency-check-panel.css` to keep component styling centralized in `src/styles/**`.

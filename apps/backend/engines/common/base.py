@@ -961,6 +961,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         """Return the canonical memory-manager target for first-stage VAE lifecycle."""
         return self._canonical_patcher_target(self.codex_objects.vae)
 
+    def _denoiser_memory_target(self) -> object | None:
+        """Return the canonical memory-manager target for denoiser lifecycle."""
+        return self._canonical_patcher_target(getattr(self.codex_objects, "denoiser", None))
+
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         from apps.backend.runtime.memory import memory_management
@@ -981,7 +985,27 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         from apps.backend.runtime.memory import memory_management
 
         vae_target = self._vae_memory_target()
-        memory_management.manager.load_model(vae_target)
+        denoiser_target = self._denoiser_memory_target()
+        preserve_denoiser_residency = (
+            denoiser_target is not None
+            and denoiser_target is not vae_target
+            and memory_management.manager.is_model_loaded(denoiser_target)
+        )
+        if preserve_denoiser_residency:
+            memory_management.manager.load_models(
+                [vae_target, denoiser_target],
+                source="engines.common.base.decode_first_stage",
+                stage="decode_first_stage",
+                component_hint="vae",
+                event_reason="preserve_denoiser_residency",
+            )
+        else:
+            memory_management.manager.load_model(
+                vae_target,
+                source="engines.common.base.decode_first_stage",
+                stage="decode_first_stage",
+                component_hint="vae",
+            )
         unload_vae = self.smart_offload_enabled
         debug_stats = self._decode_debug_stats_enabled()
         try:
@@ -996,7 +1020,12 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             return sample.to(x)
         finally:
             if unload_vae:
-                memory_management.manager.unload_model(vae_target)
+                memory_management.manager.unload_model(
+                    vae_target,
+                    source="engines.common.base.decode_first_stage",
+                    stage="decode_first_stage",
+                    component_hint="vae",
+                )
 
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         raise NotImplementedError(f"{self.__class__.__name__}.get_prompt_lengths_on_ui must be implemented.")

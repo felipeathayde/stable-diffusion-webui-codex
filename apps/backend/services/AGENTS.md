@@ -1,6 +1,6 @@
 # apps/backend/services Overview
 Date: 2025-10-28
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 - 2026-02-15: `options_store.py` now maintains `codex_options_revision` as persisted source-of-truth for generation contract checks; revision increments on option writes and is surfaced through options snapshots/API.
 - 2026-02-21: `options_store.py` and `live_preview_service.py` now parse boolean options strictly (`true/false/1/0/yes/no/on/off`) and fail loud on invalid persisted values instead of permissive Python truthiness (e.g. `"false"` no longer coerces to `True`).
 - 2026-02-21: `live_preview_service.py` now parses `show_progress_every_n_steps` via shared strict integer parsing and raises on malformed/negative values (no silent fallback to `0` that disabled previews implicitly).
+- 2026-02-22: `live_preview_service.py` now hard-disables live previews globally for task runtime and SSE payload emission (`runtime_interval_steps=0`, `sse_enabled=false`, `runtime_method=Approx cheap`) while still parsing preview options strictly to fail loud on invalid persisted values.

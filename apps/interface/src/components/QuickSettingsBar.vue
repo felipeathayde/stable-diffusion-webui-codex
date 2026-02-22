@@ -41,7 +41,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onSmartCacheChange` (function): Updates Smart Cache toggle (conditioning caching behavior).
 - `onCoreStreamingChange` (function): Updates core streaming toggle (runtime streaming behavior).
 - `isObliteratingVram` (ref): Tracks in-flight `/api/obliterate-vram` requests to prevent repeated fire.
-- `onObliterateVram` (function): Triggers aggressive VRAM cleanup and surfaces fail-loud status in quicksettings toasts/logs.
+- `onObliterateVram` (function): Triggers safe VRAM cleanup and surfaces fail-loud status in quicksettings toasts/logs.
 - `resolveWanFlowShiftForMode` (function): Resolves automatic WAN stage `flowShift` policy for the selected WAN mode + LightX2V toggle.
 - `patchWanStageFlowShift` (function): Applies/removes managed WAN stage `flowShift` values without clobbering unrelated manual overrides.
 - `finiteStageFlowShift` (function): Normalizes a stage `flowShift` into a finite number or `undefined` for stable policy comparisons.
@@ -1525,8 +1525,17 @@ async function onObliterateVram(): Promise<void> {
     const killedCount = Array.isArray(result.external?.terminated_pids)
       ? result.external.terminated_pids.length
       : 0
+    const detectedCount = Array.isArray(result.external?.detected_processes)
+      ? result.external.detected_processes.length
+      : 0
+    const disabledExternalKill = Array.isArray(result.warnings)
+      && result.warnings.includes('external_gpu_termination_disabled_by_default')
     if (killedCount > 0) {
       qsToast(`Obliterate VRAM done. Killed ${killedCount} external GPU process(es).`)
+      return
+    }
+    if (disabledExternalKill && detectedCount > 0) {
+      qsToast(`Obliterate VRAM done (internal only). ${detectedCount} external GPU process(es) detected.`)
       return
     }
     qsToast('Obliterate VRAM done.')

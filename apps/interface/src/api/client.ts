@@ -44,7 +44,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `cancelTask` (function): Requests task cancellation (`/tasks/:id/cancel`).
 - `subscribeTask` (function): Subscribes to task SSE events and returns an unsubscribe closure.
 - `fetchMemory` (function): Fetches memory stats (`/memory`).
-- `fetchObliterateVram` (function): Triggers aggressive runtime/external GPU VRAM cleanup (`POST /obliterate-vram`).
+- `fetchObliterateVram` (function): Triggers VRAM cleanup (`POST /obliterate-vram`); external kill is disabled by default unless explicitly requested.
 - `fetchVersion` (function): Fetches backend version (`/version`).
 - `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
 - `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
@@ -78,6 +78,7 @@ import type {
   TaskResult,
   TaskEvent,
   MemoryResponse,
+  ObliterateVramRequest,
   ObliterateVramResponse,
   VersionResponse,
   EmbeddingsResponse,
@@ -470,10 +471,13 @@ export function fetchMemory(): Promise<MemoryResponse> {
   return requestJson<MemoryResponse>('/memory')
 }
 
-export function fetchObliterateVram(): Promise<ObliterateVramResponse> {
+export function fetchObliterateVram(payload: ObliterateVramRequest = {}): Promise<ObliterateVramResponse> {
+  const body: ObliterateVramRequest = {
+    external_kill_mode: payload.external_kill_mode ?? 'disabled',
+  }
   return requestJson<ObliterateVramResponse>('/obliterate-vram', {
     method: 'POST',
-    body: '{}',
+    body: JSON.stringify(body),
   })
 }
 

@@ -13,8 +13,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_parse_optional_int` (function): Parses integer-like text (supports mixed unit strings like `123 MiB`).
 - `_parse_compute_csv_line` (function): Parses one `nvidia-smi --query-compute-apps` CSV row into a process descriptor.
 - `_query_gpu_compute_processes` (function): Returns external GPU compute processes from `nvidia-smi` plus warnings/availability.
+- `_normalize_process_basename` (function): Resolves a stable lowercase executable basename from process path/name strings.
+- `_is_critical_process_name` (function): Flags critical OS/shell/UI process names that must not be terminated.
 - `_kill_process` (function): Terminates a PID cross-platform (POSIX `SIGKILL`, Windows `taskkill`).
 - `_protected_pids` (function): Returns PID set that must not be killed by the obliterate endpoint (current + parent).
+- `ObliterateExternalKillMode` (enum): External termination mode for `/api/obliterate-vram`.
+- `ObliterateVramRequest` (model): Request payload for `/api/obliterate-vram`.
 - `build_router` (function): Build the APIRouter for system endpoints.
 """
 
@@ -22,15 +26,49 @@ from __future__ import annotations
 
 import gc
 import logging
+import ntpath
 import os
 import re
 import signal
 import subprocess
+from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 _LOG = logging.getLogger(__name__)
+
+_CRITICAL_PROCESS_BASENAMES: set[str] = {
+    "explorer.exe",
+    "dwm.exe",
+    "winlogon.exe",
+    "csrss.exe",
+    "smss.exe",
+    "services.exe",
+    "lsass.exe",
+    "svchost.exe",
+    "taskmgr.exe",
+    "startmenuexperiencehost.exe",
+    "shellexperiencehost.exe",
+    "searchhost.exe",
+    "code.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "cmd.exe",
+    "conhost.exe",
+    "windowsterminal.exe",
+    "wt.exe",
+}
+
+
+class ObliterateExternalKillMode(str, Enum):
+    DISABLED = "disabled"
+    ALL = "all"
+
+
+class ObliterateVramRequest(BaseModel):
+    external_kill_mode: ObliterateExternalKillMode = ObliterateExternalKillMode.DISABLED
 
 
 def _parse_optional_int(raw_value: str) -> Optional[int]:
@@ -117,6 +155,24 @@ def _query_gpu_compute_processes() -> Tuple[list[Dict[str, Any]], list[str], boo
         processes.append(parsed)
 
     return processes, warnings, True
+
+
+def _normalize_process_basename(process_name: str) -> str:
+    raw = str(process_name or "").strip().strip('"').strip("'")
+    if not raw:
+        return ""
+    # nvidia-smi on Windows commonly returns absolute paths with backslashes.
+    from_nt = ntpath.basename(raw)
+    from_posix = os.path.basename(raw)
+    base = from_nt or from_posix or raw
+    return base.strip().lower()
+
+
+def _is_critical_process_name(process_name: str) -> bool:
+    base = _normalize_process_basename(process_name)
+    if not base:
+        return False
+    return base in _CRITICAL_PROCESS_BASENAMES
 
 
 def _kill_process(pid: int) -> None:
@@ -222,7 +278,8 @@ def build_router(*, app_version: str) -> APIRouter:
         }
 
     @router.post("/api/obliterate-vram")
-    def obliterate_vram() -> Dict[str, Any]:
+    def obliterate_vram(payload: Optional[ObliterateVramRequest] = None) -> Dict[str, Any]:
+        effective_payload = payload or ObliterateVramRequest()
         report: Dict[str, Any] = {
             "ok": True,
             "message": "",
@@ -235,6 +292,7 @@ def build_router(*, app_version: str) -> APIRouter:
             },
             "internal_failures": [],
             "external": {
+                "kill_mode": effective_payload.external_kill_mode.value,
                 "nvidia_smi_available": False,
                 "detected_processes": [],
                 "terminated_pids": [],
@@ -294,18 +352,32 @@ def build_router(*, app_version: str) -> APIRouter:
         report["warnings"].extend(external_warnings)
 
         protected = _protected_pids()
-        for process in detected_processes:
-            pid = int(process["pid"])
-            if pid in protected:
-                report["external"]["skipped"].append({"pid": pid, "reason": "protected_pid"})
-                continue
-            try:
-                _kill_process(pid)
-                report["external"]["terminated_pids"].append(pid)
-            except ProcessLookupError:
-                report["external"]["skipped"].append({"pid": pid, "reason": "already_exited"})
-            except Exception as exc:
-                report["external"]["failures"].append({"pid": pid, "error": str(exc)})
+        if effective_payload.external_kill_mode == ObliterateExternalKillMode.DISABLED:
+            report["warnings"].append("external_gpu_termination_disabled_by_default")
+            for process in detected_processes:
+                report["external"]["skipped"].append(
+                    {
+                        "pid": int(process["pid"]),
+                        "reason": "external_kill_disabled",
+                    }
+                )
+        else:
+            for process in detected_processes:
+                pid = int(process["pid"])
+                process_name = str(process.get("process_name", ""))
+                if pid in protected:
+                    report["external"]["skipped"].append({"pid": pid, "reason": "protected_pid"})
+                    continue
+                if _is_critical_process_name(process_name):
+                    report["external"]["skipped"].append({"pid": pid, "reason": "critical_process_name"})
+                    continue
+                try:
+                    _kill_process(pid)
+                    report["external"]["terminated_pids"].append(pid)
+                except ProcessLookupError:
+                    report["external"]["skipped"].append({"pid": pid, "reason": "already_exited"})
+                except Exception as exc:
+                    report["external"]["failures"].append({"pid": pid, "error": str(exc)})
 
         if not report["external"]["nvidia_smi_available"]:
             report["warnings"].append("external_gpu_cleanup_unavailable")
@@ -320,7 +392,14 @@ def build_router(*, app_version: str) -> APIRouter:
             )
         else:
             killed = len(report["external"]["terminated_pids"])
-            report["message"] = f"Obliterate VRAM finished successfully. external_killed={killed}"
+            if effective_payload.external_kill_mode == ObliterateExternalKillMode.DISABLED:
+                detected = len(report["external"]["detected_processes"])
+                report["message"] = (
+                    "Obliterate VRAM finished successfully (internal cleanup only). "
+                    f"external_detected={detected}, external_killed=0"
+                )
+            else:
+                report["message"] = f"Obliterate VRAM finished successfully. external_killed={killed}"
 
         _LOG.info(
             "Obliterate VRAM result: ok=%s killed=%d internal_failures=%d external_failures=%d warnings=%d",

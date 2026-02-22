@@ -153,29 +153,27 @@ def decode_preview_image(processing: Any, denoised_latent: Any, *, method: LiveP
     import torch
     import torch.nn.functional as F
 
-    from apps.backend.runtime.processing.conditioners import decode_latent_batch
-
     if not isinstance(denoised_latent, torch.Tensor):
         return None
     if denoised_latent.ndim != 4:
         return None
 
-    resolved = method
-    if resolved == LivePreviewMethod.APPROX_CHEAP:
+    if method == LivePreviewMethod.APPROX_CHEAP:
         if denoised_latent.shape[1] != 4:
             logger.warning(
-                "Live preview method '%s' requires 4-channel latents; falling back to VAE decode.",
+                "Live preview method '%s' requires 4-channel latents; skipping preview.",
                 method.value,
             )
-            resolved = LivePreviewMethod.FULL
-        else:
-            factors = _LATENT_RGB_FACTORS_SDXL if bool(getattr(processing.sd_model, "is_sdxl", False)) else _LATENT_RGB_FACTORS_SD15
-            mat = torch.tensor(factors, device=denoised_latent.device, dtype=denoised_latent.dtype)
-            rgb_small = torch.einsum("blhw,lr->brhw", denoised_latent, mat)
-            rgb = F.interpolate(rgb_small, scale_factor=8, mode="bilinear", align_corners=False)
-            return _tensor_to_pil_rgb(rgb[0])
+            return None
+        factors = _LATENT_RGB_FACTORS_SDXL if bool(getattr(processing.sd_model, "is_sdxl", False)) else _LATENT_RGB_FACTORS_SD15
+        mat = torch.tensor(factors, device=denoised_latent.device, dtype=denoised_latent.dtype)
+        rgb_small = torch.einsum("blhw,lr->brhw", denoised_latent, mat)
+        rgb = F.interpolate(rgb_small, scale_factor=8, mode="bilinear", align_corners=False)
+        return _tensor_to_pil_rgb(rgb[0])
 
-    if resolved == LivePreviewMethod.FULL:
+    if method == LivePreviewMethod.FULL:
+        from apps.backend.runtime.processing.conditioners import decode_latent_batch
+
         decoded = decode_latent_batch(processing.sd_model, denoised_latent)
         return _tensor_to_pil_rgb(decoded[0])
 

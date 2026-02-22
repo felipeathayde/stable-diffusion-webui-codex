@@ -34,6 +34,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ObliterateVramProcessInfo` (interface): One external GPU process row returned by `/api/obliterate-vram`.
 - `ObliterateVramFailure` (interface): One failed external process termination row from `/api/obliterate-vram`.
 - `ObliterateVramSkippedProcess` (interface): One skipped external process row from `/api/obliterate-vram`.
+- `ObliterateVramExternalKillMode` (type): External process termination mode for `/api/obliterate-vram`.
+- `ObliterateVramRequest` (interface): Request payload for `/api/obliterate-vram`.
 - `ObliterateVramResponse` (interface): `/api/obliterate-vram` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
 - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
@@ -292,6 +294,12 @@ export interface ObliterateVramSkippedProcess {
   reason: string
 }
 
+export type ObliterateVramExternalKillMode = 'disabled' | 'all'
+
+export interface ObliterateVramRequest {
+  external_kill_mode?: ObliterateVramExternalKillMode
+}
+
 export interface ObliterateVramResponse {
   ok: boolean
   message: string
@@ -304,6 +312,7 @@ export interface ObliterateVramResponse {
   }
   internal_failures: string[]
   external: {
+    kill_mode: ObliterateVramExternalKillMode
     nvidia_smi_available: boolean
     detected_processes: ObliterateVramProcessInfo[]
     terminated_pids: number[]

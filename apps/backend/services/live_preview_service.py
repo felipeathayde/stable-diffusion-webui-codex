@@ -102,7 +102,7 @@ class LivePreviewService:
     """Build live preview config and attach preview payloads to progress events."""
 
     def build_task_config(self, opts_get: Callable[[str, object], object]) -> LivePreviewTaskConfig:
-        enabled = _coerce_bool_option(
+        _coerce_bool_option(
             opts_get("live_previews_enable", True),
             key="live_previews_enable",
             default=True,
@@ -111,28 +111,22 @@ class LivePreviewService:
         image_format = LivePreviewImageFormat.from_string(fmt_value, default=LivePreviewImageFormat.PNG)
 
         period_raw = opts_get("show_progress_every_n_steps", 10)
-        period = _coerce_int_option(
+        _coerce_int_option(
             period_raw,
             key="show_progress_every_n_steps",
             default=10,
             minimum=-1,
         )
 
-        # `show_progress_every_n_steps=-1` is a supported persisted sentinel that disables previews.
-        # SSE preview payloads are gated by the explicit UI setting plus a positive period.
-        sse_enabled = enabled and period > 0
-
-        runtime_interval = period if sse_enabled else 0
-        if debug_preview_factors_enabled() and runtime_interval <= 0:
-            runtime_interval = 10
-
         method_raw = str(opts_get("show_progress_type", LivePreviewMethod.APPROX_CHEAP.value) or LivePreviewMethod.APPROX_CHEAP.value)
-        method = LivePreviewMethod.from_string(method_raw, default=LivePreviewMethod.APPROX_CHEAP)
+        LivePreviewMethod.from_string(method_raw, default=LivePreviewMethod.APPROX_CHEAP)
+        # Global safety mode: keep the debug flag read path stable while preview is force-disabled.
+        debug_preview_factors_enabled()
 
         return LivePreviewTaskConfig(
-            runtime_interval_steps=runtime_interval,
-            runtime_method=method,
-            sse_enabled=sse_enabled,
+            runtime_interval_steps=0,
+            runtime_method=LivePreviewMethod.APPROX_CHEAP,
+            sse_enabled=False,
             image_format=image_format,
             max_dim=512,
         )

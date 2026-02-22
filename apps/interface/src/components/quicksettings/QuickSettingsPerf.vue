@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Performance quicksettings toggles (smart flags + streaming + VRAM cleanup action).
-Renders toggle buttons for Smart Offload/Fallback/Cache/Core Streaming plus an explicit "Obliterate VRAM" action, emitting updates
-to the parent quicksettings bar.
+Purpose: Performance quicksettings toggles (smart flags + streaming + safe VRAM cleanup action).
+Renders toggle buttons for Smart Offload/Fallback/Cache/Core Streaming plus an explicit "Obliterate VRAM" action
+(internal cleanup by default), emitting updates to the parent quicksettings bar.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `QuickSettingsPerf` (component): Performance toggles for smart runtime flags/core streaming plus an aggressive VRAM cleanup action.
+- `QuickSettingsPerf` (component): Performance toggles for smart runtime flags/core streaming plus a safe VRAM cleanup action.
 -->
 
 <template>
@@ -82,7 +82,7 @@ Symbols (top-level; keep in sync; no ghosts):
         class="btn qs-toggle-btn qs-toggle-btn--off"
         type="button"
         :disabled="obliterateBusy"
-        :title="obliterateBusy ? 'Obliterate VRAM is running' : 'Force runtime cleanup and terminate external GPU compute processes detected via nvidia-smi'"
+        :title="obliterateBusy ? 'Obliterate VRAM is running' : 'Run internal VRAM cleanup now (external process termination is disabled by default)'"
         @click="$emit('obliterateVram')"
       >
         {{ obliterateBusy ? 'Obliterating...' : 'Obliterate VRAM' }}

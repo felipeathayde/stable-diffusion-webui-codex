@@ -263,7 +263,10 @@ function Resolve-CudaExtra {
 }
 
 function Try-ParseInt {
-  param([Parameter(Mandatory = $true)][string]$Raw)
+  param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Raw)
+  if ([string]::IsNullOrWhiteSpace($Raw)) {
+    return $null
+  }
   $value = 0
   if ([int]::TryParse($Raw, [ref]$value)) {
     return $value

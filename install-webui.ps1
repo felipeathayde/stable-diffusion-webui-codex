@@ -940,14 +940,16 @@ while ($true) {
     Fail "Error: --check and --reinstall-deps are mutually exclusive."
   }
 
+  $hasMenuSuppressor = $script:Config.ArgNoMenu -or (Is-EnvDefined -Name "CODEX_NO_MENU") -or (Is-EnvDefined -Name "CI") -or (Is-EnvDefined -Name "GITHUB_ACTIONS")
+
   $showMenu = $true
-  if ($script:Config.ArgNoMenu -or Is-EnvDefined -Name "CODEX_NO_MENU" -or Is-EnvDefined -Name "CI" -or Is-EnvDefined -Name "GITHUB_ACTIONS") {
+  if ($hasMenuSuppressor) {
     $showMenu = $false
   }
 
   if ($script:Config.ForceMenu) {
     $showMenu = $true
-    if ($script:Config.ArgNoMenu -or Is-EnvDefined -Name "CODEX_NO_MENU" -or Is-EnvDefined -Name "CI" -or Is-EnvDefined -Name "GITHUB_ACTIONS") {
+    if ($hasMenuSuppressor) {
       $showMenu = $false
     }
   }

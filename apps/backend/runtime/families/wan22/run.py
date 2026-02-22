@@ -33,7 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
 - `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state, with explicit VAE config-dir forwarding).
-- `stream_img2vid_chunked` (function): Chunked img2vid runner with chunk-major sequencing (for each chunk: high pass -> low pass in latent space, then final decode/stitch pass).
+- `stream_img2vid_chunked` (function): Chunked img2vid runner with chunk-major sequencing (for each chunk: high pass -> low pass in latent space, then final decode/stitch pass) and configurable anchor-reset continuity policy.
 - `stream_img2vid_sliding_window` (function): Sliding-window img2vid runner built on the chunked runtime with explicit window/stride/commit controls.
 """
 
@@ -1718,6 +1718,7 @@ def stream_img2vid_chunked(
     chunk_seed_mode: str,
     commit_frames: int | None = None,
     chunk_buffer_mode: str | None = None,
+    reset_anchor_to_base: bool = True,
     logger: Any = None,
 ):
     log = get_logger(logger)
@@ -1815,7 +1816,7 @@ def stream_img2vid_chunked(
     h_lat = max(8, int(cfg.height) // 8)
     w_lat = max(8, int(cfg.width) // 8)
     log.info(
-        "[wan22.gguf] chunked img2vid: total_frames=%d chunk_frames=%d overlap=%d stride=%d commit=%d chunks=%d seed_mode=%s",
+        "[wan22.gguf] chunked img2vid: total_frames=%d chunk_frames=%d overlap=%d stride=%d commit=%d chunks=%d seed_mode=%s reset_anchor_to_base=%s",
         int(total_out),
         int(chunk_out),
         int(overlap_frames),
@@ -1823,6 +1824,7 @@ def stream_img2vid_chunked(
         int(commit_frames_value),
         int(len(chunk_starts)),
         str(chunk_seed_mode),
+        bool(reset_anchor_to_base),
     )
     yield {"type": "progress", "stage": "chunk.prepare", "step": 0, "total": int(len(chunk_starts)), "percent": 0.0}
 
@@ -1847,6 +1849,13 @@ def stream_img2vid_chunked(
         )
     base_anchor_latent = latent_condition_base[:, :, :1, :, :].detach()
     stride_latent_start_index = int(max(0, int(stride_frames)) // 4)
+    if int(stride_frames) % 4 != 0:
+        log.warning(
+            "[wan22.gguf] chunked img2vid: stride_frames=%d is not aligned to temporal scale=4 "
+            "(effective latent stride start=%d). Temporal continuity can jitter.",
+            int(stride_frames),
+            int(stride_latent_start_index),
+        )
     if stride_latent_start_index >= int(chunk_lat):
         raise RuntimeError(
             "WAN22 GGUF chunked img2vid: stride maps outside latent timeline "
@@ -1958,6 +1967,12 @@ def stream_img2vid_chunked(
         latent_channels_lo_value: int | None = None
         prev_chunk_anchor_latents_cpu: torch.Tensor | None = None
         chunk_condition_buffer: torch.Tensor | None = None
+        anchor_reset_to_base = bool(reset_anchor_to_base)
+        if (not anchor_reset_to_base) and float(anchor_alpha_value) > 0.0:
+            log.info(
+                "[wan22.gguf] chunked img2vid continuity: reset_anchor_to_base=false, "
+                "carried latent anchors override base reset (anchor_alpha applies only when reset is enabled)."
+            )
 
         for chunk_index, _chunk_start in enumerate(chunk_starts):
             chunk_condition = latent_condition_base
@@ -1978,13 +1993,16 @@ def stream_img2vid_chunked(
                     )
                 if chunk_condition_buffer is None:
                     chunk_condition_buffer = latent_condition_base.clone()
-                anchor_base = prev_chunk_anchor_latents.clone()
-                anchor_base[:, :, :1, :, :] = base_anchor_latent
-                chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = _blend_anchor_latent(
-                    prev_chunk_anchor_latents,
-                    anchor_base,
-                    alpha=anchor_alpha_value,
-                )
+                if anchor_reset_to_base:
+                    anchor_base = prev_chunk_anchor_latents.clone()
+                    anchor_base[:, :, :1, :, :] = base_anchor_latent
+                    chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = _blend_anchor_latent(
+                        prev_chunk_anchor_latents,
+                        anchor_base,
+                        alpha=anchor_alpha_value,
+                    )
+                else:
+                    chunk_condition_buffer[:, :, :anchor_latent_frames, :, :] = prev_chunk_anchor_latents
                 chunk_condition = chunk_condition_buffer
 
             chunk_seed = _resolve_chunk_seed(getattr(cfg, "seed", None), chunk_index=chunk_index, mode=chunk_seed_mode)
@@ -2353,5 +2371,6 @@ def stream_img2vid_sliding_window(
         chunk_seed_mode=str(chunk_seed_mode),
         commit_frames=int(window_commit_frames),
         chunk_buffer_mode=chunk_buffer_mode,
+        reset_anchor_to_base=False,
         logger=logger,
     )

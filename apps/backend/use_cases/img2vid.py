@@ -10,7 +10,7 @@ Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
 Runs high/low stages, configures sampler settings, applies LoRAs, runs the shared video interpolation stage when requested, exports video, and yields
 progress/result events.
 Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and `extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when missing.
-Temporal routing requires explicit `extras.img2vid_mode` (`solo|chunk|sliding`) and rejects implicit mode fallbacks.
+Temporal routing requires explicit `extras.img2vid_mode` (`solo|chunk|sliding`) and rejects implicit mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity, and result metadata includes frame-count diagnostics across generation/interpolation/export stages.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
@@ -195,8 +195,9 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
             raise RuntimeError(f"img2vid_anchor_alpha must be within [0, 1], got: {anchor_alpha}")
         return anchor_alpha
 
-    def _parse_seed_mode() -> str:
-        raw_seed_mode = str(extras.get("img2vid_chunk_seed_mode", "increment") or "").strip().lower()
+    def _parse_seed_mode(*, temporal_mode: str) -> str:
+        default_seed_mode = "fixed" if str(temporal_mode) == "sliding" else "increment"
+        raw_seed_mode = str(extras.get("img2vid_chunk_seed_mode", default_seed_mode) or "").strip().lower()
         if raw_seed_mode not in {"fixed", "increment", "random"}:
             raise RuntimeError(
                 "img2vid_chunk_seed_mode must be one of ('fixed','increment','random'), "
@@ -272,7 +273,7 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
                 chunk_frames=chunk_frames,
                 overlap_frames=overlap_frames,
                 anchor_alpha=_parse_anchor_alpha(),
-                chunk_seed_mode=_parse_seed_mode(),
+                chunk_seed_mode=_parse_seed_mode(temporal_mode="chunk"),
                 chunk_buffer_mode=_parse_buffer_mode(),
             ),
         )
@@ -332,7 +333,7 @@ def _parse_img2vid_temporal_options(extras: Mapping[str, Any], *, total_frames: 
             window_stride=window_stride,
             window_commit_frames=window_commit_frames,
             anchor_alpha=_parse_anchor_alpha(),
-            chunk_seed_mode=_parse_seed_mode(),
+            chunk_seed_mode=_parse_seed_mode(temporal_mode="sliding"),
             chunk_buffer_mode=_parse_buffer_mode(),
         ),
     )
@@ -464,6 +465,12 @@ def run_img2vid(
                     sliding_opts.chunk_seed_mode,
                     sliding_opts.chunk_buffer_mode,
                 )
+                if str(sliding_opts.chunk_seed_mode) != "fixed":
+                    logger.warning(
+                        "[img2vid] sliding mode continuity risk: chunk_seed_mode=%s can cause per-window temporal drift; "
+                        "prefer 'fixed' for stable motion.",
+                        str(sliding_opts.chunk_seed_mode),
+                    )
 
             cfg = build_wan22_gguf_run_config(
                 request=request,
@@ -509,14 +516,24 @@ def run_img2vid(
             raise RuntimeError("WAN22 GGUF: produced no frames")
         if cfg is None:
             raise RuntimeError("WAN22 GGUF: runtime config resolution failed (cfg is None).")
+        generated_frame_count = int(len(frames))
 
         vfi_options = read_video_interpolation_options(plan.extras)
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
         frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
+        interpolated_frame_count = int(len(frames))
         plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
 
         video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
+        export_frame_count: int | None = None
+        if isinstance(video_meta, Mapping):
+            raw_export_frame_count = video_meta.get("frames", video_meta.get("frame_count"))
+            if raw_export_frame_count is not None:
+                try:
+                    export_frame_count = int(raw_export_frame_count)
+                except Exception:  # noqa: BLE001 - metadata remains optional for diagnostics
+                    export_frame_count = None
 
         @dataclass(frozen=True)
         class _SamplerOutcome:
@@ -529,6 +546,12 @@ def run_img2vid(
         extra_meta: dict[str, Any] = dict(plan.extras) if isinstance(plan.extras, dict) else {}
         if vfi_opts is not None:
             extra_meta["video_interpolation"] = vfi_opts
+        extra_meta["frame_counts"] = {
+            "requested": int(getattr(request, "num_frames", plan.frames) or plan.frames),
+            "generated": int(generated_frame_count),
+            "after_interpolation": int(interpolated_frame_count),
+            "after_export": (int(export_frame_count) if export_frame_count is not None else None),
+        }
         if cfg.low is not None:
             extra_meta["sampler_low"] = {
                 "sampler_in": cfg.low.sampler,

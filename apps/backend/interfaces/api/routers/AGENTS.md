@@ -101,3 +101,4 @@ Status: Active
 - 2026-02-21: `generation.py` img2img masked/hires integer controls (`img2img_inpainting_*`, `img2img_mask_blur*`, `img2img_hires_resize_*`, `img2img_hires_steps`) now also use strict integer validators instead of permissive `_p.as_int(...)`.
 - 2026-02-21: `tools.py` now parses `overwrite` via shared strict bool parsing for both GGUF conversion and CodexPack packing endpoints (no fail-open `bool(\"false\") == True` overwrite bypass).
 - 2026-02-21: `ui.py` blocks cache key now includes `blocks.d/*.json` mtimes (not only `blocks.json`), and tabs/workflows/presets loaders now convert JSON-store read failures into deterministic fail-loud HTTP 500 details.
+- 2026-02-22: `system.py` adds `POST /api/obliterate-vram` for aggressive VRAM cleanup: runtime unload/empty-cache + optional external compute-process termination via `nvidia-smi`, with structured result payload (`ok/message/internal/external/warnings`) and protected PID skip (`self`/`parent`).

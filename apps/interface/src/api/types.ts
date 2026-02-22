@@ -31,6 +31,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/events` (supports replay via `id:` / `after` and emits `gap` on truncation).
 - `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
 - `MemoryResponse` (interface): `/api/memory` response shape.
+- `ObliterateVramProcessInfo` (interface): One external GPU process row returned by `/api/obliterate-vram`.
+- `ObliterateVramFailure` (interface): One failed external process termination row from `/api/obliterate-vram`.
+- `ObliterateVramSkippedProcess` (interface): One skipped external process row from `/api/obliterate-vram`.
+- `ObliterateVramResponse` (interface): `/api/obliterate-vram` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
 - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
 - `GuidanceAdvancedCapabilities` (interface): Per-engine support map for advanced CFG/APG controls.
@@ -269,6 +273,44 @@ export interface TaskResult {
 
 export interface MemoryResponse {
   total_vram_mb: number
+}
+
+export interface ObliterateVramProcessInfo {
+  pid: number
+  process_name: string
+  used_gpu_memory_mb: number | null
+  gpu_uuid: string
+}
+
+export interface ObliterateVramFailure {
+  pid: number
+  error: string
+}
+
+export interface ObliterateVramSkippedProcess {
+  pid: number
+  reason: string
+}
+
+export interface ObliterateVramResponse {
+  ok: boolean
+  message: string
+  internal: {
+    runtime_unload_models: boolean
+    runtime_soft_empty_cache: boolean
+    gguf_cache_cleared: boolean
+    gc_collect_ran: boolean
+    torch_cuda_cache_cleared: boolean
+  }
+  internal_failures: string[]
+  external: {
+    nvidia_smi_available: boolean
+    detected_processes: ObliterateVramProcessInfo[]
+    terminated_pids: number[]
+    skipped: ObliterateVramSkippedProcess[]
+    failures: ObliterateVramFailure[]
+  }
+  warnings: string[]
 }
 
 export interface VersionResponse {

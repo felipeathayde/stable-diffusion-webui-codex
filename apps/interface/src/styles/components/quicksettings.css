@@ -81,7 +81,8 @@
   .quicksettings .qs-group-perf-offload,
   .quicksettings .qs-group-perf-fallback,
   .quicksettings .qs-group-perf-cache,
-  .quicksettings .qs-group-perf-streaming { flex: 0 0 auto; }
+  .quicksettings .qs-group-perf-streaming,
+  .quicksettings .qs-group-perf-obliterate { flex: 0 0 auto; }
   
   .qs-row { 
     display: flex; 

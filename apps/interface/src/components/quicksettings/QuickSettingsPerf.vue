@@ -6,11 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Performance quicksettings toggles (smart flags + streaming).
-Renders toggle buttons for Smart Offload/Fallback/Cache and Core Streaming, emitting updates to the quicksettings store.
+Purpose: Performance quicksettings toggles (smart flags + streaming + VRAM cleanup action).
+Renders toggle buttons for Smart Offload/Fallback/Cache/Core Streaming plus an explicit "Obliterate VRAM" action, emitting updates
+to the parent quicksettings bar.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `QuickSettingsPerf` (component): Performance toggles for smart runtime flags and core streaming.
+- `QuickSettingsPerf` (component): Performance toggles for smart runtime flags/core streaming plus an aggressive VRAM cleanup action.
 -->
 
 <template>
@@ -73,6 +74,21 @@ Symbols (top-level; keep in sync; no ghosts):
       </button>
     </div>
   </div>
+
+  <!-- Obliterate VRAM -->
+  <div class="quicksettings-group qs-group-perf qs-group-perf-obliterate">
+    <div class="qs-row">
+      <button
+        class="btn qs-toggle-btn qs-toggle-btn--off"
+        type="button"
+        :disabled="obliterateBusy"
+        :title="obliterateBusy ? 'Obliterate VRAM is running' : 'Force runtime cleanup and terminate external GPU compute processes detected via nvidia-smi'"
+        @click="$emit('obliterateVram')"
+      >
+        {{ obliterateBusy ? 'Obliterating...' : 'Obliterate VRAM' }}
+      </button>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -81,6 +97,7 @@ defineProps<{
   smartFallback: boolean
   smartCache: boolean
   coreStreaming: boolean
+  obliterateBusy: boolean
 }>()
 
 defineEmits<{
@@ -88,5 +105,6 @@ defineEmits<{
   (e: 'update:smartFallback', value: boolean): void
   (e: 'update:smartCache', value: boolean): void
   (e: 'update:coreStreaming', value: boolean): void
+  (e: 'obliterateVram'): void
 }>()
 </script>

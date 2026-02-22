@@ -40,6 +40,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onSmartFallbackChange` (function): Updates Smart Fallback toggle (best-effort OOM fallback behavior).
 - `onSmartCacheChange` (function): Updates Smart Cache toggle (conditioning caching behavior).
 - `onCoreStreamingChange` (function): Updates core streaming toggle (runtime streaming behavior).
+- `isObliteratingVram` (ref): Tracks in-flight `/api/obliterate-vram` requests to prevent repeated fire.
+- `onObliterateVram` (function): Triggers aggressive VRAM cleanup and surfaces fail-loud status in quicksettings toasts/logs.
 - `resolveWanFlowShiftForMode` (function): Resolves automatic WAN stage `flowShift` policy for the selected WAN mode + LightX2V toggle.
 - `patchWanStageFlowShift` (function): Applies/removes managed WAN stage `flowShift` values without clobbering unrelated manual overrides.
 - `finiteStageFlowShift` (function): Normalizes a stage `flowShift` into a finite number or `undefined` for stable policy comparisons.
@@ -336,10 +338,12 @@ Symbols (top-level; keep in sync; no ghosts):
           :smart-fallback="store.smartFallback"
           :smart-cache="store.smartCache"
           :core-streaming="store.coreStreaming"
+          :obliterate-busy="isObliteratingVram"
           @update:smartOffload="onSmartOffloadChange"
           @update:smartFallback="onSmartFallbackChange"
           @update:smartCache="onSmartCacheChange"
           @update:coreStreaming="onCoreStreamingChange"
+          @obliterateVram="onObliterateVram"
         />
 
         <div class="quicksettings-group qs-group-overrides">
@@ -386,7 +390,7 @@ import { useUiBlocksStore } from '../stores/ui_blocks'
 import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams, type WanStageParams } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
-import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
+import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, fetchObliterateVram, updatePaths } from '../api/client'
 import type { ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
@@ -433,6 +437,7 @@ let pathInputApply: ((value: string) => Promise<void>) | null = null
 const { notice: qsNotice, toast: qsToast } = useResultsCard({ noticeDurationMs: 4000 })
 const isLoadingQuicksettings = ref(false)
 const isQuicksettingsReady = ref(false)
+const isObliteratingVram = ref(false)
 const advancedOpen = ref(true)
 const advancedRowEl = ref<HTMLElement | null>(null)
 const advancedRowInnerEl = ref<HTMLElement | null>(null)
@@ -1499,6 +1504,37 @@ function onCoreStreamingChange(value: boolean): void {
   store.setCoreStreaming(value).catch((error) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
+}
+
+async function onObliterateVram(): Promise<void> {
+  if (isObliteratingVram.value) return
+  isObliteratingVram.value = true
+  try {
+    const result = await fetchObliterateVram()
+    console.info('[QuickSettingsBar] obliterate-vram result', result)
+    if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+      console.warn('[QuickSettingsBar] obliterate-vram warnings', result.warnings)
+    }
+    if (!result.ok) {
+      console.error('[QuickSettingsBar] obliterate-vram failed', {
+        internal_failures: result.internal_failures,
+        external_failures: result.external?.failures ?? [],
+      })
+      throw new Error(result.message || 'Obliterate VRAM finished with failures.')
+    }
+    const killedCount = Array.isArray(result.external?.terminated_pids)
+      ? result.external.terminated_pids.length
+      : 0
+    if (killedCount > 0) {
+      qsToast(`Obliterate VRAM done. Killed ${killedCount} external GPU process(es).`)
+      return
+    }
+    qsToast('Obliterate VRAM done.')
+  } catch (error) {
+    qsToast(error instanceof Error ? error.message : String(error))
+  } finally {
+    isObliteratingVram.value = false
+  }
 }
 
 async function onWanModeChange(value: string): Promise<void> {

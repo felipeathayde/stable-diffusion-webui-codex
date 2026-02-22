@@ -44,6 +44,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `cancelTask` (function): Requests task cancellation (`/tasks/:id/cancel`).
 - `subscribeTask` (function): Subscribes to task SSE events and returns an unsubscribe closure.
 - `fetchMemory` (function): Fetches memory stats (`/memory`).
+- `fetchObliterateVram` (function): Triggers aggressive runtime/external GPU VRAM cleanup (`POST /obliterate-vram`).
 - `fetchVersion` (function): Fetches backend version (`/version`).
 - `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
 - `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
@@ -77,6 +78,7 @@ import type {
   TaskResult,
   TaskEvent,
   MemoryResponse,
+  ObliterateVramResponse,
   VersionResponse,
   EmbeddingsResponse,
   PathsResponse,
@@ -466,6 +468,13 @@ export function subscribeTask(
 
 export function fetchMemory(): Promise<MemoryResponse> {
   return requestJson<MemoryResponse>('/memory')
+}
+
+export function fetchObliterateVram(): Promise<ObliterateVramResponse> {
+  return requestJson<ObliterateVramResponse>('/obliterate-vram', {
+    method: 'POST',
+    body: '{}',
+  })
 }
 
 export function fetchVersion(): Promise<VersionResponse> {

@@ -17,6 +17,7 @@ Status: Active
 - `QuickSettingsBase` stays presentational and engine-agnostic; engine-specific filtering and labels (e.g. FLUX.1-only TE layout, WAN-only selectors) live in `QuickSettingsBar.vue`.
 - `QuickSettingsBar.vue` renders a main row for engine selectors and a collapsible Advanced nested area (Smart toggles + GPU VRAM / Attention Backend / Overrides), with a left-side handle button.
 - `QuickSettingsPerf` uses toggle buttons (`.qs-toggle-btn`) for Smart Offload/Fallback/Cache/Core Streaming (no legacy switches).
+- 2026-02-22: `QuickSettingsPerf.vue` adds an `Obliterate VRAM` action button (disabled while running), emitted to `QuickSettingsBar.vue` for backend-triggered aggressive VRAM cleanup (`POST /api/obliterate-vram`).
 - Text encoder dropdowns display a compact label (`family/basename`) even when `/api/paths` or the inventory return long absolute paths; the full value is still posted back in the `<option value>`.
 - For FLUX.1, `QuickSettingsBar` hides the base text encoder field and exposes a FLUX.1-only pair of text encoder selectors based on individual files under `flux1_tenc`; wiring to backend overrides is intentionally deferred to a dedicated handoff.
 - 2026-01-28: `QuickSettingsZImage.vue` now includes a `Turbo` toggle (per-tab, persisted in `tab.params.zimageTurbo`) and `QuickSettingsBar.vue` can lock the toggle when the selected checkpoint carries trusted `codex.zimage.variant` metadata (Codex-produced GGUFs).

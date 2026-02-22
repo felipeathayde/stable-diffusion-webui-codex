@@ -6,20 +6,143 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: System/diagnostic API routes (health, version, memory).
-Exposes lightweight endpoints used by the UI footer and diagnostics overlays.
+Purpose: System/diagnostic API routes (health, version, memory, VRAM cleanup).
+Exposes lightweight endpoints used by the UI footer/diagnostics overlays and a fail-loud VRAM cleanup entrypoint.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_parse_optional_int` (function): Parses integer-like text (supports mixed unit strings like `123 MiB`).
+- `_parse_compute_csv_line` (function): Parses one `nvidia-smi --query-compute-apps` CSV row into a process descriptor.
+- `_query_gpu_compute_processes` (function): Returns external GPU compute processes from `nvidia-smi` plus warnings/availability.
+- `_kill_process` (function): Terminates a PID cross-platform (POSIX `SIGKILL`, Windows `taskkill`).
+- `_protected_pids` (function): Returns PID set that must not be killed by the obliterate endpoint (current + parent).
 - `build_router` (function): Build the APIRouter for system endpoints.
 """
 
 from __future__ import annotations
 
+import gc
+import logging
 import os
+import re
+import signal
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
+
+_LOG = logging.getLogger(__name__)
+
+
+def _parse_optional_int(raw_value: str) -> Optional[int]:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    if text.lower() in {"n/a", "na", "-"}:
+        return None
+    direct = re.fullmatch(r"-?\d+", text)
+    if direct is not None:
+        try:
+            return int(text)
+        except Exception:
+            return None
+    match = re.search(r"-?\d+", text)
+    if match is None:
+        return None
+    try:
+        return int(match.group(0))
+    except Exception:
+        return None
+
+
+def _parse_compute_csv_line(raw_line: str) -> Optional[Dict[str, Any]]:
+    line = str(raw_line or "").strip()
+    if not line:
+        return None
+    columns = [segment.strip() for segment in line.split(",")]
+    if not columns:
+        return None
+    pid = _parse_optional_int(columns[0])
+    if pid is None or pid <= 0:
+        return None
+    process_name = columns[1] if len(columns) > 1 else ""
+    used_gpu_memory_mb = _parse_optional_int(columns[2]) if len(columns) > 2 else None
+    gpu_uuid = columns[3] if len(columns) > 3 else ""
+    return {
+        "pid": pid,
+        "process_name": process_name,
+        "used_gpu_memory_mb": used_gpu_memory_mb,
+        "gpu_uuid": gpu_uuid,
+    }
+
+
+def _query_gpu_compute_processes() -> Tuple[list[Dict[str, Any]], list[str], bool]:
+    command = [
+        "nvidia-smi",
+        "--query-compute-apps=pid,process_name,used_gpu_memory,gpu_uuid",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return [], ["nvidia-smi was not found; external GPU process cleanup skipped."], False
+    except Exception as exc:  # pragma: no cover - defensive command execution guard
+        return [], [f"nvidia-smi probe failed: {exc}"], False
+
+    warnings: list[str] = []
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        stdout = (completed.stdout or "").strip()
+        detail = stderr or stdout or f"exit={completed.returncode}"
+        warnings.append(f"nvidia-smi query failed: {detail}")
+        return [], warnings, True
+
+    processes: list[Dict[str, Any]] = []
+    seen_pids: set[int] = set()
+    for raw_line in (completed.stdout or "").splitlines():
+        parsed = _parse_compute_csv_line(raw_line)
+        if parsed is None:
+            line = str(raw_line or "").strip()
+            if line:
+                warnings.append(f"ignored malformed nvidia-smi row: {line}")
+            continue
+        pid = int(parsed["pid"])
+        if pid in seen_pids:
+            continue
+        seen_pids.add(pid)
+        processes.append(parsed)
+
+    return processes, warnings, True
+
+
+def _kill_process(pid: int) -> None:
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F", "/T"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            detail = stderr or stdout or f"taskkill exit={result.returncode}"
+            raise RuntimeError(detail)
+        return
+
+    os.kill(pid, signal.SIGKILL)
+
+
+def _protected_pids() -> set[int]:
+    protected: set[int] = {os.getpid()}
+    parent_pid = os.getppid()
+    if isinstance(parent_pid, int) and parent_pid > 1:
+        protected.add(parent_pid)
+    return protected
 
 
 def build_router(*, app_version: str) -> APIRouter:
@@ -97,5 +220,116 @@ def build_router(*, app_version: str) -> APIRouter:
             "models": snap.get("models", []),
             "totals": totals,
         }
+
+    @router.post("/api/obliterate-vram")
+    def obliterate_vram() -> Dict[str, Any]:
+        report: Dict[str, Any] = {
+            "ok": True,
+            "message": "",
+            "internal": {
+                "runtime_unload_models": False,
+                "runtime_soft_empty_cache": False,
+                "gguf_cache_cleared": False,
+                "gc_collect_ran": False,
+                "torch_cuda_cache_cleared": False,
+            },
+            "internal_failures": [],
+            "external": {
+                "nvidia_smi_available": False,
+                "detected_processes": [],
+                "terminated_pids": [],
+                "skipped": [],
+                "failures": [],
+            },
+            "warnings": [],
+        }
+
+        try:
+            from apps.backend.runtime import memory_management as memory_state  # type: ignore
+        except Exception as exc:
+            report["internal_failures"].append(f"memory_manager_import:{exc}")
+        else:
+            try:
+                memory_state.manager.unload_all_models()
+                report["internal"]["runtime_unload_models"] = True
+            except Exception as exc:
+                report["internal_failures"].append(f"runtime_unload_models:{exc}")
+
+            try:
+                memory_state.manager.soft_empty_cache(force=True)
+                report["internal"]["runtime_soft_empty_cache"] = True
+            except Exception as exc:
+                report["internal_failures"].append(f"runtime_soft_empty_cache:{exc}")
+
+        try:
+            from apps.backend.runtime.ops.operations_gguf import clear_cache as clear_gguf_cache  # type: ignore
+        except Exception as exc:
+            report["warnings"].append(f"gguf_cache_import_failed:{exc}")
+        else:
+            try:
+                clear_gguf_cache()
+                report["internal"]["gguf_cache_cleared"] = True
+            except Exception as exc:
+                report["internal_failures"].append(f"gguf_cache_clear:{exc}")
+
+        try:
+            gc.collect()
+            report["internal"]["gc_collect_ran"] = True
+        except Exception as exc:  # pragma: no cover - defensive
+            report["warnings"].append(f"gc_collect_failed:{exc}")
+
+        try:
+            import torch  # type: ignore
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                report["internal"]["torch_cuda_cache_cleared"] = True
+        except Exception as exc:
+            report["internal_failures"].append(f"torch_cuda_cache_clear:{exc}")
+
+        detected_processes, external_warnings, nvidia_available = _query_gpu_compute_processes()
+        report["external"]["nvidia_smi_available"] = bool(nvidia_available)
+        report["external"]["detected_processes"] = detected_processes
+        report["warnings"].extend(external_warnings)
+
+        protected = _protected_pids()
+        for process in detected_processes:
+            pid = int(process["pid"])
+            if pid in protected:
+                report["external"]["skipped"].append({"pid": pid, "reason": "protected_pid"})
+                continue
+            try:
+                _kill_process(pid)
+                report["external"]["terminated_pids"].append(pid)
+            except ProcessLookupError:
+                report["external"]["skipped"].append({"pid": pid, "reason": "already_exited"})
+            except Exception as exc:
+                report["external"]["failures"].append({"pid": pid, "error": str(exc)})
+
+        if not report["external"]["nvidia_smi_available"]:
+            report["warnings"].append("external_gpu_cleanup_unavailable")
+
+        failure_count = len(report["internal_failures"]) + len(report["external"]["failures"])
+        if failure_count > 0:
+            report["ok"] = False
+            report["message"] = (
+                "Obliterate VRAM finished with failures. "
+                f"internal_failures={len(report['internal_failures'])}, "
+                f"external_failures={len(report['external']['failures'])}"
+            )
+        else:
+            killed = len(report["external"]["terminated_pids"])
+            report["message"] = f"Obliterate VRAM finished successfully. external_killed={killed}"
+
+        _LOG.info(
+            "Obliterate VRAM result: ok=%s killed=%d internal_failures=%d external_failures=%d warnings=%d",
+            report["ok"],
+            len(report["external"]["terminated_pids"]),
+            len(report["internal_failures"]),
+            len(report["external"]["failures"]),
+            len(report["warnings"]),
+        )
+        return report
 
     return router

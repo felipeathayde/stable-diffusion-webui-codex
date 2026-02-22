@@ -9,23 +9,39 @@ This repo ships:
 - Internet access (first install: downloads `uv`, CPython 3.12.10, Node.js (via nodeenv), and wheels)
 
 Video runtime note:
-- `install-webui.(bat|sh)` provisions repo-local `ffmpeg` + `ffprobe` binaries and the default RIFE checkpoint automatically (no manual PATH/model setup required).
+- `install-webui.(cmd|sh)` provisions repo-local `ffmpeg` + `ffprobe` binaries and the default RIFE checkpoint automatically (no manual PATH/model setup required).
 
 ## Quick install (recommended)
 
 ### Windows (PowerShell or CMD)
 1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs lock-preserving `npm ci`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
-```bat
-install-webui.bat
+```powershell
+.\install-webui.cmd
 ```
 
-On Windows, `install-webui.bat` prompts for **Simple / Advanced / Check / Reinstall** by default.
+```bat
+install-webui.cmd
+```
+
+`install-webui.ps1` is the Windows installer source of truth.
+`install-webui.cmd` is a thin wrapper that invokes the PowerShell installer and propagates its exit code.
+
+On Windows, the installer prompts for **Simple / Advanced / Check / Reinstall** by default.
 Advanced mode includes CPU/CUDA/skip and a **Windows-only custom PyTorch** entry that loads options from a remote JSON manifest.
 For automation, pass `--no-menu` and use flags/env vars.
 
 Windows installer flags:
-- `install-webui.bat --check` (verify installer-managed dependencies only; non-destructive)
-- `install-webui.bat --reinstall-deps` (reinstall dependencies in-place, without deleting `.venv` / `.nodeenv`)
+- `install-webui.cmd --check` (verify installer-managed dependencies only; non-destructive)
+- `install-webui.cmd --reinstall-deps` (reinstall dependencies in-place, without deleting `.venv` / `.nodeenv`)
+
+Windows one-liner (Win11Debloat style, but safe: download-to-file + execute; no `iex`):
+```powershell
+$ref = "main" # recommend: replace with a release tag or commit SHA
+$url = "https://raw.githubusercontent.com/sangoi-exe/stable-diffusion-webui-codex/$ref/install-webui.ps1"
+$dst = Join-Path $env:TEMP "codex-install-webui.ps1"
+irm $url -OutFile $dst
+powershell -NoProfile -ExecutionPolicy Bypass -File $dst
+```
 
 2) Launch the GUI launcher:
 ```bat
@@ -59,6 +75,82 @@ Linux installer flags:
 bash update-webui.sh
 # Optional: ignore untracked-path preflight checks (tracked changes still abort)
 bash update-webui.sh --force
+```
+
+## Manual install (no installer scripts)
+
+Use this if you want full manual control and do not want to run `install-webui.cmd`, `install-webui.ps1`, or `install-webui.sh`.
+
+### Windows manual (PowerShell commands, no installer script)
+1) Clone and enter repo:
+```powershell
+git clone https://github.com/sangoi-exe/stable-diffusion-webui-codex.git
+cd .\stable-diffusion-webui-codex
+$repoRoot = (Get-Location).Path
+```
+
+2) Prepare repo-local tool/cache paths:
+```powershell
+mkdir "$repoRoot\.uv\cache","$repoRoot\.uv\xdg-data","$repoRoot\.uv\xdg-cache","$repoRoot\.npm-cache" -Force | Out-Null
+$env:UV_CACHE_DIR = "$repoRoot\.uv\cache"
+$env:NPM_CONFIG_CACHE = "$repoRoot\.npm-cache"
+$env:XDG_DATA_HOME = "$repoRoot\.uv\xdg-data"
+$env:XDG_CACHE_HOME = "$repoRoot\.uv\xdg-cache"
+$env:UV_PYTHON_INSTALL_DIR = "$repoRoot\.uv\python"
+$env:UV_PYTHON_INSTALL_BIN = "0"
+$env:UV_PYTHON_INSTALL_REGISTRY = "0"
+$env:UV_PYTHON_PREFERENCE = "only-managed"
+$env:UV_PYTHON_DOWNLOADS = "manual"
+$env:UV_PROJECT_ENVIRONMENT = "$repoRoot\.venv"
+$env:PYTHONPATH = "$repoRoot"
+```
+
+3) Install uv (choose one):
+- With winget (recommended):
+```powershell
+winget install --id Astral-sh.uv -e
+```
+- Or manual binary download (no remote script execution):
+```powershell
+$uvVersion = "0.9.17"
+$asset = "uv-x86_64-pc-windows-msvc.zip" # ARM64: uv-aarch64-pc-windows-msvc.zip
+$uvDir = "$repoRoot\.uv\bin"
+mkdir $uvDir -Force | Out-Null
+$zip = Join-Path $uvDir $asset
+irm "https://github.com/astral-sh/uv/releases/download/$uvVersion/$asset" -OutFile $zip
+tar -xf $zip -C $uvDir
+Remove-Item $zip -Force
+$env:PATH = "$uvDir;$env:PATH"
+```
+
+4) Install managed Python + sync dependencies:
+```powershell
+uv python install 3.12.10
+# Pick ONE backend extra: cpu | cu126 | cu128 | cu130
+uv sync --locked --extra cu128
+```
+
+5) Provision FFmpeg + default RIFE model:
+```powershell
+& "$repoRoot\.venv\Scripts\python.exe" -c "import os; from apps.backend.video.runtime_dependencies import ensure_ffmpeg_binaries; p=ensure_ffmpeg_binaries(version=os.environ.get('CODEX_FFMPEG_VERSION','7.0.2')); print(p)"
+& "$repoRoot\.venv\Scripts\python.exe" -c "from apps.backend.video.runtime_dependencies import ensure_rife_model_file; print(ensure_rife_model_file())"
+```
+
+6) Install repo-local Node.js + frontend deps:
+```powershell
+uv tool run --from nodeenv nodeenv -n 24.13.0 "$repoRoot\.nodeenv"
+$npm = Join-Path $repoRoot ".nodeenv\Scripts\npm.cmd"
+if (!(Test-Path $npm)) { $npm = Join-Path $repoRoot ".nodeenv\bin\npm.cmd" }
+$interfaceDir = Join-Path $repoRoot "apps\interface"
+$npmCache = Join-Path $repoRoot ".npm-cache"
+Push-Location $interfaceDir
+& $npm ci --cache $npmCache --no-audit --no-fund
+Pop-Location
+```
+
+7) Run WebUI:
+```powershell
+& "$repoRoot\run-webui.bat"
 ```
 
 ## Safe updater contract (`update-webui.(bat|sh)`)
@@ -106,6 +198,7 @@ Override:
 Windows-only custom PyTorch:
 - `CODEX_TORCH_MODE=custom`
 - `CODEX_CUSTOM_TORCH_SRC=<custom wheel/source URL or path>`
+- `CODEX_CUSTOM_TORCH_SHA256=<sha256>` (optional; if set, installer verifies the wheel hash before install)
 - `CODEX_PYTORCH_MANIFEST_URL=<remote json manifest url>` (optional override; defaults to this repo `main` branch)
 - Menu options are loaded from remote JSON field `windows_custom_torch`.
 - To publish a new custom build, update `pytorch_manifest.json` in the repo (installer keeps fetching it remotely; no installer code changes needed).
@@ -121,7 +214,7 @@ This is a **cmd.exe batch parsing** error (not a `uv`/Python error). It typicall
 
 Fix:
 - `git pull` (the Windows installer routine was hardened to avoid this class of cmd parsing failure)
-- Re-run `install-webui.bat`
+- Re-run `install-webui.cmd`
 
 If it still happens, see the deep dive runbook:
 - Open an issue with the full console output, plus:
@@ -134,9 +227,9 @@ Your `peft` and `transformers` are out of sync (common when extra packages pull 
 
 Fix: remove the venv and re-install with this repo’s locked dependencies:
 - First try in-place reinstall:
-  - Windows: `install-webui.bat --reinstall-deps`
+  - Windows: `install-webui.cmd --reinstall-deps`
   - Linux/WSL: `bash install-webui.sh --reinstall-deps`
-- If the environment is still irrecoverable, delete `.venv` and re-run `install-webui.(bat|sh)`.
+- If the environment is still irrecoverable, delete `.venv` and re-run `install-webui.(cmd|sh)`.
 
 ### Don’t mix “research deps” into the WebUI venv
 Packages like `pyiqa`, `datasets`, `numba`, `opencv-python-headless` often pin conflicting `transformers`/`numpy`.

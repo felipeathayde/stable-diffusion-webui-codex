@@ -253,9 +253,9 @@ if exist "%TARGET%" del /q "%TARGET%" >nul 2>nul
 exit /b 0
 
 :prepare_refresh_requirements
-if not exist "%UV_BIN%" call :die E_UV_MISSING "uv not found at '%UV_BIN%'. Run install-webui.bat first."
+if not exist "%UV_BIN%" call :die E_UV_MISSING "uv not found at '%UV_BIN%'. Run install-webui.cmd first."
 if errorlevel 1 exit /b 1
-if not exist "%PYTHON_BIN%" call :die E_PYTHON_MISSING "Python runtime missing at '%PYTHON_BIN%'. Run install-webui.bat first."
+if not exist "%PYTHON_BIN%" call :die E_PYTHON_MISSING "Python runtime missing at '%PYTHON_BIN%'. Run install-webui.cmd first."
 if errorlevel 1 exit /b 1
 call :ensure_nodeenv
 if errorlevel 1 exit /b 1
@@ -307,7 +307,7 @@ call :die E_NODE_VERSION_MISMATCH "'%NODEENV_DIR%' already contains Node.js %NOD
 exit /b 1
 
 :ensure_nodeenv_corrupt
-call :die E_NODEENV_CORRUPT "Found '%NODEENV_DIR%', but node/npm are missing or invalid. Recreate '%NODEENV_DIR%' or run install-webui.bat."
+call :die E_NODEENV_CORRUPT "Found '%NODEENV_DIR%', but node/npm are missing or invalid. Recreate '%NODEENV_DIR%' or run install-webui.cmd."
 exit /b 1
 
 :resolve_torch_backend

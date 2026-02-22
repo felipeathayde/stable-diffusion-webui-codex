@@ -123,7 +123,7 @@ def resolve_ffmpeg_binary(binary_name: str) -> str:
 
     raise VideoDependencyResolutionError(
         f"Unable to resolve required binary '{binary_name}'. Tried: {', '.join(attempts)}. "
-        "Run install-webui.sh/install-webui.bat to provision ffmpeg runtime dependencies."
+        "Run install-webui.sh/install-webui.cmd to provision ffmpeg runtime dependencies."
     )
 
 
@@ -146,7 +146,7 @@ def resolve_rife_model_path(model: str | None) -> Path:
     if not candidate.is_file():
         raise VideoDependencyResolutionError(
             f"RIFE model checkpoint not found: {candidate}. "
-            "Run install-webui.sh/install-webui.bat to provision the default model, or set CODEX_RIFE_MODEL_PATH."
+            "Run install-webui.sh/install-webui.cmd to provision the default model, or set CODEX_RIFE_MODEL_PATH."
         )
     return candidate
 

@@ -58,10 +58,16 @@ For detailed install options, backend selection, and troubleshooting, see [INSTA
 
 ### Windows
 
+```powershell
+.\install-webui.cmd
+```
+
 ```bat
-install-webui.bat
+install-webui.cmd
 run-webui.bat
 ```
+
+Online one-liner + full manual (no installer scripts) are documented in `INSTALL.md`.
 
 Optional safe update:
 

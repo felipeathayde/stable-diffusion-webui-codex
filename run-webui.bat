@@ -14,7 +14,7 @@ if defined PYTHON (
 
 if not exist "%PY_BIN%" (
     echo Error: expected Python at "%PY_BIN%".>&2
-    echo Run: install-webui.bat>&2
+    echo Run: install-webui.cmd>&2
     exit /b 1
 )
 

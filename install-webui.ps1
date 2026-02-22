@@ -249,7 +249,7 @@ function Ensure-Uv {
 }
 
 function Resolve-CudaExtra {
-  param([Parameter(Mandatory = $true)][string]$CudaVariant)
+  param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$CudaVariant)
 
   switch ($CudaVariant.Trim().ToLowerInvariant()) {
     "12.6" { return "cu126" }
@@ -321,8 +321,8 @@ function Try-GetNvidiaInfo {
 function Resolve-TorchExtra {
   param(
     [Parameter(Mandatory = $true)][string]$TorchMode,
-    [Parameter(Mandatory = $true)][string]$TorchBackend,
-    [Parameter(Mandatory = $true)][string]$CudaVariant
+    [Parameter(Mandatory = $true)][AllowEmptyString()][string]$TorchBackend,
+    [Parameter(Mandatory = $true)][AllowEmptyString()][string]$CudaVariant
   )
 
   if (-not [string]::IsNullOrWhiteSpace($TorchBackend)) {

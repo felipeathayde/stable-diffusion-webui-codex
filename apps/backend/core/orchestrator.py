@@ -176,6 +176,10 @@ class InferenceOrchestrator:
         return InferenceOrchestrator._freeze_engine_options(relevant)
 
     def _purge_vram(self, *, reason: str, clear_engine_cache: bool = False) -> None:
+        def _is_cleanup_oom(detail: str) -> bool:
+            text = str(detail or "").strip().lower()
+            return ("out of memory" in text) and ("cuda" in text)
+
         purge_failures: list[str] = []
         for cached_engine in list(self._engine_cache.values()):
             if not clear_engine_cache and not getattr(cached_engine, "_is_loaded", False):
@@ -215,6 +219,18 @@ class InferenceOrchestrator:
             pass
 
         if purge_failures:
+            reason_lc = str(reason or "").strip().lower()
+            if "engine execution failure" in reason_lc and all(_is_cleanup_oom(item) for item in purge_failures):
+                detail = "; ".join(purge_failures[:3])
+                if len(purge_failures) > 3:
+                    detail = f"{detail}; ... (+{len(purge_failures) - 3} more)"
+                logger.warning(
+                    "VRAM purge encountered non-fatal CUDA OOM while unwinding execution failure (%s): %s",
+                    reason,
+                    detail,
+                )
+                return
+
             detail = "; ".join(purge_failures[:3])
             if len(purge_failures) > 3:
                 detail = f"{detail}; ... (+{len(purge_failures) - 3} more)"

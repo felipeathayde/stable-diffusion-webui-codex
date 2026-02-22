@@ -183,7 +183,7 @@ def _teardown_stage(
                     "(stage=%s): %s",
                     str(stage),
                     str(exc),
-                    exc_info=True,
+                    exc_info=False,
                 )
     finally:
         del mm

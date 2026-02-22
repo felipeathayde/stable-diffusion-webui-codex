@@ -155,7 +155,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
                 "Failed to clear orchestrator cache during runtime cleanup (%s): %s",
                 reason,
                 exc,
-                exc_info=True,
+                exc_info=False,
             )
 
     try:
@@ -165,7 +165,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
             "Runtime memory-manager import failed during cleanup (%s): %s",
             reason,
             exc,
-            exc_info=True,
+            exc_info=False,
         )
     else:
         try:
@@ -175,7 +175,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
                 "Runtime unload_all_models failed during cleanup (%s): %s",
                 reason,
                 exc,
-                exc_info=True,
+                exc_info=False,
             )
         try:
             memory_state.manager.soft_empty_cache(force=True)
@@ -184,7 +184,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
                 "Runtime soft_empty_cache failed during cleanup (%s): %s",
                 reason,
                 exc,
-                exc_info=True,
+                exc_info=False,
             )
 
     gguf_clear_cache: Callable[[], None] | None = None
@@ -201,7 +201,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
                 "Failed to clear GGUF cache during runtime cleanup (%s): %s",
                 reason,
                 exc,
-                exc_info=True,
+                exc_info=False,
             )
 
     with contextlib.suppress(Exception):
@@ -217,7 +217,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
             "Torch cache cleanup failed during runtime cleanup (%s): %s",
             reason,
             exc,
-            exc_info=True,
+            exc_info=False,
         )
 
     logger.info("Runtime memory cleanup completed (%s).", reason)

@@ -988,7 +988,12 @@ class CodexMemoryManager:
     # --------------------------------------------------------------------- cache helpers
     def soft_empty_cache(self, force: bool = False) -> None:
         if self._primary_device.type == "cuda":
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except self._oom_exception as exc:
+                logger.debug("Suppressed CUDA empty_cache OOM during soft_empty_cache: %s", exc)
+            except Exception as exc:
+                logger.debug("Suppressed CUDA empty_cache failure during soft_empty_cache: %s", exc)
         if force:
             self._signal_empty_cache = False
 
@@ -1080,7 +1085,12 @@ class CodexMemoryManager:
         except ValueError:  # pragma: no cover
             pass
         if self._primary_device.type == "cuda":
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except self._oom_exception as exc:
+                logger.debug("Suppressed CUDA empty_cache OOM during unload_model: %s", exc)
+            except Exception as exc:
+                logger.debug("Suppressed CUDA empty_cache failure during unload_model: %s", exc)
 
     # --------------------------------------------------------------------- load/unload
     def load_models(

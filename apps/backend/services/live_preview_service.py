@@ -13,6 +13,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `LivePreviewImageFormat` (enum): Supported output formats for encoded preview images.
 - `_coerce_bool_option` (function): Strict bool parser for preview-related option values.
 - `_coerce_int_option` (function): Strict integer parser for preview-related option values.
+- `_coerce_image_format_option` (function): Strict image format parser for preview output settings.
+- `_coerce_preview_method_option` (function): Strict preview method parser for runtime option values.
 - `LivePreviewEncodedImage` (dataclass): Encoded preview payload (`format` + base64 `data`).
 - `LivePreviewTaskConfig` (dataclass): Preview config for a task; can apply per-task runtime overrides for the sampling runtime.
 - `LivePreviewService` (class): Builds preview config, encodes images, and attaches previews to progress events.
@@ -71,6 +73,49 @@ def _coerce_int_option(value: object, *, key: str, default: int, minimum: int | 
         raise RuntimeError(f"Invalid integer option '{key}': {exc}") from exc
 
 
+def _coerce_image_format_option(
+    value: object,
+    *,
+    key: str,
+    default: LivePreviewImageFormat,
+) -> LivePreviewImageFormat:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized == "":
+        raise RuntimeError(f"Invalid image format option '{key}': expected non-empty value, got {value!r}")
+    if normalized in {"jpg", "jpeg"}:
+        return LivePreviewImageFormat.JPEG
+    if normalized == "png":
+        return LivePreviewImageFormat.PNG
+    if normalized == "webp":
+        return LivePreviewImageFormat.WEBP
+    raise RuntimeError(
+        f"Invalid image format option '{key}': expected one of ['jpeg', 'png', 'webp'], got {value!r}",
+    )
+
+
+def _coerce_preview_method_option(
+    value: object,
+    *,
+    key: str,
+    default: LivePreviewMethod,
+) -> LivePreviewMethod:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"full", "vae"}:
+        return LivePreviewMethod.FULL
+    if normalized == "":
+        raise RuntimeError(f"Invalid preview method option '{key}': expected non-empty value, got {value!r}")
+    if normalized in {"approx cheap", "approx_cheap", "approx-cheap", "cheap"}:
+        return LivePreviewMethod.APPROX_CHEAP
+    raise RuntimeError(
+        "Invalid preview method option "
+        f"'{key}': expected one of ['full', 'vae', 'approx cheap', 'approx_cheap', 'approx-cheap', 'cheap'], got {value!r}",
+    )
+
+
 @dataclass(frozen=True)
 class LivePreviewEncodedImage:
     format: str
@@ -102,31 +147,43 @@ class LivePreviewService:
     """Build live preview config and attach preview payloads to progress events."""
 
     def build_task_config(self, opts_get: Callable[[str, object], object]) -> LivePreviewTaskConfig:
-        _coerce_bool_option(
+        enabled = _coerce_bool_option(
             opts_get("live_previews_enable", True),
             key="live_previews_enable",
             default=True,
         )
-        fmt_value = str(opts_get("live_previews_image_format", "png") or "png")
-        image_format = LivePreviewImageFormat.from_string(fmt_value, default=LivePreviewImageFormat.PNG)
+        image_format = _coerce_image_format_option(
+            opts_get("live_previews_image_format", LivePreviewImageFormat.PNG.value),
+            key="live_previews_image_format",
+            default=LivePreviewImageFormat.PNG,
+        )
 
         period_raw = opts_get("show_progress_every_n_steps", 10)
-        _coerce_int_option(
+        period = _coerce_int_option(
             period_raw,
             key="show_progress_every_n_steps",
             default=10,
             minimum=-1,
         )
 
-        method_raw = str(opts_get("show_progress_type", LivePreviewMethod.APPROX_CHEAP.value) or LivePreviewMethod.APPROX_CHEAP.value)
-        LivePreviewMethod.from_string(method_raw, default=LivePreviewMethod.APPROX_CHEAP)
-        # Global safety mode: keep the debug flag read path stable while preview is force-disabled.
-        debug_preview_factors_enabled()
+        method = _coerce_preview_method_option(
+            opts_get("show_progress_type", LivePreviewMethod.APPROX_CHEAP.value),
+            key="show_progress_type",
+            default=LivePreviewMethod.APPROX_CHEAP,
+        )
+
+        # `show_progress_every_n_steps=-1` is a supported persisted sentinel that disables previews.
+        # SSE preview payloads are gated by the explicit UI setting plus a positive period.
+        sse_enabled = enabled and period > 0
+
+        runtime_interval = period if sse_enabled else 0
+        if debug_preview_factors_enabled() and runtime_interval <= 0:
+            runtime_interval = 10
 
         return LivePreviewTaskConfig(
-            runtime_interval_steps=0,
-            runtime_method=LivePreviewMethod.APPROX_CHEAP,
-            sse_enabled=False,
+            runtime_interval_steps=runtime_interval,
+            runtime_method=method,
+            sse_enabled=sse_enabled,
             image_format=image_format,
             max_dim=512,
         )

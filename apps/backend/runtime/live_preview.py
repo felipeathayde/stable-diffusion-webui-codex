@@ -20,6 +20,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `live_preview_method_from_env` (function): Reads `CODEX_LIVE_PREVIEW_METHOD` into a `LivePreviewMethod`.
 - `live_preview_method_to_env` (function): Converts a `LivePreviewMethod` into an env-friendly string.
 - `_tensor_to_pil_rgb` (function): Converts a tensor image into a PIL RGB image.
+- `_PreviewProjectionSpec` (dataclass): Internal latent->RGB projection contract for cheap preview profiles.
+- `_preview_family_id` (function): Resolves normalized model family id from runtime processing/model metadata.
+- `_preview_profile_id` (function): Resolves preview profile id from family + latent channel count.
+- `_projection_for_profile` (function): Returns internal projection spec for a profile/channels pair when available.
+- `_projection_is_valid` (function): Validates projection shape and finiteness contract.
+- `_warn_projection_skip_once` (function): Emits deduplicated skip warnings for missing/invalid cheap projections.
 - `decode_preview_image` (function): Decodes a denoised latent into a preview image using the selected method.
 - `PreviewFactorsFit` (dataclass): Fit result container for latent→RGB factors and bias (with MSE and VAE metadata).
 - `fit_preview_factors` (function): Fits latent→RGB factors via least squares against a decoded VAE image (debug tool).
@@ -29,6 +35,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from contextlib import contextmanager
@@ -55,9 +62,44 @@ _LATENT_RGB_FACTORS_SDXL: tuple[tuple[float, float, float], ...] = (
     (-0.3112, -0.2359, -0.2076),
 )
 
+_PREVIEW_ZERO_BIAS: tuple[float, float, float] = (0.0, 0.0, 0.0)
+_LATENT_RGB_FACTORS_ANIMA16_BOOTSTRAP: tuple[tuple[float, float, float], ...] = (
+    (0.3920, 0.4054, 0.4549),
+    (-0.2634, -0.0196, 0.0653),
+    (0.0568, 0.1687, -0.0755),
+    (-0.3112, -0.2359, -0.2076),
+    (0.1960, 0.2027, 0.2274),
+    (-0.1317, -0.0098, 0.0326),
+    (0.0284, 0.08435, -0.03775),
+    (-0.1556, -0.11795, -0.1038),
+    (0.0980, 0.10135, 0.1137),
+    (-0.06585, -0.0049, 0.016325),
+    (0.0142, 0.042175, -0.018875),
+    (-0.0778, -0.058975, -0.0519),
+    (0.0490, 0.050675, 0.05685),
+    (-0.032925, -0.00245, 0.0081625),
+    (0.0071, 0.0210875, -0.0094375),
+    (-0.0389, -0.0294875, -0.02595),
+)
+
 _DEBUG_PREVIEW_FACTORS_LAST_JOB_TS: str | None = None
 
 _THREAD_OVERRIDES = threading.local()
+
+
+@dataclass(frozen=True)
+class _PreviewProjectionSpec:
+    profile_id: str
+    channels: int
+    factors: tuple[tuple[float, float, float], ...]
+    bias: tuple[float, float, float] = _PREVIEW_ZERO_BIAS
+
+
+_PREVIEW_PROJECTIONS: dict[tuple[str, int], _PreviewProjectionSpec] = {
+    ("sd15", 4): _PreviewProjectionSpec(profile_id="sd15", channels=4, factors=_LATENT_RGB_FACTORS_SD15),
+    ("sdxl", 4): _PreviewProjectionSpec(profile_id="sdxl", channels=4, factors=_LATENT_RGB_FACTORS_SDXL),
+    ("anima", 16): _PreviewProjectionSpec(profile_id="anima", channels=16, factors=_LATENT_RGB_FACTORS_ANIMA16_BOOTSTRAP),
+}
 
 
 def _get_override(name: str) -> object | None:
@@ -149,6 +191,87 @@ def _tensor_to_pil_rgb(tensor: Any) -> Any:
     return Image.fromarray(np.asarray(arr), mode="RGB")
 
 
+def _preview_family_id(processing: Any) -> str | None:
+    model = getattr(processing, "sd_model", None)
+    if model is None:
+        return None
+
+    expected_family = getattr(model, "expected_family", None)
+    if expected_family is not None:
+        expected_value = getattr(expected_family, "value", expected_family)
+        key = str(expected_value).strip().lower()
+        if key in {"sdxl", "sdxl_refiner"} or key.startswith("sdxl"):
+            return "sdxl"
+        return key
+
+    engine_id = str(getattr(model, "engine_id", "") or "").strip().lower()
+    if engine_id:
+        if engine_id in {"sdxl", "sdxl_refiner"}:
+            return "sdxl"
+        return engine_id
+    return None
+
+
+def _preview_profile_id(processing: Any, *, channels: int) -> str:
+    family_id = _preview_family_id(processing)
+    if int(channels) == 4:
+        if family_id == "sdxl" or bool(getattr(getattr(processing, "sd_model", None), "is_sdxl", False)):
+            return "sdxl"
+        return "sd15"
+    return family_id or "unknown"
+
+
+def _projection_for_profile(profile_id: str, *, channels: int) -> _PreviewProjectionSpec | None:
+    return _PREVIEW_PROJECTIONS.get((str(profile_id).strip().lower(), int(channels)))
+
+
+def _projection_is_valid(spec: _PreviewProjectionSpec) -> bool:
+    if int(spec.channels) <= 0:
+        return False
+    if len(spec.factors) != int(spec.channels):
+        return False
+    if len(spec.bias) != 3:
+        return False
+    for row in spec.factors:
+        if len(row) != 3:
+            return False
+        if any(not math.isfinite(float(value)) for value in row):
+            return False
+    if any(not math.isfinite(float(value)) for value in spec.bias):
+        return False
+    return True
+
+
+def _warn_projection_skip_once(
+    processing: Any,
+    *,
+    method: LivePreviewMethod,
+    profile_id: str,
+    channels: int,
+    reason: str,
+) -> None:
+    dedupe_key = (method.value, str(profile_id), int(channels), str(reason))
+    dedupe_bucket_name = "_codex_preview_warned_projection_skips"
+    try:
+        dedupe_bucket = getattr(processing, dedupe_bucket_name, None)
+        if dedupe_bucket is None:
+            dedupe_bucket = set()
+            setattr(processing, dedupe_bucket_name, dedupe_bucket)
+        if isinstance(dedupe_bucket, set):
+            if dedupe_key in dedupe_bucket:
+                return
+            dedupe_bucket.add(dedupe_key)
+    except Exception:
+        pass
+    logger.warning(
+        "Live preview method '%s' cannot resolve projection (%s) for profile=%s channels=%d; skipping preview.",
+        method.value,
+        reason,
+        profile_id,
+        int(channels),
+    )
+
+
 def decode_preview_image(processing: Any, denoised_latent: Any, *, method: LivePreviewMethod) -> Any | None:
     import torch
     import torch.nn.functional as F
@@ -159,15 +282,32 @@ def decode_preview_image(processing: Any, denoised_latent: Any, *, method: LiveP
         return None
 
     if method == LivePreviewMethod.APPROX_CHEAP:
-        if denoised_latent.shape[1] != 4:
-            logger.warning(
-                "Live preview method '%s' requires 4-channel latents; skipping preview.",
-                method.value,
+        channels = int(denoised_latent.shape[1])
+        profile_id = _preview_profile_id(processing, channels=channels)
+        projection = _projection_for_profile(profile_id, channels=channels)
+        if projection is None:
+            _warn_projection_skip_once(
+                processing,
+                method=method,
+                profile_id=profile_id,
+                channels=channels,
+                reason="missing",
             )
             return None
-        factors = _LATENT_RGB_FACTORS_SDXL if bool(getattr(processing.sd_model, "is_sdxl", False)) else _LATENT_RGB_FACTORS_SD15
-        mat = torch.tensor(factors, device=denoised_latent.device, dtype=denoised_latent.dtype)
+        if not _projection_is_valid(projection):
+            _warn_projection_skip_once(
+                processing,
+                method=method,
+                profile_id=profile_id,
+                channels=channels,
+                reason="invalid",
+            )
+            return None
+        mat = torch.tensor(projection.factors, device=denoised_latent.device, dtype=denoised_latent.dtype)
         rgb_small = torch.einsum("blhw,lr->brhw", denoised_latent, mat)
+        if projection.bias != _PREVIEW_ZERO_BIAS:
+            bias = torch.tensor(projection.bias, device=denoised_latent.device, dtype=denoised_latent.dtype).view(1, 3, 1, 1)
+            rgb_small = rgb_small + bias
         rgb = F.interpolate(rgb_small, scale_factor=8, mode="bilinear", align_corners=False)
         return _tensor_to_pil_rgb(rgb[0])
 

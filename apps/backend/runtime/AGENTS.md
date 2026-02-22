@@ -1,7 +1,7 @@
 # apps/backend/runtime Overview
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
-Last Review: 2026-02-20
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -61,3 +61,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py` and diagnostics modules) (doc-only change; part of rollout).
 - 2026-01-03: Standardized upstream references in runtime docs/comments to prefer Hugging Face Diffusers as the behaviour baseline.
 - 2026-02-09: Version-counter mitigation is handled at engine conditioning entrypoints (`torch.no_grad()`); runtime no longer carries inference-tensor materialization shims for this class of failure.
+- 2026-02-22: `runtime/live_preview.py` now resolves cheap-preview projections by `(profile, channels)` and includes an initial Anima 16-channel bootstrap projection path (no VAE fallback in `Approx cheap`; missing/invalid projections skip preview with deduplicated warnings).

@@ -14,6 +14,7 @@ Also emits canonical smart-offload INFO audit events for model load/unload trans
 Smart-offload action payloads include best-effort memory windows (`memory_before_*`/`memory_after_*`) to provide global per-action residency telemetry.
 `unload_model(...)` performs explicit CPU-target unload for both patcher-backed and plain module loaders, avoiding bookkeeping-only unloads and swap-policy-dependent stale GPU residency.
 Generic smart-offload action emission (`load`/`unload`/`unload_noop`) is centralized here, with optional caller context fields (`source`/`stage`/`component_hint`/`event_reason`).
+Per-item load telemetry (signed deltas + post-load counters) is captured best-effort per load target device and exposed in `memory_snapshot()['models']`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
@@ -21,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_normalize_device_name` (function): Normalizes device name strings for stable matching and policy decisions.
 - `_device_has_native_bf16` (function): Heuristic for whether a device likely supports native BF16 (name + compute capability).
 - `_probe_hardware` (function): Performs hardware probing and returns a `HardwareProbe` (raises `HardwareProbeError` on failure).
-- `_LoadedModelRecord` (dataclass): Tracks one loaded model/component (name/path/device/dtype) for introspection and unload decisions.
+- `_LoadedModelRecord` (dataclass): Tracks one loaded model/component (name/path/device/dtype + per-load telemetry) for introspection and unload decisions.
 - `CodexMemoryManager` (class): Main memory manager; owns runtime config, budget calculation, model registry, and policy decisions
   (contains many methods for load/unload bookkeeping, swap/offload behavior, and “best defaults” selection).
 """
@@ -252,6 +253,14 @@ class _LoadedModelRecord:
     inclusive_memory: int = 0
     exclusive_memory: int = 0
     model_accelerated: bool = False
+    load_telemetry_device: str | None = None
+    load_alloc_delta_bytes: int | None = None
+    load_reserved_delta_bytes: int | None = None
+    load_free_delta_bytes: int | None = None
+    load_alloc_after_bytes: int | None = None
+    load_reserved_after_bytes: int | None = None
+    load_free_after_bytes: int | None = None
+    load_total_after_bytes: int | None = None
 
     def __hash__(self) -> int:
         return hash(id(self.model))
@@ -863,44 +872,7 @@ class CodexMemoryManager:
             probe_dict = {}
 
         # Torch-level stats (best-effort; only populated when supported)
-        torch_stats: Dict[str, int] = {}
-        if device.type == DeviceBackend.CUDA.value:
-            try:
-                stats = torch.cuda.memory_stats(device)
-                free_bytes, total_bytes = torch.cuda.mem_get_info(device)
-                torch_stats = {
-                    "allocated_bytes": int(stats.get("allocated_bytes.all.current", 0)),
-                    "reserved_bytes": int(stats.get("reserved_bytes.all.current", 0)),
-                    "free_bytes": int(free_bytes),
-                    "total_bytes": int(total_bytes),
-                }
-            except Exception:  # pragma: no cover
-                torch_stats = {}
-        elif device.type == "xpu":
-            try:
-                stats = torch.xpu.memory_stats(device)  # type: ignore[attr-defined]
-                free_bytes, total_bytes = torch.xpu.mem_get_info(device)  # type: ignore[attr-defined]
-                torch_stats = {
-                    "allocated_bytes": int(stats.get("allocated_bytes.all.current", 0)),
-                    "reserved_bytes": int(stats.get("reserved_bytes.all.current", 0)),
-                    "free_bytes": int(free_bytes),
-                    "total_bytes": int(total_bytes),
-                }
-            except Exception:  # pragma: no cover
-                torch_stats = {}
-        elif device.type == "mps":
-            try:
-                allocated = int(torch.mps.current_allocated_memory())
-                total = int(torch.mps.driver_allocated_memory())
-                free = max(total - allocated, 0)
-                torch_stats = {
-                    "allocated_bytes": allocated,
-                    "reserved_bytes": allocated,
-                    "free_bytes": free,
-                    "total_bytes": total,
-                }
-            except Exception:  # pragma: no cover
-                torch_stats = {}
+        torch_stats = self._read_device_memory_counters_bytes(device) or {}
 
         # Managed model records
         models: List[Dict[str, object]] = []
@@ -930,6 +902,14 @@ class CodexMemoryManager:
                     "inclusive_bytes": int(record.inclusive_memory),
                     "exclusive_bytes": int(record.exclusive_memory),
                     "accelerated": bool(record.model_accelerated),
+                    "load_telemetry_device": record.load_telemetry_device,
+                    "load_alloc_delta_bytes": record.load_alloc_delta_bytes,
+                    "load_reserved_delta_bytes": record.load_reserved_delta_bytes,
+                    "load_free_delta_bytes": record.load_free_delta_bytes,
+                    "load_alloc_after_bytes": record.load_alloc_after_bytes,
+                    "load_reserved_after_bytes": record.load_reserved_after_bytes,
+                    "load_free_after_bytes": record.load_free_after_bytes,
+                    "load_total_after_bytes": record.load_total_after_bytes,
                 }
             )
             total_inclusive += int(record.inclusive_memory)
@@ -1253,6 +1233,39 @@ class CodexMemoryManager:
     def _bytes_to_mib(value: int) -> float:
         return round(float(max(0, int(value))) / (1024.0 * 1024.0), 2)
 
+    @staticmethod
+    def _signed_bytes_to_mib(value: int) -> float:
+        return round(float(int(value)) / (1024.0 * 1024.0), 2)
+
+    def _read_device_memory_counters_bytes(self, device: torch.device) -> Dict[str, int] | None:
+        try:
+            if device.type == DeviceBackend.CUDA.value:
+                stats = torch.cuda.memory_stats(device)
+                free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+                allocated_bytes = int(stats.get("allocated_bytes.all.current", 0))
+                reserved_bytes = int(stats.get("reserved_bytes.all.current", 0))
+            elif device.type == "xpu":
+                stats = torch.xpu.memory_stats(device)  # type: ignore[attr-defined]
+                free_bytes, total_bytes = torch.xpu.mem_get_info(device)  # type: ignore[attr-defined]
+                allocated_bytes = int(stats.get("allocated_bytes.all.current", 0))
+                reserved_bytes = int(stats.get("reserved_bytes.all.current", 0))
+            elif device.type == "mps":
+                allocated_bytes = int(torch.mps.current_allocated_memory())
+                total_bytes = int(torch.mps.driver_allocated_memory())
+                reserved_bytes = allocated_bytes
+                free_bytes = max(total_bytes - allocated_bytes, 0)
+            else:
+                return None
+        except Exception:
+            return None
+
+        return {
+            "allocated_bytes": int(allocated_bytes),
+            "reserved_bytes": int(reserved_bytes),
+            "free_bytes": int(free_bytes),
+            "total_bytes": int(total_bytes),
+        }
+
     def _smart_offload_memory_fields(self, *, prefix: str) -> Dict[str, object]:
         """Best-effort primary-device memory telemetry for smart-offload logs."""
 
@@ -1261,30 +1274,15 @@ class CodexMemoryManager:
             f"{prefix}_device": str(device),
         }
 
-        try:
-            if device.type == DeviceBackend.CUDA.value:
-                free_bytes, total_bytes = torch.cuda.mem_get_info(device)
-                allocated_bytes = torch.cuda.memory_allocated(device)
-                reserved_bytes = torch.cuda.memory_reserved(device)
-            elif device.type == "xpu":
-                free_bytes, total_bytes = torch.xpu.mem_get_info(device)  # type: ignore[attr-defined]
-                allocated_bytes = torch.xpu.memory_allocated(device)  # type: ignore[attr-defined]
-                reserved_bytes = torch.xpu.memory_reserved(device)  # type: ignore[attr-defined]
-            elif device.type == "mps":
-                allocated_bytes = int(torch.mps.current_allocated_memory())
-                total_bytes = int(torch.mps.driver_allocated_memory())
-                reserved_bytes = allocated_bytes
-                free_bytes = max(total_bytes - allocated_bytes, 0)
-            else:
-                return fields
-        except Exception:
+        counters = self._read_device_memory_counters_bytes(device)
+        if counters is None:
             return fields
 
         stats = (
-            ("alloc", int(allocated_bytes)),
-            ("reserved", int(reserved_bytes)),
-            ("free", int(free_bytes)),
-            ("total", int(total_bytes)),
+            ("alloc", counters["allocated_bytes"]),
+            ("reserved", counters["reserved_bytes"]),
+            ("free", counters["free_bytes"]),
+            ("total", counters["total_bytes"]),
         )
         for key, bytes_value in stats:
             fields[f"{prefix}_{key}_mb"] = self._bytes_to_mib(bytes_value)
@@ -1425,6 +1423,16 @@ class CodexMemoryManager:
         # Ensure cache of module for downstream accounting
         record.base_module = module
         target_name = module.__class__.__name__
+        record.load_telemetry_device = str(record.load_device)
+        record.load_alloc_delta_bytes = None
+        record.load_reserved_delta_bytes = None
+        record.load_free_delta_bytes = None
+        record.load_alloc_after_bytes = None
+        record.load_reserved_after_bytes = None
+        record.load_free_after_bytes = None
+        record.load_total_after_bytes = None
+
+        before_load_counters: Dict[str, int] | None = None
         action_memory_before: Dict[str, object] = {}
         if smart_offload_enabled():
             action_memory_before = self._smart_offload_memory_fields(prefix="memory_before")
@@ -1454,6 +1462,8 @@ class CodexMemoryManager:
                 if self._primary_device.type == DeviceBackend.CUDA.value:
                     free_bytes, _ = torch.cuda.mem_get_info(self._primary_device)
                     logger.info("[memory-debug] AFTER empty_cache: free=%.2f GB", free_bytes / 1e9)
+
+            before_load_counters = self._read_device_memory_counters_bytes(record.load_device)
 
             if hasattr(loader, "model_patches_to"):
                 logger.info("[memory-debug] calling model_patches_to(%s)", record.load_device)
@@ -1488,6 +1498,55 @@ class CodexMemoryManager:
             if self._primary_device.type == DeviceBackend.CUDA.value:
                 free_bytes, _ = torch.cuda.mem_get_info(self._primary_device)
                 logger.info("[memory-debug] AFTER load %s: free=%.2f GB", target_name, free_bytes / 1e9)
+
+            after_load_counters = self._read_device_memory_counters_bytes(record.load_device)
+            if after_load_counters is not None:
+                record.load_alloc_after_bytes = after_load_counters["allocated_bytes"]
+                record.load_reserved_after_bytes = after_load_counters["reserved_bytes"]
+                record.load_free_after_bytes = after_load_counters["free_bytes"]
+                record.load_total_after_bytes = after_load_counters["total_bytes"]
+
+            if before_load_counters is not None and after_load_counters is not None:
+                record.load_alloc_delta_bytes = (
+                    after_load_counters["allocated_bytes"] - before_load_counters["allocated_bytes"]
+                )
+                record.load_reserved_delta_bytes = (
+                    after_load_counters["reserved_bytes"] - before_load_counters["reserved_bytes"]
+                )
+                record.load_free_delta_bytes = (
+                    after_load_counters["free_bytes"] - before_load_counters["free_bytes"]
+                )
+
+            if after_load_counters is not None:
+                alloc_delta_mib = "n/a"
+                reserved_delta_mib = "n/a"
+                free_delta_mib = "n/a"
+                if record.load_alloc_delta_bytes is not None:
+                    alloc_delta_mib = f"{self._signed_bytes_to_mib(record.load_alloc_delta_bytes):.2f}"
+                if record.load_reserved_delta_bytes is not None:
+                    reserved_delta_mib = f"{self._signed_bytes_to_mib(record.load_reserved_delta_bytes):.2f}"
+                if record.load_free_delta_bytes is not None:
+                    free_delta_mib = f"{self._signed_bytes_to_mib(record.load_free_delta_bytes):.2f}"
+
+                logger.info(
+                    "[memory-debug] ITEM load module=%s device=%s alloc_delta_mib=%s reserved_delta_mib=%s "
+                    "free_delta_mib=%s alloc_after_mib=%.2f reserved_after_mib=%.2f free_after_mib=%.2f total_after_mib=%.2f",
+                    target_name,
+                    record.load_telemetry_device,
+                    alloc_delta_mib,
+                    reserved_delta_mib,
+                    free_delta_mib,
+                    self._bytes_to_mib(record.load_alloc_after_bytes or 0),
+                    self._bytes_to_mib(record.load_reserved_after_bytes or 0),
+                    self._bytes_to_mib(record.load_free_after_bytes or 0),
+                    self._bytes_to_mib(record.load_total_after_bytes or 0),
+                )
+            else:
+                logger.debug(
+                    "[memory-debug] ITEM load telemetry unavailable module=%s device=%s",
+                    target_name,
+                    record.load_telemetry_device,
+                )
 
             logger.info(
                 "[memory] loaded %s to device=%s storage=%s compute=%s mem=%d",

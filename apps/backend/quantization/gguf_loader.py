@@ -12,6 +12,7 @@ Fails loud if CodexPack files contain raw quant tensors outside `__codexpack__.*
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_numpy_to_frozen_parameter` (function): Converts a NumPy tensor blob into a read-only `nn.Parameter` on the requested device.
+- `_bf16_numpy_to_frozen_parameter` (function): Converts GGUF BF16 payload bytes/words into a read-only `nn.Parameter` with logical shape and `torch.bfloat16` dtype.
 - `load_gguf_state_dict` (function): Loads a GGUF file into a PyTorch-style state dict (optionally dequantizing tensors) with optional target-device exposure.
 - `get_gguf_metadata` (function): Extracts GGUF metadata fields into a JSON-serializable dict.
 """
@@ -54,6 +55,38 @@ def _numpy_to_tensor_no_copy(data: np.ndarray) -> torch.Tensor:
 
 def _numpy_to_frozen_parameter(data: np.ndarray, *, target_device: torch.device) -> torch.nn.Parameter:
     tensor = _numpy_to_tensor_no_copy(data)
+    if target_device.type != "cpu":
+        tensor = tensor.to(device=target_device, non_blocking=True)
+    return torch.nn.Parameter(tensor, requires_grad=False)
+
+
+def _bf16_numpy_to_frozen_parameter(
+    data: np.ndarray,
+    *,
+    logical_shape: tuple[int, ...],
+    target_device: torch.device,
+) -> torch.nn.Parameter:
+    if not isinstance(data, np.ndarray):
+        raise TypeError(f"Expected numpy.ndarray, got {type(data)!r}")
+
+    flat = data.reshape(-1)
+    if flat.dtype == np.uint8:
+        if flat.size % 2 != 0:
+            raise RuntimeError(f"BF16 payload has odd byte count: {flat.size}")
+        bf16_words = flat.view(np.uint16)
+    elif flat.dtype == np.uint16:
+        bf16_words = flat
+    else:
+        raise RuntimeError(f"Unsupported BF16 payload dtype: {flat.dtype!r}")
+
+    tensor = _numpy_to_tensor_no_copy(bf16_words).view(torch.bfloat16)
+    expected_elems = int(np.prod(logical_shape, dtype=np.int64)) if len(logical_shape) > 0 else 1
+    if tensor.numel() != expected_elems:
+        raise RuntimeError(
+            "BF16 payload element-count mismatch: "
+            f"got={tensor.numel()} expected={expected_elems} shape={logical_shape}"
+        )
+    tensor = tensor.reshape(logical_shape)
     if target_device.type != "cpu":
         tensor = tensor.to(device=target_device, non_blocking=True)
     return torch.nn.Parameter(tensor, requires_grad=False)
@@ -204,6 +237,7 @@ def load_gguf_state_dict(
 
             if ggml_type in {
                 GGMLQuantizationType.F16,
+                GGMLQuantizationType.BF16,
                 GGMLQuantizationType.F32,
                 GGMLQuantizationType.F64,
                 GGMLQuantizationType.I8,
@@ -211,7 +245,14 @@ def load_gguf_state_dict(
                 GGMLQuantizationType.I32,
                 GGMLQuantizationType.I64,
             }:
-                state_dict[name] = _numpy_to_frozen_parameter(tensor.data, target_device=target_device)
+                if ggml_type == GGMLQuantizationType.BF16:
+                    state_dict[name] = _bf16_numpy_to_frozen_parameter(
+                        tensor.data,
+                        logical_shape=real_shape,
+                        target_device=target_device,
+                    )
+                else:
+                    state_dict[name] = _numpy_to_frozen_parameter(tensor.data, target_device=target_device)
                 continue
 
             # CodexPack is an optimized artifact; leaving raw quant tensors would silently reintroduce
@@ -239,6 +280,7 @@ def load_gguf_state_dict(
 
         if ggml_type in {
             GGMLQuantizationType.F16,
+            GGMLQuantizationType.BF16,
             GGMLQuantizationType.F32,
             GGMLQuantizationType.F64,
             GGMLQuantizationType.I8,
@@ -247,7 +289,14 @@ def load_gguf_state_dict(
             GGMLQuantizationType.I64,
         }:
             try:
-                state_dict[name] = _numpy_to_frozen_parameter(tensor.data, target_device=target_device)
+                if ggml_type == GGMLQuantizationType.BF16:
+                    state_dict[name] = _bf16_numpy_to_frozen_parameter(
+                        tensor.data,
+                        logical_shape=real_shape,
+                        target_device=target_device,
+                    )
+                else:
+                    state_dict[name] = _numpy_to_frozen_parameter(tensor.data, target_device=target_device)
             except Exception as exc:
                 raise RuntimeError(
                     f"GGUF tensor transfer failed for '{name}' to device={target_device}: {exc}"

@@ -73,9 +73,11 @@ class CodexLauncherApp(tk.Tk):
         self._show_advanced_controls = tk.BooleanVar(value=False)
 
         apply_style(self, self._palette)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
 
         self._notebook = ttk.Notebook(self)
-        self._notebook.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+        self._notebook.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 0))
 
         self._services_tab = ServicesTab(
             self._controller,
@@ -104,6 +106,7 @@ class CodexLauncherApp(tk.Tk):
             self._controller,
             mark_changed=self._mark_changed,
             run_checks_async=self._run_checks_async,
+            canvas_bg=self._palette.bg1,
         )
         self._logs_tab = LogsTab(
             self._controller,
@@ -176,7 +179,7 @@ class CodexLauncherApp(tk.Tk):
 
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self, style="Section.Toolbar.TFrame")
-        bar.pack(fill="x", padx=10, pady=10)
+        bar.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
         ttk.Button(bar, text="Save Settings", command=self._save).pack(side="left", padx=(0, 8))
         ttk.Button(bar, text="Revert", command=self._revert).pack(side="left", padx=(0, 8))
         ttk.Button(bar, text="Exit Without Saving", command=self._exit_no_save).pack(side="left")

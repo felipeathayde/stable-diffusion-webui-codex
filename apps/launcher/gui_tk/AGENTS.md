@@ -45,3 +45,5 @@ Last Review: 2026-02-23
 - 2026-02-23: Services button-state refresh now updates only on state transition (avoids hover flicker caused by repeated poll-time reconfigure).
 - 2026-02-23: Scrollable canvas border chrome removed (`widgets.py`) and dark scrollbar styling added (`styles.py`) to avoid legacy bright frame artifacts.
 - 2026-02-23: Runtime explanatory text now renders per-field via contextual `?` help buttons (`HelpMode.DIALOG`) instead of detached multi-line blocks.
+- 2026-02-23: Root app layout now uses `grid` (`notebook` row + fixed footer row) so the footer is preserved in reduced window sizes.
+- 2026-02-23: Diagnostics tab now renders inside `ScrollableFrame`, preventing advanced controls from clipping/forcing footer loss on small windows.

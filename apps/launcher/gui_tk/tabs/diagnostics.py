@@ -26,6 +26,7 @@ from apps.launcher.checks import CodexLaunchCheck
 from apps.launcher.settings import BoolSetting, ChoiceSetting, CFG_BATCH_MODE_CHOICES, IntSetting, SettingValidationError
 
 from ..controller import LauncherController
+from ..widgets import ScrollableFrame
 
 
 class DiagnosticsTab:
@@ -35,10 +36,12 @@ class DiagnosticsTab:
         *,
         mark_changed: Callable[[], None],
         run_checks_async: Callable[[], None],
+        canvas_bg: str,
     ) -> None:
         self._controller = controller
         self._mark_changed = mark_changed
         self._run_checks_async = run_checks_async
+        self._canvas_bg = str(canvas_bg)
 
         self.frame: ttk.Frame | None = None
 
@@ -60,9 +63,12 @@ class DiagnosticsTab:
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
-        frame.columnconfigure(0, weight=1)
+        scroll = ScrollableFrame(frame, canvas_bg=self._canvas_bg)
+        scroll.pack(fill="both", expand=True)
+        body = scroll.inner
+        body.columnconfigure(0, weight=1)
 
-        checks_box = ttk.LabelFrame(frame, text="  Environment Checks  ", padding=14)
+        checks_box = ttk.LabelFrame(body, text="  Environment Checks  ", padding=14)
         checks_box.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
         checks_box.columnconfigure(0, weight=1)
 
@@ -77,7 +83,7 @@ class DiagnosticsTab:
         ttk.Button(checks_box, text="↻ Re-run checks", command=self._run_checks_async).grid(row=1, column=0, sticky="e", pady=(10, 0))
         self._checks_tree = tree
 
-        diag = ttk.LabelFrame(frame, text="  Debug + Logging  ", padding=14)
+        diag = ttk.LabelFrame(body, text="  Debug + Logging  ", padding=14)
         diag.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
         diag.columnconfigure(0, weight=1)
         diag.columnconfigure(1, weight=1)

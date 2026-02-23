@@ -361,9 +361,45 @@ class RuntimeTab:
         raw_main = _get("CODEX_MAIN_DEVICE", "")
         if not raw_main:
             raw_main = _get("CODEX_CORE_DEVICE", "auto")
-        self._set_main_device_env(raw_main, mark_changed=False)
-        self._set_mount_device_env(_get("CODEX_MOUNT_DEVICE", raw_main), mark_changed=False)
-        self._set_offload_device_env(_get("CODEX_OFFLOAD_DEVICE", raw_main), mark_changed=False)
+        try:
+            main_device = ChoiceSetting(
+                "CODEX_MAIN_DEVICE",
+                default="auto",
+                choices=DEVICE_CHOICES,
+            ).parse(raw_main)
+        except SettingValidationError as exc:
+            main_device = "auto"
+            messagebox.showerror("Invalid runtime setting", str(exc))
+        env["CODEX_MAIN_DEVICE"] = main_device
+        env["CODEX_CORE_DEVICE"] = main_device
+        env["CODEX_TE_DEVICE"] = main_device
+        env["CODEX_VAE_DEVICE"] = main_device
+        self._var_main_device.set(main_device)
+
+        raw_mount = _get("CODEX_MOUNT_DEVICE", main_device)
+        raw_offload = _get("CODEX_OFFLOAD_DEVICE", main_device)
+        try:
+            mount_device = ChoiceSetting(
+                "CODEX_MOUNT_DEVICE",
+                default=main_device,
+                choices=DEVICE_CHOICES,
+            ).parse(raw_mount)
+        except SettingValidationError as exc:
+            mount_device = main_device
+            messagebox.showerror("Invalid runtime setting", str(exc))
+        try:
+            offload_device = ChoiceSetting(
+                "CODEX_OFFLOAD_DEVICE",
+                default=main_device,
+                choices=DEVICE_CHOICES,
+            ).parse(raw_offload)
+        except SettingValidationError as exc:
+            offload_device = main_device
+            messagebox.showerror("Invalid runtime setting", str(exc))
+        env["CODEX_MOUNT_DEVICE"] = mount_device
+        env["CODEX_OFFLOAD_DEVICE"] = offload_device
+        self._var_mount_device.set(mount_device)
+        self._var_offload_device.set(offload_device)
         try:
             attn_backend, attn_sdpa_policy = normalize_attention_env(env)
         except SettingValidationError as exc:

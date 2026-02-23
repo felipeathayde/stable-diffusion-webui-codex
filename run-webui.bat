@@ -27,7 +27,6 @@ if defined PYTHONPATH (
 if defined PYTORCH_CUDA_ALLOC_CONF (
     if not defined PYTORCH_ALLOC_CONF set "PYTORCH_ALLOC_CONF=%PYTORCH_CUDA_ALLOC_CONF%"
     set "PYTORCH_CUDA_ALLOC_CONF="
-    echo [webui] warning: PYTORCH_CUDA_ALLOC_CONF is deprecated; using PYTORCH_ALLOC_CONF.>&2
 )
 
 set "SCRIPT=%ROOT%apps\codex_launcher.py"

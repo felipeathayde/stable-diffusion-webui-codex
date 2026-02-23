@@ -14,6 +14,7 @@ task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap d
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
+- `_BOOTSTRAP_DEVICE_KEYS` (constant): Runtime-global launcher device keys that must stay scoped to `areas/core` (never model/non-core overlays).
 - `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_ALLOC_CONF` applied by launchers when unset.
 - `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_ALLOC_CONF` is unset.
 - `CODEX_CUDA_MALLOC_KEY` (constant): Env key toggling backend `--cuda-malloc` forwarding in launcher-managed runs.
@@ -52,6 +53,17 @@ LOGGER = logging.getLogger("codex.launcher.profiles")
 ENV_PREFIX_AREAS: Dict[str, str] = {
     "CODEX_": "core",
 }
+
+_BOOTSTRAP_DEVICE_KEYS: frozenset[str] = frozenset(
+    {
+        "CODEX_MAIN_DEVICE",
+        "CODEX_MOUNT_DEVICE",
+        "CODEX_OFFLOAD_DEVICE",
+        "CODEX_CORE_DEVICE",
+        "CODEX_TE_DEVICE",
+        "CODEX_VAE_DEVICE",
+    }
+)
 
 
 def _default_area_env() -> Dict[str, Dict[str, str]]:
@@ -184,7 +196,12 @@ class LauncherProfileStore:
         for mapping in self.areas.values():
             env.update(mapping)
         active_model = self.meta.active_model
-        env.update(self.models.get(active_model, {}))
+        model_overlay = self.models.get(active_model, {})
+        for key, value in model_overlay.items():
+            if key.startswith("CODEX_"):
+                # CODEX runtime/bootstrap knobs are area-scoped (core); never let model overlays override them.
+                continue
+            env[key] = value
         raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "1") or "").strip().lower()
         default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
         if default_alloc_enabled and not str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip():
@@ -234,7 +251,7 @@ class LauncherProfileStore:
     def _ensure_consistency(self) -> None:
         # Legacy migration: when old profiles only have component device keys,
         # seed CODEX_MAIN_DEVICE from core device before defaults are merged.
-        for container in list(self.areas.values()) + list(self.models.values()):
+        for container in list(self.areas.values()):
             raw_main = str(container.get("CODEX_MAIN_DEVICE", "") or "").strip().lower()
             if not raw_main:
                 legacy_core = str(container.get("CODEX_CORE_DEVICE", "") or "").strip().lower()
@@ -288,6 +305,18 @@ class LauncherProfileStore:
         for area_name, container in self.areas.items():
             if area_name == "core":
                 continue
+            removed_device_keys: list[str] = []
+            for key in _BOOTSTRAP_DEVICE_KEYS:
+                if key in container:
+                    container.pop(key, None)
+                    removed_device_keys.append(key)
+            if removed_device_keys:
+                LOGGER.warning(
+                    "Dropped non-core launcher device override(s) from area '%s': %s. "
+                    "Main/mount/offload/core/TE/VAE device keys are runtime-global in area 'core'.",
+                    area_name,
+                    ", ".join(sorted(removed_device_keys)),
+                )
             removed_keys: list[str] = []
             for key in ("CODEX_ATTENTION_BACKEND", "CODEX_ATTENTION_SDPA_POLICY"):
                 if key in container:
@@ -301,6 +330,18 @@ class LauncherProfileStore:
                     ", ".join(removed_keys),
                 )
         for model_name, container in self.models.items():
+            removed_device_keys: list[str] = []
+            for key in _BOOTSTRAP_DEVICE_KEYS:
+                if key in container:
+                    container.pop(key, None)
+                    removed_device_keys.append(key)
+            if removed_device_keys:
+                LOGGER.warning(
+                    "Dropped model-scoped launcher device override(s) for model '%s': %s. "
+                    "Main/mount/offload/core/TE/VAE device keys are runtime-global in area 'core'.",
+                    model_name,
+                    ", ".join(sorted(removed_device_keys)),
+                )
             removed_keys: list[str] = []
             for key in ("CODEX_ATTENTION_BACKEND", "CODEX_ATTENTION_SDPA_POLICY"):
                 if key in container:

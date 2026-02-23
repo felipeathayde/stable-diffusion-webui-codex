@@ -353,7 +353,6 @@ if [[ -n "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
     export PYTORCH_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF}"
   fi
   unset PYTORCH_CUDA_ALLOC_CONF
-  echo "[webui] warning: PYTORCH_CUDA_ALLOC_CONF is deprecated; using PYTORCH_ALLOC_CONF." >&2
 fi
 
 if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]] && is_truthy "${default_alloc_conf_enabled}"; then

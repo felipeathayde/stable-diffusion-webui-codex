@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
 - `GGUFConversionCancelled` (exception): Raised when a conversion is cancelled via a cooperative cancel signal.
 - `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
-- `_apply_float_group_overrides` (function): Applies profile-scoped FP16/FP32 group overrides to compiled dtype rules.
+- `_apply_float_group_overrides` (function): Applies profile-scoped F16/BF16/F32 group overrides to compiled dtype rules.
 - `convert_safetensors_to_gguf` (function): Main conversion entrypoint; reads SafeTensors (incl. sharded), quantizes tensors, writes GGUF,
   and optionally verifies the output (uses many helpers above).
 """
@@ -53,6 +53,7 @@ from apps.backend.runtime.tools.gguf_converter_types import (
     ConversionProgress,
     GGUFVerificationError,
     QuantizationType,
+    normalize_mixed_float_override,
 )
 
 logger = logging.getLogger("backend.runtime.tools.gguf_converter")
@@ -81,14 +82,16 @@ def _apply_float_group_overrides(
         raise ValueError(f"Profile {profile_id!r} does not define any float dtype groups")
 
     def _parse_choice(value: object) -> GGMLQuantizationType | None:
-        raw = str(value or "").strip().upper()
-        if raw in {"", "AUTO"}:
+        normalized = normalize_mixed_float_override(value)
+        if normalized == "auto":
             return None
-        if raw in {"F16", "FP16"}:
+        if normalized == "F16":
             return GGMLQuantizationType.F16
-        if raw in {"F32", "FP32"}:
+        if normalized == "BF16":
+            return GGMLQuantizationType.BF16
+        if normalized == "F32":
             return GGMLQuantizationType.F32
-        raise ValueError(f"Invalid float dtype selection: {value!r} (expected auto|F16|F32)")
+        raise RuntimeError(f"Unsupported normalized float dtype selection: {normalized!r}")
 
     for group_id, choice in overrides.items():
         gid = str(group_id).strip()
@@ -237,6 +240,13 @@ def convert_safetensors_to_gguf(
 
             # Stream-write tensors in the same order used for tensor-info offsets.
             chunk_rows = 1024
+
+            def _write_bf16_bytes(tensor: torch.Tensor) -> int:
+                bf16_tensor = tensor.to(torch.bfloat16).contiguous()
+                bf16_bits = bf16_tensor.view(torch.uint16).contiguous()
+                out.write(bf16_bits.numpy().tobytes(order="C"))
+                return int(bf16_bits.numel() * 2)
+
             for i, plan in enumerate(plans):
                 check_cancel()
                 progress.current_step = i + 1
@@ -289,9 +299,22 @@ def convert_safetensors_to_gguf(
                             out.write(t.numpy().tobytes(order="C"))
                             bytes_written += t.numel() * 4
 
+                    elif plan.ggml_type == GGMLQuantizationType.BF16:
+                        if len(shape) == 1:
+                            bytes_written += _write_bf16_bytes(sl[:])
+                        elif len(shape) == 2:
+                            rows = shape[0]
+                            for start in range(0, rows, chunk_rows):
+                                check_cancel()
+                                chunk = sl[start : min(rows, start + chunk_rows)]
+                                bytes_written += _write_bf16_bytes(chunk)
+                        else:
+                            t = sf.get_tensor(plan.src_name)
+                            bytes_written += _write_bf16_bytes(t)
+
                     else:
                         if len(shape) == 1:
-                            # By policy we keep 1D tensors in F16, so this would indicate a planning bug.
+                            # By policy we keep 1D tensors in float-like dtypes, so this indicates a planning bug.
                             raise RuntimeError(f"Unexpected quantized 1D tensor plan for {plan.src_name}: {shape}")
 
                         if len(shape) == 2:
@@ -343,6 +366,8 @@ def convert_safetensors_to_gguf(
                         swapped = swapped.to(torch.float16).contiguous()
                         out.write(swapped.numpy().tobytes(order="C"))
                         bytes_written += swapped.numel() * 2
+                    elif plan.ggml_type == GGMLQuantizationType.BF16:
+                        bytes_written += _write_bf16_bytes(swapped)
                     elif plan.ggml_type == GGMLQuantizationType.F32:
                         swapped = swapped.to(torch.float32).contiguous()
                         out.write(swapped.numpy().tobytes(order="C"))
@@ -408,6 +433,19 @@ def convert_safetensors_to_gguf(
                                     chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
                                     out.write(chunk.numpy().tobytes(order="C"))
                                     bytes_written += chunk.numel() * 2
+
+                    elif plan.ggml_type == GGMLQuantizationType.BF16:
+                        if rank == 1:
+                            for sl in slices:
+                                check_cancel()
+                                bytes_written += _write_bf16_bytes(sl[:])
+                        else:
+                            for sl, shape in zip(slices, shapes, strict=True):
+                                rows = int(shape[0])
+                                for start in range(0, rows, chunk_rows):
+                                    check_cancel()
+                                    chunk = sl[start : min(rows, start + chunk_rows)]
+                                    bytes_written += _write_bf16_bytes(chunk)
 
                     elif plan.ggml_type == GGMLQuantizationType.F32:
                         target_dtype = torch.float32

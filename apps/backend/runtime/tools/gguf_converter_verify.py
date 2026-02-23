@@ -104,6 +104,16 @@ def verify_gguf_file(
                 if gg != src:
                     raise GGUFVerificationError(f"Tensor data mismatch (F16) for {plan.gguf_name}")
 
+            elif plan.ggml_type == GGMLQuantizationType.BF16:
+                if len(src_shape) == 1:
+                    src_bits = src_slice[:4].to(torch.bfloat16).flatten().view(torch.uint16)
+                else:
+                    src_bits = src_slice[:1].to(torch.bfloat16).flatten()[:4].view(torch.uint16)
+                src = src_bits.numpy().tobytes(order="C")
+                gg = gguf_tensor.data.reshape(-1).view(np.uint8)[: len(src)].tobytes(order="C")
+                if gg != src:
+                    raise GGUFVerificationError(f"Tensor data mismatch (BF16) for {plan.gguf_name}")
+
             elif plan.ggml_type == GGMLQuantizationType.F32:
                 if len(src_shape) == 1:
                     src = src_slice[:4].to(torch.float32).flatten().numpy().tobytes(order="C")

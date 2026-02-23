@@ -243,6 +243,9 @@ def build_router(*, codex_root: Path) -> APIRouter:
             QuantizationType,
             convert_safetensors_to_gguf,
         )
+        from apps.backend.runtime.tools.gguf_converter_types import (
+            normalize_mixed_float_override,
+        )
 
         job_id = str(uuid.uuid4())[:8]
 
@@ -297,8 +300,12 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
         try:
             quant = QuantizationType(quant_str)
-        except ValueError:
-            quant = QuantizationType.F16
+        except ValueError as exc:
+            allowed = ", ".join(q.value for q in QuantizationType)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid quantization: {quant_str!r} (allowed: {allowed})",
+            ) from exc
 
         profile_id: str | None = None
         if profile_id_raw is not None:
@@ -311,19 +318,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        def _normalize_float_dtype_choice(value: Any) -> str:
-            raw = str(value or "").strip().upper()
-            if raw in {"", "AUTO"}:
-                return "auto"
-            if raw in {"F16", "FP16"}:
-                return "F16"
-            if raw in {"F32", "FP32"}:
-                return "F32"
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid float dtype selection: {value!r} (expected auto|F16|F32)",
-            )
-
         float_group_overrides: dict[str, str] = {}
         if float_group_overrides_raw is None:
             float_group_overrides = {}
@@ -332,7 +326,13 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 group_id = str(k or "").strip()
                 if not group_id:
                     raise HTTPException(status_code=400, detail="float_group_overrides contains an empty group id")
-                float_group_overrides[group_id] = _normalize_float_dtype_choice(v)
+                try:
+                    float_group_overrides[group_id] = normalize_mixed_float_override(v)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=str(exc),
+                    ) from exc
         else:
             raise HTTPException(status_code=400, detail="float_group_overrides must be an object/dict when provided")
 

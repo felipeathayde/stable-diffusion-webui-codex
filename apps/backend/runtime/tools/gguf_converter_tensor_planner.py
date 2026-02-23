@@ -84,8 +84,20 @@ def plan_tensors(
                 desired = rule.ggml_type
         ggml_type = select_tensor_ggml_type(raw_shape, desired)
 
+        if gguf_name in _ZIMAGE_PAD_TOKENS:
+            if ggml_type == GGMLQuantizationType.BF16:
+                raise RuntimeError(
+                    f"BF16 override is not supported for Z-Image pad token {gguf_name!r}; use F16/F32 or auto."
+                )
+            if ggml_type not in {GGMLQuantizationType.F16, GGMLQuantizationType.F32}:
+                ggml_type = GGMLQuantizationType.F16
+
         if ggml_type == GGMLQuantizationType.F16:
             stored_dtype = np.dtype(np.float16)
+            stored_shape = raw_shape
+            stored_nbytes = int(np.prod(raw_shape, dtype=np.int64) * 2)
+        elif ggml_type == GGMLQuantizationType.BF16:
+            stored_dtype = np.dtype(np.uint16)
             stored_shape = raw_shape
             stored_nbytes = int(np.prod(raw_shape, dtype=np.int64) * 2)
         elif ggml_type == GGMLQuantizationType.F32:
@@ -423,8 +435,13 @@ def _select_ggml_type(
 
     # Z-Image pad tokens are plain nn.Parameters; quantizing them produces packed-byte
     # shapes that can't be loaded via nn.Module.load_state_dict.
-    if gguf_name in _ZIMAGE_PAD_TOKENS and ggml_type not in {GGMLQuantizationType.F16, GGMLQuantizationType.F32}:
-        return GGMLQuantizationType.F16
+    if gguf_name in _ZIMAGE_PAD_TOKENS:
+        if ggml_type == GGMLQuantizationType.BF16:
+            raise RuntimeError(
+                f"BF16 override is not supported for Z-Image pad token {gguf_name!r}; use F16/F32 or auto."
+            )
+        if ggml_type not in {GGMLQuantizationType.F16, GGMLQuantizationType.F32}:
+            return GGMLQuantizationType.F16
 
     return ggml_type
 
@@ -449,6 +466,10 @@ def _build_plan(
 
     if ggml_type == GGMLQuantizationType.F16:
         stored_dtype = np.dtype(np.float16)
+        stored_shape = raw_shape
+        stored_nbytes = int(np.prod(raw_shape, dtype=np.int64) * 2)
+    elif ggml_type == GGMLQuantizationType.BF16:
+        stored_dtype = np.dtype(np.uint16)
         stored_shape = raw_shape
         stored_nbytes = int(np.prod(raw_shape, dtype=np.int64) * 2)
     elif ggml_type == GGMLQuantizationType.F32:

@@ -135,14 +135,14 @@ Symbols (top-level; keep in sync; no ghosts):
 		              ]"
 		              type="button"
 		              :disabled="isConverting"
-		              title="Mixed float dtype (cycles AUTO → FP16 → FP32)"
+		              title="Mixed float dtype (cycles AUTO → FP16 → BF16 → FP32)"
 		              @click="cycleMixedFloatDtype"
 		            >
 		              {{ mixedFloatDtypeLabel }}
 		            </button>
               </div>
 	            <p class="caption">
-	              Mixed enables mixed quant variants when available. Float dtype cycles AUTO/FP16/FP32.
+	              Mixed enables mixed quant variants when available. Float dtype cycles AUTO/FP16/BF16/FP32.
 	            </p>
 	          </div>
 
@@ -375,7 +375,7 @@ interface GGUFForm {
   safetensorsPath: string
   quantization: string
   mixed: boolean
-  mixedFloatDtype: 'auto' | 'F16' | 'F32'
+  mixedFloatDtype: 'auto' | 'F16' | 'BF16' | 'F32'
   outputDir: string
   overwrite: boolean
   comfyLayout: boolean
@@ -508,12 +508,13 @@ const mixedFloatDtypeLabel = computed(() => {
   const v = ggufForm.value.mixedFloatDtype
   if (v === 'auto') return 'AUTO'
   if (v === 'F16') return 'FP16'
+  if (v === 'BF16') return 'BF16'
   if (v === 'F32') return 'FP32'
   return String(v).toUpperCase()
 })
 
 function cycleMixedFloatDtype() {
-  const order: Array<'auto' | 'F16' | 'F32'> = ['auto', 'F16', 'F32']
+  const order: Array<'auto' | 'F16' | 'BF16' | 'F32'> = ['auto', 'F16', 'BF16', 'F32']
   const current = ggufForm.value.mixedFloatDtype
   const idx = order.indexOf(current)
   ggufForm.value.mixedFloatDtype = order[(idx + 1) % order.length]

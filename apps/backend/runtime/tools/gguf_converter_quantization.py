@@ -60,12 +60,12 @@ def select_tensor_ggml_type(shape: Sequence[int], requested: GGMLQuantizationTyp
     """Select the per-tensor GGML type.
 
     Behavior:
-    - If requested is F16/F32: apply to all tensors.
+    - If requested is F16/BF16/F32: apply to all tensors.
     - Otherwise: keep 1D tensors in F16 and only quantize tensors whose last dim
       is divisible by the block size.
     """
 
-    if requested in {GGMLQuantizationType.F16, GGMLQuantizationType.F32}:
+    if requested in {GGMLQuantizationType.F16, GGMLQuantizationType.BF16, GGMLQuantizationType.F32}:
         return requested
 
     # Common GGUF convention: keep 1D tensors in F16.

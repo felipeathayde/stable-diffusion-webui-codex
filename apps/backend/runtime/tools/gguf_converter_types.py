@@ -11,6 +11,8 @@ Defines the conversion config, quantization selector enum, progress tracking, an
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuantizationType` (enum): Supported “human” quantization selectors for conversion (maps to `GGMLQuantizationType`).
+- `MIXED_FLOAT_OVERRIDE_VALUES` (tuple): Canonical allowed literals for mixed float override values.
+- `normalize_mixed_float_override` (function): Normalizes and validates a mixed float override literal (`auto|F16|BF16|F32`).
 - `ConversionConfig` (dataclass): Conversion configuration (paths, profile selection, quantization, and dtype override knobs).
 - `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
 - `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
@@ -41,6 +43,26 @@ class QuantizationType(str, Enum):
     Q3_K = "Q3_K"
     Q2_K = "Q2_K"
     IQ4_NL = "IQ4_NL"
+
+
+MIXED_FLOAT_OVERRIDE_VALUES: tuple[str, str, str, str] = ("auto", "F16", "BF16", "F32")
+
+
+def normalize_mixed_float_override(value: object) -> str:
+    if value is None:
+        return "auto"
+    if not isinstance(value, str):
+        raise ValueError(
+            f"Invalid float dtype selection: {value!r} (expected {'|'.join(MIXED_FLOAT_OVERRIDE_VALUES)})"
+        )
+    raw = value.strip().upper()
+    if raw in {"", "AUTO"}:
+        return "auto"
+    if raw in {"F16", "BF16", "F32"}:
+        return raw
+    raise ValueError(
+        f"Invalid float dtype selection: {value!r} (expected {'|'.join(MIXED_FLOAT_OVERRIDE_VALUES)})"
+    )
 
 
 @dataclass(slots=True)
@@ -82,5 +104,7 @@ __all__ = [
     "ConversionConfig",
     "ConversionProgress",
     "GGUFVerificationError",
+    "MIXED_FLOAT_OVERRIDE_VALUES",
     "QuantizationType",
+    "normalize_mixed_float_override",
 ]

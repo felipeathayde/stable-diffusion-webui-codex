@@ -25,8 +25,9 @@ if defined PYTHONPATH (
 )
 
 if defined PYTORCH_CUDA_ALLOC_CONF (
-    if not defined PYTORCH_ALLOC_CONF set "PYTORCH_ALLOC_CONF=%PYTORCH_CUDA_ALLOC_CONF%"
-    set "PYTORCH_CUDA_ALLOC_CONF="
+    echo Error: legacy env var PYTORCH_CUDA_ALLOC_CONF is no longer supported.>&2
+    echo Use PYTORCH_ALLOC_CONF instead.>&2
+    exit /b 2
 )
 
 set "SCRIPT=%ROOT%apps\codex_launcher.py"

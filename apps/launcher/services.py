@@ -9,7 +9,9 @@ Required Notice: see NOTICE
 Purpose: Launcher service specs and process supervision (API + UI).
 Defines service specs/handles, spawns subprocesses with environment overrides, streams logs into a shared buffer, and performs strict port
 availability checks (IPv4/IPv6) before starting the API.
-Maps launcher env toggles to backend CLI flags, including main/mount/offload bootstrap device flags, with offload defaulting to CPU when unset, plus trace/profiler diagnostics toggles.
+Maps launcher env toggles to backend CLI flags, including main/mount/offload bootstrap device flags, with offload defaulting to CPU when unset,
+plus trace/profiler diagnostics toggles.
+When `CODEX_CUDA_MALLOC=1`, validates/ensures `PYTORCH_ALLOC_CONF` includes `backend:cudaMallocAsync` before spawning the API process.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ServiceStatus` (enum): Launcher service lifecycle status.
@@ -18,6 +20,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
 - `_env_truthy` (function): Normalizes launcher env booleans (`1/true/yes/on`) for CLI flag forwarding.
+- `_parse_pytorch_alloc_conf` (function): Parses `PYTORCH_ALLOC_CONF` entries into strict `key:value` pairs.
+- `_ensure_cuda_malloc_async_allocator_env` (function): Enforces allocator backend `cudaMallocAsync` when `CODEX_CUDA_MALLOC=1`.
 - `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles; offload defaults to CPU when unset).
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
@@ -40,7 +44,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Dict, Iterator, List, Mapping, Optional
+from typing import Dict, Iterator, List, Mapping, MutableMapping, Optional
 
 from .log_buffer import CodexLogBuffer
 from .settings import DEVICE_CHOICES
@@ -101,6 +105,8 @@ class CodexServiceHandle:
 
         command = list(self.spec.command)
         if self.spec.name.upper() == "API":
+            if _env_truthy(env.get("CODEX_CUDA_MALLOC")):
+                _ensure_cuda_malloc_async_allocator_env(env)
             command.extend(_api_backend_args_from_env(env))
             port = _extract_cli_port(command)
             if port is None:
@@ -382,6 +388,63 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
 def _env_truthy(value: object) -> bool:
     normalized = str(value or "").strip().lower()
     return normalized in {"1", "true", "yes", "on"}
+
+
+def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for raw_entry in str(raw_conf or "").split(","):
+        token = raw_entry.strip()
+        if not token:
+            continue
+        if ":" not in token:
+            raise ValueError(
+                "Invalid PYTORCH_ALLOC_CONF entry "
+                f"{token!r}: expected 'key:value' format."
+            )
+        key, value = token.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            raise ValueError(
+                "Invalid PYTORCH_ALLOC_CONF entry "
+                f"{token!r}: expected non-empty 'key:value' parts."
+            )
+        entries.append((key, value))
+    return entries
+
+
+def _ensure_cuda_malloc_async_allocator_env(env: MutableMapping[str, str]) -> None:
+    target_backend = "cudaMallocAsync"
+    target_backend_norm = target_backend.lower()
+    raw_alloc_conf = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
+    if not raw_alloc_conf:
+        env["PYTORCH_ALLOC_CONF"] = f"backend:{target_backend}"
+        return
+
+    entries = _parse_pytorch_alloc_conf(raw_alloc_conf)
+    backend_index: int | None = None
+    for index, (key, _value) in enumerate(entries):
+        if key.strip().lower() == "backend":
+            if backend_index is not None:
+                raise ValueError(
+                    "Invalid PYTORCH_ALLOC_CONF: multiple 'backend' entries found. "
+                    "Use exactly one backend directive."
+                )
+            backend_index = index
+
+    if backend_index is None:
+        entries.append(("backend", target_backend))
+        env["PYTORCH_ALLOC_CONF"] = ",".join(f"{key}:{value}" for key, value in entries)
+        return
+
+    configured_backend = entries[backend_index][1]
+    if configured_backend.replace(" ", "").lower() != target_backend_norm:
+        raise ValueError(
+            "CODEX_CUDA_MALLOC=1 requires PYTORCH_ALLOC_CONF backend:cudaMallocAsync, "
+            f"but found backend:{configured_backend}. "
+            "Set PYTORCH_ALLOC_CONF with backend:cudaMallocAsync or disable CODEX_CUDA_MALLOC."
+        )
+    env["PYTORCH_ALLOC_CONF"] = ",".join(f"{key}:{value}" for key, value in entries)
 
 
 def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:

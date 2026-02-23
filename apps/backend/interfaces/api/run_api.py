@@ -13,6 +13,7 @@ Bootstrap env overrides are published only when non-default to avoid pinning glo
 Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`, `CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) from resolved runtime namespace values.
 Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid reliability-critical values (including `codex_attention_backend` and checkbox settings).
 Launcher/backend trace toggles (`--trace-contract`, `--trace-profiler`) are published via bootstrap env for runtime diagnostics modules.
+Startup bootstrap logs allocator diagnostics (`PYTORCH_ALLOC_CONF`, resolved allocator backend, and `--cuda-malloc` flag state) for fail-loud VRAM debugging.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
@@ -522,11 +523,54 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
     global _RUNTIME_NAMESPACE
     if _RUNTIME_NAMESPACE is not None:
         return _RUNTIME_NAMESPACE
+
+    def _allocator_backend(raw_alloc_conf: str) -> str | None:
+        backend: str | None = None
+        for raw_entry in str(raw_alloc_conf or "").split(","):
+            token = raw_entry.strip()
+            if not token:
+                continue
+            if ":" not in token:
+                raise RuntimeError(
+                    "Invalid PYTORCH_ALLOC_CONF entry "
+                    f"{token!r}: expected 'key:value' format."
+                )
+            key, value = token.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if not key or not value:
+                raise RuntimeError(
+                    "Invalid PYTORCH_ALLOC_CONF entry "
+                    f"{token!r}: expected non-empty 'key:value' parts."
+                )
+            if key == "backend":
+                if backend is not None:
+                    raise RuntimeError(
+                        "Invalid PYTORCH_ALLOC_CONF: multiple 'backend' entries found. "
+                        "Use exactly one backend directive."
+                    )
+                backend = value
+        return backend
+
+    raw_alloc_conf = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
+    raw_legacy_alloc_conf = str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
+    if raw_legacy_alloc_conf:
+        _LOG.warning(
+            "startup: legacy PYTORCH_CUDA_ALLOC_CONF is set for this process; "
+            "prefer PYTORCH_ALLOC_CONF."
+        )
     ns, runtime_config = config_args.initialize(
         argv=argv,
         env=env,
         settings=settings,
         strict=True,
+    )
+    allocator_backend = _allocator_backend(raw_alloc_conf)
+    _LOG.info(
+        "startup: PYTORCH_ALLOC_CONF=%s (backend=%s, cuda_malloc_flag=%s)",
+        raw_alloc_conf or "<unset>",
+        allocator_backend or "<default>",
+        bool(getattr(ns, "cuda_malloc", False)),
     )
     # Publish resolved bootstrap values (after CLI/env/settings precedence) without mutating os.environ.
     try:

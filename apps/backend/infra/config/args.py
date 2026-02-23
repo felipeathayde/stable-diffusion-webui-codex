@@ -22,6 +22,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_has_value` (function): Checks whether a parsed CLI option has a meaningful value (vs unset/default).
 - `_apply_source_overrides` (function): Applies overrides from a source mapping onto the argparse namespace.
 - `_validate_runtime_flags` (function): Validates behavior-changing runtime flag combinations (GGUF exec modes, online LoRA math).
+- `_parse_pytorch_alloc_conf` (function): Parses `PYTORCH_ALLOC_CONF` entries into validated `key:value` pairs.
+- `_allocator_backend_from_env` (function): Extracts and validates allocator backend from `PYTORCH_ALLOC_CONF`.
 - `_validate_required_devices` (function): Ensures resolved device values obey the main-device invariant.
 - `_normalize_device_choice` (function): Normalizes device choice strings (e.g., cpu/cuda/directml) into canonical form.
 - `_device_backend_for_choice` (function): Maps normalized device choices into `DeviceBackend` values.
@@ -497,7 +499,46 @@ def _apply_source_overrides(
     _ = env_map  # env_map only carries debug/log vars now (settings are payload/options-driven)
 
 
-def _validate_runtime_flags(ns: argparse.Namespace) -> None:
+def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for raw_entry in str(raw_conf or "").split(","):
+        token = raw_entry.strip()
+        if not token:
+            continue
+        if ":" not in token:
+            raise RuntimeError(
+                "Invalid PYTORCH_ALLOC_CONF entry "
+                f"{token!r}: expected 'key:value' format."
+            )
+        key, value = token.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            raise RuntimeError(
+                "Invalid PYTORCH_ALLOC_CONF entry "
+                f"{token!r}: expected non-empty 'key:value' parts."
+            )
+        entries.append((key, value))
+    return entries
+
+
+def _allocator_backend_from_env(env: Mapping[str, str]) -> str | None:
+    raw_conf = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
+    if not raw_conf:
+        return None
+    backend: str | None = None
+    for key, value in _parse_pytorch_alloc_conf(raw_conf):
+        if key.lower() == "backend":
+            if backend is not None:
+                raise RuntimeError(
+                    "Invalid PYTORCH_ALLOC_CONF: multiple 'backend' entries found. "
+                    "Use exactly one backend directive."
+                )
+            backend = value
+    return backend
+
+
+def _validate_runtime_flags(ns: argparse.Namespace, env: Mapping[str, str]) -> None:
     gguf_exec = str(getattr(ns, "gguf_exec", DEFAULT_GGUF_EXEC_MODE.value))
     gguf_dequant_cache = str(getattr(ns, "gguf_dequant_cache", "off") or "off").strip().lower()
     gguf_dequant_cache_limit_mb = getattr(ns, "gguf_dequant_cache_limit_mb", None)
@@ -534,6 +575,19 @@ def _validate_runtime_flags(ns: argparse.Namespace) -> None:
         raise RuntimeError(
             "--gguf-dequant-cache-ratio is no longer supported because GGUF dequant-forward run cache was removed."
         )
+
+    if getattr(ns, "cuda_malloc", False):
+        allocator_backend = _allocator_backend_from_env(env)
+        if allocator_backend is None:
+            raise RuntimeError(
+                "--cuda-malloc requires PYTORCH_ALLOC_CONF to include "
+                "'backend:cudaMallocAsync'."
+            )
+        if allocator_backend.replace(" ", "").lower() != "cudamallocasync":
+            raise RuntimeError(
+                "--cuda-malloc requires PYTORCH_ALLOC_CONF backend:cudaMallocAsync, "
+                f"but found backend:{allocator_backend}."
+            )
 
     attn_backend = _resolve_attention_backend(ns)
     _resolve_attention_sdpa_policy(ns, backend=attn_backend)
@@ -1194,7 +1248,7 @@ def initialize(
         namespace.lora_refresh_signature = DEFAULT_LORA_REFRESH_SIGNATURE_MODE.value
 
     if strict:
-        _validate_runtime_flags(namespace)
+        _validate_runtime_flags(namespace, env_map)
         _validate_required_devices(namespace)
     config = build_runtime_memory_config(namespace)
 

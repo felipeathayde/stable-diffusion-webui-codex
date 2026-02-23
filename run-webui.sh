@@ -30,7 +30,7 @@ Launcher args:
   - '--enable-default-pytorch-cuda-alloc-conf' / '--disable-default-pytorch-cuda-alloc-conf':
       toggles default allocator tuning when 'PYTORCH_ALLOC_CONF' is unset.
   - '--enable-cuda-malloc' / '--disable-cuda-malloc':
-      toggles backend '--cuda-malloc' forwarding (cudaMallocAsync backend).
+      toggles backend '--cuda-malloc' forwarding and enforces allocator backend `backend:cudaMallocAsync`.
 
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
@@ -152,6 +152,60 @@ is_truthy() {
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+ensure_cuda_malloc_allocator_backend() {
+  local target_backend="cudaMallocAsync"
+  local target_backend_norm="cudamallocasync"
+  local raw_conf="${PYTORCH_ALLOC_CONF:-}"
+  local trimmed_conf
+  trimmed_conf="$(echo "${raw_conf}" | xargs)"
+  if [[ -z "${trimmed_conf}" ]]; then
+    export PYTORCH_ALLOC_CONF="backend:${target_backend}"
+    return 0
+  fi
+
+  local has_backend=0
+  local entry token key value value_norm
+  local -a entries=()
+  local -a normalized_entries=()
+  IFS=',' read -r -a entries <<<"${trimmed_conf}"
+  for entry in "${entries[@]}"; do
+    token="$(echo "${entry}" | xargs)"
+    if [[ -z "${token}" ]]; then
+      continue
+    fi
+    if [[ "${token}" != *:* ]]; then
+      echo "[webui] Error: invalid PYTORCH_ALLOC_CONF entry '${token}' (expected key:value)." >&2
+      exit 2
+    fi
+    key="${token%%:*}"
+    value="${token#*:}"
+    key="$(echo "${key}" | xargs)"
+    value="$(echo "${value}" | xargs)"
+    if [[ -z "${key}" || -z "${value}" ]]; then
+      echo "[webui] Error: invalid PYTORCH_ALLOC_CONF entry '${token}' (expected non-empty key:value)." >&2
+      exit 2
+    fi
+    normalized_entries+=("${key}:${value}")
+    if [[ "$(echo "${key}" | tr '[:upper:]' '[:lower:]')" == "backend" ]]; then
+      if (( has_backend == 1 )); then
+        echo "[webui] Error: invalid PYTORCH_ALLOC_CONF (multiple backend entries)." >&2
+        exit 2
+      fi
+      has_backend=1
+      value_norm="$(echo "${value}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+      if [[ "${value_norm}" != "${target_backend_norm}" ]]; then
+        echo "[webui] Error: CODEX_CUDA_MALLOC/--cuda-malloc requires backend:cudaMallocAsync in PYTORCH_ALLOC_CONF, got backend:${value}." >&2
+        exit 2
+      fi
+    fi
+  done
+
+  if (( has_backend == 0 )); then
+    normalized_entries+=("backend:${target_backend}")
+  fi
+  export PYTORCH_ALLOC_CONF="$(IFS=,; echo "${normalized_entries[*]}")"
 }
 
 normalize_device_choice() {
@@ -349,18 +403,28 @@ fi
 
 default_alloc_conf_enabled="${CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF:-1}"
 if [[ -n "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
-  if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]]; then
-    export PYTORCH_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF}"
-  fi
-  unset PYTORCH_CUDA_ALLOC_CONF
+  echo "[webui] Error: legacy env var PYTORCH_CUDA_ALLOC_CONF is no longer supported." >&2
+  echo "[webui] Use PYTORCH_ALLOC_CONF instead." >&2
+  exit 2
 fi
 
 if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]] && is_truthy "${default_alloc_conf_enabled}"; then
   export PYTORCH_ALLOC_CONF="${DEFAULT_PYTORCH_ALLOC_CONF}"
 fi
 
-if is_truthy "${CODEX_CUDA_MALLOC:-0}" && ! has_backend_flag "--cuda-malloc" "$@"; then
-  set -- "--cuda-malloc" "$@"
+cuda_malloc_requested=0
+if has_backend_flag "--cuda-malloc" "$@"; then
+  cuda_malloc_requested=1
+fi
+if is_truthy "${CODEX_CUDA_MALLOC:-0}"; then
+  cuda_malloc_requested=1
+  if ! has_backend_flag "--cuda-malloc" "$@"; then
+    set -- "--cuda-malloc" "$@"
+  fi
+fi
+
+if (( cuda_malloc_requested == 1 )); then
+  ensure_cuda_malloc_allocator_backend
 fi
 
 is_uint() {

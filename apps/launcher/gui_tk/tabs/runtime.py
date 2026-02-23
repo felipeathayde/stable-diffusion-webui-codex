@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Runtime settings tab for the Tk launcher.
 Edits bootstrap-critical main-device defaults and global runtime/task knobs that must exist before the API starts (main/mount/offload devices, GGUF/LoRA, task single-flight,
 task cancel default mode, task SSE buffer caps, upscaler safeweights). Offload device defaults to CPU on missing/invalid values to preserve explicit de-residency semantics.
+Allocator defaults are managed through `PYTORCH_ALLOC_CONF` and `CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + GGUF/LoRA + `PYTORCH_ALLOC_CONF`/cuda-malloc toggles).
@@ -22,8 +23,8 @@ from typing import Callable, List
 
 from apps.launcher.profiles import (
     CODEX_CUDA_MALLOC_KEY,
-    DEFAULT_PYTORCH_CUDA_ALLOC_CONF,
-    ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
+    DEFAULT_PYTORCH_ALLOC_CONF,
+    ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
 )
 from apps.launcher.settings import (
     BoolSetting,
@@ -256,8 +257,8 @@ class RuntimeTab:
             body,
             row,
             "Env var: PYTORCH_ALLOC_CONF\n"
-            f"Default value: {DEFAULT_PYTORCH_CUDA_ALLOC_CONF}\n"
-            f"Default toggle env: {ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY}",
+            f"Default value: {DEFAULT_PYTORCH_ALLOC_CONF}\n"
+            f"Default toggle env: {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY}",
         )
         row = self._add_check(
             body,
@@ -400,10 +401,10 @@ class RuntimeTab:
         self._var_wan_chunk_buffer_mode.set(_get("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"))
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
         try:
-            default_alloc_enabled = BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True).get(env)
+            default_alloc_enabled = BoolSetting(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, default=True).get(env)
         except SettingValidationError:
             default_alloc_enabled = True
-            BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True).set(env, default_alloc_enabled)
+            BoolSetting(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, default=True).set(env, default_alloc_enabled)
         self._var_default_alloc_conf_enabled.set(bool(default_alloc_enabled))
 
         try:
@@ -415,7 +416,7 @@ class RuntimeTab:
 
         alloc = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
         if not alloc and default_alloc_enabled:
-            alloc = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
+            alloc = DEFAULT_PYTORCH_ALLOC_CONF
         self._var_pytorch_alloc_conf.set(alloc)
 
         try:
@@ -656,13 +657,13 @@ class RuntimeTab:
         env = self._controller.store.env
         enabled = bool(self._var_default_alloc_conf_enabled.get())
         BoolSetting(
-            ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
+            ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
             default=True,
         ).set(env, enabled)
         if not enabled and "PYTORCH_ALLOC_CONF" not in env:
             self._var_pytorch_alloc_conf.set("")
         if enabled and "PYTORCH_ALLOC_CONF" not in env and not str(self._var_pytorch_alloc_conf.get() or "").strip():
-            self._var_pytorch_alloc_conf.set(DEFAULT_PYTORCH_CUDA_ALLOC_CONF)
+            self._var_pytorch_alloc_conf.set(DEFAULT_PYTORCH_ALLOC_CONF)
         self._mark_changed()
 
     def _on_cuda_malloc_changed(self) -> None:

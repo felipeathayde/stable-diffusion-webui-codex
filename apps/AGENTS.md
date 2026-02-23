@@ -25,8 +25,8 @@ Status: Active
 - 2025-11-03: Launcher runtime settings (device/dtype/attention/cache/offload) are configured via Web UI; launchers no longer write CODEX_* device/dtype/attention/cache/offload env vars.
 - 2026-01-20: Launchers can set `CODEX_LORA_APPLY_MODE` (merge|online) to control whether native LoRA selections are merged into weights (default) or applied on-the-fly; backend CLI also supports `--lora-apply-mode`.
 - 2026-01-23: Launcher now exposes GGUF exec and online LoRA math settings and forwards them to the backend as CLI flags (`--gguf-exec`, `--lora-online-math`).
-- 2026-01-21: Launchers can set `PYTORCH_CUDA_ALLOC_CONF` to tune the PyTorch CUDA caching allocator (e.g. reduce fragmentation via `max_split_size_mb`).
-- 2026-01-21: Launcher default for `PYTORCH_CUDA_ALLOC_CONF` is `max_split_size_mb:256,garbage_collection_threshold:0.8` (override via GUI or `./run-webui.sh --pytorch-cuda-alloc-conf ...`).
+- 2026-01-21: Launchers can set `PYTORCH_ALLOC_CONF` to tune the PyTorch CUDA caching allocator (e.g. reduce fragmentation via `max_split_size_mb`).
+- 2026-01-21: Launcher default for `PYTORCH_ALLOC_CONF` is `max_split_size_mb:256,garbage_collection_threshold:0.8` (override via GUI or `./run-webui.sh --pytorch-alloc-conf ...`).
 - 2025-11-03: Launcher UI exposes "Conditioning Debug" toggle, wiring to `CODEX_DEBUG_COND` and the backend `--debug-conditioning` flag.
 - 2025-11-03: (Deprecated) "Pin Shared Memory" launcher toggle removed; `--pin-shared-memory` remains a CLI-only switch (no env overrides).
 - 2025-11-03: Logging tab now includes a "Trace Debug" toggle that sets `CODEX_TRACE_DEBUG=1`, enabling the global call tracer behind `--trace-debug`.

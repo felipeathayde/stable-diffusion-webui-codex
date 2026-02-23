@@ -14,6 +14,7 @@ Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`
 Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid reliability-critical values (including `codex_attention_backend` and checkbox settings).
 Launcher/backend trace toggles (`--trace-contract`, `--trace-profiler`) are published via bootstrap env for runtime diagnostics modules.
 Startup bootstrap logs allocator diagnostics (`PYTORCH_ALLOC_CONF`, resolved allocator backend, and `--cuda-malloc` flag state) for fail-loud VRAM debugging.
+Allocator bootstrap contract is `PYTORCH_ALLOC_CONF` only.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
@@ -553,12 +554,6 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         return backend
 
     raw_alloc_conf = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
-    raw_legacy_alloc_conf = str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
-    if raw_legacy_alloc_conf:
-        _LOG.warning(
-            "startup: legacy PYTORCH_CUDA_ALLOC_CONF is set for this process; "
-            "prefer PYTORCH_ALLOC_CONF."
-        )
     ns, runtime_config = config_args.initialize(
         argv=argv,
         env=env,

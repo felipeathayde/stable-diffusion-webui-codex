@@ -24,12 +24,6 @@ if defined PYTHONPATH (
     set "PYTHONPATH=%ROOT%"
 )
 
-if defined PYTORCH_CUDA_ALLOC_CONF (
-    echo Warning: ignoring legacy env var PYTORCH_CUDA_ALLOC_CONF (value: "%PYTORCH_CUDA_ALLOC_CONF%").>&2
-    echo Warning: keeping only PYTORCH_ALLOC_CONF for allocator configuration.>&2
-    set "PYTORCH_CUDA_ALLOC_CONF="
-)
-
 set "SCRIPT=%ROOT%apps\codex_launcher.py"
 set "CODEX_ROOT=%ROOT%"
 

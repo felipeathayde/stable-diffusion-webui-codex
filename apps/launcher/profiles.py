@@ -15,8 +15,8 @@ task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap d
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs; default offload target is CPU).
 - `_BOOTSTRAP_DEVICE_KEYS` (constant): Runtime-global launcher device keys that must stay scoped to `areas/core` (never model/non-core overlays).
-- `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_ALLOC_CONF` applied by launchers when unset.
-- `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_ALLOC_CONF` is unset.
+- `DEFAULT_PYTORCH_ALLOC_CONF` (constant): Default `PYTORCH_ALLOC_CONF` applied by launchers when unset.
+- `ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_ALLOC_CONF` is unset.
 - `CODEX_CUDA_MALLOC_KEY` (constant): Env key toggling backend `--cuda-malloc` forwarding in launcher-managed runs.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
@@ -96,15 +96,15 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE": os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"),
         "CODEX_LORA_APPLY_MODE": "merge",
         "CODEX_LORA_ONLINE_MATH": "weight_merge",
-        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY: "1",
+        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY: "1",
         CODEX_CUDA_MALLOC_KEY: "0",
     }
     return {"core": core}
 
 
 DEFAULT_MODEL_NAME = "default"
-DEFAULT_PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
-ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
+DEFAULT_PYTORCH_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
+ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF"
 CODEX_CUDA_MALLOC_KEY = "CODEX_CUDA_MALLOC"
 
 
@@ -182,7 +182,10 @@ class LauncherProfileStore:
         areas = _load_areas(root)
         models = _load_models(root)
         store = cls(root=root, meta=meta, areas=areas, models=models)
-        store._ensure_consistency()
+        changed = store._ensure_consistency()
+        if changed:
+            LOGGER.warning("Launcher profile sanitized at load; persisting normalized env maps to %s", root)
+            store.save()
         return store
 
     @property
@@ -202,10 +205,10 @@ class LauncherProfileStore:
                 # CODEX runtime/bootstrap knobs are area-scoped (core); never let model overlays override them.
                 continue
             env[key] = value
-        raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "1") or "").strip().lower()
+        raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "1") or "").strip().lower()
         default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
         if default_alloc_enabled and not str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip():
-            env["PYTORCH_ALLOC_CONF"] = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
+            env["PYTORCH_ALLOC_CONF"] = DEFAULT_PYTORCH_ALLOC_CONF
         return env
 
     def lookup_env(self, key: str) -> str | None:
@@ -248,7 +251,8 @@ class LauncherProfileStore:
 
     # ------------------------------------------------------------------ internal
 
-    def _ensure_consistency(self) -> None:
+    def _ensure_consistency(self) -> bool:
+        changed = False
         # Legacy migration: when old profiles only have component device keys,
         # seed CODEX_MAIN_DEVICE from core device before defaults are merged.
         for container in list(self.areas.values()):
@@ -257,31 +261,60 @@ class LauncherProfileStore:
                 legacy_core = str(container.get("CODEX_CORE_DEVICE", "") or "").strip().lower()
                 if legacy_core:
                     container["CODEX_MAIN_DEVICE"] = legacy_core
+                    changed = True
                     raw_main = legacy_core
             if raw_main:
                 if not str(container.get("CODEX_MOUNT_DEVICE", "") or "").strip().lower():
                     container["CODEX_MOUNT_DEVICE"] = raw_main
+                    changed = True
                 if not str(container.get("CODEX_OFFLOAD_DEVICE", "") or "").strip().lower():
                     container["CODEX_OFFLOAD_DEVICE"] = "cpu"
+                    changed = True
 
         defaults = _default_area_env()
         for area, values in defaults.items():
+            if area not in self.areas:
+                changed = True
             current = self.areas.setdefault(area, {})
             for key, default in values.items():
-                current.setdefault(key, default)
+                if key not in current:
+                    current[key] = default
+                    changed = True
         if self.meta.active_model not in self.models:
             self.models[self.meta.active_model] = {}
+            changed = True
 
         # Drop legacy env knobs (WAN_* and CODEX_* runtime settings).
         # Keep bootstrap-critical device defaults (CODEX_*_DEVICE) in launcher env so
         # the API can start in non-interactive spawns without prompting/fallbacks.
         for container in list(self.areas.values()) + list(self.models.values()):
-            legacy_alloc_conf = str(container.pop("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
-            if legacy_alloc_conf and not str(container.get("PYTORCH_ALLOC_CONF", "") or "").strip():
-                container["PYTORCH_ALLOC_CONF"] = legacy_alloc_conf
             for key in list(container.keys()):
+                if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_ALLOC_CONF":
+                    container.pop(key, None)
+                    changed = True
+                    LOGGER.warning(
+                        "Dropped unsupported launcher allocator key from persisted profile: %s "
+                        "(use PYTORCH_ALLOC_CONF).",
+                        key,
+                    )
+                    continue
+                if (
+                    key.startswith("CODEX_ENABLE_DEFAULT_PYTORCH_")
+                    and key.endswith("_ALLOC_CONF")
+                    and key != ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY
+                ):
+                    container.pop(key, None)
+                    changed = True
+                    LOGGER.warning(
+                        "Dropped unsupported launcher allocator toggle key from persisted profile: %s "
+                        "(use %s).",
+                        key,
+                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                    )
+                    continue
                 if key.startswith("WAN_"):
                     container.pop(key, None)
+                    changed = True
                 if key in {
                     "CODEX_ATTN_CHUNK_SIZE",
                     "CODEX_GGUF_CACHE_POLICY",
@@ -297,6 +330,7 @@ class LauncherProfileStore:
                     "CODEX_PIN_SHARED_MEMORY",
                 }:
                     container.pop(key, None)
+                    changed = True
         core_env = self.areas.setdefault("core", {})
         try:
             normalize_attention_env(core_env)
@@ -310,6 +344,7 @@ class LauncherProfileStore:
                 if key in container:
                     container.pop(key, None)
                     removed_device_keys.append(key)
+                    changed = True
             if removed_device_keys:
                 LOGGER.warning(
                     "Dropped non-core launcher device override(s) from area '%s': %s. "
@@ -322,6 +357,7 @@ class LauncherProfileStore:
                 if key in container:
                     container.pop(key, None)
                     removed_keys.append(key)
+                    changed = True
             if removed_keys:
                 LOGGER.warning(
                     "Dropped non-core launcher attention override(s) from area '%s': %s. "
@@ -335,6 +371,7 @@ class LauncherProfileStore:
                 if key in container:
                     container.pop(key, None)
                     removed_device_keys.append(key)
+                    changed = True
             if removed_device_keys:
                 LOGGER.warning(
                     "Dropped model-scoped launcher device override(s) for model '%s': %s. "
@@ -347,6 +384,7 @@ class LauncherProfileStore:
                 if key in container:
                     container.pop(key, None)
                     removed_keys.append(key)
+                    changed = True
             if removed_keys:
                 LOGGER.warning(
                     "Dropped model-scoped launcher attention override(s) for model '%s': %s. "
@@ -354,8 +392,10 @@ class LauncherProfileStore:
                     model_name,
                     ", ".join(removed_keys),
                 )
-        self.areas.pop("wan", None)
+        if self.areas.pop("wan", None) is not None:
+            changed = True
         # Device/dtype bootstrap settings live in launcher env and are forwarded as API CLI flags.
+        return changed
 
 def _default_root() -> Path:
     return get_repo_root() / ".sangoi" / "launcher"
@@ -429,6 +469,11 @@ def _load_models(root: Path) -> Dict[str, Dict[str, str]]:
 
 def _write_env_maps(base_dir: Path, mapping: Dict[str, Dict[str, str]]) -> None:
     base_dir.mkdir(parents=True, exist_ok=True)
+    expected_files = {f"{name}.json" for name in mapping}
+    for path in base_dir.glob("*.json"):
+        if path.name in expected_files:
+            continue
+        path.unlink(missing_ok=True)
     for name, env in mapping.items():
         out_path = base_dir / f"{name}.json"
         out_path.write_text(json.dumps(_stringify_dict(env), indent=2, sort_keys=True))
@@ -450,9 +495,6 @@ def _read_env_file(path: Path, defaults: Dict[str, str] | None = None) -> Dict[s
     result: Dict[str, str] = {}
     for key, value in data.items():
         result[str(key)] = str(value)
-    if defaults:
-        for key, value in defaults.items():
-            result.setdefault(key, value)
     return result
 
 

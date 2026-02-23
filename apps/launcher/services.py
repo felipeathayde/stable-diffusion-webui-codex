@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
 - `_env_truthy` (function): Normalizes launcher env booleans (`1/true/yes/on`) for CLI flag forwarding.
+- `_sanitize_allocator_env_contract` (function): Removes unsupported allocator env keys before subprocess spawn (contract keys only: `PYTORCH_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF`).
 - `_parse_pytorch_alloc_conf` (function): Parses `PYTORCH_ALLOC_CONF` entries into strict `key:value` pairs.
 - `_ensure_cuda_malloc_async_allocator_env` (function): Enforces allocator backend `cudaMallocAsync` when `CODEX_CUDA_MALLOC=1`.
 - `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles; offload defaults to CPU when unset).
@@ -102,6 +103,7 @@ class CodexServiceHandle:
         env = os.environ.copy()
         env.update(self.spec.base_env)
         env.update(overrides_map)
+        _sanitize_allocator_env_contract(env, scope_label=self.spec.name)
 
         command = list(self.spec.command)
         if self.spec.name.upper() == "API":
@@ -388,6 +390,31 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
 def _env_truthy(value: object) -> bool:
     normalized = str(value or "").strip().lower()
     return normalized in {"1", "true", "yes", "on"}
+
+
+def _sanitize_allocator_env_contract(env: MutableMapping[str, str], *, scope_label: str) -> None:
+    supported_toggle_key = "CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF"
+    removed_keys: list[str] = []
+    for key in list(env.keys()):
+        if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_ALLOC_CONF":
+            env.pop(key, None)
+            removed_keys.append(key)
+            continue
+        if (
+            key.startswith("CODEX_ENABLE_DEFAULT_PYTORCH_")
+            and key.endswith("_ALLOC_CONF")
+            and key != supported_toggle_key
+        ):
+            env.pop(key, None)
+            removed_keys.append(key)
+    if removed_keys:
+        LOGGER.warning(
+            "Dropped unsupported allocator env key(s) before spawning %s: %s. "
+            "Supported keys: PYTORCH_ALLOC_CONF and %s.",
+            scope_label,
+            ", ".join(sorted(removed_keys)),
+            supported_toggle_key,
+        )
 
 
 def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:

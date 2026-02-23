@@ -1062,14 +1062,6 @@ while ($true) {
   $env:XDG_CACHE_HOME = $xdgCacheHome
   $env:CODEX_FFMPEG_VERSION = $script:Config.FFmpegVersion
 
-  if (-not [string]::IsNullOrWhiteSpace($env:PYTORCH_CUDA_ALLOC_CONF)) {
-    if ([string]::IsNullOrWhiteSpace($env:PYTORCH_ALLOC_CONF)) {
-      $env:PYTORCH_ALLOC_CONF = $env:PYTORCH_CUDA_ALLOC_CONF
-      Write-InstallWarning "migrated PYTORCH_CUDA_ALLOC_CONF -> PYTORCH_ALLOC_CONF for this install process."
-    }
-    Remove-Item Env:PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
-  }
-
   Write-Install "Repo: $root"
   Write-Install "uv: $uvBin  version pin: $($script:Config.UvVersion)"
   Write-Install "uv cache: $uvCacheDir"

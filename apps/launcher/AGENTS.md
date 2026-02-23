@@ -32,18 +32,21 @@ Last Review: 2026-02-23
 - 2026-01-02: Added standardized file header docstrings to launcher modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining launcher modules (`__init__.py`, `checks.py`, `log_buffer.py`, `paths.py`) (doc-only change; part of rollout).
 - 2026-01-06: Launcher Python preflight now matches `.python-version` (3.12.10) instead of allowing stale 3.10/3.11.
-- 2026-01-21: Launcher profiles now default `PYTORCH_CUDA_ALLOC_CONF` (global PyTorch CUDA allocator tuning) to `max_split_size_mb:256,garbage_collection_threshold:0.8` when unset.
+- 2026-01-21: Launcher profiles now default `PYTORCH_ALLOC_CONF` (global PyTorch CUDA allocator tuning) to `max_split_size_mb:256,garbage_collection_threshold:0.8` when unset.
 - 2026-01-29: Launcher no longer exposes reserved `cuda_pack` GGUF exec mode; CodexPack packed GGUFs are auto-detected via `codex.pack.*` / `*.codexpack.gguf`. Legacy launcher configs are migrated to `dequant_forward`.
 - 2026-01-31: Launcher profiles now persist global profiling env flags (`CODEX_PROFILE*`) and the GUI diagnostics tab exposes them for backend torch-profiler runs.
 - 2026-02-15: Launcher API arg forwarding now includes trace toggles (`CODEX_TRACE_CONTRACT` -> `--trace-contract`, `CODEX_TRACE_PROFILER` -> `--trace-profiler`) for backend bootstrap alignment.
 - 2026-02-18: Launcher task/runtime profile defaults now persist `CODEX_TASK_CANCEL_DEFAULT_MODE` (`immediate|after_current`) as a backend bootstrap knob for task cancel policy.
 - 2026-02-21: Launcher profiles/settings now persist and validate `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE` (`hybrid|ram|ram+hd`) as a runtime bootstrap knob used by WAN22 img2vid chunk buffering policy.
 - 2026-02-21: Launcher Runtime now owns attention bootstrap policy via `CODEX_ATTENTION_BACKEND` + `CODEX_ATTENTION_SDPA_POLICY`, forwarding `--attention-backend` and `--attention-sdpa-policy` to backend startup.
-- 2026-02-22: Launcher profiles now write `PYTORCH_ALLOC_CONF` (replacing deprecated `PYTORCH_CUDA_ALLOC_CONF`) for allocator tuning defaults.
+- 2026-02-22: Launcher profiles now write `PYTORCH_ALLOC_CONF` for allocator tuning defaults.
 - 2026-02-22: Removed GGUF dequant-forward run cache forwarding from launcher bootstrap args (`services.py` no longer emits `--gguf-dequant-cache*` flags); runtime env normalization now forces `CODEX_GGUF_DEQUANT_CACHE=off` and clears stale ratio/limit keys.
 - 2026-02-23: Launcher now defines a global device authority via `CODEX_MAIN_DEVICE`; `services.py` forwards `--main-device` and mirrors core/TE/VAE flags to the same value to enforce single-device runtime invariant.
 - 2026-02-23: `profiles.py` now treats `CODEX_*` runtime/device keys as area-scoped only (`core`): model overlays and non-core areas can no longer override `CODEX_MAIN_DEVICE`/`CODEX_MOUNT_DEVICE`/`CODEX_OFFLOAD_DEVICE` (prevents stale model JSON from defeating saved runtime-tab device settings).
-- 2026-02-23: `run-webui.{bat,sh}` now strips legacy `PYTORCH_CUDA_ALLOC_CONF` from launcher entrypoint env and keeps only `PYTORCH_ALLOC_CONF` for runtime allocator configuration.
+- 2026-02-23: Launcher entrypoints now enforce `PYTORCH_ALLOC_CONF` allocator contract keys and drop unsupported `*_ALLOC_CONF` variants from process env before backend spawn.
+- 2026-02-23: `profiles.py` now sanitizes persisted allocator/profile env keys at load (drops unsupported `*_ALLOC_CONF` variants), backfills missing required defaults, and persists normalized env maps automatically when cleanup occurs.
+- 2026-02-23: `profiles.py` save now prunes stale `areas/*.json`/`models/*.json` files not present in normalized mappings, so removed legacy areas (e.g. `wan`) are deleted from disk and do not trigger repeated load-time rewrites.
 - 2026-02-23: launcher offload default is now explicit CPU: `services.py` forwards `--offload-device=cpu` when unset, and `profiles.py` defaults `CODEX_OFFLOAD_DEVICE=cpu` to avoid implicit same-device offload no-op states under Contract-R unload semantics.
 - 2026-02-23: `services.py` now enforces `PYTORCH_ALLOC_CONF` allocator backend when `CODEX_CUDA_MALLOC=1` (requires/ensures `backend:cudaMallocAsync`, fail-loud on conflicting backend entries).
+- 2026-02-23: `services.py` now sanitizes unsupported allocator env keys (`PYTORCH_*_ALLOC_CONF` / `CODEX_ENABLE_DEFAULT_PYTORCH_*_ALLOC_CONF` variants) before subprocess spawn to keep runtime contract strict (`PYTORCH_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF` only).
 - 2026-02-23: `run-webui.sh` now makes `--cuda-malloc` / `CODEX_CUDA_MALLOC=1` effective by ensuring `PYTORCH_ALLOC_CONF` includes `backend:cudaMallocAsync` (and failing loud on invalid/conflicting allocator config).

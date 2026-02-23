@@ -16,7 +16,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass
-import errno
 from enum import Enum
 from io import BytesIO
 import json
@@ -123,28 +122,21 @@ def build_router(*, codex_root: Path) -> APIRouter:
         current_tensor: str
         error: str | None
         output_path: str
-        codexpack_output_path: str | None = None
 
         def to_payload(self) -> Dict[str, Any]:
-            payload: Dict[str, Any] = {
+            return {
                 "status": self.status.value,
                 "progress": self.progress,
                 "current_tensor": self.current_tensor,
                 "error": self.error,
                 "output_path": self.output_path,
             }
-            if self.codexpack_output_path is not None:
-                payload["codexpack_output_path"] = self.codexpack_output_path
-            return payload
 
     @dataclass(slots=True)
     class _GgufConversionControl:
         cancel_event: threading.Event
         tmp_path: Path
         final_path: Path
-        codexpack_path: Path | None
-        base_tmp_path: Path | None
-        codexpack_keymap_id: str | None = None
 
     @dataclass(slots=True)
     class _CodexPackControl:
@@ -196,32 +188,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
             if not candidate.exists():
                 return candidate
         raise RuntimeError(f"Failed to allocate a unique output path under: {str(parent)!r}")
-
-    def _replace_or_copy(src: Path, dst: Path) -> None:
-        try:
-            os.replace(str(src), str(dst))
-            return
-        except OSError as exc:
-            # Cross-device rename (EXDEV) can happen when temp dirs live on a different volume.
-            if getattr(exc, "errno", None) != errno.EXDEV:
-                raise
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        import shutil
-
-        shutil.copy2(str(src), str(dst))
-        try:
-            src.unlink()
-        except Exception:
-            pass
-
-    def _derive_base_failed_path(codexpack_path: Path, *, job_id: str) -> Path:
-        name = codexpack_path.name
-        suffix = ".codexpack.gguf"
-        if name.lower().endswith(suffix):
-            base = name[: -len(suffix)]
-        else:
-            base = codexpack_path.stem
-        return codexpack_path.with_name(f"{base}.base.failed-{job_id}.gguf")
 
     @router.get("/api/tools/gguf-converter/presets")
     async def list_gguf_converter_presets() -> Dict[str, Any]:
@@ -289,7 +255,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         comfy_layout_raw = payload.get("comfy_layout", True)
-        codexpack_v1_raw = payload.get("codexpack_v1", False)
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
         profile_id_raw = payload.get("profile_id", None)
@@ -309,28 +274,21 @@ def build_router(*, codex_root: Path) -> APIRouter:
         if not isinstance(comfy_layout_raw, bool):
             raise HTTPException(status_code=400, detail="comfy_layout must be a boolean when provided")
         comfy_layout = bool(comfy_layout_raw)
-
-        if not isinstance(codexpack_v1_raw, bool):
-            raise HTTPException(status_code=400, detail="codexpack_v1 must be a boolean when provided")
-        codexpack_v1 = bool(codexpack_v1_raw)
-
-        if codexpack_v1:
-            if not final_path.name.lower().endswith(".codexpack.gguf"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "When codexpack_v1 is enabled, output_path must end with `.codexpack.gguf` "
-                        "(CodexPack is the primary output; the intermediate base GGUF is temp-only)."
-                    ),
-                )
-        else:
-            if final_path.name.lower().endswith(".codexpack.gguf"):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Output path ends with `.codexpack.gguf`. Use codexpack_v1=true or choose a base `.gguf` output path.",
-                )
-            if not final_path.name.lower().endswith(".gguf"):
-                raise HTTPException(status_code=400, detail="Output path must end with `.gguf`.")
+        if "codexpack_v1" in payload:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "codexpack_v1 has been removed from /api/tools/convert-gguf. "
+                    "Use /api/tools/codexpack/pack-v1 to pack an existing base GGUF."
+                ),
+            )
+        if final_path.name.lower().endswith(".codexpack.gguf"):
+            raise HTTPException(
+                status_code=400,
+                detail="Output path for /api/tools/convert-gguf must end with `.gguf` (base GGUF only).",
+            )
+        if not final_path.name.lower().endswith(".gguf"):
+            raise HTTPException(status_code=400, detail="Output path must end with `.gguf`.")
 
         if final_path.exists() and not overwrite:
             raise HTTPException(status_code=409, detail=f"Output file already exists: {final_path}")
@@ -340,99 +298,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         try:
             quant = QuantizationType(quant_str)
         except ValueError:
-            if codexpack_v1:
-                raise HTTPException(status_code=400, detail=f"Invalid quantization: {quant_str!r}")
             quant = QuantizationType.F16
-
-        codexpack_path: Path | None = None
-        codexpack_keymap_id: str | None = None
-        if codexpack_v1:
-            if quant is not QuantizationType.Q4_K:
-                raise HTTPException(
-                    status_code=400,
-                    detail="CodexPack v1 requires quantization=Q4_K (mixed presets are not supported).",
-                )
-            if not comfy_layout:
-                raise HTTPException(
-                    status_code=400,
-                    detail="CodexPack v1 requires Comfy Layout on (Comfy/Codex key layout).",
-                )
-
-            codexpack_path = final_path
-
-            cfg_dir = Path(os.path.expanduser(str(config_path))).resolve()
-            cfg_json_path = cfg_dir
-            if cfg_dir.is_dir():
-                cfg_json_path = cfg_dir / "config.json"
-            if not cfg_json_path.is_file():
-                raise HTTPException(status_code=400, detail=f"config.json not found for CodexPack: {cfg_json_path}")
-
-            try:
-                cfg = json.loads(cfg_json_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Failed to read config.json for CodexPack: {exc}") from exc
-
-            class_name = str(cfg.get("_class_name") or "").strip()
-            if class_name != "ZImageTransformer2DModel":
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "CodexPack v1 is only supported for Z-Image denoisers "
-                        f"(expected _class_name='ZImageTransformer2DModel', got {class_name!r})."
-                    ),
-                )
-
-            # CodexPack v1 supports Z-Image Base (shift=6.0) and Turbo (shift=3.0).
-            shift: float | None = None
-            cfg_root = cfg_json_path.parent
-            for cand in (
-                cfg_root / "scheduler" / "scheduler_config.json",
-                cfg_root.parent / "scheduler" / "scheduler_config.json",
-            ):
-                if not cand.is_file():
-                    continue
-                try:
-                    data = json.loads(cand.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                raw_shift = data.get("shift")
-                if raw_shift is None:
-                    continue
-                try:
-                    shift = float(raw_shift)
-                except Exception:
-                    continue
-                break
-
-            if shift is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "CodexPack v1 requires Z-Image Base or Turbo. Could not detect `shift` from scheduler_config.json "
-                        f"near {cfg_root}. Ensure the source includes `scheduler/scheduler_config.json`."
-                    ),
-                )
-            if abs(shift - 3.0) < 1e-3:
-                variant = "turbo"
-            elif abs(shift - 6.0) < 1e-3:
-                variant = "base"
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "CodexPack v1 requires Z-Image Base or Turbo. "
-                        f"Expected shift=6.0 (base) or shift=3.0 (turbo). Got shift={shift:g}."
-                    ),
-                )
-
-            from apps.backend.quantization.codexpack_keymaps import (
-                ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1,
-                ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1,
-            )
-
-            codexpack_keymap_id = (
-                ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1 if variant == "turbo" else ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1
-            )
 
         profile_id: str | None = None
         if profile_id_raw is not None:
@@ -494,25 +360,14 @@ def build_router(*, codex_root: Path) -> APIRouter:
             tensor_type_overrides = [str(x).strip() for x in overrides_raw if str(x).strip()]
 
         final_path.parent.mkdir(parents=True, exist_ok=True)
-        base_tmp_path: Path | None = None
-        if codexpack_v1:
-            base_tmp_handle = tempfile.NamedTemporaryFile(
-                prefix=f"codexpack_base_{job_id}.",
-                suffix=".gguf",
-                delete=False,
-            )
-            base_tmp_path = Path(base_tmp_handle.name)
-            base_tmp_handle.close()
-            tmp_path = base_tmp_path
-        else:
-            tmp_handle = tempfile.NamedTemporaryFile(
-                prefix=f"{final_path.stem}.",
-                suffix=f".part-{job_id}{final_path.suffix or '.gguf'}",
-                dir=str(final_path.parent),
-                delete=False,
-            )
-            tmp_path = Path(tmp_handle.name)
-            tmp_handle.close()
+        tmp_handle = tempfile.NamedTemporaryFile(
+            prefix=f"{final_path.stem}.",
+            suffix=f".part-{job_id}{final_path.suffix or '.gguf'}",
+            dir=str(final_path.parent),
+            delete=False,
+        )
+        tmp_path = Path(tmp_handle.name)
+        tmp_handle.close()
 
         cancel_event = threading.Event()
         with _job_state_lock:
@@ -522,19 +377,14 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 current_tensor="",
                 error=None,
                 output_path=str(final_path),
-                codexpack_output_path=(str(codexpack_path) if codexpack_path is not None else None),
             )
             _gguf_conversion_controls[job_id] = _GgufConversionControl(
                 cancel_event=cancel_event,
                 tmp_path=tmp_path,
                 final_path=final_path,
-                codexpack_path=codexpack_path,
-                base_tmp_path=base_tmp_path,
-                codexpack_keymap_id=codexpack_keymap_id,
             )
 
         def run_conversion() -> None:
-            converted_ok = False
             try:
                 with _job_state_lock:
                     job = _gguf_conversion_jobs[job_id]
@@ -572,49 +422,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     progress_callback=progress_cb,
                     should_cancel=lambda: bool(ctrl.cancel_event.is_set()),
                 )
-                converted_ok = True
 
                 with _job_state_lock:
                     _set_job_state(job, status=_ToolJobStatus.FINALIZING, progress=99.9)
-                if ctrl.codexpack_path is None:
-                    os.replace(str(ctrl.tmp_path), str(ctrl.final_path))
-
-                if ctrl.codexpack_path is not None:
-                    from apps.backend.runtime.tools.codexpack_packer import pack_gguf_to_codexpack_v1
-
-                    codexpack_final_path = ctrl.codexpack_path
-                    base_tmp = ctrl.tmp_path
-                    with _job_state_lock:
-                        _set_job_state(job, status=_ToolJobStatus.PACKING_CODEXPACK, progress=99.95)
-
-                    pack_tmp_path = _alloc_nonexistent_path(
-                        codexpack_final_path.parent,
-                        prefix=f"{codexpack_final_path.stem}.part-{job_id}-",
-                        suffix=codexpack_final_path.suffix or ".gguf",
-                    )
-                    try:
-                        keymap_id = ctrl.codexpack_keymap_id
-                        if not keymap_id:
-                            raise RuntimeError(
-                                "codexpack_keymap_id is missing from conversion job controls (internal invariant)."
-                            )
-                        pack_gguf_to_codexpack_v1(
-                            str(base_tmp),
-                            str(pack_tmp_path),
-                            keymap_id=keymap_id,
-                        )
-                        os.replace(str(pack_tmp_path), str(codexpack_final_path))
-                    finally:
-                        try:
-                            if pack_tmp_path.exists():
-                                pack_tmp_path.unlink()
-                        except Exception:
-                            pass
-                    if ctrl.base_tmp_path is not None:
-                        try:
-                            base_tmp.unlink()
-                        except Exception:
-                            pass
+                os.replace(str(ctrl.tmp_path), str(ctrl.final_path))
 
                 with _job_state_lock:
                     _set_job_state(job, status=_ToolJobStatus.COMPLETE, progress=100)
@@ -632,29 +443,17 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 except Exception:
                     pass
             except Exception as exc:
-                msg = str(exc)
                 try:
                     with _job_state_lock:
                         ctrl = _gguf_conversion_controls[job_id]
                     tmp = ctrl.tmp_path
-                    if ctrl.codexpack_path is not None and converted_ok and tmp.exists():
-                        base_failed_path = _derive_base_failed_path(ctrl.codexpack_path, job_id=job_id)
-                        try:
-                            _replace_or_copy(tmp, base_failed_path)
-                            msg = f"{msg}\nPreserved base GGUF (packing failed): {str(base_failed_path)}"
-                        except Exception:
-                            try:
-                                tmp.unlink()
-                            except Exception:
-                                pass
-                    else:
-                        if tmp.exists():
-                            tmp.unlink()
+                    if tmp.exists():
+                        tmp.unlink()
                 except Exception:
                     pass
                 with _job_state_lock:
                     job = _gguf_conversion_jobs[job_id]
-                    _set_job_state(job, status=_ToolJobStatus.ERROR, error=msg)
+                    _set_job_state(job, status=_ToolJobStatus.ERROR, error=str(exc))
 
         thread = threading.Thread(target=run_conversion, daemon=True)
         thread.start()

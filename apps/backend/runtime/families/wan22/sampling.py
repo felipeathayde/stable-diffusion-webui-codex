@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
-Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks and scheduler aliases are rejected fail-loud while unsupported sampler overrides are logged and ignored by metadata-driven scheduler construction, except for experimental FlowMatch-Euler sampler lanes.
+Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks, I2V conditioning channels are cached once per stage loop to avoid redundant per-step buffer copies, and scheduler aliases are rejected fail-loud while unsupported sampler overrides are logged and ignored by metadata-driven scheduler construction, except for experimental FlowMatch-Euler sampler lanes.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PatchGeometry` (dataclass): Patch/tile geometry configuration used to infer latent/video shapes.
@@ -24,7 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `build_i2v_mask4` (function): Builds the 4-channel I2V first-frame mask (Diffusers-compatible; latent time scale=4).
 - `assemble_i2v_state` (function): Assembles I2V model state `[lat16 + mask4 + img16]` (order-aware, strict).
 - `sample_stage_latents` (function): Core latent sampling for a single WAN stage (high/low) using the selected scheduler/sampler.
-- `sample_stage_latents_generator` (function): Generator version of stage sampling for streaming progress (yields intermediate states; CFG path runs sequential cond/uncond passes).
+- `sample_stage_latents_generator` (function): Generator version of stage sampling for streaming progress (yields intermediate states; CFG path runs sequential cond/uncond passes, I2V conditioning channels are cached once per stage loop, and non-CFG timestep buffers are reused).
 """
 
 from __future__ import annotations
@@ -694,9 +694,33 @@ def sample_stage_latents_generator(
                 "WAN22 GGUF: negative embeds batch does not match latent batch for CFG "
                 f"(negative_B={int(negative_embeds.shape[0])} latent_B={int(batch)})."
             )
-    cached_state_cond_model: torch.Tensor | None = None
+    else:
+        if int(prompt_embeds.shape[0]) != int(batch):
+            raise RuntimeError(
+                "WAN22 GGUF: prompt embeds batch does not match latent batch for non-CFG "
+                f"(prompt_B={int(prompt_embeds.shape[0])} latent_B={int(batch)})."
+            )
+    has_conditioning = int(state.shape[1]) != cout
+    cond_channels = 0
+    state_cond_model_static: torch.Tensor | None = None
+    if has_conditioning:
+        if int(state.shape[1]) != cin:
+            raise RuntimeError(
+                f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected in_channels={cin}."
+            )
+        if order == "lat_first":
+            state_cond_static = state[:, cout:, ...]
+        else:
+            state_cond_static = state[:, :-cout, ...]
+        if state_cond_static.dtype == dtype:
+            state_cond_model_static = state_cond_static
+        else:
+            # I2V conditioning channels are invariant across steps in this loop; cast once.
+            state_cond_model_static = state_cond_static.to(dtype=dtype)
+        cond_channels = int(state_cond_model_static.shape[1])
     model_state_buffer: torch.Tensor | None = None
     cfg_timestep_buffer: torch.Tensor | None = None
+    non_cfg_timestep_buffer: torch.Tensor | None = None
     state_lat_scaled_model_buffer: torch.Tensor | None = None
     eps_scheduler_buffer: torch.Tensor | None = None
 
@@ -730,9 +754,12 @@ def sample_stage_latents_generator(
             )
 
         with torch.no_grad():
-            if int(state.shape[1]) == cout:
+            if not has_conditioning:
+                if int(state.shape[1]) != cout:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected latent_channels={cout}."
+                    )
                 state_lat = state
-                state_cond = None
             else:
                 if int(state.shape[1]) != cin:
                     raise RuntimeError(
@@ -742,9 +769,7 @@ def sample_stage_latents_generator(
                 # Inpainting-style I2V: state is [latents + conditioning], while the model predicts only the latent channels.
                 if order == "lat_first":
                     state_lat = state[:, :cout, ...]
-                    state_cond = state[:, cout:, ...]
                 else:
-                    state_cond = state[:, :-cout, ...]
                     state_lat = state[:, -cout:, ...]
 
             state_lat_scaled = state_lat
@@ -777,23 +802,15 @@ def sample_stage_latents_generator(
                     )
                 state_lat_scaled_model_buffer.copy_(state_lat_scaled)
                 state_lat_scaled_model = state_lat_scaled_model_buffer
-            state_cond_model: torch.Tensor | None = None
-            if state_cond is not None:
-                if state_cond.dtype == dtype:
-                    state_cond_model = state_cond
-                    cached_state_cond_model = None
-                else:
-                    if cached_state_cond_model is None:
-                        # I2V conditioning channels are invariant across steps in this loop; cache cast once.
-                        cached_state_cond_model = state_cond.to(dtype=dtype)
-                    state_cond_model = cached_state_cond_model
-
-            if state_cond_model is None:
+            if not has_conditioning:
                 model_state = state_lat_scaled_model
             else:
+                if state_cond_model_static is None:
+                    raise RuntimeError("WAN22 GGUF: conditioning tensor is missing for I2V latent state.")
+                latent_channels = int(state_lat_scaled_model.shape[1])
                 expected_shape = (
                     int(state_lat_scaled_model.shape[0]),
-                    int(state_lat_scaled_model.shape[1]) + int(state_cond_model.shape[1]),
+                    int(state_lat_scaled_model.shape[1]) + int(cond_channels),
                     int(state_lat_scaled_model.shape[2]),
                     int(state_lat_scaled_model.shape[3]),
                     int(state_lat_scaled_model.shape[4]),
@@ -805,18 +822,26 @@ def sample_stage_latents_generator(
                     or model_state_buffer.device != state_lat_scaled_model.device
                 ):
                     model_state_buffer = torch.empty(expected_shape, device=state_lat_scaled_model.device, dtype=dtype)
+                    if order == "lat_first":
+                        model_state_buffer[:, latent_channels:, ...].copy_(state_cond_model_static)
+                    else:
+                        model_state_buffer[:, :cond_channels, ...].copy_(state_cond_model_static)
                 if order == "lat_first":
-                    latent_channels = int(state_lat_scaled_model.shape[1])
                     model_state_buffer[:, :latent_channels, ...].copy_(state_lat_scaled_model)
-                    model_state_buffer[:, latent_channels:, ...].copy_(state_cond_model)
                 else:
-                    cond_channels = int(state_cond_model.shape[1])
-                    model_state_buffer[:, :cond_channels, ...].copy_(state_cond_model)
                     model_state_buffer[:, cond_channels:, ...].copy_(state_lat_scaled_model)
                 model_state = model_state_buffer
 
             if cfg_scale is None:
-                eps_model = model(model_state, di_timestep, prompt_embeds)
+                model_batch = int(model_state.shape[0])
+                if (
+                    non_cfg_timestep_buffer is None
+                    or int(non_cfg_timestep_buffer.shape[0]) != model_batch
+                    or non_cfg_timestep_buffer.device != device
+                ):
+                    non_cfg_timestep_buffer = torch.empty((model_batch,), device=device, dtype=torch.float32)
+                non_cfg_timestep_buffer.fill_(float(di_timestep))
+                eps_model = model(model_state, non_cfg_timestep_buffer, prompt_embeds)
                 _assert_finite_tensor(
                     eps_model,
                     tensor_name="model_output",
@@ -894,7 +919,7 @@ def sample_stage_latents_generator(
                 eps_scheduler_buffer.copy_(eps_model)
                 eps = eps_scheduler_buffer
 
-            if state_cond is None:
+            if not has_conditioning:
                 out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
                 state = out.prev_sample
                 _assert_finite_tensor(

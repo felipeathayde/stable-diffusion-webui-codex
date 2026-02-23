@@ -9,8 +9,9 @@ Required Notice: see NOTICE
 Purpose: WAN22 GGUF scheduler helpers (Diffusers-free).
 Provides a strict reader for `scheduler_config.json` (vendored HF mirror) and a WAN-only scheduler implementation that
 matches the flow-sigmas schedule used by WAN2.2 (source-of-truth: `scheduler_config.json`), without importing Diffusers.
-Includes explicit mixed-precision stability guards for UniPC corrector linear solves and an experimental FlowMatch-Euler
-lane for sampler experiments.
+Includes explicit mixed-precision stability guards for UniPC corrector linear solves, per-device/dtype sigma cache reuse
+for hot-path step calls (avoiding repeated scalar device materialization), and an experimental FlowMatch-Euler lane for
+sampler experiments.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanSchedulerOutput` (dataclass): Minimal scheduler step output with `prev_sample` (Diffusers-compatible surface).
@@ -166,6 +167,7 @@ class WanFlowMatchEulerScheduler:
         self.sigmas = sigmas.detach().to(device="cpu", dtype=torch.float32)
         self.timesteps = timesteps.detach().to(device="cpu", dtype=torch.float32)
         self._stochastic_sampling = bool(stochastic_sampling)
+        self._sigmas_cache: dict[tuple[str, str], torch.Tensor] = {}
         self._step_index: int | None = None
         self._begin_index: int | None = None
         self.config = SimpleNamespace(
@@ -184,6 +186,14 @@ class WanFlowMatchEulerScheduler:
 
     def set_begin_index(self, begin_index: int = 0) -> None:
         self._begin_index = int(begin_index)
+
+    def _sigmas_for(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        key = (str(device), str(dtype))
+        cached = self._sigmas_cache.get(key)
+        if cached is None:
+            cached = self.sigmas.to(device=device, dtype=dtype)
+            self._sigmas_cache[key] = cached
+        return cached
 
     def index_for_timestep(self, timestep: int | float | torch.Tensor, schedule_timesteps: torch.Tensor | None = None) -> int:
         schedule = self.timesteps if schedule_timesteps is None else schedule_timesteps
@@ -248,8 +258,9 @@ class WanFlowMatchEulerScheduler:
 
         sample_fp32 = sample.to(dtype=torch.float32)
         model_output_fp32 = model_output.to(dtype=torch.float32)
-        sigma = self.sigmas[self._step_index].to(device=sample_fp32.device, dtype=sample_fp32.dtype)
-        sigma_next = self.sigmas[self._step_index + 1].to(device=sample_fp32.device, dtype=sample_fp32.dtype)
+        sigmas = self._sigmas_for(device=sample_fp32.device, dtype=sample_fp32.dtype)
+        sigma = sigmas[self._step_index]
+        sigma_next = sigmas[self._step_index + 1]
 
         if self._stochastic_sampling:
             x0 = sample_fp32 - sigma * model_output_fp32
@@ -324,6 +335,7 @@ class WanUniPCFlowScheduler:
 
         self.sigmas = sigmas.detach().to(device="cpu", dtype=torch.float32)
         self.timesteps = timesteps.detach().to(device="cpu", dtype=torch.int64)
+        self._sigmas_cache: dict[tuple[str, str], torch.Tensor] = {}
 
         self._solver_order = solver_order
         self._solver_type = solver_type_norm
@@ -359,6 +371,14 @@ class WanUniPCFlowScheduler:
     def step_index(self) -> int | None:
         return self._step_index
 
+    def _sigmas_for(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        key = (str(device), str(dtype))
+        cached = self._sigmas_cache.get(key)
+        if cached is None:
+            cached = self.sigmas.to(device=device, dtype=dtype)
+            self._sigmas_cache[key] = cached
+        return cached
+
     def _sigma_to_alpha_sigma_t(self, sigma: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         alpha_t = 1 - sigma
         sigma_t = sigma
@@ -370,7 +390,8 @@ class WanUniPCFlowScheduler:
         if self._prediction_type != "flow_prediction" or not self._predict_x0:
             raise NotImplementedError("WAN22 GGUF: only flow_prediction + predict_x0=true is implemented.")
 
-        sigma = self.sigmas[self._step_index].to(device=sample.device, dtype=sample.dtype)
+        sigmas = self._sigmas_for(device=sample.device, dtype=sample.dtype)
+        sigma = sigmas[self._step_index]
         return sample - sigma * model_output
 
     def _B_h(self, hh: torch.Tensor) -> torch.Tensor:
@@ -393,10 +414,9 @@ class WanUniPCFlowScheduler:
             raise RuntimeError("WAN22 GGUF: missing current model_output history (m0).")
 
         x = sample
-        sigma_t_raw = self.sigmas[self._step_index + 1]
-        sigma_s0_raw = self.sigmas[self._step_index]
-        sigma_t = sigma_t_raw.to(device=x.device, dtype=x.dtype)
-        sigma_s0 = sigma_s0_raw.to(device=x.device, dtype=x.dtype)
+        sigmas = self._sigmas_for(device=x.device, dtype=x.dtype)
+        sigma_t = sigmas[self._step_index + 1]
+        sigma_s0 = sigmas[self._step_index]
         alpha_t, sigma_t = self._sigma_to_alpha_sigma_t(sigma_t)
         alpha_s0, sigma_s0 = self._sigma_to_alpha_sigma_t(sigma_s0)
 
@@ -418,8 +438,7 @@ class WanUniPCFlowScheduler:
         if mi is None:
             raise RuntimeError("WAN22 GGUF: UniPC order=2 requires 2 model outputs, but history is incomplete.")
 
-        sigma_si_raw = self.sigmas[self._step_index - 1]
-        sigma_si = sigma_si_raw.to(device=x.device, dtype=x.dtype)
+        sigma_si = sigmas[self._step_index - 1]
         alpha_si, sigma_si = self._sigma_to_alpha_sigma_t(sigma_si)
         lambda_si = torch.log(alpha_si) - torch.log(sigma_si)
         rk = (lambda_si - lambda_s0) / h
@@ -452,10 +471,9 @@ class WanUniPCFlowScheduler:
         x_t = this_sample
         model_t = this_model_output
 
-        sigma_t_raw = self.sigmas[self._step_index]
-        sigma_s0_raw = self.sigmas[self._step_index - 1]
-        sigma_t = sigma_t_raw.to(device=x_t.device, dtype=x_t.dtype)
-        sigma_s0 = sigma_s0_raw.to(device=x_t.device, dtype=x_t.dtype)
+        sigmas = self._sigmas_for(device=x_t.device, dtype=x_t.dtype)
+        sigma_t = sigmas[self._step_index]
+        sigma_s0 = sigmas[self._step_index - 1]
         alpha_t, sigma_t = self._sigma_to_alpha_sigma_t(sigma_t)
         alpha_s0, sigma_s0 = self._sigma_to_alpha_sigma_t(sigma_s0)
 
@@ -474,8 +492,7 @@ class WanUniPCFlowScheduler:
 
         device = x_t.device
         if order == 1:
-            rhos_c = torch.tensor([0.5], dtype=x.dtype, device=device)
-            x_out = x_t_ - alpha_t * B_h * (rhos_c[-1] * D1_t)
+            x_out = x_t_ - alpha_t * B_h * (0.5 * D1_t)
             return x_out.to(x.dtype)
 
         if self._step_index < 2:
@@ -484,8 +501,7 @@ class WanUniPCFlowScheduler:
         if mi is None:
             raise RuntimeError("WAN22 GGUF: UniPC corrector order=2 requires 2 model outputs, but history is incomplete.")
 
-        sigma_si_raw = self.sigmas[self._step_index - 2]
-        sigma_si = sigma_si_raw.to(device=x_t.device, dtype=x_t.dtype)
+        sigma_si = sigmas[self._step_index - 2]
         alpha_si, sigma_si = self._sigma_to_alpha_sigma_t(sigma_si)
         lambda_si = torch.log(alpha_si) - torch.log(sigma_si)
         rk = (lambda_si - lambda_s0) / h

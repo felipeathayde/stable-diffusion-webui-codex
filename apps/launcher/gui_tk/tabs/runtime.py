@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Runtime settings tab for the Tk launcher.
-Edits bootstrap-critical device defaults and global runtime/task knobs that must exist before the API starts (devices, GGUF/LoRA, task single-flight,
+Edits bootstrap-critical main-device defaults and global runtime/task knobs that must exist before the API starts (main/mount/offload devices, GGUF/LoRA, task single-flight,
 task cancel default mode, task SSE buffer caps, upscaler safeweights).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -27,6 +27,7 @@ from apps.launcher.profiles import (
 )
 from apps.launcher.settings import (
     BoolSetting,
+    ChoiceSetting,
     DEVICE_CHOICES,
     IntSetting,
     WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES,
@@ -72,15 +73,14 @@ class RuntimeTab:
 
         self.frame: ttk.Frame | None = None
 
-        self._var_core_device = tk.StringVar()
-        self._var_te_device = tk.StringVar()
-        self._var_vae_device = tk.StringVar()
+        self._var_main_device = tk.StringVar()
+        self._var_mount_device = tk.StringVar()
+        self._var_offload_device = tk.StringVar()
         self._var_attention_mode = tk.StringVar()
 
         self._var_lora_apply_mode = tk.StringVar()
         self._var_gguf_exec = tk.StringVar()
         self._var_gguf_dequant_cache = tk.StringVar()
-        self._var_gguf_dequant_cache_ratio = tk.StringVar()
         self._var_wan_chunk_buffer_mode = tk.StringVar()
         self._var_lora_online_math = tk.StringVar()
         self._var_pytorch_alloc_conf = tk.StringVar()
@@ -103,30 +103,30 @@ class RuntimeTab:
         body = scroll.inner
 
         row = 0
-        row = add_section_header(body, row, "Device Defaults (bootstrap)")
+        row = add_section_header(body, row, "Main Device (bootstrap)")
         row = self._add_choice_combo(
             body,
             row,
-            label="Core device (requires API restart):",
-            var=self._var_core_device,
+            label="Main device (requires API restart):",
+            var=self._var_main_device,
             choices=list(DEVICE_CHOICES),
-            on_change=lambda: self._set_env_lower("CODEX_CORE_DEVICE", self._var_core_device.get()),
+            on_change=self._on_main_device_changed,
         )
         row = self._add_choice_combo(
             body,
             row,
-            label="Text encoder device (requires API restart):",
-            var=self._var_te_device,
+            label="Mount device (requires API restart):",
+            var=self._var_mount_device,
             choices=list(DEVICE_CHOICES),
-            on_change=lambda: self._set_env_lower("CODEX_TE_DEVICE", self._var_te_device.get()),
+            on_change=self._on_mount_device_changed,
         )
         row = self._add_choice_combo(
             body,
             row,
-            label="VAE device (requires API restart):",
-            var=self._var_vae_device,
+            label="Offload device (requires API restart):",
+            var=self._var_offload_device,
             choices=list(DEVICE_CHOICES),
-            on_change=lambda: self._set_env_lower("CODEX_VAE_DEVICE", self._var_vae_device.get()),
+            on_change=self._on_offload_device_changed,
         )
         row = self._add_choice_combo(
             body,
@@ -147,7 +147,10 @@ class RuntimeTab:
         row = add_help(
             body,
             row,
-            "These values are passed as backend CLI flags (`--core-device/--te-device/--vae-device`).\n"
+            "Main device is passed as backend CLI flag (`--main-device`) and mirrored to core/TE/VAE.\n"
+            "Mount/offload devices are passed as `--mount-device` and `--offload-device`.\n"
+            "When unset, mount/offload default to the resolved main device.\n"
+            "Per-component divergence is not allowed by contract.\n"
             "Attention mode is passed via `--attention-backend` + optional `--attention-sdpa-policy`.\n"
             "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks.",
         )
@@ -189,7 +192,7 @@ class RuntimeTab:
             row,
             label="GGUF dequant cache (requires API restart):",
             var=self._var_gguf_dequant_cache,
-            choices=["off", "lvl1", "lvl2"],
+            choices=["off"],
             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
             width=10,
             out_combo="_gguf_dequant_cache_combo",
@@ -197,25 +200,8 @@ class RuntimeTab:
         row = add_help(
             body,
             row,
-            "off: no cache.\n"
-            "lvl1: cache moved+baked GGUF parameters per sampling run (reuses step-1 bake across steps).\n"
-            "lvl2: also cache dequantized float weights per sampling run (more speed, more memory).\n"
-            "Only applies to GGUF exec mode 'dequant_forward' and is capped by a heuristic VRAM/RAM budget.",
-        )
-        row = self._add_entry(
-            body,
-            row,
-            label="GGUF dequant cache ratio (optional):",
-            var=self._var_gguf_dequant_cache_ratio,
-            width=12,
-            on_change=self._on_gguf_dequant_cache_ratio_changed,
-        )
-        row = add_help(
-            body,
-            row,
-            "Env var: CODEX_GGUF_DEQUANT_CACHE_RATIO (float, >0 and <=1).\n"
-            "Used only when GGUF dequant cache is enabled and no explicit LIMIT_MB is set.\n"
-            "Example: 0.30 reserves ~30% of free VRAM/RAM at sampling start.",
+            "Removed in this build: GGUF dequant run cache levels (lvl1/lvl2).\n"
+            "Value is locked to 'off'.",
         )
         row = self._add_choice_combo(
             body,
@@ -372,9 +358,12 @@ class RuntimeTab:
             raw = str(env.get(key, default) or "").strip().lower()
             return raw if raw else default
 
-        self._var_core_device.set(_get("CODEX_CORE_DEVICE", "auto"))
-        self._var_te_device.set(_get("CODEX_TE_DEVICE", "auto"))
-        self._var_vae_device.set(_get("CODEX_VAE_DEVICE", "auto"))
+        raw_main = _get("CODEX_MAIN_DEVICE", "")
+        if not raw_main:
+            raw_main = _get("CODEX_CORE_DEVICE", "auto")
+        self._set_main_device_env(raw_main, mark_changed=False)
+        self._set_mount_device_env(_get("CODEX_MOUNT_DEVICE", raw_main), mark_changed=False)
+        self._set_offload_device_env(_get("CODEX_OFFLOAD_DEVICE", raw_main), mark_changed=False)
         try:
             attn_backend, attn_sdpa_policy = normalize_attention_env(env)
         except SettingValidationError as exc:
@@ -388,7 +377,6 @@ class RuntimeTab:
         self._var_lora_apply_mode.set(_get("CODEX_LORA_APPLY_MODE", "merge"))
         self._var_gguf_exec.set(_get("CODEX_GGUF_EXEC", "dequant_forward"))
         self._var_gguf_dequant_cache.set(_get("CODEX_GGUF_DEQUANT_CACHE", "off"))
-        self._var_gguf_dequant_cache_ratio.set(str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip())
         self._var_wan_chunk_buffer_mode.set(_get("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"))
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
         try:
@@ -518,9 +506,74 @@ class RuntimeTab:
 
     # ------------------------------------------------------------------ env helpers
 
-    def _set_env_lower(self, key: str, value: str) -> None:
-        self._controller.store.env[key] = str(value).strip().lower()
-        self._mark_changed()
+    def _set_main_device_env(self, value: str, *, mark_changed: bool) -> None:
+        env = self._controller.store.env
+        normalized = str(value or "").strip().lower() or "auto"
+        normalized = ChoiceSetting(
+            "CODEX_MAIN_DEVICE",
+            default="auto",
+            choices=DEVICE_CHOICES,
+        ).parse(normalized)
+        env["CODEX_MAIN_DEVICE"] = normalized
+        env["CODEX_CORE_DEVICE"] = normalized
+        env["CODEX_TE_DEVICE"] = normalized
+        env["CODEX_VAE_DEVICE"] = normalized
+        env["CODEX_MOUNT_DEVICE"] = normalized
+        env["CODEX_OFFLOAD_DEVICE"] = normalized
+        self._var_main_device.set(normalized)
+        self._var_mount_device.set(normalized)
+        self._var_offload_device.set(normalized)
+        if mark_changed:
+            self._mark_changed()
+
+    def _set_mount_device_env(self, value: str, *, mark_changed: bool) -> None:
+        env = self._controller.store.env
+        default_device = str(self._var_main_device.get() or "auto").strip().lower() or "auto"
+        normalized = str(value or "").strip().lower() or default_device
+        normalized = ChoiceSetting(
+            "CODEX_MOUNT_DEVICE",
+            default=default_device,
+            choices=DEVICE_CHOICES,
+        ).parse(normalized)
+        env["CODEX_MOUNT_DEVICE"] = normalized
+        self._var_mount_device.set(normalized)
+        if mark_changed:
+            self._mark_changed()
+
+    def _set_offload_device_env(self, value: str, *, mark_changed: bool) -> None:
+        env = self._controller.store.env
+        default_device = str(self._var_main_device.get() or "auto").strip().lower() or "auto"
+        normalized = str(value or "").strip().lower() or default_device
+        normalized = ChoiceSetting(
+            "CODEX_OFFLOAD_DEVICE",
+            default=default_device,
+            choices=DEVICE_CHOICES,
+        ).parse(normalized)
+        env["CODEX_OFFLOAD_DEVICE"] = normalized
+        self._var_offload_device.set(normalized)
+        if mark_changed:
+            self._mark_changed()
+
+    def _on_main_device_changed(self) -> None:
+        try:
+            self._set_main_device_env(self._var_main_device.get(), mark_changed=True)
+        except SettingValidationError as exc:
+            messagebox.showerror("Invalid runtime setting", str(exc))
+            self._set_main_device_env("auto", mark_changed=True)
+
+    def _on_mount_device_changed(self) -> None:
+        try:
+            self._set_mount_device_env(self._var_mount_device.get(), mark_changed=True)
+        except SettingValidationError as exc:
+            messagebox.showerror("Invalid runtime setting", str(exc))
+            self._set_mount_device_env(self._var_main_device.get(), mark_changed=True)
+
+    def _on_offload_device_changed(self) -> None:
+        try:
+            self._set_offload_device_env(self._var_offload_device.get(), mark_changed=True)
+        except SettingValidationError as exc:
+            messagebox.showerror("Invalid runtime setting", str(exc))
+            self._set_offload_device_env(self._var_main_device.get(), mark_changed=True)
 
     def _on_attention_mode_changed(self) -> None:
         env = self._controller.store.env
@@ -569,15 +622,6 @@ class RuntimeTab:
         ).set(self._controller.store.env, bool(self._var_cuda_malloc.get()))
         self._mark_changed()
 
-    def _on_gguf_dequant_cache_ratio_changed(self) -> None:
-        key = "CODEX_GGUF_DEQUANT_CACHE_RATIO"
-        value = str(self._var_gguf_dequant_cache_ratio.get() or "").strip()
-        if not value:
-            self._controller.store.env.pop(key, None)
-        else:
-            self._controller.store.env[key] = value
-        self._mark_changed()
-
     def _sync_task_deps(self, *, mark_changed: bool) -> None:
         env = self._controller.store.env
 
@@ -614,6 +658,8 @@ class RuntimeTab:
         env = self._controller.store.env
         env["CODEX_GGUF_EXEC"] = str(self._var_gguf_exec.get() or "").strip().lower() or "dequant_forward"
         env["CODEX_GGUF_DEQUANT_CACHE"] = str(self._var_gguf_dequant_cache.get() or "").strip().lower() or "off"
+        env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
+        env.pop("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", None)
         env["CODEX_LORA_APPLY_MODE"] = str(self._var_lora_apply_mode.get() or "").strip().lower() or "merge"
         env["CODEX_LORA_ONLINE_MATH"] = str(self._var_lora_online_math.get() or "").strip().lower() or "weight_merge"
         env["CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE"] = (
@@ -625,6 +671,7 @@ class RuntimeTab:
             env["CODEX_GGUF_EXEC"] = "dequant_forward"
             env["CODEX_GGUF_DEQUANT_CACHE"] = "off"
             env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
+            env.pop("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", None)
             env["CODEX_LORA_APPLY_MODE"] = "merge"
             env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
             env["CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE"] = "hybrid"
@@ -635,7 +682,6 @@ class RuntimeTab:
         self._var_gguf_exec.set(gguf)
         self._var_gguf_dequant_cache.set(gguf_cache)
         self._var_lora_apply_mode.set(lora_apply)
-        self._var_gguf_dequant_cache_ratio.set(str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip())
         self._var_lora_online_math.set(lora_math)
         self._var_wan_chunk_buffer_mode.set(chunk_buffer_mode)
 

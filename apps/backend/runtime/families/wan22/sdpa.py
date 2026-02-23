@@ -10,13 +10,16 @@ Purpose: SDPA backend selection helpers for WAN runtimes.
 Provides a configurable `sdpa(...)` wrapper with optional chunking and strict policy validation, delegating per-call SDPA execution to the central attention dispatcher.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_SDPA_SETTINGS` (constant): Mutable config dict storing current SDPA policy and chunk size.
+- `_SDPA_SETTINGS_CTX` (constant): Context-local SDPA settings tuple (`policy`, `mode`, `chunk`).
+- `_normalize_sdpa_settings` (function): Validates and normalizes SDPA policy/chunk/mode inputs.
 - `set_sdpa_settings` (function): Applies policy/chunk settings (explicit args override env overrides).
+- `_get_sdpa_settings` (function): Reads effective context-local SDPA settings tuple.
 - `sdpa` (function): Calls PyTorch SDPA using the configured backend policy and optional chunking.
 """
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Optional
 
 import torch
@@ -30,14 +33,17 @@ _LOG_ONCE = {
 }
 _SDPA_LOG_COUNT = 0
 
-_SDPA_SETTINGS = {
-    "policy": "auto",
-    "mode": "global",
-    "chunk": 0,
-}
+_SDPA_SETTINGS_CTX: ContextVar[tuple[str, str, int]] = ContextVar(
+    "wan22_sdpa_settings",
+    default=("auto", "global", 0),
+)
 
 
-def set_sdpa_settings(policy: Optional[str], chunk: Optional[int], attention_mode: Optional[str] = None) -> None:
+def _normalize_sdpa_settings(
+    policy: Optional[str],
+    chunk: Optional[int],
+    attention_mode: Optional[str],
+) -> tuple[str, str, int]:
     if policy is not None and not isinstance(policy, str):
         raise TypeError(f"WAN22 SDPA: policy must be a string when provided, got {type(policy).__name__}.")
     pol = str(policy if policy is not None else "auto").strip().lower()
@@ -57,15 +63,19 @@ def set_sdpa_settings(policy: Optional[str], chunk: Optional[int], attention_mod
         except Exception as exc:
             raise RuntimeError(f"WAN22 SDPA: chunk must be an integer when provided, got {chunk!r}.") from exc
         ch = chunk_value if chunk_value > 0 else 0
-    _SDPA_SETTINGS["policy"] = pol
-    _SDPA_SETTINGS["mode"] = mode
-    _SDPA_SETTINGS["chunk"] = ch
+    return pol, mode, ch
+
+
+def set_sdpa_settings(policy: Optional[str], chunk: Optional[int], attention_mode: Optional[str] = None) -> None:
+    _SDPA_SETTINGS_CTX.set(_normalize_sdpa_settings(policy, chunk, attention_mode))
+
+
+def _get_sdpa_settings() -> tuple[str, str, int]:
+    return _SDPA_SETTINGS_CTX.get()
 
 
 def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = False) -> torch.Tensor:
-    pol = str(_SDPA_SETTINGS["policy"]).strip().lower()
-    mode = str(_SDPA_SETTINGS["mode"]).strip().lower()
-    ch = int(_SDPA_SETTINGS["chunk"])
+    pol, mode, ch = _get_sdpa_settings()
 
     global _LOG_ONCE, _SDPA_LOG_COUNT
     _SDPA_LOG_COUNT += 1

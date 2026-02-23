@@ -10,7 +10,7 @@ Purpose: Launcher profile persistence (meta + env areas + per-model env overlays
 Implements the profile store used by the TUI/GUI launchers to load/save settings under `.sangoi/launcher/` (meta/areas/models) and to
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 Defines defaults for performance-related env keys (GGUF exec/cache knobs, CFG batching, profiling flags) and task/runtime safety knobs (single-flight,
-task cancel mode, task SSE buffer caps, safeweights), plus attention bootstrap policy keys, so runs are reproducible.
+task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap device policy keys (`CODEX_MAIN_DEVICE`, `CODEX_MOUNT_DEVICE`, `CODEX_OFFLOAD_DEVICE`), so runs are reproducible.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
@@ -71,6 +71,9 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_PROFILE_WITH_STACK": os.getenv("CODEX_PROFILE_WITH_STACK", "0"),
         "CODEX_PROFILE_TOP_N": os.getenv("CODEX_PROFILE_TOP_N", "25"),
         "CODEX_PROFILE_MAX_STEPS": os.getenv("CODEX_PROFILE_MAX_STEPS", "0"),
+        "CODEX_MAIN_DEVICE": "auto",
+        "CODEX_MOUNT_DEVICE": "auto",
+        "CODEX_OFFLOAD_DEVICE": "auto",
         "CODEX_CORE_DEVICE": "auto",
         "CODEX_TE_DEVICE": "auto",
         "CODEX_VAE_DEVICE": "auto",
@@ -229,6 +232,21 @@ class LauncherProfileStore:
     # ------------------------------------------------------------------ internal
 
     def _ensure_consistency(self) -> None:
+        # Legacy migration: when old profiles only have component device keys,
+        # seed CODEX_MAIN_DEVICE from core device before defaults are merged.
+        for container in list(self.areas.values()) + list(self.models.values()):
+            raw_main = str(container.get("CODEX_MAIN_DEVICE", "") or "").strip().lower()
+            if not raw_main:
+                legacy_core = str(container.get("CODEX_CORE_DEVICE", "") or "").strip().lower()
+                if legacy_core:
+                    container["CODEX_MAIN_DEVICE"] = legacy_core
+                    raw_main = legacy_core
+            if raw_main:
+                if not str(container.get("CODEX_MOUNT_DEVICE", "") or "").strip().lower():
+                    container["CODEX_MOUNT_DEVICE"] = raw_main
+                if not str(container.get("CODEX_OFFLOAD_DEVICE", "") or "").strip().lower():
+                    container["CODEX_OFFLOAD_DEVICE"] = raw_main
+
         defaults = _default_area_env()
         for area, values in defaults.items():
             current = self.areas.setdefault(area, {})

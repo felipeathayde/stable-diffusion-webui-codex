@@ -64,7 +64,7 @@ LAUNCHER_ATTENTION_MODE_CHOICES: tuple[str, ...] = (
     "quad",
 )
 GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
-GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off", "lvl1", "lvl2")
+GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off",)
 WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES: tuple[str, ...] = ("hybrid", "ram", "ram+hd")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")
 LORA_ONLINE_MATH_CHOICES: tuple[str, ...] = ("weight_merge",)
@@ -229,19 +229,8 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
     if str(env.get("CODEX_LORA_ONLINE_MATH", "") or "").strip().lower() == "activation":
         env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
 
-    raw_ratio = str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip()
-    if raw_ratio:
-        try:
-            ratio = float(raw_ratio)
-        except Exception as exc:
-            raise SettingValidationError(
-                f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be a float (got {raw_ratio!r})."
-            ) from exc
-        if ratio <= 0.0 or ratio > 1.0:
-            raise SettingValidationError(f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be > 0 and <= 1 (got {ratio}).")
-        env["CODEX_GGUF_DEQUANT_CACHE_RATIO"] = str(ratio)
-    else:
-        env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
+    env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
+    env.pop("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", None)
 
     gguf = ChoiceSetting("CODEX_GGUF_EXEC", default="dequant_forward", choices=GGUF_EXEC_CHOICES).get(env)
     gguf_dequant_cache = ChoiceSetting(
@@ -258,8 +247,6 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
     ).get(env)
 
     if gguf != "dequant_forward":
-        if gguf_dequant_cache != "off":
-            raise SettingValidationError("CODEX_GGUF_DEQUANT_CACHE requires CODEX_GGUF_EXEC=dequant_forward.")
         gguf_dequant_cache = "off"
 
     # math only valid on online mode

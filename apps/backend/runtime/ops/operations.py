@@ -18,6 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `OperationContext` (dataclass): Thread-local-ish operation config (device/dtype + manual cast + weight-format hints).
 - `StreamStashEntry` (dataclass): One stashed streaming entry (weight/bias + bookkeeping for swap/stream state).
 - `StreamStash` (dataclass): Tracks streaming stash state across ops (used to coordinate stream workers and cleanup).
+- `_OPERATION_CONTEXT_CTX` (constant): Context-local storage for the active operation context.
+- `_OPERATIONS_PATCH_LOCK` (constant): Reentrant lock serializing global torch.nn patch windows.
 - `get_operation_context` (function): Returns the active `OperationContext` (resolved from env/defaults).
 - `_resolve_device` (function): Resolves a default device for operations (explicit override vs runtime defaults).
 - `_resolve_dtype` (function): Resolves a default dtype for operations (explicit override vs runtime defaults).
@@ -39,8 +41,10 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import threading
 import time
 from collections import defaultdict
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
@@ -52,8 +56,6 @@ from .operations_gguf import (
     CodexPackLinearQ4KTilepackV1Parameter,
     CodexParameter,
     dequantize_tensor,
-    dequantize_tensor_for_forward,
-    is_dequant_forward_cache_enabled,
 )
 
 logger = logging.getLogger("backend.runtime.ops.operations")
@@ -197,12 +199,19 @@ class StreamStash:
         self.entries.clear()
 
 
-_operation_context = OperationContext()
+_OPERATION_CONTEXT_CTX: ContextVar[OperationContext | None] = ContextVar(
+    "codex_operation_context",
+    default=None,
+)
+_OPERATIONS_PATCH_LOCK = threading.RLock()
 _stream_stash = StreamStash()
 
 
 def get_operation_context() -> OperationContext:
-    return _operation_context
+    context = _OPERATION_CONTEXT_CTX.get()
+    if context is None:
+        return OperationContext()
+    return context
 
 
 def _resolve_device(default: Optional[torch.device] = None) -> Optional[torch.device]:
@@ -263,28 +272,11 @@ def get_weight_and_bias(
     weight = None
     if layer.weight is not None:
         weight = layer.weight
-        apply_weight_args = weight_args is not None
         if weight_fn is not None:
-            if (
-                weight_fn is dequantize_tensor
-                and is_dequant_forward_cache_enabled()
-                and weight_args is not None
-                and (device := weight_args.get("device")) is not None
-            ):
-                source_is_quantized = isinstance(weight, CodexParameter) and weight.qtype is not None
-                weight = dequantize_tensor_for_forward(
-                    weight,
-                    target_device=device,
-                    target_dtype=weight_args.get("dtype") if isinstance(weight_args.get("dtype"), torch.dtype) else None,
-                    non_blocking=bool(weight_args.get("non_blocking", False)),
-                )
-                if source_is_quantized:
-                    apply_weight_args = False
-            else:
-                if weight_args is not None and (device := weight_args.get("device")) is not None:
-                    weight = weight.to(device=device)
-                weight = weight_fn(weight)
-        if apply_weight_args and weight_args is not None:
+            if weight_args is not None and (device := weight_args.get("device")) is not None:
+                weight = weight.to(device=device)
+            weight = weight_fn(weight)
+        if weight_args is not None:
             weight = weight.to(**weight_args)
         if scale_weight is not None:
             weight = weight * scale_weight.to(device=weight.device, dtype=weight.dtype)
@@ -301,28 +293,11 @@ def get_weight_and_bias(
     bias = None
     if layer.bias is not None:
         bias = layer.bias
-        apply_bias_args = bias_args is not None
         if bias_fn is not None:
-            if (
-                bias_fn is dequantize_tensor
-                and is_dequant_forward_cache_enabled()
-                and bias_args is not None
-                and (device := bias_args.get("device")) is not None
-            ):
-                source_is_quantized = isinstance(bias, CodexParameter) and bias.qtype is not None
-                bias = dequantize_tensor_for_forward(
-                    bias,
-                    target_device=device,
-                    target_dtype=bias_args.get("dtype") if isinstance(bias_args.get("dtype"), torch.dtype) else None,
-                    non_blocking=bool(bias_args.get("non_blocking", False)),
-                )
-                if source_is_quantized:
-                    apply_bias_args = False
-            else:
-                if bias_args is not None and (device := bias_args.get("device")) is not None:
-                    bias = bias.to(device=device)
-                bias = bias_fn(bias)
-        if apply_bias_args and bias_args is not None:
+            if bias_args is not None and (device := bias_args.get("device")) is not None:
+                bias = bias.to(device=device)
+            bias = bias_fn(bias)
+        if bias_args is not None:
             bias = bias.to(**bias_args)
         if bias_patches is not None:
             from apps.backend.patchers.lora import merge_lora_to_weight
@@ -1258,40 +1233,43 @@ def using_codex_operations(operations=None, device=None, dtype=None, manual_cast
                 f"Got weight_format={weight_format!r}. Convert the model to GGUF or use a safetensors fp16/bf16/fp32 checkpoint."
             )
 
-    global _operation_context
-    previous_context = _operation_context
-    _operation_context = OperationContext(
+    active_context = OperationContext(
         device=device,
         dtype=dtype,
         manual_cast_enabled=manual_cast_enabled,
         weight_format=weight_format,
     )
+    with _OPERATIONS_PATCH_LOCK:
+        token = _OPERATION_CONTEXT_CTX.set(active_context)
+        operations_class = _select_operations_class(active_context, operations)
+        op_names = [
+            "Linear",
+            "Conv1d",
+            "Conv2d",
+            "Conv3d",
+            "ConvTranspose1d",
+            "ConvTranspose2d",
+            "ConvTranspose3d",
+            "GroupNorm",
+            "LayerNorm",
+            "Embedding",
+        ]
+        backups = {name: getattr(torch.nn, name) for name in op_names}
 
-    operations_class = _select_operations_class(_operation_context, operations)
-    op_names = [
-        "Linear",
-        "Conv1d",
-        "Conv2d",
-        "Conv3d",
-        "ConvTranspose1d",
-        "ConvTranspose2d",
-        "ConvTranspose3d",
-        "GroupNorm",
-        "LayerNorm",
-        "Embedding",
-    ]
-    backups = {name: getattr(torch.nn, name) for name in op_names}
-
-    try:
-        for name in op_names:
-            setattr(torch.nn, name, getattr(operations_class, name))
-        logger.debug("Installed Codex operations (%s) with context %s", operations_class.__name__, _operation_context.describe())
-        yield
-    finally:
-        for name, original in backups.items():
-            setattr(torch.nn, name, original)
-        logger.debug("Restored torch.nn operations to originals")
-        _operation_context = previous_context
+        try:
+            for name in op_names:
+                setattr(torch.nn, name, getattr(operations_class, name))
+            logger.debug(
+                "Installed Codex operations (%s) with context %s",
+                operations_class.__name__,
+                active_context.describe(),
+            )
+            yield
+        finally:
+            for name, original in backups.items():
+                setattr(torch.nn, name, original)
+            logger.debug("Restored torch.nn operations to originals")
+            _OPERATION_CONTEXT_CTX.reset(token)
 
 
 def shift_manual_cast(model, enabled):

@@ -11,7 +11,10 @@ Builds the argparse schema for runtime flags (devices/dtypes/attention/swap/smar
 Supports separate storage vs compute dtype overrides for core/text encoder/VAE (e.g., `--core-dtype` vs `--core-compute-dtype`) for stability and tuning.
 Also parses diagnostics bootstrap toggles (`--trace-contract`, `--trace-profiler`) for runtime trace/profiler activation.
 Also parses strict LoRA loader policy toggles (`--lora-merge-mode`, `--lora-refresh-signature`) for merge/signature behavior.
-Interactive prompt stdout writes use centralized helpers from `apps.backend.infra.stdio`.
+Main-device invariant support enforces a single runtime device authority: `--main-device` (launcher-provided) governs
+core/TE/VAE and falls back to CUDA when available (else CPU) when omitted.
+Mount/offload device invariants add explicit lifecycle control (`--mount-device`, `--offload-device`) with fail-loud
+normalization and default resolution against the main device.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_parser` (function): Defines the argparse schema for backend runtime flags (devices/dtypes/attention/swap/etc).
@@ -19,8 +22,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_has_value` (function): Checks whether a parsed CLI option has a meaningful value (vs unset/default).
 - `_apply_source_overrides` (function): Applies overrides from a source mapping onto the argparse namespace.
 - `_validate_runtime_flags` (function): Validates behavior-changing runtime flag combinations (GGUF exec modes, online LoRA math).
-- `_validate_required_devices` (function): Ensures device defaults are configured (prompts in foreground TTY; raises in non-interactive).
+- `_validate_required_devices` (function): Ensures resolved device values obey the main-device invariant.
 - `_normalize_device_choice` (function): Normalizes device choice strings (e.g., cpu/cuda/directml) into canonical form.
+- `_device_backend_for_choice` (function): Maps normalized device choices into `DeviceBackend` values.
+- `_cuda_available_for_main_device` (function): Detects CUDA availability for main-device fallback resolution.
+- `_default_main_device_choice` (function): Resolves default main-device fallback (`cuda` when available, else `cpu`).
+- `_resolve_main_device_choice` (function): Resolves authoritative main device from args/env/legacy component settings.
+- `_resolve_aux_device_choice` (function): Resolves mount/offload device choices from args/env with fallback to main device.
 - `_normalize_dtype_choice` (function): Normalizes dtype choice strings (fp32/fp16/bf16/fp8) into canonical form.
 - `_torch_dtype_for_choice` (function): Maps a dtype choice string to a torch dtype name (string form used across config objects).
 - `_apply_component_device_overrides` (function): Applies per-component device overrides (core/vae/text encoders) to `RuntimeMemoryConfig`.
@@ -37,7 +45,6 @@ import os
 import sys
 from typing import Mapping, MutableMapping, Sequence
 
-from apps.backend.infra.stdio import flush_stdout, write_stdout
 from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
 from .gguf_exec_mode import DEFAULT_GGUF_EXEC_MODE, GgufExecMode
 from .lora_online_math import DEFAULT_LORA_ONLINE_MATH, LoraOnlineMath
@@ -69,6 +76,15 @@ from apps.backend.runtime.memory.config import (
 
 _LOG = logging.getLogger("backend.infra.config.args")
 TRACE_DEBUG_DEFAULT = 10
+_DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda", "cpu", "mps", "xpu", "directml")
+_DEVICE_CHOICE_TO_BACKEND: dict[str, DeviceBackend] = {
+    "auto": DeviceBackend.AUTO,
+    "cuda": DeviceBackend.CUDA,
+    "cpu": DeviceBackend.CPU,
+    "mps": DeviceBackend.MPS,
+    "xpu": DeviceBackend.XPU,
+    "directml": DeviceBackend.DIRECTML,
+}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -174,11 +190,8 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["off", "lvl1", "lvl2"],
         default=None,
         help=(
-            "Enable run-scoped caching for GGUF dequant_forward execution: "
-            "'off' disables caching (default). "
-            "'lvl1' caches moved+baked GGUF parameters per sampling run (reduces repeated bake/move overhead). "
-            "'lvl2' also caches dequantized float weights per sampling run (more speed, more memory). "
-            "Only valid with '--gguf-exec=dequant_forward'."
+            "Removed feature flag for GGUF dequant-forward run cache. "
+            "Only 'off' is supported in this build; selecting 'lvl1'/'lvl2' fails loud."
         ),
     )
     parser.add_argument(
@@ -187,8 +200,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="MB",
         help=(
-            "Optional memory cap (MB) for GGUF dequant cache. When unset, a heuristic cap is chosen from free VRAM/RAM at sampling start. "
-            "Ignored when '--gguf-dequant-cache=off'."
+            "Removed feature flag for GGUF dequant-forward run cache. Must be unset."
         ),
     )
     parser.add_argument(
@@ -197,9 +209,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="RATIO",
         help=(
-            "Optional ratio used to compute the heuristic GGUF dequant cache budget from free VRAM/RAM at sampling start when "
-            "'--gguf-dequant-cache-limit-mb' is unset. Must be >0 and <=1. Applies to both lvl1 and lvl2. "
-            "Ignored when '--gguf-dequant-cache=off' or when an explicit limit is provided."
+            "Removed feature flag for GGUF dequant-forward run cache. Must be unset."
         ),
     )
 
@@ -299,22 +309,48 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Prefer constructing models directly on GPU (no implicit fallback).",
     )
 
-    device_choices = ["auto", "cuda", "cpu", "mps", "xpu", "directml"]
+    parser.add_argument(
+        "--main-device",
+        choices=_DEVICE_CHOICES,
+        default=None,
+        help=(
+            "Global runtime device authority. When set, core/text-encoder/VAE are forced to this device. "
+            "When unset, backend resolves to CUDA if available, otherwise CPU."
+        ),
+    )
+    parser.add_argument(
+        "--mount-device",
+        choices=_DEVICE_CHOICES,
+        default=None,
+        help=(
+            "Model mount/load device authority. Defaults to resolved main device when unset/auto. "
+            "Must be launcher-provided when non-default behavior is needed."
+        ),
+    )
+    parser.add_argument(
+        "--offload-device",
+        choices=_DEVICE_CHOICES,
+        default=None,
+        help=(
+            "Model offload target authority. Defaults to resolved main device when unset/auto. "
+            "Use with swap policy controls for explicit residency behavior."
+        ),
+    )
     parser.add_argument(
         "--core-device",
-        choices=device_choices,
+        choices=_DEVICE_CHOICES,
         default=None,
         help="Explicit device for diffusion core (overrides saved WebUI settings).",
     )
     parser.add_argument(
         "--te-device",
-        choices=device_choices,
+        choices=_DEVICE_CHOICES,
         default=None,
         help="Explicit device for text encoder (overrides saved WebUI settings).",
     )
     parser.add_argument(
         "--vae-device",
-        choices=device_choices,
+        choices=_DEVICE_CHOICES,
         default=None,
         help="Explicit device for VAE (overrides saved WebUI settings).",
     )
@@ -370,6 +406,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 _DEVICE_DIRECTIVES = (
+    ("main_device", "codex_main_device"),
+    ("mount_device", "codex_mount_device"),
+    ("offload_device", "codex_offload_device"),
     ("core_device", "codex_core_device"),
     ("te_device", "codex_te_device"),
     ("vae_device", "codex_vae_device"),
@@ -481,19 +520,18 @@ def _validate_runtime_flags(ns: argparse.Namespace) -> None:
         )
 
     if gguf_dequant_cache != "off":
-        if gguf_exec != GgufExecMode.DEQUANT_FORWARD.value:
-            raise RuntimeError("--gguf-dequant-cache requires '--gguf-exec=dequant_forward'.")
-        if gguf_dequant_cache not in {"lvl1", "lvl2"}:
-            raise RuntimeError("--gguf-dequant-cache must be one of: off, lvl1, lvl2.")
-        if gguf_dequant_cache_limit_mb is not None and int(gguf_dequant_cache_limit_mb) <= 0:
-            raise RuntimeError("--gguf-dequant-cache-limit-mb must be > 0 when provided.")
+        raise RuntimeError(
+            "GGUF dequant-forward run cache (lvl1/lvl2) was removed. "
+            "Set '--gguf-dequant-cache=off' and remove dequant-cache tuning flags."
+        )
+    if gguf_dequant_cache_limit_mb is not None:
+        raise RuntimeError(
+            "--gguf-dequant-cache-limit-mb is no longer supported because GGUF dequant-forward run cache was removed."
+        )
     if gguf_dequant_cache_ratio is not None:
-        try:
-            ratio = float(gguf_dequant_cache_ratio)
-        except Exception as exc:
-            raise RuntimeError("--gguf-dequant-cache-ratio must be a float when provided.") from exc
-        if ratio <= 0.0 or ratio > 1.0:
-            raise RuntimeError("--gguf-dequant-cache-ratio must be > 0 and <= 1 when provided.")
+        raise RuntimeError(
+            "--gguf-dequant-cache-ratio is no longer supported because GGUF dequant-forward run cache was removed."
+        )
 
     attn_backend = _resolve_attention_backend(ns)
     _resolve_attention_sdpa_policy(ns, backend=attn_backend)
@@ -512,19 +550,82 @@ def _normalize_device_choice(value: str | None) -> str | None:
     v = value.strip().lower()
     if not v:
         return None
-    if v == "auto":
-        return "auto"
-    if v in {"cuda", "gpu"}:
-        return "cuda"
-    if v == "cpu":
-        return "cpu"
-    if v == "mps":
-        return "mps"
-    if v == "xpu":
-        return "xpu"
-    if v in {"directml", "dml"}:
-        return "directml"
-    raise ValueError(f"Unsupported device option '{value}'. Allowed: auto, cuda, cpu, mps, xpu, directml")
+    alias_map = {
+        "gpu": "cuda",
+        "dml": "directml",
+    }
+    normalized = alias_map.get(v, v)
+    if normalized in _DEVICE_CHOICES:
+        return normalized
+    raise ValueError(
+        f"Unsupported device option '{value}'. Allowed: {', '.join(_DEVICE_CHOICES)}"
+    )
+
+
+def _device_backend_for_choice(choice: str | None) -> DeviceBackend | None:
+    normalized = _normalize_device_choice(choice)
+    if normalized is None:
+        return None
+    return _DEVICE_CHOICE_TO_BACKEND[normalized]
+
+
+def _cuda_available_for_main_device() -> bool:
+    try:
+        import torch  # type: ignore
+
+        return bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def _default_main_device_choice() -> str:
+    return "cuda" if _cuda_available_for_main_device() else "cpu"
+
+
+def _resolve_main_device_choice(ns: argparse.Namespace, env: Mapping[str, str]) -> str:
+    explicit_main = _normalize_device_choice(getattr(ns, "codex_main_device", None))
+    if explicit_main is None:
+        env_main = _normalize_device_choice(str(env.get("CODEX_MAIN_DEVICE", "") or "").strip() or None)
+        explicit_main = env_main
+
+    if explicit_main is not None:
+        return _default_main_device_choice() if explicit_main == "auto" else explicit_main
+
+    component_choices = {
+        "core": _normalize_device_choice(getattr(ns, "codex_core_device", None)),
+        "te": _normalize_device_choice(getattr(ns, "codex_te_device", None)),
+        "vae": _normalize_device_choice(getattr(ns, "codex_vae_device", None)),
+    }
+
+    non_auto = {
+        value for value in component_choices.values() if value not in (None, "auto")
+    }
+    if len(non_auto) > 1:
+        joined = ", ".join(f"{name}={value}" for name, value in component_choices.items() if value not in (None, "auto"))
+        raise RuntimeError(
+            "Component device divergence is not allowed without --main-device. "
+            f"Found: {joined}. Set CODEX_MAIN_DEVICE/--main-device to a single value."
+        )
+    if len(non_auto) == 1:
+        return next(iter(non_auto))
+    return _default_main_device_choice()
+
+
+def _resolve_aux_device_choice(
+    ns: argparse.Namespace,
+    env: Mapping[str, str],
+    *,
+    namespace_attr: str,
+    env_key: str,
+    fallback_choice: str,
+) -> str:
+    explicit = _normalize_device_choice(getattr(ns, namespace_attr, None))
+    if explicit is None:
+        env_raw = str(env.get(env_key, "") or "").strip() or None
+        explicit = _normalize_device_choice(env_raw)
+    if explicit in (None, "auto"):
+        return fallback_choice
+    return explicit
 
 
 def _normalize_dtype_choice(value: str | None, *, allow_fp8: bool = False) -> str | None:
@@ -563,69 +664,26 @@ def _normalize_dtype_choice(value: str | None, *, allow_fp8: bool = False) -> st
 
 
 def _validate_required_devices(ns: argparse.Namespace) -> None:
-    """Ensure device defaults are explicitly configured (no silent fallbacks).
+    """Ensure resolved runtime devices obey the global main-device invariant."""
 
-    In interactive terminals, missing device values are prompted from the user.
-    In non-interactive contexts, we fail loud with a clear error message.
-    """
+    main_device = _normalize_device_choice(getattr(ns, "codex_main_device", None))
+    if main_device is None:
+        raise RuntimeError("Main-device invariant violated: codex_main_device was not resolved.")
 
-    required: list[tuple[str, str]] = [
-        ("codex_core_device", "diffusion core"),
-        ("codex_te_device", "text encoder"),
-        ("codex_vae_device", "VAE"),
-    ]
+    for attr in ("codex_core_device", "codex_te_device", "codex_vae_device"):
+        value = _normalize_device_choice(getattr(ns, attr, None))
+        if value is None:
+            raise RuntimeError(f"Main-device invariant violated: missing {attr}.")
+        if value != main_device:
+            raise RuntimeError(
+                "Main-device invariant violated: "
+                f"{attr}={value!r} diverges from codex_main_device={main_device!r}."
+            )
 
-    missing = [(attr, label) for attr, label in required if getattr(ns, attr, None) is None]
-    if not missing:
-        return
-
-    choices = ["auto", "cuda", "cpu", "mps", "xpu", "directml"]
-
-    def _interactive() -> bool:
-        try:
-            if not (sys.stdin.isatty() and sys.stdout.isatty()):
-                return False
-            # Avoid prompting when the process is in the background (would SIGTTIN / hang).
-            return os.getpgrp() == os.tcgetpgrp(sys.stdin.fileno())
-        except Exception:
-            return False
-
-    if not _interactive():
-        keys = ", ".join(attr for attr, _label in missing)
-        raise RuntimeError(
-            "Device configuration is required but missing: "
-            f"{keys}. Provide it via startup flags "
-            "(`--core-device`, `--te-device`, `--vae-device`) or set persisted defaults in "
-            "`apps/settings_values.json` (keys `codex_core_device`, `codex_te_device`, `codex_vae_device`)."
-        )
-
-    def _prompt(attr: str, label: str) -> str:
-        write_stdout("\n")
-        write_stdout(f"[config] Missing {attr} ({label}). Choose one:\n")
-        for idx, option in enumerate(choices, start=1):
-            write_stdout(f"  {idx}) {option}\n")
-        flush_stdout()
-        while True:
-            try:
-                raw = input(f"Select {attr} (1-{len(choices)} or value, 'q' to abort): ").strip()
-            except EOFError as exc:
-                raise RuntimeError(f"Missing {attr} and no input available (stdin closed).") from exc
-            if not raw:
-                continue
-            lowered = raw.strip().lower()
-            if lowered in {"q", "quit", "exit"}:
-                raise RuntimeError("Aborted by user.")
-            if lowered.isdigit():
-                n = int(lowered)
-                if 1 <= n <= len(choices):
-                    return choices[n - 1]
-            if lowered in choices:
-                return lowered
-            write_stdout(f"Invalid choice {raw!r}. Allowed: {', '.join(choices)}\n")
-            flush_stdout()
-
-    for attr, label in missing:
-        setattr(ns, attr, _prompt(attr, label))
+    for attr in ("codex_mount_device", "codex_offload_device"):
+        value = _normalize_device_choice(getattr(ns, attr, None))
+        if value is None:
+            raise RuntimeError(f"Device invariant violated: missing {attr}.")
 
 
 def _torch_dtype_for_choice(choice: str | None) -> str | None:
@@ -642,6 +700,7 @@ def _torch_dtype_for_choice(choice: str | None) -> str | None:
 
 
 def _apply_component_device_overrides(config: RuntimeMemoryConfig, ns: argparse.Namespace) -> None:
+    main_backend = _device_backend_for_choice(getattr(ns, "codex_main_device", None))
     role_choices = (
         (DeviceRole.CORE, getattr(ns, "codex_core_device", None), getattr(ns, "codex_core_dtype", None)),
         (DeviceRole.TEXT_ENCODER, getattr(ns, "codex_te_device", None), getattr(ns, "codex_te_dtype", None)),
@@ -649,19 +708,15 @@ def _apply_component_device_overrides(config: RuntimeMemoryConfig, ns: argparse.
     )
     for role, device_choice, dtype_choice in role_choices:
         policy = config.component_policy(role)
-        if device_choice == "cuda":
-            policy.preferred_backend = DeviceBackend.CUDA
-        elif device_choice == "cpu":
-            policy.preferred_backend = DeviceBackend.CPU
-        elif device_choice == "mps":
-            policy.preferred_backend = DeviceBackend.MPS
-        elif device_choice == "xpu":
-            policy.preferred_backend = DeviceBackend.XPU
-        elif device_choice == "directml":
-            policy.preferred_backend = DeviceBackend.DIRECTML
+        resolved_backend = _device_backend_for_choice(device_choice)
+        if resolved_backend is not None:
+            if main_backend is not None and resolved_backend == main_backend:
+                policy.preferred_backend = DeviceBackend.AUTO
+            else:
+                policy.preferred_backend = resolved_backend
 
         forced = _torch_dtype_for_choice(dtype_choice)
-        if device_choice == "cpu":
+        if resolved_backend == DeviceBackend.CPU:
             forced = "float32"
         if forced:
             policy.forced_dtype = forced
@@ -674,7 +729,7 @@ def _apply_component_device_overrides(config: RuntimeMemoryConfig, ns: argparse.
         if compute_key:
             compute_choice = getattr(ns, compute_key, None)
             forced_compute = _torch_dtype_for_choice(compute_choice)
-            if device_choice == "cpu" and forced_compute and forced_compute != "float32":
+            if resolved_backend == DeviceBackend.CPU and forced_compute and forced_compute != "float32":
                 forced_compute = "float32"
             if forced_compute:
                 policy.forced_compute_dtype = forced_compute
@@ -689,6 +744,18 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         raw_attention_sdpa_policy = str(env.get("CODEX_ATTENTION_SDPA_POLICY", "") or "").strip().lower()
         if raw_attention_sdpa_policy:
             ns.attention_sdpa_policy = raw_attention_sdpa_policy
+    if not _has_value(getattr(ns, "codex_main_device", None)):
+        raw_main_device = str(env.get("CODEX_MAIN_DEVICE", "") or "").strip().lower()
+        if raw_main_device:
+            ns.codex_main_device = raw_main_device
+    if not _has_value(getattr(ns, "codex_mount_device", None)):
+        raw_mount_device = str(env.get("CODEX_MOUNT_DEVICE", "") or "").strip().lower()
+        if raw_mount_device:
+            ns.codex_mount_device = raw_mount_device
+    if not _has_value(getattr(ns, "codex_offload_device", None)):
+        raw_offload_device = str(env.get("CODEX_OFFLOAD_DEVICE", "") or "").strip().lower()
+        if raw_offload_device:
+            ns.codex_offload_device = raw_offload_device
 
     def _set_core_dtype(val: str | None) -> None:
         ns.core_in_fp16 = False
@@ -745,10 +812,31 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         elif v in {"fp8_e5m2", "fp8-e5m2", "fp8_e5"}:
             ns.clip_in_fp8_e5m2 = True
 
-    core_device_choice = _normalize_device_choice(getattr(ns, "codex_core_device", None))
+    resolved_main_device = _resolve_main_device_choice(ns, env)
+    ns.codex_main_device = resolved_main_device
+    ns.codex_mount_device = _resolve_aux_device_choice(
+        ns,
+        env,
+        namespace_attr="codex_mount_device",
+        env_key="CODEX_MOUNT_DEVICE",
+        fallback_choice=resolved_main_device,
+    )
+    ns.codex_offload_device = _resolve_aux_device_choice(
+        ns,
+        env,
+        namespace_attr="codex_offload_device",
+        env_key="CODEX_OFFLOAD_DEVICE",
+        fallback_choice=resolved_main_device,
+    )
+    ns.codex_core_device = resolved_main_device
+    ns.codex_te_device = resolved_main_device
+    ns.codex_vae_device = resolved_main_device
+
+    core_device_choice = resolved_main_device
+    core_device_backend = _device_backend_for_choice(core_device_choice)
     core_dtype_raw = getattr(ns, "codex_core_dtype", None)
     core_dtype_choice = _normalize_dtype_choice(core_dtype_raw, allow_fp8=True)
-    if core_device_choice == "cpu" and core_dtype_choice not in (None, "fp32"):
+    if core_device_backend == DeviceBackend.CPU and core_dtype_choice not in (None, "fp32"):
         core_dtype_choice = "fp32"
     _set_core_dtype(core_dtype_choice or core_dtype_raw)
     ns.codex_core_device = core_device_choice
@@ -756,14 +844,15 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     core_compute_dtype_raw = getattr(ns, "codex_core_compute_dtype", None)
     core_compute_dtype_choice = _normalize_dtype_choice(core_compute_dtype_raw, allow_fp8=False)
-    if core_device_choice == "cpu" and core_compute_dtype_choice not in (None, "fp32"):
+    if core_device_backend == DeviceBackend.CPU and core_compute_dtype_choice not in (None, "fp32"):
         core_compute_dtype_choice = "fp32"
     ns.codex_core_compute_dtype = core_compute_dtype_choice
 
-    vae_device_choice = _normalize_device_choice(getattr(ns, "codex_vae_device", None))
+    vae_device_choice = resolved_main_device
+    vae_device_backend = _device_backend_for_choice(vae_device_choice)
     vae_dtype_raw = getattr(ns, "codex_vae_dtype", None)
     vae_dtype_choice = _normalize_dtype_choice(vae_dtype_raw, allow_fp8=False)
-    if vae_device_choice == "cpu":
+    if vae_device_backend == DeviceBackend.CPU:
         ns.vae_in_cpu = True
         if vae_dtype_choice not in (None, "fp32"):
             vae_dtype_choice = "fp32"
@@ -773,14 +862,15 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     vae_compute_dtype_raw = getattr(ns, "codex_vae_compute_dtype", None)
     vae_compute_dtype_choice = _normalize_dtype_choice(vae_compute_dtype_raw, allow_fp8=False)
-    if vae_device_choice == "cpu" and vae_compute_dtype_choice not in (None, "fp32"):
+    if vae_device_backend == DeviceBackend.CPU and vae_compute_dtype_choice not in (None, "fp32"):
         vae_compute_dtype_choice = "fp32"
     ns.codex_vae_compute_dtype = vae_compute_dtype_choice
 
-    te_device_choice = _normalize_device_choice(getattr(ns, "codex_te_device", None))
+    te_device_choice = resolved_main_device
+    te_device_backend = _device_backend_for_choice(te_device_choice)
     te_dtype_raw = getattr(ns, "codex_te_dtype", None)
     te_dtype_choice = _normalize_dtype_choice(te_dtype_raw, allow_fp8=True)
-    if te_device_choice == "cpu" and te_dtype_choice not in (None, "fp32"):
+    if te_device_backend == DeviceBackend.CPU and te_dtype_choice not in (None, "fp32"):
         te_dtype_choice = "fp32"
     _set_te_dtype(te_dtype_choice or te_dtype_raw)
     ns.codex_te_device = te_device_choice
@@ -788,14 +878,14 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     te_compute_dtype_raw = getattr(ns, "codex_te_compute_dtype", None)
     te_compute_dtype_choice = _normalize_dtype_choice(te_compute_dtype_raw, allow_fp8=False)
-    if te_device_choice == "cpu" and te_compute_dtype_choice not in (None, "fp32"):
+    if te_device_backend == DeviceBackend.CPU and te_compute_dtype_choice not in (None, "fp32"):
         te_compute_dtype_choice = "fp32"
     ns.codex_te_compute_dtype = te_compute_dtype_choice
 
-    if te_device_choice == "cpu" and not getattr(ns, "clip_in_fp32", False):
+    if te_device_backend == DeviceBackend.CPU and not getattr(ns, "clip_in_fp32", False):
         ns.clip_in_fp32 = True
 
-    if te_device_choice == "cpu" and getattr(ns, "clip_in_fp16", False):
+    if te_device_backend == DeviceBackend.CPU and getattr(ns, "clip_in_fp16", False):
         ns.clip_in_fp16 = False
 
     if _truthy(env.get("CODEX_DEBUG_COND")):
@@ -932,6 +1022,8 @@ def build_runtime_memory_config(ns: argparse.Namespace) -> RuntimeMemoryConfig:
 
     config = RuntimeMemoryConfig(
         device_backend=DeviceBackend.AUTO,
+        mount_device_backend=DeviceBackend.AUTO,
+        offload_device_backend=DeviceBackend.AUTO,
         gpu_device_id=ns.gpu_device_id,
         gpu_prefer_construct=ns.gpu_prefer_construct,
         precision=precision,
@@ -955,6 +1047,27 @@ def build_runtime_memory_config(ns: argparse.Namespace) -> RuntimeMemoryConfig:
         config.component_policy(DeviceRole.VAE).preferred_backend = DeviceBackend.CPU
 
     _apply_component_device_overrides(config, ns)
+
+    resolved_main_backend = _device_backend_for_choice(getattr(ns, "codex_main_device", None))
+    if resolved_main_backend is not None and resolved_main_backend != DeviceBackend.AUTO:
+        config.device_backend = resolved_main_backend
+
+    resolved_mount_backend = _device_backend_for_choice(getattr(ns, "codex_mount_device", None))
+    if resolved_mount_backend in (None, DeviceBackend.AUTO):
+        resolved_mount_backend = config.device_backend
+    config.mount_device_backend = resolved_mount_backend
+
+    resolved_offload_backend = _device_backend_for_choice(getattr(ns, "codex_offload_device", None))
+    if resolved_offload_backend in (None, DeviceBackend.AUTO):
+        resolved_offload_backend = config.device_backend
+    config.offload_device_backend = resolved_offload_backend
+
+    if DeviceBackend.DIRECTML in {
+        config.device_backend,
+        config.mount_device_backend,
+        config.offload_device_backend,
+    }:
+        config.allow_directml = True
 
     return config
 

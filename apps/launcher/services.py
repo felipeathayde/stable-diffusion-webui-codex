@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Launcher service specs and process supervision (API + UI).
 Defines service specs/handles, spawns subprocesses with environment overrides, streams logs into a shared buffer, and performs strict port
 availability checks (IPv4/IPv6) before starting the API.
-Maps launcher env toggles to backend CLI flags, including trace/profiler bootstrap toggles for diagnostics.
+Maps launcher env toggles to backend CLI flags, including main/mount/offload bootstrap device flags and trace/profiler diagnostics toggles.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ServiceStatus` (enum): Launcher service lifecycle status.
@@ -43,6 +43,7 @@ from queue import Empty, Queue
 from typing import Dict, Iterator, List, Mapping, Optional
 
 from .log_buffer import CodexLogBuffer
+from .settings import DEVICE_CHOICES
 from apps.backend.infra.config.repo_root import get_repo_root
 
 LOGGER = logging.getLogger("codex.launcher.services")
@@ -385,19 +386,54 @@ def _env_truthy(value: object) -> bool:
 
 def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     args: List[str] = []
+    allowed_devices = set(DEVICE_CHOICES)
 
-    # Device defaults (required at backend bootstrap; explicit, no silent fallbacks).
-    raw_core_device = str(env.get("CODEX_CORE_DEVICE", "") or "").strip().lower()
-    if raw_core_device:
-        args.append(f"--core-device={raw_core_device}")
+    def _append_device_arg(*, env_key: str, flag: str, fallback: str = "") -> None:
+        raw_value = str(env.get(env_key, "") or "").strip().lower()
+        if not raw_value:
+            raw_value = str(fallback or "").strip().lower()
+        if not raw_value:
+            return
+        if raw_value not in allowed_devices:
+            allowed = ", ".join(sorted(allowed_devices))
+            raise ValueError(f"{env_key} must be one of: {allowed} (got {raw_value!r}).")
+        args.append(f"--{flag}={raw_value}")
 
-    raw_te_device = str(env.get("CODEX_TE_DEVICE", "") or "").strip().lower()
-    if raw_te_device:
-        args.append(f"--te-device={raw_te_device}")
+    # Main device contract (single authority). When provided, mirror to all components.
+    raw_main_device = str(env.get("CODEX_MAIN_DEVICE", "") or "").strip().lower()
+    if raw_main_device:
+        if raw_main_device not in allowed_devices:
+            allowed = ", ".join(sorted(allowed_devices))
+            raise ValueError(f"CODEX_MAIN_DEVICE must be one of: {allowed} (got {raw_main_device!r}).")
+        args.append(f"--main-device={raw_main_device}")
+        args.append(f"--core-device={raw_main_device}")
+        args.append(f"--te-device={raw_main_device}")
+        args.append(f"--vae-device={raw_main_device}")
+    else:
+        # Legacy per-component defaults (kept for backward-compatible launcher profiles).
+        raw_core_device = str(env.get("CODEX_CORE_DEVICE", "") or "").strip().lower()
+        if raw_core_device:
+            if raw_core_device not in allowed_devices:
+                allowed = ", ".join(sorted(allowed_devices))
+                raise ValueError(f"CODEX_CORE_DEVICE must be one of: {allowed} (got {raw_core_device!r}).")
+            args.append(f"--core-device={raw_core_device}")
 
-    raw_vae_device = str(env.get("CODEX_VAE_DEVICE", "") or "").strip().lower()
-    if raw_vae_device:
-        args.append(f"--vae-device={raw_vae_device}")
+        raw_te_device = str(env.get("CODEX_TE_DEVICE", "") or "").strip().lower()
+        if raw_te_device:
+            if raw_te_device not in allowed_devices:
+                allowed = ", ".join(sorted(allowed_devices))
+                raise ValueError(f"CODEX_TE_DEVICE must be one of: {allowed} (got {raw_te_device!r}).")
+            args.append(f"--te-device={raw_te_device}")
+
+        raw_vae_device = str(env.get("CODEX_VAE_DEVICE", "") or "").strip().lower()
+        if raw_vae_device:
+            if raw_vae_device not in allowed_devices:
+                allowed = ", ".join(sorted(allowed_devices))
+                raise ValueError(f"CODEX_VAE_DEVICE must be one of: {allowed} (got {raw_vae_device!r}).")
+            args.append(f"--vae-device={raw_vae_device}")
+
+    _append_device_arg(env_key="CODEX_MOUNT_DEVICE", flag="mount-device", fallback=raw_main_device)
+    _append_device_arg(env_key="CODEX_OFFLOAD_DEVICE", flag="offload-device", fallback=raw_main_device)
 
     raw_attention_backend = str(env.get("CODEX_ATTENTION_BACKEND", "") or "").strip().lower()
     if raw_attention_backend:
@@ -419,30 +455,6 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     raw_exec = str(env.get("CODEX_GGUF_EXEC", "") or "").strip().lower()
     if raw_exec:
         args.append(f"--gguf-exec={raw_exec}")
-
-    raw_dequant_cache = str(env.get("CODEX_GGUF_DEQUANT_CACHE", "") or "").strip().lower()
-    if raw_dequant_cache:
-        args.append(f"--gguf-dequant-cache={raw_dequant_cache}")
-
-    raw_dequant_cache_limit = str(env.get("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", "") or "").strip()
-    if raw_dequant_cache_limit:
-        try:
-            limit_mb = int(raw_dequant_cache_limit)
-        except Exception as exc:
-            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB must be an integer (got {raw_dequant_cache_limit!r}).") from exc
-        if limit_mb <= 0:
-            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB must be > 0 (got {limit_mb}).")
-        args.append(f"--gguf-dequant-cache-limit-mb={limit_mb}")
-
-    raw_dequant_cache_ratio = str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip()
-    if raw_dequant_cache_ratio:
-        try:
-            ratio = float(raw_dequant_cache_ratio)
-        except Exception as exc:
-            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be a float (got {raw_dequant_cache_ratio!r}).") from exc
-        if ratio <= 0.0 or ratio > 1.0:
-            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be > 0 and <= 1 (got {ratio}).")
-        args.append(f"--gguf-dequant-cache-ratio={ratio}")
 
     raw_lora_mode = str(env.get("CODEX_LORA_APPLY_MODE", "") or "").strip().lower()
     if raw_lora_mode:

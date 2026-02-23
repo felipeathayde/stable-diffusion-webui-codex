@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Typed configuration models for runtime memory management (devices, swap, attention, and budgets).
-Includes per-role dtype settings for both storage dtype and optional compute dtype overrides.
+Includes explicit main/mount/offload backend directives plus per-role dtype settings for both storage dtype and optional compute dtype overrides.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DeviceBackend` (enum): Execution backend selection (auto/cuda/cpu/mps/xpu/directml).
@@ -155,6 +155,8 @@ class RuntimeMemoryConfig:
     """High-level configuration consumed by the memory manager."""
 
     device_backend: DeviceBackend = DeviceBackend.AUTO
+    mount_device_backend: DeviceBackend = DeviceBackend.AUTO
+    offload_device_backend: DeviceBackend = DeviceBackend.AUTO
     gpu_device_id: Optional[int] = None
     gpu_prefer_construct: bool = False
     precision: PrecisionFlags = field(default_factory=PrecisionFlags)

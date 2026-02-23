@@ -25,6 +25,7 @@ from typing import Callable
 
 
 _INFERENCE_LOCK = threading.Lock()
+_INFERENCE_GATE_LOCAL = threading.local()
 
 
 def _env_truthy(key: str, *, default: bool) -> bool:
@@ -51,6 +52,8 @@ def acquire_inference_gate(*, should_cancel: Callable[[], bool], poll_interval_s
     Returns True when acquired. Returns False when cancelled while waiting.
     """
 
+    setattr(_INFERENCE_GATE_LOCAL, "lock_held", False)
+
     if not single_flight_enabled():
         return True
 
@@ -62,16 +65,19 @@ def acquire_inference_gate(*, should_cancel: Callable[[], bool], poll_interval_s
         if should_cancel():
             return False
         if _INFERENCE_LOCK.acquire(timeout=interval):
+            setattr(_INFERENCE_GATE_LOCAL, "lock_held", True)
             return True
         # brief sleep to avoid a tight loop when timeout is 0 on some platforms
         time.sleep(0.0)
 
 
 def release_inference_gate() -> None:
-    if not single_flight_enabled():
+    if not bool(getattr(_INFERENCE_GATE_LOCAL, "lock_held", False)):
         return
-    _INFERENCE_LOCK.release()
+    try:
+        _INFERENCE_LOCK.release()
+    finally:
+        setattr(_INFERENCE_GATE_LOCAL, "lock_held", False)
 
 
 __all__ = ["single_flight_enabled", "acquire_inference_gate", "release_inference_gate"]
-

@@ -205,8 +205,13 @@ def run_upscale_task(
             if acquired:
                 try:
                     release_inference_gate()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "inference gate release failed in upscale worker (task_id=%s): %s",
+                        task_id,
+                        exc,
+                        exc_info=False,
+                    )
 
     threading.Thread(target=worker, name=f"upscale-task-{task_id}", daemon=True).start()
 

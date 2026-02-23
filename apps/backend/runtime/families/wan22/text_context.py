@@ -236,6 +236,15 @@ def get_text_context(
     te_dev_eff = (te_device or device or "cpu").strip().lower()
     if te_dev_eff == "gpu":
         te_dev_eff = "cuda"
+    if te_dev_eff == "auto":
+        te_dev_eff = (device or "cpu").strip().lower()
+        if te_dev_eff == "gpu":
+            te_dev_eff = "cuda"
+    if te_dev_eff not in {"cpu", "cuda"} and not re.fullmatch(r"cuda:\d+", te_dev_eff):
+        raise RuntimeError(
+            "WAN22 GGUF: 'gguf_te_device' must be one of "
+            f"'auto', 'cpu', 'cuda', or 'cuda:<index>' (got {te_device!r})."
+        )
 
     # CPU TE requires fp32 (avoid implicit casts / weird numerics)
     if te_dev_eff == "cpu" and str(dtype).lower().strip() not in {"fp32", "float32"}:

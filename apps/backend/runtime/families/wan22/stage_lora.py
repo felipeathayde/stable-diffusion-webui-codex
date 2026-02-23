@@ -11,6 +11,7 @@ Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transforme
 with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO`.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_resolve_stage_lora_offload_device` (function): Resolves stage-LoRA offload device from memory-manager policy.
 - `apply_wan22_stage_lora` (function): Applies a LoRA file to a loaded stage model (merge or online).
 """
 
@@ -27,6 +28,7 @@ from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_apply_mode
 from apps.backend.patchers.lora_loader import CodexLoraLoader
 from apps.backend.runtime.adapters.lora.pipeline import build_patch_dicts
+from apps.backend.runtime.memory import memory_management
 
 from .diagnostics import get_logger
 from .model import remap_wan22_gguf_state_dict
@@ -109,6 +111,19 @@ def _read_min_match_ratio() -> float:
             f"{_ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO} must be in [0, 1], got: {raw!r}"
         )
     return ratio
+
+
+def _resolve_stage_lora_offload_device() -> torch.device:
+    manager = getattr(memory_management, "manager", None)
+    if manager is None or not hasattr(manager, "offload_device"):
+        raise RuntimeError("WAN22 GGUF stage LoRA requires an active memory manager with offload_device().")
+    offload_device = manager.offload_device()
+    if not isinstance(offload_device, torch.device):
+        raise RuntimeError(
+            "WAN22 GGUF stage LoRA requires memory manager offload_device() to return torch.device "
+            f"(got {type(offload_device).__name__})."
+        )
+    return offload_device
 
 
 def _strip_known_prefixes(name: str) -> str:
@@ -264,14 +279,16 @@ def apply_wan22_stage_lora(
             key: [(strength, payload, 1.0, None, None)] for key, payload in patch_dict.items()
         }
     }
-    loader.refresh(lora_patches, offload_device=torch.device("cpu"), force_refresh=True)
+    offload_device = _resolve_stage_lora_offload_device()
+    loader.refresh(lora_patches, offload_device=offload_device, force_refresh=True)
 
     log.info(
-        "[wan22.gguf] stage LoRA applied: stage=%s mode=%s file=%s params=%d",
+        "[wan22.gguf] stage LoRA applied: stage=%s mode=%s file=%s params=%d offload_device=%s",
         stage,
         apply_mode.value,
         os.path.basename(resolved_path),
         len(patch_dict),
+        offload_device,
     )
 
 

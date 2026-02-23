@@ -716,7 +716,12 @@ def run_image_task(
             if acquired:
                 try:
                     release_inference_gate()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "inference gate release failed in generation_image_worker (task_id=%s): %s",
+                        task_id,
+                        exc,
+                        exc_info=False,
+                    )
 
     threading.Thread(target=worker, name=f"{task_type.value}-task-{task_id}", daemon=True).start()

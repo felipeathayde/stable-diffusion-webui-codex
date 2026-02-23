@@ -28,3 +28,4 @@ Status: Active
 - 2026-02-22: `generation_tasks.py::force_runtime_memory_cleanup(...)` now logs cleanup failures without traceback payload (`exc_info=False`), preventing repeated stacktrace floods when CUDA is already in OOM/error state after engine failure.
 - 2026-02-21: `generation_tasks.py::build_engine_options(...)` now parses `codex_core_streaming` via shared strict bool parsing before emitting engine options (no truthiness coercion from malformed option snapshots).
 - 2026-02-21: `generation_tasks.py` now parses `samples_save` via shared strict bool parsing before output persistence, removing permissive `bool("false")==True` behavior.
+- 2026-02-22: task workers now log warning-level diagnostics when inference-gate release fails (`generation_tasks.py`, `upscale_tasks.py`, `supir_tasks.py`) instead of silently swallowing release errors.

@@ -763,22 +763,118 @@ def vae_decode_video(
 
     from PIL import Image
 
-    frames: list[Image.Image] = []
     dev_name = resolve_device_name(device)
     target = "cuda" if dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
     preferred = as_torch_dtype(dtype)
     dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
     last_exc: Exception | None = None
+    decode_meta: dict[str, Any] | None = None
+
+    class _DecodeNonFiniteError(RuntimeError):
+        """Internal decode sentinel used to preserve dtype/CPU fallback flow."""
 
     def _decode_attempt(
         *,
         attempt_device: str,
         torch_dtype: torch.dtype,
         session: WanVAEDecodeSession | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[list[Image.Image], dict[str, Any]]:
         vae: Any
         lane: str
         local_vae_loaded = False
+        attempt_frames: list[Image.Image] = []
+        chunk_count = 0
+        first_chunk_shape: tuple[int, ...] | None = None
+        last_chunk_shape: tuple[int, ...] | None = None
+        expected_chunk_layout: tuple[int, int, int, int] | None = None
+
+        def _extract_decode_tensor(decoded: Any) -> torch.Tensor:
+            sample = getattr(decoded, "sample", None)
+            if sample is not None:
+                return sample
+            if torch.is_tensor(decoded):
+                return decoded
+            if isinstance(decoded, (tuple, list)) and decoded and torch.is_tensor(decoded[0]):
+                return decoded[0]
+            raise RuntimeError(
+                "WAN22 GGUF: VAE decode output has no tensor sample "
+                f"(type={type(decoded).__name__})."
+            )
+
+        def _append_decoded_chunk(
+            img_chunk: torch.Tensor,
+            *,
+            lane_name: str,
+            chunk_label: str,
+        ) -> None:
+            nonlocal chunk_count, first_chunk_shape, last_chunk_shape, expected_chunk_layout
+            if not torch.is_tensor(img_chunk):
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE decode chunk has non-tensor output "
+                    f"(lane={lane_name} chunk={chunk_label} type={type(img_chunk).__name__})."
+                )
+            if img_chunk.ndim == 4:
+                if lane_name == "3d_native":
+                    img_chunk = img_chunk.unsqueeze(2)
+                else:
+                    raise RuntimeError(
+                        "WAN22 GGUF: VAE decode produced unsupported tensor rank "
+                        f"(lane={lane_name} chunk={chunk_label} shape={tuple(img_chunk.shape)})."
+                    )
+            if img_chunk.ndim != 5:
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE decode produced unsupported tensor rank "
+                    f"(lane={lane_name} chunk={chunk_label} shape={tuple(img_chunk.shape)})."
+                )
+            out_batch = int(img_chunk.shape[0])
+            out_channels = int(img_chunk.shape[1])
+            out_time = int(img_chunk.shape[2])
+            out_h = int(img_chunk.shape[3])
+            out_w = int(img_chunk.shape[4])
+            if out_batch < 1 or out_channels != 3:
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE decode produced unexpected chunk shape "
+                    f"(lane={lane_name} chunk={chunk_label} shape={tuple(img_chunk.shape)}; expected B>=1 and C=3)."
+                )
+            chunk_layout = (out_batch, out_channels, out_h, out_w)
+            if expected_chunk_layout is None:
+                expected_chunk_layout = chunk_layout
+            elif chunk_layout != expected_chunk_layout:
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE decode produced inconsistent chunk layout "
+                    f"(lane={lane_name} chunk={chunk_label} layout={chunk_layout} expected={expected_chunk_layout})."
+                )
+            if not torch.isfinite(img_chunk).all():
+                n_bad = int((~torch.isfinite(img_chunk)).sum().item())
+                raise _DecodeNonFiniteError(
+                    "WAN22 GGUF: VAE decode produced non-finite outputs "
+                    f"(lane={lane_name} chunk={chunk_label} bad={n_bad}; {summarize_numerics(img_chunk, name='vae_out_chunk')})."
+                )
+            chunk_shape = tuple(int(v) for v in img_chunk.shape)
+            if first_chunk_shape is None:
+                first_chunk_shape = chunk_shape
+            last_chunk_shape = chunk_shape
+            chunk_count += 1
+            if log_numerics_enabled():
+                log.info(
+                    "[wan22.gguf] VAE decode chunk ok lane=%s chunk=%s: %s",
+                    lane_name,
+                    chunk_label,
+                    summarize_numerics(img_chunk, name="vae_out_chunk"),
+                )
+            for ti in range(out_time):
+                x = img_chunk[0, :, ti, :, :].detach()
+                if x.ndim != 3:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: VAE decode produced unexpected frame tensor rank: shape={tuple(x.shape)}; expected [C,H,W]"
+                    )
+                x = (x + 1.0) * 0.5
+                x = x.clamp(0, 1)
+                frame_hwc = x.permute(1, 2, 0)
+                frame_uint8 = frame_hwc.mul(255).to(dtype=torch.uint8)
+                arr = frame_uint8.cpu().numpy()
+                attempt_frames.append(Image.fromarray(arr))
+
         if session is not None:
             vae = session.vae
             lane = str(session.lane)
@@ -805,31 +901,78 @@ def vae_decode_video(
         with torch.no_grad():
             if lane == "2d_native":
                 lat_batched, batch_size, frame_count = _to_frame_batch_4d(lat)
-                decoded = vae.decode(lat_batched)
+                if int(batch_size) < 1:
+                    raise RuntimeError(
+                        "WAN22 GGUF: VAE decode produced invalid batch size for 2D lane "
+                        f"(batch_size={batch_size} frame_count={frame_count})."
+                    )
+                if int(batch_size) == 1 and int(frame_count) > 1:
+                    decode_chunk_frames = min(int(frame_count), 8)
+                    for frame_start in range(0, int(frame_count), int(decode_chunk_frames)):
+                        frame_stop = min(int(frame_count), int(frame_start + decode_chunk_frames))
+                        frame_slice = frame_stop - frame_start
+                        decoded = vae.decode(lat_batched[frame_start:frame_stop, :, :, :])
+                        img_chunk = _extract_decode_tensor(decoded)
+                        if img_chunk.ndim == 4:
+                            img_chunk = _from_frame_batch_4d(img_chunk, batch=1, frames=frame_slice)
+                        elif img_chunk.ndim != 5 or int(img_chunk.shape[2]) != int(frame_slice):
+                            raise RuntimeError(
+                                "WAN22 GGUF: 2D VAE decode produced unexpected chunk shape "
+                                f"(chunk={frame_start}:{frame_stop} shape={tuple(img_chunk.shape)} expected_t={frame_slice})."
+                            )
+                        _append_decoded_chunk(
+                            img_chunk,
+                            lane_name=lane,
+                            chunk_label=f"{frame_start}:{frame_stop}",
+                        )
+                else:
+                    decoded = vae.decode(lat_batched)
+                    img_chunk = _extract_decode_tensor(decoded)
+                    if img_chunk.ndim == 4:
+                        img_chunk = _from_frame_batch_4d(img_chunk, batch=batch_size, frames=frame_count)
+                    elif img_chunk.ndim != 5 or int(img_chunk.shape[2]) != int(frame_count):
+                        raise RuntimeError(
+                            "WAN22 GGUF: 2D VAE decode produced unexpected tensor shape "
+                            f"(shape={tuple(img_chunk.shape)} expected_t={frame_count})."
+                        )
+                    _append_decoded_chunk(img_chunk, lane_name=lane, chunk_label="full")
             else:
-                batch_size, frame_count = int(lat.shape[0]), int(lat.shape[2])
-                decoded = vae.decode(lat)
-            sample = getattr(decoded, "sample", None)
-            if sample is not None:
-                img = sample
-            elif torch.is_tensor(decoded):
-                img = decoded
-            elif isinstance(decoded, (tuple, list)) and decoded and torch.is_tensor(decoded[0]):
-                img = decoded[0]
-            else:
-                raise RuntimeError(
-                    "WAN22 GGUF: VAE decode output has no tensor sample "
-                    f"(type={type(decoded).__name__})."
-                )
-            if lane == "2d_native" and img.ndim == 4:
-                img = _from_frame_batch_4d(img, batch=batch_size, frames=frame_count)
-            elif lane == "3d_native" and img.ndim == 4:
-                img = img.unsqueeze(2)
-            elif img.ndim != 5:
-                raise RuntimeError(
-                    "WAN22 GGUF: VAE decode produced unsupported tensor rank "
-                    f"(lane={lane} shape={tuple(img.shape)})."
-                )
+                stream_ok = False
+                try:
+                    decoded_stream = vae.decode(
+                        lat,
+                        chunk_callback=lambda chunk, idx: _append_decoded_chunk(
+                            chunk,
+                            lane_name=lane,
+                            chunk_label=str(int(idx)),
+                        ),
+                    )
+                    stream_ok = chunk_count > 0
+                    if not stream_ok:
+                        img_chunk = _extract_decode_tensor(decoded_stream)
+                        if img_chunk.ndim == 4:
+                            img_chunk = img_chunk.unsqueeze(2)
+                        elif img_chunk.ndim != 5:
+                            raise RuntimeError(
+                                "WAN22 GGUF: VAE decode produced unsupported tensor rank "
+                                f"(lane={lane} shape={tuple(img_chunk.shape)})."
+                            )
+                        _append_decoded_chunk(img_chunk, lane_name=lane, chunk_label="stream-fallback")
+                        stream_ok = chunk_count > 0
+                except TypeError as exc:
+                    if "chunk_callback" not in str(exc):
+                        raise
+                if not stream_ok:
+                    decoded = vae.decode(lat)
+                    img_chunk = _extract_decode_tensor(decoded)
+                    if img_chunk.ndim == 4:
+                        img_chunk = img_chunk.unsqueeze(2)
+                    elif img_chunk.ndim != 5:
+                        raise RuntimeError(
+                            "WAN22 GGUF: VAE decode produced unsupported tensor rank "
+                            f"(lane={lane} shape={tuple(img_chunk.shape)})."
+                        )
+                    _append_decoded_chunk(img_chunk, lane_name=lane, chunk_label="full")
         if local_vae_loaded and offload_after:
             try:
                 vae.to("cpu")
@@ -837,12 +980,22 @@ def vae_decode_video(
                 pass
             del vae
             cuda_empty_cache(logger, label="after-vae-decode")
-        return img
+        if not attempt_frames:
+            raise RuntimeError(
+                "WAN22 GGUF: VAE decode produced zero output frames "
+                f"(lane={lane} latent_T={int(t_lat)} device={attempt_device} dtype={torch_dtype})."
+            )
+        return attempt_frames, {
+            "lane": lane,
+            "chunk_count": int(chunk_count),
+            "first_chunk_shape": first_chunk_shape,
+            "last_chunk_shape": last_chunk_shape,
+        }
 
-    img = None
+    decoded_frames: list[Image.Image] | None = None
     if decode_session is not None:
         try:
-            img = _decode_attempt(
+            decoded_frames, decode_meta = _decode_attempt(
                 attempt_device=decode_session.decode_device,
                 torch_dtype=decode_session.decode_dtype,
                 session=decode_session,
@@ -855,6 +1008,7 @@ def vae_decode_video(
                 f"(device={decode_session.decode_device} dtype={decode_session.decode_dtype} lane={decode_session.lane})."
             ) from exc
     else:
+        saw_nonfinite = False
         for attempt_idx, torch_dtype in enumerate(dtypes):
             if attempt_idx > 0:
                 warn_fallback(
@@ -864,13 +1018,7 @@ def vae_decode_video(
                     reason=str(last_exc) if last_exc is not None else "previous attempt failed",
                 )
             try:
-                img = _decode_attempt(attempt_device=target, torch_dtype=torch_dtype)
-                bad = int((~torch.isfinite(img)).sum().item()) if isinstance(img, torch.Tensor) else -1
-                if bad > 0:
-                    raise RuntimeError(
-                        "WAN22 GGUF: VAE decode produced non-finite outputs "
-                        f"(bad={bad} dtype={torch_dtype} device={target}; {summarize_numerics(img, name='vae_out')})."
-                    )
+                decoded_frames, decode_meta = _decode_attempt(attempt_device=target, torch_dtype=torch_dtype)
                 break
             except torch.OutOfMemoryError as exc:
                 last_exc = exc
@@ -884,74 +1032,43 @@ def vae_decode_video(
                     cuda_empty_cache(logger, label="vae-decode-oom")
                     continue
                 raise
+            except _DecodeNonFiniteError as exc:
+                last_exc = exc
+                saw_nonfinite = True
+                continue
             except WAN22VAEContractError:
                 raise
             except Exception as exc:
                 last_exc = exc
                 # Continue to next dtype.
                 continue
+        if decoded_frames is None and saw_nonfinite and target == "cuda" and smart_fallback_enabled():
+            warn_fallback(
+                logger,
+                component="VAE decode",
+                detail="all CUDA dtype attempts produced non-finite outputs; retrying on CPU fp32",
+                reason="nonfinite_cuda",
+            )
+            cuda_empty_cache(logger, label="vae-decode-nonfinite")
+            decoded_frames, decode_meta = _decode_attempt(attempt_device="cpu", torch_dtype=torch.float32)
 
-    if img is None or not isinstance(img, torch.Tensor):
-        raise RuntimeError("WAN22 GGUF: VAE decode failed (no tensor output).") from last_exc
-
-    # Last-resort: if CUDA path fails, try CPU fp32 (only when smart fallback is enabled).
-    if (
-        decode_session is None
-        and not torch.isfinite(img).all()
-        and target == "cuda"
-        and smart_fallback_enabled()
-    ):
-        warn_fallback(
-            logger,
-            component="VAE decode",
-            detail="all CUDA dtype attempts produced non-finite outputs; retrying on CPU fp32",
-            reason="nonfinite_cuda",
-        )
-        cuda_empty_cache(logger, label="vae-decode-nonfinite")
-        img = _decode_attempt(attempt_device="cpu", torch_dtype=torch.float32)
-
-    log.info("[wan22.gguf] VAE decode output shape=%s", tuple(getattr(img, "shape", ())))
-    if not hasattr(img, "ndim") or img.ndim != 5:
-        raise RuntimeError(
-            f"WAN22 GGUF: VAE decode produced unexpected rank: shape={tuple(getattr(img,'shape',()))}; expected [B,C,T,H,W]"
-        )
-    if int(img.shape[0]) < 1 or int(img.shape[1]) != 3:
-        raise RuntimeError(
-            f"WAN22 GGUF: VAE decode produced unexpected shape: {tuple(img.shape)}; expected B>=1 and C=3."
-        )
-    t_out = int(img.shape[2])
+    if not decoded_frames:
+        raise RuntimeError("WAN22 GGUF: VAE decode failed (no frame output).") from last_exc
+    t_out = int(len(decoded_frames))
     if expected_frames is not None and int(expected_frames) != t_out:
         raise RuntimeError(
             "WAN22 GGUF: VAE decode time dimension mismatch: "
             f"expected T={int(expected_frames)} got T={t_out} (latent_T={int(t_lat)})."
         )
-
-    if not torch.isfinite(img).all():
-        n_bad = int((~torch.isfinite(img)).sum().item())
-        raise RuntimeError(
-            "WAN22 GGUF: VAE decode produced non-finite outputs after fallbacks "
-            f"(bad={n_bad}; {summarize_numerics(img, name='vae_out')})."
-        )
-
-    if log_numerics_enabled():
-        log.info("[wan22.gguf] VAE decode ok: %s", summarize_numerics(img, name="vae_out"))
-
-    for ti in range(t_out):
-        x = img[0, :, ti, :, :].detach()
-        if x.ndim != 3:
-            raise RuntimeError(
-                f"WAN22 GGUF: VAE decode produced unexpected frame tensor rank: shape={tuple(x.shape)}; expected [C,H,W]"
-            )
-        # Diffusers VAEs output [-1, 1]; convert to [0, 1] for image conversion.
-        x = (x + 1.0) * 0.5
-        x = x.clamp(0, 1)
-        frame_hwc = x.permute(1, 2, 0)
-        # Keep conversion on torch side so BF16 tensors never hit numpy unsupported dtypes.
-        frame_uint8 = frame_hwc.mul(255).to(dtype=torch.uint8)
-        arr = frame_uint8.cpu().numpy()
-        frames.append(Image.fromarray(arr))
-
-    return frames
+    log.info(
+        "[wan22.gguf] VAE decode output frames=%d lane=%s chunks=%s first_chunk_shape=%s last_chunk_shape=%s",
+        t_out,
+        (decode_meta or {}).get("lane"),
+        (decode_meta or {}).get("chunk_count"),
+        (decode_meta or {}).get("first_chunk_shape"),
+        (decode_meta or {}).get("last_chunk_shape"),
+    )
+    return decoded_frames
 
 
 def decode_latents_to_frames(

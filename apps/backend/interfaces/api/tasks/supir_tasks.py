@@ -19,12 +19,15 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import io
+import logging
 import threading
 from typing import Any, Callable, Mapping
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
 from apps.backend.interfaces.api.public_errors import public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
+
+logger = logging.getLogger("backend.api.tasks.supir")
 
 
 def run_supir_enhance_task(
@@ -93,8 +96,13 @@ def run_supir_enhance_task(
             if acquired:
                 try:
                     release_inference_gate()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "inference gate release failed in supir enhance worker (task_id=%s): %s",
+                        task_id,
+                        exc,
+                        exc_info=False,
+                    )
 
     threading.Thread(target=worker, name=f"supir-enhance-task-{task_id}", daemon=True).start()
 

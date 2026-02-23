@@ -11,6 +11,7 @@ Orchestrates text context, per-stage sampling, and VAE encode/decode (including 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
+- `_WAN_CHUNK_HYBRID_RAM_BUDGET_MB` (constant): Default RAM budget threshold (MB) used by `chunk_buffer_mode='hybrid'` when resolving low/decode tensor storage (`ram` vs `ram+hd`).
 - `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager.
 - `_try_set_cache_policy` (function): Configure GGUF dequant cache policy + limit when supported.
 - `_try_clear_cache` (function): Clear GGUF dequant cache when supported.
@@ -76,7 +77,7 @@ from .sampling import (
     sample_stage_latents_generator,
 )
 from .sdpa import set_sdpa_settings
-from .stage_loader import load_stage_model_from_gguf, pick_stage_gguf
+from .stage_loader import mount_stage_model_from_gguf, pick_stage_gguf
 from .text_context import get_text_context
 from .vae_io import (
     WAN22VAEContractError,
@@ -92,13 +93,14 @@ _WAN_WINDOW_COMMIT_OVERLAP_MIN = 4
 _WAN_CONTINUITY_PROFILE_OVERLAP = "overlap"
 _WAN_CONTINUITY_PROFILE_SVI2 = "svi2"
 _WAN_CONTINUITY_PROFILE_SVI2_PRO = "svi2_pro"
+_WAN_CHUNK_HYBRID_RAM_BUDGET_MB = 2048.0
 
 
 class _MemoryManagedModule:
     """Tiny wrapper to integrate plain nn.Modules with the Codex memory manager.
 
     We intentionally keep this minimal (no patch plumbing during device moves).
-    Stage-level LoRAs (when configured) are applied at load time by `stage_loader.load_stage_model_from_gguf(...)`.
+    Stage-level LoRAs (when configured) are applied at mount time by `stage_loader.mount_stage_model_from_gguf(...)`.
     """
 
     def __init__(self, model: torch.nn.Module, *, load_device: torch.device) -> None:
@@ -132,12 +134,31 @@ class _MemoryManagedModule:
 
 
 def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
-    if policy is None:
-        return
+    pol_raw = "none" if policy is None else str(policy)
+    pol = pol_raw.strip().lower()
     lim = int(limit_mb or 0)
-    pol = str(policy).strip().lower()
-    if pol in {"none", "", "off"} or lim <= 0:
-        return
+
+    if pol in {"", "none", "off"}:
+        normalized_policy = "none"
+        normalized_limit_mb = 0
+        if lim > 0:
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_cache_limit_mb' must be omitted or 0 when "
+                f"'gguf_cache_policy' is '{pol or 'none'}' (got {lim})."
+            )
+    elif pol == "cpu_lru":
+        if lim <= 0:
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_cache_limit_mb' must be > 0 when "
+                "'gguf_cache_policy' is 'cpu_lru'."
+            )
+        normalized_policy = "cpu_lru"
+        normalized_limit_mb = lim
+    else:
+        raise RuntimeError(
+            "WAN22 GGUF: 'gguf_cache_policy' must be one of 'none', 'off', or "
+            f"'cpu_lru' (got {policy!r})."
+        )
 
     try:
         from apps.backend.runtime.ops.operations_gguf import set_cache_policy
@@ -146,7 +167,7 @@ def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> Non
             "GGUF dequant cache requested but not available in this build (set_cache_policy missing)."
         ) from exc
 
-    set_cache_policy(pol, lim)
+    set_cache_policy(normalized_policy, normalized_limit_mb)
 
 
 def _try_clear_cache() -> None:
@@ -921,14 +942,13 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
 
     lvl = _resolve_offload_level(cfg)
 
-    # Load stage weights directly on the execution device; offload policy handles standby/unload.
+    # Stage loader now keeps GGUF parse/materialization on CPU; memory manager owns final execution placement.
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
-        hi_model = load_stage_model_from_gguf(
+        hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -1052,10 +1072,9 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
     try:
-        lo_model = load_stage_model_from_gguf(
+        lo_model = mount_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -1170,10 +1189,9 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
-        hi_model = load_stage_model_from_gguf(
+        hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -1262,10 +1280,9 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
     try:
-        lo_model = load_stage_model_from_gguf(
+        lo_model = mount_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -1429,10 +1446,9 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
-        hi_model = load_stage_model_from_gguf(
+        hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -1524,10 +1540,9 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
     try:
-        lo_model = load_stage_model_from_gguf(
+        lo_model = mount_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -1678,10 +1693,9 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
-        hi_model = load_stage_model_from_gguf(
+        hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
             lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -1767,10 +1781,9 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
     try:
-        lo_model = load_stage_model_from_gguf(
+        lo_model = mount_stage_model_from_gguf(
             lo_path,
             stage="low",
-            device=dev,
             dtype=dt,
             lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
             lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -2076,12 +2089,9 @@ def stream_img2vid_chunked(
     del scheduler_preview
     log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
 
-    dtype_bytes = int(torch.tensor([], dtype=dt).element_size())
-    hybrid_ram_budget_mb = 2048.0
-
     def _resolve_hybrid_mode(*, estimated_total_mb: float) -> str:
         if chunk_buffer_mode_value == "hybrid":
-            return "ram" if float(estimated_total_mb) <= float(hybrid_ram_budget_mb) else "ram+hd"
+            return "ram" if float(estimated_total_mb) <= float(_WAN_CHUNK_HYBRID_RAM_BUDGET_MB) else "ram+hd"
         return chunk_buffer_mode_value
 
     def _save_chunk_tensor(path: str, tensor: torch.Tensor, *, label: str) -> None:
@@ -2120,6 +2130,7 @@ def stream_img2vid_chunked(
         low_decode_ram: list[torch.Tensor] = []
         low_decode_paths: list[str] = []
         latent_channels_lo_value: int | None = None
+        estimated_low_total_mb: float | None = None
         prev_chunk_anchor_latents_cpu: torch.Tensor | None = None
         prev_chunk_tail_latent_cpu: torch.Tensor | None = None
         chunk_condition_buffer: torch.Tensor | None = None
@@ -2239,10 +2250,9 @@ def stream_img2vid_chunked(
             hi_model: torch.nn.Module | None = None
             hi_mm: _MemoryManagedModule | None = None
             try:
-                hi_model = load_stage_model_from_gguf(
+                hi_model = mount_stage_model_from_gguf(
                     hi_path,
                     stage="high",
-                    device=dev,
                     dtype=dt,
                     lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
                     lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
@@ -2307,10 +2317,9 @@ def stream_img2vid_chunked(
             lo_model: torch.nn.Module | None = None
             lo_mm: _MemoryManagedModule | None = None
             try:
-                lo_model = load_stage_model_from_gguf(
+                lo_model = mount_stage_model_from_gguf(
                     lo_path,
                     stage="low",
-                    device=dev,
                     dtype=dt,
                     lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
                     lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
@@ -2324,20 +2333,6 @@ def stream_img2vid_chunked(
                     )
                 if latent_channels_lo_value is None:
                     latent_channels_lo_value = latent_channels_lo
-                    estimated_low_total_mb = (
-                        float(len(chunk_starts))
-                        * float(max(1, int(latent_channels_lo_value)))
-                        * float(int(chunk_lat))
-                        * float(int(h_lat))
-                        * float(int(w_lat))
-                        * float(dtype_bytes)
-                    ) / float(1024.0 * 1024.0)
-                    low_store_mode = _resolve_hybrid_mode(estimated_total_mb=estimated_low_total_mb)
-                    log.info(
-                        "[wan22.gguf] chunked img2vid low/decode buffer: mode=%s estimated_total_mb=%.2f",
-                        low_store_mode,
-                        float(estimated_low_total_mb),
-                    )
                 elif int(latent_channels_lo) != int(latent_channels_lo_value):
                     raise RuntimeError(
                         "WAN22 GGUF chunked img2vid: low-stage latent_channels changed across chunks "
@@ -2396,6 +2391,22 @@ def stream_img2vid_chunked(
                         f"(decode_C={int(decode_chunk_latents.shape[1])} anchor_C={int(base_anchor_latent.shape[1])})."
                     )
                 decode_chunk_latents_cpu = decode_chunk_latents.detach().to(device="cpu")
+                if estimated_low_total_mb is None:
+                    per_chunk_bytes = int(decode_chunk_latents_cpu.numel()) * int(decode_chunk_latents_cpu.element_size())
+                    estimated_low_total_mb = (
+                        float(max(1, int(len(chunk_starts)))) * float(per_chunk_bytes)
+                    ) / float(1024.0 * 1024.0)
+                    low_store_mode = _resolve_hybrid_mode(estimated_total_mb=estimated_low_total_mb)
+                    log.info(
+                        "[wan22.gguf] chunked img2vid low/decode buffer: mode=%s estimated_total_mb=%.2f "
+                        "per_chunk_mb=%.2f chunk_dtype=%s chunk_shape=%s hybrid_budget_mb=%.2f",
+                        low_store_mode,
+                        float(estimated_low_total_mb),
+                        float(per_chunk_bytes) / float(1024.0 * 1024.0),
+                        str(decode_chunk_latents_cpu.dtype),
+                        tuple(int(v) for v in decode_chunk_latents_cpu.shape),
+                        float(_WAN_CHUNK_HYBRID_RAM_BUDGET_MB),
+                    )
                 prev_chunk_tail_latent_cpu = decode_chunk_latents_cpu[:, :, -1:, :, :].clone()
                 if continuity_profile_value == _WAN_CONTINUITY_PROFILE_OVERLAP:
                     anchor_slice_start = int(stride_latent_start_index)

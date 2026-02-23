@@ -279,6 +279,97 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=f"'{key}' must be a boolean")
         return value
 
+    def _parse_optional_non_negative_int(value: object, *, field_name: str) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if not re.fullmatch(r"[+-]?\d+", text):
+                raise HTTPException(status_code=400, detail=f"'{field_name}' must be an integer")
+            parsed = int(text)
+        elif isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an integer")
+        elif isinstance(value, float):
+            if not value.is_integer():
+                raise HTTPException(status_code=400, detail=f"'{field_name}' must be an integer")
+            parsed = int(value)
+        else:
+            parsed = int(value)
+        if parsed < 0:
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be >= 0")
+        return parsed
+
+    def _normalize_gguf_cache_controls(extras: Dict[str, Any]) -> None:
+        has_policy = "gguf_cache_policy" in extras
+        has_limit = "gguf_cache_limit_mb" in extras
+        if not has_policy and not has_limit:
+            return
+
+        policy: Optional[str] = None
+        if has_policy:
+            raw_policy = extras.get("gguf_cache_policy")
+            if not isinstance(raw_policy, str):
+                raise HTTPException(status_code=400, detail="'gguf_cache_policy' must be a string")
+            policy_raw = raw_policy.strip().lower()
+            if policy_raw in {"", "none", "off"}:
+                policy = "none"
+            elif policy_raw == "cpu_lru":
+                policy = "cpu_lru"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid gguf_cache_policy: {raw_policy!r} (expected 'none'|'off'|'cpu_lru').",
+                )
+
+        limit_mb = (
+            _parse_optional_non_negative_int(extras.get("gguf_cache_limit_mb"), field_name="gguf_cache_limit_mb")
+            if has_limit
+            else None
+        )
+
+        if policy is None and limit_mb is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="'gguf_cache_limit_mb' requires 'gguf_cache_policy'.",
+            )
+        if policy == "cpu_lru" and (limit_mb is None or limit_mb <= 0):
+            raise HTTPException(
+                status_code=400,
+                detail="'gguf_cache_limit_mb' must be > 0 when 'gguf_cache_policy' is 'cpu_lru'.",
+            )
+        if policy == "none" and limit_mb not in (None, 0):
+            raise HTTPException(
+                status_code=400,
+                detail="'gguf_cache_limit_mb' must be omitted or 0 when 'gguf_cache_policy' is 'none' or 'off'.",
+            )
+
+        if has_policy:
+            extras["gguf_cache_policy"] = policy
+        if has_limit and limit_mb is not None:
+            extras["gguf_cache_limit_mb"] = int(limit_mb)
+
+    def _normalize_gguf_te_device(extras: Dict[str, Any]) -> None:
+        if "gguf_te_device" not in extras:
+            return
+        raw_value = extras.get("gguf_te_device")
+        if not isinstance(raw_value, str):
+            raise HTTPException(status_code=400, detail="'gguf_te_device' must be a string")
+        normalized = raw_value.strip().lower()
+        if normalized == "gpu":
+            normalized = "cuda"
+        if normalized in {"cpu", "cuda", "auto"} or re.fullmatch(r"cuda:\d+", normalized):
+            extras["gguf_te_device"] = normalized
+            return
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid gguf_te_device: "
+                f"{raw_value!r} (expected 'auto', 'cpu', 'cuda', or 'cuda:<index>')."
+            ),
+        )
+
     def _optional_video_interpolation_field(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if "video_interpolation" not in payload:
             return None
@@ -2526,6 +2617,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if sdpa_policy not in {'auto', 'mem_efficient', 'flash', 'math'}:
                 raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
             extras['gguf_sdpa_policy'] = sdpa_policy
+        _normalize_gguf_te_device(extras)
+        _normalize_gguf_cache_controls(extras)
 
         engine_key, wan_engine_variant = _resolve_wan22_engine_key(
             payload,
@@ -2770,6 +2863,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if sdpa_policy not in {'auto', 'mem_efficient', 'flash', 'math'}:
                 raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
             extras['gguf_sdpa_policy'] = sdpa_policy
+        _normalize_gguf_te_device(extras)
+        _normalize_gguf_cache_controls(extras)
         img2vid_mode = str(payload.get('img2vid_mode') or '').strip().lower()
         if img2vid_mode not in {'solo', 'chunk', 'sliding', 'svi2', 'svi2_pro'}:
             raise HTTPException(
@@ -3369,8 +3464,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if acquired:
                     try:
                         release_inference_gate()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _router_log.warning(
+                            "inference gate release failed in %s_worker (task_id=%s): %s",
+                            label,
+                            task_id,
+                            exc,
+                            exc_info=False,
+                        )
                 if task_type == TaskType.VID2VID:
                     try:
                         uploaded_paths: list[str] = []

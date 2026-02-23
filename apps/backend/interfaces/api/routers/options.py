@@ -167,9 +167,30 @@ def build_router(
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         updates = _validate_options(payload)
         hot_applied_keys: set[str] = set()
+        device_keys = ("codex_core_device", "codex_te_device", "codex_vae_device")
 
         # Apply memory manager overrides when present
         from apps.backend.runtime import memory_management as mem_management
+
+        requested_devices = {
+            key: str(updates[key]).strip().lower()
+            for key in device_keys
+            if key in updates
+        }
+        if requested_devices:
+            distinct = {value for value in requested_devices.values()}
+            if len(distinct) != 1:
+                joined = ", ".join(f"{key}={value!r}" for key, value in requested_devices.items())
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Main-device invariant violation: core/TE/VAE device updates must match exactly. "
+                        f"Received: {joined}"
+                    ),
+                )
+            resolved = next(iter(distinct))
+            for key in device_keys:
+                updates[key] = resolved
 
         role_map = {
             "codex_core_device": ("core", "backend"),

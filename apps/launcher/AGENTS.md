@@ -40,3 +40,5 @@ Last Review: 2026-02-22
 - 2026-02-21: Launcher profiles/settings now persist and validate `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE` (`hybrid|ram|ram+hd`) as a runtime bootstrap knob used by WAN22 img2vid chunk buffering policy.
 - 2026-02-21: Launcher Runtime now owns attention bootstrap policy via `CODEX_ATTENTION_BACKEND` + `CODEX_ATTENTION_SDPA_POLICY`, forwarding `--attention-backend` and `--attention-sdpa-policy` to backend startup.
 - 2026-02-22: Launcher profiles now write `PYTORCH_ALLOC_CONF` (replacing deprecated `PYTORCH_CUDA_ALLOC_CONF`) for allocator tuning defaults.
+- 2026-02-22: Removed GGUF dequant-forward run cache forwarding from launcher bootstrap args (`services.py` no longer emits `--gguf-dequant-cache*` flags); runtime env normalization now forces `CODEX_GGUF_DEQUANT_CACHE=off` and clears stale ratio/limit keys.
+- 2026-02-23: Launcher now defines a global device authority via `CODEX_MAIN_DEVICE`; `services.py` forwards `--main-device` and mirrors core/TE/VAE flags to the same value to enforce single-device runtime invariant.

@@ -30,8 +30,6 @@ Symbols (top-level; keep in sync; no ghosts):
   control/image concat plumbing, returning denoised + (cond/uncond) predictions.
 - `sampling_prepare` (function): Pre-sampling hook; activates ControlNet runtime, loads required models to GPU, and prepares smart-offload state.
 - `sampling_cleanup` (function): Post-sampling hook; cleans up ControlNet, smart-offload state, unloads models, and triggers op cache cleanup.
-- `_try_enable_gguf_dequant_forward_cache` (function): Best-effort sampling-stage hook to enable run-scoped GGUF `dequant_forward` caches.
-- `_try_disable_gguf_dequant_forward_cache` (function): Best-effort sampling-stage hook to disable run-scoped GGUF caches.
 """
 
 import torch
@@ -733,8 +731,6 @@ def sampling_prepare(denoiser, x):
                 dtype=denoiser.model.computation_dtype,
             )
 
-        _try_enable_gguf_dequant_forward_cache(x)
-
         real_model = denoiser.model
 
         def percent_to_timestep_function(p):  # type: ignore[no-untyped-def]
@@ -774,73 +770,6 @@ def sampling_cleanup(denoiser):
                 stage="sampling_cleanup",
             )
         setattr(denoiser, "_codex_smart_offload_models", [])
-    _try_disable_gguf_dequant_forward_cache()
     from apps.backend.runtime.ops import cleanup_cache
     cleanup_cache()
     return
-
-
-def _try_enable_gguf_dequant_forward_cache(x) -> None:  # type: ignore[no-untyped-def]
-    """Enable run-scoped GGUF dequant_forward cache when requested by runtime flags."""
-
-    try:
-        from apps.backend.infra.config import args as config_args
-    except Exception:
-        return
-
-    gguf_exec = str(getattr(config_args.args, "gguf_exec", "dequant_forward") or "dequant_forward").strip().lower()
-    level = str(getattr(config_args.args, "gguf_dequant_cache", "off") or "off").strip().lower()
-    if level == "off":
-        return
-    if gguf_exec != "dequant_forward":
-        raise RuntimeError("GGUF dequant cache requires --gguf-exec=dequant_forward.")
-
-    limit_mb = getattr(config_args.args, "gguf_dequant_cache_limit_mb", None)
-    if limit_mb is None:
-        free_bytes = memory_management.manager.get_free_memory(device=x.device)
-        free_mb = int(max(0, int(free_bytes)) // (1024 * 1024))
-        ratio_override = getattr(config_args.args, "gguf_dequant_cache_ratio", None)
-        if ratio_override is None:
-            ratio = 0.20 if level == "lvl1" else 0.10
-        else:
-            ratio = float(ratio_override)
-            if ratio <= 0.0 or ratio > 1.0:
-                raise RuntimeError("--gguf-dequant-cache-ratio must be > 0 and <= 1 when provided.")
-        limit_mb = int(free_mb * ratio)
-        logger.info(
-            "[gguf] dequant_forward cache enabled (heuristic): level=%s device=%s free_mb=%d limit_mb=%d ratio=%.2f",
-            level,
-            x.device,
-            free_mb,
-            limit_mb,
-            ratio,
-        )
-    else:
-        logger.info(
-            "[gguf] dequant_forward cache enabled (explicit): level=%s device=%s limit_mb=%s",
-            level,
-            x.device,
-            limit_mb,
-        )
-
-    limit_mb = int(limit_mb)
-    if limit_mb <= 0:
-        raise RuntimeError(
-            "GGUF dequant cache enabled but computed a non-positive cache limit. "
-            "Set --gguf-dequant-cache-limit-mb to a positive value or disable the cache."
-        )
-
-    from apps.backend.runtime.ops.operations_gguf import enable_dequant_forward_cache
-
-    enable_dequant_forward_cache(level=level, limit_mb=limit_mb)
-
-
-def _try_disable_gguf_dequant_forward_cache() -> None:
-    try:
-        from apps.backend.runtime.ops.operations_gguf import disable_dequant_forward_cache
-    except Exception:
-        return
-    try:
-        disable_dequant_forward_cache()
-    except Exception:
-        return

@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 import torch
 import torch.nn.functional as F
@@ -650,7 +650,13 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
             return (posterior,)
         return SimpleNamespace(latent_dist=posterior, latents=latents)
 
-    def decode(self, z: torch.Tensor, return_dict: bool = True) -> Any:
+    def decode(
+        self,
+        z: torch.Tensor,
+        return_dict: bool = True,
+        *,
+        chunk_callback: Callable[[torch.Tensor, int], None] | None = None,
+    ) -> Any:
         squeeze_t = False
         if z.ndim == 4:
             squeeze_t = True
@@ -664,23 +670,38 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
         x = self.conv2(z)
         self.clear_cache()
         out_chunks: list[torch.Tensor] = []
-        for index in range(int(num_frame)):
-            self._conv_idx = [0]
-            if index == 0:
-                out_chunk = self.decoder(
-                    x[:, :, index : index + 1, :, :],
-                    feat_cache=self._feat_map,
-                    feat_idx=self._conv_idx,
-                    first_chunk=True,
-                )
-            else:
-                out_chunk = self.decoder(x[:, :, index : index + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx)
-            out_chunks.append(out_chunk)
-        if not out_chunks:
+        chunk_count = 0
+        try:
+            for index in range(int(num_frame)):
+                self._conv_idx = [0]
+                if index == 0:
+                    out_chunk = self.decoder(
+                        x[:, :, index : index + 1, :, :],
+                        feat_cache=self._feat_map,
+                        feat_idx=self._conv_idx,
+                        first_chunk=True,
+                    )
+                else:
+                    out_chunk = self.decoder(
+                        x[:, :, index : index + 1, :, :],
+                        feat_cache=self._feat_map,
+                        feat_idx=self._conv_idx,
+                    )
+                chunk_count += 1
+                if chunk_callback is not None:
+                    chunk_callback(torch.clamp(out_chunk, min=-1.0, max=1.0), int(index))
+                else:
+                    out_chunks.append(out_chunk)
+        finally:
+            self.clear_cache()
+        if chunk_count < 1:
             raise RuntimeError("AutoencoderCodex3D decode produced no chunks.")
+        if chunk_callback is not None:
+            if not return_dict:
+                return (None,)
+            return SimpleNamespace(sample=None)
         out = out_chunks[0] if len(out_chunks) == 1 else torch.cat(out_chunks, dim=2)
         out = torch.clamp(out, min=-1.0, max=1.0)
-        self.clear_cache()
         if squeeze_t and out.ndim == 5 and int(out.shape[2]) == 1:
             out = out.squeeze(2)
         if not return_dict:

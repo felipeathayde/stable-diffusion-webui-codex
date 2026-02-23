@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Codex-native runtime memory management service (hardware probe + precision/budget policies + loaded model registry).
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
+Resolves explicit main/mount/offload device backends from runtime config and keeps lifecycle device routing centralized.
 Exposes per-role storage vs compute dtype selection (core/TE default to fp16 on accelerator devices, VAE defaults to fp32, CPU remains fp32 unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
 Also emits canonical smart-offload INFO audit events for model load/unload transitions and unload no-op requests when smart offload is active.
 Smart-offload action payloads include best-effort memory windows (`memory_before_*`/`memory_after_*`) to provide global per-action residency telemetry.
@@ -274,8 +275,16 @@ class CodexMemoryManager:
         self._loaded_models: MutableSequence[_LoadedModelRecord] = []
         self._signal_empty_cache: bool = False
         self._vae_always_tiled: bool = False
+        self._cpu_device = torch.device(DeviceBackend.CPU.value)
         self._primary_device: torch.device = self._resolve_primary_device()
-        self._cpu_device = torch.device("cpu")
+        self._mount_device: torch.device = self._device_from_backend(
+            config.mount_device_backend,
+            fallback=self._primary_device,
+        )
+        self._offload_device: torch.device = self._device_from_backend(
+            config.offload_device_backend,
+            fallback=self._primary_device,
+        )
         self._attention = config.attention
         self._swap = config.swap
         self._budgets = config.budgets
@@ -462,16 +471,24 @@ class CodexMemoryManager:
         return text.split(".")[-1]
 
     # --------------------------------------------------------------------- device/dtype
+    def _resolve_cuda_device(self) -> torch.device:
+        if not self._probe.cuda_available:
+            raise MemoryConfigurationError("CUDA requested but not available.")
+        if self._config.gpu_device_id is not None:
+            return torch.device(DeviceBackend.CUDA.value, int(self._config.gpu_device_id))
+        primary_device = getattr(self, "_primary_device", None)
+        if isinstance(primary_device, torch.device):
+            if primary_device.type == DeviceBackend.CUDA.value and primary_device.index is not None:
+                return torch.device(DeviceBackend.CUDA.value, int(primary_device.index))
+        return torch.device(DeviceBackend.CUDA.value, torch.cuda.current_device())
+
     def _resolve_primary_device(self) -> torch.device:
         cfg = self._config
         backend = cfg.device_backend
         probe = self._probe
 
         def choose_cuda() -> torch.device:
-            if not probe.cuda_available:
-                raise MemoryConfigurationError("CUDA requested but not available.")
-            index = cfg.gpu_device_id or torch.cuda.current_device()
-            return torch.device("cuda", index)
+            return self._resolve_cuda_device()
 
         if backend == DeviceBackend.AUTO:
             if probe.cuda_available:
@@ -488,22 +505,46 @@ class CodexMemoryManager:
                 "Configure diffusion device to CPU in the Web UI to silence this warning."
             )
             self._config.device_backend = DeviceBackend.CPU
-            return torch.device("cpu")
+            return self._cpu_device
         if backend == DeviceBackend.CUDA:
             return choose_cuda()
         if backend == DeviceBackend.MPS:
             if not probe.mps_available:
                 raise MemoryConfigurationError("MPS backend requested but not available.")
-            return torch.device("mps")
+            return torch.device(DeviceBackend.MPS.value)
         if backend == DeviceBackend.XPU:
             if not probe.xpu_available:
                 raise MemoryConfigurationError("XPU backend requested but not available.")
-            return torch.device("xpu")
+            return torch.device(DeviceBackend.XPU.value)
         if backend == DeviceBackend.DIRECTML:
             if not cfg.allow_directml:
                 raise MemoryConfigurationError("DirectML backend disabled by configuration.")
             return torch.device("dml")
-        return torch.device("cpu")
+        return self._cpu_device
+
+    def _device_from_backend(
+        self,
+        backend: DeviceBackend,
+        *,
+        fallback: torch.device | None = None,
+    ) -> torch.device:
+        if backend == DeviceBackend.AUTO:
+            return fallback or self._primary_device
+        if backend == DeviceBackend.CUDA:
+            return self._resolve_cuda_device()
+        if backend == DeviceBackend.MPS:
+            if not self._probe.mps_available:
+                raise MemoryConfigurationError("MPS backend requested but not available.")
+            return torch.device(DeviceBackend.MPS.value)
+        if backend == DeviceBackend.XPU:
+            if not self._probe.xpu_available:
+                raise MemoryConfigurationError("XPU backend requested but not available.")
+            return torch.device(DeviceBackend.XPU.value)
+        if backend == DeviceBackend.DIRECTML:
+            if not self._config.allow_directml:
+                raise MemoryConfigurationError("DirectML requested but disabled.")
+            return torch.device("dml")
+        return self._cpu_device
 
     # --------------------------------------------------------------------- public accessors
     @property
@@ -543,40 +584,24 @@ class CodexMemoryManager:
     def primary_device(self) -> torch.device:
         return self._primary_device
 
+    def mount_device(self) -> torch.device:
+        return self._mount_device
+
+    def offload_device(self) -> torch.device:
+        return self._offload_device
+
     def get_device(self, role: DeviceRole) -> torch.device:
         policy = self._config.component_policy(role)
         backend = policy.preferred_backend
         if backend == DeviceBackend.AUTO:
-            if role == DeviceRole.TEXT_ENCODER and self._swap.policy != SwapPolicy.NEVER:
-                return self._primary_device if self._primary_device.type != "cpu" else self._cpu_device
-            if role == DeviceRole.VAE and policy.allow_offload:
-                return self._primary_device if self._primary_device.type != "cpu" else self._cpu_device
-            return self._primary_device
-        if backend == DeviceBackend.CUDA:
-            if not self._probe.cuda_available:
-                raise MemoryConfigurationError("CUDA device requested for role but unsupported.")
-            return torch.device("cuda", self._primary_device.index if self._primary_device.type == "cuda" else 0)
-        if backend == DeviceBackend.MPS:
-            if not self._probe.mps_available:
-                raise MemoryConfigurationError("MPS device requested for role but unsupported.")
-            return torch.device("mps")
-        if backend == DeviceBackend.XPU:
-            if not self._probe.xpu_available:
-                raise MemoryConfigurationError("XPU device requested for role but unsupported.")
-            return torch.device("xpu")
-        if backend == DeviceBackend.DIRECTML:
-            if not self._config.allow_directml:
-                raise MemoryConfigurationError("DirectML requested but disabled.")
-            return torch.device("dml")
-        return self._cpu_device
+            return self._mount_device
+        return self._device_from_backend(backend, fallback=self._mount_device)
 
     def get_offload_device(self, role: DeviceRole) -> torch.device:
         policy = self._config.component_policy(role)
         if not policy.allow_offload or self._swap.policy == SwapPolicy.NEVER:
             return self.get_device(role)
-        if self._swap.policy == SwapPolicy.SHARED and self._primary_device.type != "cpu":
-            return torch.device("cpu")
-        return torch.device("cpu")
+        return self._offload_device
 
     def dtype_for_role(
         self,
@@ -595,14 +620,14 @@ class CodexMemoryManager:
                 forced_dtype = getattr(torch, policy.forced_dtype)
             except AttributeError as exc:
                 raise MemoryConfigurationError(f"Unsupported dtype '{policy.forced_dtype}' for {role.value}.") from exc
-            if device.type == "cpu" and torch.float32 in supported and forced_dtype != torch.float32:
+            if device.type == DeviceBackend.CPU.value and torch.float32 in supported and forced_dtype != torch.float32:
                 return torch.float32
             if forced_dtype in supported:
                 return forced_dtype
             return supported[-1]
 
         if native_dtype is not None:
-            if device.type == "cpu" and torch.float32 in supported and native_dtype != torch.float32:
+            if device.type == DeviceBackend.CPU.value and torch.float32 in supported and native_dtype != torch.float32:
                 raise MemoryConfigurationError(
                     f"{role.value} weights are {native_dtype} but CPU execution requires float32. "
                     f"Set an explicit {role.value} storage dtype override (fp32)."
@@ -614,7 +639,7 @@ class CodexMemoryManager:
                 f"(supported={supported}). Set an explicit {role.value} storage dtype override."
             )
 
-        if device.type == "cpu":
+        if device.type == DeviceBackend.CPU.value:
             if torch.float32 in supported:
                 return torch.float32
             return supported[-1]
@@ -654,7 +679,7 @@ class CodexMemoryManager:
                 raise MemoryConfigurationError(
                     f"Unsupported compute dtype '{raw_forced}' for {role.value}."
                 ) from exc
-            if device.type == "cpu" and torch.float32 in supported and forced != torch.float32:
+            if device.type == DeviceBackend.CPU.value and torch.float32 in supported and forced != torch.float32:
                 return torch.float32
             if forced not in supported:
                 raise MemoryConfigurationError(
@@ -662,7 +687,7 @@ class CodexMemoryManager:
                 )
             compute = forced
         else:
-            if device.type == "cpu":
+            if device.type == DeviceBackend.CPU.value:
                 compute = torch.float32
             elif role in (DeviceRole.CORE, DeviceRole.TEXT_ENCODER):
                 if torch.float16 in supported:
@@ -790,14 +815,14 @@ class CodexMemoryManager:
     def get_free_memory(self, device: torch.device | None = None, *, return_torch_stats: bool = False) -> int | Tuple[int, int]:
         device = device or self._primary_device
 
-        if device.type == "cpu":
+        if device.type == DeviceBackend.CPU.value:
             import psutil  # type: ignore
 
             virtual = psutil.virtual_memory()
             total = virtual.available
             return (total, total) if return_torch_stats else total
 
-        if device.type == "cuda":
+        if device.type == DeviceBackend.CUDA.value:
             stats = torch.cuda.memory_stats(device)
             torch_reserved = stats.get("reserved_bytes.all.current", 0)
             free, total = torch.cuda.mem_get_info(device)
@@ -839,7 +864,7 @@ class CodexMemoryManager:
 
         # Torch-level stats (best-effort; only populated when supported)
         torch_stats: Dict[str, int] = {}
-        if device.type == "cuda":
+        if device.type == DeviceBackend.CUDA.value:
             try:
                 stats = torch.cuda.memory_stats(device)
                 free_bytes, total_bytes = torch.cuda.mem_get_info(device)
@@ -941,7 +966,7 @@ class CodexMemoryManager:
         manual_cast: bool = False,
     ) -> bool:
         device = device or self._primary_device
-        if device.type == "cpu":
+        if device.type == DeviceBackend.CPU.value:
             return False
         if manual_cast:
             return True
@@ -987,7 +1012,7 @@ class CodexMemoryManager:
 
     # --------------------------------------------------------------------- cache helpers
     def soft_empty_cache(self, force: bool = False) -> None:
-        if self._primary_device.type == "cuda":
+        if self._primary_device.type == DeviceBackend.CUDA.value:
             try:
                 torch.cuda.empty_cache()
             except self._oom_exception as exc:
@@ -1084,7 +1109,7 @@ class CodexMemoryManager:
             self._loaded_models.remove(record)
         except ValueError:  # pragma: no cover
             pass
-        if self._primary_device.type == "cuda":
+        if self._primary_device.type == DeviceBackend.CUDA.value:
             try:
                 torch.cuda.empty_cache()
             except self._oom_exception as exc:
@@ -1113,7 +1138,7 @@ class CodexMemoryManager:
         already_loaded: List[_LoadedModelRecord] = []
 
         # DEBUG: Log memory state before loading
-        if self._primary_device.type == "cuda":
+        if self._primary_device.type == DeviceBackend.CUDA.value:
             free_bytes, total_bytes = torch.cuda.mem_get_info(self._primary_device)
             allocated = torch.cuda.memory_allocated(self._primary_device)
             reserved = torch.cuda.memory_reserved(self._primary_device)
@@ -1206,7 +1231,7 @@ class CodexMemoryManager:
             if not free_all and released >= memory_required:
                 break
 
-        if device.type == "cuda":
+        if device.type == DeviceBackend.CUDA.value:
             torch.cuda.empty_cache()
         logger.debug("Freed %d bytes on %s (required=%d).", released, device, memory_required)
 
@@ -1237,7 +1262,7 @@ class CodexMemoryManager:
         }
 
         try:
-            if device.type == "cuda":
+            if device.type == DeviceBackend.CUDA.value:
                 free_bytes, total_bytes = torch.cuda.mem_get_info(device)
                 allocated_bytes = torch.cuda.memory_allocated(device)
                 reserved_bytes = torch.cuda.memory_reserved(device)
@@ -1368,7 +1393,7 @@ class CodexMemoryManager:
         return None, module
 
     def _create_record(self, model: object) -> _LoadedModelRecord:
-        load_device = getattr(model, "load_device", self._primary_device)
+        load_device = getattr(model, "load_device", self._mount_device)
         offload_device = getattr(model, "offload_device", self.get_offload_device(DeviceRole.CORE))
         storage_dtype_getter = getattr(model, "model_dtype", None)
         storage_dtype = storage_dtype_getter() if callable(storage_dtype_getter) else torch.float32
@@ -1423,10 +1448,10 @@ class CodexMemoryManager:
             pass
 
         try:
-            if smart_offload_enabled() and getattr(record.load_device, "type", "") == "cuda":
+            if smart_offload_enabled() and getattr(record.load_device, "type", "") == DeviceBackend.CUDA.value:
                 torch.cuda.empty_cache()
                 # DEBUG: Log after empty_cache
-                if self._primary_device.type == "cuda":
+                if self._primary_device.type == DeviceBackend.CUDA.value:
                     free_bytes, _ = torch.cuda.mem_get_info(self._primary_device)
                     logger.info("[memory-debug] AFTER empty_cache: free=%.2f GB", free_bytes / 1e9)
 
@@ -1460,7 +1485,7 @@ class CodexMemoryManager:
                 compute_dtype = None
 
             # DEBUG: Log memory after load
-            if self._primary_device.type == "cuda":
+            if self._primary_device.type == DeviceBackend.CUDA.value:
                 free_bytes, _ = torch.cuda.mem_get_info(self._primary_device)
                 logger.info("[memory-debug] AFTER load %s: free=%.2f GB", target_name, free_bytes / 1e9)
 
@@ -1546,7 +1571,7 @@ class CodexMemoryManager:
             ) from exc
 
     def _cleanup_for_loaded_models(self, records: Sequence[_LoadedModelRecord], memory_budget: int) -> None:
-        devices = {record.load_device for record in records if record.load_device.type != "cpu"}
+        devices = {record.load_device for record in records if record.load_device.type != DeviceBackend.CPU.value}
         for device in devices:
             self.free_memory(memory_budget, device=device, keep_loaded=records)
 

@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-02-21
+Last Review: 2026-02-22
 Status: Active
 
 ## Purpose
@@ -71,6 +71,7 @@ Status: Active
 - 2026-02-18: `driver.py`/`inner_loop.py` now support optional guidance policy wiring (env + `override_settings.guidance`) for APG, CFG truncation by progress ratio, guidance rescale, and renorm clamp; policy parsing is strict and inactive policies are ignored (legacy sampling preserved when unset).
 - 2026-02-18: `inner_loop.sampling_prepare(...)` / `sampling_cleanup(...)` now route smart-offload load/unload context through `memory_management.manager` (`source`/`stage`), keeping generic action emission (`load`/`unload`) centralized in the manager.
 - 2026-02-20: `driver.py` now emits dense sampler diagnostics through `emit_backend_event(...)` (`sampling.sigma_schedule`, `sampling.plan.prepare`, `sampling.plan.run`, `sampling.cfg_delta`, `sampling.step`, `guidance.policy`) so logs inherit centralized multiline formatting/colorization instead of ad-hoc single-line format strings.
+- 2026-02-22: Removed run-scoped GGUF dequant-forward cache hooks (`lvl1`/`lvl2`) from `inner_loop.sampling_prepare(...)`/`sampling_cleanup(...)`; sampling lifecycle now no longer enables/disables per-run GGUF forward caches.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

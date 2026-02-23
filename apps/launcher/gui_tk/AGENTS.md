@@ -47,3 +47,4 @@ Last Review: 2026-02-23
 - 2026-02-23: Runtime explanatory text now renders per-field via contextual `?` help buttons (`HelpMode.DIALOG`) instead of detached multi-line blocks.
 - 2026-02-23: Root app layout now uses `grid` (`notebook` row + fixed footer row) so the footer is preserved in reduced window sizes.
 - 2026-02-23: Diagnostics tab now renders inside `ScrollableFrame`, preventing advanced controls from clipping/forcing footer loss on small windows.
+- 2026-02-23: `ScrollableFrame` now binds wheel events to descendant widgets (not just canvas enter/leave), fixing mouse-wheel scroll over content controls when scrollbars are present.

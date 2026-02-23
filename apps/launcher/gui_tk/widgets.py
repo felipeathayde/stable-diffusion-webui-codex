@@ -35,28 +35,44 @@ class ScrollableFrame(ttk.Frame):
         self._canvas.configure(yscrollcommand=self._scrollbar.set)
 
         self.inner.bind("<Configure>", lambda _e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        self.inner.bind("<Configure>", lambda _e: self._refresh_mousewheel_bindings(), add="+")
+        self._bound_mousewheel_widgets: set[str] = set()
 
         self._canvas.pack(side="left", fill="both", expand=True)
         self._scrollbar.pack(side="right", fill="y")
+        self._refresh_mousewheel_bindings()
 
-        # Bind wheel only while the cursor is over this widget (no global bind_all).
-        for target in (self._canvas, self.inner):
-            target.bind("<Enter>", self._bind_mousewheel)
-            target.bind("<Leave>", self._unbind_mousewheel)
+    def _refresh_mousewheel_bindings(self) -> None:
+        for widget in self._iter_widgets():
+            widget_key = str(widget)
+            if widget_key in self._bound_mousewheel_widgets:
+                continue
+            if os.name == "nt":
+                widget.bind("<MouseWheel>", self._on_mousewheel_windows, add="+")
+            elif os.name == "darwin":
+                widget.bind("<MouseWheel>", self._on_mousewheel_macos, add="+")
+            else:
+                widget.bind("<Button-4>", self._on_mousewheel_linux, add="+")
+                widget.bind("<Button-5>", self._on_mousewheel_linux, add="+")
+            self._bound_mousewheel_widgets.add(widget_key)
 
-    def _bind_mousewheel(self, _event: tk.Event) -> None:
-        if os.name == "nt":
-            self._canvas.bind("<MouseWheel>", self._on_mousewheel_windows)
-        elif os.name == "darwin":
-            self._canvas.bind("<MouseWheel>", self._on_mousewheel_macos)
-        else:
-            self._canvas.bind("<Button-4>", self._on_mousewheel_linux)
-            self._canvas.bind("<Button-5>", self._on_mousewheel_linux)
-
-    def _unbind_mousewheel(self, _event: tk.Event) -> None:
-        self._canvas.unbind("<MouseWheel>")
-        self._canvas.unbind("<Button-4>")
-        self._canvas.unbind("<Button-5>")
+    def _iter_widgets(self) -> list[tk.Widget]:
+        collected: list[tk.Widget] = []
+        stack: list[tk.Widget] = [self, self._canvas, self.inner]
+        seen: set[str] = set()
+        while stack:
+            widget = stack.pop()
+            key = str(widget)
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(widget)
+            try:
+                children = list(widget.winfo_children())
+            except Exception:
+                children = []
+            stack.extend(children)
+        return collected
 
     def _on_mousewheel_windows(self, event: tk.Event) -> None:
         delta = int(getattr(event, "delta", 0) or 0)

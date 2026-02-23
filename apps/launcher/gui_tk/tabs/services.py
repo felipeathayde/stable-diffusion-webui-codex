@@ -17,24 +17,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import logging
 import os
 from pathlib import Path
-import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, Dict, Tuple
-from urllib import error as url_error
-from urllib import request as url_request
 import webbrowser
 
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.launcher.services import ServiceStatus
 
 from ..controller import LauncherController
-
-LOGGER = logging.getLogger("codex.launcher.gui_tk.services_tab")
 
 
 @dataclass(slots=True)
@@ -69,11 +63,6 @@ class ServicesTab:
         self.frame: ttk.Frame | None = None
         self._external_terminal_var = tk.BooleanVar(value=bool(controller.store.meta.external_terminal))
         self._cards: Dict[str, _ServiceCard] = {}
-        self._health_lock = threading.Lock()
-        self._health_cache: Dict[str, Dict[str, object]] = {}
-        self._health_targets: Dict[str, str] = {}
-        self._health_stop_event = threading.Event()
-        self._health_thread: threading.Thread | None = None
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
@@ -163,7 +152,6 @@ class ServicesTab:
             )
             row += 1
 
-        self._start_health_worker()
         self.frame = frame
         return frame
 
@@ -190,9 +178,8 @@ class ServicesTab:
             if last_exit is not None and status != ServiceStatus.RUNNING:
                 info_bits.append(f"Last exit {last_exit}")
             card.info_var.set(" | ".join(info_bits))
-            root_url, _docs_url, health_url = self._resolve_service_urls(svc_name)
+            root_url, _docs_url = self._resolve_service_urls(svc_name)
             card.endpoint_var.set(root_url)
-            self._set_health_target(svc_name, health_url)
 
             if status == ServiceStatus.RUNNING:
                 card.status_label.configure(style="Status.Running.TLabel")
@@ -209,10 +196,13 @@ class ServicesTab:
                 self._set_widget_enabled(card.open_docs_btn, enabled=(status == ServiceStatus.RUNNING))
             self._set_widget_enabled(card.open_btn, enabled=(status == ServiceStatus.RUNNING))
 
-            health_state = self._health_snapshot(svc_name)
-            health_label = str(health_state.get("label", "Health: stopped"))
-            health_style = str(health_state.get("style", "Health.Stopped.TLabel"))
-            if status != ServiceStatus.RUNNING:
+            if status == ServiceStatus.RUNNING:
+                health_label = "Health: process running"
+                health_style = "Health.Ok.TLabel"
+            elif status == ServiceStatus.ERROR:
+                health_label = "Health: process error"
+                health_style = "Health.Error.TLabel"
+            else:
                 health_label = "Health: stopped"
                 health_style = "Health.Stopped.TLabel"
             card.health_var.set(health_label)
@@ -296,7 +286,7 @@ class ServicesTab:
             return int(candidate)
         return int(base_port)
 
-    def _resolve_service_urls(self, service_name: str) -> Tuple[str, str | None, str]:
+    def _resolve_service_urls(self, service_name: str) -> Tuple[str, str | None]:
         def _browser_host(raw_host: str) -> str:
             host = str(raw_host or "localhost").strip() or "localhost"
             if host in {"0.0.0.0", "::", "[::]"}:
@@ -313,93 +303,20 @@ class ServicesTab:
             )
             port = str(api_port)
             root_url = f"http://{host}:{port}"
-            return root_url, f"{root_url}/docs", f"{root_url}/api/health"
+            return root_url, f"{root_url}/docs"
 
         host = _browser_host(str(env.get("SERVER_HOST", "localhost")))
         base_port = self._parse_port(env.get("WEB_PORT", service.spec.base_env.get("WEB_PORT", "7860")), default=7860)
         effective_port = self._resolve_ui_effective_port(base_port=base_port, interface_cwd=Path(service.spec.cwd))
         port = str(effective_port)
         root_url = f"http://{host}:{port}"
-        return root_url, None, root_url
-
-    def _health_snapshot(self, service_name: str) -> Dict[str, object]:
-        with self._health_lock:
-            return dict(self._health_cache.get(service_name, {"label": "Health: unknown", "style": "Health.Stopped.TLabel"}))
-
-    def _set_health_snapshot(self, service_name: str, payload: Dict[str, object]) -> None:
-        with self._health_lock:
-            self._health_cache[service_name] = dict(payload)
-
-    def _set_health_target(self, service_name: str, health_url: str) -> None:
-        with self._health_lock:
-            self._health_targets[service_name] = str(health_url)
-
-    def _health_target(self, service_name: str) -> str:
-        with self._health_lock:
-            return str(self._health_targets.get(service_name, ""))
-
-    def _probe_health(self, service_name: str, health_url: str, *, timeout_s: float = 0.75) -> Dict[str, object]:
-        start = time.perf_counter()
-        try:
-            request = url_request.Request(health_url, method="GET")
-            with url_request.urlopen(request, timeout=timeout_s) as response:
-                payload = response.read()
-                elapsed_ms = int((time.perf_counter() - start) * 1000)
-                if service_name == "API":
-                    parsed = json.loads(payload.decode("utf-8", errors="replace"))
-                    if not bool(parsed.get("ok")):
-                        return {"label": "Health: fail", "style": "Health.Error.TLabel", "checked_at": time.time()}
-                return {"label": f"Health: ok ({elapsed_ms} ms)", "style": "Health.Ok.TLabel", "checked_at": time.time()}
-        except (url_error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
-            return {"label": "Health: unreachable", "style": "Health.Error.TLabel", "checked_at": time.time()}
-
-    def _health_worker(self) -> None:
-        poll_s = 2.0
-        while not self._health_stop_event.is_set():
-            for service_name in self._cards:
-                try:
-                    service = self._controller.services[service_name]
-                    if service.status != ServiceStatus.RUNNING:
-                        self._set_health_snapshot(
-                            service_name,
-                            {"label": "Health: stopped", "style": "Health.Stopped.TLabel", "checked_at": time.time()},
-                        )
-                        continue
-                    health_url = self._health_target(service_name)
-                    if not health_url:
-                        self._set_health_snapshot(
-                            service_name,
-                            {"label": "Health: unknown", "style": "Health.Stopped.TLabel", "checked_at": time.time()},
-                        )
-                        continue
-                    result = self._probe_health(service_name, health_url)
-                    self._set_health_snapshot(service_name, result)
-                except Exception:
-                    LOGGER.exception("Services health worker failed while polling %s", service_name)
-                    self._set_health_snapshot(
-                        service_name,
-                        {"label": "Health: error", "style": "Health.Error.TLabel", "checked_at": time.time()},
-                    )
-            if self._health_stop_event.wait(poll_s):
-                break
-
-    def _start_health_worker(self) -> None:
-        if self._health_thread and self._health_thread.is_alive():
-            return
-        self._health_stop_event.clear()
-        worker = threading.Thread(target=self._health_worker, daemon=True, name="launcher-services-health")
-        worker.start()
-        self._health_thread = worker
+        return root_url, None
 
     def dispose(self) -> None:
-        self._health_stop_event.set()
-        thread = self._health_thread
-        if thread and thread.is_alive():
-            thread.join(timeout=1.0)
-        self._health_thread = None
+        return
 
     def _open_service(self, service_name: str, *, target: str) -> None:
-        root_url, docs_url, _health_url = self._resolve_service_urls(service_name)
+        root_url, docs_url = self._resolve_service_urls(service_name)
         target_url = root_url
         if target == "docs":
             if docs_url is None:

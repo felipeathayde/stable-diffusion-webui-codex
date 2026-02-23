@@ -64,7 +64,7 @@ class AnimaEngineRuntime:
     denoiser: DenoiserPatcher
     text: AnimaTextPipelines
     qwen: ModelPatcher
-    device: torch.device = field(default_factory=lambda: torch.device("cpu"))
+    device: torch.device = field(default_factory=lambda: memory_management.manager.mount_device())
     core_storage_dtype: str = "bf16"
     core_compute_dtype: str = "fp32"
     te_storage_dtype: str = "bf16"

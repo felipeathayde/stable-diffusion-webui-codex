@@ -163,7 +163,7 @@ def run_txt2vid(
 
         cfg = build_wan22_gguf_run_config(
             request=request,
-            device=getattr(comp, "device", "auto"),
+            device=getattr(comp, "device", None),
             dtype=getattr(comp, "dtype", "fp16"),
             logger=logger,
         )

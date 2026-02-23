@@ -145,12 +145,11 @@ class SupirEnhanceConfig:
     use_all_samplers: bool = False
 
 
-def parse_supir_enhance_config(payload: Mapping[str, Any]) -> SupirEnhanceConfig:
+def parse_supir_enhance_config(payload: Mapping[str, Any], *, device: str) -> SupirEnhanceConfig:
     if not isinstance(payload, Mapping):
         raise SupirConfigError("payload must be an object")
 
-    device_raw = payload.get("codex_device") or payload.get("device") or payload.get("codex_diffusion_device")
-    device = _as_str(device_raw, name="device").strip().lower()
+    device = _as_str(device, name="device").strip().lower()
     if device not in {"cpu", "cuda", "mps", "xpu", "directml"}:
         raise SupirConfigError("device must be one of: cpu|cuda|mps|xpu|directml")
 

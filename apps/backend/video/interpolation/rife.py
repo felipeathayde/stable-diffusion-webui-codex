@@ -26,6 +26,7 @@ from typing import Any, List, Optional, Sequence
 
 import numpy as np
 
+from apps.backend.runtime.memory import memory_management
 from apps.backend.video.runtime_dependencies import (
     VIDEO_RUNTIME_RIFE_MODEL_RELATIVE,
     VideoDependencyResolutionError,
@@ -87,7 +88,17 @@ def _load_model(model_path: Path):
             f"RIFE runtime dependencies are unavailable ({exc}). Re-run install-webui to provision them."
         ) from exc
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = memory_management.manager.mount_device()
+    if not isinstance(device, torch.device):
+        raise RIFEUnavailableError(
+            "RIFE runtime requires memory manager mount_device() to return torch.device "
+            f"(got {type(device).__name__})."
+        )
+    if device.type not in {"cpu", "cuda"}:
+        raise RIFEUnavailableError(
+            "RIFE runtime supports only cpu/cuda mount devices; "
+            f"got mount_device={device}. Reconfigure launcher main/mount device."
+        )
     fp16 = device.type == "cuda"
 
     try:

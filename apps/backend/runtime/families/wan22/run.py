@@ -928,7 +928,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         except Exception:
             pass
 
-    dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
+    dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
@@ -1173,7 +1173,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     )
     _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
 
-    dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
+    dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
@@ -1378,7 +1378,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         except Exception:
             pass
 
-    dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
+    dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
@@ -1635,7 +1635,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     )
     _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
 
-    dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
+    dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))
@@ -1941,7 +1941,7 @@ def stream_img2vid_chunked(
     )
     _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
 
-    dev_name = resolve_device_name(getattr(cfg, "device", "auto"))
+    dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     flow_multiplier = resolve_wan_flow_multiplier(str(cfg.metadata_dir or ""))

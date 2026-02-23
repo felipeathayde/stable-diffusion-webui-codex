@@ -30,6 +30,7 @@ from typing import Any, Optional, Tuple
 
 import torch
 
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import SmartOffloadAction, log_smart_offload_action
 from .config import as_torch_dtype, resolve_device_name
 from .diagnostics import get_logger
@@ -233,11 +234,11 @@ def get_text_context(
         int(max_sequence_length),
     )
 
-    te_dev_eff = (te_device or device or "cpu").strip().lower()
+    te_dev_eff = (te_device or device).strip().lower()
     if te_dev_eff == "gpu":
         te_dev_eff = "cuda"
     if te_dev_eff == "auto":
-        te_dev_eff = (device or "cpu").strip().lower()
+        te_dev_eff = device.strip().lower()
         if te_dev_eff == "gpu":
             te_dev_eff = "cuda"
     if te_dev_eff not in {"cpu", "cuda"} and not re.fullmatch(r"cuda:\d+", te_dev_eff):
@@ -274,8 +275,8 @@ def get_text_context(
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF: failed to read text encoder config from '{enc_dir}': {exc}") from exc
 
-    use_dev_name = (te_dev_eff or device or "cpu").lower().strip()
-    target_device = use_dev_name if use_dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
+    use_dev_name = te_dev_eff.lower().strip()
+    target_device = use_dev_name
     te_is_gguf = te_file.lower().endswith(".gguf")
     if te_is_gguf:
         from transformers import modeling_utils as hf_modeling_utils
@@ -329,7 +330,7 @@ def get_text_context(
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {exc}") from exc
 
-    dev = torch.device(use_dev_name if use_dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu")
+    dev = torch.device(use_dev_name)
     if not te_is_gguf:
         try:
             enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
@@ -389,20 +390,29 @@ def get_text_context(
 
     if offload_after:
         if not te_is_gguf:
+            offload_device = memory_management.manager.offload_device()
+            if not isinstance(offload_device, torch.device):
+                raise RuntimeError(
+                    "WAN22 GGUF: memory manager offload_device() must return torch.device "
+                    f"(got {type(offload_device).__name__})."
+                )
             moved_to_cpu = False
             try:
-                enc.to("cpu")
+                enc.to(offload_device)
                 moved_to_cpu = True
             except Exception:
                 pass
             if moved_to_cpu and dev.type == "cuda":
-                log.info("[wan22.gguf] text-encoder offloaded to CPU (smart_offload)")
+                log.info(
+                    "[wan22.gguf] text-encoder offloaded to %s (smart_offload)",
+                    offload_device,
+                )
                 log_smart_offload_action(
                     SmartOffloadAction.DIRECT_CPU_OFFLOAD,
                     source="runtime.families.wan22.text_context",
                     component="text_encoder",
                     from_device=str(dev),
-                    to_device="cpu",
+                    to_device=str(offload_device),
                 )
         del enc
         if torch.cuda.is_available():

@@ -50,7 +50,7 @@ class WanEngineRuntime:
     vae: VAE
     denoiser: DenoiserPatcher  # wraps WanTransformer2DModel
     text: WanTextPipelines
-    device: str = "cuda"
+    device: str
     dtype: str = "bf16"
 
 
@@ -142,7 +142,7 @@ def assemble_wan_runtime(
     spec: WanEngineSpec,
     codex_components: Mapping[str, object],
     estimated_config: Any,
-    device: str = "cuda",
+    device: str,
     dtype: str = "bf16",
     embedding_dir: Optional[str] = None,
     emphasis_name: str = "Original",

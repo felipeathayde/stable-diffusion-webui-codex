@@ -21,6 +21,7 @@ from typing import Any, Mapping
 
 from apps.backend.engines.common.base import CodexObjects
 from apps.backend.engines.wan22.spec import WanEngineRuntime, WanEngineSpec, assemble_wan_runtime
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 
@@ -42,7 +43,8 @@ class CodexWan22Factory:
         *,
         options: Mapping[str, Any],
     ) -> CodexWan22Assembly:
-        device = str(options.get("device", "cuda"))
+        default_mount_device = str(memory_management.manager.mount_device())
+        device = str(options.get("device") or default_mount_device)
         dtype = str(options.get("dtype", "bf16"))
         runtime = assemble_wan_runtime(
             spec=self._spec,
@@ -58,4 +60,3 @@ class CodexWan22Factory:
             clipvision=None,
         )
         return CodexWan22Assembly(runtime=runtime, codex_objects=codex_objects)
-

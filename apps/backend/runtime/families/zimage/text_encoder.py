@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 
 from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.runtime.memory import memory_management
 
 from .debug import env_flag, env_int, find_indices, summarize_ints, tensor_stats, truncate_text
 
@@ -190,7 +191,7 @@ class ZImageTextEncoder(nn.Module):
         try:
             return next(self.model.parameters()).device
         except StopIteration:
-            return torch.device("cpu")
+            return memory_management.manager.cpu_device
     
     @property
     def dtype(self) -> torch.dtype:

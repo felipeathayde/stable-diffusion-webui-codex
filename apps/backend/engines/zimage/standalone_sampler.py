@@ -10,6 +10,7 @@ Purpose: Standalone Z Image sampler using Diffusers scheduler math.
 Runs the Z-Image transformer directly while following `FlowMatchEulerDiscreteScheduler` semantics (including `shift` and terminal sigma handling) without the native sampler driver stack.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_default_zimage_sampler_device` (function): Resolves default sampler device identity from memory-manager mount authority.
 - `sample_zimage_diffusers_math` (function): Samples Z Image latents using Diffusers math/scheduler steps with optional classic CFG
   (positive/negative embeddings) and explicit `shift` selection (no double-negation of the model output).
 """
@@ -22,7 +23,18 @@ from typing import Optional
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
 
+from apps.backend.runtime.memory import memory_management
+
 logger = logging.getLogger("backend.zimage.standalone")
+
+
+def _default_zimage_sampler_device() -> str:
+    mount_device = memory_management.manager.mount_device()
+    if not hasattr(mount_device, "type"):
+        raise RuntimeError(
+            "ZImage standalone sampler requires memory manager mount_device() to return torch.device."
+        )
+    return str(mount_device)
 
 
 def sample_zimage_diffusers_math(
@@ -36,7 +48,7 @@ def sample_zimage_diffusers_math(
     guidance_scale: float = 0.0,
     shift: float = 3.0,
     generator: Optional[torch.Generator] = None,
-    device: str = "cuda",
+    device: str | None = None,
     dtype: torch.dtype = torch.bfloat16,
     latent_channels: int = 16,
     patch_size: int = 2,
@@ -67,6 +79,7 @@ def sample_zimage_diffusers_math(
     Returns:
         latents: Final denoised latents [B, C, H//8, W//8]
     """
+    device_name = str(device or _default_zimage_sampler_device())
     batch_size = text_embeddings.shape[0]
     apply_cfg = guidance_scale > 1.0
     if apply_cfg:
@@ -90,7 +103,7 @@ def sample_zimage_diffusers_math(
     )
     # Match diffusers ZImagePipeline: force a terminal sigma of 0.0 (double-zero tail after set_timesteps).
     scheduler.sigma_min = 0.0
-    scheduler.set_timesteps(num_inference_steps, device=device)
+    scheduler.set_timesteps(num_inference_steps, device=device_name)
     timesteps = scheduler.timesteps
     
     logger.debug(
@@ -104,7 +117,7 @@ def sample_zimage_diffusers_math(
     latents = torch.randn(
         latents_shape,
         generator=generator,
-        device=device,
+        device=device_name,
         dtype=torch.float32,  # Scheduler expects float32
     )
     
@@ -125,7 +138,7 @@ def sample_zimage_diffusers_math(
             # Scheduler returns timesteps t = sigma * 1000 (1000=start → 0=end), so sigma = t/1000.
             sigma = float(t) / 1000.0
             if apply_cfg:
-                sigma_tensor = torch.full((batch_size * 2,), sigma, device=device, dtype=dtype)
+                sigma_tensor = torch.full((batch_size * 2,), sigma, device=device_name, dtype=dtype)
                 latent_model_input = latent_model_input.repeat(2, 1, 1, 1)
                 context = torch.cat([negative_text_embeddings, text_embeddings], dim=0).to(dtype)
                 model_output = transformer(

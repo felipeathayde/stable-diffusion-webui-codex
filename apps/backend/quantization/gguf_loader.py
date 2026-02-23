@@ -25,11 +25,19 @@ from typing import Dict, Any
 import numpy as np
 import torch
 
+from apps.backend.runtime.memory import memory_management
+
 logger = logging.getLogger("backend.quantization.gguf_loader")
 
 def _resolve_target_device(device: torch.device | str | None) -> torch.device:
     if device is None:
-        return torch.device("cpu")
+        resolved = memory_management.manager.mount_device()
+        if not isinstance(resolved, torch.device):
+            raise RuntimeError(
+                "GGUF loader requires memory manager mount_device() to return torch.device "
+                f"(got {type(resolved).__name__})."
+            )
+        return resolved
     resolved = torch.device(device)
     if resolved.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(f"GGUF load requested CUDA target '{resolved}', but CUDA is not available.")

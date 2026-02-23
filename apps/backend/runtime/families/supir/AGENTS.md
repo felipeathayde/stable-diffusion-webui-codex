@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/supir Overview
 Date: 2026-02-02
-Last Review: 2026-02-02
+Last Review: 2026-02-23
 Status: In progress
 
 ## Purpose
@@ -23,3 +23,4 @@ Status: In progress
 - **No fast VAE encode/decode**: do not implement any “fast VAE” shortcuts.
 - Default OFF: VAE cache, VAE tiling, diffusion tiling (guardrails required when enabled).
 - Keep router/task imports **import-light**: torch-heavy work must be inside functions.
+- 2026-02-23: `config.py::parse_supir_enhance_config(...)` no longer owns payload device selection; router canonical device parsing (`parse_device_from_payload`) now resolves device first and passes it explicitly into SUPIR config parsing.

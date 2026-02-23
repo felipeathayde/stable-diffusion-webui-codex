@@ -486,15 +486,18 @@ def _run_flow_chunks(
     )
     estimator: Optional[RaftFlowEstimator] = None
     if flow_enabled:
-        estimator = RaftFlowEstimator(
-            device=str(flow_cfg.get("device") or "cuda"),
-            use_large=parse_bool_value(
+        estimator_kwargs: dict[str, Any] = {
+            "use_large": parse_bool_value(
                 flow_cfg.get("use_large"),
                 field="vid2vid_flow.use_large",
                 default=False,
             ),
-            downscale=int(flow_cfg.get("downscale") or 2),
-        )
+            "downscale": int(flow_cfg.get("downscale") or 2),
+        }
+        flow_device_raw = flow_cfg.get("device")
+        if flow_device_raw not in (None, ""):
+            estimator_kwargs["device"] = str(flow_device_raw)
+        estimator = RaftFlowEstimator(**estimator_kwargs)
 
     out: list[Any] = []
     seed_base = getattr(request, "seed", None)

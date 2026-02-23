@@ -29,3 +29,4 @@ Status: Active
 - 2026-01-19: Made `apps.backend.quantization` import-light (lazy facade) so `apps.backend.quantization.gguf` can be torch-free on import; kernel registration now happens when importing `apps.backend.quantization.api`.
 - 2026-01-20: Removed unreferenced legacy quantization helpers (`quantization/ops.py` and `gguf/{lazy,metadata,tensor_mapping,utility,vocab}.py`).
 - 2026-02-15: `tensor.py` and `codexpack_tensor.py` now use explicit NumPy->tensor no-copy helpers (readonly warning suppressed intentionally) to avoid eager host copies for packed GGUF/CodexPack weights.
+- 2026-02-23: `gguf_loader.py::_resolve_target_device(...)` now defaults to memory-manager mount-device authority when no device is provided, removing an implicit CPU default in GGUF load paths.

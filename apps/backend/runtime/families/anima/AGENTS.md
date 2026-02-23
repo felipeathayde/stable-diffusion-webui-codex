@@ -30,3 +30,4 @@ Status: Draft
 - 2026-02-08: `wan_vae.py` now emits `shift_factor=None` (not numeric `0.0`) for Anima Wan21 parity; shared VAE no-shift policy remains strict and continues to reject explicit numeric shift values for Anima.
 - 2026-02-16: WAN2.1 VAE keymap ownership moved to `apps/backend/runtime/state_dict/keymap_wan21_vae.py`; `wan_vae.py` now consumes model-owned keymap directly (no Anima mixed-ownership).
 - 2026-02-20: Anima DiT and LLM adapter attention callsites now route through runtime dispatcher helper `attention_function_pre_shaped(...)` (explicit PyTorch backend override), removing direct SDPA bypasses in family modules.
+- 2026-02-23: `text_encoder.py` device metadata fallback now resolves from memory-manager CPU device (`manager.cpu_device`) instead of constructing a local CPU literal when parameter iterators are empty.

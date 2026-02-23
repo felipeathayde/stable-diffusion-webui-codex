@@ -12,7 +12,8 @@ device switch only when the task actually starts running (single-flight-safe).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cuda_available_for_fallback` (function): Returns whether CUDA is available for default main-device fallback.
-- `configured_main_device` (function): Resolves the active configured main device (`args`/env/fallback).
+- `_normalize_backend_label` (function): Normalizes runtime/backend labels into canonical API device keys.
+- `configured_main_device` (function): Resolves the active configured main device (live memory-manager authority first, then args/env/fallback).
 - `parse_device_from_payload` (function): Validates payload device and enforces main-device invariant.
 - `apply_primary_device` (function): Applies the validated device via `memory_management.switch_primary_device`.
 """
@@ -35,7 +36,33 @@ def _cuda_available_for_fallback() -> bool:
         return False
 
 
+def _normalize_backend_label(raw: str) -> str:
+    normalized = str(raw or "").strip().lower()
+    if not normalized:
+        raise ValueError("Empty device/backend label.")
+    if normalized == "gpu":
+        return "cuda"
+    if normalized == "dml":
+        return "directml"
+    if normalized.startswith("cuda"):
+        return "cuda"
+    if normalized in _ALLOWED_DEVICES:
+        return normalized
+    raise ValueError(f"Unsupported device/backend label: {raw!r}")
+
+
 def configured_main_device() -> str:
+    try:
+        from apps.backend.runtime.memory import memory_management as mem_management
+
+        manager = getattr(mem_management, "manager", None)
+        if manager is not None and hasattr(manager, "primary_device"):
+            primary_device = manager.primary_device()
+            return _normalize_backend_label(str(primary_device))
+    except Exception:
+        # Keep deterministic fallback resolution below.
+        pass
+
     from apps.backend.infra.config import args as runtime_args
 
     candidates: list[str | None] = [
@@ -50,8 +77,10 @@ def configured_main_device() -> str:
             continue
         if normalized == "auto":
             return "cuda" if _cuda_available_for_fallback() else "cpu"
-        if normalized in _ALLOWED_DEVICES:
-            return normalized
+        try:
+            return _normalize_backend_label(normalized)
+        except ValueError:
+            continue
     return "cuda" if _cuda_available_for_fallback() else "cpu"
 
 

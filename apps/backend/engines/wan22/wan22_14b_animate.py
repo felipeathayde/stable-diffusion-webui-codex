@@ -27,6 +27,7 @@ from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipel
 from apps.backend.engines.wan22.wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.runtime.memory import memory_management
 from apps.backend.use_cases.vid2vid import run_vid2vid as _run_v2v
 
 
@@ -52,7 +53,8 @@ class Wan22Animate14BEngine(BaseVideoEngine):
         )
 
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
-        dev = str(options.get("device", "auto"))
+        default_mount_device = str(memory_management.manager.mount_device())
+        dev = str(options.get("device") or default_mount_device)
         dty = str(options.get("dtype", "fp16"))
         self._opts = EngineOpts(device=dev, dtype=dty)
 
@@ -101,7 +103,7 @@ class Wan22Animate14BEngine(BaseVideoEngine):
             from apps.backend.runtime.families.wan22.config import resolve_device_name
 
             resolved = resolve_device_name(dev)
-            comp.device = "cpu" if resolved == "cpu" else "cuda"
+            comp.device = resolved
         except Exception as exc:
             raise EngineLoadError(str(exc)) from exc
         comp.model_dir = p

@@ -152,7 +152,7 @@ class ZImageEngineRuntime:
     denoiser: DenoiserPatcher  # wraps ZImageTransformer2DModel
     text: ZImageTextPipelines
     qwen: ZImageQwenPatcher  # wrapper with ModelPatcher for memory management
-    device: str = "cuda"
+    device: str
     core_storage_dtype: str = "bf16"
     core_compute_dtype: str = "fp32"
     te_storage_dtype: str = "bf16"
@@ -267,7 +267,7 @@ def assemble_zimage_runtime(
     spec: ZImageEngineSpec,
     codex_components: Mapping[str, object],
     estimated_config: Any,
-    device: str = "cuda",
+    device: str,
     vae_path: str | None = None,
     tenc_path: str | None = None,
 ) -> ZImageEngineRuntime:

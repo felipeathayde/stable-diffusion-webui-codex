@@ -28,6 +28,8 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 import logging
 import torch
 
+from apps.backend.runtime.memory import memory_management
+
 logger = logging.getLogger("backend.runtime.controlnet.config")
 
 
@@ -176,7 +178,7 @@ class ControlNode:
             try:
                 device = next(model.parameters()).device
             except StopIteration:
-                device = torch.device("cpu")
+                device = memory_management.manager.mount_device()
         if dtype is None:
             raise ValueError("Unable to determine dtype for control node preparation")
         if device is None:

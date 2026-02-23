@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional, List
 
 @dataclass
 class EngineOpts:
-    device: str = "auto"
+    device: str = ""
     dtype: str = "fp16"
 
 
@@ -43,7 +43,7 @@ class WanComponents:
     model_dir: str | None = None
     high_dir: str | None = None
     low_dir: str | None = None
-    device: str = "cpu"
+    device: str = ""
     dtype: str = "fp16"
     hf_repo_dir: Optional[str] = None
     hf_text_encoder_dir: Optional[str] = None

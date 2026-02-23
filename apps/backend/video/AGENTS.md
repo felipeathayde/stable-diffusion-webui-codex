@@ -18,3 +18,4 @@ Status: Active
 - Default RIFE checkpoint is provisioned under `.uv/xdg-data/rife/rife47.pth`; interpolation runtime now attempts one-shot auto-provision only for default-token requests (custom paths/env overrides still fail loud).
 - Flow guidance requires `torch` + `torchvision`.
 - 2026-01-02: Added standardized file header docstrings to video export modules (doc-only change; part of rollout).
+- 2026-02-23: RIFE/RAFT runtime defaults now derive device identity from memory-manager mount-device authority; unsupported device/backend combinations fail loud instead of implicit CUDA→CPU fallback.

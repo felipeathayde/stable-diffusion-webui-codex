@@ -14,3 +14,4 @@ Status: Active
 - `FluxTransformer2DModel.forward` now accepts extra keyword-only arguments (`control`, `transformer_options`, plus ignored `**kwargs`) so it can be driven safely via `SamplerModel.apply_model` without relying on them; do not use these for new behaviour without coordinating with `apps/backend/runtime/sampling_adapters/sampler_model.py`.
 - Keep this in sync with `apps/backend/engines/flux/` to avoid drift between runtime and engine expectations; document new invariants in engine AGENTS when behaviour changes.
 - 2026-01-02: Added standardized file header docstrings to Flux runtime surface modules (`__init__.py`, `config.py`, `embed.py`, `geometry.py`, `flux.py`, and `streaming/{__init__,config,specs}.py`) (doc-only change; part of rollout).
+- 2026-02-23: Flux streaming controller wrapper (`streaming/controller.py`) now resolves default `storage_device`/`compute_device` from memory-manager offload/mount policy instead of local CPU/CUDA literals.

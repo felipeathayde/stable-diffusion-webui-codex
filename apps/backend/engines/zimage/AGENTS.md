@@ -39,3 +39,5 @@ Status: Active
 - 2026-02-09: ZImage conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-11: `CodexZImageFactory` now wires `text_encoders[\"qwen3\"]` to the dedicated Qwen patcher wrapper (`runtime.qwen`) instead of the non-loadable text-processing engine object, so smart-offload TE staging can call memory-manager load/unload without resolver failures.
 - 2026-02-18: sampling-path latent decode in `zimage.py` now loads/unloads VAE with the base canonical target (`self._vae_memory_target()`), avoiding wrapper-vs-patcher identity drift against shared engine unload cleanup.
+- 2026-02-23: Z-Image runtime metadata defaults no longer hardcode backend device literals in engine/spec surfaces; runtime device fallback now resolves from memory-manager mount-device authority.
+- 2026-02-23: `standalone_sampler.py::sample_zimage_diffusers_math(...)` no longer defaults `device=\"cuda\"`; unresolved device now resolves through memory-manager mount-device authority.

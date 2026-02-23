@@ -353,7 +353,7 @@ def _prepare_init_image_tensor(
     width: int,
 ) -> torch.Tensor:
     dev_name = resolve_device_name(device)
-    target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
+    target_device = torch.device(dev_name)
 
     if hasattr(init_image, "to"):
         t = init_image
@@ -366,7 +366,7 @@ def _prepare_init_image_tensor(
                 "WAN22 GGUF: init_image tensor must be 4D [B,C,H,W] (or 5D [B,C,T,H,W]); "
                 f"got {getattr(t, 'shape', None)}"
             )
-        t = t.to(device=target, dtype=torch_dtype)
+        t = t.to(device=target_device, dtype=torch_dtype)
         t = _maybe_resize_hw(t, height=height, width=width)
         return t
 
@@ -378,7 +378,7 @@ def _prepare_init_image_tensor(
         img = img.resize((int(width), int(height)), resample=Image.BICUBIC)
         arr = np.array(img).astype("float32") / 255.0
         t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
-        t = t.to(device=target, dtype=torch_dtype)
+        t = t.to(device=target_device, dtype=torch_dtype)
         return t * 2.0 - 1.0
 
     arr = np.asarray(init_image).astype("float32")
@@ -390,7 +390,7 @@ def _prepare_init_image_tensor(
     else:
         raise RuntimeError("WAN22 GGUF: unsupported init_image array shape")
 
-    t = t.to(device=target, dtype=torch_dtype)
+    t = t.to(device=target_device, dtype=torch_dtype)
     t = _maybe_resize_hw(t, height=height, width=width)
     return t * 2.0 - 1.0
 
@@ -490,7 +490,7 @@ def open_vae_decode_session(
 ) -> WanVAEDecodeSession:
     log = get_logger(logger)
     dev_name = resolve_device_name(device)
-    target_device = "cuda" if dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
+    target_device = str(torch.device(dev_name))
     preferred = as_torch_dtype(dtype)
     dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
     last_exc: Exception | None = None
@@ -566,7 +566,7 @@ def vae_encode_video_condition(
         raise RuntimeError(f"WAN22 GGUF: invalid num_frames={num_frames} for I2V video_condition")
 
     dev_name = resolve_device_name(device)
-    target = "cuda" if dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
+    target = str(torch.device(dev_name))
     preferred = as_torch_dtype(dtype)
     dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
     last_exc: Exception | None = None
@@ -764,7 +764,7 @@ def vae_decode_video(
     from PIL import Image
 
     dev_name = resolve_device_name(device)
-    target = "cuda" if dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
+    target = str(torch.device(dev_name))
     preferred = as_torch_dtype(dtype)
     dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
     last_exc: Exception | None = None

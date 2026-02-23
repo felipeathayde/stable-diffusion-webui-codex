@@ -318,12 +318,7 @@ class InferenceOrchestrator:
                     desired = _mem.manager.primary_device()
                     dcur = self._engine_primary_component_device(engine)
                     if dcur is not None:
-                        desired_type = getattr(desired, "type", None)
-                        current_type = getattr(dcur, "type", None)
-                        if desired_type is None or current_type is None:
-                            device_mismatch = str(dcur) != str(desired)
-                        else:
-                            device_mismatch = current_type != desired_type
+                        device_mismatch = str(dcur) != str(desired)
                 except Exception:
                     device_mismatch = False
 

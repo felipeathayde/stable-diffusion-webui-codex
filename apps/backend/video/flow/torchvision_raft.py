@@ -12,14 +12,17 @@ Implements a lazy-loaded RAFT flow estimator and a `warp_frame(...)` helper for 
 Symbols (top-level; keep in sync; no ghosts):
 - `FlowGuidanceError` (class): Raised when flow guidance dependencies are missing or inputs are invalid.
 - `_round_down_to_multiple` (function): Rounds a value down to a given multiple (used for downscaled inference shapes).
+- `_default_flow_device_name` (function): Resolves RAFT default device identity from memory-manager mount-device authority.
 - `RaftFlowEstimator` (dataclass): Lazy-loaded RAFT estimator that produces backward flow tensors `[1,2,H,W]`.
 - `warp_frame` (function): Warps a PIL frame using a backward flow tensor (torch grid sampling).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
+
+from apps.backend.runtime.memory import memory_management
 
 
 class FlowGuidanceError(RuntimeError):
@@ -32,6 +35,15 @@ def _round_down_to_multiple(value: int, multiple: int) -> int:
     return max(multiple, int(value) - (int(value) % multiple))
 
 
+def _default_flow_device_name() -> str:
+    mount_device = memory_management.manager.mount_device()
+    if not hasattr(mount_device, "type"):
+        raise FlowGuidanceError(
+            "RAFT flow estimator requires memory manager mount_device() to return torch.device."
+        )
+    return str(mount_device)
+
+
 @dataclass
 class RaftFlowEstimator:
     """Optical flow estimator powered by torchvision RAFT (lazy-loaded).
@@ -40,7 +52,7 @@ class RaftFlowEstimator:
     can still import the backend and use non-flow modes.
     """
 
-    device: str = "cuda"
+    device: str = field(default_factory=_default_flow_device_name)
     use_large: bool = False
     downscale: int = 2
 
@@ -64,9 +76,12 @@ class RaftFlowEstimator:
                 "Optical flow requires torch + torchvision (RAFT). Install torchvision or disable flow guidance."
             ) from exc
 
-        dev = str(self.device or "cuda").lower().strip()
+        dev = str(self.device).lower().strip() if self.device else _default_flow_device_name().lower().strip()
         if dev != "cpu" and not (hasattr(torch, "cuda") and torch.cuda.is_available()):
-            dev = "cpu"
+            raise FlowGuidanceError(
+                f"RAFT requested device={self.device!r}, but CUDA is unavailable. "
+                "Set flow device to CPU explicitly or configure a CUDA mount device."
+            )
         self.device = dev
 
         if self.use_large:
@@ -149,7 +164,8 @@ def warp_frame(frame: Any, *, backward_flow, device: Optional[str] = None) -> An
     if not hasattr(flow, "shape") or len(getattr(flow, "shape")) != 4:
         raise FlowGuidanceError("backward_flow must be a tensor shaped [1,2,H,W]")
 
-    dev = str(device or getattr(flow, "device", "cpu"))
+    flow_device = getattr(flow, "device", None)
+    dev = str(device or flow_device or _default_flow_device_name())
     img = frame.convert("RGB")
     t = pil_to_tensor(img).float() / 255.0
     t = t.unsqueeze(0).to(dev)

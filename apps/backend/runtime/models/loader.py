@@ -1552,7 +1552,7 @@ def _load_huggingface_component(
                 DeviceRole.CORE,
                 supported=supported_dtypes,
             )
-            
+            cpu_device = memory_management.manager.cpu_device
             initial_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
             # Smart offload: load transformers to CPU to prevent OOM
             # The engine will move it to GPU on demand via streaming or memory management
@@ -1562,21 +1562,30 @@ def _load_huggingface_component(
                 "ChromaTransformer2DModel",
                 "SD3Transformer2DModel",
             }
-            if cls_name in _SMART_OFFLOAD_TRANSFORMERS and smart_offload_enabled() and load_device.type != "cpu":
-                initial_device = torch.device("cpu")
-                LOGGER.info("[loader] Smart offload: loading %s to CPU (will stream to GPU)", cls_name)
+            if (
+                cls_name in _SMART_OFFLOAD_TRANSFORMERS
+                and smart_offload_enabled()
+                and load_device.type != cpu_device.type
+            ):
+                initial_device = offload_device
+                LOGGER.info(
+                    "[loader] Smart offload: loading %s to offload device %s (will stream to load device %s)",
+                    cls_name,
+                    initial_device,
+                    load_device,
+                )
                 log_smart_offload_action(
                     SmartOffloadAction.CPU_STAGE_LOAD,
                     source="runtime.models.loader",
                     component=cls_name,
                     from_device=str(load_device),
-                    to_device="cpu",
+                    to_device=str(initial_device),
                 )
-            
+
             # For GGUF on CPU, use bfloat16 for storage to avoid unnecessary upcasting
             # The model will automatically cast to appropriate dtype during forward pass on GPU
-            construct_dtype = torch.bfloat16 if initial_device.type == "cpu" else computation_dtype
-            
+            construct_dtype = torch.bfloat16 if initial_device.type == cpu_device.type else computation_dtype
+
             with using_codex_operations(device=initial_device, dtype=construct_dtype, manual_cast_enabled=False, weight_format="gguf"):
                 model = model_ctor(config_json)
         else:

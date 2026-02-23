@@ -37,6 +37,7 @@ from typing import Any, Mapping, Optional
 
 import torch
 
+from apps.backend.runtime.memory import memory_management
 from .paths import normalize_win_path
 
 WAN_FLOW_MULTIPLIER = 1000.0
@@ -104,23 +105,42 @@ def as_torch_dtype(dtype: str) -> torch.dtype:
     raise ValueError(f"Unsupported dtype: {dtype!r} (expected fp16/bf16/fp32)")
 
 
-def resolve_device_name(name: str) -> str:
-    raw = str(name or "auto").strip()
+def resolve_device_name(name: str | None) -> str:
+    raw = "" if name is None else str(name).strip()
     s = raw.lower()
+    manager = getattr(memory_management, "manager", None)
+    if manager is None or not hasattr(manager, "mount_device"):
+        raise RuntimeError("WAN22: memory manager is required to resolve runtime device.")
+    mount_device = manager.mount_device()
+    if not isinstance(mount_device, torch.device):
+        raise RuntimeError(
+            "WAN22: memory manager mount_device() must return torch.device "
+            f"(got {type(mount_device).__name__})."
+        )
+    mount_name = str(mount_device).lower().strip()
 
     if s in {"cpu"}:
         return "cpu"
 
     if s in {"auto", ""}:
-        if torch.cuda.is_available():
-            return "cuda"
-        raise RuntimeError("WAN22: CUDA is not available; set device='cpu' explicitly to force CPU.")
+        if mount_name == "cpu" or mount_name.startswith("cuda"):
+            return mount_name
+        raise RuntimeError(
+            "WAN22: memory manager mount device is unsupported for WAN runtime "
+            f"(mount_device={mount_device!s}; expected cpu/cuda)."
+        )
 
     # Accept explicit CUDA device strings (cuda, cuda:0, etc).
-    if s == "gpu" or s.startswith("cuda"):
-        if torch.cuda.is_available():
-            return "cuda" if s == "gpu" else s
-        raise RuntimeError(f"WAN22: device={raw!r} requested but CUDA is not available; set device='cpu' explicitly.")
+    if s == "gpu":
+        s = "cuda"
+    if s.startswith("cuda"):
+        cuda_available = bool(getattr(manager.hardware_probe, "cuda_available", False))
+        if cuda_available:
+            return s
+        raise RuntimeError(
+            f"WAN22: device={raw!r} requested but CUDA is unavailable in memory-manager probe; "
+            "set device='cpu' explicitly."
+        )
 
     raise ValueError(f"Unsupported device: {raw!r} (expected 'auto', 'cpu', or 'cuda').")
 
@@ -219,7 +239,7 @@ def resolve_wan_flow_multiplier(metadata_dir: str) -> float:
 def build_wan22_gguf_run_config(
     *,
     request: Any,
-    device: str,
+    device: str | None,
     dtype: str,
     logger: Any = None,
 ) -> RunConfig:
@@ -743,7 +763,7 @@ def build_wan22_gguf_run_config(
         num_frames=int(getattr(request, "num_frames", 17) or 17),
         guidance_scale=getattr(request, "guidance_scale", None),
         dtype=str(dtype or "fp16"),
-        device=str(device or "cuda"),
+        device=resolve_device_name(device),
         seed=seed,
         prompt=getattr(request, "prompt", None),
         negative_prompt=getattr(request, "negative_prompt", None),

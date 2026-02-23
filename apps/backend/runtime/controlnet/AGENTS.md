@@ -13,3 +13,4 @@ Status: Active
 - `preprocessors/` contains Codex-native preprocessing pipelines (edge detectors, etc.) registered through `ControlPreprocessorRegistry`.
 - `__init__.py` is a package marker (no re-exports); import ControlNet types/helpers from their owning modules.
 - 2026-01-20: Removed unused `converters.py` helper (no call sites).
+- 2026-02-23: `config.py::ControlNode.prepare(...)` now resolves the no-parameter fallback device from memory-manager mount-device authority instead of constructing a local CPU fallback literal.

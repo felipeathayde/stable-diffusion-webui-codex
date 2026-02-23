@@ -48,6 +48,7 @@ Status: Active
 - 2026-02-19: `vae.py` decode/encode OOM regular→tiled retries now drop failed-path buffers before explicit cleanup (`unload_model` + `gc.collect()` + `soft_empty_cache(force=True)`) and deterministic VAE reload before tiled retry, avoiding allocator carry-over across fallback attempts.
 - 2026-02-19: `vae.py` output staging now treats `DeviceRole.INTERMEDIATE=auto` as CPU-target by default, preventing large decode buffers from staying on GPU unless intermediate backend is explicitly overridden.
 - 2026-02-20: `vae.py` native-LDM type checks now import `AutoencoderKL_LDM` from `runtime/common/vae_ldm.py` (canonical shared lane) instead of the WAN family path.
+- 2026-02-23: `lora_loader.py::CodexLoraLoader.refresh(...)` now resolves default LoRA backup/offload placement from `memory_management.manager.offload_device()` when `offload_device` is omitted (no implicit CPU literal default).
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

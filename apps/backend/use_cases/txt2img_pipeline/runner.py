@@ -553,11 +553,6 @@ class Txt2ImgPipelineRunner:
         subseed_strength: float,
         prompts: Sequence[str],
     ) -> GenerationResult:
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                "StableDiffusionXL exige CUDA ativo (torch.cuda.is_available() retornou False). "
-                "Instale os drivers/CUDA corretos ou execute o modo somente CPU conscientemente."
-            )
         setattr(processing, "_codex_last_decode_engine", None)
         t_start = time.perf_counter()
         t_prepare_end: float | None = None
@@ -568,11 +563,6 @@ class Txt2ImgPipelineRunner:
         model_device, model_dtype = self._sd_model_device_info(processing)
         if model_device is not None:
             self._logger.info("SDXL sd_model device=%s dtype=%s", model_device, model_dtype)
-            if model_device.type != "cuda":
-                raise RuntimeError(
-                    "StableDiffusionXL carregou o modelo em %s; configure uma GPU CUDA antes de continuar."
-                    % model_device
-                )
 
         state = self._prepare_state(
             processing,

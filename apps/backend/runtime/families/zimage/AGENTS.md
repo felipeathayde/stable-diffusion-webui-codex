@@ -45,6 +45,7 @@ Status: Active
 - 2026-02-07: Updated Qwen3 attention-mask sentinel to a finite `finfo.min/4` value (ComfyUI parity); if Z-Image output quality regresses, re-check this mask behavior.
 - 2026-02-10: Hardened strict-load behavior: ZImage transformer/text-encoder paths now fail loud on missing/unexpected keys (`model.py`, `qwen3.py`, `text_encoder.py`) instead of warning-only continuation.
 - 2026-02-20: `model.py` and `qwen3.py` attention lanes now route through runtime dispatcher helper `attention_function_pre_shaped(...)` with explicit PyTorch backend, removing direct family-level SDPA bypasses.
+- 2026-02-23: `text_encoder.py` device metadata fallback now resolves from memory-manager CPU device (`manager.cpu_device`) instead of constructing a local CPU literal when parameter iterators are empty.
 - **Debugging:** enable extra logs with env flags:
   - `CODEX_ZIMAGE_DEBUG_PROMPT=1` (engine prompt string + distilled cfg scale)
   - `CODEX_ZIMAGE_DEBUG_TENC_TEXT=1`, `CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1`, `CODEX_ZIMAGE_DEBUG_TENC_DECODE=1`, `CODEX_ZIMAGE_DEBUG_TENC_RUN=1` (tokenization + embedding stats)

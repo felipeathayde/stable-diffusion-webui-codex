@@ -26,6 +26,7 @@ from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
 from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
 from apps.backend.use_cases.vid2vid import run_vid2vid as _run_v2v
 from apps.backend.core.exceptions import EngineLoadError
+from apps.backend.runtime.memory import memory_management
 
 import os
 
@@ -52,7 +53,8 @@ class Wan225BEngine(BaseVideoEngine):
     # ------------------------------ lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         self._logger.debug("[%s] before load()", self.engine_id)
-        dev = str(options.get("device", "auto"))
+        default_mount_device = str(memory_management.manager.mount_device())
+        dev = str(options.get("device") or default_mount_device)
         dty = str(options.get("dtype", "fp16"))
         comp = WanComponents()
         engine_label = self.engine_id
@@ -90,7 +92,7 @@ class Wan225BEngine(BaseVideoEngine):
             from apps.backend.runtime.families.wan22.config import resolve_device_name
 
             resolved = resolve_device_name(dev)
-            comp.device = "cpu" if resolved == "cpu" else "cuda"
+            comp.device = resolved
         except Exception as exc:
             raise EngineLoadError(str(exc)) from exc
 

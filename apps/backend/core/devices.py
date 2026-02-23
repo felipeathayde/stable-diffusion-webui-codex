@@ -7,11 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Small device helpers for backend runtime code.
-Provides a default CUDA/CPU device chooser and best-effort GC helpers to reduce VRAM fragmentation between runs.
+Provides canonical device helpers backed by memory-manager authority (`mount_device`/`cpu_device`) and best-effort
+GC helpers to reduce VRAM fragmentation between runs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `default_device` (function): Returns CUDA device if available, otherwise CPU.
-- `cpu` (function): Returns a CPU `torch.device`.
+- `_require_memory_manager` (function): Resolves the active memory-manager instance or fails loud when unavailable.
+- `default_device` (function): Returns memory-manager mount device.
+- `cpu` (function): Returns memory-manager CPU device.
 - `torch_gc` (function): Best-effort cleanup (CUDA cache/IPCs + Python `gc.collect()`).
 """
 
@@ -21,12 +23,35 @@ import gc
 import torch
 
 
+def _require_memory_manager():
+    from apps.backend.runtime.memory import memory_management
+
+    manager = getattr(memory_management, "manager", None)
+    if manager is None:
+        raise RuntimeError("core.devices requires an active memory manager instance.")
+    return manager
+
+
 def default_device() -> torch.device:
-    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    manager = _require_memory_manager()
+    mount_device = manager.mount_device()
+    if not isinstance(mount_device, torch.device):
+        raise RuntimeError(
+            "memory manager mount_device() must return torch.device "
+            f"(got {type(mount_device).__name__})."
+        )
+    return mount_device
 
 
 def cpu() -> torch.device:
-    return torch.device("cpu")
+    manager = _require_memory_manager()
+    cpu_device = manager.cpu_device
+    if not isinstance(cpu_device, torch.device):
+        raise RuntimeError(
+            "memory manager cpu_device must be torch.device "
+            f"(got {type(cpu_device).__name__})."
+        )
+    return cpu_device
 
 
 def torch_gc() -> None:

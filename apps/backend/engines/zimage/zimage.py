@@ -64,7 +64,7 @@ class ZImageEngine(CodexDiffusionEngine):
     def __init__(self) -> None:
         super().__init__()
         self._runtime: Optional[ZImageEngineRuntime] = None
-        self._device = "cuda"
+        self._device = str(memory_management.manager.mount_device())
         self._dtype = "fp32"
         self._zimage_variant: str = "turbo"
 
@@ -167,7 +167,7 @@ class ZImageEngine(CodexDiffusionEngine):
         )
         runtime = assembly.runtime
         self._runtime = runtime
-        self._device = str(getattr(runtime, "device", "cuda"))
+        self._device = str(getattr(runtime, "device", memory_management.manager.mount_device()))
         self._dtype = str(getattr(runtime, "core_compute_dtype", "fp32"))
 
         if vendor_dir is not None:

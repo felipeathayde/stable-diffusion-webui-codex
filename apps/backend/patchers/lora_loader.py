@@ -70,7 +70,7 @@ class CodexLoraLoader:
         self,
         lora_patches: MutableMapping[Tuple[str, float, float, bool], Dict[str, List[LoraPatchEntry]]],
         *,
-        offload_device=torch.device("cpu"),
+        offload_device: torch.device | str | None = None,
         force_refresh: bool = False,
     ) -> None:
         if lora_patches and any(
@@ -85,6 +85,11 @@ class CodexLoraLoader:
         merge_dtype = torch.float64 if merge_mode is LoraMergeMode.PRECISE else torch.float32
         signature_mode = read_lora_refresh_signature_mode()
         signature = self._signature(lora_patches, mode=signature_mode)
+        resolved_offload_device = (
+            memory_management.manager.offload_device()
+            if offload_device is None
+            else torch.device(offload_device)
+        )
         if signature == self.loaded_signature and not force_refresh:
             logger.debug("LoRA loader refresh skipped (no changes).")
             return
@@ -127,9 +132,11 @@ class CodexLoraLoader:
 
                 if param_key not in self.backup:
                     if isinstance(parameter, CodexParameter) and parameter.qtype is not None:
-                        self.backup[param_key] = parameter.copy_with_data(parameter.data.detach().to(device=offload_device).clone())
+                        self.backup[param_key] = parameter.copy_with_data(
+                            parameter.data.detach().to(device=resolved_offload_device).clone()
+                        )
                     else:
-                        self.backup[param_key] = parameter.detach().to(device=offload_device).clone()
+                        self.backup[param_key] = parameter.detach().to(device=resolved_offload_device).clone()
 
                 gguf_parameter = None
                 tensor = parameter
@@ -155,8 +162,12 @@ class CodexLoraLoader:
                 except RuntimeError as err:
                     if "out of memory" not in str(err).lower():
                         raise
-                    logger.warning("LoRA merge OOM on %s; offloading to %s and retrying", param_key, offload_device)
-                    self._offload_model(parameter_devices, offload_device)
+                    logger.warning(
+                        "LoRA merge OOM on %s; offloading to %s and retrying",
+                        param_key,
+                        resolved_offload_device,
+                    )
+                    self._offload_model(parameter_devices, resolved_offload_device)
                     memory_management.manager.soft_empty_cache()
                     merged = merge_lora_to_weight(
                         entries,

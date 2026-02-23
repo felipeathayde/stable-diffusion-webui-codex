@@ -95,16 +95,15 @@ def build_router(
         if not get_paths_for("supir_models"):
             raise HTTPException(status_code=400, detail="No 'supir_models' path configured in apps/paths.json")
 
+        device = _parse_explicit_device(data)
         try:
-            config = parse_supir_enhance_config(data)
+            config = parse_supir_enhance_config(data, device=device)
         except SupirConfigError as exc:
             _router_log.warning("supir config validation failed: %s", exc)
             raise HTTPException(
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid SUPIR payload configuration"),
             ) from None
-
-        device = _parse_explicit_device(data)
 
         try:
             assets = resolve_supir_assets(

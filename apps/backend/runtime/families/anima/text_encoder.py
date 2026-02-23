@@ -35,6 +35,7 @@ import torch.nn as nn
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_header
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.state_dict.keymap_anima import remap_anima_qwen3_06b_state_dict
@@ -398,7 +399,7 @@ class AnimaQwenTextEncoder(nn.Module):
         try:
             return next(self.model.parameters()).device
         except StopIteration:
-            return torch.device("cpu")
+            return memory_management.manager.cpu_device
 
     @property
     def dtype(self) -> torch.dtype:

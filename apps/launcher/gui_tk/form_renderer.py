@@ -16,10 +16,10 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Dict, Iterable, List
 
-from .form_schema import FieldKind, FormFieldDescriptor, FormSectionDescriptor
+from .form_schema import FieldKind, FormFieldDescriptor, FormSectionDescriptor, HelpMode
 
 
 class FormRenderer:
@@ -124,15 +124,37 @@ class FormRenderer:
             raise ValueError(f"Unknown field kind: {descriptor.kind}")
 
         self._field_widgets[descriptor.field_id] = widget
-        self._mark_advanced(is_advanced, label_widget, widget)
+        help_button: tk.Widget | None = None
+        if descriptor.help_text and descriptor.help_mode == HelpMode.DIALOG:
+            title = str(descriptor.help_title or descriptor.label or "Field Help")
+            message = str(descriptor.help_text)
+            help_button = ttk.Button(
+                self._parent,
+                text="?",
+                width=3,
+                style="Help.TButton",
+                command=lambda t=title, m=message: messagebox.showinfo(t, m),
+            )
+            help_button.grid(
+                row=row,
+                column=self._value_column + 1,
+                sticky="w",
+                padx=(6, self._padx),
+                pady=8,
+            )
+
+        marked_widgets: list[tk.Widget] = [label_widget, widget]
+        if help_button is not None:
+            marked_widgets.append(help_button)
+        self._mark_advanced(is_advanced, *marked_widgets)
         row += 1
 
-        if descriptor.help_text:
+        if descriptor.help_text and descriptor.help_mode == HelpMode.INLINE:
             help_label = ttk.Label(self._parent, text=str(descriptor.help_text), justify="left", style="Muted.TLabel")
             help_label.grid(
                 row=row,
                 column=self._label_column,
-                columnspan=2,
+                columnspan=3,
                 sticky="w",
                 padx=self._padx,
                 pady=(0, 8),

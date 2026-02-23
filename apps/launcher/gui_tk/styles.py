@@ -120,6 +120,22 @@ def apply_style(root: tk.Tk, palette: Palette) -> None:
         background=[("active", palette.accent_hover), ("pressed", palette.accent_active), ("disabled", palette.bg1)],
         foreground=[("active", palette.bg0), ("pressed", palette.bg0), ("disabled", palette.fg_muted)],
     )
+    style.configure(
+        "Help.TButton",
+        background=palette.bg1,
+        foreground=palette.accent,
+        bordercolor=palette.line,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+        relief="solid",
+        padding=[4, 2],
+        font=("Segoe UI Semibold", 8),
+    )
+    style.map(
+        "Help.TButton",
+        background=[("active", palette.accent_hover), ("pressed", palette.accent_active)],
+        foreground=[("active", palette.bg0), ("pressed", palette.bg0)],
+    )
 
     style.configure("Filter.TButton", background=palette.bg1, foreground=palette.fg0, padding=[10, 4], font=("Segoe UI", 9))
     style.map(

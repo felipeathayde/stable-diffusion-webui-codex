@@ -11,6 +11,7 @@ Defines typed descriptors for sections and fields so tabs can render settings de
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FieldKind` (class): Supported form input kinds for launcher setting rows.
+- `HelpMode` (class): Supported help rendering modes for field descriptions (inline text or dialog).
 - `FormFieldDescriptor` (dataclass): Declarative field definition consumed by the shared form renderer.
 - `FormSectionDescriptor` (dataclass): Declarative section definition containing ordered form fields.
 """
@@ -32,6 +33,13 @@ class FieldKind(StrEnum):
     ENTRY_COMMIT = "entry_commit"
 
 
+class HelpMode(StrEnum):
+    """Supported help rendering modes for field descriptions."""
+
+    INLINE = "inline"
+    DIALOG = "dialog"
+
+
 @dataclass(frozen=True, slots=True)
 class FormFieldDescriptor:
     """Declarative field definition rendered by `FormRenderer`."""
@@ -45,6 +53,8 @@ class FormFieldDescriptor:
     width: int = 18
     advanced: bool = False
     help_text: str | None = None
+    help_mode: HelpMode = HelpMode.INLINE
+    help_title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

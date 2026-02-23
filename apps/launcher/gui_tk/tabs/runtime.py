@@ -45,7 +45,7 @@ from apps.launcher.settings import (
 
 from ..controller import LauncherController
 from ..form_renderer import FormRenderer
-from ..form_schema import FieldKind, FormFieldDescriptor, FormSectionDescriptor
+from ..form_schema import FieldKind, FormFieldDescriptor, FormSectionDescriptor, HelpMode
 from ..widgets import ScrollableFrame
 
 
@@ -142,6 +142,12 @@ class RuntimeTab:
                             variable=self._var_main_device,
                             choices=list(DEVICE_CHOICES),
                             on_change=self._on_main_device_changed,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Main device",
+                            help_text=(
+                                "Backend flag: --main-device.\n"
+                                "Launcher mirrors main device to core/TE/VAE for invariant bootstrap behavior."
+                            ),
                         ),
                         FormFieldDescriptor(
                             field_id="mount_device",
@@ -150,6 +156,12 @@ class RuntimeTab:
                             variable=self._var_mount_device,
                             choices=list(DEVICE_CHOICES),
                             on_change=self._on_mount_device_changed,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Mount device",
+                            help_text=(
+                                "Backend flag: --mount-device.\n"
+                                "When unset, mount defaults to main device."
+                            ),
                         ),
                         FormFieldDescriptor(
                             field_id="offload_device",
@@ -158,6 +170,13 @@ class RuntimeTab:
                             variable=self._var_offload_device,
                             choices=list(DEVICE_CHOICES),
                             on_change=self._on_offload_device_changed,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Offload device",
+                            help_text=(
+                                "Backend flag: --offload-device.\n"
+                                "Default is CPU.\n"
+                                "Offload cannot match non-CPU mount device."
+                            ),
                         ),
                         FormFieldDescriptor(
                             field_id="attention_mode",
@@ -167,20 +186,15 @@ class RuntimeTab:
                             choices=[label for label, _mode in _ATTENTION_MODE_OPTIONS],
                             on_change=self._on_attention_mode_changed,
                             width=20,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Attention mode",
                             help_text=(
                                 "sdpa_auto lets PyTorch pick the best SDPA kernel.\n"
                                 "sdpa_flash/sdpa_mem_efficient/sdpa_math force a specific SDPA policy.\n"
-                                "xformers/split/quad select non-SDPA attention backends."
+                                "xformers/split/quad select non-SDPA attention backends.\n"
+                                "Backend flags: --attention-backend + optional --attention-sdpa-policy."
                             ),
                         ),
-                    ],
-                    help_texts=[
-                        "Main device is passed as backend CLI flag (`--main-device`) and mirrored to core/TE/VAE.\n"
-                        "Mount/offload devices are passed as `--mount-device` and `--offload-device`.\n"
-                        "When unset, mount defaults to main and offload defaults to CPU.\n"
-                        "Per-component divergence is not allowed by contract.\n"
-                        "Attention mode is passed via `--attention-backend` + optional `--attention-sdpa-policy`.\n"
-                        "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks."
                     ],
                 ),
             ]
@@ -198,6 +212,8 @@ class RuntimeTab:
                             choices=["merge", "online"],
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=12,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="LoRA apply mode",
                             help_text=(
                                 "merge: rewrites weights once at apply-time (default).\n"
                                 "online: applies LoRA patches on-the-fly during forward."
@@ -211,6 +227,8 @@ class RuntimeTab:
                             choices=["dequant_forward", "dequant_upfront"],
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=18,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="GGUF exec mode",
                             help_text=(
                                 "dequant_forward: current default (GGUF weights dequantize on-demand during forward).\n"
                                 "dequant_upfront: dequantize GGUF weights at load time (uses more RAM/VRAM).\n"
@@ -226,6 +244,8 @@ class RuntimeTab:
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=10,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="GGUF dequant cache",
                             help_text="Removed in this build: GGUF dequant run cache levels (lvl1/lvl2).\nValue is locked to 'off'.",
                         ),
                         FormFieldDescriptor(
@@ -237,6 +257,8 @@ class RuntimeTab:
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=10,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="WAN chunk buffer mode",
                             help_text=(
                                 "Env var: CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE\n"
                                 "hybrid: auto-select RAM or RAM+disk by chunk memory estimate.\n"
@@ -253,6 +275,8 @@ class RuntimeTab:
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=16,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="LoRA online math",
                             help_text=(
                                 "weight_merge: current online behavior (materializes patched weights per-forward).\n"
                                 "activation math is reserved for future packed-kernel LoRA support (not exposed in this build)."
@@ -266,6 +290,8 @@ class RuntimeTab:
                             on_change=self._on_alloc_conf_changed,
                             width=56,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="PyTorch alloc conf",
                             help_text=(
                                 "Env var: PYTORCH_ALLOC_CONF\n"
                                 f"Default value: {DEFAULT_PYTORCH_ALLOC_CONF}\n"
@@ -279,6 +305,12 @@ class RuntimeTab:
                             variable=self._var_default_alloc_conf_enabled,
                             on_change=self._on_default_alloc_conf_toggle_changed,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Default alloc conf toggle",
+                            help_text=(
+                                f"Env var: {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY}\n"
+                                "When enabled and PYTORCH_ALLOC_CONF is empty, launcher injects the default alloc config."
+                            ),
                         ),
                         FormFieldDescriptor(
                             field_id="cuda_malloc_toggle",
@@ -287,6 +319,8 @@ class RuntimeTab:
                             variable=self._var_cuda_malloc,
                             on_change=self._on_cuda_malloc_changed,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="cudaMallocAsync backend",
                             help_text=(
                                 f"Env var: {CODEX_CUDA_MALLOC_KEY}\n"
                                 "When enabled, launcher forwards backend flag '--cuda-malloc'."
@@ -307,6 +341,8 @@ class RuntimeTab:
                             label="Single-flight inference (requires API restart):",
                             variable=self._var_single_flight,
                             on_change=lambda: self._sync_task_deps(mark_changed=True),
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Single-flight inference",
                             help_text=(
                                 "Env var: CODEX_SINGLE_FLIGHT\n"
                                 "When enabled (default), GPU-heavy tasks (generation/video/upscale/SUPIR) are serialized to avoid global-state races."
@@ -320,6 +356,8 @@ class RuntimeTab:
                             choices=list(TASK_CANCEL_DEFAULT_MODE_CHOICES),
                             on_change=lambda: self._sync_task_deps(mark_changed=True),
                             width=14,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Task cancel default mode",
                             help_text=(
                                 "Env var: CODEX_TASK_CANCEL_DEFAULT_MODE\n"
                                 "immediate: cancels in-flight generation now.\n"
@@ -332,6 +370,8 @@ class RuntimeTab:
                             label="Upscalers safeweights mode (requires API restart):",
                             variable=self._var_safeweights,
                             on_change=lambda: self._sync_task_deps(mark_changed=True),
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Upscalers safeweights mode",
                             help_text=(
                                 "Env var: CODEX_SAFE_WEIGHTS\n"
                                 "When enabled, upscaler weights must be .safetensors (blocks .pt/.pth at discovery, download, and load-time)."
@@ -351,6 +391,12 @@ class RuntimeTab:
                             on_change=self._commit_task_buffer_max_events,
                             width=12,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Task SSE buffer max events",
+                            help_text=(
+                                "Env var: CODEX_TASK_EVENT_BUFFER_MAX_EVENTS\n"
+                                "Caps in-memory per-task replay events for reconnect/resume."
+                            ),
                         ),
                         FormFieldDescriptor(
                             field_id="task_buffer_max_mb",
@@ -360,11 +406,13 @@ class RuntimeTab:
                             on_change=self._commit_task_buffer_max_mb,
                             width=12,
                             advanced=True,
+                            help_mode=HelpMode.DIALOG,
+                            help_title="Task SSE buffer max MB",
+                            help_text=(
+                                "Env var: CODEX_TASK_EVENT_BUFFER_MAX_MB\n"
+                                "Caps in-memory per-task replay size for reconnect/resume."
+                            ),
                         ),
-                    ],
-                    help_texts=[
-                        "These caps bound in-memory task replay buffers (per task) used for reconnect/resume.\n"
-                        "Env vars: CODEX_TASK_EVENT_BUFFER_MAX_EVENTS, CODEX_TASK_EVENT_BUFFER_MAX_MB"
                     ],
                 ),
             ]

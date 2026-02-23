@@ -44,3 +44,4 @@ Last Review: 2026-02-23
 - 2026-02-23: Advanced controls toggle moved to global footer (`app.py`) and now drives both Runtime and Diagnostics progressive disclosure.
 - 2026-02-23: Services button-state refresh now updates only on state transition (avoids hover flicker caused by repeated poll-time reconfigure).
 - 2026-02-23: Scrollable canvas border chrome removed (`widgets.py`) and dark scrollbar styling added (`styles.py`) to avoid legacy bright frame artifacts.
+- 2026-02-23: Runtime explanatory text now renders per-field via contextual `?` help buttons (`HelpMode.DIALOG`) instead of detached multi-line blocks.

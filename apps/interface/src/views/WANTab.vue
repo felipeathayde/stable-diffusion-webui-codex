@@ -250,29 +250,33 @@ Symbols (top-level; keep in sync; no ghosts):
             />
             <div v-if="mode === 'img2vid'" class="mt-2">
               <div class="gen-card refiner-card refiner-card--dense">
-                <WanSubHeader title="Temporal Loom">
+                <WanSubHeader
+                  title="Temporal Loom"
+                  :clickable="true"
+                  :disabled="isRunning"
+                  :aria-pressed="temporalControlsEnabled"
+                  :aria-expanded="temporalControlsEnabled"
+                  @header-click="setImg2VidTemporalEnabled(!temporalControlsEnabled)"
+                >
                   <span class="wan-badge-experimental">EXPERIMENTAL</span>
+                  <button
+                    :class="[
+                      'btn',
+                      'qs-toggle-btn',
+                      'qs-toggle-btn--sm',
+                      temporalControlsEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off',
+                    ]"
+                    type="button"
+                    :disabled="isRunning"
+                    :aria-pressed="temporalControlsEnabled"
+                    @click.stop="setImg2VidTemporalEnabled(!temporalControlsEnabled)"
+                  >
+                    {{ temporalControlsEnabled ? 'Enabled' : 'Disabled' }}
+                  </button>
                 </WanSubHeader>
-                <div class="param-blocks wan-temporal-controls">
-                  <div class="param-grid wan-temporal-row" :data-cols="temporalControlsEnabled ? 4 : 2">
+                <div v-if="temporalControlsEnabled" class="param-blocks wan-temporal-controls">
+                  <div class="param-grid wan-temporal-row" data-cols="3">
                     <div class="field">
-                      <label class="label-muted">Temporal</label>
-                      <button
-                        :class="[
-                          'btn',
-                          'qs-toggle-btn',
-                          'qs-toggle-btn--sm',
-                          temporalControlsEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off',
-                        ]"
-                        type="button"
-                        :disabled="isRunning"
-                        :aria-pressed="temporalControlsEnabled"
-                        @click="setImg2VidTemporalEnabled(!temporalControlsEnabled)"
-                      >
-                        {{ temporalControlsEnabled ? 'Enabled' : 'Disabled' }}
-                      </button>
-                    </div>
-                    <div v-if="temporalControlsEnabled" class="field">
                       <label class="label-muted">Mode</label>
                       <select
                         class="select-md"
@@ -312,7 +316,7 @@ Symbols (top-level; keep in sync; no ghosts):
                         <option value="sliding">Sliding</option>
                       </select>
                     </div>
-                    <div v-if="temporalControlsEnabled" class="field">
+                    <div class="field">
                       <label class="label-muted">
                         <HoverTooltip
                           class="cdx-slider-field__label-tooltip"
@@ -341,7 +345,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </select>
                     </div>
                   </div>
-                  <div v-if="temporalControlsEnabled && video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="4">
+                  <div v-if="video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="4">
                     <SliderField
                       class="field"
                       label="Chunk Frames"
@@ -424,7 +428,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </button>
                     </div>
                   </div>
-                  <div v-else-if="temporalControlsEnabled && isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
+                  <div v-else-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
                     <SliderField
                       class="field"
                       label="Window Frames"
@@ -530,8 +534,8 @@ Symbols (top-level; keep in sync; no ghosts):
                       </button>
                     </div>
                   </div>
-                  <div v-else class="caption">Native WAN22 mode runs img2vid without temporal chunk/window partitioning.</div>
                 </div>
+                <div v-else class="caption">Native WAN22 mode runs img2vid without temporal chunk/window partitioning.</div>
               </div>
             </div>
           </div>

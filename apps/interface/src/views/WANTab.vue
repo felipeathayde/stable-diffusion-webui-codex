@@ -24,7 +24,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes UI attention mode values (`global|sliding`).
 - `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|chunk|sliding|svi2|svi2_pro`).
+- `normalizeImg2VidTemporalEnabledMode` (function): Normalizes temporal-mode selector values to non-solo modes (`chunk|sliding|svi2|svi2_pro`).
 - `normalizeChunkSeedMode` (function): Normalizes UI img2vid chunk-seed mode values.
+- `img2vidTemporalEnabledModeStorageKey` (function): Returns localStorage key for the last non-solo temporal mode per tab.
+- `readImg2VidTemporalEnabledMode` (function): Loads the persisted non-solo temporal mode used when temporal controls are re-enabled.
+- `writeImg2VidTemporalEnabledMode` (function): Persists the last non-solo temporal mode for toggle round-trips.
 - `img2vidTemporalStorageKey` (function): Returns localStorage key for per-mode temporal UI snapshots.
 - `readImg2VidTemporalSnapshot` (function): Loads per-mode temporal UI snapshot from localStorage.
 - `writeImg2VidTemporalSnapshot` (function): Persists per-mode temporal UI snapshot to localStorage.
@@ -39,6 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `appendPromptToken` (function): Appends a prompt token string with whitespace-safe formatting.
 - `onHighPromptLoraInsert` (function): Inserts a selected LoRA token into High prompt/negative prompt based on modal target.
 - `onLowPromptLoraInsert` (function): Inserts a selected LoRA token into Low prompt/negative prompt based on modal target.
+- `setImg2VidTemporalEnabled` (function): Toggles temporal controls on/off (`enabled => non-solo`, `disabled => solo` native mode).
 - `setImg2VidTemporalMode` (function): Switches img2vid temporal mode and restores per-mode UI snapshot.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
@@ -245,20 +250,36 @@ Symbols (top-level; keep in sync; no ghosts):
             />
             <div v-if="mode === 'img2vid'" class="mt-2">
               <div class="gen-card refiner-card refiner-card--dense">
-                <WanSubHeader title="Temporal">
+                <WanSubHeader title="Temporal Loom">
                   <span class="wan-badge-experimental">EXPERIMENTAL</span>
                 </WanSubHeader>
                 <div class="param-blocks wan-temporal-controls">
-                  <div class="param-grid wan-temporal-row" data-cols="3">
+                  <div class="param-grid wan-temporal-row" :data-cols="temporalControlsEnabled ? 4 : 2">
                     <div class="field">
+                      <label class="label-muted">Temporal</label>
+                      <button
+                        :class="[
+                          'btn',
+                          'qs-toggle-btn',
+                          'qs-toggle-btn--sm',
+                          temporalControlsEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off',
+                        ]"
+                        type="button"
+                        :disabled="isRunning"
+                        :aria-pressed="temporalControlsEnabled"
+                        @click="setImg2VidTemporalEnabled(!temporalControlsEnabled)"
+                      >
+                        {{ temporalControlsEnabled ? 'Enabled' : 'Disabled' }}
+                      </button>
+                    </div>
+                    <div v-if="temporalControlsEnabled" class="field">
                       <label class="label-muted">Mode</label>
                       <select
                         class="select-md"
                         :disabled="isRunning"
-                        :value="video.img2vidMode"
-                        @change="setImg2VidTemporalMode(normalizeImg2VidMode(($event.target as HTMLSelectElement).value))"
+                        :value="temporalEnabledMode"
+                        @change="setImg2VidTemporalMode(normalizeImg2VidTemporalEnabledMode(($event.target as HTMLSelectElement).value))"
                       >
-                        <option value="solo">Solo</option>
                         <option value="chunk">Chunk</option>
                         <option value="sliding">Sliding Window</option>
                         <option value="svi2">SVI 2.0</option>
@@ -291,7 +312,7 @@ Symbols (top-level; keep in sync; no ghosts):
                         <option value="sliding">Sliding</option>
                       </select>
                     </div>
-                    <div class="field">
+                    <div v-if="temporalControlsEnabled" class="field">
                       <label class="label-muted">
                         <HoverTooltip
                           class="cdx-slider-field__label-tooltip"
@@ -320,7 +341,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </select>
                     </div>
                   </div>
-                  <div v-if="video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="4">
+                  <div v-if="temporalControlsEnabled && video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="4">
                     <SliderField
                       class="field"
                       label="Chunk Frames"
@@ -403,7 +424,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </button>
                     </div>
                   </div>
-                  <div v-else-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
+                  <div v-else-if="temporalControlsEnabled && isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
                     <SliderField
                       class="field"
                       label="Window Frames"
@@ -509,7 +530,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </button>
                     </div>
                   </div>
-                  <div v-else class="caption">Solo mode runs img2vid without temporal chunk/window partitioning.</div>
+                  <div v-else class="caption">Native WAN22 mode runs img2vid without temporal chunk/window partitioning.</div>
                 </div>
               </div>
             </div>
@@ -922,6 +943,16 @@ function normalizeImg2VidMode(rawValue: unknown): WanVideoParams['img2vidMode'] 
   return normalizeWanImg2VidMode(rawValue)
 }
 
+type WanTemporalEnabledMode = Exclude<WanVideoParams['img2vidMode'], 'solo'>
+
+const DEFAULT_TEMPORAL_ENABLED_MODE: WanTemporalEnabledMode = 'chunk'
+
+function normalizeImg2VidTemporalEnabledMode(rawValue: unknown): WanTemporalEnabledMode {
+  const mode = normalizeImg2VidMode(rawValue)
+  if (mode === 'solo') return DEFAULT_TEMPORAL_ENABLED_MODE
+  return mode
+}
+
 function isWindowedTemporalMode(rawValue: unknown): boolean {
   return isWanWindowedImg2VidMode(normalizeImg2VidMode(rawValue))
 }
@@ -943,6 +974,31 @@ function normalizeChunkSeedMode(rawValue: unknown): 'fixed' | 'increment' | 'ran
   const v = String(rawValue || '').trim().toLowerCase()
   if (v === 'fixed' || v === 'random') return v
   return 'increment'
+}
+
+function img2vidTemporalEnabledModeStorageKey(): string {
+  return `codex.wan.img2vid.temporal.enabled_mode.${props.tabId}`
+}
+
+function readImg2VidTemporalEnabledMode(): WanTemporalEnabledMode | null {
+  const key = img2vidTemporalEnabledModeStorageKey()
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    return normalizeImg2VidTemporalEnabledMode(raw)
+  } catch {
+    return null
+  }
+}
+
+function writeImg2VidTemporalEnabledMode(mode: WanVideoParams['img2vidMode']): void {
+  if (mode === 'solo') return
+  const key = img2vidTemporalEnabledModeStorageKey()
+  try {
+    localStorage.setItem(key, normalizeImg2VidTemporalEnabledMode(mode))
+  } catch {
+    // ignore localStorage failures
+  }
 }
 
 function img2vidTemporalStorageKey(mode: WanVideoParams['img2vidMode']): string {
@@ -1221,6 +1277,7 @@ function setImg2VidTemporalMode(nextMode: WanVideoParams['img2vidMode']): void {
   const currentMode = normalizeImg2VidMode(video.value.img2vidMode)
   const targetMode = normalizeImg2VidMode(nextMode)
   if (currentMode === targetMode) return
+  if (targetMode !== 'solo') writeImg2VidTemporalEnabledMode(targetMode)
   writeImg2VidTemporalSnapshot(currentMode, video.value)
   const restoredPatch = readImg2VidTemporalSnapshot(targetMode)
   const restoredResetAnchor = restoredPatch?.img2vidResetAnchorToBase
@@ -1229,6 +1286,22 @@ function setImg2VidTemporalMode(nextMode: WanVideoParams['img2vidMode']): void {
       ? restoredResetAnchor
       : defaultResetAnchorToBase(targetMode)
   setVideo({ img2vidMode: targetMode, img2vidResetAnchorToBase: nextResetAnchorToBase, ...(restoredPatch ?? {}) })
+}
+
+const temporalControlsEnabled = computed<boolean>(() => normalizeImg2VidMode(video.value.img2vidMode) !== 'solo')
+const temporalEnabledMode = computed<WanTemporalEnabledMode>(() => normalizeImg2VidTemporalEnabledMode(video.value.img2vidMode))
+
+function setImg2VidTemporalEnabled(enabled: boolean): void {
+  const currentMode = normalizeImg2VidMode(video.value.img2vidMode)
+  if (enabled) {
+    if (currentMode !== 'solo') return
+    const restoredMode = readImg2VidTemporalEnabledMode() ?? DEFAULT_TEMPORAL_ENABLED_MODE
+    setImg2VidTemporalMode(restoredMode)
+    return
+  }
+  if (currentMode === 'solo') return
+  writeImg2VidTemporalEnabledMode(currentMode)
+  setImg2VidTemporalMode('solo')
 }
 
 function toggleHighPrompt(): void {
@@ -1269,7 +1342,11 @@ watch(
     video.value.img2vidWindowCommitFrames,
   ] as const),
   () => {
-    writeImg2VidTemporalSnapshot(normalizeImg2VidMode(video.value.img2vidMode), video.value)
+    const currentMode = normalizeImg2VidMode(video.value.img2vidMode)
+    writeImg2VidTemporalSnapshot(currentMode, video.value)
+    if (currentMode !== 'solo') {
+      writeImg2VidTemporalEnabledMode(currentMode)
+    }
   },
 )
 

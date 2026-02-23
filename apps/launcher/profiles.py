@@ -133,6 +133,19 @@ class _EnvironmentView(MutableMapping[str, str]):
 
     def __setitem__(self, key: str, value: str) -> None:
         value = str(value)
+        if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_ALLOC_CONF":
+            raise KeyError(
+                f"Unsupported allocator key {key!r}. Use 'PYTORCH_ALLOC_CONF'."
+            )
+        if (
+            key.startswith("CODEX_ENABLE_DEFAULT_PYTORCH_")
+            and key.endswith("_ALLOC_CONF")
+            and key != ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY
+        ):
+            raise KeyError(
+                "Unsupported allocator toggle key "
+                f"{key!r}. Use {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY!r}."
+            )
         with self._store._lock:
             target_map, target_kind = self._store.resolve_container_for_key(key)
             target_map[key] = value
@@ -248,6 +261,9 @@ class LauncherProfileStore:
         LOGGER.debug("Persisting launcher profile to %s", self.root)
         _ensure_tree(self.root)
         with self._lock:
+            changed = self._ensure_consistency()
+            if changed:
+                LOGGER.warning("Launcher profile normalized at save; writing canonical env maps to %s", self.root)
             _write_meta(self.root, self.meta)
             _write_env_maps(self.root / "areas", self.areas)
             _write_env_maps(self.root / "models", self.models)
@@ -280,6 +296,39 @@ class LauncherProfileStore:
                 if not str(container.get("CODEX_OFFLOAD_DEVICE", "") or "").strip().lower():
                     container["CODEX_OFFLOAD_DEVICE"] = "cpu"
                     changed = True
+
+        # Legacy allocator migration must run before defaults are merged so legacy
+        # user values override injected defaults.
+        for container in list(self.areas.values()) + list(self.models.values()):
+            legacy_alloc_key = "PYTORCH_CUDA_ALLOC_CONF"
+            if legacy_alloc_key in container:
+                legacy_value = str(container.get(legacy_alloc_key, "") or "").strip()
+                current_value = str(container.get("PYTORCH_ALLOC_CONF", "") or "").strip()
+                if legacy_value and not current_value:
+                    container["PYTORCH_ALLOC_CONF"] = legacy_value
+                    changed = True
+                    LOGGER.warning(
+                        "Migrated legacy launcher allocator key in persisted profile: %s -> %s.",
+                        legacy_alloc_key,
+                        "PYTORCH_ALLOC_CONF",
+                    )
+                container.pop(legacy_alloc_key, None)
+                changed = True
+
+            legacy_toggle_key = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
+            if legacy_toggle_key in container:
+                legacy_value = str(container.get(legacy_toggle_key, "") or "").strip()
+                current_value = str(container.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+                if legacy_value and not current_value:
+                    container[ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY] = legacy_value
+                    changed = True
+                    LOGGER.warning(
+                        "Migrated legacy launcher allocator toggle key in persisted profile: %s -> %s.",
+                        legacy_toggle_key,
+                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                    )
+                container.pop(legacy_toggle_key, None)
+                changed = True
 
         defaults = _default_area_env()
         for area, values in defaults.items():
@@ -375,6 +424,24 @@ class LauncherProfileStore:
                     area_name,
                     ", ".join(removed_keys),
                 )
+            if ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY in container:
+                moved_value = str(container.pop(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+                changed = True
+                core_current = str(core_env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+                if moved_value and not core_current:
+                    core_env[ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY] = moved_value
+                    changed = True
+                    LOGGER.warning(
+                        "Moved non-core launcher allocator toggle from area '%s' to area 'core': %s.",
+                        area_name,
+                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                    )
+                else:
+                    LOGGER.warning(
+                        "Dropped non-core launcher allocator toggle from area '%s': %s.",
+                        area_name,
+                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                    )
         for model_name, container in self.models.items():
             removed_device_keys: list[str] = []
             for key in _BOOTSTRAP_DEVICE_KEYS:
@@ -402,6 +469,24 @@ class LauncherProfileStore:
                     model_name,
                     ", ".join(removed_keys),
                 )
+            if ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY in container:
+                moved_value = str(container.pop(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+                changed = True
+                core_current = str(core_env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+                if moved_value and not core_current:
+                    core_env[ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY] = moved_value
+                    changed = True
+                    LOGGER.warning(
+                        "Moved model-scoped launcher allocator toggle for model '%s' to area 'core': %s.",
+                        model_name,
+                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                    )
+                else:
+                    LOGGER.warning(
+                        "Dropped model-scoped launcher allocator toggle for model '%s': %s.",
+                        model_name,
+                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                    )
         if self.areas.pop("wan", None) is not None:
             changed = True
         # Device/dtype bootstrap settings live in launcher env and are forwarded as API CLI flags.

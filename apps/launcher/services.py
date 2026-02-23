@@ -393,7 +393,38 @@ def _env_truthy(value: object) -> bool:
 
 
 def _sanitize_allocator_env_contract(env: MutableMapping[str, str], *, scope_label: str) -> None:
+    supported_alloc_key = "PYTORCH_ALLOC_CONF"
     supported_toggle_key = "CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF"
+    legacy_to_supported = (
+        ("PYTORCH_CUDA_ALLOC_CONF", supported_alloc_key),
+        ("CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF", supported_toggle_key),
+    )
+    migrated_pairs: list[tuple[str, str]] = []
+    removed_legacy_keys: list[str] = []
+    for legacy_key, supported_key in legacy_to_supported:
+        if legacy_key not in env:
+            continue
+        legacy_value = str(env.get(legacy_key, "") or "").strip()
+        supported_value = str(env.get(supported_key, "") or "").strip()
+        if legacy_value and not supported_value:
+            env[supported_key] = legacy_value
+            migrated_pairs.append((legacy_key, supported_key))
+        env.pop(legacy_key, None)
+        removed_legacy_keys.append(legacy_key)
+
+    if migrated_pairs:
+        LOGGER.warning(
+            "Migrated legacy allocator env key(s) before spawning %s: %s.",
+            scope_label,
+            ", ".join(f"{old}->{new}" for old, new in migrated_pairs),
+        )
+    elif removed_legacy_keys:
+        LOGGER.warning(
+            "Dropped legacy allocator env key(s) before spawning %s (canonical keys already set): %s.",
+            scope_label,
+            ", ".join(sorted(removed_legacy_keys)),
+        )
+
     removed_keys: list[str] = []
     for key in list(env.keys()):
         if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_ALLOC_CONF":

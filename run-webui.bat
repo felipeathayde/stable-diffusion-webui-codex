@@ -25,20 +25,9 @@ if defined PYTHONPATH (
 )
 
 if defined PYTORCH_CUDA_ALLOC_CONF (
-    echo Error: legacy env var PYTORCH_CUDA_ALLOC_CONF is no longer supported.>&2
-    echo Found value: "%PYTORCH_CUDA_ALLOC_CONF%".>&2
-    echo Use PYTORCH_ALLOC_CONF instead.>&2
-    echo.>&2
-    echo To clear it for this current cmd.exe session:>&2
-    echo   set PYTORCH_CUDA_ALLOC_CONF=>&2
-    echo.>&2
-    echo To clear it for this current PowerShell session:>&2
-    echo   Remove-Item Env:PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue>&2
-    echo.>&2
-    echo To remove a persisted User/Machine variable in PowerShell:>&2
-    echo   [Environment]::SetEnvironmentVariable('PYTORCH_CUDA_ALLOC_CONF',$null,'User')>&2
-    echo   [Environment]::SetEnvironmentVariable('PYTORCH_CUDA_ALLOC_CONF',$null,'Machine')>&2
-    exit /b 2
+    echo Warning: ignoring legacy env var PYTORCH_CUDA_ALLOC_CONF (value: "%PYTORCH_CUDA_ALLOC_CONF%").>&2
+    echo Warning: keeping only PYTORCH_ALLOC_CONF for allocator configuration.>&2
+    set "PYTORCH_CUDA_ALLOC_CONF="
 )
 
 set "SCRIPT=%ROOT%apps\codex_launcher.py"

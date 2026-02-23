@@ -403,9 +403,9 @@ fi
 
 default_alloc_conf_enabled="${CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF:-1}"
 if [[ -n "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
-  echo "[webui] Error: legacy env var PYTORCH_CUDA_ALLOC_CONF is no longer supported." >&2
-  echo "[webui] Use PYTORCH_ALLOC_CONF instead." >&2
-  exit 2
+  echo "[webui] Warning: ignoring legacy env var PYTORCH_CUDA_ALLOC_CONF." >&2
+  echo "[webui] Warning: keeping only PYTORCH_ALLOC_CONF for allocator configuration." >&2
+  unset PYTORCH_CUDA_ALLOC_CONF
 fi
 
 if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]] && is_truthy "${default_alloc_conf_enabled}"; then

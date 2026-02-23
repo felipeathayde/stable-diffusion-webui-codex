@@ -51,7 +51,15 @@ def apply_style(root: tk.Tk, palette: Palette) -> None:
     style.configure("Muted.TLabel", background=palette.bg0, foreground=palette.fg_muted)
     style.configure("Section.Header.TLabel", background=palette.bg0, foreground=palette.accent, font=("Segoe UI Semibold", 10))
 
-    style.configure("TNotebook", background=palette.bg0, borderwidth=0)
+    style.configure(
+        "TNotebook",
+        background=palette.bg0,
+        borderwidth=1,
+        relief="solid",
+        bordercolor=palette.line,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+    )
     style.configure(
         "TNotebook.Tab",
         background=palette.bg1,
@@ -202,6 +210,21 @@ def apply_style(root: tk.Tk, palette: Palette) -> None:
         font=("Segoe UI Semibold", 9),
     )
     style.map("Treeview", background=[("selected", palette.accent)], foreground=[("selected", palette.bg0)])
+
+    style.configure(
+        "Vertical.TScrollbar",
+        background=palette.bg2,
+        troughcolor=palette.bg1,
+        bordercolor=palette.line,
+        arrowcolor=palette.fg_muted,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+    )
+    style.map(
+        "Vertical.TScrollbar",
+        background=[("active", palette.bg2), ("pressed", palette.accent_active)],
+        arrowcolor=[("active", palette.fg0), ("pressed", palette.bg0)],
+    )
 
     style.configure("Service.Info.TLabel", background=palette.bg1, foreground=palette.fg_muted, font=("Segoe UI", 9))
     style.configure("Service.Endpoint.TLabel", background=palette.bg1, foreground=palette.fg0, font=("Consolas", 9))

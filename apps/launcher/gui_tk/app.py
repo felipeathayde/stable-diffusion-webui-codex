@@ -82,10 +82,23 @@ class CodexLauncherApp(tk.Tk):
             run_in_thread=self._run_in_thread,
             set_status=self._set_status,
         )
-        self._runtime_tab = RuntimeTab(
+        self._runtime_bootstrap_tab = RuntimeTab(
             self._controller,
             canvas_bg=self._palette.bg1,
             mark_changed=self._mark_changed,
+            section="bootstrap",
+        )
+        self._runtime_engine_tab = RuntimeTab(
+            self._controller,
+            canvas_bg=self._palette.bg1,
+            mark_changed=self._mark_changed,
+            section="engine",
+        )
+        self._runtime_safety_tab = RuntimeTab(
+            self._controller,
+            canvas_bg=self._palette.bg1,
+            mark_changed=self._mark_changed,
+            section="safety",
         )
         self._diagnostics_tab = DiagnosticsTab(
             self._controller,
@@ -100,7 +113,9 @@ class CodexLauncherApp(tk.Tk):
 
         tabs = [
             ("Services", self._services_tab.build(self._notebook)),
-            ("Runtime", self._runtime_tab.build(self._notebook)),
+            ("Bootstrap", self._runtime_bootstrap_tab.build(self._notebook)),
+            ("Engine", self._runtime_engine_tab.build(self._notebook)),
+            ("Safety", self._runtime_safety_tab.build(self._notebook)),
             ("Diagnostics", self._diagnostics_tab.build(self._notebook)),
             ("Logs", self._logs_tab.build(self._notebook)),
         ]
@@ -181,7 +196,9 @@ class CodexLauncherApp(tk.Tk):
 
     def _apply_advanced_controls_visibility(self) -> None:
         visible = bool(self._show_advanced_controls.get())
-        self._runtime_tab.set_advanced_visible(visible)
+        self._runtime_bootstrap_tab.set_advanced_visible(visible)
+        self._runtime_engine_tab.set_advanced_visible(visible)
+        self._runtime_safety_tab.set_advanced_visible(visible)
         self._diagnostics_tab.set_advanced_visible(visible)
 
     def _on_show_advanced_controls_changed(self) -> None:
@@ -268,7 +285,9 @@ class CodexLauncherApp(tk.Tk):
             return
         self._controller.reload_store()
         self._services_tab.reload()
-        self._runtime_tab.reload()
+        self._runtime_bootstrap_tab.reload()
+        self._runtime_engine_tab.reload()
+        self._runtime_safety_tab.reload()
         self._diagnostics_tab.reload()
         self._logs_tab.reload()
         self._apply_advanced_controls_visibility()

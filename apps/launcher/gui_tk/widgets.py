@@ -27,7 +27,7 @@ class ScrollableFrame(ttk.Frame):
 
     def __init__(self, parent: tk.Misc, *, canvas_bg: str) -> None:
         super().__init__(parent)
-        self._canvas = tk.Canvas(self, bg=canvas_bg, highlightthickness=0)
+        self._canvas = tk.Canvas(self, bg=canvas_bg, highlightthickness=0, bd=0, relief="flat")
         self._scrollbar = ttk.Scrollbar(self, orient="vertical", command=self._canvas.yview)
         self.inner = ttk.Frame(self._canvas)
 
@@ -87,4 +87,3 @@ def add_section_header(parent: ttk.Frame, row: int, title: str) -> int:
 def add_help(parent: ttk.Frame, row: int, text: str) -> int:
     ttk.Label(parent, text=text, justify="left", style="Muted.TLabel").grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
     return row + 1
-

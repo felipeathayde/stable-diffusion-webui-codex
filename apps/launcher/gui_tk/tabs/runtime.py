@@ -69,10 +69,15 @@ class RuntimeTab:
         *,
         canvas_bg: str,
         mark_changed: Callable[[], None],
+        section: str,
     ) -> None:
         self._controller = controller
         self._canvas_bg = canvas_bg
         self._mark_changed = mark_changed
+        normalized_section = str(section or "").strip().lower()
+        if normalized_section not in {"bootstrap", "engine", "safety"}:
+            raise ValueError(f"Unknown runtime section: {section!r}")
+        self._section = normalized_section
 
         self.frame: ttk.Frame | None = None
 
@@ -103,19 +108,30 @@ class RuntimeTab:
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
+        scroll = ScrollableFrame(frame, canvas_bg=self._canvas_bg)
+        scroll.pack(fill="both", expand=True, padx=8, pady=8)
+        body = scroll.inner
+        body.columnconfigure(0, weight=0)
+        body.columnconfigure(1, weight=1)
 
-        runtime_notebook = ttk.Notebook(frame)
-        runtime_notebook.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        renderer = FormRenderer(body)
+        sections = self._sections_for_view()
+        renderer.render_sections(0, sections)
+        self._form_renderers = [renderer]
 
-        self._form_renderers = []
+        gguf_combo = renderer.widget_for("gguf_dequant_cache")
+        lora_combo = renderer.widget_for("lora_online_math")
+        self._gguf_dequant_cache_combo = gguf_combo if isinstance(gguf_combo, ttk.Combobox) else None
+        self._lora_math_combo = lora_combo if isinstance(lora_combo, ttk.Combobox) else None
+        self._apply_advanced_visibility()
 
-        bootstrap_body = self._new_runtime_panel(runtime_notebook, title="Bootstrap")
-        bootstrap_renderer = FormRenderer(bootstrap_body)
-        bootstrap_renderer.render_sections(
-            0,
-            [
+        self.frame = frame
+        self.reload()
+        return frame
+
+    def _sections_for_view(self) -> list[FormSectionDescriptor]:
+        if self._section == "bootstrap":
+            return [
                 FormSectionDescriptor(
                     title="Main Device (bootstrap)",
                     fields=[
@@ -167,15 +183,10 @@ class RuntimeTab:
                         "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks."
                     ],
                 ),
-            ],
-        )
-        self._form_renderers.append(bootstrap_renderer)
+            ]
 
-        engine_body = self._new_runtime_panel(runtime_notebook, title="Engine")
-        engine_renderer = FormRenderer(engine_body)
-        engine_renderer.render_sections(
-            0,
-            [
+        if self._section == "engine":
+            return [
                 FormSectionDescriptor(
                     title="GGUF / LoRA / PyTorch",
                     fields=[
@@ -283,15 +294,10 @@ class RuntimeTab:
                         ),
                     ],
                 ),
-            ],
-        )
-        self._form_renderers.append(engine_renderer)
+            ]
 
-        safety_body = self._new_runtime_panel(runtime_notebook, title="Safety")
-        safety_renderer = FormRenderer(safety_body)
-        safety_renderer.render_sections(
-            0,
-            [
+        if self._section == "safety":
+            return [
                 FormSectionDescriptor(
                     title="Tasks / Safety",
                     fields=[
@@ -361,31 +367,9 @@ class RuntimeTab:
                         "Env vars: CODEX_TASK_EVENT_BUFFER_MAX_EVENTS, CODEX_TASK_EVENT_BUFFER_MAX_MB"
                     ],
                 ),
-            ],
-        )
-        self._form_renderers.append(safety_renderer)
+            ]
 
-        gguf_combo = engine_renderer.widget_for("gguf_dequant_cache")
-        lora_combo = engine_renderer.widget_for("lora_online_math")
-        self._gguf_dequant_cache_combo = gguf_combo if isinstance(gguf_combo, ttk.Combobox) else None
-        self._lora_math_combo = lora_combo if isinstance(lora_combo, ttk.Combobox) else None
-        self._apply_advanced_visibility()
-
-        self.frame = frame
-        self.reload()
-        return frame
-
-    def _new_runtime_panel(self, notebook: ttk.Notebook, *, title: str) -> ttk.Frame:
-        panel = ttk.Frame(notebook)
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(0, weight=1)
-        scroll = ScrollableFrame(panel, canvas_bg=self._canvas_bg)
-        scroll.grid(row=0, column=0, sticky="nsew")
-        body = scroll.inner
-        body.columnconfigure(0, weight=0)
-        body.columnconfigure(1, weight=1)
-        notebook.add(panel, text=title)
-        return body
+        raise ValueError(f"Unhandled runtime section: {self._section}")
 
     def reload(self) -> None:
         env = self._controller.store.env

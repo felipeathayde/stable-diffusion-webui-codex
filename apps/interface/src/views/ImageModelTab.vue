@@ -279,7 +279,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <!-- Right column: Run + Results -->
-    <div class="panel-stack">
+    <div class="panel-stack panel-stack--sticky">
       <RunCard
         :generateLabel="generateLabel"
         :generateDisabled="runGenerateDisabled"

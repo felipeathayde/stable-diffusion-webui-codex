@@ -110,7 +110,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <!-- Right column: run + results -->
-    <div class="panel-stack">
+    <div class="panel-stack panel-stack--sticky">
       <RunCard
         title="Run"
         :showBatchControls="false"

@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
-Last Review: 2026-02-22  
+Last Review: 2026-02-23  
 Status: Active
 
 ## Purpose
@@ -124,3 +124,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-21: Removed every `transform: translate...` usage from active UI styles (and the `EXAMPLE-dashboard-surface-base.css` reference sheet), replacing those offsets with `top/left`, `inset`, margin-based centering, and non-translate transitions.
 - 2026-02-22: `styles/components/views-shared.css` now defines a richer `run-progress-status` system under shared `panel-status` semantics (variant colors, icon animation, structured header/meta) so Run panels can host progress/error/warning/info/success in one container.
 - 2026-02-22: `styles/components/views-shared.css` adds split meta layout helpers (`run-progress-status__meta-left/right`) and `run-progress-status__meta-item--elapsed` so progress panels render elapsed time on the right side opposite Step/ETA.
+- 2026-02-23: `styles/components/views-shared.css` adds `.panel-stack--sticky` for generation right-column stickiness (Run + Results follow scroll with `--sticky-offset` on desktop; auto-disabled below the shared one-column breakpoint).

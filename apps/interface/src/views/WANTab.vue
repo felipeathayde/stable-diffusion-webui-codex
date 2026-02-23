@@ -587,7 +587,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <!-- Right column: Results -->
-    <div class="panel-stack">
+    <div class="panel-stack panel-stack--sticky">
       <RunCard
         :isRunning="isRunning"
         :generateDisabled="isRunning || !canRunGeneration"

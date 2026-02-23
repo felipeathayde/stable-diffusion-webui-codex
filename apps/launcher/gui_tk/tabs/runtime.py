@@ -95,41 +95,26 @@ class RuntimeTab:
         self._var_task_cancel_default_mode = tk.StringVar()
         self._var_task_buffer_max_events = tk.StringVar()
         self._var_task_buffer_max_mb = tk.StringVar()
-        self._var_show_advanced = tk.BooleanVar(value=False)
+        self._advanced_visible = False
 
         self._lora_math_combo: ttk.Combobox | None = None
         self._gguf_dequant_cache_combo: ttk.Combobox | None = None
-        self._form_renderer: FormRenderer | None = None
+        self._form_renderers: list[FormRenderer] = []
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
-        scroll = ScrollableFrame(frame, canvas_bg=self._canvas_bg)
-        scroll.pack(fill="both", expand=True)
-        body = scroll.inner
-        body.columnconfigure(0, weight=0)
-        body.columnconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
 
-        row = 0
-        controls = ttk.Frame(body, style="Section.Toolbar.TFrame")
-        controls.grid(row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(8, 2))
-        controls.columnconfigure(0, weight=1)
-        ttk.Checkbutton(
-            controls,
-            text="Show advanced runtime controls",
-            variable=self._var_show_advanced,
-            command=self._on_show_advanced_changed,
-            style="Toggle.TCheckbutton",
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            controls,
-            text="Bootstrap-only knobs live here; generation parameters stay in the Web UI.",
-            style="Muted.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
-        row += 1
+        runtime_notebook = ttk.Notebook(frame)
+        runtime_notebook.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
-        self._form_renderer = FormRenderer(body)
-        row = self._form_renderer.render_sections(
-            row,
+        self._form_renderers = []
+
+        bootstrap_body = self._new_runtime_panel(runtime_notebook, title="Bootstrap")
+        bootstrap_renderer = FormRenderer(bootstrap_body)
+        bootstrap_renderer.render_sections(
+            0,
             [
                 FormSectionDescriptor(
                     title="Main Device (bootstrap)",
@@ -182,9 +167,17 @@ class RuntimeTab:
                         "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks."
                     ],
                 ),
+            ],
+        )
+        self._form_renderers.append(bootstrap_renderer)
+
+        engine_body = self._new_runtime_panel(runtime_notebook, title="Engine")
+        engine_renderer = FormRenderer(engine_body)
+        engine_renderer.render_sections(
+            0,
+            [
                 FormSectionDescriptor(
                     title="GGUF / LoRA / PyTorch",
-                    advanced=True,
                     fields=[
                         FormFieldDescriptor(
                             field_id="lora_apply_mode",
@@ -194,7 +187,6 @@ class RuntimeTab:
                             choices=["merge", "online"],
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=12,
-                            advanced=True,
                             help_text=(
                                 "merge: rewrites weights once at apply-time (default).\n"
                                 "online: applies LoRA patches on-the-fly during forward."
@@ -208,7 +200,6 @@ class RuntimeTab:
                             choices=["dequant_forward", "dequant_upfront"],
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=18,
-                            advanced=True,
                             help_text=(
                                 "dequant_forward: current default (GGUF weights dequantize on-demand during forward).\n"
                                 "dequant_upfront: dequantize GGUF weights at load time (uses more RAM/VRAM).\n"
@@ -291,8 +282,16 @@ class RuntimeTab:
                             ),
                         ),
                     ],
-                    help_texts=[],
                 ),
+            ],
+        )
+        self._form_renderers.append(engine_renderer)
+
+        safety_body = self._new_runtime_panel(runtime_notebook, title="Safety")
+        safety_renderer = FormRenderer(safety_body)
+        safety_renderer.render_sections(
+            0,
+            [
                 FormSectionDescriptor(
                     title="Tasks / Safety",
                     fields=[
@@ -364,16 +363,29 @@ class RuntimeTab:
                 ),
             ],
         )
+        self._form_renderers.append(safety_renderer)
 
-        gguf_combo = self._form_renderer.widget_for("gguf_dequant_cache")
-        lora_combo = self._form_renderer.widget_for("lora_online_math")
+        gguf_combo = engine_renderer.widget_for("gguf_dequant_cache")
+        lora_combo = engine_renderer.widget_for("lora_online_math")
         self._gguf_dequant_cache_combo = gguf_combo if isinstance(gguf_combo, ttk.Combobox) else None
         self._lora_math_combo = lora_combo if isinstance(lora_combo, ttk.Combobox) else None
-        self._on_show_advanced_changed()
+        self._apply_advanced_visibility()
 
         self.frame = frame
         self.reload()
         return frame
+
+    def _new_runtime_panel(self, notebook: ttk.Notebook, *, title: str) -> ttk.Frame:
+        panel = ttk.Frame(notebook)
+        panel.columnconfigure(0, weight=1)
+        panel.rowconfigure(0, weight=1)
+        scroll = ScrollableFrame(panel, canvas_bg=self._canvas_bg)
+        scroll.grid(row=0, column=0, sticky="nsew")
+        body = scroll.inner
+        body.columnconfigure(0, weight=0)
+        body.columnconfigure(1, weight=1)
+        notebook.add(panel, text=title)
+        return body
 
     def reload(self) -> None:
         env = self._controller.store.env
@@ -460,13 +472,15 @@ class RuntimeTab:
         self._var_task_buffer_max_mb.set(str(int(max_mb)))
 
         self._sync_runtime_deps(mark_changed=False)
-        self._on_show_advanced_changed()
+        self._apply_advanced_visibility()
 
-    def _on_show_advanced_changed(self) -> None:
-        renderer = self._form_renderer
-        if renderer is None:
-            return
-        renderer.set_advanced_visible(bool(self._var_show_advanced.get()))
+    def set_advanced_visible(self, visible: bool) -> None:
+        self._advanced_visible = bool(visible)
+        self._apply_advanced_visibility()
+
+    def _apply_advanced_visibility(self) -> None:
+        for renderer in self._form_renderers:
+            renderer.set_advanced_visible(self._advanced_visible)
 
     def _commit_int_setting(
         self,

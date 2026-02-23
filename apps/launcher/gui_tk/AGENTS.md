@@ -40,3 +40,6 @@ Last Review: 2026-02-23
 - 2026-02-23: Services tab now resolves effective UI port via `.webui-ui-<port>.pid` (port-guard output) so endpoint/open/health follow fallback ports (`+10000/+20000`) when base `WEB_PORT` is busy.
 - 2026-02-23: Services health worker now probes cached URLs from UI-thread snapshots and logs per-service poll failures (fail-loud) instead of rebuilding env in background thread.
 - 2026-02-23: Visual revamp “Control Room”: updated palette/surfaces/buttons/inputs/status styles for stronger hierarchy and reduced legacy Tk look.
+- 2026-02-23: Runtime tab now uses internal sub-tabs (`Bootstrap`, `Engine`, `Safety`) so settings are grouped by responsibility instead of a single long page.
+- 2026-02-23: Advanced controls toggle moved to global footer (`app.py`) and now drives both Runtime and Diagnostics progressive disclosure.
+- 2026-02-23: Services button-state refresh now updates only on state transition (avoids hover flicker caused by repeated poll-time reconfigure).

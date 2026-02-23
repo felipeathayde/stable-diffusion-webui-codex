@@ -70,6 +70,7 @@ class CodexLauncherApp(tk.Tk):
 
         self._unsaved_changes = False
         self._status_text = tk.StringVar(value="Ready")
+        self._show_advanced_controls = tk.BooleanVar(value=False)
 
         apply_style(self, self._palette)
 
@@ -114,6 +115,7 @@ class CodexLauncherApp(tk.Tk):
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         self._build_status_bar()
+        self._apply_advanced_controls_visibility()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.after(self.POLL_INTERVAL_MS, self._poll)
@@ -163,12 +165,27 @@ class CodexLauncherApp(tk.Tk):
         ttk.Button(bar, text="Save Settings", command=self._save).pack(side="left", padx=(0, 8))
         ttk.Button(bar, text="Revert", command=self._revert).pack(side="left", padx=(0, 8))
         ttk.Button(bar, text="Exit Without Saving", command=self._exit_no_save).pack(side="left")
+        ttk.Checkbutton(
+            bar,
+            text="Show advanced controls",
+            variable=self._show_advanced_controls,
+            command=self._on_show_advanced_controls_changed,
+            style="Toggle.TCheckbutton",
+        ).pack(side="left", padx=(16, 0))
         ttk.Label(bar, textvariable=self._status_text, style="Muted.TLabel").pack(side="right")
 
     # ------------------------------------------------------------------ status/dirty
 
     def _set_status(self, msg: str) -> None:
         self._status_text.set(str(msg))
+
+    def _apply_advanced_controls_visibility(self) -> None:
+        visible = bool(self._show_advanced_controls.get())
+        self._runtime_tab.set_advanced_visible(visible)
+        self._diagnostics_tab.set_advanced_visible(visible)
+
+    def _on_show_advanced_controls_changed(self) -> None:
+        self._apply_advanced_controls_visibility()
 
     def _mark_changed(self) -> None:
         self._unsaved_changes = True
@@ -254,6 +271,7 @@ class CodexLauncherApp(tk.Tk):
         self._runtime_tab.reload()
         self._diagnostics_tab.reload()
         self._logs_tab.reload()
+        self._apply_advanced_controls_visibility()
         self._unsaved_changes = False
         self._set_status("Reverted")
 

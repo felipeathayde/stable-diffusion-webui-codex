@@ -54,7 +54,7 @@ class DiagnosticsTab:
         self._var_profile_top_n = tk.StringVar()
         self._var_profile_max_steps = tk.StringVar()
         self._var_log_file = tk.BooleanVar()
-        self._var_show_advanced = tk.BooleanVar(value=False)
+        self._advanced_visible = False
         self._advanced_widgets: List[tk.Widget] = []
         self._cfg_delta_trace_ids: List[Tuple[tk.Variable, str]] = []
 
@@ -82,24 +82,8 @@ class DiagnosticsTab:
         diag.columnconfigure(0, weight=1)
         diag.columnconfigure(1, weight=1)
 
-        topbar = ttk.Frame(diag, style="Section.Toolbar.TFrame")
-        topbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        topbar.columnconfigure(0, weight=1)
-        ttk.Checkbutton(
-            topbar,
-            text="Show advanced diagnostics/profiling controls",
-            variable=self._var_show_advanced,
-            command=self._on_show_advanced_changed,
-            style="Toggle.TCheckbutton",
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            topbar,
-            text="Keep advanced options hidden unless debugging pipeline/runtime behavior.",
-            style="Muted.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
-
         dbg_col = ttk.Frame(diag)
-        dbg_col.grid(row=1, column=0, sticky="nsew", padx=(0, 14))
+        dbg_col.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
         ttk.Label(dbg_col, text="Debug Flags", style="TLabelframe.Label").grid(row=0, column=0, sticky="w", pady=(0, 6))
 
         debug_flags = [
@@ -213,7 +197,7 @@ class DiagnosticsTab:
         )
 
         log_col = ttk.Frame(diag)
-        log_col.grid(row=1, column=1, sticky="nsew")
+        log_col.grid(row=0, column=1, sticky="nsew")
         ttk.Label(log_col, text="Log Levels", style="TLabelframe.Label").grid(row=0, column=0, sticky="w", pady=(0, 6))
 
         log_defaults = {
@@ -252,7 +236,7 @@ class DiagnosticsTab:
         log_file_toggle.grid(row=r + 1, column=0, sticky="w", pady=(10, 2))
 
         self._install_cfg_delta_guard()
-        self._on_show_advanced_changed()
+        self._apply_advanced_visibility()
         self.frame = frame
         return frame
 
@@ -278,7 +262,7 @@ class DiagnosticsTab:
         self._var_log_file.set(bool(str(env.get("CODEX_LOG_FILE", "") or "").strip()))
 
         self._install_cfg_delta_guard()
-        self._on_show_advanced_changed()
+        self._apply_advanced_visibility()
 
     def render_checks(self, checks: Iterable[CodexLaunchCheck]) -> None:
         tree = self._checks_tree
@@ -345,8 +329,12 @@ class DiagnosticsTab:
     def _register_advanced(self, *widgets: tk.Widget) -> None:
         self._advanced_widgets.extend(widgets)
 
-    def _on_show_advanced_changed(self) -> None:
-        visible = bool(self._var_show_advanced.get())
+    def set_advanced_visible(self, visible: bool) -> None:
+        self._advanced_visible = bool(visible)
+        self._apply_advanced_visibility()
+
+    def _apply_advanced_visibility(self) -> None:
+        visible = bool(self._advanced_visible)
         for widget in self._advanced_widgets:
             if visible:
                 widget.grid()

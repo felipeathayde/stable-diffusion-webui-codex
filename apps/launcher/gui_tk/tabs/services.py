@@ -201,13 +201,13 @@ class ServicesTab:
             else:
                 card.status_label.configure(style="Status.Stopped.TLabel")
 
-            card.start_btn.configure(state=("disabled" if status == ServiceStatus.RUNNING else "normal"))
-            card.restart_btn.configure(state=("normal" if status == ServiceStatus.RUNNING else "disabled"))
-            card.stop_btn.configure(state=("normal" if status == ServiceStatus.RUNNING else "disabled"))
-            card.kill_btn.configure(state=("normal" if status == ServiceStatus.RUNNING else "disabled"))
+            self._set_widget_enabled(card.start_btn, enabled=(status != ServiceStatus.RUNNING))
+            self._set_widget_enabled(card.restart_btn, enabled=(status == ServiceStatus.RUNNING))
+            self._set_widget_enabled(card.stop_btn, enabled=(status == ServiceStatus.RUNNING))
+            self._set_widget_enabled(card.kill_btn, enabled=(status == ServiceStatus.RUNNING))
             if card.open_docs_btn is not None:
-                card.open_docs_btn.configure(state=("normal" if status == ServiceStatus.RUNNING else "disabled"))
-            card.open_btn.configure(state=("normal" if status == ServiceStatus.RUNNING else "disabled"))
+                self._set_widget_enabled(card.open_docs_btn, enabled=(status == ServiceStatus.RUNNING))
+            self._set_widget_enabled(card.open_btn, enabled=(status == ServiceStatus.RUNNING))
 
             health_state = self._health_snapshot(svc_name)
             health_label = str(health_state.get("label", "Health: stopped"))
@@ -220,6 +220,14 @@ class ServicesTab:
 
     def _external_terminal(self) -> bool:
         return bool(self._external_terminal_var.get()) and self._controller.external_terminal_supported
+
+    @staticmethod
+    def _set_widget_enabled(widget: ttk.Widget, *, enabled: bool) -> None:
+        target_state = "normal" if enabled else "disabled"
+        current_state = str(widget.cget("state"))
+        if current_state == target_state:
+            return
+        widget.configure(state=target_state)
 
     def _service_runtime_env(self, service_name: str) -> Dict[str, str]:
         service = self._controller.services[service_name]

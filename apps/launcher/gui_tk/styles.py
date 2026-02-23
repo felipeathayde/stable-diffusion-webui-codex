@@ -23,16 +23,18 @@ from tkinter import ttk
 
 @dataclass(frozen=True, slots=True)
 class Palette:
-    bg0: str = "#1e1e2e"
-    bg1: str = "#2d2d3d"
-    bg2: str = "#11111b"
-    fg0: str = "#cdd6f4"
-    fg_muted: str = "#a6adc8"
-    accent: str = "#89b4fa"
-    accent_hover: str = "#b4befe"
-    ok: str = "#a6e3a1"
-    warn: str = "#f9e2af"
-    err: str = "#f38ba8"
+    bg0: str = "#0d1118"
+    bg1: str = "#141b27"
+    bg2: str = "#1b2534"
+    fg0: str = "#e8eef8"
+    fg_muted: str = "#9bb0c9"
+    accent: str = "#57a6ff"
+    accent_hover: str = "#7ebcff"
+    accent_active: str = "#2f8df4"
+    line: str = "#2a3a52"
+    ok: str = "#50d2a0"
+    warn: str = "#f0c66c"
+    err: str = "#ff6f91"
 
 
 def apply_style(root: tk.Tk, palette: Palette) -> None:
@@ -41,92 +43,173 @@ def apply_style(root: tk.Tk, palette: Palette) -> None:
 
     root.configure(bg=palette.bg0)
 
-    style.configure(".", background=palette.bg0, foreground=palette.fg0, font=("Segoe UI", 11))
+    style.configure(".", background=palette.bg0, foreground=palette.fg0, font=("Segoe UI", 10))
 
     style.configure("TFrame", background=palette.bg0)
+    style.configure("Section.Toolbar.TFrame", background=palette.bg0)
     style.configure("TLabel", background=palette.bg0, foreground=palette.fg0)
     style.configure("Muted.TLabel", background=palette.bg0, foreground=palette.fg_muted)
+    style.configure("Section.Header.TLabel", background=palette.bg0, foreground=palette.accent, font=("Segoe UI Semibold", 10))
 
     style.configure("TNotebook", background=palette.bg0, borderwidth=0)
     style.configure(
         "TNotebook.Tab",
         background=palette.bg1,
-        foreground=palette.fg0,
-        padding=[12, 7],
-        font=("Segoe UI", 11, "bold"),
+        foreground=palette.fg_muted,
+        padding=[14, 8],
+        borderwidth=1,
+        relief="flat",
+        font=("Segoe UI Semibold", 9),
     )
-    style.map("TNotebook.Tab", background=[("selected", palette.accent)], foreground=[("selected", palette.bg0)])
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", palette.bg2), ("active", palette.bg2)],
+        foreground=[("selected", palette.fg0), ("active", palette.fg0)],
+    )
 
-    style.configure("TLabelframe", background=palette.bg0, foreground=palette.fg0)
-    style.configure("TLabelframe.Label", background=palette.bg0, foreground=palette.accent, font=("Segoe UI", 11, "bold"))
+    style.configure(
+        "TLabelframe",
+        background=palette.bg1,
+        bordercolor=palette.line,
+        relief="solid",
+        borderwidth=1,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+    )
+    style.configure(
+        "TLabelframe.Label",
+        background=palette.bg1,
+        foreground=palette.accent,
+        font=("Segoe UI Semibold", 9),
+    )
+    style.configure(
+        "Service.Card.TLabelframe",
+        background=palette.bg1,
+        bordercolor=palette.line,
+        relief="solid",
+        borderwidth=1,
+    )
+    style.configure(
+        "Service.Card.TLabelframe.Label",
+        background=palette.bg1,
+        foreground=palette.fg0,
+        font=("Segoe UI Semibold", 10),
+    )
 
-    style.configure("TButton", background=palette.bg1, foreground=palette.fg0, padding=[16, 8], font=("Segoe UI", 11))
+    style.configure(
+        "TButton",
+        background=palette.bg2,
+        foreground=palette.fg0,
+        bordercolor=palette.line,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+        relief="solid",
+        padding=[14, 7],
+        font=("Segoe UI Semibold", 9),
+    )
     style.map(
         "TButton",
-        background=[("active", palette.accent_hover), ("pressed", palette.accent)],
-        foreground=[("active", palette.bg0), ("pressed", palette.bg0)],
+        background=[("active", palette.accent_hover), ("pressed", palette.accent_active), ("disabled", palette.bg1)],
+        foreground=[("active", palette.bg0), ("pressed", palette.bg0), ("disabled", palette.fg_muted)],
     )
 
-    style.configure("Filter.TButton", background=palette.bg1, foreground=palette.fg0, padding=[10, 4], font=("Segoe UI", 10, "bold"))
-    style.map("Filter.TButton", background=[("active", palette.accent_hover)], foreground=[("active", palette.bg0)])
+    style.configure("Filter.TButton", background=palette.bg1, foreground=palette.fg0, padding=[10, 4], font=("Segoe UI", 9))
+    style.map(
+        "Filter.TButton",
+        background=[("active", palette.bg2), ("disabled", palette.bg1)],
+        foreground=[("active", palette.fg0), ("disabled", palette.fg_muted)],
+    )
     style.configure(
         "Filter.Selected.TButton",
         background=palette.accent,
         foreground=palette.bg0,
         padding=[10, 4],
-        font=("Segoe UI", 10, "bold"),
+        font=("Segoe UI Semibold", 9),
     )
-    style.map("Filter.Selected.TButton", background=[("active", palette.accent_hover)], foreground=[("active", palette.bg0)])
+    style.map(
+        "Filter.Selected.TButton",
+        background=[("active", palette.accent_hover), ("disabled", palette.bg1)],
+        foreground=[("active", palette.bg0), ("disabled", palette.fg_muted)],
+    )
 
     style.configure("TCheckbutton", background=palette.bg0, foreground=palette.fg0)
-    style.map("TCheckbutton", background=[("active", palette.bg0)])
+    style.map(
+        "TCheckbutton",
+        background=[("active", palette.bg0), ("disabled", palette.bg0)],
+        foreground=[("disabled", palette.fg_muted)],
+    )
+    style.configure("Toggle.TCheckbutton", background=palette.bg0, foreground=palette.fg0, font=("Segoe UI", 9))
+    style.map(
+        "Toggle.TCheckbutton",
+        background=[("active", palette.bg0), ("disabled", palette.bg0)],
+        foreground=[("disabled", palette.fg_muted)],
+    )
 
     style.configure(
         "TEntry",
-        fieldbackground=palette.bg1,
-        background=palette.bg1,
+        fieldbackground=palette.bg2,
+        background=palette.bg2,
         foreground=palette.fg0,
+        bordercolor=palette.line,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+        insertcolor=palette.fg0,
     )
     style.map(
         "TEntry",
-        fieldbackground=[("disabled", palette.bg0)],
+        fieldbackground=[("disabled", palette.bg1)],
         foreground=[("disabled", palette.fg_muted)],
     )
 
     style.configure(
         "TCombobox",
-        fieldbackground=palette.bg1,
-        background=palette.bg1,
+        fieldbackground=palette.bg2,
+        background=palette.bg2,
         foreground=palette.fg0,
+        bordercolor=palette.line,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+        arrowcolor=palette.fg0,
     )
     style.map(
         "TCombobox",
-        fieldbackground=[("readonly", palette.bg1), ("disabled", palette.bg0)],
+        fieldbackground=[("readonly", palette.bg2), ("disabled", palette.bg1)],
         foreground=[("readonly", palette.fg0), ("disabled", palette.fg_muted)],
     )
-    root.option_add("*TCombobox*Listbox.background", palette.bg1)
+    root.option_add("*TCombobox*Listbox.background", palette.bg2)
     root.option_add("*TCombobox*Listbox.foreground", palette.fg0)
     root.option_add("*TCombobox*Listbox.selectBackground", palette.accent)
     root.option_add("*TCombobox*Listbox.selectForeground", palette.bg0)
 
     style.configure(
         "Treeview",
-        background=palette.bg1,
-        fieldbackground=palette.bg1,
+        background=palette.bg2,
+        fieldbackground=palette.bg2,
         foreground=palette.fg0,
-        bordercolor=palette.bg0,
-        lightcolor=palette.bg0,
-        darkcolor=palette.bg0,
-        font=("Segoe UI", 10),
+        bordercolor=palette.line,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+        font=("Segoe UI", 9),
     )
     style.configure(
         "Treeview.Heading",
-        background=palette.bg0,
+        background=palette.bg1,
         foreground=palette.accent,
-        font=("Segoe UI", 10, "bold"),
+        bordercolor=palette.line,
+        lightcolor=palette.line,
+        darkcolor=palette.line,
+        relief="solid",
+        font=("Segoe UI Semibold", 9),
     )
     style.map("Treeview", background=[("selected", palette.accent)], foreground=[("selected", palette.bg0)])
 
-    style.configure("Status.Running.TLabel", background=palette.bg0, foreground=palette.ok, font=("Segoe UI", 12, "bold"))
-    style.configure("Status.Stopped.TLabel", background=palette.bg0, foreground=palette.warn, font=("Segoe UI", 12, "bold"))
-    style.configure("Status.Error.TLabel", background=palette.bg0, foreground=palette.err, font=("Segoe UI", 12, "bold"))
+    style.configure("Service.Info.TLabel", background=palette.bg1, foreground=palette.fg_muted, font=("Segoe UI", 9))
+    style.configure("Service.Endpoint.TLabel", background=palette.bg1, foreground=palette.fg0, font=("Consolas", 9))
+
+    style.configure("Status.Running.TLabel", background=palette.bg1, foreground=palette.ok, font=("Segoe UI Semibold", 10))
+    style.configure("Status.Stopped.TLabel", background=palette.bg1, foreground=palette.warn, font=("Segoe UI Semibold", 10))
+    style.configure("Status.Error.TLabel", background=palette.bg1, foreground=palette.err, font=("Segoe UI Semibold", 10))
+
+    style.configure("Health.Ok.TLabel", background=palette.bg1, foreground=palette.ok, font=("Segoe UI", 9))
+    style.configure("Health.Stopped.TLabel", background=palette.bg1, foreground=palette.fg_muted, font=("Segoe UI", 9))
+    style.configure("Health.Error.TLabel", background=palette.bg1, foreground=palette.err, font=("Segoe UI", 9))

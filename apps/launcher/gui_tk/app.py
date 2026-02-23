@@ -83,7 +83,7 @@ class CodexLauncherApp(tk.Tk):
         )
         self._runtime_tab = RuntimeTab(
             self._controller,
-            canvas_bg=self._palette.bg0,
+            canvas_bg=self._palette.bg1,
             mark_changed=self._mark_changed,
         )
         self._diagnostics_tab = DiagnosticsTab(
@@ -158,11 +158,11 @@ class CodexLauncherApp(tk.Tk):
     # ------------------------------------------------------------------ status bar
 
     def _build_status_bar(self) -> None:
-        bar = ttk.Frame(self)
+        bar = ttk.Frame(self, style="Section.Toolbar.TFrame")
         bar.pack(fill="x", padx=10, pady=10)
-        ttk.Button(bar, text="💾 Save Settings", command=self._save).pack(side="left", padx=(0, 8))
-        ttk.Button(bar, text="↩ Revert", command=self._revert).pack(side="left", padx=(0, 8))
-        ttk.Button(bar, text="❌ Exit Without Saving", command=self._exit_no_save).pack(side="left")
+        ttk.Button(bar, text="Save Settings", command=self._save).pack(side="left", padx=(0, 8))
+        ttk.Button(bar, text="Revert", command=self._revert).pack(side="left", padx=(0, 8))
+        ttk.Button(bar, text="Exit Without Saving", command=self._exit_no_save).pack(side="left")
         ttk.Label(bar, textvariable=self._status_text, style="Muted.TLabel").pack(side="right")
 
     # ------------------------------------------------------------------ status/dirty
@@ -258,9 +258,11 @@ class CodexLauncherApp(tk.Tk):
         self._set_status("Reverted")
 
     def _exit_no_save(self) -> None:
+        self._services_tab.dispose()
         self.destroy()
 
     def _on_close(self) -> None:
+        self._services_tab.dispose()
         self._persist_ui_state()
         if self._unsaved_changes:
             if messagebox.askyesno("Unsaved changes", "Save settings before exiting?"):

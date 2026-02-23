@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import messagebox, ttk
-from typing import Callable, List
+from typing import Callable
 
 from apps.launcher.profiles import (
     CODEX_CUDA_MALLOC_KEY,
@@ -44,7 +44,9 @@ from apps.launcher.settings import (
 )
 
 from ..controller import LauncherController
-from ..widgets import ScrollableFrame, add_help, add_section_header
+from ..form_renderer import FormRenderer
+from ..form_schema import FieldKind, FormFieldDescriptor, FormSectionDescriptor
+from ..widgets import ScrollableFrame
 
 
 _ATTENTION_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -93,260 +95,281 @@ class RuntimeTab:
         self._var_task_cancel_default_mode = tk.StringVar()
         self._var_task_buffer_max_events = tk.StringVar()
         self._var_task_buffer_max_mb = tk.StringVar()
+        self._var_show_advanced = tk.BooleanVar(value=False)
 
         self._lora_math_combo: ttk.Combobox | None = None
         self._gguf_dequant_cache_combo: ttk.Combobox | None = None
+        self._form_renderer: FormRenderer | None = None
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
         scroll = ScrollableFrame(frame, canvas_bg=self._canvas_bg)
         scroll.pack(fill="both", expand=True)
         body = scroll.inner
+        body.columnconfigure(0, weight=0)
+        body.columnconfigure(1, weight=1)
 
         row = 0
-        row = add_section_header(body, row, "Main Device (bootstrap)")
-        row = self._add_choice_combo(
-            body,
+        controls = ttk.Frame(body, style="Section.Toolbar.TFrame")
+        controls.grid(row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(8, 2))
+        controls.columnconfigure(0, weight=1)
+        ttk.Checkbutton(
+            controls,
+            text="Show advanced runtime controls",
+            variable=self._var_show_advanced,
+            command=self._on_show_advanced_changed,
+            style="Toggle.TCheckbutton",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            controls,
+            text="Bootstrap-only knobs live here; generation parameters stay in the Web UI.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        row += 1
+
+        self._form_renderer = FormRenderer(body)
+        row = self._form_renderer.render_sections(
             row,
-            label="Main device (requires API restart):",
-            var=self._var_main_device,
-            choices=list(DEVICE_CHOICES),
-            on_change=self._on_main_device_changed,
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="Mount device (requires API restart):",
-            var=self._var_mount_device,
-            choices=list(DEVICE_CHOICES),
-            on_change=self._on_mount_device_changed,
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="Offload device (requires API restart):",
-            var=self._var_offload_device,
-            choices=list(DEVICE_CHOICES),
-            on_change=self._on_offload_device_changed,
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="Attention mode (requires API restart):",
-            var=self._var_attention_mode,
-            choices=[label for label, _mode in _ATTENTION_MODE_OPTIONS],
-            on_change=self._on_attention_mode_changed,
-            width=20,
-        )
-        row = add_help(
-            body,
-            row,
-            "sdpa_auto lets PyTorch pick the best SDPA kernel.\n"
-            "sdpa_flash/sdpa_mem_efficient/sdpa_math force a specific SDPA policy.\n"
-            "xformers/split/quad select non-SDPA attention backends.",
-        )
-        row = add_help(
-            body,
-            row,
-            "Main device is passed as backend CLI flag (`--main-device`) and mirrored to core/TE/VAE.\n"
-            "Mount/offload devices are passed as `--mount-device` and `--offload-device`.\n"
-            "When unset, mount defaults to main and offload defaults to CPU.\n"
-            "Per-component divergence is not allowed by contract.\n"
-            "Attention mode is passed via `--attention-backend` + optional `--attention-sdpa-policy`.\n"
-            "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks.",
+            [
+                FormSectionDescriptor(
+                    title="Main Device (bootstrap)",
+                    fields=[
+                        FormFieldDescriptor(
+                            field_id="main_device",
+                            kind=FieldKind.CHOICE,
+                            label="Main device (requires API restart):",
+                            variable=self._var_main_device,
+                            choices=list(DEVICE_CHOICES),
+                            on_change=self._on_main_device_changed,
+                        ),
+                        FormFieldDescriptor(
+                            field_id="mount_device",
+                            kind=FieldKind.CHOICE,
+                            label="Mount device (requires API restart):",
+                            variable=self._var_mount_device,
+                            choices=list(DEVICE_CHOICES),
+                            on_change=self._on_mount_device_changed,
+                        ),
+                        FormFieldDescriptor(
+                            field_id="offload_device",
+                            kind=FieldKind.CHOICE,
+                            label="Offload device (requires API restart):",
+                            variable=self._var_offload_device,
+                            choices=list(DEVICE_CHOICES),
+                            on_change=self._on_offload_device_changed,
+                        ),
+                        FormFieldDescriptor(
+                            field_id="attention_mode",
+                            kind=FieldKind.CHOICE,
+                            label="Attention mode (requires API restart):",
+                            variable=self._var_attention_mode,
+                            choices=[label for label, _mode in _ATTENTION_MODE_OPTIONS],
+                            on_change=self._on_attention_mode_changed,
+                            width=20,
+                            help_text=(
+                                "sdpa_auto lets PyTorch pick the best SDPA kernel.\n"
+                                "sdpa_flash/sdpa_mem_efficient/sdpa_math force a specific SDPA policy.\n"
+                                "xformers/split/quad select non-SDPA attention backends."
+                            ),
+                        ),
+                    ],
+                    help_texts=[
+                        "Main device is passed as backend CLI flag (`--main-device`) and mirrored to core/TE/VAE.\n"
+                        "Mount/offload devices are passed as `--mount-device` and `--offload-device`.\n"
+                        "When unset, mount defaults to main and offload defaults to CPU.\n"
+                        "Per-component divergence is not allowed by contract.\n"
+                        "Attention mode is passed via `--attention-backend` + optional `--attention-sdpa-policy`.\n"
+                        "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks."
+                    ],
+                ),
+                FormSectionDescriptor(
+                    title="GGUF / LoRA / PyTorch",
+                    advanced=True,
+                    fields=[
+                        FormFieldDescriptor(
+                            field_id="lora_apply_mode",
+                            kind=FieldKind.CHOICE,
+                            label="LoRA apply mode (requires API restart):",
+                            variable=self._var_lora_apply_mode,
+                            choices=["merge", "online"],
+                            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
+                            width=12,
+                            advanced=True,
+                            help_text=(
+                                "merge: rewrites weights once at apply-time (default).\n"
+                                "online: applies LoRA patches on-the-fly during forward."
+                            ),
+                        ),
+                        FormFieldDescriptor(
+                            field_id="gguf_exec_mode",
+                            kind=FieldKind.CHOICE,
+                            label="GGUF exec mode (requires API restart):",
+                            variable=self._var_gguf_exec,
+                            choices=["dequant_forward", "dequant_upfront"],
+                            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
+                            width=18,
+                            advanced=True,
+                            help_text=(
+                                "dequant_forward: current default (GGUF weights dequantize on-demand during forward).\n"
+                                "dequant_upfront: dequantize GGUF weights at load time (uses more RAM/VRAM).\n"
+                                "CodexPack packed GGUFs are auto-detected via `*.codexpack.gguf` (no exec-mode toggle)."
+                            ),
+                        ),
+                        FormFieldDescriptor(
+                            field_id="gguf_dequant_cache",
+                            kind=FieldKind.CHOICE,
+                            label="GGUF dequant cache (requires API restart):",
+                            variable=self._var_gguf_dequant_cache,
+                            choices=["off"],
+                            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
+                            width=10,
+                            advanced=True,
+                            help_text="Removed in this build: GGUF dequant run cache levels (lvl1/lvl2).\nValue is locked to 'off'.",
+                        ),
+                        FormFieldDescriptor(
+                            field_id="wan_chunk_buffer_mode",
+                            kind=FieldKind.CHOICE,
+                            label="WAN img2vid chunk buffer mode (requires API restart):",
+                            variable=self._var_wan_chunk_buffer_mode,
+                            choices=list(WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES),
+                            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
+                            width=10,
+                            advanced=True,
+                            help_text=(
+                                "Env var: CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE\n"
+                                "hybrid: auto-select RAM or RAM+disk by chunk memory estimate.\n"
+                                "ram: keep chunk buffers only in RAM.\n"
+                                "ram+hd: spool chunk buffers to RAM+disk (bounded RAM)."
+                            ),
+                        ),
+                        FormFieldDescriptor(
+                            field_id="lora_online_math",
+                            kind=FieldKind.CHOICE,
+                            label="LoRA online math (requires API restart):",
+                            variable=self._var_lora_online_math,
+                            choices=["weight_merge"],
+                            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
+                            width=16,
+                            advanced=True,
+                            help_text=(
+                                "weight_merge: current online behavior (materializes patched weights per-forward).\n"
+                                "activation math is reserved for future packed-kernel LoRA support (not exposed in this build)."
+                            ),
+                        ),
+                        FormFieldDescriptor(
+                            field_id="pytorch_alloc_conf",
+                            kind=FieldKind.ENTRY,
+                            label="PyTorch CUDA alloc conf (requires API restart):",
+                            variable=self._var_pytorch_alloc_conf,
+                            on_change=self._on_alloc_conf_changed,
+                            width=56,
+                            advanced=True,
+                            help_text=(
+                                "Env var: PYTORCH_ALLOC_CONF\n"
+                                f"Default value: {DEFAULT_PYTORCH_ALLOC_CONF}\n"
+                                f"Default toggle env: {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY}"
+                            ),
+                        ),
+                        FormFieldDescriptor(
+                            field_id="default_alloc_toggle",
+                            kind=FieldKind.CHECK,
+                            label="Apply default PyTorch alloc conf when unset (requires API restart):",
+                            variable=self._var_default_alloc_conf_enabled,
+                            on_change=self._on_default_alloc_conf_toggle_changed,
+                            advanced=True,
+                        ),
+                        FormFieldDescriptor(
+                            field_id="cuda_malloc_toggle",
+                            kind=FieldKind.CHECK,
+                            label="Enable cudaMallocAsync backend (requires API restart):",
+                            variable=self._var_cuda_malloc,
+                            on_change=self._on_cuda_malloc_changed,
+                            advanced=True,
+                            help_text=(
+                                f"Env var: {CODEX_CUDA_MALLOC_KEY}\n"
+                                "When enabled, launcher forwards backend flag '--cuda-malloc'."
+                            ),
+                        ),
+                    ],
+                    help_texts=[],
+                ),
+                FormSectionDescriptor(
+                    title="Tasks / Safety",
+                    fields=[
+                        FormFieldDescriptor(
+                            field_id="single_flight",
+                            kind=FieldKind.CHECK,
+                            label="Single-flight inference (requires API restart):",
+                            variable=self._var_single_flight,
+                            on_change=lambda: self._sync_task_deps(mark_changed=True),
+                            help_text=(
+                                "Env var: CODEX_SINGLE_FLIGHT\n"
+                                "When enabled (default), GPU-heavy tasks (generation/video/upscale/SUPIR) are serialized to avoid global-state races."
+                            ),
+                        ),
+                        FormFieldDescriptor(
+                            field_id="task_cancel_mode",
+                            kind=FieldKind.CHOICE,
+                            label="Task cancel default mode (requires API restart):",
+                            variable=self._var_task_cancel_default_mode,
+                            choices=list(TASK_CANCEL_DEFAULT_MODE_CHOICES),
+                            on_change=lambda: self._sync_task_deps(mark_changed=True),
+                            width=14,
+                            help_text=(
+                                "Env var: CODEX_TASK_CANCEL_DEFAULT_MODE\n"
+                                "immediate: cancels in-flight generation now.\n"
+                                "after_current: finish current image job (1st pass + hires/decode/cleanup) before stopping."
+                            ),
+                        ),
+                        FormFieldDescriptor(
+                            field_id="safeweights_mode",
+                            kind=FieldKind.CHECK,
+                            label="Upscalers safeweights mode (requires API restart):",
+                            variable=self._var_safeweights,
+                            on_change=lambda: self._sync_task_deps(mark_changed=True),
+                            help_text=(
+                                "Env var: CODEX_SAFE_WEIGHTS\n"
+                                "When enabled, upscaler weights must be .safetensors (blocks .pt/.pth at discovery, download, and load-time)."
+                            ),
+                        ),
+                    ],
+                ),
+                FormSectionDescriptor(
+                    title="Tasks / Safety (Advanced)",
+                    advanced=True,
+                    fields=[
+                        FormFieldDescriptor(
+                            field_id="task_buffer_max_events",
+                            kind=FieldKind.ENTRY_COMMIT,
+                            label="Task SSE buffer max events (requires API restart):",
+                            variable=self._var_task_buffer_max_events,
+                            on_change=self._commit_task_buffer_max_events,
+                            width=12,
+                            advanced=True,
+                        ),
+                        FormFieldDescriptor(
+                            field_id="task_buffer_max_mb",
+                            kind=FieldKind.ENTRY_COMMIT,
+                            label="Task SSE buffer max MB (requires API restart):",
+                            variable=self._var_task_buffer_max_mb,
+                            on_change=self._commit_task_buffer_max_mb,
+                            width=12,
+                            advanced=True,
+                        ),
+                    ],
+                    help_texts=[
+                        "These caps bound in-memory task replay buffers (per task) used for reconnect/resume.\n"
+                        "Env vars: CODEX_TASK_EVENT_BUFFER_MAX_EVENTS, CODEX_TASK_EVENT_BUFFER_MAX_MB"
+                    ],
+                ),
+            ],
         )
 
-        row = add_section_header(body, row, "GGUF / LoRA / PyTorch")
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="LoRA apply mode (requires API restart):",
-            var=self._var_lora_apply_mode,
-            choices=["merge", "online"],
-            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
-            width=12,
-        )
-        row = add_help(
-            body,
-            row,
-            "merge: rewrites weights once at apply-time (default).\n"
-            "online: applies LoRA patches on-the-fly during forward.",
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="GGUF exec mode (requires API restart):",
-            var=self._var_gguf_exec,
-            choices=["dequant_forward", "dequant_upfront"],
-            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
-            width=18,
-        )
-        row = add_help(
-            body,
-            row,
-            "dequant_forward: current default (GGUF weights dequantize on-demand during forward).\n"
-            "dequant_upfront: dequantize GGUF weights at load time (uses more RAM/VRAM).\n"
-            "CodexPack packed GGUFs are auto-detected via `*.codexpack.gguf` (no exec-mode toggle).",
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="GGUF dequant cache (requires API restart):",
-            var=self._var_gguf_dequant_cache,
-            choices=["off"],
-            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
-            width=10,
-            out_combo="_gguf_dequant_cache_combo",
-        )
-        row = add_help(
-            body,
-            row,
-            "Removed in this build: GGUF dequant run cache levels (lvl1/lvl2).\n"
-            "Value is locked to 'off'.",
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="WAN img2vid chunk buffer mode (requires API restart):",
-            var=self._var_wan_chunk_buffer_mode,
-            choices=list(WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES),
-            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
-            width=10,
-        )
-        row = add_help(
-            body,
-            row,
-            "Env var: CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE\n"
-            "hybrid: auto-select RAM or RAM+disk by chunk memory estimate.\n"
-            "ram: keep chunk buffers only in RAM.\n"
-            "ram+hd: spool chunk buffers to RAM+disk (bounded RAM).",
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="LoRA online math (requires API restart):",
-            var=self._var_lora_online_math,
-            choices=["weight_merge"],
-            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
-            width=16,
-            out_combo="_lora_math_combo",
-        )
-        row = add_help(
-            body,
-            row,
-            "weight_merge: current online behavior (materializes patched weights per-forward).\n"
-            "activation math is reserved for future packed-kernel LoRA support (not exposed in this build).",
-        )
-
-        row = self._add_entry(
-            body,
-            row,
-            label="PyTorch CUDA alloc conf (requires API restart):",
-            var=self._var_pytorch_alloc_conf,
-            width=56,
-            on_change=self._on_alloc_conf_changed,
-        )
-        row = self._add_check(
-            body,
-            row,
-            label="Apply default PyTorch alloc conf when unset (requires API restart):",
-            var=self._var_default_alloc_conf_enabled,
-            on_change=self._on_default_alloc_conf_toggle_changed,
-        )
-        row = add_help(
-            body,
-            row,
-            "Env var: PYTORCH_ALLOC_CONF\n"
-            f"Default value: {DEFAULT_PYTORCH_ALLOC_CONF}\n"
-            f"Default toggle env: {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY}",
-        )
-        row = self._add_check(
-            body,
-            row,
-            label="Enable cudaMallocAsync backend (requires API restart):",
-            var=self._var_cuda_malloc,
-            on_change=self._on_cuda_malloc_changed,
-        )
-        row = add_help(
-            body,
-            row,
-            f"Env var: {CODEX_CUDA_MALLOC_KEY}\n"
-            "When enabled, launcher forwards backend flag '--cuda-malloc'.",
-        )
-        _ = add_help(
-            body,
-            row,
-            "Runtime settings (dtype/cache/offload) are configured via the Web UI.\n"
-            "This launcher focuses on bootstrap + global runtime knobs that must exist before the API starts.",
-        )
-
-        row = add_section_header(body, row, "Tasks / Safety")
-        row = self._add_check(
-            body,
-            row,
-            label="Single-flight inference (requires API restart):",
-            var=self._var_single_flight,
-            on_change=lambda: self._sync_task_deps(mark_changed=True),
-        )
-        row = add_help(
-            body,
-            row,
-            "Env var: CODEX_SINGLE_FLIGHT\n"
-            "When enabled (default), GPU-heavy tasks (generation/video/upscale/SUPIR) are serialized to avoid global-state races.",
-        )
-        row = self._add_choice_combo(
-            body,
-            row,
-            label="Task cancel default mode (requires API restart):",
-            var=self._var_task_cancel_default_mode,
-            choices=list(TASK_CANCEL_DEFAULT_MODE_CHOICES),
-            on_change=lambda: self._sync_task_deps(mark_changed=True),
-            width=14,
-        )
-        row = add_help(
-            body,
-            row,
-            "Env var: CODEX_TASK_CANCEL_DEFAULT_MODE\n"
-            "immediate: cancels in-flight generation now.\n"
-            "after_current: finish current image job (1st pass + hires/decode/cleanup) before stopping.",
-        )
-        row = self._add_entry_commit_int(
-            body,
-            row,
-            label="Task SSE buffer max events (requires API restart):",
-            var=self._var_task_buffer_max_events,
-            key="CODEX_TASK_EVENT_BUFFER_MAX_EVENTS",
-            default=TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
-            minimum=1,
-        )
-        row = self._add_entry_commit_int(
-            body,
-            row,
-            label="Task SSE buffer max MB (requires API restart):",
-            var=self._var_task_buffer_max_mb,
-            key="CODEX_TASK_EVENT_BUFFER_MAX_MB",
-            default=TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
-            minimum=1,
-        )
-        row = add_help(
-            body,
-            row,
-            "These caps bound in-memory task replay buffers (per task) used for reconnect/resume.\n"
-            "Env vars: CODEX_TASK_EVENT_BUFFER_MAX_EVENTS, CODEX_TASK_EVENT_BUFFER_MAX_MB",
-        )
-        row = self._add_check(
-            body,
-            row,
-            label="Upscalers safeweights mode (requires API restart):",
-            var=self._var_safeweights,
-            on_change=lambda: self._sync_task_deps(mark_changed=True),
-        )
-        _ = add_help(
-            body,
-            row,
-            "Env var: CODEX_SAFE_WEIGHTS\n"
-            "When enabled, upscaler weights must be .safetensors (blocks .pt/.pth at discovery, download, and load-time).",
-        )
+        gguf_combo = self._form_renderer.widget_for("gguf_dequant_cache")
+        lora_combo = self._form_renderer.widget_for("lora_online_math")
+        self._gguf_dequant_cache_combo = gguf_combo if isinstance(gguf_combo, ttk.Combobox) else None
+        self._lora_math_combo = lora_combo if isinstance(lora_combo, ttk.Combobox) else None
+        self._on_show_advanced_changed()
 
         self.frame = frame
         self.reload()
@@ -437,93 +460,51 @@ class RuntimeTab:
         self._var_task_buffer_max_mb.set(str(int(max_mb)))
 
         self._sync_runtime_deps(mark_changed=False)
+        self._on_show_advanced_changed()
 
-    # ------------------------------------------------------------------ widgets
+    def _on_show_advanced_changed(self) -> None:
+        renderer = self._form_renderer
+        if renderer is None:
+            return
+        renderer.set_advanced_visible(bool(self._var_show_advanced.get()))
 
-    def _add_choice_combo(
+    def _commit_int_setting(
         self,
-        parent: ttk.Frame,
-        row: int,
         *,
-        label: str,
-        var: tk.StringVar,
-        choices: List[str],
-        on_change: Callable[[], None],
-        width: int = 18,
-        out_combo: str | None = None,
-    ) -> int:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=16, pady=8)
-        combo = ttk.Combobox(parent, textvariable=var, values=choices, state="readonly", width=width)
-        combo.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
-        combo.bind("<<ComboboxSelected>>", lambda _e: on_change())
-        if out_combo:
-            setattr(self, out_combo, combo)
-            if out_combo == "_lora_math_combo":
-                self._lora_math_combo = combo
-            elif out_combo == "_gguf_dequant_cache_combo":
-                self._gguf_dequant_cache_combo = combo
-        return row + 1
-
-    def _add_check(
-        self,
-        parent: ttk.Frame,
-        row: int,
-        *,
-        label: str,
-        var: tk.BooleanVar,
-        on_change: Callable[[], None],
-    ) -> int:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=16, pady=8)
-        cb = ttk.Checkbutton(parent, variable=var, command=on_change)
-        cb.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
-        return row + 1
-
-    def _add_entry_commit_int(
-        self,
-        parent: ttk.Frame,
-        row: int,
-        *,
-        label: str,
         var: tk.StringVar,
         key: str,
         default: int,
         minimum: int,
-    ) -> int:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=16, pady=8)
-        entry = ttk.Entry(parent, textvariable=var, width=12)
-        entry.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
+        error_title: str,
+    ) -> None:
+        env = self._controller.store.env
+        setting = IntSetting(key, default=default, minimum=minimum)
+        try:
+            value = setting.parse(str(var.get() or ""))
+        except SettingValidationError as exc:
+            messagebox.showerror(error_title, str(exc))
+            value = int(default)
+        setting.set(env, value)
+        var.set(str(value))
+        self._mark_changed()
 
-        def commit() -> None:
-            env = self._controller.store.env
-            setting = IntSetting(key, default=default, minimum=minimum)
-            try:
-                value = setting.parse(str(var.get() or ""))
-            except SettingValidationError as exc:
-                messagebox.showerror("Invalid task setting", str(exc))
-                value = int(default)
-            setting.set(env, value)
-            var.set(str(value))
-            self._mark_changed()
+    def _commit_task_buffer_max_events(self) -> None:
+        self._commit_int_setting(
+            var=self._var_task_buffer_max_events,
+            key="CODEX_TASK_EVENT_BUFFER_MAX_EVENTS",
+            default=TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
+            minimum=1,
+            error_title="Invalid task setting",
+        )
 
-        entry.bind("<FocusOut>", lambda _e: commit())
-        entry.bind("<Return>", lambda _e: commit())
-        return row + 1
-
-    def _add_entry(
-        self,
-        parent: ttk.Frame,
-        row: int,
-        *,
-        label: str,
-        var: tk.StringVar,
-        width: int,
-        on_change: Callable[[], None],
-    ) -> int:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=16, pady=8)
-        entry = ttk.Entry(parent, textvariable=var, width=width)
-        entry.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
-        entry.bind("<KeyRelease>", lambda _e: on_change())
-        return row + 1
+    def _commit_task_buffer_max_mb(self) -> None:
+        self._commit_int_setting(
+            var=self._var_task_buffer_max_mb,
+            key="CODEX_TASK_EVENT_BUFFER_MAX_MB",
+            default=TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
+            minimum=1,
+            error_title="Invalid task setting",
+        )
 
     # ------------------------------------------------------------------ env helpers
 

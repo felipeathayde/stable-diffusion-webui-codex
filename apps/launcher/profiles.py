@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -124,31 +125,34 @@ class _EnvironmentView(MutableMapping[str, str]):
         self._store = store
 
     def __getitem__(self, key: str) -> str:
-        value = self._store.lookup_env(key)
+        with self._store._lock:
+            value = self._store.lookup_env(key)
         if value is None:
             raise KeyError(key)
         return value
 
     def __setitem__(self, key: str, value: str) -> None:
         value = str(value)
-        target_map, target_kind = self._store.resolve_container_for_key(key)
-        target_map[key] = value
+        with self._store._lock:
+            target_map, target_kind = self._store.resolve_container_for_key(key)
+            target_map[key] = value
         LOGGER.debug("Set env %s=%s (container=%s)", key, value, target_kind)
 
     def __delitem__(self, key: str) -> None:
         removed = False
-        for area, mapping in self._store.areas.items():
-            if key in mapping:
-                del mapping[key]
-                removed = True
-                LOGGER.debug("Deleted env %s from area %s", key, area)
-                break
-        if not removed:
-            model_map = self._store.models.get(self._store.meta.active_model, {})
-            if key in model_map:
-                del model_map[key]
-                removed = True
-                LOGGER.debug("Deleted env %s from model %s", key, self._store.meta.active_model)
+        with self._store._lock:
+            for area, mapping in self._store.areas.items():
+                if key in mapping:
+                    del mapping[key]
+                    removed = True
+                    LOGGER.debug("Deleted env %s from area %s", key, area)
+                    break
+            if not removed:
+                model_map = self._store.models.get(self._store.meta.active_model, {})
+                if key in model_map:
+                    del model_map[key]
+                    removed = True
+                    LOGGER.debug("Deleted env %s from model %s", key, self._store.meta.active_model)
         if not removed:
             raise KeyError(key)
 
@@ -172,6 +176,7 @@ class LauncherProfileStore:
     areas: Dict[str, Dict[str, str]] = field(default_factory=dict)
     models: Dict[str, Dict[str, str]] = field(default_factory=dict)
     _env_view: _EnvironmentView | None = field(default=None, init=False, repr=False)
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
 
     @classmethod
     def load(cls, root: Path | None = None) -> "LauncherProfileStore":
@@ -195,59 +200,64 @@ class LauncherProfileStore:
         return self._env_view
 
     def build_env(self) -> Dict[str, str]:
-        env: Dict[str, str] = {}
-        for mapping in self.areas.values():
-            env.update(mapping)
-        active_model = self.meta.active_model
-        model_overlay = self.models.get(active_model, {})
-        for key, value in model_overlay.items():
-            if key.startswith("CODEX_"):
-                # CODEX runtime/bootstrap knobs are area-scoped (core); never let model overlays override them.
-                continue
-            env[key] = value
-        raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "1") or "").strip().lower()
-        default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
-        if default_alloc_enabled and not str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip():
-            env["PYTORCH_ALLOC_CONF"] = DEFAULT_PYTORCH_ALLOC_CONF
-        return env
+        with self._lock:
+            env: Dict[str, str] = {}
+            for mapping in self.areas.values():
+                env.update(mapping)
+            active_model = self.meta.active_model
+            model_overlay = self.models.get(active_model, {})
+            for key, value in model_overlay.items():
+                if key.startswith("CODEX_"):
+                    # CODEX runtime/bootstrap knobs are area-scoped (core); never let model overlays override them.
+                    continue
+                env[key] = value
+            raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "1") or "").strip().lower()
+            default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
+            if default_alloc_enabled and not str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip():
+                env["PYTORCH_ALLOC_CONF"] = DEFAULT_PYTORCH_ALLOC_CONF
+            return env
 
     def lookup_env(self, key: str) -> str | None:
-        for prefix, area in ENV_PREFIX_AREAS.items():
-            if key.startswith(prefix):
-                return self.areas.get(area, {}).get(key)
-        active_model = self.meta.active_model
-        if key in self.models.get(active_model, {}):
-            return self.models[active_model][key]
-        # As a safeguard allow lookups in other stored maps
-        for mapping in self.areas.values():
-            if key in mapping:
-                return mapping[key]
-        for mapping in self.models.values():
-            if key in mapping:
-                return mapping[key]
-        return None
+        with self._lock:
+            for prefix, area in ENV_PREFIX_AREAS.items():
+                if key.startswith(prefix):
+                    return self.areas.get(area, {}).get(key)
+            active_model = self.meta.active_model
+            if key in self.models.get(active_model, {}):
+                return self.models[active_model][key]
+            # As a safeguard allow lookups in other stored maps
+            for mapping in self.areas.values():
+                if key in mapping:
+                    return mapping[key]
+            for mapping in self.models.values():
+                if key in mapping:
+                    return mapping[key]
+            return None
 
     def resolve_container_for_key(self, key: str) -> Tuple[Dict[str, str], str]:
-        for prefix, area in ENV_PREFIX_AREAS.items():
-            if key.startswith(prefix):
-                mapping = self.areas.setdefault(area, {})
-                return mapping, f"area:{area}"
-        model = self.meta.active_model
-        mapping = self.models.setdefault(model, {})
-        return mapping, f"model:{model}"
+        with self._lock:
+            for prefix, area in ENV_PREFIX_AREAS.items():
+                if key.startswith(prefix):
+                    mapping = self.areas.setdefault(area, {})
+                    return mapping, f"area:{area}"
+            model = self.meta.active_model
+            mapping = self.models.setdefault(model, {})
+            return mapping, f"model:{model}"
 
     def save(self) -> None:
         LOGGER.debug("Persisting launcher profile to %s", self.root)
         _ensure_tree(self.root)
-        _write_meta(self.root, self.meta)
-        _write_env_maps(self.root / "areas", self.areas)
-        _write_env_maps(self.root / "models", self.models)
+        with self._lock:
+            _write_meta(self.root, self.meta)
+            _write_env_maps(self.root / "areas", self.areas)
+            _write_env_maps(self.root / "models", self.models)
 
     def save_meta(self) -> None:
         """Persist launcher metadata (meta.json) without touching env maps."""
         LOGGER.debug("Persisting launcher meta to %s", self.root)
         _ensure_tree(self.root)
-        _write_meta(self.root, self.meta)
+        with self._lock:
+            _write_meta(self.root, self.meta)
 
     # ------------------------------------------------------------------ internal
 

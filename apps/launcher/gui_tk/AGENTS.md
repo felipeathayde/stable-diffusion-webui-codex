@@ -12,6 +12,8 @@ Last Review: 2026-02-23
 - `app.py` – Tk root window + tab wiring + background task polling.
 - `controller.py` – Non-UI controller (store/services/log buffer + persistence helpers).
 - `styles.py` – Palette + ttk styling.
+- `form_schema.py` – Declarative form descriptor models (`FormSectionDescriptor`, `FormFieldDescriptor`, `FieldKind`).
+- `form_renderer.py` – Shared descriptor-driven form renderer used by tabs for consistent layout/progressive disclosure.
 - `widgets.py` – Scrollable container + small layout helpers.
 - `tabs/services.py` – API/UI supervision tab.
 - `tabs/runtime.py` – Device defaults + attention mode + GGUF/LoRA + PyTorch alloc conf.
@@ -32,3 +34,9 @@ Last Review: 2026-02-23
 - 2026-02-23: `tabs/runtime.py` now uses a single `CODEX_MAIN_DEVICE` selector and mirrors it to `CODEX_CORE_DEVICE`/`CODEX_TE_DEVICE`/`CODEX_VAE_DEVICE` to enforce main-device invariance from launcher bootstrap.
 - 2026-02-23: `tabs/runtime.py::reload()` no longer mutates mount/offload to main-device as a side effect while loading UI state; it now parses and preserves persisted `CODEX_MOUNT_DEVICE`/`CODEX_OFFLOAD_DEVICE` values.
 - 2026-02-23: `tabs/runtime.py::reload()` now defaults invalid/missing offload values to CPU (not main device) to keep launcher bootstrap aligned with explicit offload de-residency semantics.
+- 2026-02-23: Runtime/Diagnostics now support progressive disclosure (`Show advanced ...` toggles) so high-risk profiling/runtime knobs are hidden by default.
+- 2026-02-23: Runtime tab now renders from declarative descriptors via `form_schema.py` + `form_renderer.py` (reduces manual widget boilerplate and centralizes form behavior).
+- 2026-02-23: Services tab now shows resolved endpoints, background health status, and quick actions (`Open`, API `Docs`) without blocking the Tk event loop.
+- 2026-02-23: Services tab now resolves effective UI port via `.webui-ui-<port>.pid` (port-guard output) so endpoint/open/health follow fallback ports (`+10000/+20000`) when base `WEB_PORT` is busy.
+- 2026-02-23: Services health worker now probes cached URLs from UI-thread snapshots and logs per-service poll failures (fail-loud) instead of rebuilding env in background thread.
+- 2026-02-23: Visual revamp “Control Room”: updated palette/surfaces/buttons/inputs/status styles for stronger hierarchy and reduced legacy Tk look.

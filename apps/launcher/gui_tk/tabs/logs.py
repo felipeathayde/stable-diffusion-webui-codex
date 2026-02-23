@@ -90,9 +90,9 @@ class LogsTab:
         btn_row = ttk.Frame(frame)
         btn_row.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
 
-        ttk.Button(btn_row, text="🗑 Clear", command=self._clear).pack(side="left")
-        ttk.Button(btn_row, text="📋 Copy", command=self._copy).pack(side="left", padx=(8, 0))
-        ttk.Button(btn_row, text="💾 Export", command=self._export).pack(side="left", padx=(8, 0))
+        ttk.Button(btn_row, text="Clear", command=self._clear).pack(side="left")
+        ttk.Button(btn_row, text="Copy", command=self._copy).pack(side="left", padx=(8, 0))
+        ttk.Button(btn_row, text="Export", command=self._export).pack(side="left", padx=(8, 0))
         ttk.Checkbutton(btn_row, text="Auto-scroll", variable=self._var_autoscroll).pack(side="right")
 
         self.frame = frame
@@ -240,4 +240,3 @@ class LogsTab:
         out_path = logs_dir / f"codex-launcher-{stamp}.log"
         out_path.write_text(self._text.get("1.0", "end-1c"), encoding="utf-8")
         self._set_status(f"Exported logs to {out_path}")
-

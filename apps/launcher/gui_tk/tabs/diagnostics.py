@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 import tkinter as tk
 from tkinter import ttk
-from typing import Callable, Dict, Iterable
+from typing import Callable, Dict, Iterable, List, Tuple
 
 from apps.launcher.checks import CodexLaunchCheck
 from apps.launcher.settings import BoolSetting, ChoiceSetting, CFG_BATCH_MODE_CHOICES, IntSetting, SettingValidationError
@@ -54,6 +54,9 @@ class DiagnosticsTab:
         self._var_profile_top_n = tk.StringVar()
         self._var_profile_max_steps = tk.StringVar()
         self._var_log_file = tk.BooleanVar()
+        self._var_show_advanced = tk.BooleanVar(value=False)
+        self._advanced_widgets: List[tk.Widget] = []
+        self._cfg_delta_trace_ids: List[Tuple[tk.Variable, str]] = []
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
@@ -79,8 +82,24 @@ class DiagnosticsTab:
         diag.columnconfigure(0, weight=1)
         diag.columnconfigure(1, weight=1)
 
+        topbar = ttk.Frame(diag, style="Section.Toolbar.TFrame")
+        topbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        topbar.columnconfigure(0, weight=1)
+        ttk.Checkbutton(
+            topbar,
+            text="Show advanced diagnostics/profiling controls",
+            variable=self._var_show_advanced,
+            command=self._on_show_advanced_changed,
+            style="Toggle.TCheckbutton",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            topbar,
+            text="Keep advanced options hidden unless debugging pipeline/runtime behavior.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+
         dbg_col = ttk.Frame(diag)
-        dbg_col.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        dbg_col.grid(row=1, column=0, sticky="nsew", padx=(0, 14))
         ttk.Label(dbg_col, text="Debug Flags", style="TLabelframe.Label").grid(row=0, column=0, sticky="w", pady=(0, 6))
 
         debug_flags = [
@@ -100,13 +119,33 @@ class DiagnosticsTab:
             ("CODEX_PROFILE_PROFILE_MEMORY", "Profiler: profile memory"),
             ("CODEX_PROFILE_WITH_STACK", "Profiler: include stacks (very heavy)"),
         ]
+        advanced_debug_keys = {
+            "CODEX_TRACE_DEBUG",
+            "CODEX_PIPELINE_DEBUG",
+            "CODEX_DUMP_LATENTS",
+            "CODEX_TIMELINE",
+            "CODEX_TRACE_CONTRACT",
+            "CODEX_TRACE_PROFILER",
+            "CODEX_PROFILE",
+            "CODEX_PROFILE_TRACE",
+            "CODEX_PROFILE_RECORD_SHAPES",
+            "CODEX_PROFILE_PROFILE_MEMORY",
+            "CODEX_PROFILE_WITH_STACK",
+        }
         r = 1
         for key, label in debug_flags:
             var = tk.BooleanVar(value=BoolSetting(key, default=False).get(self._controller.store.env))
             self._debug_flags[key] = var
-            ttk.Checkbutton(dbg_col, text=label, variable=var, command=lambda k=key: self._set_bool(k, self._debug_flags[k].get())).grid(
-                row=r, column=0, sticky="w", pady=2
+            checkbox = ttk.Checkbutton(
+                dbg_col,
+                text=label,
+                variable=var,
+                command=lambda k=key: self._set_bool(k, self._debug_flags[k].get()),
+                style="Toggle.TCheckbutton",
             )
+            checkbox.grid(row=r, column=0, sticky="w", pady=2)
+            if key in advanced_debug_keys:
+                self._register_advanced(checkbox)
             r += 1
 
         # Debug numeric/text
@@ -134,6 +173,7 @@ class DiagnosticsTab:
             var=self._var_cfg_batch_mode,
             choices=CFG_BATCH_MODE_CHOICES,
             on_change=lambda: self._set_text("CODEX_CFG_BATCH_MODE", self._var_cfg_batch_mode.get()),
+            advanced=True,
         )
         r = self._add_entry(
             dbg_col,
@@ -142,6 +182,7 @@ class DiagnosticsTab:
             var=self._var_trace_max,
             width=10,
             on_change=lambda: self._set_text("CODEX_TRACE_DEBUG_MAX_PER_FUNC", self._var_trace_max.get()),
+            advanced=True,
         )
         r = self._add_entry(
             dbg_col,
@@ -150,6 +191,7 @@ class DiagnosticsTab:
             var=self._var_dump_path,
             width=36,
             on_change=lambda: self._set_text("CODEX_DUMP_LATENTS_PATH", self._var_dump_path.get()),
+            advanced=True,
         )
         r = self._add_entry(
             dbg_col,
@@ -158,6 +200,7 @@ class DiagnosticsTab:
             var=self._var_profile_top_n,
             width=10,
             on_change=lambda: self._set_text("CODEX_PROFILE_TOP_N", self._var_profile_top_n.get()),
+            advanced=True,
         )
         _ = self._add_entry(
             dbg_col,
@@ -166,10 +209,11 @@ class DiagnosticsTab:
             var=self._var_profile_max_steps,
             width=10,
             on_change=lambda: self._set_text("CODEX_PROFILE_MAX_STEPS", self._var_profile_max_steps.get()),
+            advanced=True,
         )
 
         log_col = ttk.Frame(diag)
-        log_col.grid(row=0, column=1, sticky="nsew")
+        log_col.grid(row=1, column=1, sticky="nsew")
         ttk.Label(log_col, text="Log Levels", style="TLabelframe.Label").grid(row=0, column=0, sticky="w", pady=(0, 6))
 
         log_defaults = {
@@ -187,20 +231,28 @@ class DiagnosticsTab:
         ):
             var = tk.BooleanVar(value=BoolSetting(key, default=bool(default)).get(self._controller.store.env))
             self._log_levels[key] = var
-            ttk.Checkbutton(log_col, text=label, variable=var, command=lambda k=key: self._set_bool(k, self._log_levels[k].get())).grid(
-                row=r, column=0, sticky="w", pady=2
+            checkbox = ttk.Checkbutton(
+                log_col,
+                text=label,
+                variable=var,
+                command=lambda k=key: self._set_bool(k, self._log_levels[k].get()),
+                style="Toggle.TCheckbutton",
             )
+            checkbox.grid(row=r, column=0, sticky="w", pady=2)
             r += 1
 
         self._var_log_file.set(bool(str(self._controller.store.env.get("CODEX_LOG_FILE", "") or "").strip()))
-        ttk.Checkbutton(
+        log_file_toggle = ttk.Checkbutton(
             log_col,
             text="Write to log file (logs/codex-*.log)",
             variable=self._var_log_file,
             command=self._toggle_log_file,
-        ).grid(row=r + 1, column=0, sticky="w", pady=(10, 2))
+            style="Toggle.TCheckbutton",
+        )
+        log_file_toggle.grid(row=r + 1, column=0, sticky="w", pady=(10, 2))
 
         self._install_cfg_delta_guard()
+        self._on_show_advanced_changed()
         self.frame = frame
         return frame
 
@@ -226,6 +278,7 @@ class DiagnosticsTab:
         self._var_log_file.set(bool(str(env.get("CODEX_LOG_FILE", "") or "").strip()))
 
         self._install_cfg_delta_guard()
+        self._on_show_advanced_changed()
 
     def render_checks(self, checks: Iterable[CodexLaunchCheck]) -> None:
         tree = self._checks_tree
@@ -255,11 +308,15 @@ class DiagnosticsTab:
         var: tk.StringVar,
         width: int,
         on_change: Callable[[], None],
+        advanced: bool = False,
     ) -> int:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=8)
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", pady=8)
         entry = ttk.Entry(parent, textvariable=var, width=width)
         entry.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=8)
         entry.bind("<KeyRelease>", lambda _e: on_change())
+        if advanced:
+            self._register_advanced(label_widget, entry)
         return row + 1
 
     def _add_choice(
@@ -271,19 +328,43 @@ class DiagnosticsTab:
         var: tk.StringVar,
         choices: tuple[str, ...],
         on_change: Callable[[], None],
+        advanced: bool = False,
     ) -> int:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=8)
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", pady=8)
         combo = ttk.Combobox(parent, textvariable=var, width=18, state="readonly")
         combo["values"] = list(choices)
         combo.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=8)
         combo.bind("<<ComboboxSelected>>", lambda _e: on_change())
+        if advanced:
+            self._register_advanced(label_widget, combo)
         return row + 1
 
     # ------------------------------------------------------------------ dependency guards
 
+    def _register_advanced(self, *widgets: tk.Widget) -> None:
+        self._advanced_widgets.extend(widgets)
+
+    def _on_show_advanced_changed(self) -> None:
+        visible = bool(self._var_show_advanced.get())
+        for widget in self._advanced_widgets:
+            if visible:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+    def _clear_cfg_delta_guard(self) -> None:
+        for variable, trace_id in self._cfg_delta_trace_ids:
+            try:
+                variable.trace_remove("write", trace_id)
+            except Exception:
+                continue
+        self._cfg_delta_trace_ids.clear()
+
     def _install_cfg_delta_guard(self) -> None:
         if "CODEX_LOG_SAMPLER" not in self._debug_flags or "CODEX_LOG_CFG_DELTA" not in self._debug_flags:
             return
+        self._clear_cfg_delta_guard()
         sampler_var = self._debug_flags["CODEX_LOG_SAMPLER"]
         delta_var = self._debug_flags["CODEX_LOG_CFG_DELTA"]
         guard = {"active": False}
@@ -314,8 +395,10 @@ class DiagnosticsTab:
             finally:
                 guard["active"] = False
 
-        delta_var.trace_add("write", _on_delta_changed)
-        sampler_var.trace_add("write", _on_sampler_changed)
+        delta_trace_id = delta_var.trace_add("write", _on_delta_changed)
+        sampler_trace_id = sampler_var.trace_add("write", _on_sampler_changed)
+        self._cfg_delta_trace_ids.append((delta_var, delta_trace_id))
+        self._cfg_delta_trace_ids.append((sampler_var, sampler_trace_id))
         _on_delta_changed()
 
     def _toggle_log_file(self) -> None:

@@ -30,7 +30,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
-from .diagnostics import get_logger
+from .diagnostics import get_logger, log_cuda_mem
 from .model import load_wan_transformer_from_state_dict, remap_wan22_gguf_state_dict
 from .paths import normalize_win_path
 from .stage_lora import apply_wan22_stage_lora
@@ -97,16 +97,19 @@ def mount_stage_model_from_gguf(
     log = get_logger(logger)
     dequantize = _resolve_stage_mount_dequantize()
     mount_device = _resolve_stage_mount_device()
+    log_cuda_mem(log, label=f"{stage}:before-mount-load")
     state = load_gguf_state_dict(
         gguf_path,
         dequantize=dequantize,
         computation_dtype=dtype,
         device=mount_device,
     )
+    log_cuda_mem(log, label=f"{stage}:after-mount-load")
     state = remap_wan22_gguf_state_dict(state)
     with using_codex_operations(device=mount_device, dtype=dtype, weight_format="gguf"):
         model = load_wan_transformer_from_state_dict(state, config=None)
     del state
+    log_cuda_mem(log, label=f"{stage}:after-mount-materialize")
     model.eval()
     apply_wan22_stage_lora(
         model,

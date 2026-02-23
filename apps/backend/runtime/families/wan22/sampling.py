@@ -637,7 +637,13 @@ def sample_stage_latents_generator(
     shape = (batch, int(geom.in_channels), t_lat, h_lat, w_lat)
 
     if state_init is not None:
-        state = ensure_latent_shape(state_init.to(device=device, dtype=scheduler_state_dtype), geom).clone()
+        state = ensure_latent_shape(state_init, geom)
+        if state.device != device or state.dtype != scheduler_state_dtype:
+            state = state.to(device=device, dtype=scheduler_state_dtype)
+        if not state.is_contiguous():
+            state = state.contiguous()
+        # Drop the caller reference as soon as the sampler state is materialized to avoid dual-live retention.
+        state_init = None
     else:
         if cin != cout:
             raise RuntimeError(

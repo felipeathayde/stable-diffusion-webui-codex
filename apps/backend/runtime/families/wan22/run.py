@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_try_set_cache_policy` (function): Configure GGUF dequant cache policy + limit when supported.
 - `_try_clear_cache` (function): Clear GGUF dequant cache when supported.
 - `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
+- `_stage_transition_barrier` (function): Enforce a deterministic memory barrier between heavyweight stage transitions (release/sync/cache-gc/log) without altering mount policy.
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
 - `_parse_sampler` (function): Parse WAN sampler strings into `(name, solver_hint)` while tolerating non-UniPC multi-token inputs.
@@ -215,6 +216,21 @@ def _teardown_stage(
             _try_clear_cache()
             cuda_empty_cache(logger, label=f"after-{stage}")
     return None, None
+
+
+def _stage_transition_barrier(
+    *,
+    logger: Any,
+    label: str,
+    offload_level: int,
+) -> None:
+    log = get_logger(logger)
+    log_cuda_mem(log, label=f"{label}:pre-barrier")
+    gc.collect()
+    if offload_level >= 2:
+        _try_clear_cache()
+        cuda_empty_cache(log, label=f"{label}-barrier")
+    log_cuda_mem(log, label=f"{label}:post-barrier")
 
 
 def _resolve_offload_level(cfg: RunConfig) -> int:
@@ -983,7 +999,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
 
     lvl = _resolve_offload_level(cfg)
 
-    # Stage loader now keeps GGUF parse/materialization on CPU; memory manager owns final execution placement.
+    # Stage loader materializes according to memory-manager mount-device policy; execution placement remains manager-owned.
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
@@ -1026,6 +1042,9 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             te_device=(cfg.te_device or te_dev_eff),
             logger=log,
         )
+        low_prompt_embeds = low_prompt_embeds.to(device="cpu")
+        low_negative_embeds = low_negative_embeds.to(device="cpu")
+        log_cuda_mem(log, label="txt2vid:after-text-embed-split")
 
         geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
         log.info(
@@ -1101,6 +1120,8 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             flow_multiplier=flow_multiplier,
             stage_name="high",
         )
+        del high_prompt_embeds
+        del high_negative_embeds
     finally:
         hi_mm, hi_model = _teardown_stage(
             stage="high",
@@ -1109,6 +1130,8 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             offload_level=lvl,
             logger=log,
         )
+
+    _stage_transition_barrier(logger=log, label="txt2vid:high->low", offload_level=lvl)
 
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
@@ -1149,6 +1172,8 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             sched_lo,
             (getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
         )
+        low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
+        low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
 
         memory_management.manager.load_model(lo_mm)
         latents_lo = sample_stage_latents(
@@ -1175,6 +1200,10 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             flow_multiplier=flow_multiplier,
             stage_name="low",
         )
+        del seed_latents
+        del low_prompt_embeds
+        del low_negative_embeds
+        del latents_hi
     finally:
         lo_mm, lo_model = _teardown_stage(
             stage="low",
@@ -1251,6 +1280,9 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             te_device=(cfg.te_device or te_dev_eff),
             logger=log,
         )
+        low_prompt_embeds = low_prompt_embeds.to(device="cpu")
+        low_negative_embeds = low_negative_embeds.to(device="cpu")
+        log_cuda_mem(log, label="stream_txt2vid:after-text-embed-split")
 
         t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
         log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
@@ -1309,6 +1341,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             stage_name="high",
             emit_logs=False,
         )
+        del high_prompt_embeds
+        del high_negative_embeds
     finally:
         hi_mm, hi_model = _teardown_stage(
             stage="high",
@@ -1317,6 +1351,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             offload_level=lvl,
             logger=log,
         )
+
+    _stage_transition_barrier(logger=log, label="stream_txt2vid:high->low", offload_level=lvl)
 
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
@@ -1344,6 +1380,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
                 f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
             )
 
+        low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
+        low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
         memory_management.manager.load_model(lo_mm)
         latents_lo = yield from sample_stage_latents_generator(
             model=lo_model,
@@ -1369,6 +1407,10 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             stage_name="low",
             emit_logs=False,
         )
+        del seed_latents
+        del low_prompt_embeds
+        del low_negative_embeds
+        del latents_hi
         latents_lo_decode = _extract_i2v_decode_latents(
             state=latents_lo,
             latent_channels=latent_channels_lo,
@@ -1483,6 +1525,9 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         te_device=(cfg.te_device or te_dev_eff),
         logger=log,
     )
+    low_prompt_embeds = low_prompt_embeds.to(device="cpu")
+    low_negative_embeds = low_negative_embeds.to(device="cpu")
+    log_cuda_mem(log, label="img2vid:after-text-embed-split")
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
@@ -1543,6 +1588,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             dtype=dt,
             logger=log,
         )
+        del latent_condition
 
         memory_management.manager.load_model(hi_mm)
         latents_hi = sample_stage_latents(
@@ -1569,6 +1615,9 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             flow_multiplier=flow_multiplier,
             stage_name="high",
         )
+        del seed_hi
+        del high_prompt_embeds
+        del high_negative_embeds
     finally:
         hi_mm, hi_model = _teardown_stage(
             stage="high",
@@ -1577,6 +1626,8 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             offload_level=lvl,
             logger=log,
         )
+
+    _stage_transition_barrier(logger=log, label="img2vid:high->low", offload_level=lvl)
 
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
@@ -1605,6 +1656,8 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             )
         del latents_hi
 
+        low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
+        low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
         memory_management.manager.load_model(lo_mm)
         latents_lo = sample_stage_latents(
             model=lo_model,
@@ -1631,6 +1684,8 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             stage_name="low",
         )
         del seed_lo
+        del low_prompt_embeds
+        del low_negative_embeds
         latents_lo_decode = _extract_i2v_decode_latents(
             state=latents_lo,
             latent_channels=latent_channels_lo,
@@ -1730,6 +1785,9 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         te_device=(cfg.te_device or te_dev_eff),
         logger=log,
     )
+    low_prompt_embeds = low_prompt_embeds.to(device="cpu")
+    low_negative_embeds = low_negative_embeds.to(device="cpu")
+    log_cuda_mem(log, label="stream_img2vid:after-text-embed-split")
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
@@ -1783,6 +1841,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             dtype=dt,
             logger=log,
         )
+        del latent_condition
 
         memory_management.manager.load_model(hi_mm)
         latents_hi = yield from sample_stage_latents_generator(
@@ -1810,6 +1869,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             emit_logs=False,
         )
         del seed_hi
+        del high_prompt_embeds
+        del high_negative_embeds
     finally:
         hi_mm, hi_model = _teardown_stage(
             stage="high",
@@ -1818,6 +1879,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             offload_level=lvl,
             logger=log,
         )
+
+    _stage_transition_barrier(logger=log, label="stream_img2vid:high->low", offload_level=lvl)
 
     lo_model: torch.nn.Module | None = None
     lo_mm: _MemoryManagedModule | None = None
@@ -1846,6 +1909,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             )
         del latents_hi
 
+        low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
+        low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
         memory_management.manager.load_model(lo_mm)
         latents_lo = yield from sample_stage_latents_generator(
             model=lo_model,
@@ -1872,6 +1937,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             emit_logs=False,
         )
         del seed_lo
+        del low_prompt_embeds
+        del low_negative_embeds
         latents_lo_decode = _extract_i2v_decode_latents(
             state=latents_lo,
             latent_channels=latent_channels_lo,
@@ -2103,6 +2170,11 @@ def stream_img2vid_chunked(
         te_device=(cfg.te_device or te_dev_eff),
         logger=log,
     )
+    high_prompt_embeds = high_prompt_embeds.to(device="cpu")
+    high_negative_embeds = high_negative_embeds.to(device="cpu")
+    low_prompt_embeds = low_prompt_embeds.to(device="cpu")
+    low_negative_embeds = low_negative_embeds.to(device="cpu")
+    log_cuda_mem(log, label="chunked_img2vid:after-text-embed-spill-cpu")
 
     steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
@@ -2274,6 +2346,8 @@ def stream_img2vid_chunked(
             latents_hi: torch.Tensor | None = None
             hi_model: torch.nn.Module | None = None
             hi_mm: _MemoryManagedModule | None = None
+            chunk_high_prompt_embeds: torch.Tensor | None = None
+            chunk_high_negative_embeds: torch.Tensor | None = None
             try:
                 hi_model = mount_stage_model_from_gguf(
                     hi_path,
@@ -2285,6 +2359,8 @@ def stream_img2vid_chunked(
                 )
                 hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
                 geom_hi = infer_patch_geometry(hi_model, t=int(chunk_lat), h_lat=h_lat, w_lat=w_lat)
+                chunk_high_prompt_embeds = high_prompt_embeds.to(device=dev, dtype=dt)
+                chunk_high_negative_embeds = high_negative_embeds.to(device=dev, dtype=dt)
                 memory_management.manager.load_model(hi_mm)
 
                 seed_hi = _build_i2v_seed_state(
@@ -2307,8 +2383,8 @@ def stream_img2vid_chunked(
                     geom=geom_hi,
                     steps=steps_hi,
                     cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-                    prompt_embeds=high_prompt_embeds,
-                    negative_embeds=high_negative_embeds,
+                    prompt_embeds=chunk_high_prompt_embeds,
+                    negative_embeds=chunk_high_negative_embeds,
                     device=dev,
                     dtype=dt,
                     logger=log,
@@ -2330,6 +2406,8 @@ def stream_img2vid_chunked(
                     chunk_total=1,
                 )
                 del seed_hi
+                del chunk_high_prompt_embeds
+                del chunk_high_negative_embeds
             finally:
                 hi_mm, hi_model = _teardown_stage(
                     stage="high",
@@ -2338,9 +2416,16 @@ def stream_img2vid_chunked(
                     offload_level=lvl,
                     logger=log,
                 )
+            _stage_transition_barrier(
+                logger=log,
+                label=f"chunked_img2vid:chunk{int(chunk_index) + 1}:high->low",
+                offload_level=lvl,
+            )
 
             lo_model: torch.nn.Module | None = None
             lo_mm: _MemoryManagedModule | None = None
+            chunk_low_prompt_embeds: torch.Tensor | None = None
+            chunk_low_negative_embeds: torch.Tensor | None = None
             try:
                 lo_model = mount_stage_model_from_gguf(
                     lo_path,
@@ -2366,6 +2451,8 @@ def stream_img2vid_chunked(
 
                 lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
                 geom_lo = infer_patch_geometry(lo_model, t=int(chunk_lat), h_lat=h_lat, w_lat=w_lat)
+                chunk_low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
+                chunk_low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
                 memory_management.manager.load_model(lo_mm)
                 if latents_hi is None:
                     raise RuntimeError(
@@ -2383,8 +2470,8 @@ def stream_img2vid_chunked(
                     geom=geom_lo,
                     steps=steps_lo,
                     cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-                    prompt_embeds=low_prompt_embeds,
-                    negative_embeds=low_negative_embeds,
+                    prompt_embeds=chunk_low_prompt_embeds,
+                    negative_embeds=chunk_low_negative_embeds,
                     device=dev,
                     dtype=dt,
                     logger=log,
@@ -2457,6 +2544,8 @@ def stream_img2vid_chunked(
                 del latents_lo
                 del decode_chunk_latents
                 del decode_chunk_latents_cpu
+                del chunk_low_prompt_embeds
+                del chunk_low_negative_embeds
             finally:
                 lo_mm, lo_model = _teardown_stage(
                     stage="low",

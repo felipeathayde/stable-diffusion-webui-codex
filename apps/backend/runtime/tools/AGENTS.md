@@ -1,6 +1,6 @@
 # apps/backend/runtime/tools Overview
 Date: 2025-12-31
-Last Review: 2026-01-29
+Last Review: 2026-02-23
 Status: Active
 
 ## Purpose
@@ -50,3 +50,4 @@ Status: Active
 - 2026-01-29: Tools API can produce CodexPack v1 outputs either via `POST /api/tools/convert-gguf` (`codexpack_v1=true`; `output_path=*.codexpack.gguf`; base GGUF is temp-only and deleted on success) or by packing an existing base GGUF via `POST /api/tools/codexpack/pack-v1` (Z-Image Base/Turbo; requires `Q4_K` and Comfy Layout metadata).
 - 2026-01-29: CodexPack v1 packer now falls back to `F16` for non tile-aligned `Q4_K` 2D weights (e.g. `out_features=64`), keeping the packed path for tile-aligned weights and preserving the “no raw quant outside `__codexpack__.*`” invariant.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).
+- 2026-02-23: GGUF converter mixed precision controls now support `precision_mode` (`FULL_BF16|FULL_FP16|FULL_FP32|FP16_PLUS_FP32|BF16_PLUS_FP32`): PLUS modes inject profile float-group overrides before required rules (required policy still wins), while FULL modes force all non-quantized tensors to the selected float dtype.

@@ -123,6 +123,7 @@ class QuantizationPolicySpec:
         *,
         quant: QuantizationType,
         user_rules: Sequence[str],
+        extra_rules_before_required: Sequence[CompiledTensorTypeRule] = (),
     ) -> list[CompiledTensorTypeRule]:
         compiled: list[CompiledTensorTypeRule] = []
 
@@ -163,6 +164,14 @@ class QuantizationPolicySpec:
                     reason="user override",
                 )
             )
+
+        for extra in extra_rules_before_required:
+            if not isinstance(extra, CompiledTensorTypeRule):
+                raise TypeError(
+                    "extra_rules_before_required entries must be CompiledTensorTypeRule; "
+                    f"got {type(extra).__name__}"
+                )
+            compiled.append(extra)
 
         for rule in self.required_rules:
             if not rule.when.matches(quant):

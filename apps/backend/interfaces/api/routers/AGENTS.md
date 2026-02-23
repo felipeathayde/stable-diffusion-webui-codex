@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-22
+Last Review: 2026-02-23
 Status: Active
 
 ## Purpose
@@ -107,3 +107,4 @@ Status: Active
 - 2026-02-22: `generation.py` now validates `gguf_te_device` fail-loud in WAN video prepare paths (`txt2vid` + `img2vid`), accepting only `auto|cpu|cuda|cuda:<index>` (with `gpu` normalized to `cuda`).
 - 2026-02-22: `generation.py` gate-release failure handling now logs warning-level diagnostics instead of swallowing exceptions silently in video worker teardown.
 - 2026-02-23: `options.py` now enforces main-device invariant on runtime updates: any device update to `codex_core_device`/`codex_te_device`/`codex_vae_device` is normalized to one shared value, and mixed values are rejected with HTTP 400.
+- 2026-02-23: `tools.py` GGUF conversion API now accepts `precision_mode` (`FULL_BF16|FULL_FP16|FULL_FP32|FP16_PLUS_FP32|BF16_PLUS_FP32`) and rejects ambiguous payloads that combine `precision_mode` with legacy `float_group_overrides`.

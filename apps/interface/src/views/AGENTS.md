@@ -32,6 +32,7 @@ Status: Active
 - 2026-01-14: `ToolsTab.vue` GGUF converter supports Comfy/Codex key mapping for diffusion denoisers (Diffusers→Comfy keys via `comfy_layout`).
 - 2026-01-14: `ToolsTab.vue` now right-aligns the GGUF converter action rows (toggles + Convert/Cancel).
 - 2026-01-16: `ToolsTab.vue` now uses vendored model metadata only and exposes a Mixed toggle with an FP16/FP32 choice (advanced overrides are hidden).
+- 2026-02-23: `ToolsTab.vue` mixed precision control now uses a dedicated `precision_mode` select (`Full BF16`, `Full FP16`, `Full FP32`, `FP16+FP32`, `BF16+FP32`) and sends `precision_mode` to `/api/tools/convert-gguf`.
 - 2026-01-16: `ToolsTab.vue` GGUF converter presets include WAN22 denoisers (selectable via vendored model metadata).
 - 2026-01-29: `ToolsTab.vue` supports CodexPack v1 outputs: the GGUF converter can emit `*.codexpack.gguf` directly (`codexpack_v1=true`; base GGUF is temp-only and deleted on success), and a separate CodexPack packer can pack an existing base GGUF to `*.codexpack.gguf` (Z-Image Base only; Q4_K; Comfy Layout metadata required).
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.

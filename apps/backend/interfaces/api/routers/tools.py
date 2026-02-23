@@ -245,6 +245,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         )
         from apps.backend.runtime.tools.gguf_converter_types import (
             normalize_mixed_float_override,
+            normalize_precision_mode,
         )
 
         job_id = str(uuid.uuid4())[:8]
@@ -262,6 +263,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         overrides_raw = payload.get("tensor_type_overrides", [])
         profile_id_raw = payload.get("profile_id", None)
         float_group_overrides_raw = payload.get("float_group_overrides", {})
+        precision_mode_raw = payload.get("precision_mode", None)
 
         if not config_path or not safetensors_path or not output_path:
             raise HTTPException(status_code=400, detail="Missing required paths")
@@ -318,6 +320,11 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        try:
+            precision_mode = normalize_precision_mode(precision_mode_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         float_group_overrides: dict[str, str] = {}
         if float_group_overrides_raw is None:
             float_group_overrides = {}
@@ -335,6 +342,12 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     ) from exc
         else:
             raise HTTPException(status_code=400, detail="float_group_overrides must be an object/dict when provided")
+
+        if precision_mode is not None and float_group_overrides:
+            raise HTTPException(
+                status_code=400,
+                detail="precision_mode cannot be combined with float_group_overrides.",
+            )
 
         if any(v != "auto" for v in float_group_overrides.values()):
             if profile_id is None:
@@ -399,6 +412,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     comfy_layout=comfy_layout,
                     tensor_type_overrides=tensor_type_overrides,
                     float_group_overrides=float_group_overrides,
+                    precision_mode=precision_mode,
                 )
 
                 def progress_cb(prog):

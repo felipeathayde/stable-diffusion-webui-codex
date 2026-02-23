@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FloatDtypeGroup` (interface): Float dtype override group returned by `/api/tools/gguf-converter/presets`.
 - `GGUFConverterModelComponent` (interface): Convertible component entry (config dir + profile hints).
 - `GGUFConverterModelMetadata` (interface): Vendored model metadata entry returned by `/api/tools/gguf-converter/presets`.
-- `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + overwrite + Comfy Layout).
+- `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + precision mode + overwrite + Comfy Layout).
 - `CodexPackForm` (interface): CodexPack v1 packer form state (base GGUF path + output folder + overwrite).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
@@ -126,23 +126,22 @@ Symbols (top-level; keep in sync; no ghosts):
 		            >
 		              Mixed
 		            </button>
-		            <button
+		            <select
 		              v-if="ggufForm.mixed && mixedSupported"
-		              :class="[
-		                'btn',
-		                'qs-toggle-btn',
-		                ggufForm.mixedFloatDtype === 'auto' ? 'qs-toggle-btn--off' : 'qs-toggle-btn--on',
-		              ]"
-		              type="button"
+		              class="select-md cdx-tools-precision-mode"
+		              v-model="ggufForm.precisionMode"
 		              :disabled="isConverting"
-		              title="Mixed float dtype (cycles AUTO → FP16 → BF16 → FP32)"
-		              @click="cycleMixedFloatDtype"
+		              title="Select mixed precision policy"
 		            >
-		              {{ mixedFloatDtypeLabel }}
-		            </button>
+		              <option value="FULL_BF16">Full BF16</option>
+		              <option value="FULL_FP16">Full FP16</option>
+		              <option value="FULL_FP32">Full FP32</option>
+		              <option value="FP16_PLUS_FP32">FP16+FP32</option>
+		              <option value="BF16_PLUS_FP32">BF16+FP32</option>
+		            </select>
               </div>
 	            <p class="caption">
-	              Mixed enables mixed quant variants when available. Float dtype cycles AUTO/FP16/BF16/FP32.
+	              Mixed enables mixed quant variants when available. Precision mode controls non-quantized tensor dtype policy.
 	            </p>
 	          </div>
 
@@ -375,7 +374,7 @@ interface GGUFForm {
   safetensorsPath: string
   quantization: string
   mixed: boolean
-  mixedFloatDtype: 'auto' | 'F16' | 'BF16' | 'F32'
+  precisionMode: 'FULL_BF16' | 'FULL_FP16' | 'FULL_FP32' | 'FP16_PLUS_FP32' | 'BF16_PLUS_FP32'
   outputDir: string
   overwrite: boolean
   comfyLayout: boolean
@@ -418,7 +417,7 @@ const ggufForm = ref<GGUFForm>({
   safetensorsPath: '',
   quantization: 'Q5_K',
   mixed: true,
-  mixedFloatDtype: 'auto',
+  precisionMode: 'FP16_PLUS_FP32',
   outputDir: '',
   overwrite: false,
   comfyLayout: true,
@@ -460,12 +459,6 @@ const effectiveProfileId = computed(() => {
   return null
 })
 
-const floatGroups = computed(() => {
-  const pid = effectiveProfileId.value
-  if (!pid) return [] as FloatDtypeGroup[]
-  return floatGroupsByProfileId.value[pid] || []
-})
-
 function formatComponentLabel(component: GGUFConverterModelComponent): string {
   const kind = String(component.kind || '')
   const base =
@@ -503,22 +496,6 @@ const mixedSupported = computed(() => {
   const q = String(ggufForm.value.quantization || '').trim()
   return q === 'Q5_K' || q === 'Q4_K'
 })
-
-const mixedFloatDtypeLabel = computed(() => {
-  const v = ggufForm.value.mixedFloatDtype
-  if (v === 'auto') return 'AUTO'
-  if (v === 'F16') return 'FP16'
-  if (v === 'BF16') return 'BF16'
-  if (v === 'F32') return 'FP32'
-  return String(v).toUpperCase()
-})
-
-function cycleMixedFloatDtype() {
-  const order: Array<'auto' | 'F16' | 'BF16' | 'F32'> = ['auto', 'F16', 'BF16', 'F32']
-  const current = ggufForm.value.mixedFloatDtype
-  const idx = order.indexOf(current)
-  ggufForm.value.mixedFloatDtype = order[(idx + 1) % order.length]
-}
 
 const browserTitle = computed(() => {
   if (browserMode.value === 'safetensors') return 'Choose Weights'
@@ -685,14 +662,8 @@ async function startConversion() {
       payload.profile_id = profileId
     }
 
-    if (ggufForm.value.mixed && mixedSupported.value && ggufForm.value.mixedFloatDtype !== 'auto') {
-      const floatGroupOverrides: Record<string, string> = {}
-      for (const group of floatGroups.value) {
-        floatGroupOverrides[group.id] = ggufForm.value.mixedFloatDtype
-      }
-      if (Object.keys(floatGroupOverrides).length > 0) {
-        payload.float_group_overrides = floatGroupOverrides
-      }
+    if (ggufForm.value.mixed && mixedSupported.value) {
+      payload.precision_mode = ggufForm.value.precisionMode
     }
 
     const response = await fetch('/api/tools/convert-gguf', {

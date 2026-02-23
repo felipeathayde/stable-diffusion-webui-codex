@@ -115,15 +115,18 @@ def _run_pipeline(
         if negative_prompt is not None
         else str(getattr(request, "negative_prompt", None) or "").strip()
     )
-    output = pipe(
-        prompt=prompt_text,
-        negative_prompt=negative_prompt_text,
-        num_frames=plan.frames,
-        num_inference_steps=plan.steps,
-        height=plan.height,
-        width=plan.width,
-        guidance_scale=plan.guidance_scale,
-    )
+    import torch
+
+    with torch.inference_mode():
+        output = pipe(
+            prompt=prompt_text,
+            negative_prompt=negative_prompt_text,
+            num_frames=plan.frames,
+            num_inference_steps=plan.steps,
+            height=plan.height,
+            width=plan.width,
+            guidance_scale=plan.guidance_scale,
+        )
     if hasattr(output, "frames"):
         return list(output.frames[0])
     if hasattr(output, "images"):

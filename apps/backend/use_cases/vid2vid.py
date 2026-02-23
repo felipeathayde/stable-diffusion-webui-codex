@@ -235,17 +235,20 @@ def _run_native_pipeline(
         strength = 0.8
     strength_val = max(0.0, min(1.0, float(strength)))
 
-    output = pipe(
-        video=list(frames_in),
-        prompt=request.prompt,
-        negative_prompt=getattr(request, "negative_prompt", None),
-        num_frames=int(getattr(request, "num_frames", len(frames_in)) or len(frames_in)),
-        num_inference_steps=int(getattr(request, "steps", 30) or 30),
-        height=int(getattr(request, "height", 432) or 432),
-        width=int(getattr(request, "width", 768) or 768),
-        guidance_scale=getattr(request, "guidance_scale", None),
-        strength=strength_val,
-    )
+    import torch
+
+    with torch.inference_mode():
+        output = pipe(
+            video=list(frames_in),
+            prompt=request.prompt,
+            negative_prompt=getattr(request, "negative_prompt", None),
+            num_frames=int(getattr(request, "num_frames", len(frames_in)) or len(frames_in)),
+            num_inference_steps=int(getattr(request, "steps", 30) or 30),
+            height=int(getattr(request, "height", 432) or 432),
+            width=int(getattr(request, "width", 768) or 768),
+            guidance_scale=getattr(request, "guidance_scale", None),
+            strength=strength_val,
+        )
     if hasattr(output, "frames"):
         frames = list(output.frames[0])
         if not frames:
@@ -381,25 +384,28 @@ def _run_wan_animate(
         if guidance is None:
             guidance = 1.0
 
-        output = pipe(
-            image=ref,
-            pose_video=pose_frames,
-            face_video=face_frames,
-            background_video=bg_frames,
-            mask_video=mask_frames,
-            prompt=request.prompt,
-            negative_prompt=getattr(request, "negative_prompt", None) or None,
-            height=height,
-            width=width,
-            segment_frame_length=segment_len,
-            num_inference_steps=steps,
-            mode=mode,
-            prev_segment_conditioning_frames=prev_cond,
-            motion_encode_batch_size=(getattr(request, "motion_encode_batch_size", None) or None),
-            guidance_scale=float(guidance),
-            generator=generator,
-            output_type="pil",
-        )
+        import torch
+
+        with torch.inference_mode():
+            output = pipe(
+                image=ref,
+                pose_video=pose_frames,
+                face_video=face_frames,
+                background_video=bg_frames,
+                mask_video=mask_frames,
+                prompt=request.prompt,
+                negative_prompt=getattr(request, "negative_prompt", None) or None,
+                height=height,
+                width=width,
+                segment_frame_length=segment_len,
+                num_inference_steps=steps,
+                mode=mode,
+                prev_segment_conditioning_frames=prev_cond,
+                motion_encode_batch_size=(getattr(request, "motion_encode_batch_size", None) or None),
+                guidance_scale=float(guidance),
+                generator=generator,
+                output_type="pil",
+            )
 
         frames_out: list[Any] = []
         if hasattr(output, "frames"):

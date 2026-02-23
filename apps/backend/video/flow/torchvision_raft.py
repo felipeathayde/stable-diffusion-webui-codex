@@ -166,27 +166,28 @@ def warp_frame(frame: Any, *, backward_flow, device: Optional[str] = None) -> An
 
     flow_device = getattr(flow, "device", None)
     dev = str(device or flow_device or _default_flow_device_name())
-    img = frame.convert("RGB")
-    t = pil_to_tensor(img).float() / 255.0
-    t = t.unsqueeze(0).to(dev)
-    flow = flow.to(dev)
+    with torch.inference_mode():
+        img = frame.convert("RGB")
+        t = pil_to_tensor(img).float() / 255.0
+        t = t.unsqueeze(0).to(dev)
+        flow = flow.to(dev)
 
-    _, _, h, w = t.shape
+        _, _, h, w = t.shape
 
-    # Build base grid in normalized coordinates.
-    ys = torch.linspace(-1.0, 1.0, h, device=dev)
-    xs = torch.linspace(-1.0, 1.0, w, device=dev)
-    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
-    base = torch.stack([grid_x, grid_y], dim=-1).unsqueeze(0)  # [1,H,W,2]
+        # Build base grid in normalized coordinates.
+        ys = torch.linspace(-1.0, 1.0, h, device=dev)
+        xs = torch.linspace(-1.0, 1.0, w, device=dev)
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+        base = torch.stack([grid_x, grid_y], dim=-1).unsqueeze(0)  # [1,H,W,2]
 
-    # Convert pixel flow to normalized offsets (align_corners=True semantics).
-    if w <= 1 or h <= 1:
-        return frame
-    flow_x = flow[:, 0] * (2.0 / float(w - 1))
-    flow_y = flow[:, 1] * (2.0 / float(h - 1))
-    flow_norm = torch.stack([flow_x, flow_y], dim=-1)  # [1,H,W,2]
+        # Convert pixel flow to normalized offsets (align_corners=True semantics).
+        if w <= 1 or h <= 1:
+            return frame
+        flow_x = flow[:, 0] * (2.0 / float(w - 1))
+        flow_y = flow[:, 1] * (2.0 / float(h - 1))
+        flow_norm = torch.stack([flow_x, flow_y], dim=-1)  # [1,H,W,2]
 
-    grid = base + flow_norm
-    warped = F.grid_sample(t, grid, mode="bilinear", padding_mode="border", align_corners=True)
-    warped = warped.clamp(0.0, 1.0).squeeze(0)
-    return to_pil_image(warped)
+        grid = base + flow_norm
+        warped = F.grid_sample(t, grid, mode="bilinear", padding_mode="border", align_corners=True)
+        warped = warped.clamp(0.0, 1.0).squeeze(0)
+        return to_pil_image(warped)

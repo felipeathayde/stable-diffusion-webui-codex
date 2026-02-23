@@ -112,16 +112,19 @@ def _run_stage(
 ) -> list[Any]:
     if pipe is None:
         raise RuntimeError("img2vid requires a Diffusers pipeline (single or per-stage)")
-    output = pipe(
-        image=init_image,
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        num_frames=plan.frames,
-        num_inference_steps=plan.steps,
-        height=plan.height,
-        width=plan.width,
-        guidance_scale=plan.guidance_scale,
-    )
+    import torch
+
+    with torch.inference_mode():
+        output = pipe(
+            image=init_image,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_frames=plan.frames,
+            num_inference_steps=plan.steps,
+            height=plan.height,
+            width=plan.width,
+            guidance_scale=plan.guidance_scale,
+        )
     if hasattr(output, "frames"):
         return list(output.frames[0])
     raise RuntimeError("img2vid pipeline returned no frames")

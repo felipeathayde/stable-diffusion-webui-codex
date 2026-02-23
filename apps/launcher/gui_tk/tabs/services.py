@@ -36,10 +36,8 @@ class _ServiceCard:
     status_var: tk.StringVar
     info_var: tk.StringVar
     endpoint_var: tk.StringVar
-    health_var: tk.StringVar
     status_label: ttk.Label
     endpoint_label: ttk.Label
-    health_label: ttk.Label
     start_btn: ttk.Button
     restart_btn: ttk.Button
     stop_btn: ttk.Button
@@ -97,7 +95,6 @@ class ServicesTab:
             status_var = tk.StringVar(value="STOPPED")
             info_var = tk.StringVar(value="")
             endpoint_var = tk.StringVar(value="-")
-            health_var = tk.StringVar(value="Health: stopped")
 
             ttk.Label(card_frame, text="Status:").grid(row=0, column=0, sticky="w", padx=(0, 10))
             status_lbl = ttk.Label(card_frame, textvariable=status_var, style="Status.Stopped.TLabel")
@@ -106,9 +103,7 @@ class ServicesTab:
 
             ttk.Label(card_frame, text="Endpoint:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(6, 0))
             endpoint_lbl = ttk.Label(card_frame, textvariable=endpoint_var, style="Service.Endpoint.TLabel")
-            endpoint_lbl.grid(row=1, column=1, sticky="w", pady=(6, 0))
-            health_lbl = ttk.Label(card_frame, textvariable=health_var, style="Health.Stopped.TLabel")
-            health_lbl.grid(row=1, column=2, sticky="e", pady=(6, 0))
+            endpoint_lbl.grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
 
             btn_row = ttk.Frame(card_frame)
             btn_row.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
@@ -139,10 +134,8 @@ class ServicesTab:
                 status_var=status_var,
                 info_var=info_var,
                 endpoint_var=endpoint_var,
-                health_var=health_var,
                 status_label=status_lbl,
                 endpoint_label=endpoint_lbl,
-                health_label=health_lbl,
                 start_btn=start_btn,
                 restart_btn=restart_btn,
                 stop_btn=stop_btn,
@@ -195,18 +188,6 @@ class ServicesTab:
             if card.open_docs_btn is not None:
                 self._set_widget_enabled(card.open_docs_btn, enabled=(status == ServiceStatus.RUNNING))
             self._set_widget_enabled(card.open_btn, enabled=(status == ServiceStatus.RUNNING))
-
-            if status == ServiceStatus.RUNNING:
-                health_label = "Health: process running"
-                health_style = "Health.Ok.TLabel"
-            elif status == ServiceStatus.ERROR:
-                health_label = "Health: process error"
-                health_style = "Health.Error.TLabel"
-            else:
-                health_label = "Health: stopped"
-                health_style = "Health.Stopped.TLabel"
-            card.health_var.set(health_label)
-            card.health_label.configure(style=health_style)
 
     def _external_terminal(self) -> bool:
         return bool(self._external_terminal_var.get()) and self._controller.external_terminal_supported

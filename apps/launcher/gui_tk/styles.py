@@ -248,7 +248,3 @@ def apply_style(root: tk.Tk, palette: Palette) -> None:
     style.configure("Status.Running.TLabel", background=palette.bg1, foreground=palette.ok, font=("Segoe UI Semibold", 10))
     style.configure("Status.Stopped.TLabel", background=palette.bg1, foreground=palette.warn, font=("Segoe UI Semibold", 10))
     style.configure("Status.Error.TLabel", background=palette.bg1, foreground=palette.err, font=("Segoe UI Semibold", 10))
-
-    style.configure("Health.Ok.TLabel", background=palette.bg1, foreground=palette.ok, font=("Segoe UI", 9))
-    style.configure("Health.Stopped.TLabel", background=palette.bg1, foreground=palette.fg_muted, font=("Segoe UI", 9))
-    style.configure("Health.Error.TLabel", background=palette.bg1, foreground=palette.err, font=("Segoe UI", 9))

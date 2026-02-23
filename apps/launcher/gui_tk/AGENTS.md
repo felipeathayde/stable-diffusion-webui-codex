@@ -36,7 +36,7 @@ Last Review: 2026-02-23
 - 2026-02-23: `tabs/runtime.py::reload()` now defaults invalid/missing offload values to CPU (not main device) to keep launcher bootstrap aligned with explicit offload de-residency semantics.
 - 2026-02-23: Runtime/Diagnostics now support progressive disclosure (`Show advanced ...` toggles) so high-risk profiling/runtime knobs are hidden by default.
 - 2026-02-23: Runtime tab now renders from declarative descriptors via `form_schema.py` + `form_renderer.py` (reduces manual widget boilerplate and centralizes form behavior).
-- 2026-02-23: Services tab now shows resolved endpoints and quick actions (`Open`, API `Docs`) while keeping health display process-state based (no backend HTTP polling).
+- 2026-02-23: Services tab now shows resolved endpoints and quick actions (`Open`, API `Docs`) with no health polling/status row in the UI.
 - 2026-02-23: Services tab now resolves effective UI port via `.webui-ui-<port>.pid` (port-guard output) so endpoint/open follow fallback ports (`+10000/+20000`) when base `WEB_PORT` is busy.
 - 2026-02-23: Visual revamp “Control Room”: updated palette/surfaces/buttons/inputs/status styles for stronger hierarchy and reduced legacy Tk look.
 - 2026-02-23: Runtime settings are now split into dedicated top-level tabs (`Bootstrap`, `Engine`, `Safety`) for clearer navigation and less nested chrome.

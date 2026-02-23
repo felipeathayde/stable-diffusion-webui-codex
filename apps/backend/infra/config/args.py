@@ -14,7 +14,7 @@ Also parses strict LoRA loader policy toggles (`--lora-merge-mode`, `--lora-refr
 Main-device invariant support enforces a single runtime device authority: `--main-device` (launcher-provided) governs
 core/TE/VAE and falls back to CUDA when available (else CPU) when omitted.
 Mount/offload device invariants add explicit lifecycle control (`--mount-device`, `--offload-device`) with fail-loud
-normalization and default resolution against the main device.
+normalization; mount defaults to the resolved main device, offload defaults to CPU when unset/auto.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_parser` (function): Defines the argparse schema for backend runtime flags (devices/dtypes/attention/swap/etc).
@@ -28,7 +28,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_cuda_available_for_main_device` (function): Detects CUDA availability for main-device fallback resolution.
 - `_default_main_device_choice` (function): Resolves default main-device fallback (`cuda` when available, else `cpu`).
 - `_resolve_main_device_choice` (function): Resolves authoritative main device from args/env/legacy component settings.
-- `_resolve_aux_device_choice` (function): Resolves mount/offload device choices from args/env with fallback to main device.
+- `_resolve_aux_device_choice` (function): Resolves mount/offload device choices from args/env with explicit fallback policy.
+- `_default_offload_device_choice` (function): Resolves default offload target when offload is unset/auto (CPU by default).
+- `_validate_mount_offload_device_choices` (function): Enforces fail-loud mount/offload de-residency invariants (no CPU->accelerator unload target, no non-CPU offload==mount).
 - `_normalize_dtype_choice` (function): Normalizes dtype choice strings (fp32/fp16/bf16/fp8) into canonical form.
 - `_torch_dtype_for_choice` (function): Maps a dtype choice string to a torch dtype name (string form used across config objects).
 - `_apply_component_device_overrides` (function): Applies per-component device overrides (core/vae/text encoders) to `RuntimeMemoryConfig`.
@@ -332,7 +334,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=_DEVICE_CHOICES,
         default=None,
         help=(
-            "Model offload target authority. Defaults to resolved main device when unset/auto. "
+            "Model offload target authority. Defaults to CPU when unset/auto. "
             "Use with swap policy controls for explicit residency behavior."
         ),
     )
@@ -582,6 +584,10 @@ def _default_main_device_choice() -> str:
     return "cuda" if _cuda_available_for_main_device() else "cpu"
 
 
+def _default_offload_device_choice(_main_device_choice: str) -> str:
+    return "cpu"
+
+
 def _resolve_main_device_choice(ns: argparse.Namespace, env: Mapping[str, str]) -> str:
     explicit_main = _normalize_device_choice(getattr(ns, "codex_main_device", None))
     if explicit_main is None:
@@ -626,6 +632,43 @@ def _resolve_aux_device_choice(
     if explicit in (None, "auto"):
         return fallback_choice
     return explicit
+
+
+def _validate_mount_offload_device_choices(
+    *,
+    main_device_choice: str | None,
+    mount_device_choice: str | None,
+    offload_device_choice: str | None,
+) -> None:
+    main_device = _normalize_device_choice(main_device_choice)
+    mount_device = _normalize_device_choice(mount_device_choice)
+    offload_device = _normalize_device_choice(offload_device_choice)
+
+    if main_device is None:
+        raise RuntimeError("Offload-device invariant violated: missing resolved codex_main_device.")
+    if mount_device is None:
+        raise RuntimeError("Offload-device invariant violated: missing resolved codex_mount_device.")
+    if offload_device is None:
+        raise RuntimeError("Offload-device invariant violated: missing resolved codex_offload_device.")
+
+    if main_device == "cpu" and offload_device != "cpu":
+        raise RuntimeError(
+            "Offload-device invariant violated: main_device=cpu requires offload_device=cpu. "
+            f"Got offload_device={offload_device!r}."
+        )
+
+    if mount_device == "cpu" and offload_device != "cpu":
+        raise RuntimeError(
+            "Offload-device invariant violated: mount_device=cpu requires offload_device=cpu. "
+            f"Got offload_device={offload_device!r}."
+        )
+
+    if mount_device != "cpu" and offload_device == mount_device:
+        raise RuntimeError(
+            "Offload-device invariant violated: offload_device matches mount_device for non-CPU unload "
+            f"(mount={mount_device!r}, offload={offload_device!r}). "
+            "Contract R requires real de-residency."
+        )
 
 
 def _normalize_dtype_choice(value: str | None, *, allow_fp8: bool = False) -> str | None:
@@ -684,6 +727,12 @@ def _validate_required_devices(ns: argparse.Namespace) -> None:
         value = _normalize_device_choice(getattr(ns, attr, None))
         if value is None:
             raise RuntimeError(f"Device invariant violated: missing {attr}.")
+
+    _validate_mount_offload_device_choices(
+        main_device_choice=main_device,
+        mount_device_choice=getattr(ns, "codex_mount_device", None),
+        offload_device_choice=getattr(ns, "codex_offload_device", None),
+    )
 
 
 def _torch_dtype_for_choice(choice: str | None) -> str | None:
@@ -826,7 +875,12 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         env,
         namespace_attr="codex_offload_device",
         env_key="CODEX_OFFLOAD_DEVICE",
-        fallback_choice=resolved_main_device,
+        fallback_choice=_default_offload_device_choice(resolved_main_device),
+    )
+    _validate_mount_offload_device_choices(
+        main_device_choice=resolved_main_device,
+        mount_device_choice=ns.codex_mount_device,
+        offload_device_choice=ns.codex_offload_device,
     )
     ns.codex_core_device = resolved_main_device
     ns.codex_te_device = resolved_main_device
@@ -1059,7 +1113,9 @@ def build_runtime_memory_config(ns: argparse.Namespace) -> RuntimeMemoryConfig:
 
     resolved_offload_backend = _device_backend_for_choice(getattr(ns, "codex_offload_device", None))
     if resolved_offload_backend in (None, DeviceBackend.AUTO):
-        resolved_offload_backend = config.device_backend
+        raise RuntimeError(
+            "Offload-device invariant violated: codex_offload_device resolved to an invalid backend."
+        )
     config.offload_device_backend = resolved_offload_backend
 
     if DeviceBackend.DIRECTML in {

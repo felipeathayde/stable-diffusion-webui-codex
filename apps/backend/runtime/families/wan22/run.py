@@ -12,13 +12,16 @@ Orchestrates text context, per-stage sampling, and VAE encode/decode (including 
 Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
 - `_WAN_CHUNK_HYBRID_RAM_BUDGET_MB` (constant): Default RAM budget threshold (MB) used by `chunk_buffer_mode='hybrid'` when resolving low/decode tensor storage (`ram` vs `ram+hd`).
-- `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager.
+- `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager (explicit unload honors manager-provided target device).
 - `_try_set_cache_policy` (function): Configure GGUF dequant cache policy + limit when supported.
 - `_try_clear_cache` (function): Clear GGUF dequant cache when supported.
 - `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
 - `_parse_sampler` (function): Parse WAN sampler strings into `(name, solver_hint)` while tolerating non-UniPC multi-token inputs.
+- `_ResolvedSharedSchedulerSpec` (dataclass): Frozen shared scheduler spec (validated/normalized flow_shift + sampler/scheduler + total_steps) reused across scheduler instantiations.
+- `_resolve_shared_scheduler_spec` (function): Validate/normalize high+low scheduler inputs into a frozen shared scheduler spec with fail-loud continuity checks.
+- `_build_shared_scheduler_from_spec` (function): Instantiate a scheduler from a previously resolved shared scheduler spec.
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity with fail-loud sampler/scheduler lane mismatch checks.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
 - `_infer_stage_variant` (function): Infer WAN model variant (`5b`/`14b`) from a stage GGUF filename.
@@ -45,6 +48,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import gc
 import os
 import re
@@ -55,7 +59,7 @@ from typing import Any, Optional
 import torch
 
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled, smart_offload_enabled
+from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 
 from .config import (
     RunConfig,
@@ -122,9 +126,6 @@ class _MemoryManagedModule:
 
     def codex_unpatch_model(self, target_device: torch.device | None = None):  # noqa: ANN001 - protocol
         if target_device is None:
-            return self.model
-        if target_device.type == "cpu" and not smart_fallback_enabled():
-            # No smart-fallback means OOM should fail loud; teardown must not try GPU->CPU migration.
             return self.model
         try:
             self.model.to(target_device, non_blocking=True)
@@ -263,8 +264,15 @@ def _parse_sampler(value: object | None) -> tuple[str | None, str | None]:
     return parts[0], None
 
 
-def _build_shared_scheduler(
-    cfg: RunConfig,
+@dataclass(frozen=True, slots=True)
+class _ResolvedSharedSchedulerSpec:
+    total_steps: int
+    flow_shift: float
+    sampler: str | None
+    scheduler: str | None
+
+
+def _resolve_shared_scheduler_spec(
     *,
     steps_hi: int,
     steps_lo: int,
@@ -274,7 +282,7 @@ def _build_shared_scheduler(
     scheduler_lo: object | None,
     flow_shift_hi: float,
     flow_shift_lo: float,
-):
+) -> _ResolvedSharedSchedulerSpec:
     if float(flow_shift_hi) != float(flow_shift_lo):
         raise RuntimeError(
             "WAN22 GGUF: high/low flow_shift mismatch. "
@@ -364,15 +372,48 @@ def _build_shared_scheduler(
             "WAN22 GGUF: high/low scheduler mismatch for shared scheduler continuity "
             f"(high={scheduler_hi!r}, low={scheduler_lo!r})."
         )
-    scheduler_eff = hi_scheduler_raw or lo_scheduler_raw
 
-    return make_scheduler(
-        total_steps,
-        metadata_dir=str(cfg.metadata_dir or ""),
+    return _ResolvedSharedSchedulerSpec(
+        total_steps=int(total_steps),
         flow_shift=float(flow_shift_hi),
         sampler=sampler_eff,
-        scheduler=scheduler_eff,
-    ), total_steps
+        scheduler=(hi_scheduler_raw or lo_scheduler_raw),
+    )
+
+
+def _build_shared_scheduler_from_spec(cfg: RunConfig, *, spec: _ResolvedSharedSchedulerSpec):
+    return make_scheduler(
+        int(spec.total_steps),
+        metadata_dir=str(cfg.metadata_dir or ""),
+        flow_shift=float(spec.flow_shift),
+        sampler=spec.sampler,
+        scheduler=spec.scheduler,
+    ), int(spec.total_steps)
+
+
+def _build_shared_scheduler(
+    cfg: RunConfig,
+    *,
+    steps_hi: int,
+    steps_lo: int,
+    sampler_hi: object | None,
+    sampler_lo: object | None,
+    scheduler_hi: object | None,
+    scheduler_lo: object | None,
+    flow_shift_hi: float,
+    flow_shift_lo: float,
+):
+    spec = _resolve_shared_scheduler_spec(
+        steps_hi=steps_hi,
+        steps_lo=steps_lo,
+        sampler_hi=sampler_hi,
+        sampler_lo=sampler_lo,
+        scheduler_hi=scheduler_hi,
+        scheduler_lo=scheduler_lo,
+        flow_shift_hi=flow_shift_hi,
+        flow_shift_lo=flow_shift_lo,
+    )
+    return _build_shared_scheduler_from_spec(cfg, spec=spec)
 
 
 def _resolve_frame_counts(num_frames: int, *, logger: Any) -> tuple[int, int]:
@@ -2075,8 +2116,7 @@ def stream_img2vid_chunked(
     flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
     flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
-    scheduler_preview, total_steps = _build_shared_scheduler(
-        cfg,
+    shared_scheduler_spec = _resolve_shared_scheduler_spec(
         steps_hi=steps_hi,
         steps_lo=steps_lo,
         sampler_hi=sampler_hi,
@@ -2086,7 +2126,7 @@ def stream_img2vid_chunked(
         flow_shift_hi=flow_shift_hi_value,
         flow_shift_lo=flow_shift_lo_value,
     )
-    del scheduler_preview
+    total_steps = int(shared_scheduler_spec.total_steps)
     log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
 
     def _resolve_hybrid_mode(*, estimated_total_mb: float) -> str:
@@ -2224,22 +2264,7 @@ def stream_img2vid_chunked(
                     chunk_condition = chunk_condition_buffer
 
             chunk_seed = _resolve_chunk_seed(getattr(cfg, "seed", None), chunk_index=chunk_index, mode=chunk_seed_mode)
-            chunk_scheduler, chunk_total_steps = _build_shared_scheduler(
-                cfg,
-                steps_hi=steps_hi,
-                steps_lo=steps_lo,
-                sampler_hi=sampler_hi,
-                sampler_lo=sampler_lo,
-                scheduler_hi=sched_hi,
-                scheduler_lo=sched_lo,
-                flow_shift_hi=flow_shift_hi_value,
-                flow_shift_lo=flow_shift_lo_value,
-            )
-            if int(chunk_total_steps) != int(total_steps):
-                raise RuntimeError(
-                    "WAN22 GGUF chunked img2vid: scheduler total step mismatch across chunks "
-                    f"(expected={int(total_steps)} got={int(chunk_total_steps)} chunk={int(chunk_index) + 1})."
-                )
+            chunk_scheduler, _ = _build_shared_scheduler_from_spec(cfg, spec=shared_scheduler_spec)
 
             chunk_pct_span = float(chunk_sampling_span_pct) / float(len(chunk_starts))
             chunk_pct_start = 5.0 + (chunk_pct_span * float(chunk_index))

@@ -10,10 +10,10 @@ Purpose: Launcher profile persistence (meta + env areas + per-model env overlays
 Implements the profile store used by the TUI/GUI launchers to load/save settings under `.sangoi/launcher/` (meta/areas/models) and to
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 Defines defaults for performance-related env keys (GGUF exec/cache knobs, CFG batching, profiling flags) and task/runtime safety knobs (single-flight,
-task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap device policy keys (`CODEX_MAIN_DEVICE`, `CODEX_MOUNT_DEVICE`, `CODEX_OFFLOAD_DEVICE`), so runs are reproducible.
+task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap device policy keys (`CODEX_MAIN_DEVICE`, `CODEX_MOUNT_DEVICE`, `CODEX_OFFLOAD_DEVICE`) with CPU offload default, so runs are reproducible.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
+- `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs; default offload target is CPU).
 - `_BOOTSTRAP_DEVICE_KEYS` (constant): Runtime-global launcher device keys that must stay scoped to `areas/core` (never model/non-core overlays).
 - `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_ALLOC_CONF` applied by launchers when unset.
 - `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_ALLOC_CONF` is unset.
@@ -85,7 +85,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_PROFILE_MAX_STEPS": os.getenv("CODEX_PROFILE_MAX_STEPS", "0"),
         "CODEX_MAIN_DEVICE": "auto",
         "CODEX_MOUNT_DEVICE": "auto",
-        "CODEX_OFFLOAD_DEVICE": "auto",
+        "CODEX_OFFLOAD_DEVICE": "cpu",
         "CODEX_CORE_DEVICE": "auto",
         "CODEX_TE_DEVICE": "auto",
         "CODEX_VAE_DEVICE": "auto",
@@ -262,7 +262,7 @@ class LauncherProfileStore:
                 if not str(container.get("CODEX_MOUNT_DEVICE", "") or "").strip().lower():
                     container["CODEX_MOUNT_DEVICE"] = raw_main
                 if not str(container.get("CODEX_OFFLOAD_DEVICE", "") or "").strip().lower():
-                    container["CODEX_OFFLOAD_DEVICE"] = raw_main
+                    container["CODEX_OFFLOAD_DEVICE"] = "cpu"
 
         defaults = _default_area_env()
         for area, values in defaults.items():

@@ -1,7 +1,7 @@
 # apps.launcher.gui_tk
 Date: 2026-01-25
 Status: Active
-Last Review: 2026-02-22
+Last Review: 2026-02-23
 
 ## Purpose
 - Modular Tk/ttk GUI implementation for the Codex launcher (services + settings + logs).
@@ -31,3 +31,4 @@ Last Review: 2026-02-22
 - 2026-02-22: `tabs/runtime.py` no longer offers GGUF dequant cache levels (`lvl1`/`lvl2`) or ratio tuning UI; the setting is locked to `off` and stale dequant cache env tuning keys are cleared during runtime sync.
 - 2026-02-23: `tabs/runtime.py` now uses a single `CODEX_MAIN_DEVICE` selector and mirrors it to `CODEX_CORE_DEVICE`/`CODEX_TE_DEVICE`/`CODEX_VAE_DEVICE` to enforce main-device invariance from launcher bootstrap.
 - 2026-02-23: `tabs/runtime.py::reload()` no longer mutates mount/offload to main-device as a side effect while loading UI state; it now parses and preserves persisted `CODEX_MOUNT_DEVICE`/`CODEX_OFFLOAD_DEVICE` values.
+- 2026-02-23: `tabs/runtime.py::reload()` now defaults invalid/missing offload values to CPU (not main device) to keep launcher bootstrap aligned with explicit offload de-residency semantics.

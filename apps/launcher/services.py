@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Launcher service specs and process supervision (API + UI).
 Defines service specs/handles, spawns subprocesses with environment overrides, streams logs into a shared buffer, and performs strict port
 availability checks (IPv4/IPv6) before starting the API.
-Maps launcher env toggles to backend CLI flags, including main/mount/offload bootstrap device flags and trace/profiler diagnostics toggles.
+Maps launcher env toggles to backend CLI flags, including main/mount/offload bootstrap device flags, with offload defaulting to CPU when unset, plus trace/profiler diagnostics toggles.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ServiceStatus` (enum): Launcher service lifecycle status.
@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
 - `_env_truthy` (function): Normalizes launcher env booleans (`1/true/yes/on`) for CLI flag forwarding.
-- `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles).
+- `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles; offload defaults to CPU when unset).
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
 - `_windows_no_activate` (function): Windows startupinfo helper to open consoles without stealing focus.
@@ -433,7 +433,7 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
             args.append(f"--vae-device={raw_vae_device}")
 
     _append_device_arg(env_key="CODEX_MOUNT_DEVICE", flag="mount-device", fallback=raw_main_device)
-    _append_device_arg(env_key="CODEX_OFFLOAD_DEVICE", flag="offload-device", fallback=raw_main_device)
+    _append_device_arg(env_key="CODEX_OFFLOAD_DEVICE", flag="offload-device", fallback="cpu")
 
     raw_attention_backend = str(env.get("CODEX_ATTENTION_BACKEND", "") or "").strip().lower()
     if raw_attention_backend:

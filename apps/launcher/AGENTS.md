@@ -1,7 +1,7 @@
 # apps.launcher
 Date: 2025-10-28
 Status: Active
-Last Review: 2026-02-22
+Last Review: 2026-02-23
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -44,3 +44,4 @@ Last Review: 2026-02-22
 - 2026-02-23: Launcher now defines a global device authority via `CODEX_MAIN_DEVICE`; `services.py` forwards `--main-device` and mirrors core/TE/VAE flags to the same value to enforce single-device runtime invariant.
 - 2026-02-23: `profiles.py` now treats `CODEX_*` runtime/device keys as area-scoped only (`core`): model overlays and non-core areas can no longer override `CODEX_MAIN_DEVICE`/`CODEX_MOUNT_DEVICE`/`CODEX_OFFLOAD_DEVICE` (prevents stale model JSON from defeating saved runtime-tab device settings).
 - 2026-02-23: `run-webui.{bat,sh}` now migrates legacy `PYTORCH_CUDA_ALLOC_CONF` to `PYTORCH_ALLOC_CONF` silently (no deprecation warning spam during launcher startup).
+- 2026-02-23: launcher offload default is now explicit CPU: `services.py` forwards `--offload-device=cpu` when unset, and `profiles.py` defaults `CODEX_OFFLOAD_DEVICE=cpu` to avoid implicit same-device offload no-op states under Contract-R unload semantics.

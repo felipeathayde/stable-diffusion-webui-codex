@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-22
+Last Review: 2026-02-23
 Status: Active
 
 ## Purpose
@@ -120,6 +120,7 @@ Status: Active
 - 2026-02-23: WAN22 runtime device defaults were further scrubbed: `stage_lora.py` now resolves LoRA refresh offload device from `manager.offload_device()`, `text_context.py` no longer applies implicit CPU fallback when device is already resolved and now offloads TE to memory-manager offload device, `vae_io.py` initialization paths now use resolved runtime device identity directly (no local `'cuda' if ... else 'cpu'` fallback), and `sampler.py` default device wiring now uses memory-manager mount device.
 - 2026-02-23: `config.py::resolve_device_name(...)` now resolves `auto` from memory-manager mount-device authority (and validates explicit CUDA requests against memory-manager hardware probe), removing local CUDA-availability hardcoded defaults from WAN22 device resolution.
 - 2026-02-23: WAN22 use-case/runtime handoff removed local `"auto"`/`"cuda"` fallback literals (`build_wan22_gguf_run_config(device=...)`, `run.py` device resolution callsites); unresolved device now flows as `None` until `resolve_device_name(...)` maps it through memory-manager mount authority.
+- 2026-02-23: `_MemoryManagedModule.codex_unpatch_model(...)` now always honors manager-provided unload targets (including CPU) so explicit unload contracts remain fail-loud and do not silently no-op when smart fallback is disabled.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

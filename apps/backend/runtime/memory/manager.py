@@ -12,7 +12,7 @@ Resolves explicit main/mount/offload device backends from runtime config and kee
 Exposes per-role storage vs compute dtype selection (core/TE default to fp16 on accelerator devices, VAE defaults to fp32, CPU remains fp32 unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
 Also emits canonical smart-offload INFO audit events for model load/unload transitions and unload no-op requests when smart offload is active.
 Smart-offload action payloads include best-effort memory windows (`memory_before_*`/`memory_after_*`) to provide global per-action residency telemetry.
-`unload_model(...)` performs explicit CPU-target unload for both patcher-backed and plain module loaders, avoiding bookkeeping-only unloads and swap-policy-dependent stale GPU residency.
+`unload_model(...)` now treats manager-level `offload_device` as authoritative and fail-loud: explicit unload must route to the configured offload target (no legacy CPU-force override path).
 Generic smart-offload action emission (`load`/`unload`/`unload_noop`) is centralized here, with optional caller context fields (`source`/`stage`/`component_hint`/`event_reason`).
 Per-item load telemetry (signed deltas + post-load counters) is captured best-effort per load target device and exposed in `memory_snapshot()['models']`.
 
@@ -1078,7 +1078,6 @@ class CodexMemoryManager:
         self._unload_record(
             record,
             avoid_model_moving=False,
-            force_cpu_target=True,
             reason="unload_model",
             event_source=source,
             event_stage=stage,
@@ -1237,6 +1236,16 @@ class CodexMemoryManager:
     def _signed_bytes_to_mib(value: int) -> float:
         return round(float(int(value)) / (1024.0 * 1024.0), 2)
 
+    @staticmethod
+    def _first_module_device(module: torch.nn.Module) -> torch.device | None:
+        first_parameter = next(module.parameters(), None)
+        if first_parameter is not None:
+            return first_parameter.device
+        first_buffer = next(module.buffers(), None)
+        if first_buffer is not None:
+            return first_buffer.device
+        return None
+
     def _read_device_memory_counters_bytes(self, device: torch.device) -> Dict[str, int] | None:
         try:
             if device.type == DeviceBackend.CUDA.value:
@@ -1391,8 +1400,14 @@ class CodexMemoryManager:
         return None, module
 
     def _create_record(self, model: object) -> _LoadedModelRecord:
-        load_device = getattr(model, "load_device", self._mount_device)
-        offload_device = getattr(model, "offload_device", self.get_offload_device(DeviceRole.CORE))
+        raw_load_device = getattr(model, "load_device", self._mount_device)
+        try:
+            load_device = torch.device(raw_load_device)
+        except Exception as exc:
+            raise MemoryLoadError(
+                f"Invalid load_device for {type(model).__name__}: {raw_load_device!r}"
+            ) from exc
+        offload_device = self._offload_device
         storage_dtype_getter = getattr(model, "model_dtype", None)
         storage_dtype = storage_dtype_getter() if callable(storage_dtype_getter) else torch.float32
         loader, base_module = self._resolve_loader(model)
@@ -1581,7 +1596,6 @@ class CodexMemoryManager:
         record: _LoadedModelRecord,
         *,
         avoid_model_moving: bool = False,
-        force_cpu_target: bool = False,
         reason: str = "unknown",
         event_source: str | None = None,
         event_stage: str | None = None,
@@ -1589,23 +1603,54 @@ class CodexMemoryManager:
         event_reason: str | None = None,
     ) -> None:
         loader = record.loader or record.model
+        module = record.base_module or self._extract_module(loader)
+        if module is not None:
+            record.base_module = module
         target_device: torch.device | None = None
+        pre_unload_device = self._first_module_device(module) if module is not None else None
         action_memory_before: Dict[str, object] = {}
         if smart_offload_enabled():
             action_memory_before = self._smart_offload_memory_fields(prefix="memory_before")
         try:
+            if not avoid_model_moving:
+                target_device = self._offload_device
+                if (
+                    record.load_device.type == DeviceBackend.CPU.value
+                    and target_device.type != DeviceBackend.CPU.value
+                ):
+                    raise MemoryLoadError(
+                        f"Refusing unload for {self._record_label(record)}: "
+                        f"load_device={record.load_device} with offload_device={target_device} "
+                        "(unload must not move CPU-resident models onto an accelerator)."
+                    )
+                if (
+                    record.load_device.type != DeviceBackend.CPU.value
+                    and target_device == record.load_device
+                ):
+                    raise MemoryLoadError(
+                        f"Refusing unload for {self._record_label(record)}: "
+                        f"offload_device={target_device} matches load_device={record.load_device} "
+                        "(Contract R requires real de-residency)."
+                    )
+                record.offload_device = target_device
             if hasattr(loader, "codex_unpatch_model"):
-                if avoid_model_moving:
-                    target_device = None
-                elif force_cpu_target:
-                    target_device = self._cpu_device
-                else:
-                    target_device = record.offload_device
                 loader.codex_unpatch_model(target_device)
             elif hasattr(loader, "to") and not avoid_model_moving:
-                target_device = self._cpu_device
                 loader.to(target_device)
             record.model_accelerated = False
+            if (
+                not avoid_model_moving
+                and module is not None
+                and pre_unload_device is not None
+                and pre_unload_device.type != DeviceBackend.CPU.value
+                and target_device is not None
+            ):
+                post_unload_device = self._first_module_device(module) or pre_unload_device
+                if post_unload_device == pre_unload_device:
+                    raise MemoryLoadError(
+                        f"Unload failed to move {self._record_label(record)} off {pre_unload_device} "
+                        f"(target_device={target_device})."
+                    )
             logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
             if smart_offload_enabled():
                 action_memory_after = self._smart_offload_memory_fields(prefix="memory_after")
@@ -1619,14 +1664,13 @@ class CodexMemoryManager:
                     offload_device=str(record.offload_device),
                     target_device=str(target_device) if target_device is not None else "unknown",
                     avoid_model_moving=avoid_model_moving,
-                    force_cpu_target=force_cpu_target,
                     **action_memory_before,
                     **action_memory_after,
                 )
         except Exception as exc:
             raise MemoryLoadError(
                 f"Failed to unload model {self._record_label(record)} "
-                f"(avoid_model_moving={avoid_model_moving}, force_cpu_target={force_cpu_target}): {exc}"
+                f"(avoid_model_moving={avoid_model_moving}, target_device={target_device}): {exc}"
             ) from exc
 
     def _cleanup_for_loaded_models(self, records: Sequence[_LoadedModelRecord], memory_budget: int) -> None:

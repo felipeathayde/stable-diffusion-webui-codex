@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Runtime settings tab for the Tk launcher.
 Edits bootstrap-critical main-device defaults and global runtime/task knobs that must exist before the API starts (main/mount/offload devices, GGUF/LoRA, task single-flight,
-task cancel default mode, task SSE buffer caps, upscaler safeweights).
+task cancel default mode, task SSE buffer caps, upscaler safeweights). Offload device defaults to CPU on missing/invalid values to preserve explicit de-residency semantics.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + GGUF/LoRA + `PYTORCH_ALLOC_CONF`/cuda-malloc toggles).
@@ -149,7 +149,7 @@ class RuntimeTab:
             row,
             "Main device is passed as backend CLI flag (`--main-device`) and mirrored to core/TE/VAE.\n"
             "Mount/offload devices are passed as `--mount-device` and `--offload-device`.\n"
-            "When unset, mount/offload default to the resolved main device.\n"
+            "When unset, mount defaults to main and offload defaults to CPU.\n"
             "Per-component divergence is not allowed by contract.\n"
             "Attention mode is passed via `--attention-backend` + optional `--attention-sdpa-policy`.\n"
             "They exist so the API can start in non-interactive spawns without prompting or silent fallbacks.",
@@ -370,36 +370,20 @@ class RuntimeTab:
         except SettingValidationError as exc:
             main_device = "auto"
             messagebox.showerror("Invalid runtime setting", str(exc))
-        env["CODEX_MAIN_DEVICE"] = main_device
-        env["CODEX_CORE_DEVICE"] = main_device
-        env["CODEX_TE_DEVICE"] = main_device
-        env["CODEX_VAE_DEVICE"] = main_device
-        self._var_main_device.set(main_device)
+        self._set_main_device_env(main_device, mark_changed=False)
 
         raw_mount = _get("CODEX_MOUNT_DEVICE", main_device)
-        raw_offload = _get("CODEX_OFFLOAD_DEVICE", main_device)
+        raw_offload = _get("CODEX_OFFLOAD_DEVICE", "cpu")
         try:
-            mount_device = ChoiceSetting(
-                "CODEX_MOUNT_DEVICE",
-                default=main_device,
-                choices=DEVICE_CHOICES,
-            ).parse(raw_mount)
+            self._set_mount_device_env(raw_mount, mark_changed=False)
         except SettingValidationError as exc:
-            mount_device = main_device
             messagebox.showerror("Invalid runtime setting", str(exc))
+            self._set_mount_device_env(self._var_main_device.get(), mark_changed=False)
         try:
-            offload_device = ChoiceSetting(
-                "CODEX_OFFLOAD_DEVICE",
-                default=main_device,
-                choices=DEVICE_CHOICES,
-            ).parse(raw_offload)
+            self._set_offload_device_env(raw_offload, mark_changed=False)
         except SettingValidationError as exc:
-            offload_device = main_device
             messagebox.showerror("Invalid runtime setting", str(exc))
-        env["CODEX_MOUNT_DEVICE"] = mount_device
-        env["CODEX_OFFLOAD_DEVICE"] = offload_device
-        self._var_mount_device.set(mount_device)
-        self._var_offload_device.set(offload_device)
+            self._set_offload_device_env("cpu", mark_changed=False)
         try:
             attn_backend, attn_sdpa_policy = normalize_attention_env(env)
         except SettingValidationError as exc:
@@ -555,10 +539,13 @@ class RuntimeTab:
         env["CODEX_TE_DEVICE"] = normalized
         env["CODEX_VAE_DEVICE"] = normalized
         env["CODEX_MOUNT_DEVICE"] = normalized
-        env["CODEX_OFFLOAD_DEVICE"] = normalized
         self._var_main_device.set(normalized)
         self._var_mount_device.set(normalized)
-        self._var_offload_device.set(normalized)
+        current_offload = str(env.get("CODEX_OFFLOAD_DEVICE", "cpu") or "").strip().lower() or "cpu"
+        try:
+            self._set_offload_device_env(current_offload, mark_changed=False)
+        except SettingValidationError:
+            self._set_offload_device_env("cpu", mark_changed=False)
         if mark_changed:
             self._mark_changed()
 
@@ -573,18 +560,45 @@ class RuntimeTab:
         ).parse(normalized)
         env["CODEX_MOUNT_DEVICE"] = normalized
         self._var_mount_device.set(normalized)
+        current_offload = str(env.get("CODEX_OFFLOAD_DEVICE", "cpu") or "").strip().lower() or "cpu"
+        try:
+            self._set_offload_device_env(current_offload, mark_changed=False)
+        except SettingValidationError:
+            self._set_offload_device_env("cpu", mark_changed=False)
         if mark_changed:
             self._mark_changed()
 
     def _set_offload_device_env(self, value: str, *, mark_changed: bool) -> None:
         env = self._controller.store.env
-        default_device = str(self._var_main_device.get() or "auto").strip().lower() or "auto"
+        default_device = "cpu"
         normalized = str(value or "").strip().lower() or default_device
         normalized = ChoiceSetting(
             "CODEX_OFFLOAD_DEVICE",
             default=default_device,
             choices=DEVICE_CHOICES,
         ).parse(normalized)
+        resolved_main = ChoiceSetting(
+            "CODEX_MAIN_DEVICE",
+            default="auto",
+            choices=DEVICE_CHOICES,
+        ).parse(str(self._var_main_device.get() or "auto").strip().lower() or "auto")
+        resolved_mount = ChoiceSetting(
+            "CODEX_MOUNT_DEVICE",
+            default=resolved_main,
+            choices=DEVICE_CHOICES,
+        ).parse(str(self._var_mount_device.get() or resolved_main).strip().lower() or resolved_main)
+        if resolved_main == "cpu" and normalized != "cpu":
+            raise SettingValidationError(
+                "Offload device must be CPU when main device is CPU (no CPU->accelerator unload target)."
+            )
+        if resolved_mount == "cpu" and normalized != "cpu":
+            raise SettingValidationError(
+                "Offload device must be CPU when mount device is CPU (no CPU->accelerator unload target)."
+            )
+        if resolved_mount not in {"cpu", "auto"} and normalized == resolved_mount:
+            raise SettingValidationError(
+                "Offload device cannot match mount device for non-CPU unload; use CPU for de-residency."
+            )
         env["CODEX_OFFLOAD_DEVICE"] = normalized
         self._var_offload_device.set(normalized)
         if mark_changed:
@@ -609,7 +623,7 @@ class RuntimeTab:
             self._set_offload_device_env(self._var_offload_device.get(), mark_changed=True)
         except SettingValidationError as exc:
             messagebox.showerror("Invalid runtime setting", str(exc))
-            self._set_offload_device_env(self._var_main_device.get(), mark_changed=True)
+            self._set_offload_device_env("cpu", mark_changed=True)
 
     def _on_attention_mode_changed(self) -> None:
         env = self._controller.store.env

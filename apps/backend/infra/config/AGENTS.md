@@ -1,6 +1,6 @@
 # apps/backend/infra/config Overview
 Date: 2026-02-18
-Last Review: 2026-02-22
+Last Review: 2026-02-23
 Status: Active
 
 ## Purpose
@@ -22,4 +22,5 @@ Status: Active
 - 2026-02-20: `paths.py` now enforces fail-loud config semantics: invalid `apps/paths.json` parse/type errors raise, repo-relative entries are containment-checked against `CODEX_ROOT` (parent/symlink escapes rejected), and `_ensure_model_dirs` no longer swallows directory-provisioning failures.
 - 2026-02-22: GGUF dequant-forward run cache flags were retired: `--gguf-dequant-cache=lvl1|lvl2` now fails loud with removal guidance, and tuning flags (`--gguf-dequant-cache-limit-mb`, `--gguf-dequant-cache-ratio`) are rejected as unsupported.
 - 2026-02-23: `args.py` now supports `--main-device` and enforces a global main-device invariant (core/TE/VAE locked to one value), with fallback to `cuda` when available (else `cpu`) when not explicitly provided.
+- 2026-02-23: `args.py` now defaults offload authority to CPU when `--offload-device`/`CODEX_OFFLOAD_DEVICE` is unset or `auto`; invalid unresolved offload backend states now fail loud in `build_runtime_memory_config(...)` instead of silently mirroring main-device backend.
 - Keep this folder focused on config/bootstrap contracts; runtime execution logic belongs outside `infra/config`.

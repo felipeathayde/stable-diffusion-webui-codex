@@ -125,6 +125,7 @@ Status: Active
 - 2026-02-23: `scheduler.py` hot-path step methods now reuse cached sigma ladders per `(device,dtype)` (FlowMatch + UniPC) instead of repeated scalar `.to(device,dtype)` materialization each step; UniPC corrector order-1 also removed a transient `[0.5]` tensor allocation in favor of scalar multiply, preserving solver math/parity behavior.
 - 2026-02-23: `model.py` now emits WAN block-level trace-debug diagnostics (`CODEX_TRACE_DEBUG=1`) around the `for block in self.blocks` loop: per-block dispatch/completion logs include block parameter dtype, token/context/timestep dtypes, and CUDA memory snapshots; block internals now also log op-level compute contracts (`WanFP32LayerNorm`/`WanRMSNorm` compute in fp32, FFN path dtypes) for stale-step investigation.
 - 2026-02-24: `sampling.py::sample_stage_latents_generator(...)` now treats `cfg_scale==1.0` (within epsilon) as non-CFG/single-pass conditional execution, avoiding redundant cond+uncond forwards that were mathematically no-op at CFG=1 and could stall VRAM-limited lightx2v runs.
+- 2026-02-24: `model.py` trace-debug (`CODEX_TRACE_DEBUG=1`) now includes explicit tensor/module `device` fields across WAN block logs (model pre/post, block dispatch/done, self-attn/cross-attn qkv, and block residual checkpoints) to diagnose CUDA→CPU escapes during stale slow-step runs.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

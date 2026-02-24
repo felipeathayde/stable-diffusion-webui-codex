@@ -57,6 +57,12 @@ def _module_parameter_dtype(module: nn.Module) -> str:
     return "<no-params>"
 
 
+def _module_parameter_device(module: nn.Module) -> str:
+    for param in module.parameters(recurse=True):
+        return str(param.device)
+    return "<no-params>"
+
+
 def _cuda_mem_snapshot_str(device: torch.device) -> str:
     if device.type != "cuda" or not torch.cuda.is_available():
         return "cuda_mem=n/a"
@@ -318,13 +324,18 @@ class WanSelfAttention(nn.Module):
 
         if trace_enabled:
             logger.debug(
-                "[wan22.trace] block[%s] self_attn qkv: x_dtype=%s q_dtype=%s k_dtype=%s v_dtype=%s "
+                "[wan22.trace] block[%s] self_attn qkv: x_dtype=%s x_device=%s q_dtype=%s q_device=%s k_dtype=%s k_device=%s "
+                "v_dtype=%s v_device=%s "
                 "norm_q=WanRMSNorm(compute=float32) norm_k=WanRMSNorm(compute=float32)",
                 block_tag,
                 str(x.dtype),
+                str(x.device),
                 str(q.dtype),
+                str(q.device),
                 str(k.dtype),
+                str(k.device),
                 str(v.dtype),
+                str(v.device),
             )
 
         # Reshape to heads (keep token-major layout for RoPE parity with Diffusers)
@@ -393,14 +404,20 @@ class WanCrossAttention(nn.Module):
 
         if trace_enabled:
             logger.debug(
-                "[wan22.trace] block[%s] cross_attn qkv: x_dtype=%s ctx_dtype=%s q_dtype=%s k_dtype=%s v_dtype=%s "
+                "[wan22.trace] block[%s] cross_attn qkv: x_dtype=%s x_device=%s ctx_dtype=%s ctx_device=%s "
+                "q_dtype=%s q_device=%s k_dtype=%s k_device=%s v_dtype=%s v_device=%s "
                 "norm_q=WanRMSNorm(compute=float32) norm_k=WanRMSNorm(compute=float32)",
                 block_tag,
                 str(x.dtype),
+                str(x.device),
                 str(context.dtype),
+                str(context.device),
                 str(q.dtype),
+                str(q.device),
                 str(k.dtype),
+                str(k.device),
                 str(v.dtype),
+                str(v.device),
             )
 
         # Reshape to heads
@@ -511,13 +528,18 @@ class WanTransformerBlock(nn.Module):
 
         if trace_enabled:
             logger.debug(
-                "[wan22.trace] block[%s] pre: x_dtype=%s ctx_dtype=%s time_emb_dtype=%s "
+                "[wan22.trace] block[%s] pre: x_dtype=%s x_device=%s ctx_dtype=%s ctx_device=%s "
+                "time_emb_dtype=%s time_emb_device=%s mod_device=%s "
                 "norm1/2/3=WanFP32LayerNorm(compute=float32) qk_norm=WanRMSNorm(compute=float32) "
                 "ffn=Linear->GELU(tanh)->Linear %s",
                 block_tag,
                 str(x.dtype),
+                str(x.device),
                 str(context.dtype),
+                str(context.device),
                 str(time_emb.dtype),
+                str(time_emb.device),
+                str(mod.device),
                 _cuda_mem_snapshot_str(x.device),
             )
 
@@ -533,12 +555,16 @@ class WanTransformerBlock(nn.Module):
         x = (x_float + sa_out.float() * sa_gate[:, None, :]).to(dtype=x.dtype)
         if trace_enabled:
             logger.debug(
-                "[wan22.trace] block[%s] self_attn: x_sa_dtype=%s sa_out_dtype=%s gate_dtype=%s residual_dtype=%s %s",
+                "[wan22.trace] block[%s] self_attn: x_sa_dtype=%s x_sa_device=%s sa_out_dtype=%s sa_out_device=%s "
+                "gate_dtype=%s residual_dtype=%s residual_device=%s %s",
                 block_tag,
                 str(x_sa.dtype),
+                str(x_sa.device),
                 str(sa_out.dtype),
+                str(sa_out.device),
                 str(sa_gate.dtype),
                 str(x.dtype),
+                str(x.device),
                 _cuda_mem_snapshot_str(x.device),
             )
 
@@ -553,11 +579,15 @@ class WanTransformerBlock(nn.Module):
         x = x + ca_out
         if trace_enabled:
             logger.debug(
-                "[wan22.trace] block[%s] cross_attn: x_ca_dtype=%s ca_out_dtype=%s residual_dtype=%s %s",
+                "[wan22.trace] block[%s] cross_attn: x_ca_dtype=%s x_ca_device=%s ca_out_dtype=%s ca_out_device=%s "
+                "residual_dtype=%s residual_device=%s %s",
                 block_tag,
                 str(x_ca.dtype),
+                str(x_ca.device),
                 str(ca_out.dtype),
+                str(ca_out.device),
                 str(x.dtype),
+                str(x.device),
                 _cuda_mem_snapshot_str(x.device),
             )
 
@@ -568,12 +598,16 @@ class WanTransformerBlock(nn.Module):
         x = (x_float + ffn_out.float() * ffn_gate[:, None, :]).to(dtype=x.dtype)
         if trace_enabled:
             logger.debug(
-                "[wan22.trace] block[%s] ffn: x_ffn_dtype=%s ffn_out_dtype=%s gate_dtype=%s residual_dtype=%s %s",
+                "[wan22.trace] block[%s] ffn: x_ffn_dtype=%s x_ffn_device=%s ffn_out_dtype=%s ffn_out_device=%s "
+                "gate_dtype=%s residual_dtype=%s residual_device=%s %s",
                 block_tag,
                 str(x_ffn.dtype),
+                str(x_ffn.device),
                 str(ffn_out.dtype),
+                str(ffn_out.device),
                 str(ffn_gate.dtype),
                 str(x.dtype),
+                str(x.device),
                 _cuda_mem_snapshot_str(x.device),
             )
 
@@ -733,18 +767,25 @@ class WanTransformer2DModel(nn.Module):
 
         if trace_debug:
             logger.debug(
-                "[wan22.trace] model pre-blocks: x_shape=%s x_dtype=%s tokens_shape=%s tokens_dtype=%s "
-                "ctx_shape=%s ctx_dtype=%s t_proj_shape=%s t_proj_dtype=%s rotary=(cos=%s sin=%s) %s",
+                "[wan22.trace] model pre-blocks: x_shape=%s x_dtype=%s x_device=%s tokens_shape=%s tokens_dtype=%s tokens_device=%s "
+                "ctx_shape=%s ctx_dtype=%s ctx_device=%s t_proj_shape=%s t_proj_dtype=%s t_proj_device=%s "
+                "rotary=(cos=%s@%s sin=%s@%s) %s",
                 tuple(x.shape),
                 str(x.dtype),
+                str(x.device),
                 tuple(tokens.shape),
                 str(tokens.dtype),
+                str(tokens.device),
                 tuple(ctx.shape),
                 str(ctx.dtype),
+                str(ctx.device),
                 tuple(t_proj.shape),
                 str(t_proj.dtype),
+                str(t_proj.device),
                 str(rotary_emb[0].dtype),
+                str(rotary_emb[0].device),
                 str(rotary_emb[1].dtype),
+                str(rotary_emb[1].device),
                 _cuda_mem_snapshot_str(device),
             )
 
@@ -752,13 +793,18 @@ class WanTransformer2DModel(nn.Module):
         for block_idx, block in enumerate(self.blocks):
             if trace_debug:
                 logger.debug(
-                    "[wan22.trace] block[%d/%d] dispatch: block_dtype=%s tokens_dtype=%s ctx_dtype=%s t_proj_dtype=%s %s",
+                    "[wan22.trace] block[%d/%d] dispatch: block_dtype=%s block_device=%s tokens_dtype=%s tokens_device=%s "
+                    "ctx_dtype=%s ctx_device=%s t_proj_dtype=%s t_proj_device=%s %s",
                     int(block_idx + 1),
                     int(self.n_blocks),
                     _module_parameter_dtype(block),
+                    _module_parameter_device(block),
                     str(tokens.dtype),
+                    str(tokens.device),
                     str(ctx.dtype),
+                    str(ctx.device),
                     str(t_proj.dtype),
+                    str(t_proj.device),
                     _cuda_mem_snapshot_str(device),
                 )
             tokens = block(
@@ -771,11 +817,12 @@ class WanTransformer2DModel(nn.Module):
             )
             if trace_debug:
                 logger.debug(
-                    "[wan22.trace] block[%d/%d] done: tokens_shape=%s tokens_dtype=%s %s",
+                    "[wan22.trace] block[%d/%d] done: tokens_shape=%s tokens_dtype=%s tokens_device=%s %s",
                     int(block_idx + 1),
                     int(self.n_blocks),
                     tuple(tokens.shape),
                     str(tokens.dtype),
+                    str(tokens.device),
                     _cuda_mem_snapshot_str(device),
                 )
 
@@ -788,10 +835,14 @@ class WanTransformer2DModel(nn.Module):
 
         if trace_debug:
             logger.debug(
-                "[wan22.trace] model post-blocks: tokens_dtype=%s fused_dtype=%s patches_dtype=%s %s",
+                "[wan22.trace] model post-blocks: tokens_dtype=%s tokens_device=%s fused_dtype=%s fused_device=%s "
+                "patches_dtype=%s patches_device=%s %s",
                 str(tokens_dtype),
+                str(tokens.device),
                 str(fused.dtype),
+                str(fused.device),
                 str(patches.dtype),
+                str(patches.device),
                 _cuda_mem_snapshot_str(device),
             )
 

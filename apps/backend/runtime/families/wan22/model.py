@@ -36,6 +36,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.misc.autocast import autocast_disabled
 from apps.backend.runtime.ops.operations import get_operation_context
 from apps.backend.runtime.ops.operations_gguf import CodexParameter, dequantize_tensor as gguf_dequantize_tensor
@@ -44,6 +45,35 @@ from .inference import infer_wan22_latent_channels, infer_wan22_patch_embedding,
 from .sdpa import sdpa as wan_sdpa
 
 logger = logging.getLogger("backend.runtime.wan22.model")
+
+
+def _wan_trace_verbose_enabled() -> bool:
+    return env_flag("CODEX_TRACE_DEBUG", default=False)
+
+
+def _module_parameter_dtype(module: nn.Module) -> str:
+    for param in module.parameters(recurse=True):
+        return str(param.dtype)
+    return "<no-params>"
+
+
+def _cuda_mem_snapshot_str(device: torch.device) -> str:
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return "cuda_mem=n/a"
+    try:
+        alloc_mb = float(torch.cuda.memory_allocated(device)) / (1024**2)
+        reserved_mb = float(torch.cuda.memory_reserved(device)) / (1024**2)
+        max_alloc_mb = float(torch.cuda.max_memory_allocated(device)) / (1024**2)
+        max_reserved_mb = float(torch.cuda.max_memory_reserved(device)) / (1024**2)
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+        free_mb = float(free_bytes) / (1024**2)
+        total_mb = float(total_bytes) / (1024**2)
+        return (
+            f"alloc={alloc_mb:.0f}MB reserved={reserved_mb:.0f}MB free={free_mb:.0f}MB total={total_mb:.0f}MB "
+            f"max_alloc={max_alloc_mb:.0f}MB max_reserved={max_reserved_mb:.0f}MB"
+        )
+    except Exception:
+        return "cuda_mem=unavailable"
 
 
 # Configuration
@@ -269,13 +299,33 @@ class WanSelfAttention(nn.Module):
         out[..., 1::2] = out1.to(dtype=original_dtype)
         return out
 
-    def forward(self, x: torch.Tensor, *, rotary_emb: Optional[tuple[torch.Tensor, torch.Tensor]] = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        rotary_emb: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        trace_debug: bool = False,
+        trace_block_idx: int | None = None,
+    ) -> torch.Tensor:
         B, L, C = x.shape
+        trace_enabled = bool(trace_debug and logger.isEnabledFor(logging.DEBUG))
+        block_tag = "?" if trace_block_idx is None else str(int(trace_block_idx) + 1)
 
         # QKV projections
         q = self.norm_q(self.q(x))
         k = self.norm_k(self.k(x))
         v = self.v(x)
+
+        if trace_enabled:
+            logger.debug(
+                "[wan22.trace] block[%s] self_attn qkv: x_dtype=%s q_dtype=%s k_dtype=%s v_dtype=%s "
+                "norm_q=WanRMSNorm(compute=float32) norm_k=WanRMSNorm(compute=float32)",
+                block_tag,
+                str(x.dtype),
+                str(q.dtype),
+                str(k.dtype),
+                str(v.dtype),
+            )
 
         # Reshape to heads (keep token-major layout for RoPE parity with Diffusers)
         q = q.view(B, L, self.num_heads, self.head_dim)
@@ -327,14 +377,31 @@ class WanCrossAttention(nn.Module):
         self,
         x: torch.Tensor,
         context: torch.Tensor,
+        *,
+        trace_debug: bool = False,
+        trace_block_idx: int | None = None,
     ) -> torch.Tensor:
         B, L, C = x.shape
         _, S, _ = context.shape
+        trace_enabled = bool(trace_debug and logger.isEnabledFor(logging.DEBUG))
+        block_tag = "?" if trace_block_idx is None else str(int(trace_block_idx) + 1)
 
         # QKV projections
         q = self.norm_q(self.q(x))
         k = self.norm_k(self.k(context))
         v = self.v(context)
+
+        if trace_enabled:
+            logger.debug(
+                "[wan22.trace] block[%s] cross_attn qkv: x_dtype=%s ctx_dtype=%s q_dtype=%s k_dtype=%s v_dtype=%s "
+                "norm_q=WanRMSNorm(compute=float32) norm_k=WanRMSNorm(compute=float32)",
+                block_tag,
+                str(x.dtype),
+                str(context.dtype),
+                str(q.dtype),
+                str(k.dtype),
+                str(v.dtype),
+            )
 
         # Reshape to heads
         q = q.view(B, L, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
@@ -430,29 +497,85 @@ class WanTransformerBlock(nn.Module):
         context: torch.Tensor,
         time_emb: torch.Tensor,  # [B, 6, dim]
         rotary_emb: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        *,
+        trace_block_idx: int | None = None,
+        trace_debug: bool = False,
     ) -> torch.Tensor:
+        trace_enabled = bool(trace_debug and logger.isEnabledFor(logging.DEBUG))
+        block_tag = "?" if trace_block_idx is None else str(int(trace_block_idx) + 1)
         # Combine time embedding with per-block modulation in float32 for stability (Diffusers parity).
         mod = time_emb.float() + self.modulation.float()  # [B, 6, dim]
 
         sa_shift, sa_scale, sa_gate = mod[:, 0], mod[:, 1], mod[:, 2]
         ffn_shift, ffn_scale, ffn_gate = mod[:, 3], mod[:, 4], mod[:, 5]
 
+        if trace_enabled:
+            logger.debug(
+                "[wan22.trace] block[%s] pre: x_dtype=%s ctx_dtype=%s time_emb_dtype=%s "
+                "norm1/2/3=WanFP32LayerNorm(compute=float32) qk_norm=WanRMSNorm(compute=float32) "
+                "ffn=Linear->GELU(tanh)->Linear %s",
+                block_tag,
+                str(x.dtype),
+                str(context.dtype),
+                str(time_emb.dtype),
+                _cuda_mem_snapshot_str(x.device),
+            )
+
         # Self-attention: pre-norm (no affine) + time modulation + gated residual.
         x_float = x.float()
         x_sa = (self.norm1(x_float) * (1.0 + sa_scale[:, None, :]) + sa_shift[:, None, :]).to(dtype=x.dtype)
-        sa_out = self.self_attn(x_sa, rotary_emb=rotary_emb)
+        sa_out = self.self_attn(
+            x_sa,
+            rotary_emb=rotary_emb,
+            trace_debug=trace_enabled,
+            trace_block_idx=trace_block_idx,
+        )
         x = (x_float + sa_out.float() * sa_gate[:, None, :]).to(dtype=x.dtype)
+        if trace_enabled:
+            logger.debug(
+                "[wan22.trace] block[%s] self_attn: x_sa_dtype=%s sa_out_dtype=%s gate_dtype=%s residual_dtype=%s %s",
+                block_tag,
+                str(x_sa.dtype),
+                str(sa_out.dtype),
+                str(sa_gate.dtype),
+                str(x.dtype),
+                _cuda_mem_snapshot_str(x.device),
+            )
 
         # Cross-attention: pre-norm3 (affine) + residual (no time modulation).
         x_ca = self.norm3(x.float()).to(dtype=x.dtype)
-        ca_out = self.cross_attn(x_ca, context)
+        ca_out = self.cross_attn(
+            x_ca,
+            context,
+            trace_debug=trace_enabled,
+            trace_block_idx=trace_block_idx,
+        )
         x = x + ca_out
+        if trace_enabled:
+            logger.debug(
+                "[wan22.trace] block[%s] cross_attn: x_ca_dtype=%s ca_out_dtype=%s residual_dtype=%s %s",
+                block_tag,
+                str(x_ca.dtype),
+                str(ca_out.dtype),
+                str(x.dtype),
+                _cuda_mem_snapshot_str(x.device),
+            )
 
         # FFN: pre-norm (no affine) + time modulation + gated residual.
         x_float = x.float()
         x_ffn = (self.norm2(x_float) * (1.0 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]).to(dtype=x.dtype)
         ffn_out = self.ffn(x_ffn)
         x = (x_float + ffn_out.float() * ffn_gate[:, None, :]).to(dtype=x.dtype)
+        if trace_enabled:
+            logger.debug(
+                "[wan22.trace] block[%s] ffn: x_ffn_dtype=%s ffn_out_dtype=%s gate_dtype=%s residual_dtype=%s %s",
+                block_tag,
+                str(x_ffn.dtype),
+                str(ffn_out.dtype),
+                str(ffn_gate.dtype),
+                str(x.dtype),
+                _cuda_mem_snapshot_str(x.device),
+            )
 
         return x
 
@@ -581,6 +704,7 @@ class WanTransformer2DModel(nn.Module):
         device = x.device
         dtype = x.dtype
         B, C, T, H, W = x.shape
+        trace_debug = _wan_trace_verbose_enabled() and logger.isEnabledFor(logging.DEBUG)
 
         # Timestep to scalar tensor
         if isinstance(timestep, (int, float)):
@@ -607,9 +731,53 @@ class WanTransformer2DModel(nn.Module):
         _, _, t_grid, h_grid, w_grid = tokens.shape
         tokens = tokens.flatten(2).transpose(1, 2)  # [B, L, d_model]
 
+        if trace_debug:
+            logger.debug(
+                "[wan22.trace] model pre-blocks: x_shape=%s x_dtype=%s tokens_shape=%s tokens_dtype=%s "
+                "ctx_shape=%s ctx_dtype=%s t_proj_shape=%s t_proj_dtype=%s rotary=(cos=%s sin=%s) %s",
+                tuple(x.shape),
+                str(x.dtype),
+                tuple(tokens.shape),
+                str(tokens.dtype),
+                tuple(ctx.shape),
+                str(ctx.dtype),
+                tuple(t_proj.shape),
+                str(t_proj.dtype),
+                str(rotary_emb[0].dtype),
+                str(rotary_emb[1].dtype),
+                _cuda_mem_snapshot_str(device),
+            )
+
         # Apply transformer blocks
-        for block in self.blocks:
-            tokens = block(tokens, ctx, t_proj, rotary_emb=rotary_emb)
+        for block_idx, block in enumerate(self.blocks):
+            if trace_debug:
+                logger.debug(
+                    "[wan22.trace] block[%d/%d] dispatch: block_dtype=%s tokens_dtype=%s ctx_dtype=%s t_proj_dtype=%s %s",
+                    int(block_idx + 1),
+                    int(self.n_blocks),
+                    _module_parameter_dtype(block),
+                    str(tokens.dtype),
+                    str(ctx.dtype),
+                    str(t_proj.dtype),
+                    _cuda_mem_snapshot_str(device),
+                )
+            tokens = block(
+                tokens,
+                ctx,
+                t_proj,
+                rotary_emb=rotary_emb,
+                trace_block_idx=block_idx,
+                trace_debug=trace_debug,
+            )
+            if trace_debug:
+                logger.debug(
+                    "[wan22.trace] block[%d/%d] done: tokens_shape=%s tokens_dtype=%s %s",
+                    int(block_idx + 1),
+                    int(self.n_blocks),
+                    tuple(tokens.shape),
+                    str(tokens.dtype),
+                    _cuda_mem_snapshot_str(device),
+                )
 
         # Output head (Diffusers parity: float32 norm + float32 modulation, then cast back before projection).
         shift, scale = (self.head_modulation.float() + t_emb.float()[:, None, :]).chunk(2, dim=1)  # [B, 1, C] each
@@ -617,6 +785,15 @@ class WanTransformer2DModel(nn.Module):
         tokens = self.norm_out(tokens.float())
         fused = (tokens * (1.0 + scale) + shift).to(dtype=tokens_dtype)
         patches = self.head(fused)
+
+        if trace_debug:
+            logger.debug(
+                "[wan22.trace] model post-blocks: tokens_dtype=%s fused_dtype=%s patches_dtype=%s %s",
+                str(tokens_dtype),
+                str(fused.dtype),
+                str(patches.dtype),
+                _cuda_mem_snapshot_str(device),
+            )
 
         # Unpatchify: [B, L, patch_dim] -> [B, C, T, H, W]
         kT, kH, kW = self.config.patch_size

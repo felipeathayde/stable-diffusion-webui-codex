@@ -18,6 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -35,9 +37,20 @@ def _rotate_half(x: torch.Tensor) -> torch.Tensor:
 
 
 def _apply_rotary(q_or_k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, *, unsqueeze_dim: int = 1) -> torch.Tensor:
+    original_dtype = q_or_k.dtype
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
-    return (q_or_k * cos) + (_rotate_half(q_or_k) * sin)
+    compute_dtype = torch.float32 if original_dtype in {torch.float16, torch.bfloat16} else original_dtype
+    if q_or_k.dtype != compute_dtype:
+        q_or_k = q_or_k.to(dtype=compute_dtype)
+    if cos.dtype != compute_dtype:
+        cos = cos.to(dtype=compute_dtype)
+    if sin.dtype != compute_dtype:
+        sin = sin.to(dtype=compute_dtype)
+    out = (q_or_k * cos) + (_rotate_half(q_or_k) * sin)
+    if out.dtype != original_dtype:
+        out = out.to(dtype=original_dtype)
+    return out
 
 
 class RotaryEmbedding(nn.Module):
@@ -56,10 +69,19 @@ class RotaryEmbedding(nn.Module):
             raise ValueError(f"position_ids must be 2D (B,S); got shape={tuple(position_ids.shape)}")
         inv_freq = self.inv_freq[None, :, None].to(device=x.device, dtype=torch.float32)
         pos = position_ids[:, None, :].to(device=x.device, dtype=torch.float32)
-        freqs = (inv_freq @ pos).transpose(1, 2)  # (B,S,dim/2)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos().to(dtype=x.dtype)
-        sin = emb.sin().to(dtype=x.dtype)
+        device_type = str(x.device.type) if isinstance(x.device.type, str) else "cpu"
+        if device_type not in {"cpu", "cuda"}:
+            autocast_ctx = nullcontext()
+        else:
+            try:
+                autocast_ctx = torch.autocast(device_type=device_type, enabled=False)
+            except Exception:
+                autocast_ctx = nullcontext()
+        with autocast_ctx:
+            freqs = (inv_freq @ pos).transpose(1, 2)  # (B,S,dim/2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos()
+            sin = emb.sin()
         return cos, sin
 
 

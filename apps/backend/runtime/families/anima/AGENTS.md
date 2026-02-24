@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/anima Overview
 <!-- tags: backend, runtime, families, anima, cosmos, predict2 -->
 Date: 2026-02-05
-Last Review: 2026-02-16
+Last Review: 2026-02-23
 Status: Draft
 
 ## Purpose
@@ -31,3 +31,5 @@ Status: Draft
 - 2026-02-16: WAN2.1 VAE keymap ownership moved to `apps/backend/runtime/state_dict/keymap_wan21_vae.py`; `wan_vae.py` now consumes model-owned keymap directly (no Anima mixed-ownership).
 - 2026-02-20: Anima DiT and LLM adapter attention callsites now route through runtime dispatcher helper `attention_function_pre_shaped(...)` (explicit PyTorch backend override), removing direct SDPA bypasses in family modules.
 - 2026-02-23: `text_encoder.py` device metadata fallback now resolves from memory-manager CPU device (`manager.cpu_device`) instead of constructing a local CPU literal when parameter iterators are empty.
+- 2026-02-23: `dit.py` now mirrors Cosmos fp16 residual-stream safety intent: fp16 residual stream is promoted to fp32 before block loop, each block keeps module compute at embedding dtype (compute/residual split), and final layer input is cast back to context dtype.
+- 2026-02-23: `llm_adapter.py` rotary tables are now generated under autocast-disabled fp32 math and `_apply_rotary(...)` performs fp32 rotary math for fp16/bf16 paths, then restores the original tensor dtype.

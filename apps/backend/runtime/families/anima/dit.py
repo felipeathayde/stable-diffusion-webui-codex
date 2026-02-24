@@ -39,10 +39,21 @@ def _apply_rotary_pos_emb(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
     # freqs: broadcastable to (..., head_dim/2, 2, 2)
     if x.shape[-1] % 2 != 0:
         raise ValueError(f"RoPE expects an even head_dim; got {int(x.shape[-1])}")
-    x_ = x.reshape(*x.shape[:-1], 2, -1).movedim(-2, -1).unsqueeze(-2).float()
+    compute_dtype = freqs.dtype if freqs.is_floating_point() else torch.float32
+    x_ = x.reshape(*x.shape[:-1], 2, -1).movedim(-2, -1).unsqueeze(-2)
+    if x_.dtype != compute_dtype:
+        x_ = x_.to(dtype=compute_dtype)
+    if freqs.dtype != compute_dtype:
+        freqs = freqs.to(dtype=compute_dtype)
     out = freqs[..., 0] * x_[..., 0] + freqs[..., 1] * x_[..., 1]
     out = out.movedim(-1, -2).reshape(*x.shape).to(dtype=x.dtype)
     return out
+
+
+def _promote_fp16_residual_stream(x: torch.Tensor) -> torch.Tensor:
+    if x.dtype == torch.float16:
+        return x.float()
+    return x
 
 
 class GPT2FeedForward(nn.Module):
@@ -364,6 +375,8 @@ class Block(nn.Module):
         extra_per_block_pos_emb: torch.Tensor | None = None,
         transformer_options: dict | None = None,
     ) -> torch.Tensor:
+        residual_dtype = x_B_T_H_W_D.dtype
+        compute_dtype = emb_B_T_D.dtype
         if extra_per_block_pos_emb is not None:
             x_B_T_H_W_D = x_B_T_H_W_D + extra_per_block_pos_emb
 
@@ -397,27 +410,27 @@ class Block(nn.Module):
 
         normed = _fn(x_B_T_H_W_D, self.layer_norm_self_attn, scale_self, shift_self)
         sa = self.self_attn(
-            rearrange(normed, "b t h w d -> b (t h w) d"),
+            rearrange(normed.to(dtype=compute_dtype), "b t h w d -> b (t h w) d"),
             None,
             rope_emb=rope_emb_L_1_1_D,
             transformer_options=transformer_options,
         )
         sa = rearrange(sa, "b (t h w) d -> b t h w d", t=t, h=h, w=w)
-        x_B_T_H_W_D = x_B_T_H_W_D + gate_self * sa
+        x_B_T_H_W_D = x_B_T_H_W_D + gate_self.to(dtype=residual_dtype) * sa.to(dtype=residual_dtype)
 
         normed = _fn(x_B_T_H_W_D, self.layer_norm_cross_attn, scale_cross, shift_cross)
         ca = self.cross_attn(
-            rearrange(normed, "b t h w d -> b (t h w) d"),
+            rearrange(normed.to(dtype=compute_dtype), "b t h w d -> b (t h w) d"),
             crossattn_emb,
             rope_emb=rope_emb_L_1_1_D,
             transformer_options=transformer_options,
         )
         ca = rearrange(ca, "b (t h w) d -> b t h w d", t=t, h=h, w=w)
-        x_B_T_H_W_D = (ca * gate_cross) + x_B_T_H_W_D
+        x_B_T_H_W_D = (ca.to(dtype=residual_dtype) * gate_cross.to(dtype=residual_dtype)) + x_B_T_H_W_D
 
         normed = _fn(x_B_T_H_W_D, self.layer_norm_mlp, scale_mlp, shift_mlp)
-        mlp_out = self.mlp(normed)
-        x_B_T_H_W_D = x_B_T_H_W_D + gate_mlp * mlp_out
+        mlp_out = self.mlp(normed.to(dtype=compute_dtype))
+        x_B_T_H_W_D = x_B_T_H_W_D + gate_mlp.to(dtype=residual_dtype) * mlp_out.to(dtype=residual_dtype)
         return x_B_T_H_W_D
 
 
@@ -718,6 +731,10 @@ class MiniTrainDiT(nn.Module):
         if extra_pos_emb is not None and extra_pos_emb.shape != x_B_T_H_W_D.shape:
             raise RuntimeError(f"extra_pos_emb shape mismatch: {tuple(extra_pos_emb.shape)} vs {tuple(x_B_T_H_W_D.shape)}")
 
+        # Upstream Cosmos intent for fp16 stability:
+        # keep residual stream in fp32 while block compute stays at embedding/weight dtype.
+        x_B_T_H_W_D = _promote_fp16_residual_stream(x_B_T_H_W_D)
+
         rope_broadcast = rope_emb.unsqueeze(1).unsqueeze(0)
         for block in self.blocks:
             x_B_T_H_W_D = block(
@@ -730,7 +747,8 @@ class MiniTrainDiT(nn.Module):
                 transformer_options=transformer_options,
             )
 
-        x_B_T_H_W_O = self.final_layer(x_B_T_H_W_D, t_emb, adaln_lora_B_T_3D=adaln_lora)
+        final_input = x_B_T_H_W_D.to(dtype=context.dtype) if x_B_T_H_W_D.dtype != context.dtype else x_B_T_H_W_D
+        x_B_T_H_W_O = self.final_layer(final_input, t_emb, adaln_lora_B_T_3D=adaln_lora)
         out_5d = self.unpatchify(x_B_T_H_W_O)
         out_5d = out_5d[:, :, : orig_shape[-3], : orig_shape[-2], : orig_shape[-1]]
         if squeeze_time:

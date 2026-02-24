@@ -1,7 +1,7 @@
 # apps.launcher.gui_tk
 Date: 2026-01-25
 Status: Active
-Last Review: 2026-02-23
+Last Review: 2026-02-24
 
 ## Purpose
 - Modular Tk/ttk GUI implementation for the Codex launcher (services + settings + logs).
@@ -47,3 +47,4 @@ Last Review: 2026-02-23
 - 2026-02-23: Root app layout now uses `grid` (`notebook` row + fixed footer row) so the footer is preserved in reduced window sizes.
 - 2026-02-23: Diagnostics tab now renders inside `ScrollableFrame`, preventing advanced controls from clipping/forcing footer loss on small windows.
 - 2026-02-23: `ScrollableFrame` now binds wheel events to descendant widgets (not just canvas enter/leave), fixing mouse-wheel scroll over content controls when scrollbars are present.
+- 2026-02-24: Runtime allocator UI now binds only `PYTORCH_CUDA_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF`; unsupported `PYTORCH_ALLOC_CONF` naming is no longer accepted in launcher flow.

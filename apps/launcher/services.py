@@ -11,7 +11,7 @@ Defines service specs/handles, spawns subprocesses with environment overrides, s
 availability checks (IPv4/IPv6) before starting the API.
 Maps launcher env toggles to backend CLI flags, including main/mount/offload bootstrap device flags, with offload defaulting to CPU when unset,
 plus trace/profiler diagnostics toggles.
-When `CODEX_CUDA_MALLOC=1`, validates/ensures `PYTORCH_ALLOC_CONF` includes `backend:cudaMallocAsync` before spawning the API process.
+When `CODEX_CUDA_MALLOC=1`, validates/ensures `PYTORCH_CUDA_ALLOC_CONF` includes `backend:cudaMallocAsync` before spawning the API process.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ServiceStatus` (enum): Launcher service lifecycle status.
@@ -20,8 +20,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
 - `_env_truthy` (function): Normalizes launcher env booleans (`1/true/yes/on`) for CLI flag forwarding.
-- `_sanitize_allocator_env_contract` (function): Removes unsupported allocator env keys before subprocess spawn (contract keys only: `PYTORCH_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF`).
-- `_parse_pytorch_alloc_conf` (function): Parses `PYTORCH_ALLOC_CONF` entries into strict `key:value` pairs.
+- `_sanitize_allocator_env_contract` (function): Removes unsupported allocator env keys before subprocess spawn (contract keys only: `PYTORCH_CUDA_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF`).
+- `_parse_pytorch_alloc_conf` (function): Parses `PYTORCH_CUDA_ALLOC_CONF` entries into strict `key:value` pairs.
 - `_ensure_cuda_malloc_async_allocator_env` (function): Enforces allocator backend `cudaMallocAsync` when `CODEX_CUDA_MALLOC=1`.
 - `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles; offload defaults to CPU when unset).
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
@@ -393,58 +393,25 @@ def _env_truthy(value: object) -> bool:
 
 
 def _sanitize_allocator_env_contract(env: MutableMapping[str, str], *, scope_label: str) -> None:
-    supported_alloc_key = "PYTORCH_ALLOC_CONF"
-    supported_toggle_key = "CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF"
-    legacy_to_supported = (
-        ("PYTORCH_CUDA_ALLOC_CONF", supported_alloc_key),
-        ("CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF", supported_toggle_key),
-    )
-    migrated_pairs: list[tuple[str, str]] = []
-    removed_legacy_keys: list[str] = []
-    for legacy_key, supported_key in legacy_to_supported:
-        if legacy_key not in env:
-            continue
-        legacy_value = str(env.get(legacy_key, "") or "").strip()
-        supported_value = str(env.get(supported_key, "") or "").strip()
-        if legacy_value and not supported_value:
-            env[supported_key] = legacy_value
-            migrated_pairs.append((legacy_key, supported_key))
-        env.pop(legacy_key, None)
-        removed_legacy_keys.append(legacy_key)
-
-    if migrated_pairs:
-        LOGGER.warning(
-            "Migrated legacy allocator env key(s) before spawning %s: %s.",
-            scope_label,
-            ", ".join(f"{old}->{new}" for old, new in migrated_pairs),
-        )
-    elif removed_legacy_keys:
-        LOGGER.warning(
-            "Dropped legacy allocator env key(s) before spawning %s (canonical keys already set): %s.",
-            scope_label,
-            ", ".join(sorted(removed_legacy_keys)),
-        )
-
-    removed_keys: list[str] = []
+    supported_alloc_key = "PYTORCH_CUDA_ALLOC_CONF"
+    supported_toggle_key = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
+    unsupported_keys: list[str] = []
     for key in list(env.keys()):
-        if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_ALLOC_CONF":
-            env.pop(key, None)
-            removed_keys.append(key)
+        if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != supported_alloc_key:
+            unsupported_keys.append(key)
             continue
         if (
             key.startswith("CODEX_ENABLE_DEFAULT_PYTORCH_")
             and key.endswith("_ALLOC_CONF")
             and key != supported_toggle_key
         ):
-            env.pop(key, None)
-            removed_keys.append(key)
-    if removed_keys:
-        LOGGER.warning(
-            "Dropped unsupported allocator env key(s) before spawning %s: %s. "
-            "Supported keys: PYTORCH_ALLOC_CONF and %s.",
-            scope_label,
-            ", ".join(sorted(removed_keys)),
-            supported_toggle_key,
+            unsupported_keys.append(key)
+    if unsupported_keys:
+        keys = ", ".join(sorted(unsupported_keys))
+        raise ValueError(
+            f"Unsupported allocator env key(s) for {scope_label}: {keys}. "
+            "Supported keys: PYTORCH_CUDA_ALLOC_CONF and "
+            f"{supported_toggle_key}."
         )
 
 
@@ -456,7 +423,7 @@ def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
             continue
         if ":" not in token:
             raise ValueError(
-                "Invalid PYTORCH_ALLOC_CONF entry "
+                "Invalid PYTORCH_CUDA_ALLOC_CONF entry "
                 f"{token!r}: expected 'key:value' format."
             )
         key, value = token.split(":", 1)
@@ -464,7 +431,7 @@ def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
         value = value.strip()
         if not key or not value:
             raise ValueError(
-                "Invalid PYTORCH_ALLOC_CONF entry "
+                "Invalid PYTORCH_CUDA_ALLOC_CONF entry "
                 f"{token!r}: expected non-empty 'key:value' parts."
             )
         entries.append((key, value))
@@ -474,9 +441,9 @@ def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
 def _ensure_cuda_malloc_async_allocator_env(env: MutableMapping[str, str]) -> None:
     target_backend = "cudaMallocAsync"
     target_backend_norm = target_backend.lower()
-    raw_alloc_conf = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
+    raw_alloc_conf = str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
     if not raw_alloc_conf:
-        env["PYTORCH_ALLOC_CONF"] = f"backend:{target_backend}"
+        env["PYTORCH_CUDA_ALLOC_CONF"] = f"backend:{target_backend}"
         return
 
     entries = _parse_pytorch_alloc_conf(raw_alloc_conf)
@@ -485,24 +452,24 @@ def _ensure_cuda_malloc_async_allocator_env(env: MutableMapping[str, str]) -> No
         if key.strip().lower() == "backend":
             if backend_index is not None:
                 raise ValueError(
-                    "Invalid PYTORCH_ALLOC_CONF: multiple 'backend' entries found. "
+                    "Invalid PYTORCH_CUDA_ALLOC_CONF: multiple 'backend' entries found. "
                     "Use exactly one backend directive."
                 )
             backend_index = index
 
     if backend_index is None:
         entries.append(("backend", target_backend))
-        env["PYTORCH_ALLOC_CONF"] = ",".join(f"{key}:{value}" for key, value in entries)
+        env["PYTORCH_CUDA_ALLOC_CONF"] = ",".join(f"{key}:{value}" for key, value in entries)
         return
 
     configured_backend = entries[backend_index][1]
     if configured_backend.replace(" ", "").lower() != target_backend_norm:
         raise ValueError(
-            "CODEX_CUDA_MALLOC=1 requires PYTORCH_ALLOC_CONF backend:cudaMallocAsync, "
+            "CODEX_CUDA_MALLOC=1 requires PYTORCH_CUDA_ALLOC_CONF backend:cudaMallocAsync, "
             f"but found backend:{configured_backend}. "
-            "Set PYTORCH_ALLOC_CONF with backend:cudaMallocAsync or disable CODEX_CUDA_MALLOC."
+            "Set PYTORCH_CUDA_ALLOC_CONF with backend:cudaMallocAsync or disable CODEX_CUDA_MALLOC."
         )
-    env["PYTORCH_ALLOC_CONF"] = ",".join(f"{key}:{value}" for key, value in entries)
+    env["PYTORCH_CUDA_ALLOC_CONF"] = ",".join(f"{key}:{value}" for key, value in entries)
 
 
 def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:

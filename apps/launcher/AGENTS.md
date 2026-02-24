@@ -1,7 +1,7 @@
 # apps.launcher
 Date: 2025-10-28
 Status: Active
-Last Review: 2026-02-23
+Last Review: 2026-02-24
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -54,3 +54,4 @@ Last Review: 2026-02-23
 - 2026-02-23: `run-webui.sh` now makes `--cuda-malloc` / `CODEX_CUDA_MALLOC=1` effective by ensuring `PYTORCH_ALLOC_CONF` includes `backend:cudaMallocAsync` (and failing loud on invalid/conflicting allocator config).
 - 2026-02-23: Tk launcher UI (`gui_tk/`) added descriptor-driven form infrastructure (`form_schema.py`, `form_renderer.py`) and services overview upgrades (resolved endpoint/open actions, no health polling/status row) to keep launcher UX maintainable while staying a bootstrap orchestrator.
 - 2026-02-23: `profiles.py` now guards env map reads/writes with an internal `RLock` to keep launcher env snapshots deterministic under concurrent GUI/background access.
+- 2026-02-24: Launcher allocator contract reverted to `PYTORCH_CUDA_ALLOC_CONF` only (`run-webui.sh/.bat`, `profiles.py`, `services.py`, Tk runtime tab). Unsupported `PYTORCH_ALLOC_CONF`/`CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF` now fail loud instead of being silently migrated/dropped.

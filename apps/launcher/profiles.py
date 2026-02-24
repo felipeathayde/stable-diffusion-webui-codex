@@ -15,8 +15,8 @@ task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap d
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs; default offload target is CPU).
 - `_BOOTSTRAP_DEVICE_KEYS` (constant): Runtime-global launcher device keys that must stay scoped to `areas/core` (never model/non-core overlays).
-- `DEFAULT_PYTORCH_ALLOC_CONF` (constant): Default `PYTORCH_ALLOC_CONF` applied by launchers when unset.
-- `ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_ALLOC_CONF` is unset.
+- `DEFAULT_PYTORCH_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
+- `ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_CUDA_ALLOC_CONF` is unset.
 - `CODEX_CUDA_MALLOC_KEY` (constant): Env key toggling backend `--cuda-malloc` forwarding in launcher-managed runs.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
@@ -105,7 +105,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
 
 DEFAULT_MODEL_NAME = "default"
 DEFAULT_PYTORCH_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
-ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF"
+ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
 CODEX_CUDA_MALLOC_KEY = "CODEX_CUDA_MALLOC"
 
 
@@ -133,9 +133,9 @@ class _EnvironmentView(MutableMapping[str, str]):
 
     def __setitem__(self, key: str, value: str) -> None:
         value = str(value)
-        if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_ALLOC_CONF":
+        if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_CUDA_ALLOC_CONF":
             raise KeyError(
-                f"Unsupported allocator key {key!r}. Use 'PYTORCH_ALLOC_CONF'."
+                f"Unsupported allocator key {key!r}. Use 'PYTORCH_CUDA_ALLOC_CONF'."
             )
         if (
             key.startswith("CODEX_ENABLE_DEFAULT_PYTORCH_")
@@ -226,8 +226,8 @@ class LauncherProfileStore:
                 env[key] = value
             raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "1") or "").strip().lower()
             default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
-            if default_alloc_enabled and not str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip():
-                env["PYTORCH_ALLOC_CONF"] = DEFAULT_PYTORCH_ALLOC_CONF
+            if default_alloc_enabled and not str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip():
+                env["PYTORCH_CUDA_ALLOC_CONF"] = DEFAULT_PYTORCH_ALLOC_CONF
             return env
 
     def lookup_env(self, key: str) -> str | None:
@@ -297,39 +297,6 @@ class LauncherProfileStore:
                     container["CODEX_OFFLOAD_DEVICE"] = "cpu"
                     changed = True
 
-        # Legacy allocator migration must run before defaults are merged so legacy
-        # user values override injected defaults.
-        for container in list(self.areas.values()) + list(self.models.values()):
-            legacy_alloc_key = "PYTORCH_CUDA_ALLOC_CONF"
-            if legacy_alloc_key in container:
-                legacy_value = str(container.get(legacy_alloc_key, "") or "").strip()
-                current_value = str(container.get("PYTORCH_ALLOC_CONF", "") or "").strip()
-                if legacy_value and not current_value:
-                    container["PYTORCH_ALLOC_CONF"] = legacy_value
-                    changed = True
-                    LOGGER.warning(
-                        "Migrated legacy launcher allocator key in persisted profile: %s -> %s.",
-                        legacy_alloc_key,
-                        "PYTORCH_ALLOC_CONF",
-                    )
-                container.pop(legacy_alloc_key, None)
-                changed = True
-
-            legacy_toggle_key = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
-            if legacy_toggle_key in container:
-                legacy_value = str(container.get(legacy_toggle_key, "") or "").strip()
-                current_value = str(container.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
-                if legacy_value and not current_value:
-                    container[ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY] = legacy_value
-                    changed = True
-                    LOGGER.warning(
-                        "Migrated legacy launcher allocator toggle key in persisted profile: %s -> %s.",
-                        legacy_toggle_key,
-                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
-                    )
-                container.pop(legacy_toggle_key, None)
-                changed = True
-
         defaults = _default_area_env()
         for area, values in defaults.items():
             if area not in self.areas:
@@ -348,12 +315,12 @@ class LauncherProfileStore:
         # the API can start in non-interactive spawns without prompting/fallbacks.
         for container in list(self.areas.values()) + list(self.models.values()):
             for key in list(container.keys()):
-                if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_ALLOC_CONF":
+                if key.startswith("PYTORCH_") and key.endswith("_ALLOC_CONF") and key != "PYTORCH_CUDA_ALLOC_CONF":
                     container.pop(key, None)
                     changed = True
                     LOGGER.warning(
                         "Dropped unsupported launcher allocator key from persisted profile: %s "
-                        "(use PYTORCH_ALLOC_CONF).",
+                        "(use PYTORCH_CUDA_ALLOC_CONF).",
                         key,
                     )
                     continue

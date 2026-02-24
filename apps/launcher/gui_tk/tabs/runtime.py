@@ -9,10 +9,10 @@ Required Notice: see NOTICE
 Purpose: Runtime settings tab for the Tk launcher.
 Edits bootstrap-critical main-device defaults and global runtime/task knobs that must exist before the API starts (main/mount/offload devices, GGUF/LoRA, task single-flight,
 task cancel default mode, task SSE buffer caps, upscaler safeweights). Offload device defaults to CPU on missing/invalid values to preserve explicit de-residency semantics.
-Allocator defaults are managed through `PYTORCH_ALLOC_CONF` and `CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF`.
+Allocator defaults are managed through `PYTORCH_CUDA_ALLOC_CONF` and `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF`.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + GGUF/LoRA + `PYTORCH_ALLOC_CONF`/cuda-malloc toggles).
+- `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + GGUF/LoRA + `PYTORCH_CUDA_ALLOC_CONF`/cuda-malloc toggles).
 """
 
 from __future__ import annotations
@@ -293,7 +293,7 @@ class RuntimeTab:
                             help_mode=HelpMode.DIALOG,
                             help_title="PyTorch alloc conf",
                             help_text=(
-                                "Env var: PYTORCH_ALLOC_CONF\n"
+                                "Env var: PYTORCH_CUDA_ALLOC_CONF\n"
                                 f"Default value: {DEFAULT_PYTORCH_ALLOC_CONF}\n"
                                 f"Default toggle env: {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY}"
                             ),
@@ -309,7 +309,7 @@ class RuntimeTab:
                             help_title="Default alloc conf toggle",
                             help_text=(
                                 f"Env var: {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY}\n"
-                                "When enabled and PYTORCH_ALLOC_CONF is empty, launcher injects the default alloc config."
+                                "When enabled and PYTORCH_CUDA_ALLOC_CONF is empty, launcher injects the default alloc config."
                             ),
                         ),
                         FormFieldDescriptor(
@@ -481,7 +481,7 @@ class RuntimeTab:
             BoolSetting(CODEX_CUDA_MALLOC_KEY, default=False).set(env, cuda_malloc_enabled)
         self._var_cuda_malloc.set(bool(cuda_malloc_enabled))
 
-        alloc = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
+        alloc = str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
         if not alloc and default_alloc_enabled:
             alloc = DEFAULT_PYTORCH_ALLOC_CONF
         self._var_pytorch_alloc_conf.set(alloc)
@@ -669,7 +669,7 @@ class RuntimeTab:
         self._mark_changed()
 
     def _on_alloc_conf_changed(self) -> None:
-        key = "PYTORCH_ALLOC_CONF"
+        key = "PYTORCH_CUDA_ALLOC_CONF"
         value = str(self._var_pytorch_alloc_conf.get() or "").strip()
         if not value:
             try:
@@ -687,9 +687,9 @@ class RuntimeTab:
             ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
             default=True,
         ).set(env, enabled)
-        if not enabled and "PYTORCH_ALLOC_CONF" not in env:
+        if not enabled and "PYTORCH_CUDA_ALLOC_CONF" not in env:
             self._var_pytorch_alloc_conf.set("")
-        if enabled and "PYTORCH_ALLOC_CONF" not in env and not str(self._var_pytorch_alloc_conf.get() or "").strip():
+        if enabled and "PYTORCH_CUDA_ALLOC_CONF" not in env and not str(self._var_pytorch_alloc_conf.get() or "").strip():
             self._var_pytorch_alloc_conf.set(DEFAULT_PYTORCH_ALLOC_CONF)
         self._mark_changed()
 

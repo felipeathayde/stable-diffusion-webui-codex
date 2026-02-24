@@ -206,6 +206,16 @@ class InferenceOrchestrator:
             purge_failures.append(f"memory_manager:{exc}")
 
         try:
+            from apps.backend.runtime.ops.operations_gguf import clear_cache as clear_gguf_cache
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("GGUF cache cleanup helper unavailable during VRAM purge (%s): %s", reason, exc)
+        else:
+            try:
+                clear_gguf_cache()
+            except Exception as exc:  # noqa: BLE001
+                purge_failures.append(f"gguf_cache:{exc}")
+
+        try:
             gc.collect()
         except Exception:  # pragma: no cover
             pass
@@ -324,11 +334,16 @@ class InferenceOrchestrator:
 
             if needs_load or device_mismatch:
                 try:
-                    if device_mismatch and engine._is_loaded:
-                        try:
+                    if engine._is_loaded:
+                        with contextlib.suppress(Exception):
                             engine.unload()
-                        except Exception:
-                            pass
+                            engine.mark_unloaded()
+                        logger.info(
+                            "Running VRAM cleanup barrier between unload/load transition. engine=%s model=%s",
+                            engine_key,
+                            model_ref,
+                        )
+                        self._purge_vram(reason="engine unload/load transition barrier")
                     engine.load(model_ref, **engine_opts)
                     engine.mark_loaded()
                     self._engine_options_fingerprint[normalized_key] = reload_fingerprint

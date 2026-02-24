@@ -1,6 +1,6 @@
 # apps/backend/core Overview
 Date: 2025-10-28
-Last Review: 2026-02-21
+Last Review: 2026-02-24
 Status: Active
 
 ## Purpose
@@ -48,3 +48,4 @@ Status: Active
 - 2026-02-22: `InferenceOrchestrator._purge_vram(...)` now treats cleanup-time CUDA OOM as non-fatal only when unwinding an execution failure (`reason='engine execution failure'`), logging a warning and preserving the original execution error as primary.
 - 2026-02-23: `devices.default_device()` / `devices.cpu()` now resolve through memory-manager authority (`manager.mount_device()` / `manager.cpu_device`) and fail loud when manager contracts are invalid, removing local CUDA/CPU chooser hardcodes from core helpers.
 - 2026-02-23: `InferenceOrchestrator` device-drift reload checks now compare full canonical device identity (`str(current) != str(desired)`) instead of backend type-only comparison, so CUDA index changes (`cuda:0` vs `cuda:1`) trigger deterministic reload.
+- 2026-02-24: `InferenceOrchestrator.run(...)` now enforces a VRAM cleanup barrier between model unload/load transitions (`engine.unload()` -> `_purge_vram(...)` -> `engine.load(...)`) when reloading an already-loaded engine, and `_purge_vram(...)` now also clears GGUF runtime cache as part of internal cleanup.

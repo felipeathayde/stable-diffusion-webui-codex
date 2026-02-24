@@ -689,7 +689,20 @@ def sample_stage_latents_generator(
     last = t0
 
     order = resolve_i2v_order()
+    effective_cfg_scale: float | None = None
     if cfg_scale is not None:
+        cfg_value = float(cfg_scale)
+        if not math.isfinite(cfg_value):
+            raise RuntimeError(f"WAN22 GGUF: cfg_scale must be finite; got {cfg_scale!r}.")
+        if math.isclose(cfg_value, 1.0, rel_tol=0.0, abs_tol=1e-6):
+            log.debug(
+                "[wan22.gguf] %s: cfg_scale=1.0 -> disabling CFG branch (single conditional pass).",
+                stage_name,
+            )
+        else:
+            effective_cfg_scale = cfg_value
+
+    if effective_cfg_scale is not None:
         if int(prompt_embeds.shape[0]) != int(batch):
             raise RuntimeError(
                 "WAN22 GGUF: prompt embeds batch does not match latent batch for CFG "
@@ -838,7 +851,7 @@ def sample_stage_latents_generator(
                     model_state_buffer[:, cond_channels:, ...].copy_(state_lat_scaled_model)
                 model_state = model_state_buffer
 
-            if cfg_scale is None:
+            if effective_cfg_scale is None:
                 model_batch = int(model_state.shape[0])
                 if (
                     non_cfg_timestep_buffer is None
@@ -887,7 +900,7 @@ def sample_stage_latents_generator(
                     global_idx=idx,
                     timestep=timestep,
                 )
-                eps_model = cfg_merge(v_uncond, v_cond, cfg_scale)
+                eps_model = cfg_merge(v_uncond, v_cond, effective_cfg_scale)
                 _assert_finite_tensor(
                     eps_model,
                     tensor_name="cfg_merge_output",

@@ -124,6 +124,7 @@ Status: Active
 - 2026-02-23: `sampling.py::sample_stage_latents_generator(...)` now precomputes/caches static I2V conditioning channels once per stage loop and only updates latent slices in `model_state_buffer` each step; non-CFG branch now reuses a per-step fp32 timestep buffer (instead of passing scalar timestep values), reducing avoidable per-step tensor churn while preserving fail-loud checks and stage shape contracts.
 - 2026-02-23: `scheduler.py` hot-path step methods now reuse cached sigma ladders per `(device,dtype)` (FlowMatch + UniPC) instead of repeated scalar `.to(device,dtype)` materialization each step; UniPC corrector order-1 also removed a transient `[0.5]` tensor allocation in favor of scalar multiply, preserving solver math/parity behavior.
 - 2026-02-23: `model.py` now emits WAN block-level trace-debug diagnostics (`CODEX_TRACE_DEBUG=1`) around the `for block in self.blocks` loop: per-block dispatch/completion logs include block parameter dtype, token/context/timestep dtypes, and CUDA memory snapshots; block internals now also log op-level compute contracts (`WanFP32LayerNorm`/`WanRMSNorm` compute in fp32, FFN path dtypes) for stale-step investigation.
+- 2026-02-24: `sampling.py::sample_stage_latents_generator(...)` now treats `cfg_scale==1.0` (within epsilon) as non-CFG/single-pass conditional execution, avoiding redundant cond+uncond forwards that were mathematically no-op at CFG=1 and could stall VRAM-limited lightx2v runs.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

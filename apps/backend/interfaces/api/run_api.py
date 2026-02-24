@@ -30,6 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `build_app` (function): Constructs the FastAPI app; wires router modules, configures middleware, and mounts the UI SPA (lifespan-aware).
 - `_bootstrap_runtime` (function): Bootstraps runtime settings/env before app creation (used by the uvicorn factory path).
 - `_enable_trace_debug` (function): Enables global tracing/debug logging when requested via argv/env.
+- `_try_disable_windows_power_throttling` (function): On Windows, disables process execution-speed throttling via `SetProcessInformation(ProcessPowerThrottling)`.
 - `create_api_app` (function): Canonical uvicorn `--factory` entrypoint; calls bootstrap and returns the built FastAPI app.
 - `main` (function): CLI entrypoint used by launchers (selects port, builds app, runs uvicorn).
 """
@@ -117,6 +118,7 @@ except Exception:
 _initialized = False
 _RUNTIME_NAMESPACE: Optional[Any] = None
 _APP: Optional[FastAPI] = None
+_WINDOWS_POWER_THROTTLING_ATTEMPTED = False
 
 
 def ensure_initialized() -> None:
@@ -133,6 +135,85 @@ def ensure_initialized() -> None:
         raise RuntimeError("backend logging bootstrap failed in ensure_initialized()") from exc
 
     _initialized = True
+
+
+def _try_disable_windows_power_throttling() -> None:
+    """Disable Windows process execution-speed throttling (EcoQoS background throttle).
+
+    This targets focus/background-driven throttling symptoms where GPU workloads appear to
+    stall while the API process remains alive. It is Windows-only and best-effort.
+    """
+
+    global _WINDOWS_POWER_THROTTLING_ATTEMPTED
+    if _WINDOWS_POWER_THROTTLING_ATTEMPTED:
+        return
+    _WINDOWS_POWER_THROTTLING_ATTEMPTED = True
+
+    if os.name != "nt":
+        return
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        # PROCESS_INFORMATION_CLASS::ProcessPowerThrottling (enum order from processthreadsapi.h).
+        process_power_throttling = 4
+        process_power_throttling_current_version = 1
+        process_power_throttling_execution_speed = 0x1
+
+        class _PROCESS_POWER_THROTTLING_STATE(ctypes.Structure):
+            _fields_ = [
+                ("Version", wintypes.DWORD),
+                ("ControlMask", wintypes.DWORD),
+                ("StateMask", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.restype = wintypes.HANDLE
+
+        if not hasattr(kernel32, "SetProcessInformation"):
+            _LOG.warning(
+                "startup: SetProcessInformation is unavailable on this Windows runtime; "
+                "cannot disable process power throttling."
+            )
+            return
+
+        set_process_information = kernel32.SetProcessInformation
+        set_process_information.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        )
+        set_process_information.restype = wintypes.BOOL
+
+        state = _PROCESS_POWER_THROTTLING_STATE(
+            Version=process_power_throttling_current_version,
+            ControlMask=process_power_throttling_execution_speed,
+            StateMask=0,  # Disable execution-speed throttling for this process.
+        )
+        ok = bool(
+            set_process_information(
+                get_current_process(),
+                process_power_throttling,
+                ctypes.byref(state),
+                ctypes.sizeof(state),
+            )
+        )
+        if not ok:
+            win_err = int(ctypes.get_last_error())
+            win_err_text = str(ctypes.WinError(win_err))
+            _LOG.warning(
+                "startup: failed to disable Windows process power throttling "
+                "(SetProcessInformation error=%d: %s).",
+                win_err,
+                win_err_text,
+            )
+            return
+        _LOG.info("startup: disabled Windows process power throttling (execution_speed).")
+    except Exception:
+        _LOG.exception("startup: failed to apply Windows power-throttling patch")
 
 _UVICORN_ACCESS_NOISE_PREFIXES = ("/api/tools/convert-gguf/",)
 _UVICORN_ACCESS_NOISE_FILTER_INSTALLED = False
@@ -567,6 +648,7 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         allocator_backend or "<default>",
         bool(getattr(ns, "cuda_malloc", False)),
     )
+    _try_disable_windows_power_throttling()
     # Publish resolved bootstrap values (after CLI/env/settings precedence) without mutating os.environ.
     try:
         from apps.backend.infra.config.bootstrap_env import set_bootstrap_env as _set_bootstrap_env

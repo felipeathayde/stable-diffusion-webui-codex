@@ -18,3 +18,5 @@ Status: Active
 - Forced mode must fail loud on unsupported tuples or missing extension/kernel ops.
 - Non-forced mode may return explicit reason codes and allow caller-level fallback.
 - 2026-02-25: Added explicit load-time warmup API (`warmup_extension_for_load`) that resolves fused mode/env gates, triggers extension load/build before denoise, and raises fail-loud when warmup fails under `force` mode.
+- 2026-02-25: Added pre-dispatch streaming workspace guard in runtime wrapper (`_maybe_reject_streaming_workspace`) using `torch.cuda.mem_get_info` + strict chunk env parsing (`CODEX_WAN_FUSED_V1_Q_CHUNK`, `CODEX_WAN_FUSED_V1_KV_CHUNK`) so force mode fails loud before kernel OOM.
+- 2026-02-25: Kernel-runtime invariants are now mapped to explicit contract code `E_WAN_FUSED_STREAMING_INVARIANT_VIOLATION` so failures in streaming-only guarantees are surfaced without generic error masking.

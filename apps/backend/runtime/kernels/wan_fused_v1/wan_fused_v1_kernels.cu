@@ -21,6 +21,9 @@ constexpr int64_t kDefaultQChunk = 512;
 constexpr int64_t kDefaultKvChunk = 1024;
 constexpr int64_t kMaxQChunk = 512;
 constexpr int64_t kMaxKvChunk = 1024;
+constexpr int64_t kMaxScoreTileBytes = 128 * 1024 * 1024;
+constexpr int64_t kMaxQKvTileAreaElements = 512 * 1024;
+constexpr int64_t kSmallAttentionMatrixElementsBypass = 128 * 1024;
 
 void check_cuda_tensor(const torch::Tensor& tensor, const char* name) {
   TORCH_CHECK(tensor.is_cuda(), "", name, " must be a CUDA tensor");
@@ -80,6 +83,10 @@ int64_t parse_env_chunk_or_default(const char* key, int64_t default_value, int64
     return default_value;
   }
   const std::string raw_value(raw);
+  TORCH_CHECK(!raw_value.empty(), key, " must be a strict integer (got empty value)");
+  for (char ch : raw_value) {
+    TORCH_CHECK(ch >= '0' && ch <= '9', key, " must be a strict integer (got '", raw, "')");
+  }
   std::size_t consumed = 0;
   long long parsed = 0;
   try {
@@ -91,6 +98,73 @@ int64_t parse_env_chunk_or_default(const char* key, int64_t default_value, int64
   TORCH_CHECK(parsed > 0, key, " must be > 0 (got ", parsed, ")");
   TORCH_CHECK(parsed <= hard_cap, key, " exceeds hard cap ", hard_cap, " for wan_fused_v1 v1.1");
   return static_cast<int64_t>(parsed);
+}
+
+int64_t checked_mul_int64(int64_t left, int64_t right, const char* label) {
+  TORCH_CHECK(left >= 0 && right >= 0, label, " must use non-negative factors.");
+  if (left == 0 || right == 0) {
+    return 0;
+  }
+  TORCH_CHECK(left <= std::numeric_limits<int64_t>::max() / right, label, " overflow.");
+  return left * right;
+}
+
+struct StreamingPlan {
+  int64_t q_chunk;
+  int64_t kv_chunk;
+  int64_t full_attention_elements;
+  int64_t score_tile_elements;
+  int64_t score_tile_bytes;
+};
+
+StreamingPlan enforce_streaming_invariants(
+    int64_t batch,
+    int64_t heads,
+    int64_t q_len,
+    int64_t kv_len,
+    int64_t q_chunk_size,
+    int64_t kv_chunk_size) {
+  const int64_t resolved_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
+  const int64_t resolved_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
+  const int64_t tile_area = checked_mul_int64(resolved_q_chunk, resolved_kv_chunk, "q_chunk*kv_chunk");
+  TORCH_CHECK(
+      tile_area <= kMaxQKvTileAreaElements,
+      "streaming invariant violated: q_chunk*kv_chunk exceeds cap (",
+      tile_area,
+      " > ",
+      kMaxQKvTileAreaElements,
+      ").");
+
+  const int64_t bh = checked_mul_int64(batch, heads, "batch*heads");
+  const int64_t full_attention_elements =
+      checked_mul_int64(checked_mul_int64(bh, q_len, "batch*heads*q_len"), kv_len, "full_attention_elements");
+  const int64_t score_tile_elements =
+      checked_mul_int64(checked_mul_int64(bh, resolved_q_chunk, "batch*heads*q_chunk"), resolved_kv_chunk, "score_tile_elements");
+  const int64_t score_tile_bytes = checked_mul_int64(score_tile_elements, static_cast<int64_t>(sizeof(float)), "score_tile_bytes");
+
+  TORCH_CHECK(
+      score_tile_bytes <= kMaxScoreTileBytes,
+      "streaming invariant violated: score tile bytes exceed cap (",
+      score_tile_bytes,
+      " > ",
+      kMaxScoreTileBytes,
+      "). Reduce ",
+      "CODEX_WAN_FUSED_V1_Q_CHUNK or CODEX_WAN_FUSED_V1_KV_CHUNK.");
+
+  const int64_t attention_matrix_elements = checked_mul_int64(q_len, kv_len, "q_len*kv_len");
+  if (attention_matrix_elements > kSmallAttentionMatrixElementsBypass) {
+    TORCH_CHECK(
+        resolved_q_chunk < q_len || resolved_kv_chunk < kv_len,
+        "streaming invariant violated: long sequence would run as full attention tile (q_chunk==q_len and kv_chunk==kv_len).");
+  }
+
+  StreamingPlan plan;
+  plan.q_chunk = resolved_q_chunk;
+  plan.kv_chunk = resolved_kv_chunk;
+  plan.full_attention_elements = full_attention_elements;
+  plan.score_tile_elements = score_tile_elements;
+  plan.score_tile_bytes = score_tile_bytes;
+  return plan;
 }
 
 torch::Tensor streaming_attention_bhld(
@@ -111,13 +185,21 @@ torch::Tensor streaming_attention_bhld(
   const auto kv_len = k_bhmd.size(2);
   const auto head_dim = q_bhld.size(3);
   const auto device = q_bhld.device();
+  const auto output_dtype = q_bhld.scalar_type();
   const auto options_fp32 = q_bhld.options().dtype(torch::kFloat);
+  const auto options_out = q_bhld.options().dtype(output_dtype);
   const auto scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+  const StreamingPlan plan = enforce_streaming_invariants(
+      bsz,
+      heads,
+      q_len,
+      kv_len,
+      q_chunk_size,
+      kv_chunk_size);
+  const int64_t resolved_q_chunk = plan.q_chunk;
+  const int64_t resolved_kv_chunk = plan.kv_chunk;
 
-  const int64_t resolved_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
-  const int64_t resolved_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
-
-  auto out_bhld = torch::empty({bsz, heads, q_len, head_dim}, options_fp32);
+  auto out_bhld = torch::empty({bsz, heads, q_len, head_dim}, options_out);
 
   for (int64_t q_start = 0; q_start < q_len; q_start += resolved_q_chunk) {
     const int64_t q_end = std::min<int64_t>(q_len, q_start + resolved_q_chunk);
@@ -133,24 +215,26 @@ torch::Tensor streaming_attention_bhld(
       auto k_chunk = k_bhmd.slice(/*dim=*/2, kv_start, kv_end).to(torch::kFloat).contiguous();
       auto v_chunk = v_bhmd.slice(/*dim=*/2, kv_start, kv_end).to(torch::kFloat).contiguous();
 
-      auto scores = torch::matmul(q_chunk, k_chunk.transpose(-2, -1)) * scale;
+      auto scores = torch::matmul(q_chunk, k_chunk.transpose(-2, -1));
+      scores.mul_(scale);
       auto max_chunk = std::get<0>(scores.max(/*dim=*/-1, /*keepdim=*/true));
       auto m_new = torch::maximum(m, max_chunk);
       auto alpha = torch::exp(m - m_new);
-      auto p = torch::exp(scores - m_new);
-      auto l_new = alpha * l + p.sum(/*dim=*/-1, /*keepdim=*/true);
-      auto acc_new = alpha * acc + torch::matmul(p, v_chunk);
+      scores.sub_(m_new);
+      scores.exp_();
+      auto l_new = alpha * l + scores.sum(/*dim=*/-1, /*keepdim=*/true);
+      auto acc_new = alpha * acc + torch::matmul(scores, v_chunk);
 
       m = m_new;
       l = l_new;
       acc = acc_new;
     }
 
-    auto out_chunk = acc / l.clamp_min(1e-9f);
+    auto out_chunk = (acc / l.clamp_min(1e-9f)).to(output_dtype);
     out_bhld.slice(/*dim=*/2, q_start, q_end).copy_(out_chunk);
   }
 
-  return out_bhld.to(q_bhld.scalar_type());
+  return out_bhld;
 }
 
 torch::Tensor linear_lastdim(

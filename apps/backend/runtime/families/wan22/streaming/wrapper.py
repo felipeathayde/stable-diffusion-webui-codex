@@ -23,6 +23,7 @@ from typing import Optional, TYPE_CHECKING
 import torch
 from torch import nn
 
+from apps.backend.runtime.sampling.block_progress import resolve_block_progress_callback
 from .specs import WanExecutionPlan, build_execution_plan
 from .controller import WanCoreController
 
@@ -84,6 +85,7 @@ class StreamedWanTransformer(nn.Module):
         x: torch.Tensor,
         timestep: torch.Tensor,
         context: torch.Tensor,
+        transformer_options: dict | None = None,
     ) -> torch.Tensor:
         """Forward pass with segment-based streaming.
 
@@ -116,6 +118,8 @@ class StreamedWanTransformer(nn.Module):
 
         # === Block-wise streaming ===
         segments = list(self._plan)
+        block_progress_callback = resolve_block_progress_callback(transformer_options)
+        total_blocks = int(self._plan.block_count)
         for seg_idx, segment in enumerate(segments):
             # Prefetch next segment (AGGRESSIVE policy)
             next_seg = segments[seg_idx + 1] if seg_idx + 1 < len(segments) else None
@@ -126,6 +130,8 @@ class StreamedWanTransformer(nn.Module):
 
             # Execute all blocks in segment
             for block_info in segment.blocks:
+                if block_progress_callback is not None:
+                    block_progress_callback(int(block_info.index + 1), total_blocks)
                 tokens = block_info.module(tokens, ctx, t_proj)
 
             # Maybe evict segment

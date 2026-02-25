@@ -40,6 +40,7 @@ from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.misc.autocast import autocast_disabled
 from apps.backend.runtime.ops.operations import get_operation_context
 from apps.backend.runtime.ops.operations_gguf import CodexParameter, dequantize_tensor as gguf_dequantize_tensor
+from apps.backend.runtime.sampling.block_progress import resolve_block_progress_callback
 
 from .inference import infer_wan22_latent_channels, infer_wan22_patch_embedding, infer_wan22_patch_size_and_in_channels
 from .sdpa import sdpa as wan_sdpa
@@ -724,6 +725,7 @@ class WanTransformer2DModel(nn.Module):
         x: torch.Tensor,  # [B, C, T, H, W] latent video
         timestep: torch.Tensor,  # [B,] or scalar
         context: torch.Tensor,  # [B, L, context_dim] text embeddings
+        transformer_options: dict | None = None,
     ) -> torch.Tensor:
         """Forward pass of WAN transformer.
 
@@ -790,7 +792,11 @@ class WanTransformer2DModel(nn.Module):
             )
 
         # Apply transformer blocks
+        block_progress_callback = resolve_block_progress_callback(transformer_options)
+        total_blocks = int(len(self.blocks))
         for block_idx, block in enumerate(self.blocks):
+            if block_progress_callback is not None:
+                block_progress_callback(int(block_idx + 1), total_blocks)
             if trace_debug:
                 logger.debug(
                     "[wan22.trace] block[%d/%d] dispatch: block_dtype=%s block_device=%s tokens_dtype=%s tokens_device=%s "

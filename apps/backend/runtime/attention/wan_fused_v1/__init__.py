@@ -8,7 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: WAN fused-attention V1 contract and extension bridge.
 Provides strict fail-loud validators, mode resolution, and optional CUDA extension dispatch for WAN fused
-self/cross attention (`QKV + RoPE + attention + out-proj`) in inference mode.
+self/cross attention (`QKV + RoPE + attention + out-proj`) in inference mode. Resolves projection/norm
+weights through runtime ops dequantization helpers so GGUF-backed modules feed dense floating tensors
+into fused-kernel contracts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanFusedMode` (enum): Runtime mode for fused attention dispatch (`off|auto|force`).
@@ -34,6 +36,9 @@ from enum import Enum
 from typing import Any, Optional
 
 import torch
+
+from apps.backend.runtime.ops.operations import get_weight_and_bias
+from apps.backend.runtime.ops.operations_gguf import dequantize_tensor
 
 logger = logging.getLogger("backend.runtime.attention.wan_fused_v1")
 
@@ -376,15 +381,42 @@ def _validate_arch_dtype_head_dim(*, device: torch.device, dtype: torch.dtype, h
     )
 
 
-def _resolve_linear_weight_bias(linear: Any, *, expected_out: int, expected_in: int, label: str) -> tuple[torch.Tensor, torch.Tensor | None]:
-    weight = getattr(linear, "weight", None)
-    bias = getattr(linear, "bias", None)
+def _resolve_linear_weight_bias(
+    linear: Any,
+    *,
+    expected_out: int,
+    expected_in: int,
+    label: str,
+    target_device: torch.device,
+    target_dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    non_blocking = target_device.type != "mps"
+    weight, bias = get_weight_and_bias(
+        linear,
+        weight_args={"device": target_device, "dtype": target_dtype, "non_blocking": non_blocking},
+        bias_args={"device": target_device, "dtype": target_dtype, "non_blocking": non_blocking},
+        weight_fn=dequantize_tensor,
+        bias_fn=dequantize_tensor,
+    )
     if not torch.is_tensor(weight):
         _fail(code=E_WAN_FUSED_INVALID_SHAPE, message=f"{label}.weight is missing or invalid.")
     if tuple(weight.shape) != (expected_out, expected_in):
         _fail(
             code=E_WAN_FUSED_INVALID_SHAPE,
             message=f"{label}.weight shape mismatch: got {tuple(weight.shape)} expected {(expected_out, expected_in)}.",
+        )
+    if int(weight.numel()) != int(expected_out * expected_in):
+        _fail(
+            code=E_WAN_FUSED_INVALID_SHAPE,
+            message=(
+                f"{label}.weight storage mismatch after dequantize: numel={int(weight.numel())} "
+                f"expected={int(expected_out * expected_in)} shape={tuple(weight.shape)}."
+            ),
+        )
+    if not weight.is_floating_point():
+        _fail(
+            code=E_WAN_FUSED_DTYPE_UNSUPPORTED,
+            message=f"{label}.weight must be floating for fused path; got dtype={weight.dtype}.",
         )
     if bias is not None:
         if not torch.is_tensor(bias):
@@ -393,6 +425,11 @@ def _resolve_linear_weight_bias(linear: Any, *, expected_out: int, expected_in: 
             _fail(
                 code=E_WAN_FUSED_INVALID_SHAPE,
                 message=f"{label}.bias shape mismatch: got {tuple(bias.shape)} expected {(expected_out,)}.",
+            )
+        if not bias.is_floating_point():
+            _fail(
+                code=E_WAN_FUSED_DTYPE_UNSUPPORTED,
+                message=f"{label}.bias must be floating for fused path; got dtype={bias.dtype}.",
             )
     return weight, bias
 
@@ -440,6 +477,31 @@ def _validate_rope_tensor(*, tensor: torch.Tensor | None, expected_len: int, lab
             code=E_WAN_FUSED_NONCONTIGUOUS,
             message=f"{label} must be contiguous; got stride={tuple(tensor.stride())}.",
         )
+
+
+def _resolve_norm_weight(
+    *,
+    weight: torch.Tensor,
+    expected_channels: int,
+    label: str,
+    target_device: torch.device,
+    target_dtype: torch.dtype,
+) -> torch.Tensor:
+    resolved = dequantize_tensor(weight)
+    if not torch.is_tensor(resolved):
+        _fail(code=E_WAN_FUSED_INVALID_SHAPE, message=f"{label} is missing or invalid.")
+    resolved = resolved.to(device=target_device, dtype=target_dtype, non_blocking=(target_device.type != "mps"))
+    if tuple(resolved.shape) != (expected_channels,):
+        _fail(
+            code=E_WAN_FUSED_INVALID_SHAPE,
+            message=f"{label} shape mismatch: got {tuple(resolved.shape)} expected {(expected_channels,)}.",
+        )
+    if not resolved.is_floating_point():
+        _fail(
+            code=E_WAN_FUSED_DTYPE_UNSUPPORTED,
+            message=f"{label} must be floating for fused path; got dtype={resolved.dtype}.",
+        )
+    return resolved.contiguous()
 
 
 def _maybe_return_unavailable(*, mode: WanFusedMode) -> WanFusedAttemptResult | None:
@@ -493,43 +555,76 @@ def try_fused_self_attention(
     num_heads = _resolve_head_count(channels=channels, head_dim=head_dim, field_name="self")
     _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
 
-    w_q, b_q = _resolve_linear_weight_bias(q_proj, expected_out=channels, expected_in=channels, label="q_proj")
-    w_k, b_k = _resolve_linear_weight_bias(k_proj, expected_out=channels, expected_in=channels, label="k_proj")
-    w_v, b_v = _resolve_linear_weight_bias(v_proj, expected_out=channels, expected_in=channels, label="v_proj")
-    w_o, b_o = _resolve_linear_weight_bias(o_proj, expected_out=channels, expected_in=channels, label="o_proj")
-
-    if tuple(norm_q_weight.shape) != (channels,) or tuple(norm_k_weight.shape) != (channels,):
-        _fail(
-            code=E_WAN_FUSED_INVALID_SHAPE,
-            message=(
-                "WAN fused self expects norm weights shaped [C]. "
-                f"got norm_q={tuple(norm_q_weight.shape)} norm_k={tuple(norm_k_weight.shape)} expected={(channels,)}."
-            ),
+    try:
+        w_q, b_q = _resolve_linear_weight_bias(
+            q_proj,
+            expected_out=channels,
+            expected_in=channels,
+            label="q_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        w_k, b_k = _resolve_linear_weight_bias(
+            k_proj,
+            expected_out=channels,
+            expected_in=channels,
+            label="k_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        w_v, b_v = _resolve_linear_weight_bias(
+            v_proj,
+            expected_out=channels,
+            expected_in=channels,
+            label="v_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        w_o, b_o = _resolve_linear_weight_bias(
+            o_proj,
+            expected_out=channels,
+            expected_in=channels,
+            label="o_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
         )
 
-    w_qkv = torch.stack(
-        [
-            w_q.t().contiguous().view(channels, num_heads, head_dim),
-            w_k.t().contiguous().view(channels, num_heads, head_dim),
-            w_v.t().contiguous().view(channels, num_heads, head_dim),
-        ],
-        dim=1,
-    ).contiguous()
+        norm_q_weight = _resolve_norm_weight(
+            weight=norm_q_weight,
+            expected_channels=channels,
+            label="norm_q_weight",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        norm_k_weight = _resolve_norm_weight(
+            weight=norm_k_weight,
+            expected_channels=channels,
+            label="norm_k_weight",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
 
-    b_qkv: torch.Tensor | None = None
-    if b_q is not None and b_k is not None and b_v is not None:
-        b_qkv = torch.stack(
+        w_qkv = torch.stack(
             [
-                b_q.contiguous().view(num_heads, head_dim),
-                b_k.contiguous().view(num_heads, head_dim),
-                b_v.contiguous().view(num_heads, head_dim),
+                w_q.t().contiguous().view(channels, num_heads, head_dim),
+                w_k.t().contiguous().view(channels, num_heads, head_dim),
+                w_v.t().contiguous().view(channels, num_heads, head_dim),
             ],
-            dim=0,
+            dim=1,
         ).contiguous()
 
-    w_out = w_o.t().contiguous().view(num_heads, head_dim, channels)
+        b_qkv: torch.Tensor | None = None
+        if b_q is not None and b_k is not None and b_v is not None:
+            b_qkv = torch.stack(
+                [
+                    b_q.contiguous().view(num_heads, head_dim),
+                    b_k.contiguous().view(num_heads, head_dim),
+                    b_v.contiguous().view(num_heads, head_dim),
+                ],
+                dim=0,
+            ).contiguous()
 
-    try:
+        w_out = w_o.t().contiguous().view(num_heads, head_dim, channels)
         out = torch.ops.wan_fused_v1.self_fwd(
             x,
             w_qkv,
@@ -627,30 +722,63 @@ def try_fused_cross_attention(
 
     _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
 
-    w_q, b_q = _resolve_linear_weight_bias(q_proj, expected_out=channels, expected_in=channels, label="q_proj")
-    w_k, b_k = _resolve_linear_weight_bias(k_proj, expected_out=channels, expected_in=ctx_dim, label="k_proj")
-    w_v, b_v = _resolve_linear_weight_bias(v_proj, expected_out=channels, expected_in=ctx_dim, label="v_proj")
-    w_o, b_o = _resolve_linear_weight_bias(o_proj, expected_out=channels, expected_in=channels, label="o_proj")
-
-    if tuple(norm_q_weight.shape) != (channels,) or tuple(norm_k_weight.shape) != (channels,):
-        _fail(
-            code=E_WAN_FUSED_INVALID_SHAPE,
-            message=(
-                "WAN fused cross expects norm weights shaped [C]. "
-                f"got norm_q={tuple(norm_q_weight.shape)} norm_k={tuple(norm_k_weight.shape)} expected={(channels,)}."
-            ),
+    try:
+        w_q, b_q = _resolve_linear_weight_bias(
+            q_proj,
+            expected_out=channels,
+            expected_in=channels,
+            label="q_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        w_k, b_k = _resolve_linear_weight_bias(
+            k_proj,
+            expected_out=channels,
+            expected_in=ctx_dim,
+            label="k_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        w_v, b_v = _resolve_linear_weight_bias(
+            v_proj,
+            expected_out=channels,
+            expected_in=ctx_dim,
+            label="v_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        w_o, b_o = _resolve_linear_weight_bias(
+            o_proj,
+            expected_out=channels,
+            expected_in=channels,
+            label="o_proj",
+            target_device=x.device,
+            target_dtype=x.dtype,
         )
 
-    w_q_contract = w_q.t().contiguous().view(channels, num_heads, head_dim)
-    w_k_contract = w_k.t().contiguous().view(ctx_dim, num_heads, head_dim)
-    w_v_contract = w_v.t().contiguous().view(ctx_dim, num_heads, head_dim)
-    w_out = w_o.t().contiguous().view(num_heads, head_dim, channels)
+        norm_q_weight = _resolve_norm_weight(
+            weight=norm_q_weight,
+            expected_channels=channels,
+            label="norm_q_weight",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
+        norm_k_weight = _resolve_norm_weight(
+            weight=norm_k_weight,
+            expected_channels=channels,
+            label="norm_k_weight",
+            target_device=x.device,
+            target_dtype=x.dtype,
+        )
 
-    b_q_contract = b_q.contiguous().view(num_heads, head_dim) if b_q is not None else None
-    b_k_contract = b_k.contiguous().view(num_heads, head_dim) if b_k is not None else None
-    b_v_contract = b_v.contiguous().view(num_heads, head_dim) if b_v is not None else None
+        w_q_contract = w_q.t().contiguous().view(channels, num_heads, head_dim)
+        w_k_contract = w_k.t().contiguous().view(ctx_dim, num_heads, head_dim)
+        w_v_contract = w_v.t().contiguous().view(ctx_dim, num_heads, head_dim)
+        w_out = w_o.t().contiguous().view(num_heads, head_dim, channels)
 
-    try:
+        b_q_contract = b_q.contiguous().view(num_heads, head_dim) if b_q is not None else None
+        b_k_contract = b_k.contiguous().view(num_heads, head_dim) if b_k is not None else None
+        b_v_contract = b_v.contiguous().view(num_heads, head_dim) if b_v is not None else None
         out = torch.ops.wan_fused_v1.cross_fwd(
             x,
             context,

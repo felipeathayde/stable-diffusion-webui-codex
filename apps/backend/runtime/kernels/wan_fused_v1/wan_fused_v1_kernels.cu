@@ -124,8 +124,30 @@ StreamingPlan enforce_streaming_invariants(
     int64_t kv_len,
     int64_t q_chunk_size,
     int64_t kv_chunk_size) {
-  const int64_t resolved_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
-  const int64_t resolved_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
+  int64_t resolved_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
+  int64_t resolved_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
+  const int64_t attention_matrix_elements = checked_mul_int64(q_len, kv_len, "q_len*kv_len");
+  if (attention_matrix_elements > kSmallAttentionMatrixElementsBypass &&
+      resolved_q_chunk == q_len &&
+      resolved_kv_chunk == kv_len) {
+    if (kv_len > 1) {
+      int64_t adaptive_kv_chunk =
+          std::max<int64_t>(1, kSmallAttentionMatrixElementsBypass / std::max<int64_t>(1, q_len));
+      adaptive_kv_chunk = std::min<int64_t>(adaptive_kv_chunk, kv_len - 1);
+      if (adaptive_kv_chunk >= 1 && adaptive_kv_chunk < kv_len) {
+        resolved_kv_chunk = adaptive_kv_chunk;
+      }
+    }
+    if (resolved_q_chunk == q_len && resolved_kv_chunk == kv_len && q_len > 1) {
+      int64_t adaptive_q_chunk =
+          std::max<int64_t>(1, kSmallAttentionMatrixElementsBypass / std::max<int64_t>(1, kv_len));
+      adaptive_q_chunk = std::min<int64_t>(adaptive_q_chunk, q_len - 1);
+      if (adaptive_q_chunk >= 1 && adaptive_q_chunk < q_len) {
+        resolved_q_chunk = adaptive_q_chunk;
+      }
+    }
+  }
+
   const int64_t tile_area = checked_mul_int64(resolved_q_chunk, resolved_kv_chunk, "q_chunk*kv_chunk");
   TORCH_CHECK(
       tile_area <= kMaxQKvTileAreaElements,
@@ -151,7 +173,6 @@ StreamingPlan enforce_streaming_invariants(
       "). Reduce ",
       "CODEX_WAN_FUSED_V1_Q_CHUNK or CODEX_WAN_FUSED_V1_KV_CHUNK.");
 
-  const int64_t attention_matrix_elements = checked_mul_int64(q_len, kv_len, "q_len*kv_len");
   if (attention_matrix_elements > kSmallAttentionMatrixElementsBypass) {
     TORCH_CHECK(
         resolved_q_chunk < q_len || resolved_kv_chunk < kv_len,

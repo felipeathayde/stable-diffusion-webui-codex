@@ -813,6 +813,13 @@ def try_fused_self_attention(
         return WanFusedAttemptResult(output=out, reason_code=None)
     except WanFusedContractError as ex:
         if fused_mode is WanFusedMode.FORCE:
+            _record_attempt(
+                op_kind="self",
+                mode=fused_mode,
+                success=False,
+                reason_code=ex.code,
+                reason_detail=str(ex),
+            )
             raise
         _record_attempt(
             op_kind="self",
@@ -825,6 +832,13 @@ def try_fused_self_attention(
     except Exception as ex:
         code = _map_kernel_runtime_error_code(str(ex))
         if fused_mode is WanFusedMode.FORCE:
+            _record_attempt(
+                op_kind="self",
+                mode=fused_mode,
+                success=False,
+                reason_code=code,
+                reason_detail=f"{type(ex).__name__}: {ex}",
+            )
             _fail(
                 code=code,
                 message=f"WAN fused self kernel failed: {type(ex).__name__}: {ex}",
@@ -998,6 +1012,13 @@ def try_fused_cross_attention(
         return WanFusedAttemptResult(output=out, reason_code=None)
     except WanFusedContractError as ex:
         if fused_mode is WanFusedMode.FORCE:
+            _record_attempt(
+                op_kind="cross",
+                mode=fused_mode,
+                success=False,
+                reason_code=ex.code,
+                reason_detail=str(ex),
+            )
             raise
         _record_attempt(
             op_kind="cross",
@@ -1010,6 +1031,13 @@ def try_fused_cross_attention(
     except Exception as ex:
         code = _map_kernel_runtime_error_code(str(ex))
         if fused_mode is WanFusedMode.FORCE:
+            _record_attempt(
+                op_kind="cross",
+                mode=fused_mode,
+                success=False,
+                reason_code=code,
+                reason_detail=f"{type(ex).__name__}: {ex}",
+            )
             _fail(
                 code=code,
                 message=f"WAN fused cross kernel failed: {type(ex).__name__}: {ex}",

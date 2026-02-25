@@ -36,6 +36,8 @@ from typing import Any, Optional, Tuple
 
 import torch
 
+from apps.backend.runtime.attention.wan_fused_v1 import wan_fused_runtime_metrics_set_stage
+
 from .config import WAN_FLOW_MULTIPLIER, resolve_i2v_order
 from .diagnostics import (
     get_logger,
@@ -578,6 +580,7 @@ def sample_stage_latents_generator(
     emit_logs: bool = True,
 ):
     log = get_logger(logger)
+    wan_fused_runtime_metrics_set_stage(stage_name)
     scheduler_state_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
     t_lat, h_lat, w_lat = latent_dimensions(geom)
     steps = max(int(steps), 1)

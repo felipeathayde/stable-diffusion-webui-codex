@@ -37,6 +37,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_sample_chunk_stage_with_progress` (function): Run a chunk stage sampler and remap local progress into a global phase percent.
 - `_resolve_stage_prompt_pairs` (function): Resolve high/low stage prompt+negative pairs (stage prompts required; negative falls back only when missing).
 - `_resolve_stage_text_embeddings` (function): Build stage-specific high/low embeddings from a single text-encoder load.
+- `_resolve_wan_fused_run_label` (function): Builds stable run labels for fused-attention observability lifecycle.
+- `_with_wan_fused_runtime_metrics` (function): Decorator that wraps WAN run/stream entrypoints with fused metrics reset + end-of-run summary.
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames (with explicit VAE config-dir forwarding).
@@ -51,14 +53,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import gc
+import inspect
 import os
 import re
 import sys
 import tempfile
+from functools import wraps
 from typing import Any, Optional
 
 import torch
 
+from apps.backend.runtime.attention.wan_fused_v1 import (
+    wan_fused_runtime_metrics_is_active,
+    wan_fused_runtime_metrics_log_summary,
+    wan_fused_runtime_metrics_reset,
+)
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 
@@ -99,6 +108,46 @@ _WAN_CONTINUITY_PROFILE_OVERLAP = "overlap"
 _WAN_CONTINUITY_PROFILE_SVI2 = "svi2"
 _WAN_CONTINUITY_PROFILE_SVI2_PRO = "svi2_pro"
 _WAN_CHUNK_HYBRID_RAM_BUDGET_MB = 2048.0
+
+
+def _resolve_wan_fused_run_label(func_name: str, cfg: Any) -> str:
+    variant = str(getattr(cfg, "wan_engine_variant", None) or "auto")
+    frames = int(getattr(cfg, "num_frames", 0) or 0)
+    height = int(getattr(cfg, "height", 0) or 0)
+    width = int(getattr(cfg, "width", 0) or 0)
+    return f"{str(func_name)}(variant={variant},frames={frames},size={height}x{width})"
+
+
+def _with_wan_fused_runtime_metrics(func):
+    @wraps(func)
+    def _wrapped(*args, **kwargs):
+        if wan_fused_runtime_metrics_is_active():
+            return func(*args, **kwargs)
+        cfg = kwargs.get("cfg", None)
+        if cfg is None and args:
+            cfg = args[0]
+        log = get_logger(kwargs.get("logger", None))
+        run_label = _resolve_wan_fused_run_label(func.__name__, cfg)
+        wan_fused_runtime_metrics_reset(run_label=run_label)
+        try:
+            result = func(*args, **kwargs)
+        except Exception:
+            wan_fused_runtime_metrics_log_summary(logger_obj=log, reset=True)
+            raise
+
+        if inspect.isgenerator(result):
+            def _generator():
+                try:
+                    yield from result
+                finally:
+                    wan_fused_runtime_metrics_log_summary(logger_obj=log, reset=True)
+
+            return _generator()
+
+        wan_fused_runtime_metrics_log_summary(logger_obj=log, reset=True)
+        return result
+
+    return _wrapped
 
 
 class _MemoryManagedModule:
@@ -954,6 +1003,7 @@ def _resolve_stage_text_embeddings(
     return high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds
 
 
+@_with_wan_fused_runtime_metrics
 def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
     log = get_logger(logger)
     hi_path = pick_stage_gguf(getattr(cfg.high, "model_dir", None) if cfg.high else None, stage="high")
@@ -1218,6 +1268,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     return frames
 
 
+@_with_wan_fused_runtime_metrics
 def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     log = get_logger(logger)
     hi_path = pick_stage_gguf(getattr(cfg.high, "model_dir", None) if cfg.high else None, stage="high")
@@ -1428,6 +1479,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     yield {"type": "result", "frames": frames}
 
 
+@_with_wan_fused_runtime_metrics
 def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
     log = get_logger(logger)
     hi_path = pick_stage_gguf(getattr(cfg.high, "model_dir", None) if cfg.high else None, stage="high")
@@ -1704,6 +1756,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     return frames
 
 
+@_with_wan_fused_runtime_metrics
 def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     log = get_logger(logger)
     if cfg.init_image is None:
@@ -1957,6 +2010,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     yield {"type": "result", "frames": frames}
 
 
+@_with_wan_fused_runtime_metrics
 def stream_img2vid_chunked(
     cfg: RunConfig,
     *,
@@ -2728,6 +2782,7 @@ def _validate_windowed_temporal_contract(
         )
 
 
+@_with_wan_fused_runtime_metrics
 def stream_img2vid_sliding_window(
     cfg: RunConfig,
     *,
@@ -2771,6 +2826,7 @@ def stream_img2vid_sliding_window(
     )
 
 
+@_with_wan_fused_runtime_metrics
 def stream_img2vid_svi2(
     cfg: RunConfig,
     *,
@@ -2813,6 +2869,7 @@ def stream_img2vid_svi2(
     )
 
 
+@_with_wan_fused_runtime_metrics
 def stream_img2vid_svi2_pro(
     cfg: RunConfig,
     *,

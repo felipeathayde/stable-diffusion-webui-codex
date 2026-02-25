@@ -22,6 +22,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `is_extension_available` (function): Returns whether WAN fused CUDA ops are available.
 - `last_extension_error` (function): Returns the last extension load/build error details.
 - `warmup_extension_for_load` (function): Triggers extension load/build during model-load seam and emits explicit readiness logs.
+- `wan_fused_runtime_metrics_reset` (function): Resets per-run fused dispatch counters/lifecycle state.
+- `wan_fused_runtime_metrics_is_active` (function): Returns whether a fused runtime metrics context is active for this execution flow.
+- `wan_fused_runtime_metrics_set_stage` (function): Sets the active sampling stage label for fused counter attribution.
+- `wan_fused_runtime_metrics_log_summary` (function): Emits end-of-run fused dispatch summary and optionally resets run state.
 - `try_fused_self_attention` (function): Attempts fused self-attention dispatch and returns output or reason.
 - `try_fused_cross_attention` (function): Attempts fused cross-attention dispatch and returns output or reason.
 """
@@ -32,7 +36,8 @@ import importlib
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
@@ -78,6 +83,18 @@ class WanFusedAttemptResult:
     reason_detail: str | None = None
 
 
+@dataclass(slots=True)
+class _WanFusedRuntimeMetrics:
+    run_label: str
+    attempts: int = 0
+    hits: int = 0
+    fallback_by_reason: dict[str, int] = field(default_factory=dict)
+    attempts_by_stage: dict[str, int] = field(default_factory=dict)
+    hits_by_stage: dict[str, int] = field(default_factory=dict)
+    fallback_by_stage_reason: dict[str, int] = field(default_factory=dict)
+    warned_auto_reasons: set[str] = field(default_factory=set)
+
+
 @dataclass(frozen=True, slots=True)
 class WanFusedWarmupStatus:
     mode: WanFusedMode
@@ -104,6 +121,104 @@ _last_error: str | None = None
 _attempt_errors: list[_AttemptError] = []
 _load_attempted = False
 _last_attempt_with_build = False
+_runtime_metrics_var: ContextVar[_WanFusedRuntimeMetrics | None] = ContextVar(
+    "wan_fused_v1_runtime_metrics",
+    default=None,
+)
+_runtime_stage_var: ContextVar[str] = ContextVar(
+    "wan_fused_v1_runtime_stage",
+    default="unset",
+)
+
+
+def _format_counter_map(values: dict[str, int]) -> str:
+    if not values:
+        return "none"
+    return ",".join(f"{key}={int(values[key])}" for key in sorted(values.keys()))
+
+
+def _stage_for_metrics() -> str:
+    stage = str(_runtime_stage_var.get() or "").strip()
+    return stage if stage else "unset"
+
+
+def _ensure_runtime_metrics() -> _WanFusedRuntimeMetrics:
+    metrics = _runtime_metrics_var.get()
+    if metrics is None:
+        metrics = _WanFusedRuntimeMetrics(run_label="implicit")
+        _runtime_metrics_var.set(metrics)
+    return metrics
+
+
+def wan_fused_runtime_metrics_reset(*, run_label: str) -> None:
+    _runtime_metrics_var.set(_WanFusedRuntimeMetrics(run_label=str(run_label)))
+    _runtime_stage_var.set("unset")
+
+
+def wan_fused_runtime_metrics_is_active() -> bool:
+    return _runtime_metrics_var.get() is not None
+
+
+def wan_fused_runtime_metrics_set_stage(stage_name: str) -> None:
+    _runtime_stage_var.set(str(stage_name))
+
+
+def _record_attempt(
+    *,
+    op_kind: str,
+    mode: WanFusedMode,
+    success: bool,
+    reason_code: str | None,
+    reason_detail: str | None,
+) -> None:
+    metrics = _ensure_runtime_metrics()
+    stage = _stage_for_metrics()
+    metrics.attempts += 1
+    metrics.attempts_by_stage[stage] = int(metrics.attempts_by_stage.get(stage, 0)) + 1
+    if success:
+        metrics.hits += 1
+        metrics.hits_by_stage[stage] = int(metrics.hits_by_stage.get(stage, 0)) + 1
+        return
+
+    code = str(reason_code or E_WAN_FUSED_KERNEL_RUNTIME_ERROR)
+    metrics.fallback_by_reason[code] = int(metrics.fallback_by_reason.get(code, 0)) + 1
+    stage_reason_key = f"{stage}:{code}"
+    metrics.fallback_by_stage_reason[stage_reason_key] = int(metrics.fallback_by_stage_reason.get(stage_reason_key, 0)) + 1
+    if mode is not WanFusedMode.AUTO:
+        return
+    if code in metrics.warned_auto_reasons:
+        return
+    metrics.warned_auto_reasons.add(code)
+    logger.warning(
+        "wan_fused_v1 auto fallback: reason=%s stage=%s op=%s detail=%s (logged once per reason per run)",
+        code,
+        stage,
+        str(op_kind),
+        str(reason_detail),
+    )
+
+
+def wan_fused_runtime_metrics_log_summary(*, logger_obj: logging.Logger | None = None, reset: bool = False) -> None:
+    metrics = _runtime_metrics_var.get()
+    if metrics is None:
+        if reset:
+            _runtime_stage_var.set("unset")
+        return
+    log = logger_obj if logger_obj is not None else logger
+    log.info(
+        "[wan22.gguf] fused runtime summary: run=%s attempts=%d hits=%d fallback_by_reason=%s attempts_by_stage=%s "
+        "hits_by_stage=%s fallback_by_stage_reason=%s",
+        str(metrics.run_label),
+        int(metrics.attempts),
+        int(metrics.hits),
+        _format_counter_map(metrics.fallback_by_reason),
+        _format_counter_map(metrics.attempts_by_stage),
+        _format_counter_map(metrics.hits_by_stage),
+        _format_counter_map(metrics.fallback_by_stage_reason),
+    )
+    if reset:
+        _runtime_metrics_var.set(None)
+        _runtime_stage_var.set("unset")
 
 
 def _set_attempt_error(stage: str, ex: Exception) -> None:
@@ -585,6 +700,13 @@ def try_fused_self_attention(
 
     unavailable = _maybe_return_unavailable(mode=fused_mode)
     if unavailable is not None:
+        _record_attempt(
+            op_kind="self",
+            mode=fused_mode,
+            success=False,
+            reason_code=unavailable.reason_code,
+            reason_detail=unavailable.reason_detail,
+        )
         return unavailable
 
     _validate_common_inputs(x=x, dropout_p=dropout_p)
@@ -687,9 +809,19 @@ def try_fused_self_attention(
                     f"got {tuple(out.shape)} expected {(bsz, seq_len, channels)}."
                 ),
             )
+        _record_attempt(op_kind="self", mode=fused_mode, success=True, reason_code=None, reason_detail=None)
         return WanFusedAttemptResult(output=out, reason_code=None)
-    except WanFusedContractError:
-        raise
+    except WanFusedContractError as ex:
+        if fused_mode is WanFusedMode.FORCE:
+            raise
+        _record_attempt(
+            op_kind="self",
+            mode=fused_mode,
+            success=False,
+            reason_code=ex.code,
+            reason_detail=str(ex),
+        )
+        return WanFusedAttemptResult(output=None, reason_code=ex.code, reason_detail=str(ex))
     except Exception as ex:
         code = _map_kernel_runtime_error_code(str(ex))
         if fused_mode is WanFusedMode.FORCE:
@@ -697,6 +829,13 @@ def try_fused_self_attention(
                 code=code,
                 message=f"WAN fused self kernel failed: {type(ex).__name__}: {ex}",
             )
+        _record_attempt(
+            op_kind="self",
+            mode=fused_mode,
+            success=False,
+            reason_code=code,
+            reason_detail=f"{type(ex).__name__}: {ex}",
+        )
         return WanFusedAttemptResult(
             output=None,
             reason_code=code,
@@ -727,6 +866,13 @@ def try_fused_cross_attention(
 
     unavailable = _maybe_return_unavailable(mode=fused_mode)
     if unavailable is not None:
+        _record_attempt(
+            op_kind="cross",
+            mode=fused_mode,
+            success=False,
+            reason_code=unavailable.reason_code,
+            reason_detail=unavailable.reason_detail,
+        )
         return unavailable
 
     _validate_common_inputs(x=x, dropout_p=dropout_p)
@@ -848,9 +994,19 @@ def try_fused_cross_attention(
                     f"got {tuple(out.shape)} expected {(bsz, q_len, channels)}."
                 ),
             )
+        _record_attempt(op_kind="cross", mode=fused_mode, success=True, reason_code=None, reason_detail=None)
         return WanFusedAttemptResult(output=out, reason_code=None)
-    except WanFusedContractError:
-        raise
+    except WanFusedContractError as ex:
+        if fused_mode is WanFusedMode.FORCE:
+            raise
+        _record_attempt(
+            op_kind="cross",
+            mode=fused_mode,
+            success=False,
+            reason_code=ex.code,
+            reason_detail=str(ex),
+        )
+        return WanFusedAttemptResult(output=None, reason_code=ex.code, reason_detail=str(ex))
     except Exception as ex:
         code = _map_kernel_runtime_error_code(str(ex))
         if fused_mode is WanFusedMode.FORCE:
@@ -858,6 +1014,13 @@ def try_fused_cross_attention(
                 code=code,
                 message=f"WAN fused cross kernel failed: {type(ex).__name__}: {ex}",
             )
+        _record_attempt(
+            op_kind="cross",
+            mode=fused_mode,
+            success=False,
+            reason_code=code,
+            reason_detail=f"{type(ex).__name__}: {ex}",
+        )
         return WanFusedAttemptResult(
             output=None,
             reason_code=code,

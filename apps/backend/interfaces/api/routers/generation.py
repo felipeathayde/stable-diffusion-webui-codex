@@ -2077,9 +2077,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         mask_image = media.decode_image(mask_data) if mask_data else None
 
         mask_enforcement = None
-        inpainting_fill = 0
+        inpainting_fill = 1
         inpaint_full_res = True
-        inpaint_full_res_padding = 0
+        inpaint_full_res_padding = 32
         inpainting_mask_invert = 0
         mask_blur = 4
         mask_blur_x = 4

@@ -210,6 +210,32 @@ describe('defaultImageParamsForType', () => {
   })
 })
 
+describe('image params normalization', () => {
+  it('normalizes invalid persisted mask enforcement to per_step_clamp', async () => {
+    const iso = '2026-02-25T00:00:00.000Z'
+    mockedFetchTabs.mockResolvedValueOnce({
+      tabs: [
+        {
+          id: 'sdxl-1',
+          type: 'sdxl',
+          title: 'SDXL',
+          order: 0,
+          enabled: true,
+          params: { maskEnforcement: 'bogus' },
+          meta: { createdAt: iso, updatedAt: iso },
+        },
+      ],
+    } as any)
+
+    const store = useModelTabsStore()
+    await store.load()
+
+    const sdxl = store.tabs.find((tab) => tab.id === 'sdxl-1') as any
+    expect(sdxl).toBeTruthy()
+    expect(sdxl.params.maskEnforcement).toBe('per_step_clamp')
+  })
+})
+
 describe('WAN legacy migration', () => {
   it('keeps img2vidChunkingEnabled=false as solo even when legacy chunk frames exist', async () => {
     const iso = '2026-02-21T00:00:00.000Z'

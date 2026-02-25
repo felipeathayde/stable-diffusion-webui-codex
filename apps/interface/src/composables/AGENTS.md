@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-22
+Last Review: 2026-02-25
 Status: Active
 
 ## Purpose
@@ -48,6 +48,7 @@ Status: Active
 - 2026-02-20: `useGeneration(tabId)` and `useVideoGeneration(tabId)` history entries now include optional `thumbnail` previews (`GeneratedImage`) updated during progress/result flow, enabling square thumbnail-only History cards with detail modal drill-down in views.
 - 2026-02-21: `useGeneration(tabId)` now fails loud when a non-sentinel VAE label cannot be resolved to `vae_sha` (`Selected VAE is invalid or stale`), preventing stale hidden selections from degrading into implicit built-in behavior.
 - 2026-02-22: `useGeneration(tabId)` now exposes `cancel(mode)` (task cancel API passthrough) so `RunCard` can drive the shared two-click cancel flow from image tab headers.
+- 2026-02-25: `useGeneration.ts::buildImg2ImgPayload(...)` now normalizes `img2img_mask_enforcement` via `normalizeMaskEnforcement(...)` at payload assembly time, preventing stale/invalid client values from reaching the backend contract.
 - 2026-02-21: `useVideoGeneration(tabId)` now treats WAN prompts as stage-owned (`high.prompt/negativePrompt`, `low.prompt/negativePrompt`), blocks generation if either stage prompt is empty, snapshots both stage prompts in history, and keeps top-level API prompt compatibility by deriving mode prompt from the High stage in payload builders.
 - 2026-02-21: `useVideoGeneration(tabId)` now dispatches only `txt2vid|img2vid`; frontend `vid2vid` run preparation/dispatch and init-video file state were removed to match current backend contract exposure.
 - 2026-02-21: `useVideoGeneration(tabId)` img2vid temporal dispatch now uses explicit `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`) and forwards mode-scoped controls (`chunk*` vs `window*`) to WAN payload builders; run-history snapshots persist `img2vid.mode` + window controls.

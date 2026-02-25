@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Sequence, Tuple
+from typing import Any, Callable, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -33,6 +33,11 @@ from apps.backend.runtime.pipeline_stages.image_io import pil_to_tensor
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 _RESAMPLE_NEAREST = Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST
+_MAX_TORCH_SEED = (1 << 63) - 1
+
+
+def _normalize_manual_seed(value: int) -> int:
+    return int(value) & _MAX_TORCH_SEED
 
 MaskEnforcementMode = str
 MASK_ENFORCEMENT_POST_BLEND = "post_blend"
@@ -64,14 +69,65 @@ class MaskedImg2ImgBundle:
 class LatentMaskEnforcer:
     """Applies latent masking constraints (post-blend and/or per-step clamp)."""
 
-    def __init__(self, *, init_latent: torch.Tensor, latent_masked: torch.Tensor, latent_unmasked: torch.Tensor) -> None:
+    def __init__(
+        self,
+        *,
+        init_latent: torch.Tensor,
+        latent_masked: torch.Tensor,
+        latent_unmasked: torch.Tensor,
+        noise_scaling: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+        noise_seeds: Sequence[int] | None = None,
+    ) -> None:
         self._init_latent = init_latent
         self._latent_masked = latent_masked
         self._latent_unmasked = latent_unmasked
-        self._cache: dict[tuple[torch.device, torch.dtype], tuple[torch.Tensor, torch.Tensor]] = {}
+        self._noise_scaling = noise_scaling
+        raw_seeds = [int(seed) for seed in (noise_seeds or [0])]
+        if not raw_seeds:
+            raw_seeds = [0]
+        self._noise_seeds = tuple(_normalize_manual_seed(seed) for seed in raw_seeds)
+        self._cache: dict[
+            tuple[torch.device, torch.dtype, int],
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        ] = {}
 
-    def _materialize(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        key = (x.device, x.dtype)
+    @staticmethod
+    def _expand_batch(tensor: torch.Tensor, *, batch: int) -> torch.Tensor:
+        current_batch = int(tensor.shape[0])
+        if current_batch <= 0:
+            raise ValueError("tensor batch must be >= 1")
+        if current_batch == batch:
+            return tensor
+        repeats = (batch + current_batch - 1) // current_batch
+        return tensor.repeat((repeats, 1, 1, 1))[:batch]
+
+    @staticmethod
+    def _new_generator(*, device: torch.device, seed: int) -> torch.Generator:
+        if device.type == "cuda":
+            generator = torch.Generator(device=device)
+        else:
+            generator = torch.Generator()
+        generator.manual_seed(seed)
+        return generator
+
+    def _build_base_noise(self, init_latent: torch.Tensor) -> torch.Tensor:
+        batch = int(init_latent.shape[0])
+        samples: list[torch.Tensor] = []
+        for index in range(batch):
+            seed = self._noise_seeds[index % len(self._noise_seeds)]
+            generator = self._new_generator(device=init_latent.device, seed=seed)
+            sample = torch.randn(
+                tuple(init_latent[index : index + 1].shape),
+                generator=generator,
+                device=init_latent.device,
+                dtype=init_latent.dtype,
+            )
+            samples.append(sample)
+        return torch.cat(samples, dim=0)
+
+    def _materialize(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch = int(x.shape[0])
+        key = (x.device, x.dtype, batch)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -79,26 +135,80 @@ class LatentMaskEnforcer:
         init_latent = self._init_latent
         if init_latent.device != x.device or init_latent.dtype != x.dtype:
             init_latent = init_latent.to(device=x.device, dtype=x.dtype)
+        init_latent = self._expand_batch(init_latent, batch=batch)
+        if tuple(init_latent.shape[1:]) != tuple(x.shape[1:]):
+            raise ValueError(
+                f"init_latent shape mismatch: got={tuple(init_latent.shape)} expected batchx{tuple(x.shape[1:])}"
+            )
 
         masked = self._latent_masked
         if masked.device != x.device or masked.dtype != x.dtype:
             masked = masked.to(device=x.device, dtype=x.dtype)
+        masked = self._expand_batch(masked, batch=batch)
+        if tuple(masked.shape[2:]) != tuple(x.shape[2:]):
+            raise ValueError(
+                f"mask spatial shape mismatch: got={tuple(masked.shape)} expected batchx?x{tuple(x.shape[2:])}"
+            )
+        if int(masked.shape[1]) not in (1, int(x.shape[1])):
+            raise ValueError(
+                f"mask channel mismatch: got={int(masked.shape[1])} expected 1 or {int(x.shape[1])}"
+            )
 
         unmasked = self._latent_unmasked
         if unmasked.device != x.device or unmasked.dtype != x.dtype:
             unmasked = unmasked.to(device=x.device, dtype=x.dtype)
+        unmasked = self._expand_batch(unmasked, batch=batch)
+        if tuple(unmasked.shape) != tuple(masked.shape):
+            raise ValueError(
+                f"unmasked mask shape mismatch: got={tuple(unmasked.shape)} expected {tuple(masked.shape)}"
+            )
 
         init_unmasked = init_latent * unmasked
-        self._cache[key] = (masked, init_unmasked)
-        return masked, init_unmasked
+        base_noise = self._build_base_noise(init_latent)
+        self._cache[key] = (masked, unmasked, init_latent, init_unmasked, base_noise)
+        return self._cache[key]
+
+    @staticmethod
+    def _sigma_to_latent_shape(sigma: torch.Tensor, *, batch: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        if sigma.ndim == 0:
+            sigma = sigma.view(1)
+        if sigma.ndim != 1:
+            raise ValueError(f"sigma must be 1D or scalar; got shape={tuple(sigma.shape)}")
+        if int(sigma.shape[0]) not in (1, batch):
+            raise ValueError(f"sigma batch mismatch: got={int(sigma.shape[0])} expected 1 or {batch}")
+        if int(sigma.shape[0]) == 1 and batch != 1:
+            sigma = sigma.expand(batch)
+        return sigma.to(device=device, dtype=dtype).view(batch, 1, 1, 1)
+
+    def pre_denoiser(self, x: torch.Tensor, sigma: torch.Tensor, step: int, steps: int) -> torch.Tensor:  # noqa: ARG002
+        masked, unmasked, init_latent, _init_unmasked, base_noise = self._materialize(x)
+        sigma_view = self._sigma_to_latent_shape(
+            sigma,
+            batch=int(x.shape[0]),
+            device=x.device,
+            dtype=x.dtype,
+        )
+        if self._noise_scaling is not None:
+            noisy_init = self._noise_scaling(sigma_view, base_noise, init_latent)
+        else:
+            noisy_init = init_latent + sigma_view * base_noise
+        x.mul_(masked)
+        x.add_(noisy_init * unmasked)
+        return x
+
+    def post_denoiser(self, denoised: torch.Tensor, sigma: torch.Tensor, step: int, steps: int) -> torch.Tensor:  # noqa: ARG002
+        masked, _unmasked, _init_latent, init_unmasked, _base_noise = self._materialize(denoised)
+        denoised.mul_(masked)
+        denoised.add_(init_unmasked)
+        return denoised
 
     def post_step(self, x: torch.Tensor, step: int, steps: int) -> None:  # noqa: ARG002 - hook signature
-        masked, init_unmasked = self._materialize(x)
+        masked, _unmasked, _init_latent, init_unmasked, _base_noise = self._materialize(x)
         x.mul_(masked)
         x.add_(init_unmasked)
 
     def post_sample(self, x: torch.Tensor) -> torch.Tensor:
-        masked, init_unmasked = self._materialize(x)
+        masked, _unmasked, _init_latent, init_unmasked, _base_noise = self._materialize(x)
         x.mul_(masked)
         x.add_(init_unmasked)
         return x
@@ -383,13 +493,15 @@ def prepare_masked_img2img_bundle(
         dtype=init_latent.dtype,
     )
     latent_unmasked = (1.0 - latent_masked).to(device=init_latent.device, dtype=init_latent.dtype)
+    noise_seeds: Sequence[int] = list(getattr(plan, "seeds", []) or getattr(processing, "seeds", []) or [])
+    if not noise_seeds:
+        noise_seeds = [int(getattr(processing, "seed", 0) or 0)]
 
     if inpainting_fill == 2:
-        seeds: Sequence[int] = list(getattr(plan, "seeds", []) or [0])
         gens = []
-        for seed in seeds:
+        for seed in noise_seeds:
             gen = torch.Generator(device=init_latent.device)
-            gen.manual_seed(int(seed))
+            gen.manual_seed(_normalize_manual_seed(int(seed)))
             gens.append(torch.randn(tuple(init_latent.shape[1:]), generator=gen, device=init_latent.device, dtype=init_latent.dtype))
         noise = torch.stack(gens, dim=0)
         init_latent = init_latent * latent_unmasked + noise * latent_masked
@@ -416,7 +528,27 @@ def prepare_masked_img2img_bundle(
         latent_unmasked=latent_unmasked,
         full_res=full_res_plan,
     )
-    enforcer = LatentMaskEnforcer(init_latent=init_latent, latent_masked=latent_masked, latent_unmasked=latent_unmasked)
+    predictor = getattr(getattr(getattr(processing.sd_model, "codex_objects", None), "denoiser", None), "model", None)
+    predictor = getattr(predictor, "predictor", None)
+    noise_scaling = None
+    if predictor is not None and callable(getattr(predictor, "noise_scaling", None)):
+        def _predictor_noise_scaling(sigma: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor) -> torch.Tensor:
+            return predictor.noise_scaling(
+                sigma,
+                noise,
+                latent,
+                max_denoise=False,
+            )
+
+        noise_scaling = _predictor_noise_scaling
+
+    enforcer = LatentMaskEnforcer(
+        init_latent=init_latent,
+        latent_masked=latent_masked,
+        latent_unmasked=latent_unmasked,
+        noise_scaling=noise_scaling,
+        noise_seeds=noise_seeds,
+    )
     return bundle, enforcer
 
 

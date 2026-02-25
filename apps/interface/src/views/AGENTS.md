@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-23
+Last Review: 2026-02-25
 Status: Active
 
 ## Purpose
@@ -71,6 +71,7 @@ Status: Active
 - 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.
 - 2026-02-20: `ImageModelTab.vue` and `WANTab.vue` History strips now render square 1:1 thumbnail cards (image fit/contain, no inline metadata text); clicking a card opens a details modal with organized run metadata (mode/time/status/task), prompt/negative prompt, params snapshot, and explicit Load/Apply/Copy actions.
 - 2026-02-21: `WANTab.vue` `img2vid` init-image input now reuses `components/Img2ImgInpaintParamsCard.vue` (with `useMask=false`) instead of mounting `InitialImageCard.vue` directly, keeping shared init-image dropzone/thumb/zoom behavior and preserving the guided selector anchor `#wan-guided-init-image`.
+- 2026-02-25: `WANTab.vue` now passes `maskEnforcement=\"per_step_clamp\"` to the shared img2img-init card, aligning embedded defaults with Forge-engine masked semantics.
 - 2026-02-21: `WANTab.vue` `img2vid` chunk controls now render inside a dense nested subcard (`Chunking`) in a single-row 5-control layout (`Attention Mode`, `Chunk Frames`, `Overlap`, `Anchor Alpha`, `Chunk Seed Mode`); numeric fields use shared `SliderField` controls and labels use `?` hover tooltips (`HoverTooltip`).
 - 2026-02-21: `ImageModelTab.vue` now wires `Img2ImgInpaintParamsCard.vue` to the new mask editor apply/reset-notice events (`apply:maskImageData`, `notice:maskEditorReset`) and preserves existing fail-loud dimension validation on edited masks.
 - 2026-02-21: `ImageModelTab.vue` removed direct mask-file selection wiring; inpaint mask authoring/import is now owned by the canvas editor path (`Img2ImgInpaintParamsCard.vue` + `InpaintMaskEditorOverlay.vue`), while inpaint runtime params remain parent-owned.

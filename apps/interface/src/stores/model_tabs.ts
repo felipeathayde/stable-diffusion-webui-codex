@@ -50,7 +50,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/chunk/sliding/attention controls) with `img2vidMode` as source of truth.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
-- `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
+- `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler and mask-enforcement fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
 - `cloneParamsForPersist` (function): Proxy-safe `structuredClone` boundary for params snapshots/payloads; throws typed serialization failures.
@@ -69,6 +69,7 @@ import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_co
 import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, type TabFamily } from '../utils/engine_taxonomy'
 import { DEFAULT_IMG2IMG_RESIZE_MODE, normalizeImg2ImgResizeMode, type Img2ImgResizeMode } from '../utils/img2img_resize'
+import { normalizeMaskEnforcement } from '../utils/image_params'
 import {
   normalizeWanChunkOverlap,
   normalizeWanWindowCommit,
@@ -432,9 +433,9 @@ function defaultParams<T extends BaseTabType>(
     useMask: false,
     maskImageData: '',
     maskImageName: '',
-    maskEnforcement: 'post_blend',
+    maskEnforcement: 'per_step_clamp',
     inpaintFullRes: true,
-    inpaintFullResPadding: 0,
+    inpaintFullResPadding: 32,
     inpaintingFill: 1,
     maskInvert: false,
     maskBlur: 4,
@@ -736,6 +737,9 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   if (typeof merged.scheduler !== 'string' || !merged.scheduler.trim()) {
     merged.scheduler = defaults.scheduler
   }
+  merged.maskEnforcement = normalizeMaskEnforcement(
+    typeof merged.maskEnforcement === 'string' ? merged.maskEnforcement : defaults.maskEnforcement,
+  )
   merged.img2imgResizeMode = normalizeImg2ImgResizeMode(merged.img2imgResizeMode)
   merged.img2imgUpscaler = String(merged.img2imgUpscaler || '').trim() || defaults.img2imgUpscaler
   merged.guidanceAdvanced = normalizeGuidanceAdvancedParams(

@@ -652,6 +652,8 @@ def generate_img2img(
 
     run_process_scripts(processing)
 
+    pre_denoiser_hook = None
+    post_denoiser_hook = None
     post_step_hook = None
     post_sample_hook = None
     full_res_plan = None
@@ -669,7 +671,8 @@ def generate_img2img(
         full_res_plan = masked_bundle.full_res
         enforcement_value = str(enforcement).strip()
         if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
-            post_step_hook = enforcer.post_step
+            pre_denoiser_hook = enforcer.pre_denoiser
+            post_denoiser_hook = enforcer.post_denoiser
             post_sample_hook = enforcer.post_sample
         elif enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
             post_sample_hook = enforcer.post_sample
@@ -721,6 +724,8 @@ def generate_img2img(
             init_latent=init_latent,
             start_at_step=start_step,
             denoise_strength=denoise_strength,
+            pre_denoiser_hook=pre_denoiser_hook,
+            post_denoiser_hook=post_denoiser_hook,
             post_step_hook=post_step_hook,
             post_sample_hook=post_sample_hook,
         )

@@ -40,6 +40,7 @@ import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
 import { cancelTask, fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '../api/types'
 import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
+import { normalizeMaskEnforcement } from '../utils/image_params'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
 export interface ImageRunHistoryItem {
@@ -199,7 +200,7 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
     img2img_extras: { ...args.extras },
   }
   if (params.useMask) {
-    payload.img2img_mask_enforcement = params.maskEnforcement
+    payload.img2img_mask_enforcement = normalizeMaskEnforcement(params.maskEnforcement)
     payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(params.inpaintingFill))))
     payload.img2img_inpaint_full_res = Boolean(params.inpaintFullRes)
     payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(params.inpaintFullResPadding)))

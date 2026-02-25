@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 export type MaskEnforcement = 'post_blend' | 'per_step_clamp'
 
 export function normalizeMaskEnforcement(value: string): MaskEnforcement {
-  return value === 'per_step_clamp' ? 'per_step_clamp' : 'post_blend'
+  return value === 'post_blend' ? 'post_blend' : 'per_step_clamp'
 }
 
 export function normalizeInpaintingFill(value: number): number {

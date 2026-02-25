@@ -19,7 +19,7 @@ describe('image_params normalizers', () => {
   it('normalizes mask enforcement into strict enum', () => {
     expect(normalizeMaskEnforcement('per_step_clamp')).toBe('per_step_clamp')
     expect(normalizeMaskEnforcement('post_blend')).toBe('post_blend')
-    expect(normalizeMaskEnforcement('anything-else')).toBe('post_blend')
+    expect(normalizeMaskEnforcement('anything-else')).toBe('per_step_clamp')
   })
 
   it('clamps and truncates inpainting fill mode to [0, 3]', () => {

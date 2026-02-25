@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-22
+Last Review: 2026-02-25
 Status: Active
 
 ## Purpose
@@ -22,6 +22,7 @@ Status: Active
 - 2026-01-03: Added standardized file header docstrings to remaining use case modules (`__init__.py`, `img2vid.py`, `txt2img.py`, `txt2vid.py`) (doc-only change; part of rollout).
 - 2026-01-26: Smart offload pre-conditioning cleanup now ensures denoiser/VAE are not left resident when conditioning starts (txt2img runner + img2img).
 - 2026-01-29: `img2img.py` now supports Codex-native masked img2img (“inpaint”) for SD-family engines (Forge-style full-res crop/paste-back + selectable enforcement: post-blend vs per-step clamp). Flux Kontext explicitly fails loud when a mask is provided (not yet supported).
+- 2026-02-25: `img2img.py` masked `per_step_clamp` mode now wires Forge-style denoiser-adjacent hooks (`pre_denoiser` + `post_denoiser`) plus post-sample clamp; masked `post_blend` mode remains post-sample-only.
 - 2026-01-30: `txt2img` now consumes `GenerationResult` from the staged runner; removed the global `_already_decoded` decode sentinel.
 - 2026-01-31: `img2img.py` now includes a canonical event wrapper (`run_img2img`) and shared image streaming helpers live in `apps/backend/use_cases/_image_streaming.py` (Option A: mode streaming stays in use-cases; engines delegate).
 - 2026-02-03: Hires pass validation/errors now reference `hires.*` naming (contract cutover).

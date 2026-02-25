@@ -156,7 +156,7 @@ Symbols (top-level; keep in sync; no ghosts):
               :useMask="false"
               maskImageData=""
               maskImageName=""
-              maskEnforcement="post_blend"
+              maskEnforcement="per_step_clamp"
               :inpaintingFill="1"
               :inpaintFullRes="false"
               :inpaintFullResPadding="0"

@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-02-21
+Last Review: 2026-02-25
 Status: Active
 
 ## Purpose
@@ -83,6 +83,7 @@ Status: Active
 - 2026-02-21: `QuickSettingsBar.vue` now canonicalizes `currentVae` against active-family `filteredVaeChoices` (including path/name legacy formats via SHA match) and auto-falls back to `built-in` when the stored value is stale, but only after component-local inventory/paths init completes (`isQuicksettingsReady`) to avoid mount-time stale overwrite.
 - 2026-02-21: `Img2ImgInpaintParamsCard.vue` now integrates `ui/InpaintMaskEditorOverlay.vue` and emits edited-mask data URLs to parent ownership (`apply:maskImageData`), keeping upload + editor paths in parity.
 - 2026-02-21: `Img2ImgInpaintParamsCard.vue` no longer renders a separate mask dropzone selector; when `useMask=true`, mask tools are attached to the init-image section (open editor / clear mask), and mask import happens inside the editor canvas flow.
+- 2026-02-25: `Img2ImgInpaintParamsCard.vue` enforcement selector now prioritizes Forge-engine semantics (`per_step_clamp` first/default) and labels legacy `post_blend` explicitly as post-sample legacy behavior.
 - 2026-02-21: `QuickSettingsBar.vue` no longer exposes Attention Backend controls; attention backend/SDPA policy bootstrap ownership moved to Launcher Runtime tab.
 - 2026-02-21: `QuickSettingsBar.vue` WAN mode handling is now `txt2vid|img2vid` only; legacy `v2v_14b` mapping and `useInitVideo` patching were removed to keep mode semantics aligned with the disabled vid2vid contract.
 - 2026-02-22: `QuickSettingsBar.vue` wires `Obliterate VRAM` to `POST /api/obliterate-vram` with in-flight lock (`isObliteratingVram`) and fail-loud toast/console feedback; UI now surfaces the safe-default behavior (`external_kill_mode='disabled'`) when external GPU processes are only detected (not terminated).

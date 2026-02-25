@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-02-22
+Last Review: 2026-02-25
 Status: Active
 
 ## Purpose
@@ -20,7 +20,7 @@ Status: Active
   - `get_sampler_spec(name)`: resolves sampler name and validates scheduler compatibility before sampling context creation.
 - `driver.py`
   - `CodexSampler` builds the sampling context, validates scheduler compatibility, and runs the **native** sampler loop (no external sampler deps).
-  - Supports optional latent hooks (`post_step_hook`, `post_sample_hook`) for use-case-controlled postprocessing (e.g. masked img2img enforcement).
+  - Supports optional latent hooks (`pre_denoiser_hook`, `post_denoiser_hook`, `post_step_hook`, `post_sample_hook`) for use-case-controlled postprocessing (e.g. Forge-style masked img2img enforcement).
   - Restart sampler / UniPC helpers under `sampling_adapters/extra.py` are optional/experimental and are not wired into the default driver.
 - `__init__.py` — import-light public surface re-exporting the sampler/scheduler catalog (no torch-bound exports).
 - Sampling inner loop no longer emits legacy low-VRAM print warnings; memory pressure handling remains via `memory_management.manager.get_free_memory` without stdout noise.
@@ -72,6 +72,7 @@ Status: Active
 - 2026-02-18: `inner_loop.sampling_prepare(...)` / `sampling_cleanup(...)` now route smart-offload load/unload context through `memory_management.manager` (`source`/`stage`), keeping generic action emission (`load`/`unload`) centralized in the manager.
 - 2026-02-20: `driver.py` now emits dense sampler diagnostics through `emit_backend_event(...)` (`sampling.sigma_schedule`, `sampling.plan.prepare`, `sampling.plan.run`, `sampling.cfg_delta`, `sampling.step`, `guidance.policy`) so logs inherit centralized multiline formatting/colorization instead of ad-hoc single-line format strings.
 - 2026-02-22: Removed run-scoped GGUF dequant-forward cache hooks (`lvl1`/`lvl2`) from `inner_loop.sampling_prepare(...)`/`sampling_cleanup(...)`; sampling lifecycle now no longer enables/disables per-run GGUF forward caches.
+- 2026-02-25: `driver.py` now applies optional denoiser-adjacent hooks per step (`pre_denoiser_hook` before denoise, `post_denoiser_hook` after denoise), enabling Forge-style masked blending semantics in img2img while preserving existing post-step and post-sample hook contracts.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

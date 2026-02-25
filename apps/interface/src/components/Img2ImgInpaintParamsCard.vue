@@ -78,8 +78,8 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="field">
           <label class="label-muted">Enforcement</label>
           <select class="select-md" :disabled="disabled" :value="maskEnforcement" @change="onMaskEnforcementChange">
-            <option value="post_blend">Forge-style (post-sample blend)</option>
-            <option value="per_step_clamp">Clamp per step</option>
+            <option value="per_step_clamp">Forge engine (per-step blend)</option>
+            <option value="post_blend">Legacy post-sample blend</option>
           </select>
         </div>
 
@@ -203,7 +203,7 @@ withDefaults(defineProps<{
   initImageName: '',
   maskImageData: '',
   maskImageName: '',
-  maskEnforcement: 'post_blend',
+  maskEnforcement: 'per_step_clamp',
 })
 
 const emit = defineEmits<{

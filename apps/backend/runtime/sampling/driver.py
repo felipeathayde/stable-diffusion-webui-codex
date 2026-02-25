@@ -512,6 +512,8 @@ class CodexSampler:
         init_latent: Optional[torch.Tensor] = None,
         start_at_step: int | None = None,
         denoise_strength: float | None = None,
+        pre_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor]] = None,
+        post_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor]] = None,
         preview_callback: Optional[Callable[[torch.Tensor, int, int], None]] = None,
         post_step_hook: Optional[Callable[[torch.Tensor, int, int], None]] = None,
         post_sample_hook: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
@@ -875,6 +877,17 @@ class CodexSampler:
                             sigma = sigmas[i]
                             sigma_next = sigmas[i + 1]
                             sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=torch.float32)
+                            current_step = step_index + 1
+
+                            if pre_denoiser_hook is not None:
+                                x = pre_denoiser_hook(x, sigma_batch, current_step, run_total_steps)
+                                if not isinstance(x, torch.Tensor):
+                                    raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                                if tuple(x.shape) != tuple(noise.shape):
+                                    raise RuntimeError(
+                                        "pre_denoiser_hook returned unexpected shape "
+                                        f"{tuple(x.shape)}; expected {tuple(noise.shape)}"
+                                    )
 
                             if log_cfg_delta and (i - start_idx) < cfg_delta_steps:
                                 denoised, cond_pred, uncond_pred = sampling_function_inner(
@@ -925,6 +938,16 @@ class CodexSampler:
                                     seed=None,
                                     return_full=False,
                                 )
+
+                            if post_denoiser_hook is not None:
+                                denoised = post_denoiser_hook(denoised, sigma_batch, current_step, run_total_steps)
+                                if not isinstance(denoised, torch.Tensor):
+                                    raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                                if tuple(denoised.shape) != tuple(x.shape):
+                                    raise RuntimeError(
+                                        "post_denoiser_hook returned unexpected shape "
+                                        f"{tuple(denoised.shape)}; expected {tuple(x.shape)}"
+                                    )
 
                             eps = (x - denoised) / max(float(sigma), 1e-8)
                             if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):
@@ -1167,6 +1190,15 @@ class CodexSampler:
                                 delta = float(sigma) - float(sigma_next)
                                 x_pred = x - delta * eps
                                 sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
+                                if pre_denoiser_hook is not None:
+                                    x_pred = pre_denoiser_hook(x_pred, sigma_next_batch, current_step, run_total_steps)
+                                    if not isinstance(x_pred, torch.Tensor):
+                                        raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                                    if tuple(x_pred.shape) != tuple(x.shape):
+                                        raise RuntimeError(
+                                            "pre_denoiser_hook returned unexpected shape "
+                                            f"{tuple(x_pred.shape)}; expected {tuple(x.shape)}"
+                                        )
                                 denoised_next = sampling_function_inner(
                                     model,
                                     x_pred,
@@ -1178,6 +1210,15 @@ class CodexSampler:
                                     seed=None,
                                     return_full=False,
                                 )
+                                if post_denoiser_hook is not None:
+                                    denoised_next = post_denoiser_hook(denoised_next, sigma_next_batch, current_step, run_total_steps)
+                                    if not isinstance(denoised_next, torch.Tensor):
+                                        raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                                    if tuple(denoised_next.shape) != tuple(x_pred.shape):
+                                        raise RuntimeError(
+                                            "post_denoiser_hook returned unexpected shape "
+                                            f"{tuple(denoised_next.shape)}; expected {tuple(x_pred.shape)}"
+                                        )
                                 eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
                                 x = x - delta * 0.5 * (eps + eps_next)
                             elif sampler_kind is SamplerKind.UNI_PC_BH2:
@@ -1185,6 +1226,15 @@ class CodexSampler:
                                 delta = float(sigma) - float(sigma_next)
                                 x_pred = x - delta * eps
                                 sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
+                                if pre_denoiser_hook is not None:
+                                    x_pred = pre_denoiser_hook(x_pred, sigma_next_batch, current_step, run_total_steps)
+                                    if not isinstance(x_pred, torch.Tensor):
+                                        raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                                    if tuple(x_pred.shape) != tuple(x.shape):
+                                        raise RuntimeError(
+                                            "pre_denoiser_hook returned unexpected shape "
+                                            f"{tuple(x_pred.shape)}; expected {tuple(x.shape)}"
+                                        )
                                 denoised_next = sampling_function_inner(
                                     model,
                                     x_pred,
@@ -1196,12 +1246,20 @@ class CodexSampler:
                                     seed=None,
                                     return_full=False,
                                 )
+                                if post_denoiser_hook is not None:
+                                    denoised_next = post_denoiser_hook(denoised_next, sigma_next_batch, current_step, run_total_steps)
+                                    if not isinstance(denoised_next, torch.Tensor):
+                                        raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                                    if tuple(denoised_next.shape) != tuple(x_pred.shape):
+                                        raise RuntimeError(
+                                            "post_denoiser_hook returned unexpected shape "
+                                            f"{tuple(denoised_next.shape)}; expected {tuple(x_pred.shape)}"
+                                        )
                                 eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
                                 x = x - delta * 0.5 * (eps + eps_next)
                             else:
                                 raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
 
-                            current_step = step_index + 1
                             if post_step_hook is not None:
                                 post_step_hook(x, current_step, run_total_steps)
 

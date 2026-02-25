@@ -120,6 +120,8 @@ def execute_sampling(
     init_latent: torch.Tensor | None = None,
     start_at_step: int | None = None,
     denoise_strength: float | None = None,
+    pre_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor] | None = None,
+    post_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor] | None = None,
     post_step_hook: Callable[[torch.Tensor, int, int], None] | None = None,
     post_sample_hook: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
@@ -227,6 +229,8 @@ def execute_sampling(
         init_latent=init_latent,
         start_at_step=start_at_step,
         denoise_strength=denoise_strength,
+        pre_denoiser_hook=pre_denoiser_hook,
+        post_denoiser_hook=post_denoiser_hook,
         preview_callback=_preview_cb,
         post_step_hook=post_step_hook,
         post_sample_hook=post_sample_hook,

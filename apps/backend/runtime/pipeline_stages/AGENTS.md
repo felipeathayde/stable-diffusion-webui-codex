@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-02-21
+Last Review: 2026-02-25
 Status: Active
 
 ## Purpose
@@ -44,6 +44,8 @@ Status: Active
 - 2026-02-01: Added `hires_fix.py` to centralize hires pass prep and fix `denoise` semantics (no more inverted `start_at_step` mapping).
 - 2026-02-08: Sampling stages now carry typed ER-SDE options (`SamplingPlan.er_sde`) from plan build to execution; `execute_sampling(...)` forwards options into `CodexSampler.sample(...)` and latent diagnostics include effective ER-SDE metadata when sampler is `er sde`.
 - 2026-02-09: `sampling_execute` now gates LoRA apply/reset on `codex_objects_after_applying_lora` capability and fails loud only when LoRA selections are present without engine support, while still resetting stale LoRA state for no-selection runs.
+- 2026-02-25: `sampling_execute.py` now forwards denoiser-adjacent hook callbacks (`pre_denoiser_hook`, `post_denoiser_hook`) into `CodexSampler.sample(...)`; `masked_img2img.py::LatentMaskEnforcer` now exposes Forge-style pre/post denoiser blend hooks (noisy outside-mask preblend + init-latent outside-mask postblend), while retaining post-sample clamp behavior.
+- 2026-02-25: `masked_img2img.py::LatentMaskEnforcer` now materializes masks/latents per runtime batch size (fail-loud on shape mismatch) and uses deterministic seed-derived base noise (no global RNG sampling inside denoiser hooks), fixing masked `per_step_clamp` multi-batch stability and seed reproducibility.
 - 2026-02-18: `prompt_context.py` now merges request override `lora_path` entries into `PromptContext.loras` (dedup by path, prompt-tag LoRAs keep precedence/weight) so API-resolved LoRA SHA selections can flow into sampling without exposing SHA tokens in prompt/UI.
 - 2026-02-18: `image_io.py::maybe_decode_for_hr(...)` now gates base decode by hires upscaler id (`latent:*` skips decode; pixel-space upscalers decode), replacing the stale `latent_scale_mode` sentinel that forced redundant decode in latent hires paths.
 - 2026-02-18: `image_io.py::maybe_decode_for_hr(...)` no longer hardcasts decoded tensors to fp32; decode dtype now follows the engine VAE output so runtime compute/storage policy remains authoritative.

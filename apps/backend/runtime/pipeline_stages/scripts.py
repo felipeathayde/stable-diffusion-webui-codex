@@ -6,15 +6,15 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Script hooks + extra network activation for pipeline orchestration.
-Keeps processing-level script callbacks and LoRA selection application isolated from sampler execution logic.
+Purpose: Script-hook helpers for pipeline orchestration.
+Keeps processing-level script callbacks and shared job metadata isolated from sampler execution logic.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `run_process_scripts` (function): Run processing scripts (legacy-compatible) when present.
 - `activate_extra_networks` (function): Apply globally selected extra networks (LoRAs) to the current engine.
 - `set_shared_job` (function): Update shared job metadata for batch runs.
 - `collect_lora_selections` (function): Merge global selections with prompt-local LoRA descriptors.
-- `run_before_sampling_hooks` (function): Invoke before-sampling hooks (scripts + extra networks + shared job metadata).
+- `run_before_sampling_hooks` (function): Invoke before-sampling hooks (scripts + shared job metadata).
 - `run_post_sample_hooks` (function): Invoke post-sample hooks, returning potentially modified samples.
 """
 
@@ -41,7 +41,11 @@ def run_process_scripts(processing: Any) -> None:
 
 
 def activate_extra_networks(processing: Any) -> None:
-    """Apply globally selected extra networks to the current engine."""
+    """Apply globally selected extra networks to the current engine.
+
+    Note: sampling-path LoRA ownership lives in `sampling_execute.execute_sampling(...)`.
+    This helper remains explicit/opt-in for non-sampling callsites only.
+    """
     if getattr(processing, "disable_extra_networks", False):
         return
     try:
@@ -87,7 +91,6 @@ def run_before_sampling_hooks(
     """Invoke before-sampling hooks on processing scripts."""
     script_runner = getattr(processing, "scripts", None)
     if script_runner is None:
-        activate_extra_networks(processing)
         return
 
     hook_kwargs = {
@@ -104,7 +107,6 @@ def run_before_sampling_hooks(
     if hasattr(script_runner, "process_batch"):
         script_runner.process_batch(processing, **hook_kwargs)
 
-    activate_extra_networks(processing)
     set_shared_job(processing)
 
 

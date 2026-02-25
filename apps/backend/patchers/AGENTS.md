@@ -1,6 +1,6 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Last Review: 2026-02-20
+Last Review: 2026-02-25
 Status: Active
 
 ## Purpose
@@ -58,3 +58,4 @@ Status: Active
 - 2026-02-09: LoRA refresh/merge must run outside `torch.inference_mode()`; internal inference-mode disabling was removed to keep version-counter fixes scoped to correct request entrypoints.
 - 2026-02-11: `lora_apply.py` empty-selection reset now clears/refreshes denoiser + any available text-encoder patchers (engine-key agnostic) instead of hardcoding `text_encoders['clip']`; non-empty selection path remains fail-loud when CLIP mapping prerequisites are absent.
 - 2026-02-18: `lora_apply.py` now fails loud when a selected LoRA produces zero compatible patches (`no compatible layers` / `zero parameters touched`) so SDXL key-layout mismatches do not silently no-op.
+- 2026-02-25: `lora_apply.py` non-empty apply now starts from explicit patch-state reset (single-owner semantics), refreshes all text patchers after apply, hard-resets state on apply failure, and updates `engine.current_lora_hash` deterministically on apply/reset for conditioning-cache identity.

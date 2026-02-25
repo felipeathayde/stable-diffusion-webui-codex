@@ -15,8 +15,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `AppliedStats` (dataclass): Counters for applied LoRA files and matched parameters.
 - `_unwrap_patcher` (function): Returns a `ModelPatcher` from canonical text-encoder handles (`.patcher` required).
 - `_collect_text_encoder_patchers` (function): Collects resettable text-encoder patchers keyed by encoder name.
+- `_clear_lora_state` (function): Clears `lora_patches` on a patcher with fail-loud contract checks.
 - `_clear_and_refresh_lora_state` (function): Clears `lora_patches` and refreshes a patcher with fail-loud contract checks.
 - `_refresh_lora_state` (function): Refreshes LoRA-merged weights on a patcher with fail-loud contract checks.
+- `_normalize_selection` (function): Validates and normalizes a LoRA selection into `(path, weight)`.
+- `_serialize_selection_hash` (function): Serializes deterministic LoRA selection identity for cache keys.
+- `_set_engine_lora_hash` (function): Updates `engine.current_lora_hash` with fail-loud checks.
+- `_reset_engine_lora_state` (function): Clears+refreshes all patchers and persists empty LoRA hash.
+- `_raise_apply_failure` (function): Raises fail-loud errors after best-effort reset recovery.
 - `_build_to_load_maps` (function): Builds LoRA-key → model patch-target maps for UNet and CLIP encoders.
 - `_apply_patches` (function): Adds patches to a patcher and returns the number of matched parameters.
 - `apply_loras_to_engine` (function): Applies selected LoRAs to the engine's patchers and refreshes LoRA application (merge or online).
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import json
 from typing import Dict, Tuple, Any, Iterable
 
 import safetensors.torch as sf
@@ -75,12 +82,20 @@ def _collect_text_encoder_patchers(text_encoders: Any) -> Dict[str, Any]:
     return patchers
 
 
+def _clear_lora_state(patcher: Any, *, label: str) -> None:
+    """Clear in-memory LoRA patch definitions without materializing refresh."""
+
+    if not hasattr(patcher, "lora_patches"):
+        raise RuntimeError(f"Engine exposes non-resettable LoRA patcher for {label}.")
+    patcher.lora_patches = {}
+
+
 def _clear_and_refresh_lora_state(patcher: Any, *, label: str) -> None:
     """Clear in-memory LoRA patch state and re-materialize merged weights."""
 
-    if not hasattr(patcher, "lora_patches") or not hasattr(patcher, "refresh_loras"):
-        raise RuntimeError(f"Engine exposes non-resettable LoRA patcher for {label}.")
-    patcher.lora_patches = {}
+    if not hasattr(patcher, "refresh_loras"):
+        raise RuntimeError(f"Engine exposes non-refreshable LoRA patcher for {label}.")
+    _clear_lora_state(patcher, label=label)
     patcher.refresh_loras()
 
 
@@ -90,6 +105,84 @@ def _refresh_lora_state(patcher: Any, *, label: str) -> None:
     if not hasattr(patcher, "refresh_loras"):
         raise RuntimeError(f"Engine exposes non-refreshable LoRA patcher for {label}.")
     patcher.refresh_loras()
+
+
+def _normalize_selection(selection: dict | Any) -> tuple[str, float] | None:
+    """Return `(path, weight)` for one selection entry, or `None` when path is empty."""
+
+    path: str
+    weight_raw: Any
+    if isinstance(selection, Mapping):
+        path = str(selection.get("path") or "").strip()
+        weight_raw = selection.get("weight", 1.0)
+    else:
+        path = str(getattr(selection, "path", "") or "").strip()
+        weight_raw = getattr(selection, "weight", 1.0)
+    if not path:
+        return None
+    try:
+        weight = float(weight_raw)
+    except Exception as exc:  # noqa: BLE001 - strict fail-loud selection contract
+        raise RuntimeError(
+            f"LoRA selection for '{path}' has non-numeric weight: {weight_raw!r}."
+        ) from exc
+    return path, weight
+
+
+def _serialize_selection_hash(
+    normalized: Iterable[tuple[str, float]],
+    *,
+    apply_mode: LoraApplyMode,
+) -> str:
+    """Build deterministic LoRA selection identity for cache keys."""
+
+    rows = [{"path": path, "weight": float(weight)} for path, weight in normalized]
+    if not rows:
+        return "[]"
+    rows.sort(key=lambda item: (item["path"], item["weight"]))
+    payload = {"apply_mode": apply_mode.value, "selections": rows}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _set_engine_lora_hash(engine: Any, *, hash_value: str) -> None:
+    """Update `engine.current_lora_hash` with fail-loud contract checks."""
+
+    try:
+        setattr(engine, "current_lora_hash", hash_value)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "Engine must expose writable `current_lora_hash` for deterministic conditioning identity."
+        ) from exc
+
+
+def _reset_engine_lora_state(engine: Any, *, unet_patcher: Any, text_patchers: Mapping[str, Any]) -> None:
+    """Clear+refresh all LoRA patchers and persist empty state hash."""
+
+    _clear_and_refresh_lora_state(unet_patcher, label="denoiser")
+    for encoder_name, patcher in text_patchers.items():
+        _clear_and_refresh_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
+    _set_engine_lora_hash(engine, hash_value="[]")
+
+
+def _raise_apply_failure(
+    *,
+    operation: str,
+    original_error: Exception,
+    engine: Any,
+    unet_patcher: Any,
+    text_patchers: Mapping[str, Any],
+) -> None:
+    """Raise fail-loud failure with best-effort reset to empty state."""
+
+    try:
+        _reset_engine_lora_state(engine, unet_patcher=unet_patcher, text_patchers=text_patchers)
+    except Exception as reset_error:  # noqa: BLE001
+        raise RuntimeError(
+            f"{operation} failed ({original_error}) and reset recovery failed; engine state is unreliable."
+        ) from reset_error
+    raise RuntimeError(
+        f"{operation} failed ({original_error}); engine was reset to empty LoRA state and request was rejected."
+    ) from original_error
 
 
 def _build_to_load_maps(engine) -> Tuple[Dict[str, PatchTarget], Dict[str, PatchTarget]]:
@@ -152,76 +245,113 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
 
     if not selected:
         if unet_patcher is None and not text_patchers:
+            _set_engine_lora_hash(engine, hash_value="[]")
             return stats
         if unet_patcher is None or not text_patchers:
             raise RuntimeError(
                 "Engine exposes partial LoRA patcher state for empty selection reset "
                 "(expected denoiser and at least one text encoder patcher)."
             )
-        _clear_and_refresh_lora_state(unet_patcher, label="denoiser")
-        for encoder_name, patcher in text_patchers.items():
-            _clear_and_refresh_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
+        try:
+            _reset_engine_lora_state(engine, unet_patcher=unet_patcher, text_patchers=text_patchers)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"LoRA empty-selection reset failed ({exc}); engine state is unreliable.") from exc
         return stats
 
     if unet_patcher is None or clip_patcher is None:
-        raise RuntimeError(
-            "LoRA selections were provided, but the active engine does not expose required LoRA patchers "
-            "(expected denoiser + text_encoders['clip'].patcher)."
-        )
-
-    unet_map, clip_map = _build_to_load_maps(engine)
+            raise RuntimeError(
+                "LoRA selections were provided, but the active engine does not expose required LoRA patchers "
+                "(expected denoiser + text_encoders['clip'].patcher)."
+            )
 
     apply_mode = read_lora_apply_mode()
     online_mode = apply_mode == LoraApplyMode.ONLINE
 
-    for sel in selected:
-        path = str(getattr(sel, "path", None) or sel.get("path"))  # type: ignore[attr-defined]
-        if not path:
-            continue
-        weight = float(getattr(sel, "weight", None) if hasattr(sel, "weight") else sel.get("weight", 1.0))  # type: ignore[attr-defined]
+    normalized_applied: list[tuple[str, float]] = []
+    seen_paths: set[str] = set()
+    try:
+        # Single-owner semantics: each non-empty apply starts from a clean patch state.
+        _clear_lora_state(unet_patcher, label="denoiser")
+        for encoder_name, patcher in text_patchers.items():
+            _clear_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
 
-        # Load weights once
-        try:
-            tensor_map = sf.load_file(path)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load LoRA '{path}': {e}")
+        unet_map, clip_map = _build_to_load_maps(engine)
+        for sel in selected:
+            normalized = _normalize_selection(sel)
+            if normalized is None:
+                continue
+            path, weight = normalized
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
 
-        # Build per-model patch dictionaries
-        unet_patch, _ = load_lora(tensor_map, to_load=unet_map)
-        clip_patch, _ = load_lora(tensor_map, to_load=clip_map)
-        if not unet_patch and not clip_patch:
-            raise RuntimeError(
-                "LoRA key layout mismatch: no compatible layers were found for "
-                f"'{path}' on the active model keymap."
+            # Load weights once
+            try:
+                tensor_map = sf.load_file(path)
+            except Exception as e:
+                raise RuntimeError(f"Failed to load LoRA '{path}': {e}")
+
+            # Build per-model patch dictionaries
+            unet_patch, _ = load_lora(tensor_map, to_load=unet_map)
+            clip_patch, _ = load_lora(tensor_map, to_load=clip_map)
+            if not unet_patch and not clip_patch:
+                raise RuntimeError(
+                    "LoRA key layout mismatch: no compatible layers were found for "
+                    f"'{path}' on the active model keymap."
+                )
+
+            # Apply to patchers (record how many keys matched)
+            unet_touched = _apply_patches(
+                unet_patcher,
+                filename=path,
+                patch_dict=unet_patch,
+                strength=weight,
+                online_mode=online_mode,
             )
-
-        # Apply to patchers (record how many keys matched)
-        unet_touched = _apply_patches(
-            unet_patcher,
-            filename=path,
-            patch_dict=unet_patch,
-            strength=weight,
-            online_mode=online_mode,
-        )
-        clip_touched = _apply_patches(
-            clip_patcher,
-            filename=path,
-            patch_dict=clip_patch,
-            strength=weight,
-            online_mode=online_mode,
-        )
-        touched_total = unet_touched + clip_touched
-        if touched_total <= 0:
-            raise RuntimeError(
-                "LoRA apply mismatch: zero parameters were touched for "
-                f"'{path}'. Verify LoRA/base-model compatibility and key layout."
+            clip_touched = _apply_patches(
+                clip_patcher,
+                filename=path,
+                patch_dict=clip_patch,
+                strength=weight,
+                online_mode=online_mode,
             )
-        stats.params_touched += touched_total
-        stats.files += 1
+            touched_total = unet_touched + clip_touched
+            if touched_total <= 0:
+                raise RuntimeError(
+                    "LoRA apply mismatch: zero parameters were touched for "
+                    f"'{path}'. Verify LoRA/base-model compatibility and key layout."
+                )
+            stats.params_touched += touched_total
+            stats.files += 1
+            normalized_applied.append((path, weight))
 
-    # Materialize merges onto actual model parameters
-    _refresh_lora_state(unet_patcher, label="denoiser")
-    _refresh_lora_state(clip_patcher, label="text_encoders['clip']")
+        # Materialize merges onto actual model parameters.
+        _refresh_lora_state(unet_patcher, label="denoiser")
+        for encoder_name, patcher in text_patchers.items():
+            _refresh_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
+    except Exception as exc:  # noqa: BLE001
+        # Never leak partial/stale LoRA state across requests on failure.
+        _raise_apply_failure(
+            operation="LoRA apply execution",
+            original_error=exc,
+            engine=engine,
+            unet_patcher=unet_patcher,
+            text_patchers=text_patchers,
+        )
+
+    try:
+        _set_engine_lora_hash(
+            engine,
+            hash_value=_serialize_selection_hash(normalized_applied, apply_mode=apply_mode),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _raise_apply_failure(
+            operation="LoRA apply hash persistence",
+            original_error=exc,
+            engine=engine,
+            unet_patcher=unet_patcher,
+            text_patchers=text_patchers,
+        )
 
     return stats
 

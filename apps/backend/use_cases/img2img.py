@@ -67,7 +67,6 @@ from apps.backend.runtime.pipeline_stages.image_init import prepare_init_bundle
 from apps.backend.runtime.pipeline_stages.image_io import latents_to_pil, pil_to_tensor
 from apps.backend.runtime.pipeline_stages.hires_fix import (
     prepare_hires_latents_and_conditioning,
-    start_at_step_from_denoise,
 )
 from apps.backend.runtime.pipeline_stages.masked_img2img import (
     MASK_ENFORCEMENT_PER_STEP_CLAMP,
@@ -219,9 +218,19 @@ def _compute_conditioning_payload(
             for name, entry in text_encoders.items():
                 if entry is None:
                     continue
-                patcher = getattr(entry, "patcher", None)
-                patcher_obj = patcher if patcher is not None else entry
-                text_encoder_patchers.append((str(name), patcher_obj))
+                try:
+                    patcher = entry.patcher
+                except AttributeError as exc:
+                    raise RuntimeError(
+                        "img2img conditioning requires TextEncoderHandle entries "
+                        f"(missing .patcher for text_encoders['{name}'])."
+                    ) from exc
+                if patcher is None:
+                    raise RuntimeError(
+                        "img2img conditioning requires TextEncoderHandle with non-null patcher "
+                        f"for text_encoders['{name}']."
+                    )
+                text_encoder_patchers.append((str(name), patcher))
             for name, patcher in text_encoder_patchers:
                 if memory_management.manager.is_model_loaded(patcher):
                     continue
@@ -530,7 +539,8 @@ def _run_hires_pass(
         )
         noise = rng.next().to(latents)
 
-        start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
+        start_index = 0
+        denoise_strength = float(denoise)
 
         hr_plan = replace(
             plan,
@@ -559,6 +569,7 @@ def _run_hires_pass(
             image_conditioning=image_conditioning,
             init_latent=latents,
             start_at_step=start_index,
+            denoise_strength=denoise_strength,
         )
     finally:
         processing.prompts = original["prompts"]
@@ -691,10 +702,9 @@ def generate_img2img(
     )
 
     noise = rng.next().to(init_latent)
-    start_step = start_at_step_from_denoise(
-        denoise=float(getattr(processing, "denoising_strength", 0.5) or 0.5),
-        steps=int(plan.steps),
-    )
+    denoise_value = float(getattr(processing, "denoising_strength", 0.5) or 0.5)
+    start_step = 0
+    denoise_strength = denoise_value
 
     tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
     try:
@@ -710,6 +720,7 @@ def generate_img2img(
             image_conditioning=image_conditioning,
             init_latent=init_latent,
             start_at_step=start_step,
+            denoise_strength=denoise_strength,
             post_step_hook=post_step_hook,
             post_sample_hook=post_sample_hook,
         )
@@ -875,9 +886,30 @@ def run_img2img(
         runtime_overrides=smart_flags,
     )
 
-    for step, total, eta in _iter_sampling_progress(done=done):
-        pct = max(5.0, min(99.0, (step / total) * 100.0))
-        yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
+    for step, total, block_index, block_total, eta in _iter_sampling_progress(done=done):
+        completed_units = float(step)
+        if block_total > 0 and step < total:
+            completed_units += float(block_index) / float(block_total)
+        progress_percent = (min(float(total), completed_units) / float(total)) * 100.0
+        pct = max(5.0, min(99.0, progress_percent))
+
+        if block_total > 0 and step < total:
+            message = (
+                f"Sampling step {min(step + 1, total)}/{total} "
+                f"(block {block_index}/{block_total})"
+            )
+        else:
+            message = f"Sampling step {step}/{total}"
+
+        yield ProgressEvent(
+            stage="sampling",
+            percent=pct,
+            step=step,
+            total_steps=total,
+            eta_seconds=eta,
+            message=message,
+            data={"block_index": int(block_index), "block_total": int(block_total)},
+        )
 
     if outcome.error is not None:
         raise outcome.error

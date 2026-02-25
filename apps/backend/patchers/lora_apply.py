@@ -13,7 +13,7 @@ Patch dictionary keys may be plain parameter names or `(parameter, offset)` tupl
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AppliedStats` (dataclass): Counters for applied LoRA files and matched parameters.
-- `_unwrap_patcher` (function): Returns a `ModelPatcher`-compatible object from direct patchers or wrapper entries.
+- `_unwrap_patcher` (function): Returns a `ModelPatcher` from canonical text-encoder handles (`.patcher` required).
 - `_collect_text_encoder_patchers` (function): Collects resettable text-encoder patchers keyed by encoder name.
 - `_clear_and_refresh_lora_state` (function): Clears `lora_patches` and refreshes a patcher with fail-loud contract checks.
 - `_refresh_lora_state` (function): Refreshes LoRA-merged weights on a patcher with fail-loud contract checks.
@@ -42,15 +42,26 @@ class AppliedStats:
     params_touched: int = 0
 
 
-def _unwrap_patcher(entry: Any) -> Any | None:
-    """Return a patcher from direct entries or wrapper objects exposing `patcher`."""
+def _unwrap_patcher(entry: Any, *, label: str) -> Any:
+    """Return a patcher from canonical text-encoder handles."""
 
-    candidate = getattr(entry, "patcher", entry)
-    if candidate is None:
-        return None
-    if hasattr(candidate, "add_patches") and hasattr(candidate, "refresh_loras"):
-        return candidate
-    return None
+    try:
+        patcher = entry.patcher
+    except AttributeError as exc:
+        raise RuntimeError(
+            "LoRA application requires canonical TextEncoderHandle entries with `.patcher` "
+            f"(missing for {label})."
+        ) from exc
+    if patcher is None:
+        raise RuntimeError(
+            "LoRA application requires canonical TextEncoderHandle entries with non-null patcher "
+            f"(missing for {label})."
+        )
+    if not hasattr(patcher, "add_patches") or not hasattr(patcher, "refresh_loras"):
+        raise RuntimeError(
+            f"LoRA application requires a patcher with add_patches/refresh_loras for {label}."
+        )
+    return patcher
 
 
 def _collect_text_encoder_patchers(text_encoders: Any) -> Dict[str, Any]:
@@ -60,9 +71,7 @@ def _collect_text_encoder_patchers(text_encoders: Any) -> Dict[str, Any]:
         return {}
     patchers: Dict[str, Any] = {}
     for key, entry in text_encoders.items():
-        patcher = _unwrap_patcher(entry)
-        if patcher is not None:
-            patchers[str(key)] = patcher
+        patchers[str(key)] = _unwrap_patcher(entry, label=f"text_encoders[{key!r}]")
     return patchers
 
 
@@ -88,10 +97,19 @@ def _build_to_load_maps(engine) -> Tuple[Dict[str, PatchTarget], Dict[str, Patch
     unet_model = engine.codex_objects_after_applying_lora.denoiser.model
     text_encoders = engine.codex_objects_after_applying_lora.text_encoders
     clip_entry = text_encoders.get("clip") if isinstance(text_encoders, Mapping) else None
-    clip_model = getattr(clip_entry, "cond_stage_model", None) if clip_entry is not None else None
+    if clip_entry is None:
+        raise RuntimeError("Engine does not expose required text_encoders['clip'] entry for LoRA key mapping.")
+    try:
+        clip_runtime = clip_entry.runtime
+    except AttributeError as exc:
+        raise RuntimeError(
+            "Engine exposes non-canonical text_encoders['clip']; expected TextEncoderHandle with `.runtime`."
+        ) from exc
+    clip_model = getattr(clip_runtime, "cond_stage_model", None) if clip_runtime is not None else None
     if clip_model is None:
         raise RuntimeError(
-            "Engine does not expose `text_encoders['clip'].cond_stage_model` required for LoRA key mapping."
+            "Engine does not expose CLIP runtime cond_stage_model required for LoRA key mapping "
+            "(expected text_encoders['clip'].runtime.cond_stage_model)."
         )
     unet_map = model_lora_keys_unet(unet_model)
     clip_map = model_lora_keys_clip(clip_model)

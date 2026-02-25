@@ -137,25 +137,52 @@ def _iter_sampling_progress(
     *,
     done: "threading.Event",
     poll_interval_s: float = 0.12,
-) -> Iterator[tuple[int, int, float | None]]:
+) -> Iterator[tuple[int, int, int, int, float | None]]:
     import time
 
     from apps.backend.core.state import state as backend_state
 
     t0 = time.perf_counter()
-    last_step = -1
+    last_snapshot = (-1, -1, -1, -1)
     while True:
         try:
-            step = int(getattr(backend_state, "sampling_step", 0) or 0)
-            total = int(getattr(backend_state, "sampling_steps", 0) or 0)
+            snapshot = getattr(backend_state, "sampling_snapshot", None)
+            if callable(snapshot):
+                step, total, block_index, block_total = snapshot()
+            else:
+                step = int(getattr(backend_state, "sampling_step", 0) or 0)
+                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
+                block_index = int(getattr(backend_state, "sampling_block_index", 0) or 0)
+                block_total = int(getattr(backend_state, "sampling_block_total", 0) or 0)
         except Exception:  # noqa: BLE001
-            step, total = 0, 0
+            step, total, block_index, block_total = 0, 0, 0, 0
 
-        if total > 0 and step != last_step:
+        total = max(0, int(total))
+        step = max(0, min(int(step), total if total > 0 else int(step)))
+        block_total = max(0, int(block_total))
+        block_index = max(0, int(block_index))
+        if block_total > 0:
+            block_index = min(block_index, block_total)
+
+        current_snapshot = (step, total, block_index, block_total)
+        should_emit = (
+            total > 0
+            and (step > 0 or block_index > 0 or done.is_set())
+            and current_snapshot != last_snapshot
+        )
+        if should_emit:
             elapsed = time.perf_counter() - t0
-            eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
-            yield step, total, eta
-            last_step = step
+            completed_units = float(step)
+            if block_total > 0 and step < total:
+                completed_units += float(block_index) / float(block_total)
+            completed_units = min(float(total), completed_units)
+            eta = (
+                (elapsed * (float(total) - completed_units) / completed_units)
+                if completed_units > 0.0
+                else None
+            )
+            yield step, total, block_index, block_total, eta
+            last_snapshot = current_snapshot
 
         if done.is_set():
             break

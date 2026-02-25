@@ -16,7 +16,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from datetime import datetime
@@ -25,7 +24,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 
-from apps.backend.interfaces.api.json_store import _load_json
+from apps.backend.interfaces.api.json_store import _load_json, _save_json
 
 
 def build_router(
@@ -218,8 +217,10 @@ def build_router(
         p = _tabs_path()
         if not os.path.exists(p):
             data = _default_tabs()
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            try:
+                _save_json(p, data)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"failed to initialize tabs.json: {exc}") from exc
         stat = os.stat(p)
         if _tabs_cache is not None and _tabs_mtime == stat.st_mtime:
             return _tabs_cache
@@ -274,8 +275,10 @@ def build_router(
     def _save_tabs(data: Dict[str, Any]) -> None:
         _ensure_dirs()
         p = _tabs_path()
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        try:
+            _save_json(p, data)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to save tabs.json: {exc}") from exc
         stat = os.stat(p)
         nonlocal _tabs_cache, _tabs_mtime
         _tabs_cache, _tabs_mtime = data, stat.st_mtime
@@ -285,8 +288,10 @@ def build_router(
         _ensure_dirs()
         p = _workflows_path()
         if not os.path.exists(p):
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump({"version": 1, "workflows": []}, f, indent=2)
+            try:
+                _save_json(p, {"version": 1, "workflows": []})
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"failed to initialize workflows.json: {exc}") from exc
         stat = os.stat(p)
         if _workflows_cache is not None and _workflows_mtime == stat.st_mtime:
             return _workflows_cache
@@ -311,8 +316,10 @@ def build_router(
     def _save_workflows(data: Dict[str, Any]) -> None:
         _ensure_dirs()
         p = _workflows_path()
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        try:
+            _save_json(p, data)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to save workflows.json: {exc}") from exc
         stat = os.stat(p)
         nonlocal _workflows_cache, _workflows_mtime
         _workflows_cache, _workflows_mtime = data, stat.st_mtime

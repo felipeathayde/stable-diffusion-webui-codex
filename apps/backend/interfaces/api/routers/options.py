@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Options API routes for reading, updating, and validating settings.
 Exposes the JSON-backed options store and registry-driven validation helpers, applies supported runtime memory overrides immediately
-(device backend + storage/compute dtype) via the memory manager, and emits apply metadata on `POST /api/options`.
+(device backend + storage/compute dtype) via the memory manager, enforces finite numeric values for number/slider settings,
+and emits apply metadata on `POST /api/options`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for options endpoints.
@@ -16,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Dict, List
 
 from fastapi import APIRouter, Body, HTTPException
@@ -146,6 +148,8 @@ def build_router(
                     if isinstance(v, bool):
                         raise HTTPException(status_code=400, detail=f"Invalid value for {k}: boolean is not a numeric value")
                     num = float(v)
+                    if not math.isfinite(num):
+                        raise HTTPException(status_code=400, detail=f"Invalid value for {k}: must be finite")
                     lo = getattr(f, "min", None)
                     hi = getattr(f, "max", None)
                     if isinstance(lo, (int, float)) and num < lo:
@@ -166,6 +170,9 @@ def build_router(
     @router.post("/api/options")
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         updates = _validate_options(payload)
+        previous_values = opts_load_native()
+        if not isinstance(previous_values, dict):
+            raise HTTPException(status_code=500, detail="failed to read current options before update")
         hot_applied_keys: set[str] = set()
         device_keys = ("codex_core_device", "codex_te_device", "codex_vae_device")
 
@@ -203,29 +210,51 @@ def build_router(
             "codex_te_compute_dtype": ("text_encoder", "compute_dtype"),
             "codex_vae_compute_dtype": ("vae", "compute_dtype"),
         }
-        for key, value in updates.items():
+
+        def _apply_runtime_override(key: str, value: Any) -> bool:
             if key == "codex_attention_backend":
-                try:
-                    mem_management.set_attention_backend(str(value))
-                except Exception as exc:
-                    raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
-                hot_applied_keys.add(key)
-                continue
+                mem_management.set_attention_backend(str(value))
+                return True
             if key not in role_map:
-                continue
+                return False
             role, kind = role_map[key]
+            if kind == "backend":
+                mem_management.set_component_backend(role, str(value))
+            elif kind == "dtype":
+                mem_management.set_component_dtype(role, str(value))
+            else:
+                mem_management.set_component_compute_dtype(role, str(value))
+            return True
+
+        for key, value in updates.items():
             try:
-                if kind == "backend":
-                    mem_management.set_component_backend(role, str(value))
-                elif kind == "dtype":
-                    mem_management.set_component_dtype(role, str(value))
-                else:
-                    mem_management.set_component_compute_dtype(role, str(value))
+                applied = _apply_runtime_override(key, value)
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
-            hot_applied_keys.add(key)
+            if applied:
+                hot_applied_keys.add(key)
 
-        updated = opts_set_many(updates)
+        try:
+            updated = opts_set_many(updates)
+        except Exception as exc:
+            rollback_failures: list[str] = []
+            for key in sorted(hot_applied_keys):
+                if key not in previous_values:
+                    continue
+                try:
+                    _apply_runtime_override(key, previous_values[key])
+                except Exception as rollback_exc:
+                    rollback_failures.append(f"{key}: {rollback_exc}")
+            if rollback_failures:
+                detail = (
+                    "Failed to persist options and failed to rollback runtime hot-applies: "
+                    + "; ".join(rollback_failures)
+                )
+                raise HTTPException(status_code=500, detail=detail) from exc
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to persist options; runtime hot-applies were rolled back.",
+            ) from exc
         applied_now: List[str] = []
         restart_required: List[str] = []
         for key in updated:
@@ -276,6 +305,9 @@ def build_router(
                         rejected[k] = "boolean is not a numeric value"
                         continue
                     num = float(v)
+                    if not math.isfinite(num):
+                        rejected[k] = "must be finite"
+                        continue
                     lo = getattr(f, "min", None)
                     hi = getattr(f, "max", None)
                     if isinstance(lo, (int, float)) and num < lo:

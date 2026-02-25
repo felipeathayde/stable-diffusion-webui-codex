@@ -82,8 +82,8 @@ class RunConfig:
     sdpa_policy: Optional[str] = None  # 'auto' | 'mem_efficient' | 'flash' | 'math'
     attention_mode: str = "global"  # 'global' | 'sliding'
     attn_chunk_size: Optional[int] = None  # split attention along sequence if set (>0)
-    gguf_cache_policy: Optional[str] = None  # 'none' | 'cpu_lru'
-    gguf_cache_limit_mb: Optional[int] = None  # MB limit for cpu_lru cache
+    gguf_cache_policy: Optional[str] = None  # dequant cache removed; only 'none' | 'off' accepted
+    gguf_cache_limit_mb: Optional[int] = None  # dequant cache removed; must be omitted or 0
     log_mem_interval: Optional[int] = None  # log CUDA mem every N steps if >0
     # Aggressive offload controls
     aggressive_offload: bool = True  # legacy switch; see offload_level

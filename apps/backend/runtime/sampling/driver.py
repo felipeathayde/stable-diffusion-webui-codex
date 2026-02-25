@@ -35,6 +35,7 @@ from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 
 from .inner_loop import sampling_function_inner, sampling_prepare, sampling_cleanup
+from .block_progress import BLOCK_PROGRESS_CALLBACK_KEY
 from .condition import compile_conditions
 from .context import SamplingContext, build_sampling_context
 from .registry import get_sampler_spec
@@ -86,6 +87,9 @@ _GUIDANCE_ALLOWED_KEYS = {
     "cfg_trunc_ratio",
     "renorm_cfg",
 }
+
+_COMFY_DENOISE_FULL_THRESHOLD = 0.9999
+_MAX_COMFY_DENOISE_STEPS = 10000
 
 
 def _read_env_text(name: str) -> str | None:
@@ -290,6 +294,81 @@ class CodexSampler:
         tail = ",".join(f"{v:.6g}" for v in values[-window:])
         return f"{head},...,{tail}"
 
+    @staticmethod
+    def _normalize_denoise_strength(denoise_strength: float | None) -> float | None:
+        if denoise_strength is None:
+            return None
+        if isinstance(denoise_strength, bool):
+            raise ValueError("denoise_strength must be a float in [0, 1]")
+        try:
+            value = float(denoise_strength)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"denoise_strength must be numeric; got {type(denoise_strength).__name__}") from exc
+        if not math.isfinite(value):
+            raise ValueError("denoise_strength must be finite")
+        if value < 0.0 or value > 1.0:
+            raise ValueError("denoise_strength must be in [0, 1]")
+        return value
+
+    def _build_comfy_denoise_sigmas(
+        self,
+        *,
+        processing: Any,
+        model: Any,
+        active_context: SamplingContext,
+        noise: torch.Tensor,
+        steps: int,
+        denoise_strength: float,
+    ) -> torch.Tensor:
+        if denoise_strength > _COMFY_DENOISE_FULL_THRESHOLD:
+            return active_context.sigmas.to(device=noise.device, dtype=torch.float32)
+
+        new_steps = int(float(steps) / float(denoise_strength))
+        if new_steps < 1:
+            raise RuntimeError(
+                f"Comfy denoise schedule produced invalid new_steps={new_steps} from steps={steps} denoise={denoise_strength}"
+            )
+        if new_steps > _MAX_COMFY_DENOISE_STEPS:
+            raise ValueError(
+                f"denoise_strength={denoise_strength} expands schedule to new_steps={new_steps}, "
+                f"above safety limit {_MAX_COMFY_DENOISE_STEPS}"
+            )
+        denoise_context = build_sampling_context(
+            self.sd_model,
+            sampler_name=self.algorithm,
+            scheduler_name=active_context.scheduler_name,
+            steps=new_steps,
+            noise_source=active_context.noise_settings.source.value,
+            eta_noise_seed_delta=active_context.noise_settings.eta_noise_seed_delta,
+            height=(int(getattr(processing, "height", 0) or 0) or None),
+            width=(int(getattr(processing, "width", 0) or 0) or None),
+            device=noise.device,
+            dtype=noise.dtype,
+            predictor=model,
+            is_sdxl=bool(getattr(getattr(self.sd_model, "engine", None), "is_sdxl", False)),
+        )
+        denoise_sigmas = denoise_context.sigmas.to(device=noise.device, dtype=torch.float32)
+        required = int(steps) + 1
+        if denoise_sigmas.ndim != 1:
+            raise RuntimeError(f"Comfy denoise schedule must be 1D; got shape={tuple(denoise_sigmas.shape)}")
+        if int(denoise_sigmas.numel()) < required:
+            raise RuntimeError(
+                f"Comfy denoise schedule too short: got={int(denoise_sigmas.numel())} required={required} "
+                f"(steps={steps} denoise={denoise_strength} new_steps={new_steps})"
+            )
+        tail = denoise_sigmas[-required:]
+        if self._log_enabled:
+            self._emit_event(
+                "sampling.denoise_schedule",
+                steps=int(steps),
+                denoise=float(denoise_strength),
+                new_steps=int(new_steps),
+                selected=int(required),
+                first=float(tail[0].item()),
+                last=float(tail[-1].item()),
+            )
+        return tail
+
     def _rebind_unet_precision(self, dtype: torch.dtype) -> None:
         denoiser = self.sd_model.codex_objects.denoiser
         model = getattr(denoiser, "model", None)
@@ -432,6 +511,7 @@ class CodexSampler:
         *,
         init_latent: Optional[torch.Tensor] = None,
         start_at_step: int | None = None,
+        denoise_strength: float | None = None,
         preview_callback: Optional[Callable[[torch.Tensor, int, int], None]] = None,
         post_step_hook: Optional[Callable[[torch.Tensor, int, int], None]] = None,
         post_sample_hook: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
@@ -468,6 +548,14 @@ class CodexSampler:
 
             if init_latent is not None and init_latent.dtype != noise.dtype:
                 init_latent = init_latent.to(dtype=noise.dtype)
+            normalized_denoise = self._normalize_denoise_strength(denoise_strength)
+            if normalized_denoise is not None and math.isclose(normalized_denoise, 0.0):
+                if self._log_enabled:
+                    self._emit_event("sampling.denoise_noop", reason="denoise_zero", has_init_latent=init_latent is not None)
+                samples_noop = init_latent if init_latent is not None else torch.zeros_like(noise)
+                if post_sample_hook is not None:
+                    samples_noop = post_sample_hook(samples_noop)
+                return samples_noop
 
             progress_bar = None
             retry = False
@@ -542,8 +630,25 @@ class CodexSampler:
 
                 # Keep sigma ladder in fp32 for numeric stability; casting to bf16/fp16
                 # quantizes the schedule and can produce severe quality regressions.
-                sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
-                steps = active_context.steps
+                steps = int(active_context.steps)
+                if normalized_denoise is None:
+                    sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
+                else:
+                    sigmas = self._build_comfy_denoise_sigmas(
+                        processing=processing,
+                        model=model,
+                        active_context=active_context,
+                        noise=noise,
+                        steps=steps,
+                        denoise_strength=normalized_denoise,
+                    )
+
+                if sigmas.ndim != 1 or int(sigmas.numel()) < 2:
+                    raise RuntimeError(f"sigma schedule must be 1D with at least 2 entries; got shape={tuple(sigmas.shape)}")
+                if int(sigmas.numel()) != steps + 1:
+                    raise RuntimeError(
+                        f"sigma schedule length mismatch: got {int(sigmas.numel())}, expected {steps + 1} (steps={steps})"
+                    )
 
                 if self._log_sigmas or self._log_enabled:
                     schedule_first = float(sigmas[0]) if len(sigmas) > 0 else float("nan")
@@ -641,6 +746,60 @@ class CodexSampler:
                     )
                 backend_state.start(job_count=1, sampling_steps=run_total_steps)
                 state_started = True
+                transformer_options = denoiser.model_options.get("transformer_options", None)
+                if not isinstance(transformer_options, dict):
+                    raise RuntimeError(
+                        "denoiser.model_options['transformer_options'] must be a dict for block progress wiring "
+                        f"(got {type(transformer_options).__name__})."
+                    )
+                current_completed_steps = 0
+                last_logged_step = -1
+                last_logged_block = 0
+
+                def _on_block_progress(block_index: int, total_blocks: int) -> None:
+                    nonlocal current_completed_steps, last_logged_step, last_logged_block
+
+                    normalized_total = max(0, int(total_blocks))
+                    normalized_index = max(0, int(block_index))
+                    if normalized_total > 0:
+                        normalized_index = min(normalized_index, normalized_total)
+
+                    backend_state.update_sampling_block(
+                        block_index=normalized_index,
+                        total_blocks=normalized_total,
+                    )
+
+                    if normalized_total <= 0 or normalized_index <= 0:
+                        return
+                    if current_completed_steps != last_logged_step:
+                        last_logged_step = current_completed_steps
+                        last_logged_block = 0
+
+                    stride = max(1, normalized_total // 6)
+                    if (
+                        normalized_index != 1
+                        and normalized_index != normalized_total
+                        and (normalized_index - last_logged_block) < stride
+                    ):
+                        return
+                    last_logged_block = normalized_index
+
+                    progress_units = min(
+                        float(run_total_steps),
+                        float(current_completed_steps) + (float(normalized_index) / float(normalized_total)),
+                    )
+                    progress_pct = (progress_units / float(max(1, run_total_steps))) * 100.0
+                    self._emit_event(
+                        "sampling.blocks",
+                        step_completed=int(current_completed_steps),
+                        step_total=int(run_total_steps),
+                        block=normalized_index,
+                        block_total=normalized_total,
+                        percent=round(progress_pct, 3),
+                    )
+
+                transformer_options[BLOCK_PROGRESS_CALLBACK_KEY] = _on_block_progress
+                backend_state.reset_sampling_blocks()
 
                 strict = True
                 import time as _time
@@ -708,6 +867,8 @@ class CodexSampler:
                         if backend_state.should_stop:
                             raise _SamplingCancelled("cancelled")
                         step_index = i - start_idx
+                        current_completed_steps = step_index
+                        backend_state.reset_sampling_blocks()
                         if guidance_policy is not None:
                             denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = step_index
                         with profiler.section(f"sampling.step/{step_index + 1}"):
@@ -1073,6 +1234,7 @@ class CodexSampler:
                                 progress_bar.update(1)
 
                             backend_state.tick(sampling_step=current_step)
+                            backend_state.reset_sampling_blocks()
                         profiler.step()
 
                 if progress_bar is not None:
@@ -1106,6 +1268,9 @@ class CodexSampler:
                 denoiser.model_options.pop(_GUIDANCE_TOTAL_STEPS_KEY, None)
                 denoiser.model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
                 denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
+                transformer_options = denoiser.model_options.get("transformer_options", None)
+                if isinstance(transformer_options, dict):
+                    transformer_options.pop(BLOCK_PROGRESS_CALLBACK_KEY, None)
                 backend_state.clear_flags()
 
             if retry:

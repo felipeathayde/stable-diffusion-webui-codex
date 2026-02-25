@@ -73,8 +73,19 @@ def _iter_text_encoder_patchers(sd_model: Any) -> Iterable[tuple[str, object]]:
     for name, entry in mapping.items():
         if entry is None:
             continue
-        patcher = getattr(entry, "patcher", None)
-        yield str(name), patcher if patcher is not None else entry
+        try:
+            patcher = entry.patcher
+        except AttributeError as exc:
+            raise RuntimeError(
+                "smart_offload invariant requires TextEncoderHandle entries "
+                f"(missing .patcher for text_encoders['{name}'])."
+            ) from exc
+        if patcher is None:
+            raise RuntimeError(
+                "smart_offload invariant requires TextEncoderHandle with non-null patcher "
+                f"for text_encoders['{name}']."
+            )
+        yield str(name), patcher
 
 
 def _resolve_vae_patcher(sd_model: Any) -> object | None:

@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from apps.backend.engines.common.base import CodexObjects
+from apps.backend.engines.common.base import CodexObjects, TextEncoderHandle
 from apps.backend.engines.sd.spec import SDEngineRuntime, SDEngineSpec, assemble_engine_runtime
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
@@ -47,7 +47,12 @@ class CodexSDFamilyFactory:
         codex_objects = CodexObjects(
             denoiser=runtime.unet,
             vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
+            text_encoders={
+                "clip": TextEncoderHandle(
+                    patcher=runtime.clip.patcher,
+                    runtime=runtime.clip,
+                )
+            },
             clipvision=None,
         )
         return CodexSDFamilyAssembly(runtime=runtime, codex_objects=codex_objects)

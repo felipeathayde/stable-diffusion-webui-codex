@@ -51,11 +51,12 @@ def stage_scoped_model_load(
 ) -> Iterator[None]:
     source = "engines.common.model_scopes.stage_scoped_model_load"
     already_loaded = manager.is_model_loaded(model)
-    manager.load_model(
-        model,
-        source=source,
-        stage="scope_enter",
-    )
+    if not already_loaded:
+        manager.load_model(
+            model,
+            source=source,
+            stage="scope_enter",
+        )
     unload = bool(smart_offload_enabled) and not already_loaded
     try:
         yield

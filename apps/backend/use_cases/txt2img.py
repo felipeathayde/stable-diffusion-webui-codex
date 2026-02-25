@@ -186,9 +186,30 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
         runtime_overrides=smart_flags,
     )
 
-    for step, total, eta in _iter_sampling_progress(done=done):
-        pct = max(5.0, min(99.0, (step / total) * 100.0))
-        yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
+    for step, total, block_index, block_total, eta in _iter_sampling_progress(done=done):
+        completed_units = float(step)
+        if block_total > 0 and step < total:
+            completed_units += float(block_index) / float(block_total)
+        progress_percent = (min(float(total), completed_units) / float(total)) * 100.0
+        pct = max(5.0, min(99.0, progress_percent))
+
+        if block_total > 0 and step < total:
+            message = (
+                f"Sampling step {min(step + 1, total)}/{total} "
+                f"(block {block_index}/{block_total})"
+            )
+        else:
+            message = f"Sampling step {step}/{total}"
+
+        yield ProgressEvent(
+            stage="sampling",
+            percent=pct,
+            step=step,
+            total_steps=total,
+            eta_seconds=eta,
+            message=message,
+            data={"block_index": int(block_index), "block_total": int(block_total)},
+        )
 
     if outcome.error is not None:
         raise outcome.error

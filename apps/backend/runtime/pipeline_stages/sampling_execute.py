@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -118,6 +119,7 @@ def execute_sampling(
     image_conditioning: torch.Tensor | None = None,
     init_latent: torch.Tensor | None = None,
     start_at_step: int | None = None,
+    denoise_strength: float | None = None,
     post_step_hook: Callable[[torch.Tensor, int, int], None] | None = None,
     post_sample_hook: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
@@ -192,6 +194,15 @@ def execute_sampling(
             processing.height,
         )
 
+    if denoise_strength is not None and math.isclose(float(denoise_strength), 0.0):
+        samples = init_latent if init_latent is not None else torch.zeros_like(noise)
+        if post_sample_hook is not None:
+            samples = post_sample_hook(samples)
+        samples = run_post_sample_hooks(processing, samples)
+        _maybe_dump_latents(samples, processing, plan, prompt_context)
+        devices.torch_gc()
+        return samples
+
     sampler_name = plan.sampler_name
     scheduler_name = plan.scheduler_name
     context = build_sampling_context(
@@ -215,6 +226,7 @@ def execute_sampling(
         image_conditioning=image_conditioning,
         init_latent=init_latent,
         start_at_step=start_at_step,
+        denoise_strength=denoise_strength,
         preview_callback=_preview_cb,
         post_step_hook=post_step_hook,
         post_sample_hook=post_sample_hook,

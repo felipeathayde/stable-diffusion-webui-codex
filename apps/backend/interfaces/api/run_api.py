@@ -11,7 +11,8 @@ Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
 Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`, `CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) from resolved runtime namespace values.
-Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid reliability-critical values (including `codex_attention_backend` and checkbox settings).
+Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid reliability-critical values
+(including `codex_attention_backend`, checkbox settings, and non-finite numeric options).
 Launcher/backend trace toggles (`--trace-contract`, `--trace-profiler`) are published via bootstrap env for runtime diagnostics modules.
 Startup bootstrap logs allocator diagnostics (`PYTORCH_ALLOC_CONF`, resolved allocator backend, and `--cuda-malloc` flag state) for fail-loud VRAM debugging.
 Allocator bootstrap contract is `PYTORCH_ALLOC_CONF` only.
@@ -37,6 +38,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import asyncio
 import errno
+import math
 import os
 import socket
 import sys
@@ -486,6 +488,8 @@ def build_app() -> FastAPI:
                     continue
                 if getattr(f, 'type', None) in (_SettingType.SLIDER, _SettingType.NUMBER):
                     v = float(saved[k])
+                    if not math.isfinite(v):
+                        raise ValueError(f"non-finite numeric value for {k}: {v!r}")
                     lo = getattr(f, 'min', None)
                     hi = getattr(f, 'max', None)
                     if isinstance(lo, (int, float)) and v < lo:

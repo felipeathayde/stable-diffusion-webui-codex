@@ -16,8 +16,8 @@ prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
-Resolves `extras.lora_sha` / `img2img_extras.lora_sha` into server-side `lora_path` overrides only when SHA ownership matches LoRA inventory
-(`inventory.loras`, `.safetensors`), rejecting non-LoRA resolution with HTTP 409.
+Resolves `extras.lora_sha` / `img2img_extras.lora_sha` into server-side `lora_path` overrides only for engines with `supports_lora=True`
+and when SHA ownership matches LoRA inventory (`inventory.loras`, `.safetensors`), rejecting unsupported-engine/non-LoRA resolution fail-loud.
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
 Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
@@ -86,6 +86,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         ENGINE_SURFACES,
         SemanticEngine,
         engine_supports_cfg,
+        semantic_engine_for_engine_id,
     )
 
     def _ensure_default_engines_registered() -> None:
@@ -315,12 +316,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             policy_raw = raw_policy.strip().lower()
             if policy_raw in {"", "none", "off"}:
                 policy = "none"
-            elif policy_raw == "cpu_lru":
-                policy = "cpu_lru"
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Invalid gguf_cache_policy: {raw_policy!r} (expected 'none'|'off'|'cpu_lru').",
+                    detail=f"Invalid gguf_cache_policy: {raw_policy!r} (expected 'none'|'off').",
                 )
 
         limit_mb = (
@@ -333,11 +332,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(
                 status_code=400,
                 detail="'gguf_cache_limit_mb' requires 'gguf_cache_policy'.",
-            )
-        if policy == "cpu_lru" and (limit_mb is None or limit_mb <= 0):
-            raise HTTPException(
-                status_code=400,
-                detail="'gguf_cache_limit_mb' must be > 0 when 'gguf_cache_policy' is 'cpu_lru'.",
             )
         if policy == "none" and limit_mb not in (None, 0):
             raise HTTPException(
@@ -1005,7 +999,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "min_tile": int(tile_cfg.min_tile),
                 }
                 hires_cfg = {
-                    "denoise": _require_float_field(hires, 'denoise'),
+                    "denoise": _require_float_field(hires, 'denoise', minimum=0.0, maximum=1.0),
                     "scale": _require_float_field(hires, 'scale'),
                     "resize_x": _require_int_field(hires, 'resize_x'),
                     "resize_y": _require_int_field(hires, 'resize_y'),
@@ -1449,6 +1443,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 }
 
         if lora_shas:
+            try:
+                semantic_engine = semantic_engine_for_engine_id(engine_id)
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown engine id for '{lora_field}': {engine_id!r}",
+                ) from exc
+            if not ENGINE_SURFACES[semantic_engine].supports_lora:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{lora_field}' is unsupported for engine '{engine_id}'.",
+                )
+
             from apps.backend.inventory.scanners.loras import iter_lora_files
 
             known_lora_paths = {_normalize_path_for_compare(path) for path in iter_lora_files()}
@@ -1677,7 +1684,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             cfg_scale = 1.0
             distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale')
         image_cfg_scale = _require_float_field(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
-        denoise = _require_float_field(payload, 'img2img_denoising_strength')
+        denoise = _require_float_field(payload, 'img2img_denoising_strength', minimum=0.0, maximum=1.0)
 
         def _snap_dim(value: int) -> int:
             if not value:
@@ -2208,7 +2215,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "resize_x": _require_int_field(payload, "img2img_hires_resize_x", minimum=0) if "img2img_hires_resize_x" in payload else 0,
                 "resize_y": _require_int_field(payload, "img2img_hires_resize_y", minimum=0) if "img2img_hires_resize_y" in payload else 0,
                 "steps": _require_int_field(payload, "img2img_hires_steps", minimum=0) if "img2img_hires_steps" in payload else 0,
-                "denoise": _require_float_field(payload, 'img2img_hires_denoise') if 'img2img_hires_denoise' in payload else denoise,
+                "denoise": _require_float_field(payload, 'img2img_hires_denoise', minimum=0.0, maximum=1.0) if 'img2img_hires_denoise' in payload else denoise,
                 "upscaler": payload.get('img2img_hires_upscaler', 'Latent'),
                 "tile": hr_tile,
                 "hr_sampler_name": hr_sampler_name,

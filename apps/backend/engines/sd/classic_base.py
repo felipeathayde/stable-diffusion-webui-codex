@@ -21,6 +21,7 @@ from typing import Any, List, Mapping, Optional
 import torch
 
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.model_scopes import stage_scoped_model_load
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
@@ -76,15 +77,15 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
     @torch.no_grad()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
-        unload_clip = self.smart_offload_enabled
-        try:
+        clip_patcher = self.codex_objects.text_encoders["clip"].patcher
+        with stage_scoped_model_load(
+            clip_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
             conditioning = runtime.primary_classic()(prompt)
             self._logger.debug("Generated conditioning for %d prompts.", len(prompt))
             return conditioning
-        finally:
-            if unload_clip:
-                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
 
     @torch.no_grad()
     def get_prompt_lengths_on_ui(self, prompt: str):

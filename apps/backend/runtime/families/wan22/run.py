@@ -13,8 +13,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
 - `_WAN_CHUNK_HYBRID_RAM_BUDGET_MB` (constant): Default RAM budget threshold (MB) used by `chunk_buffer_mode='hybrid'` when resolving low/decode tensor storage (`ram` vs `ram+hd`).
 - `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager (explicit unload honors manager-provided target device).
-- `_try_set_cache_policy` (function): Configure GGUF dequant cache policy + limit when supported.
-- `_try_clear_cache` (function): Clear GGUF dequant cache when supported.
+- `_try_set_cache_policy` (function): Validate removed GGUF dequant-cache settings (only disabled policy accepted).
+- `_try_clear_cache` (function): Best-effort cache-clear call after dequant-cache removal (no-op in runtime ops).
 - `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
 - `_stage_transition_barrier` (function): Enforce a deterministic memory barrier between heavyweight stage transitions (release/sync/cache-gc/log) without altering mount policy.
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
@@ -140,36 +140,26 @@ def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> Non
     pol = pol_raw.strip().lower()
     lim = int(limit_mb or 0)
 
-    if pol in {"", "none", "off"}:
-        normalized_policy = "none"
-        normalized_limit_mb = 0
-        if lim > 0:
-            raise RuntimeError(
-                "WAN22 GGUF: 'gguf_cache_limit_mb' must be omitted or 0 when "
-                f"'gguf_cache_policy' is '{pol or 'none'}' (got {lim})."
-            )
-    elif pol == "cpu_lru":
-        if lim <= 0:
-            raise RuntimeError(
-                "WAN22 GGUF: 'gguf_cache_limit_mb' must be > 0 when "
-                "'gguf_cache_policy' is 'cpu_lru'."
-            )
-        normalized_policy = "cpu_lru"
-        normalized_limit_mb = lim
-    else:
+    if pol not in {"", "none", "off"}:
         raise RuntimeError(
-            "WAN22 GGUF: 'gguf_cache_policy' must be one of 'none', 'off', or "
-            f"'cpu_lru' (got {policy!r})."
+            "WAN22 GGUF: dequant cache support was removed. "
+            f"'gguf_cache_policy' must be 'none' or 'off' (got {policy!r})."
+        )
+
+    if lim != 0:
+        raise RuntimeError(
+            "WAN22 GGUF: dequant cache support was removed. "
+            f"'gguf_cache_limit_mb' must be omitted or 0 (got {lim})."
         )
 
     try:
         from apps.backend.runtime.ops.operations_gguf import set_cache_policy
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
-            "GGUF dequant cache requested but not available in this build (set_cache_policy missing)."
+            "GGUF dequant cache validation hook is missing in this build (operations_gguf.set_cache_policy)."
         ) from exc
 
-    set_cache_policy(normalized_policy, normalized_limit_mb)
+    set_cache_policy("none", 0)
 
 
 def _try_clear_cache() -> None:

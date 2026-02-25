@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from apps.backend.engines.common.base import CodexObjects
+from apps.backend.engines.common.base import CodexObjects, TextEncoderHandle
 from apps.backend.engines.flux.spec import FluxEngineRuntime, FluxEngineSpec, assemble_flux_runtime
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
@@ -51,7 +51,12 @@ class CodexFluxFamilyFactory:
         codex_objects = CodexObjects(
             denoiser=runtime.denoiser,
             vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
+            text_encoders={
+                "clip": TextEncoderHandle(
+                    patcher=runtime.clip.patcher,
+                    runtime=runtime.clip,
+                )
+            },
             clipvision=None,
         )
         return CodexFluxFamilyAssembly(runtime=runtime, codex_objects=codex_objects)

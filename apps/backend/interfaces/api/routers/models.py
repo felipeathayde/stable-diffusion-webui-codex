@@ -10,10 +10,14 @@ Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
-(`/api/models/prompt-token-count`) using vendored offline tokenizers, including WAN22 animate engine ids.
+(`/api/models/prompt-token-count`) using vendored offline tokenizers, including WAN22 animate engine ids and Anima runtime-equivalent prompt preprocessing/max-length checks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
+- `_resolve_anima_qwen_max_length` (function): Parses and validates `CODEX_ANIMA_QWEN_MAX_LENGTH` (>0).
+- `_resolve_anima_t5_max_length` (function): Parses and validates `CODEX_ANIMA_T5_MAX_LENGTH` (>0).
+- `_clean_anima_prompt_text` (function): Applies Anima runtime-equivalent prompt cleanup (`BREAK` -> whitespace).
+- `_count_anima_tokens` (function): Counts Anima prompt tokens with runtime-equivalent preprocessing and fail-loud max-length checks.
 - `_count_prompt_tokens` (function): Returns tokenizer-accurate prompt token counts for supported semantic engines.
 """
 
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
@@ -91,6 +96,69 @@ def _resolve_tokenizer_path(key: str) -> Path:
     return candidate
 
 
+def _resolve_anima_qwen_max_length() -> int:
+    raw = str(os.getenv("CODEX_ANIMA_QWEN_MAX_LENGTH", "512") or "512").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"CODEX_ANIMA_QWEN_MAX_LENGTH must be an integer > 0, got: {raw!r}") from exc
+    if value <= 0:
+        raise RuntimeError(f"CODEX_ANIMA_QWEN_MAX_LENGTH must be > 0, got: {value}")
+    return value
+
+
+def _resolve_anima_t5_max_length() -> int:
+    raw = str(os.getenv("CODEX_ANIMA_T5_MAX_LENGTH", "4096") or "4096").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"CODEX_ANIMA_T5_MAX_LENGTH must be an integer > 0, got: {raw!r}") from exc
+    if value <= 0:
+        raise RuntimeError(f"CODEX_ANIMA_T5_MAX_LENGTH must be > 0, got: {value}")
+    return value
+
+
+def _clean_anima_prompt_text(prompt: str) -> str:
+    from apps.backend.runtime.text_processing.emphasis_parser import parse_prompt_attention
+
+    parsed = parse_prompt_attention(str(prompt or ""), "Original")
+    out: list[str] = []
+    for segment, weight in parsed:
+        if segment == "BREAK" and weight == -1:
+            out.append(" ")
+            continue
+        out.append(str(segment))
+    return "".join(out)
+
+
+def _count_anima_tokens(prompt: str) -> int:
+    from apps.backend.runtime.families.anima.text_encoder import tokenize_t5_with_weights
+
+    qwen_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_qwen")))
+    t5_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_t5")))
+    qwen_max = _resolve_anima_qwen_max_length()
+    t5_max = _resolve_anima_t5_max_length()
+
+    qwen_cleaned = _clean_anima_prompt_text(prompt)
+    qwen_count = _tokenize_len(qwen_tok, qwen_cleaned)
+    if qwen_count > qwen_max:
+        raise RuntimeError(
+            "Anima Qwen tokenizer prompt is too long for max_length=%d (len=%d). "
+            "Reduce prompt length or increase CODEX_ANIMA_QWEN_MAX_LENGTH."
+            % (qwen_max, qwen_count)
+        )
+
+    t5_ids, _weights = tokenize_t5_with_weights(
+        tokenizer=t5_tok,
+        texts=[str(prompt or "")],
+        max_length=t5_max,
+    )
+    if t5_ids.ndim != 2:
+        raise RuntimeError(f"Anima T5 tokenizer returned invalid ids tensor rank: ndim={t5_ids.ndim}")
+    t5_count = int(t5_ids.shape[1])
+    return max(qwen_count, t5_count)
+
+
 def _count_prompt_tokens(engine: str, prompt: str) -> int:
     normalized = str(engine or "").strip().lower()
     if not normalized:
@@ -105,11 +173,7 @@ def _count_prompt_tokens(engine: str, prompt: str) -> int:
         )
 
     if tokenizer_key == "anima":
-        qwen_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_qwen")))
-        t5_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_t5")))
-        qwen_count = _tokenize_len(qwen_tok, prompt)
-        t5_count = _tokenize_len(t5_tok, prompt)
-        return max(qwen_count, t5_count)
+        return _count_anima_tokens(prompt)
 
     tokenizer = _load_tokenizer(str(_resolve_tokenizer_path(tokenizer_key)))
     return _tokenize_len(tokenizer, prompt)

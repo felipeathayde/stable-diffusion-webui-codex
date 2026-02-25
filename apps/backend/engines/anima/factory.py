@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from apps.backend.engines.common.base import CodexObjects
+from apps.backend.engines.common.base import CodexObjects, TextEncoderHandle
 from apps.backend.engines.anima.spec import AnimaEngineRuntime, AnimaEngineSpec, assemble_anima_runtime
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
@@ -45,7 +45,12 @@ class CodexAnimaFactory:
         codex_objects = CodexObjects(
             denoiser=runtime.denoiser,
             vae=runtime.vae,
-            text_encoders={"qwen3": runtime.qwen},
+            text_encoders={
+                "qwen3": TextEncoderHandle(
+                    patcher=runtime.qwen,
+                    runtime=runtime.qwen,
+                )
+            },
             clipvision=None,
         )
         return CodexAnimaAssembly(runtime=runtime, codex_objects=codex_objects)

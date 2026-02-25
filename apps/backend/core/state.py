@@ -34,6 +34,8 @@ class BackendState:
     job_no: int = 0
     sampling_steps: int = 0
     sampling_step: int = 0
+    sampling_block_total: int = 0
+    sampling_block_index: int = 0
     time_start: float = 0.0
     textinfo: str = ""
     current_image: Optional[Any] = None
@@ -55,6 +57,8 @@ class BackendState:
             self.job_no = 0
             self.sampling_steps = int(sampling_steps)
             self.sampling_step = 0
+            self.sampling_block_total = 0
+            self.sampling_block_index = 0
             self.time_start = time.time()
             self.textinfo = ""
             self.current_image = None
@@ -76,6 +80,8 @@ class BackendState:
             self.current_image = None
             self.current_image_sampling_step = 0
             self.id_live_preview = 0
+            self.sampling_block_total = 0
+            self.sampling_block_index = 0
             self.skipped = False
             self.interrupted = False
             self.stopping_generation = False
@@ -96,6 +102,8 @@ class BackendState:
         with self._lock:
             self.sampling_step = 0
             self.sampling_steps = 0
+            self.sampling_block_total = 0
+            self.sampling_block_index = 0
             self.current_image = None
             self.current_latent = None
             self.current_image_sampling_step = 0
@@ -106,6 +114,8 @@ class BackendState:
             if self.job_count > 0:
                 self.job_no = min(self.job_no + 1, self.job_count)
             self.sampling_step = 0
+            self.sampling_block_total = 0
+            self.sampling_block_index = 0
             self.current_image_sampling_step = 0
 
     def set_current_image(self, image: Optional[Any] = None, *, sampling_step: Optional[int] = None) -> None:
@@ -127,12 +137,46 @@ class BackendState:
             if total is not None:
                 self.sampling_steps = int(total)
 
+    def reset_sampling_blocks(self) -> None:
+        with self._lock:
+            self.sampling_block_index = 0
+            self.sampling_block_total = 0
+
+    def update_sampling_block(
+        self,
+        *,
+        block_index: Optional[int] = None,
+        total_blocks: Optional[int] = None,
+    ) -> None:
+        with self._lock:
+            if total_blocks is not None:
+                normalized_total = max(0, int(total_blocks))
+                self.sampling_block_total = normalized_total
+                if normalized_total == 0:
+                    self.sampling_block_index = 0
+                elif self.sampling_block_index > normalized_total:
+                    self.sampling_block_index = normalized_total
+            if block_index is not None:
+                normalized_index = max(0, int(block_index))
+                if self.sampling_block_total > 0:
+                    normalized_index = min(normalized_index, self.sampling_block_total)
+                self.sampling_block_index = max(self.sampling_block_index, normalized_index)
+
     def tick(self, *, job_no: Optional[int] = None, sampling_step: Optional[int] = None) -> None:
         with self._lock:
             if job_no is not None:
                 self.job_no = int(job_no)
             if sampling_step is not None:
                 self.sampling_step = int(sampling_step)
+
+    def sampling_snapshot(self) -> tuple[int, int, int, int]:
+        with self._lock:
+            return (
+                int(self.sampling_step),
+                int(self.sampling_steps),
+                int(self.sampling_block_index),
+                int(self.sampling_block_total),
+            )
 
     def set_textinfo(self, message: str) -> None:
         with self._lock:

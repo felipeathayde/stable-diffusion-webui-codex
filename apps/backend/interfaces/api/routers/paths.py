@@ -28,7 +28,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
     @router.get("/api/paths")
     def get_paths() -> Dict[str, Any]:
-        cfg_path = str(codex_root / "apps" / "paths.json")
+        cfg_path_obj = codex_root / "apps" / "paths.json"
+        if not cfg_path_obj.is_file():
+            raise HTTPException(status_code=500, detail=f"paths config missing: {cfg_path_obj}")
+        cfg_path = str(cfg_path_obj)
         try:
             raw = _load_json(cfg_path)
         except Exception as exc:
@@ -54,7 +57,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
         if not isinstance(payload, dict) or "paths" not in payload or not isinstance(payload["paths"], dict):
             raise HTTPException(status_code=400, detail='payload must be {"paths": {...}}')
 
-        cfg_path = str(codex_root / "apps" / "paths.json")
+        cfg_path_obj = codex_root / "apps" / "paths.json"
+        if not cfg_path_obj.is_file():
+            raise HTTPException(status_code=500, detail=f"paths config missing: {cfg_path_obj}")
+        cfg_path = str(cfg_path_obj)
         try:
             current = _load_json(cfg_path)
         except Exception as exc:

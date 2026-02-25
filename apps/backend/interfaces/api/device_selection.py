@@ -13,7 +13,7 @@ device switch only when the task actually starts running (single-flight-safe).
 Symbols (top-level; keep in sync; no ghosts):
 - `_cuda_available_for_fallback` (function): Returns whether CUDA is available for default main-device fallback.
 - `_normalize_backend_label` (function): Normalizes runtime/backend labels into canonical API device keys.
-- `configured_main_device` (function): Resolves the active configured main device (live memory-manager authority first, then args/env/fallback).
+- `configured_main_device` (function): Resolves the active configured main device (live memory-manager authority first, then args/env/fallback when manager is unavailable).
 - `parse_device_from_payload` (function): Validates payload device and enforces main-device invariant.
 - `apply_primary_device` (function): Applies the validated device via `memory_management.switch_primary_device`.
 """
@@ -54,14 +54,16 @@ def _normalize_backend_label(raw: str) -> str:
 def configured_main_device() -> str:
     try:
         from apps.backend.runtime.memory import memory_management as mem_management
-
-        manager = getattr(mem_management, "manager", None)
-        if manager is not None and hasattr(manager, "primary_device"):
-            primary_device = manager.primary_device()
-            return _normalize_backend_label(str(primary_device))
     except Exception:
-        # Keep deterministic fallback resolution below.
-        pass
+        mem_management = None  # type: ignore[assignment]
+
+    manager = getattr(mem_management, "manager", None) if mem_management is not None else None
+    if manager is not None and hasattr(manager, "primary_device"):
+        try:
+            primary_device = manager.primary_device()
+        except Exception as exc:
+            raise RuntimeError("Failed to read primary device from runtime memory manager.") from exc
+        return _normalize_backend_label(str(primary_device))
 
     from apps.backend.infra.config import args as runtime_args
 

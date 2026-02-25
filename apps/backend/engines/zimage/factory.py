@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from apps.backend.engines.common.base import CodexObjects
+from apps.backend.engines.common.base import CodexObjects, TextEncoderHandle
 from apps.backend.engines.zimage.spec import ZImageEngineRuntime, ZImageEngineSpec, assemble_zimage_runtime
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.memory import memory_management
@@ -57,7 +57,12 @@ class CodexZImageFactory:
         codex_objects = CodexObjects(
             denoiser=runtime.denoiser,
             vae=runtime.vae,
-            text_encoders={"qwen3": runtime.qwen},
+            text_encoders={
+                "qwen3": TextEncoderHandle(
+                    patcher=runtime.qwen.patcher,
+                    runtime=runtime.qwen,
+                )
+            },
             clipvision=None,
         )
         return CodexZImageAssembly(runtime=runtime, codex_objects=codex_objects)

@@ -500,6 +500,9 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         for idx in sorted(batch_indices, reverse=True):
             to_run.pop(idx)
 
+    def _batch_flags(batch_indices: list[int]) -> set[int]:
+        return {int(to_run[idx][1]) for idx in batch_indices}
+
     while len(to_run) > 0:
         first = to_run[0]
         first_shape = first[0][0].shape
@@ -509,6 +512,9 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                 to_batch_temp += [x]
 
         to_batch_temp.reverse()
+        if not fused_enabled and len(to_batch_temp) > 1:
+            first_flag = int(to_run[to_batch_temp[0]][1])
+            to_batch_temp = [idx for idx in to_batch_temp if int(to_run[idx][1]) == first_flag]
         to_batch = to_batch_temp[:1]
 
         if memory_management.manager.signal_empty_cache:
@@ -527,7 +533,7 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
             # Best-effort fused CFG batch: try cond+uncond in one forward even when memory heuristics say "no".
             # Disabled by default; enable only via CODEX_CFG_FUSED_FORCE_RETRY=1.
             # If it OOMs, fall back to the existing split path for this run.
-            flags = {int(to_run[idx][1]) for idx in to_batch_temp}
+            flags = _batch_flags(to_batch_temp)
             if flags == {COND, UNCOND}:
                 try:
                     _run_batch(to_batch_temp)
@@ -548,7 +554,26 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                     except Exception:
                         pass
 
-        _run_batch(to_batch)
+        try:
+            _run_batch(to_batch)
+        except Exception as exc:
+            if not fused_enabled or not _is_cuda_oom(exc):
+                raise
+            if _batch_flags(to_batch) != {COND, UNCOND}:
+                raise
+            if not fused_disabled_logged:
+                logger.warning(
+                    "[cfg-batch] fused batch OOM; falling back to split (mode=%s). "
+                    "Try disabling GGUF dequant cache or reducing resolution/CFG.",
+                    cfg_batch_mode,
+                )
+                fused_disabled_logged = True
+            fused_enabled = False
+            try:
+                memory_management.manager.soft_empty_cache()
+            except Exception:
+                pass
+            continue
 
     out_cond /= out_count
     del out_count

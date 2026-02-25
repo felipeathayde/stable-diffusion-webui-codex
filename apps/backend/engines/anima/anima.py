@@ -179,7 +179,7 @@ class AnimaEngine(CodexDiffusionEngine):
     @torch.no_grad()
     def get_learned_conditioning(self, prompt: list[str]):
         runtime = self._require_runtime()
-        qwen_patcher = self.codex_objects.text_encoders["qwen3"]
+        qwen_patcher = self.codex_objects.text_encoders["qwen3"].patcher
 
         texts = tuple(str(x or "") for x in prompt)
         is_negative = bool(getattr(prompt, "is_negative_prompt", False))

@@ -62,7 +62,6 @@ from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_e
 from apps.backend.runtime.pipeline_stages.image_io import maybe_decode_for_hr
 from apps.backend.runtime.pipeline_stages.hires_fix import (
     prepare_hires_latents_and_conditioning,
-    start_at_step_from_denoise,
 )
 from apps.backend.runtime.pipeline_stages.prompt_context import (
     apply_dimension_overrides,
@@ -248,7 +247,18 @@ class Txt2ImgPipelineRunner:
                 for name, entry in text_encoders.items():
                     if entry is None:
                         continue
-                    patcher = getattr(entry, "patcher", entry)
+                    try:
+                        patcher = entry.patcher
+                    except AttributeError as exc:
+                        raise RuntimeError(
+                            "txt2img conditioning identity requires TextEncoderHandle entries "
+                            f"(missing .patcher for text_encoders['{name}'])."
+                        ) from exc
+                    if patcher is None:
+                        raise RuntimeError(
+                            "txt2img conditioning identity requires TextEncoderHandle with non-null patcher "
+                            f"for text_encoders['{name}']."
+                        )
                     pairs.append((str(name), int(id(patcher))))
                 text_encoder_ids = tuple(sorted(pairs))
 
@@ -374,9 +384,19 @@ class Txt2ImgPipelineRunner:
                 for name, entry in text_encoders.items():
                     if entry is None:
                         continue
-                    patcher = getattr(entry, "patcher", None)
-                    patcher_obj = patcher if patcher is not None else entry
-                    text_encoder_patchers.append((str(name), patcher_obj))
+                    try:
+                        patcher = entry.patcher
+                    except AttributeError as exc:
+                        raise RuntimeError(
+                            "txt2img conditioning requires TextEncoderHandle entries "
+                            f"(missing .patcher for text_encoders['{name}'])."
+                        ) from exc
+                    if patcher is None:
+                        raise RuntimeError(
+                            "txt2img conditioning requires TextEncoderHandle with non-null patcher "
+                            f"for text_encoders['{name}']."
+                        )
+                    text_encoder_patchers.append((str(name), patcher))
                 for name, patcher in text_encoder_patchers:
                     if memory_management.manager.is_model_loaded(patcher):
                         continue
@@ -695,6 +715,7 @@ class Txt2ImgPipelineRunner:
                     state.prompt_context.loras,
                     state.prompt_context.controls,
                     rng=state.rng,
+                    denoise_strength=1.0,
                 )
                 decoded_samples = maybe_decode_for_hr(
                     processing,
@@ -847,7 +868,8 @@ class Txt2ImgPipelineRunner:
                 device=latents.device,
                 dtype=latents.dtype,
             )
-            start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
+            start_index = 0
+            denoise_strength = float(denoise)
             image_conditioning_shape = (
                 tuple(int(dim) for dim in image_conditioning.shape)
                 if isinstance(image_conditioning, torch.Tensor)
@@ -887,6 +909,7 @@ class Txt2ImgPipelineRunner:
                 image_conditioning=image_conditioning,
                 init_latent=latents,
                 start_at_step=start_index,
+                denoise_strength=denoise_strength,
             )
 
             if processing.hires_refiner is not None:

@@ -167,6 +167,7 @@ class RefinerStage:
                 noise=noise,
                 init_latent=samples,
                 start_at_step=swap_at_step,
+                denoise_strength=1.0,
             )
             setattr(processing, "_codex_last_decode_engine", refiner_engine)
             log_tensor_stats(f"{self.label.lower().replace(' ', '_')}_samples", samples_refined)

@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_HashCacheEntry` (dataclass): Cache entry for one file (sha + mtime + size) used to avoid re-hashing unchanged files.
 - `LayoutMetadata` (dataclass): Typed CLIP layout metadata entry (`qkv_layout`, `projection_orientation`, optional `source_style`).
 - `_load_hash_cache` (function): Loads `.hashes.json` cache from disk (v1/v2 migration aware).
-- `_save_hash_cache` (function): Writes `.hashes.json` cache to disk (v2 schema).
+- `_save_hash_cache` (function): Writes `.hashes.json` cache to disk atomically (v2 schema) and fails loud on persistence errors.
 - `ModelRegistry` (class): Registry service; scans paths, maintains caches, and produces `CheckpointRecord`/`VAERecord` lists for UI/API (also provides public hash-cache helpers).
 - `get_registry` (function): Returns the singleton `ModelRegistry` instance.
 - `list_checkpoints` (function): Returns checkpoint records (optional refresh).
@@ -33,6 +33,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -238,33 +239,60 @@ def _save_hash_cache(
     layout_cache: Dict[str, Dict[str, LayoutMetadata]],
 ) -> None:
     """Persist hash/layout cache to disk (schema v2)."""
-    try:
-        payload = {
-            "schema_version": _HASH_CACHE_SCHEMA_VERSION,
-            "files": {
-                path: {
-                    "mtime": entry.mtime,
-                    "size": entry.size,
-                    "sha256": entry.sha256,
-                    "short_hash": entry.short_hash,
-                    "dtype": entry.dtype,
-                }
-                for path, entry in file_cache.items()
+    payload = {
+        "schema_version": _HASH_CACHE_SCHEMA_VERSION,
+        "files": {
+            path: {
+                "mtime": entry.mtime,
+                "size": entry.size,
+                "sha256": entry.sha256,
+                "short_hash": entry.short_hash,
+                "dtype": entry.dtype,
             }
-            ,
-            "layout_by_sha": {
-                sha256: {
-                    layout_key: _serialize_layout_metadata(metadata)
-                    for layout_key, metadata in by_key.items()
-                }
-                for sha256, by_key in layout_cache.items()
-            },
-        }
-        _HASH_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with _HASH_CACHE_FILE.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-    except Exception as e:
-        _LOGGER.debug("hash cache save failed: %s", e)
+            for path, entry in file_cache.items()
+        },
+        "layout_by_sha": {
+            sha256: {
+                layout_key: _serialize_layout_metadata(metadata)
+                for layout_key, metadata in by_key.items()
+            }
+            for sha256, by_key in layout_cache.items()
+        },
+    }
+    target = _HASH_CACHE_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(target.parent),
+            prefix=f"{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_handle:
+            temp_path = temp_handle.name
+            json.dump(payload, temp_handle, indent=2)
+            temp_handle.flush()
+            os.fsync(temp_handle.fileno())
+        os.replace(temp_path, target)
+        temp_path = None
+        try:
+            dir_fd = os.open(str(target.parent), os.O_RDONLY)
+        except OSError:
+            dir_fd = None
+        if dir_fd is not None:
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    except Exception as exc:
+        if temp_path is not None:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+        raise RuntimeError(f"hash cache save failed: {exc}") from exc
 
 
 class ModelRegistry:

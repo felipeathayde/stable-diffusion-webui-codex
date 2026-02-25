@@ -30,6 +30,7 @@ from einops.layers.torch import Rearrange
 
 from apps.backend.runtime.attention import attention_function_pre_shaped
 from apps.backend.runtime.memory.config import AttentionBackend
+from apps.backend.runtime.sampling.block_progress import resolve_block_progress_callback
 from .nn import RMSNorm
 from .position_embedding import LearnablePosEmbAxis, VideoRopePosition3DEmb
 
@@ -736,7 +737,11 @@ class MiniTrainDiT(nn.Module):
         x_B_T_H_W_D = _promote_fp16_residual_stream(x_B_T_H_W_D)
 
         rope_broadcast = rope_emb.unsqueeze(1).unsqueeze(0)
-        for block in self.blocks:
+        block_progress_callback = resolve_block_progress_callback(transformer_options)
+        total_blocks = int(len(self.blocks))
+        for block_index, block in enumerate(self.blocks):
+            if block_progress_callback is not None:
+                block_progress_callback(int(block_index + 1), total_blocks)
             x_B_T_H_W_D = block(
                 x_B_T_H_W_D,
                 t_emb,

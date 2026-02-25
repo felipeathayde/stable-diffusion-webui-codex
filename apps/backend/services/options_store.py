@@ -13,8 +13,11 @@ source of truth without importing legacy/compat shims. Includes per-component st
 Symbols (top-level; keep in sync; no ghosts):
 - `SETTINGS_PATH` (constant): Absolute path to `apps/settings_values.json` under the repo root.
 - `OPTIONS_REVISION_KEY` (constant): Internal settings revision key persisted in `settings_values.json`.
+- `_SETTINGS_LOCK_PATH` (constant): Sidecar lock file path used to serialize settings updates across processes.
 - `_coerce_revision` (function): Normalizes revision values into a non-negative integer.
 - `_coerce_bool` (function): Strict bool parser for persisted option values (fail-loud on invalid literals/types).
+- `_exclusive_settings_lock` (function): Context manager that acquires process/thread update lock for read-modify-write operations.
+- `_atomic_write_values` (function): Writes settings JSON via temp-file + fsync + replace.
 - `load_values` (function): Reads the settings JSON from disk and returns a dict.
 - `save_values` (function): Writes the settings JSON to disk (atomic overwrite).
 - `get_revision` (function): Returns the normalized persisted options revision (non-negative int).
@@ -26,8 +29,11 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
+import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping
 
@@ -35,6 +41,13 @@ from apps.backend.infra.config.repo_root import get_repo_root
 
 SETTINGS_PATH = str(get_repo_root() / "apps" / "settings_values.json")
 OPTIONS_REVISION_KEY = "codex_options_revision"
+_SETTINGS_LOCK_PATH = f"{SETTINGS_PATH}.lock"
+_SETTINGS_UPDATE_LOCK = threading.RLock()
+
+try:
+    import fcntl  # type: ignore
+except Exception:  # pragma: no cover - non-posix fallback
+    fcntl = None
 
 
 def _coerce_revision(value: object) -> int:
@@ -79,10 +92,50 @@ def load_values() -> Dict[str, Any]:
     return data
 
 
-def save_values(values: Mapping[str, Any]) -> None:
+@contextlib.contextmanager
+def _exclusive_settings_lock():
     os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-        json.dump(dict(values), f, indent=2)
+    lock_fd = os.open(_SETTINGS_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        with _SETTINGS_UPDATE_LOCK:
+            if fcntl is not None:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
+
+
+def _atomic_write_values(values: Mapping[str, Any]) -> None:
+    directory = os.path.dirname(SETTINGS_PATH)
+    os.makedirs(directory, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix="settings_values.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(dict(values), handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, SETTINGS_PATH)
+        try:
+            directory_fd = os.open(directory, os.O_DIRECTORY)
+        except Exception:
+            directory_fd = None
+        if directory_fd is not None:
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def save_values(values: Mapping[str, Any]) -> None:
+    with _exclusive_settings_lock():
+        _atomic_write_values(values)
 
 
 def get_revision(values: Mapping[str, Any] | None = None) -> int:
@@ -97,18 +150,19 @@ def get_value(key: str, default: Any = None) -> Any:
 def set_values(payload: Mapping[str, Any]) -> list[str]:
     if not isinstance(payload, Mapping):
         raise TypeError("payload must be a mapping")
-    data = load_values()
-    updated: list[str] = []
-    for k, v in payload.items():
-        key = str(k)
-        data[key] = v
-        updated.append(key)
-    if updated:
-        data[OPTIONS_REVISION_KEY] = get_revision(data) + 1
-        if OPTIONS_REVISION_KEY not in updated:
-            updated.append(OPTIONS_REVISION_KEY)
-    save_values(data)
-    return updated
+    with _exclusive_settings_lock():
+        data = load_values()
+        updated: list[str] = []
+        for k, v in payload.items():
+            key = str(k)
+            data[key] = v
+            updated.append(key)
+        if updated:
+            data[OPTIONS_REVISION_KEY] = get_revision(data) + 1
+            if OPTIONS_REVISION_KEY not in updated:
+                updated.append(OPTIONS_REVISION_KEY)
+        _atomic_write_values(data)
+        return updated
 
 
 @dataclass

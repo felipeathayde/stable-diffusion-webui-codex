@@ -7,10 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Engine-side attention backend selection for diffusers pipelines.
-Applies an attention backend (PyTorch SDPA / xFormers) based on explicit input or runtime memory config.
+Applies an attention backend (PyTorch SDPA / xFormers) based on explicit input or runtime memory config, failing loud on invalid runtime config.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_get_selected_backend` (function): Reads effective attention backend from runtime memory config (fallback: persisted options).
+- `_resolve_attention_config` (function): Resolves runtime attention config and fails loud when required fields are missing/invalid.
+- `_get_selected_backend` (function): Reads effective attention backend from runtime memory config.
 - `_selected_sdpa_flags` (function): Reads effective SDPA enable flags (`flash`, `mem_efficient`) from runtime memory config.
 - `apply_to_diffusers_pipeline` (function): Applies the chosen attention backend to a diffusers pipeline or raises with cause.
 """
@@ -21,27 +22,43 @@ import logging
 from typing import Any, Optional
 
 from apps.backend.runtime.memory import memory_management
-from apps.backend.services import options_store
 
 
 _LOGGER = logging.getLogger("backend.engines.util.attention")
 _FLASH_DIFFUSERS_FALLBACK_LOGGED: set[str] = set()
 
 
+def _resolve_attention_config() -> Any:
+    manager = getattr(memory_management, "manager", None)
+    if manager is None:
+        raise RuntimeError("memory_management.manager is not initialized")
+    config = getattr(manager, "config", None)
+    if config is None:
+        raise RuntimeError("memory_management.manager.config is not available")
+    attention_cfg = getattr(config, "attention", None)
+    if attention_cfg is None:
+        raise RuntimeError("memory_management.manager.config.attention is not available")
+    return attention_cfg
+
+
 def _get_selected_backend() -> str:
-    try:
-        return str(memory_management.manager.config.attention.backend.value)
-    except Exception:
-        # Compatibility fallback for legacy callsites that still rely on saved options.
-        return str(options_store.get_value("codex_attention_backend", "pytorch") or "pytorch")
+    attention_cfg = _resolve_attention_config()
+    backend = getattr(attention_cfg, "backend", None)
+    backend_value = getattr(backend, "value", backend)
+    if not isinstance(backend_value, str) or not backend_value.strip():
+        raise RuntimeError(f"Invalid runtime attention backend value: {backend!r}")
+    return backend_value.strip()
 
 
 def _selected_sdpa_flags() -> tuple[bool, bool]:
-    try:
-        attention_cfg = memory_management.manager.config.attention
-        return bool(attention_cfg.enable_flash), bool(attention_cfg.enable_mem_efficient)
-    except Exception:
-        return True, True
+    attention_cfg = _resolve_attention_config()
+    enable_flash = getattr(attention_cfg, "enable_flash", None)
+    enable_mem_efficient = getattr(attention_cfg, "enable_mem_efficient", None)
+    if not isinstance(enable_flash, bool):
+        raise RuntimeError(f"Invalid runtime SDPA flag 'enable_flash': {enable_flash!r}")
+    if not isinstance(enable_mem_efficient, bool):
+        raise RuntimeError(f"Invalid runtime SDPA flag 'enable_mem_efficient': {enable_mem_efficient!r}")
+    return enable_flash, enable_mem_efficient
 
 
 def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, logger=None) -> str:
@@ -51,7 +68,7 @@ def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, log
     """
     choice = (backend or _get_selected_backend()).lower().strip()
     if choice not in ("pytorch", "xformers", "split", "quad"):
-        raise ValueError(f"Invalid attention backend '{backend}'. Allowed: pytorch, xformers, split, quad")
+        raise ValueError(f"Invalid attention backend '{choice}'. Allowed: pytorch, xformers, split, quad")
 
     # Torch SDPA (Flash/Math/Mem) — default in PyTorch 2.x
     if choice == "pytorch":

@@ -15,6 +15,7 @@ Patcher-backed component memory lifecycle (for example denoiser/VAE/CLIP-vision 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
+- `TextEncoderHandle` (dataclass): Canonical text-encoder contract (`patcher` required, optional runtime wrapper reference).
 - `LoadOptions` (dataclass): Typed engine load-option contract with normalized selectors and passthrough extras.
 - `EngineStatus` (TypedDict): Explicit status mapping returned by `CodexDiffusionEngine.status()`.
 - `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
@@ -189,16 +190,36 @@ class LoadOptions:
 
 
 @dataclass(slots=True)
+class TextEncoderHandle:
+    """Canonical text-encoder contract bound in `CodexObjects`.
+
+    `patcher` is the canonical memory-manager target and is mandatory.
+    `runtime` optionally stores the engine-specific wrapper object.
+    """
+
+    patcher: Any
+    runtime: Any | None = None
+
+    def validate(self, *, context: str, encoder_name: str) -> None:
+        if self.patcher is None:
+            raise ValueError(f"{context}: text encoder '{encoder_name}' is missing required patcher.")
+        if not hasattr(self.patcher, "codex_patch_model") or not hasattr(self.patcher, "codex_unpatch_model"):
+            raise TypeError(
+                f"{context}: text encoder '{encoder_name}' patcher must expose codex_patch_model/codex_unpatch_model."
+            )
+
+
+@dataclass(slots=True)
 class CodexObjects:
     """Container for core diffusion components attached to an engine.
     
-    text_encoders is a flexible dict allowing engines to specify their own
-    text encoder types (e.g., {"clip": ...}, {"qwen3": ...}, {"clip": ..., "t5": ...}).
+    text_encoders is a canonical mapping of logical encoder names to
+    `TextEncoderHandle` values.
     """
 
     denoiser: Any
     vae: Any
-    text_encoders: dict[str, Any]  # Flexible text encoders dict
+    text_encoders: dict[str, TextEncoderHandle]
     clipvision: Any | None = None
 
     def shallow_copy(self) -> "CodexObjects":
@@ -221,6 +242,15 @@ class CodexObjects:
             raise ValueError(f"{context}: denoiser component is required.")
         if self.vae is None:
             raise ValueError(f"{context}: VAE component is required.")
+        if not isinstance(self.text_encoders, dict):
+            raise TypeError(f"{context}: text_encoders must be a dict[str, TextEncoderHandle].")
+        for te_name, te_entry in self.text_encoders.items():
+            if not isinstance(te_entry, TextEncoderHandle):
+                raise TypeError(
+                    f"{context}: text_encoders['{te_name}'] must be TextEncoderHandle "
+                    f"(got {type(te_entry).__name__})."
+                )
+            te_entry.validate(context=context, encoder_name=str(te_name))
         for te_name in required_text_encoders:
             if te_name not in self.text_encoders or self.text_encoders[te_name] is None:
                 raise ValueError(f"{context}: '{te_name}' text encoder is required.")

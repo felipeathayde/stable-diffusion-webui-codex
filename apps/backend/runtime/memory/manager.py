@@ -265,8 +265,52 @@ class _LoadedModelRecord:
     def __hash__(self) -> int:
         return hash(id(self.model))
 
+    @staticmethod
+    def _identity_candidates(other: object) -> tuple[object, ...]:
+        attrs = (
+            "patcher",
+            "loader",
+            "wrapped",
+            "target",
+            "model",
+            "module",
+            "inner",
+            "inner_model",
+            "base",
+            "_base",
+            "first_stage_model",
+        )
+        stack: List[object] = [other]
+        seen: Set[int] = set()
+        candidates: List[object] = []
+        while stack:
+            current = stack.pop()
+            if current is None:
+                continue
+            ident = id(current)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            candidates.append(current)
+            for attr in attrs:
+                if not hasattr(current, attr):
+                    continue
+                try:
+                    value = getattr(current, attr)
+                except Exception:
+                    continue
+                if value is not None and value is not current:
+                    stack.append(value)
+        return tuple(candidates)
+
     def matches(self, other: object) -> bool:
-        return self.model is other
+        identity_ids = {id(candidate) for candidate in (self.model, self.loader, self.base_module) if candidate is not None}
+        if not identity_ids:
+            return False
+        for candidate in self._identity_candidates(other):
+            if id(candidate) in identity_ids:
+                return True
+        return False
 
 
 class CodexMemoryManager:
@@ -1134,9 +1178,13 @@ class CodexMemoryManager:
         for model in models:
             record = self._find_loaded_model(model)
             if record:
-                already_loaded.append(record)
-            else:
-                models_to_load.append(self._create_record(model))
+                if not self._record_alias_exists(record, already_loaded):
+                    already_loaded.append(record)
+                continue
+            candidate = self._create_record(model)
+            if self._record_alias_exists(candidate, models_to_load):
+                continue
+            models_to_load.append(candidate)
 
         if models_to_load:
             self._allocate_memory(models_to_load, memory_budget, already_loaded)
@@ -1220,6 +1268,13 @@ class CodexMemoryManager:
             if record.matches(model):
                 return record
         return None
+
+    @staticmethod
+    def _record_alias_exists(record: _LoadedModelRecord, records: Sequence[_LoadedModelRecord]) -> bool:
+        for existing in records:
+            if record.matches(existing.model) or existing.matches(record.model):
+                return True
+        return False
 
     @staticmethod
     def _record_label(record: _LoadedModelRecord) -> str:
@@ -1400,7 +1455,9 @@ class CodexMemoryManager:
         return None, module
 
     def _create_record(self, model: object) -> _LoadedModelRecord:
-        raw_load_device = getattr(model, "load_device", self._mount_device)
+        loader, base_module = self._resolve_loader(model)
+        load_device_source = loader if loader is not None else model
+        raw_load_device = getattr(load_device_source, "load_device", getattr(model, "load_device", self._mount_device))
         try:
             load_device = torch.device(raw_load_device)
         except Exception as exc:
@@ -1408,9 +1465,10 @@ class CodexMemoryManager:
                 f"Invalid load_device for {type(model).__name__}: {raw_load_device!r}"
             ) from exc
         offload_device = self._offload_device
-        storage_dtype_getter = getattr(model, "model_dtype", None)
+        storage_dtype_getter = getattr(load_device_source, "model_dtype", None)
+        if not callable(storage_dtype_getter):
+            storage_dtype_getter = getattr(model, "model_dtype", None)
         storage_dtype = storage_dtype_getter() if callable(storage_dtype_getter) else torch.float32
-        loader, base_module = self._resolve_loader(model)
         return _LoadedModelRecord(
             model=model,
             loader=loader,

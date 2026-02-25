@@ -54,6 +54,7 @@ _MAX_Q_CHUNK = 512
 _MAX_KV_CHUNK = 1024
 _STREAMING_WORKSPACE_SAFETY_MULTIPLIER = 1.20
 _STREAMING_WORKSPACE_FREE_BUDGET_FRACTION = 0.90
+_STREAMING_ESTIMATE_MARGIN_FRACTION = 0.20
 
 
 E_WAN_FUSED_DISABLED = "E_WAN_FUSED_DISABLED"
@@ -632,12 +633,14 @@ def _maybe_reject_streaming_workspace(
         )
 
     budget_bytes = int(float(free_bytes) * _STREAMING_WORKSPACE_FREE_BUDGET_FRACTION)
-    if estimated_bytes <= budget_bytes:
+    tolerated_budget_bytes = int(float(budget_bytes) * (1.0 + _STREAMING_ESTIMATE_MARGIN_FRACTION))
+    if estimated_bytes <= tolerated_budget_bytes:
         return None
 
     detail = (
         f"{label} streaming preflight rejected: estimated_bytes={estimated_bytes} "
-        f"budget_bytes={budget_bytes} free_bytes={int(free_bytes)} "
+        f"budget_bytes={budget_bytes} tolerated_budget_bytes={tolerated_budget_bytes} "
+        f"estimate_margin_fraction={_STREAMING_ESTIMATE_MARGIN_FRACTION} free_bytes={int(free_bytes)} "
         f"(batch={batch} heads={num_heads} q_len={q_len} kv_len={kv_len} head_dim={head_dim} "
         f"q_chunk={resolved_q_chunk} kv_chunk={resolved_kv_chunk})."
     )

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model mounting.
-Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize` resolved from GGUF exec mode; `computation_dtype=dtype`) so placement policy remains centralized.
+Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize` resolved from GGUF exec mode; `computation_dtype=dtype`) so placement policy remains centralized. Also triggers WAN fused-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
 Optionally applies a per-stage LoRA file (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -118,6 +118,31 @@ def mount_stage_model_from_gguf(
         lora_weight=lora_weight,
         logger=logger,
     )
+    fused_mode_raw = str(os.environ.get("CODEX_WAN22_FUSED_ATTN_V1_MODE", "off")).strip().lower()
+    try:
+        from apps.backend.runtime.attention.wan_fused_v1 import warmup_extension_for_load
+    except Exception as exc:
+        if fused_mode_raw in {"force", "required"}:
+            raise RuntimeError(
+                "WAN fused V1 force mode requested but warmup import failed during stage load."
+            ) from exc
+        log.warning(
+            "[wan22.gguf] fused warmup skipped: stage=%s import_failed=%s: %s",
+            stage,
+            type(exc).__name__,
+            exc,
+        )
+    else:
+        warmup = warmup_extension_for_load(mode=None)
+        log.info(
+            "[wan22.gguf] fused warmup: stage=%s mode=%s attempted=%s available=%s jit_build=%s detail=%r",
+            stage,
+            warmup.mode.value,
+            warmup.attempted,
+            warmup.available,
+            warmup.build_enabled,
+            warmup.detail,
+        )
     log.info(
         "[wan22.gguf] mounted stage model: %s (dequantize=%s mount_device=%s)",
         os.path.basename(gguf_path),

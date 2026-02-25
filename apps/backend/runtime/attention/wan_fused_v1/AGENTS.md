@@ -17,3 +17,4 @@ Status: Active
 - Cross-attention in V1 requires RoPE on Q+K when fused path is enabled.
 - Forced mode must fail loud on unsupported tuples or missing extension/kernel ops.
 - Non-forced mode may return explicit reason codes and allow caller-level fallback.
+- 2026-02-25: Added explicit load-time warmup API (`warmup_extension_for_load`) that resolves fused mode/env gates, triggers extension load/build before denoise, and raises fail-loud when warmup fails under `force` mode.

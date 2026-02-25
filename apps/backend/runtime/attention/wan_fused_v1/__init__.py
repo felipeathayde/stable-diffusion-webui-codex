@@ -14,10 +14,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanFusedMode` (enum): Runtime mode for fused attention dispatch (`off|auto|force`).
 - `WanFusedContractError` (class): Fail-loud contract error with stable `code` field.
 - `WanFusedAttemptResult` (dataclass): Result envelope for non-forced attempts (`output` or `reason_code`).
+- `WanFusedWarmupStatus` (dataclass): Load-time warmup result for fused extension readiness.
 - `parse_wan_fused_mode` (function): Parses and validates a fused mode string.
 - `resolve_effective_wan_fused_mode` (function): Resolves fused mode from override/env.
 - `is_extension_available` (function): Returns whether WAN fused CUDA ops are available.
 - `last_extension_error` (function): Returns the last extension load/build error details.
+- `warmup_extension_for_load` (function): Triggers extension load/build during model-load seam and emits explicit readiness logs.
 - `try_fused_self_attention` (function): Attempts fused self-attention dispatch and returns output or reason.
 - `try_fused_cross_attention` (function): Attempts fused cross-attention dispatch and returns output or reason.
 """
@@ -65,6 +67,15 @@ class WanFusedAttemptResult:
     output: torch.Tensor | None
     reason_code: str | None
     reason_detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WanFusedWarmupStatus:
+    mode: WanFusedMode
+    build_enabled: bool
+    attempted: bool
+    available: bool
+    detail: str | None = None
 
 
 class WanFusedMode(str, Enum):
@@ -181,14 +192,76 @@ def _try_load_ext(*, build: bool) -> None:
         logger.error("failed to build wan_fused_v1_cuda via JIT: %s", ex)
 
 
+def _jit_build_enabled() -> bool:
+    return str(os.environ.get(_JIT_ENV_KEY, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def is_extension_available() -> bool:
-    build = str(os.environ.get(_JIT_ENV_KEY, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+    build = _jit_build_enabled()
     _try_load_ext(build=build)
     return _ext is not None and _has_ops()
 
 
 def last_extension_error() -> str | None:
     return _last_error
+
+
+def warmup_extension_for_load(mode: str | WanFusedMode | None = None) -> WanFusedWarmupStatus:
+    fused_mode = resolve_effective_wan_fused_mode(mode)
+    build_enabled = _jit_build_enabled()
+    if fused_mode is WanFusedMode.OFF:
+        logger.info("wan_fused_v1 warmup skipped at load (mode=off)")
+        return WanFusedWarmupStatus(
+            mode=fused_mode,
+            build_enabled=build_enabled,
+            attempted=False,
+            available=False,
+            detail=None,
+        )
+
+    logger.info(
+        "wan_fused_v1 warmup start (mode=%s jit_build=%s)",
+        fused_mode.value,
+        build_enabled,
+    )
+    _try_load_ext(build=build_enabled)
+    available = _ext is not None and _has_ops()
+    detail = last_extension_error()
+    if available:
+        logger.info(
+            "wan_fused_v1 warmup ready (mode=%s jit_build=%s)",
+            fused_mode.value,
+            build_enabled,
+        )
+        return WanFusedWarmupStatus(
+            mode=fused_mode,
+            build_enabled=build_enabled,
+            attempted=True,
+            available=True,
+            detail=None,
+        )
+
+    logger.warning(
+        "wan_fused_v1 warmup unavailable (mode=%s jit_build=%s detail=%r)",
+        fused_mode.value,
+        build_enabled,
+        detail,
+    )
+    if fused_mode is WanFusedMode.FORCE:
+        _fail(
+            code=E_WAN_FUSED_EXTENSION_UNAVAILABLE,
+            message=(
+                "WAN fused V1 force mode requested but extension warmup failed during model load. "
+                f"details={detail!r}"
+            ),
+        )
+    return WanFusedWarmupStatus(
+        mode=fused_mode,
+        build_enabled=build_enabled,
+        attempted=True,
+        available=False,
+        detail=detail,
+    )
 
 
 def parse_wan_fused_mode(value: str, *, field_name: str) -> WanFusedMode:

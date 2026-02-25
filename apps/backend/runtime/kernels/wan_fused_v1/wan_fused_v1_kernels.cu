@@ -254,8 +254,12 @@ torch::Tensor linear_lastdim(
 
 torch::Tensor wan_fused_v1_self_fwd_cuda(
     const torch::Tensor& x,
-    const torch::Tensor& w_qkv,
-    const c10::optional<torch::Tensor>& b_qkv,
+    const torch::Tensor& w_q,
+    const c10::optional<torch::Tensor>& b_q,
+    const torch::Tensor& w_k,
+    const c10::optional<torch::Tensor>& b_k,
+    const torch::Tensor& w_v,
+    const c10::optional<torch::Tensor>& b_v,
     const torch::Tensor& norm_q_weight,
     const torch::Tensor& norm_k_weight,
     const torch::Tensor& rope_cos_qk,
@@ -263,32 +267,42 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
     const torch::Tensor& w_out,
     const c10::optional<torch::Tensor>& b_out) {
   check_cuda_tensor(x, "x");
-  check_cuda_tensor(w_qkv, "w_qkv");
+  check_cuda_tensor(w_q, "w_q");
+  check_cuda_tensor(w_k, "w_k");
+  check_cuda_tensor(w_v, "w_v");
   check_cuda_tensor(norm_q_weight, "norm_q_weight");
   check_cuda_tensor(norm_k_weight, "norm_k_weight");
   check_cuda_tensor(rope_cos_qk, "rope_cos_qk");
   check_cuda_tensor(rope_sin_qk, "rope_sin_qk");
   check_cuda_tensor(w_out, "w_out");
 
-  check_same_device(x, w_qkv, "w_qkv");
+  check_same_device(x, w_q, "w_q");
+  check_same_device(x, w_k, "w_k");
+  check_same_device(x, w_v, "w_v");
   check_same_device(x, norm_q_weight, "norm_q_weight");
   check_same_device(x, norm_k_weight, "norm_k_weight");
   check_same_device(x, rope_cos_qk, "rope_cos_qk");
   check_same_device(x, rope_sin_qk, "rope_sin_qk");
   check_same_device(x, w_out, "w_out");
-  check_optional_same_device(x, b_qkv, "b_qkv");
+  check_optional_same_device(x, b_q, "b_q");
+  check_optional_same_device(x, b_k, "b_k");
+  check_optional_same_device(x, b_v, "b_v");
   check_optional_same_device(x, b_out, "b_out");
 
   TORCH_CHECK(x.dim() == 3, "wan_fused_v1.self_fwd: x must be [B,L,C]");
-  TORCH_CHECK(w_qkv.dim() == 4 && w_qkv.size(1) == 3, "wan_fused_v1.self_fwd: w_qkv must be [C,3,H,D]");
+  TORCH_CHECK(w_q.dim() == 3 && w_k.dim() == 3 && w_v.dim() == 3, "wan_fused_v1.self_fwd: w_q/w_k/w_v must be [C,H,D]");
   TORCH_CHECK(w_out.dim() == 3, "wan_fused_v1.self_fwd: w_out must be [H,D,C]");
 
   const auto bsz = x.size(0);
   const auto seq_len = x.size(1);
   const auto channels = x.size(2);
-  const auto num_heads = w_qkv.size(2);
-  const auto head_dim = w_qkv.size(3);
-  TORCH_CHECK(w_qkv.size(0) == channels, "wan_fused_v1.self_fwd: w_qkv C mismatch");
+  TORCH_CHECK(w_q.size(0) == channels, "wan_fused_v1.self_fwd: w_q C mismatch");
+  TORCH_CHECK(w_k.size(0) == channels, "wan_fused_v1.self_fwd: w_k C mismatch");
+  TORCH_CHECK(w_v.size(0) == channels, "wan_fused_v1.self_fwd: w_v C mismatch");
+  const auto num_heads = w_q.size(1);
+  const auto head_dim = w_q.size(2);
+  TORCH_CHECK(w_k.size(1) == num_heads && w_k.size(2) == head_dim, "wan_fused_v1.self_fwd: w_k H/D mismatch");
+  TORCH_CHECK(w_v.size(1) == num_heads && w_v.size(2) == head_dim, "wan_fused_v1.self_fwd: w_v H/D mismatch");
   TORCH_CHECK(num_heads * head_dim == channels, "wan_fused_v1.self_fwd: H*D must equal C");
   TORCH_CHECK(w_out.size(0) == num_heads && w_out.size(1) == head_dim && w_out.size(2) == channels,
               "wan_fused_v1.self_fwd: w_out shape mismatch");
@@ -309,20 +323,34 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   const int64_t kv_chunk_size =
       parse_env_chunk_or_default("CODEX_WAN_FUSED_V1_KV_CHUNK", kDefaultKvChunk, kMaxKvChunk);
 
-  auto wq = w_qkv.select(1, 0).contiguous().view({channels, channels});
-  auto wk = w_qkv.select(1, 1).contiguous().view({channels, channels});
-  auto wv = w_qkv.select(1, 2).contiguous().view({channels, channels});
+  auto wq = w_q.contiguous().view({channels, channels});
+  auto wk = w_k.contiguous().view({channels, channels});
+  auto wv = w_v.contiguous().view({channels, channels});
 
-  c10::optional<torch::Tensor> bq = c10::nullopt;
-  c10::optional<torch::Tensor> bk = c10::nullopt;
-  c10::optional<torch::Tensor> bv = c10::nullopt;
-  if (b_qkv.has_value()) {
-    TORCH_CHECK(b_qkv->dim() == 3 && b_qkv->size(0) == 3 && b_qkv->size(1) == num_heads && b_qkv->size(2) == head_dim,
-                "wan_fused_v1.self_fwd: b_qkv must be [3,H,D]");
-    bq = b_qkv->select(0, 0).contiguous().view({channels});
-    bk = b_qkv->select(0, 1).contiguous().view({channels});
-    bv = b_qkv->select(0, 2).contiguous().view({channels});
+  const bool has_q_bias = b_q.has_value();
+  const bool has_k_bias = b_k.has_value();
+  const bool has_v_bias = b_v.has_value();
+  TORCH_CHECK(
+      has_q_bias == has_k_bias && has_q_bias == has_v_bias,
+      "wan_fused_v1.self_fwd: requires all-or-none biases for q/k/v.");
+  if (has_q_bias) {
+    TORCH_CHECK(
+        b_q->dim() == 2 && b_q->size(0) == num_heads && b_q->size(1) == head_dim,
+        "wan_fused_v1.self_fwd: b_q must be [H,D]");
   }
+  if (has_k_bias) {
+    TORCH_CHECK(
+        b_k->dim() == 2 && b_k->size(0) == num_heads && b_k->size(1) == head_dim,
+        "wan_fused_v1.self_fwd: b_k must be [H,D]");
+  }
+  if (has_v_bias) {
+    TORCH_CHECK(
+        b_v->dim() == 2 && b_v->size(0) == num_heads && b_v->size(1) == head_dim,
+        "wan_fused_v1.self_fwd: b_v must be [H,D]");
+  }
+  c10::optional<torch::Tensor> bq = has_q_bias ? c10::optional<torch::Tensor>(b_q->contiguous().view({channels})) : c10::nullopt;
+  c10::optional<torch::Tensor> bk = has_k_bias ? c10::optional<torch::Tensor>(b_k->contiguous().view({channels})) : c10::nullopt;
+  c10::optional<torch::Tensor> bv = has_v_bias ? c10::optional<torch::Tensor>(b_v->contiguous().view({channels})) : c10::nullopt;
 
   auto q_blc = linear_lastdim(x, wq, bq);
   auto k_blc = linear_lastdim(x, wk, bk);

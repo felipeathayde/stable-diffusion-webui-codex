@@ -3,10 +3,18 @@
 
 #include <torch/extension.h>
 
+namespace {
+constexpr int kWanFusedV1AbiVersion = 2;
+}
+
 torch::Tensor wan_fused_v1_self_fwd_cuda(
     const torch::Tensor& x,
-    const torch::Tensor& w_qkv,
-    const c10::optional<torch::Tensor>& b_qkv,
+    const torch::Tensor& w_q,
+    const c10::optional<torch::Tensor>& b_q,
+    const torch::Tensor& w_k,
+    const c10::optional<torch::Tensor>& b_k,
+    const torch::Tensor& w_v,
+    const c10::optional<torch::Tensor>& b_v,
     const torch::Tensor& norm_q_weight,
     const torch::Tensor& norm_k_weight,
     const torch::Tensor& rope_cos_qk,
@@ -34,7 +42,7 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
 
 TORCH_LIBRARY(wan_fused_v1, m) {
   m.def(
-      "self_fwd(Tensor x, Tensor w_qkv, Tensor? b_qkv, Tensor norm_q_weight, Tensor norm_k_weight, Tensor rope_cos_qk, Tensor rope_sin_qk, Tensor w_out, Tensor? b_out) -> Tensor");
+      "self_fwd(Tensor x, Tensor w_q, Tensor? b_q, Tensor w_k, Tensor? b_k, Tensor w_v, Tensor? b_v, Tensor norm_q_weight, Tensor norm_k_weight, Tensor rope_cos_qk, Tensor rope_sin_qk, Tensor w_out, Tensor? b_out) -> Tensor");
   m.def(
       "cross_fwd(Tensor x, Tensor context, Tensor w_q, Tensor? b_q, Tensor norm_q_weight, Tensor rope_cos_q, Tensor rope_sin_q, Tensor w_k, Tensor? b_k, Tensor norm_k_weight, Tensor rope_cos_k, Tensor rope_sin_k, Tensor w_v, Tensor? b_v, Tensor w_out, Tensor? b_out) -> Tensor");
 }
@@ -43,8 +51,12 @@ TORCH_LIBRARY_IMPL(wan_fused_v1, CPU, m) {
   m.impl(
       "self_fwd",
       [](const torch::Tensor& x,
-         const torch::Tensor& w_qkv,
-         const c10::optional<torch::Tensor>& b_qkv,
+         const torch::Tensor& w_q,
+         const c10::optional<torch::Tensor>& b_q,
+         const torch::Tensor& w_k,
+         const c10::optional<torch::Tensor>& b_k,
+         const torch::Tensor& w_v,
+         const c10::optional<torch::Tensor>& b_v,
          const torch::Tensor& norm_q_weight,
          const torch::Tensor& norm_k_weight,
          const torch::Tensor& rope_cos_qk,
@@ -86,6 +98,7 @@ TORCH_LIBRARY_IMPL(wan_fused_v1, CUDA, m) {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.attr("WAN_FUSED_V1_ABI") = kWanFusedV1AbiVersion;
   m.def("self_fwd", &wan_fused_v1_self_fwd_cuda, "WAN fused V1 self attention forward (CUDA)");
   m.def("cross_fwd", &wan_fused_v1_cross_fwd_cuda, "WAN fused V1 cross attention forward (CUDA)");
 }

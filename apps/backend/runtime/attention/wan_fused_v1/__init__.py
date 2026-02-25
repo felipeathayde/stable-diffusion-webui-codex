@@ -29,6 +29,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import sys
@@ -46,6 +47,7 @@ logger = logging.getLogger("backend.runtime.attention.wan_fused_v1")
 
 _MODE_ENV_KEY = "CODEX_WAN22_FUSED_ATTN_V1_MODE"
 _JIT_ENV_KEY = "CODEX_WAN_FUSED_V1_JIT"
+_REQUIRED_EXTENSION_ABI = 2
 _Q_CHUNK_ENV_KEY = "CODEX_WAN_FUSED_V1_Q_CHUNK"
 _KV_CHUNK_ENV_KEY = "CODEX_WAN_FUSED_V1_KV_CHUNK"
 _DEFAULT_Q_CHUNK = 512
@@ -130,6 +132,27 @@ def _has_ops() -> bool:
     return hasattr(wan_ops, "self_fwd") and hasattr(wan_ops, "cross_fwd")
 
 
+def _ensure_extension_abi(module: Any) -> None:
+    abi = getattr(module, "WAN_FUSED_V1_ABI", None)
+    try:
+        abi_value = int(abi)
+    except Exception as ex:
+        raise RuntimeError(
+            "incompatible wan_fused_v1 extension ABI: "
+            f"required={_REQUIRED_EXTENSION_ABI} got={abi!r}"
+        ) from ex
+    if abi_value != int(_REQUIRED_EXTENSION_ABI):
+        raise RuntimeError(
+            "incompatible wan_fused_v1 extension ABI: "
+            f"required={_REQUIRED_EXTENSION_ABI} got={abi!r}"
+        )
+
+
+def _purge_extension_module_cache(*, module_name: str) -> None:
+    sys.modules.pop(module_name, None)
+    importlib.invalidate_caches()
+
+
 def _try_load_ext(*, build: bool) -> None:
     global _ext
     global _last_error
@@ -146,9 +169,44 @@ def _try_load_ext(*, build: bool) -> None:
     _attempt_errors.clear()
     _last_error = None
 
+    if build:
+        try:
+            _purge_extension_module_cache(module_name="wan_fused_v1_cuda_jit")
+            from torch.utils.cpp_extension import load
+
+            this_dir = os.path.dirname(__file__)
+            src_dir = os.path.normpath(os.path.join(this_dir, "..", "..", "kernels", "wan_fused_v1"))
+
+            def _src(path: str) -> str:
+                return os.path.join(src_dir, path)
+
+            sources = [
+                _src("wan_fused_v1_binding.cpp"),
+                _src("wan_fused_v1_kernels.cu"),
+            ]
+
+            loaded = load(
+                name="wan_fused_v1_cuda_jit",
+                sources=sources,
+                extra_cflags=["-O3"],
+                extra_cuda_cflags=["-O3", "--use_fast_math", "-DUSE_CUDA"],
+            )
+            _ensure_extension_abi(loaded)
+            _ext = loaded
+            if not _has_ops():
+                raise RuntimeError("JIT module loaded but torch.ops.wan_fused_v1.{self_fwd,cross_fwd} is missing")
+            logger.info("built wan_fused_v1_cuda extension via JIT")
+            return
+        except Exception as ex:
+            _set_attempt_error("jit", ex)
+            _ext = None
+            logger.error("failed to build wan_fused_v1_cuda via JIT: %s", ex)
+
     try:
+        _purge_extension_module_cache(module_name="wan_fused_v1_cuda")
         import wan_fused_v1_cuda as loaded
 
+        _ensure_extension_abi(loaded)
         _ext = loaded
         if not _has_ops():
             raise RuntimeError("module loaded but torch.ops.wan_fused_v1.{self_fwd,cross_fwd} is missing")
@@ -165,8 +223,10 @@ def _try_load_ext(*, build: bool) -> None:
         if os.path.isdir(ext_dir) and ext_dir not in sys.path:
             sys.path.insert(0, ext_dir)
 
+        _purge_extension_module_cache(module_name="wan_fused_v1_cuda")
         import wan_fused_v1_cuda as loaded
 
+        _ensure_extension_abi(loaded)
         _ext = loaded
         if not _has_ops():
             raise RuntimeError("in-place module loaded but torch.ops.wan_fused_v1.{self_fwd,cross_fwd} is missing")
@@ -179,35 +239,6 @@ def _try_load_ext(*, build: bool) -> None:
 
     if not build:
         return
-
-    try:
-        from torch.utils.cpp_extension import load
-
-        this_dir = os.path.dirname(__file__)
-        src_dir = os.path.normpath(os.path.join(this_dir, "..", "..", "kernels", "wan_fused_v1"))
-
-        def _src(path: str) -> str:
-            return os.path.join(src_dir, path)
-
-        sources = [
-            _src("wan_fused_v1_binding.cpp"),
-            _src("wan_fused_v1_kernels.cu"),
-        ]
-
-        loaded = load(
-            name="wan_fused_v1_cuda_jit",
-            sources=sources,
-            extra_cflags=["-O3"],
-            extra_cuda_cflags=["-O3", "--use_fast_math", "-DUSE_CUDA"],
-        )
-        _ext = loaded
-        if not _has_ops():
-            raise RuntimeError("JIT module loaded but torch.ops.wan_fused_v1.{self_fwd,cross_fwd} is missing")
-        logger.info("built wan_fused_v1_cuda extension via JIT")
-    except Exception as ex:
-        _set_attempt_error("jit", ex)
-        _ext = None
-        logger.error("failed to build wan_fused_v1_cuda via JIT: %s", ex)
 
 
 def _jit_build_enabled() -> bool:
@@ -775,31 +806,33 @@ def try_fused_self_attention(
             target_dtype=x.dtype,
         )
 
-        w_qkv = torch.stack(
-            [
-                w_q.t().contiguous().view(channels, num_heads, head_dim),
-                w_k.t().contiguous().view(channels, num_heads, head_dim),
-                w_v.t().contiguous().view(channels, num_heads, head_dim),
-            ],
-            dim=1,
-        ).contiguous()
-
-        b_qkv: torch.Tensor | None = None
-        if b_q is not None and b_k is not None and b_v is not None:
-            b_qkv = torch.stack(
-                [
-                    b_q.contiguous().view(num_heads, head_dim),
-                    b_k.contiguous().view(num_heads, head_dim),
-                    b_v.contiguous().view(num_heads, head_dim),
-                ],
-                dim=0,
-            ).contiguous()
+        w_q_contract = w_q.t().contiguous().view(channels, num_heads, head_dim)
+        w_k_contract = w_k.t().contiguous().view(channels, num_heads, head_dim)
+        w_v_contract = w_v.t().contiguous().view(channels, num_heads, head_dim)
+        has_q_bias = b_q is not None
+        has_k_bias = b_k is not None
+        has_v_bias = b_v is not None
+        if has_q_bias != has_k_bias or has_q_bias != has_v_bias:
+            _fail(
+                code=E_WAN_FUSED_INVALID_SHAPE,
+                message=(
+                    "WAN fused self requires all-or-none Q/K/V biases; "
+                    f"got q={has_q_bias} k={has_k_bias} v={has_v_bias}."
+                ),
+            )
+        b_q_contract = b_q.contiguous().view(num_heads, head_dim) if has_q_bias else None
+        b_k_contract = b_k.contiguous().view(num_heads, head_dim) if has_k_bias else None
+        b_v_contract = b_v.contiguous().view(num_heads, head_dim) if has_v_bias else None
 
         w_out = w_o.t().contiguous().view(num_heads, head_dim, channels)
         out = torch.ops.wan_fused_v1.self_fwd(
             x,
-            w_qkv,
-            b_qkv,
+            w_q_contract,
+            b_q_contract,
+            w_k_contract,
+            b_k_contract,
+            w_v_contract,
+            b_v_contract,
             norm_q_weight,
             norm_k_weight,
             rope_cos_qk,

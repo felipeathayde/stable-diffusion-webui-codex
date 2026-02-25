@@ -21,3 +21,6 @@ Status: Active
 - 2026-02-25: Added pre-dispatch streaming workspace guard in runtime wrapper (`_maybe_reject_streaming_workspace`) using `torch.cuda.mem_get_info` + strict chunk env parsing (`CODEX_WAN_FUSED_V1_Q_CHUNK`, `CODEX_WAN_FUSED_V1_KV_CHUNK`) so force mode fails loud before kernel OOM.
 - 2026-02-25: Kernel-runtime invariants are now mapped to explicit contract code `E_WAN_FUSED_STREAMING_INVARIANT_VIOLATION` so failures in streaming-only guarantees are surfaced without generic error masking.
 - 2026-02-25: Streaming preflight now applies a 20% estimate tolerance window (`tolerated_budget_bytes`) on top of budget to reduce false-negative rejects from conservative memory estimation.
+- 2026-02-25: Self fused dispatch no longer packs `w_qkv`/`b_qkv`; wrapper now passes `w_q/w_k/w_v` + optional biases separately to cut transient VRAM overhead before kernel dispatch.
+- 2026-02-25: Runtime loader enforces extension ABI (`WAN_FUSED_V1_ABI=2`) and rejects stale modules to avoid silent signature mismatch after self_fwd contract change.
+- 2026-02-25: Loader now purges import cache for extension module names during stage fallback so an ABI-rejected prebuilt module does not poison in-place/JIT resolution in-process.

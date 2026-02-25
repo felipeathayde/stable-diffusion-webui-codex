@@ -66,6 +66,6 @@ Status: Active
 - 2026-02-23: API device selection now resolves/locks to configured main device (`device_selection.py`): missing payload device defaults to runtime main device, and per-request device overrides that diverge from main device fail loud.
 - 2026-02-23: `device_selection.configured_main_device()` now resolves main-device from live memory-manager authority first (`manager.primary_device()`), then args/env fallback; this removes stale bootstrap-only device reads after hot device updates.
 - 2026-02-23: `routers/supir.py` now resolves canonical request device before SUPIR payload parsing and passes the resolved value into `parse_supir_enhance_config(..., device=...)`, removing duplicate device-authority parsing inside SUPIR config.
-- 2026-02-23: `run_api.py` now logs effective allocator bootstrap state at startup (`PYTORCH_ALLOC_CONF`, resolved `backend`, and `--cuda-malloc` flag).
+- 2026-02-23: `run_api.py` now logs effective allocator bootstrap state at startup (`PYTORCH_CUDA_ALLOC_CONF`, resolved `backend`, and `--cuda-malloc` flag).
 - 2026-02-24: `run_api.py` now applies a Windows-only process startup patch via `SetProcessInformation(ProcessPowerThrottling)` to disable execution-speed throttling (EcoQoS background throttle path), with explicit startup logs for success/failure.
 - 2026-02-24: Windows power-throttling startup patch now logs decoded Win32 error text (`ctypes.WinError`) on failure and warns explicitly when `SetProcessInformation` is unavailable in the runtime.

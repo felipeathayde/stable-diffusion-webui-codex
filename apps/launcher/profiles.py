@@ -11,14 +11,17 @@ Implements the profile store used by the TUI/GUI launchers to load/save settings
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 Defines defaults for performance-related env keys (GGUF exec/cache knobs, CFG batching, profiling flags) and task/runtime safety knobs (single-flight,
 task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap device policy keys (`CODEX_MAIN_DEVICE`, `CODEX_MOUNT_DEVICE`, `CODEX_OFFLOAD_DEVICE`) with CPU offload default, so runs are reproducible.
+Also stores API-only manual env overlay settings (`manual_api_env_enabled`, `manual_api_env_text`) and validates overlay text parsing for fail-loud startup.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs; default offload target is CPU).
 - `_BOOTSTRAP_DEVICE_KEYS` (constant): Runtime-global launcher device keys that must stay scoped to `areas/core` (never model/non-core overlays).
-- `DEFAULT_PYTORCH_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
-- `ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_CUDA_ALLOC_CONF` is unset.
+- `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
+- `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_CUDA_ALLOC_CONF` is unset.
 - `CODEX_CUDA_MALLOC_KEY` (constant): Env key toggling backend `--cuda-malloc` forwarding in launcher-managed runs.
-- `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
+- `DEFAULT_MANUAL_API_ENV_TEXT` (constant): Suggested manual API env overlay text prefilled in launcher metadata.
+- `parse_manual_api_env_text` (function): Parses manual API env text (`KEY=VALUE` per line) with strict, line-numbered validation.
+- `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy, manual API env overlay).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
 - `LauncherProfileStore` (dataclass): Main profile store; loads/saves meta/env maps, resolves key routing, and provides lookup helpers
   (contains nested helpers for container resolution and file IO).
@@ -40,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field
@@ -97,16 +101,57 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE": os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"),
         "CODEX_LORA_APPLY_MODE": "merge",
         "CODEX_LORA_ONLINE_MATH": "weight_merge",
-        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY: "1",
+        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY: "1",
         CODEX_CUDA_MALLOC_KEY: "0",
     }
     return {"core": core}
 
 
 DEFAULT_MODEL_NAME = "default"
-DEFAULT_PYTORCH_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
-ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
+DEFAULT_PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
+ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
 CODEX_CUDA_MALLOC_KEY = "CODEX_CUDA_MALLOC"
+DEFAULT_MANUAL_API_ENV_TEXT = "TORCH_CUDA_ARCH_LIST=8.6\nMAX_JOBS=4"
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def parse_manual_api_env_text(raw_text: str) -> Dict[str, str]:
+    overlay: Dict[str, str] = {}
+    seen_keys: Dict[str, tuple[str, int]] = {}
+    normalized_text = str(raw_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    for line_number, raw_line in enumerate(normalized_text.split("\n"), start=1):
+        stripped = str(raw_line).strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            raise ValueError(
+                "Invalid manual API env vars line "
+                f"{line_number}: expected 'KEY=VALUE', got {raw_line!r}."
+            )
+        key_raw, value_raw = stripped.split("=", 1)
+        key = str(key_raw).strip()
+        value = str(value_raw).strip()
+        if not key:
+            raise ValueError(
+                "Invalid manual API env vars line "
+                f"{line_number}: empty env key in {raw_line!r}."
+            )
+        if not _ENV_KEY_RE.match(key):
+            raise ValueError(
+                "Invalid manual API env vars line "
+                f"{line_number}: invalid env key {key!r}. "
+                "Expected pattern [A-Za-z_][A-Za-z0-9_]*."
+            )
+        dedupe_key = key.lower()
+        if dedupe_key in seen_keys:
+            first_key, first_line = seen_keys[dedupe_key]
+            raise ValueError(
+                "Invalid manual API env vars: duplicate key "
+                f"{key!r} at line {line_number} (already defined as {first_key!r} at line {first_line})."
+            )
+        seen_keys[dedupe_key] = (key, line_number)
+        overlay[key] = value
+    return overlay
 
 
 @dataclass
@@ -116,6 +161,8 @@ class LauncherMeta:
     tab_index: int = 0
     active_model: str = DEFAULT_MODEL_NAME
     window_geometry: str = ""
+    manual_api_env_enabled: bool = False
+    manual_api_env_text: str = DEFAULT_MANUAL_API_ENV_TEXT
 
 
 class _EnvironmentView(MutableMapping[str, str]):
@@ -140,11 +187,11 @@ class _EnvironmentView(MutableMapping[str, str]):
         if (
             key.startswith("CODEX_ENABLE_DEFAULT_PYTORCH_")
             and key.endswith("_ALLOC_CONF")
-            and key != ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY
+            and key != ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY
         ):
             raise KeyError(
                 "Unsupported allocator toggle key "
-                f"{key!r}. Use {ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY!r}."
+                f"{key!r}. Use {ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY!r}."
             )
         with self._store._lock:
             target_map, target_kind = self._store.resolve_container_for_key(key)
@@ -224,11 +271,22 @@ class LauncherProfileStore:
                     # CODEX runtime/bootstrap knobs are area-scoped (core); never let model overlays override them.
                     continue
                 env[key] = value
-            raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "1") or "").strip().lower()
+            raw_enabled = str(env.get(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "1") or "").strip().lower()
             default_alloc_enabled = raw_enabled in {"", "1", "true", "yes", "on"}
             if default_alloc_enabled and not str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip():
-                env["PYTORCH_CUDA_ALLOC_CONF"] = DEFAULT_PYTORCH_ALLOC_CONF
+                env["PYTORCH_CUDA_ALLOC_CONF"] = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
             return env
+
+    def build_manual_api_env_overlay(self) -> Dict[str, str]:
+        with self._lock:
+            enabled = bool(getattr(self.meta, "manual_api_env_enabled", False))
+            raw_text = str(getattr(self.meta, "manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or "")
+        if not enabled:
+            return {}
+        try:
+            return parse_manual_api_env_text(raw_text)
+        except Exception as exc:
+            raise ValueError(f"Invalid Manual Env Vars configuration: {exc}") from exc
 
     def lookup_env(self, key: str) -> str | None:
         with self._lock:
@@ -327,7 +385,7 @@ class LauncherProfileStore:
                 if (
                     key.startswith("CODEX_ENABLE_DEFAULT_PYTORCH_")
                     and key.endswith("_ALLOC_CONF")
-                    and key != ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY
+                    and key != ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY
                 ):
                     container.pop(key, None)
                     changed = True
@@ -335,7 +393,7 @@ class LauncherProfileStore:
                         "Dropped unsupported launcher allocator toggle key from persisted profile: %s "
                         "(use %s).",
                         key,
-                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
                     )
                     continue
                 if key.startswith("WAN_"):
@@ -391,23 +449,23 @@ class LauncherProfileStore:
                     area_name,
                     ", ".join(removed_keys),
                 )
-            if ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY in container:
-                moved_value = str(container.pop(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+            if ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY in container:
+                moved_value = str(container.pop(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "") or "").strip()
                 changed = True
-                core_current = str(core_env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+                core_current = str(core_env.get(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "") or "").strip()
                 if moved_value and not core_current:
-                    core_env[ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY] = moved_value
+                    core_env[ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY] = moved_value
                     changed = True
                     LOGGER.warning(
                         "Moved non-core launcher allocator toggle from area '%s' to area 'core': %s.",
                         area_name,
-                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
                     )
                 else:
                     LOGGER.warning(
                         "Dropped non-core launcher allocator toggle from area '%s': %s.",
                         area_name,
-                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
                     )
         for model_name, container in self.models.items():
             removed_device_keys: list[str] = []
@@ -436,23 +494,23 @@ class LauncherProfileStore:
                     model_name,
                     ", ".join(removed_keys),
                 )
-            if ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY in container:
-                moved_value = str(container.pop(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+            if ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY in container:
+                moved_value = str(container.pop(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "") or "").strip()
                 changed = True
-                core_current = str(core_env.get(ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY, "") or "").strip()
+                core_current = str(core_env.get(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, "") or "").strip()
                 if moved_value and not core_current:
-                    core_env[ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY] = moved_value
+                    core_env[ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY] = moved_value
                     changed = True
                     LOGGER.warning(
                         "Moved model-scoped launcher allocator toggle for model '%s' to area 'core': %s.",
                         model_name,
-                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
                     )
                 else:
                     LOGGER.warning(
                         "Dropped model-scoped launcher allocator toggle for model '%s': %s.",
                         model_name,
-                        ENABLE_DEFAULT_PYTORCH_ALLOC_CONF_KEY,
+                        ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY,
                     )
         if self.areas.pop("wan", None) is not None:
             changed = True
@@ -484,6 +542,8 @@ def _load_meta(root: Path) -> LauncherMeta:
         tab_index=int(data.get("tab_index", 0)),
         active_model=str(data.get("active_model", DEFAULT_MODEL_NAME)),
         window_geometry=str(data.get("window_geometry", "") or ""),
+        manual_api_env_enabled=bool(data.get("manual_api_env_enabled", False)),
+        manual_api_env_text=str(data.get("manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     )
 
 
@@ -494,6 +554,8 @@ def _write_meta(root: Path, meta: LauncherMeta) -> None:
         "sdpa_policy": meta.sdpa_policy,
         "tab_index": meta.tab_index,
         "active_model": meta.active_model,
+        "manual_api_env_enabled": bool(getattr(meta, "manual_api_env_enabled", False)),
+        "manual_api_env_text": str(getattr(meta, "manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     }
     window_geometry = str(getattr(meta, "window_geometry", "") or "").strip()
     if window_geometry:

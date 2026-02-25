@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
 - `_env_truthy` (function): Normalizes launcher env booleans (`1/true/yes/on`) for CLI flag forwarding.
 - `_sanitize_allocator_env_contract` (function): Removes unsupported allocator env keys before subprocess spawn (contract keys only: `PYTORCH_CUDA_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF`).
-- `_parse_pytorch_alloc_conf` (function): Parses `PYTORCH_CUDA_ALLOC_CONF` entries into strict `key:value` pairs.
+- `_parse_pytorch_cuda_alloc_conf` (function): Parses `PYTORCH_CUDA_ALLOC_CONF` entries into strict `key:value` pairs.
 - `_ensure_cuda_malloc_async_allocator_env` (function): Enforces allocator backend `cudaMallocAsync` when `CODEX_CUDA_MALLOC=1`.
 - `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles; offload defaults to CPU when unset).
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
@@ -415,7 +415,7 @@ def _sanitize_allocator_env_contract(env: MutableMapping[str, str], *, scope_lab
         )
 
 
-def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
+def _parse_pytorch_cuda_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     for raw_entry in str(raw_conf or "").split(","):
         token = raw_entry.strip()
@@ -446,7 +446,7 @@ def _ensure_cuda_malloc_async_allocator_env(env: MutableMapping[str, str]) -> No
         env["PYTORCH_CUDA_ALLOC_CONF"] = f"backend:{target_backend}"
         return
 
-    entries = _parse_pytorch_alloc_conf(raw_alloc_conf)
+    entries = _parse_pytorch_cuda_alloc_conf(raw_alloc_conf)
     backend_index: int | None = None
     for index, (key, _value) in enumerate(entries):
         if key.strip().lower() == "backend":

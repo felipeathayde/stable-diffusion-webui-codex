@@ -126,6 +126,7 @@ Status: Active
 - 2026-02-23: `model.py` now emits WAN block-level trace-debug diagnostics (`CODEX_TRACE_DEBUG=1`) around the `for block in self.blocks` loop: per-block dispatch/completion logs include block parameter dtype, token/context/timestep dtypes, and CUDA memory snapshots; block internals now also log op-level compute contracts (`WanFP32LayerNorm`/`WanRMSNorm` compute in fp32, FFN path dtypes) for stale-step investigation.
 - 2026-02-24: `sampling.py::sample_stage_latents_generator(...)` now treats `cfg_scale==1.0` (within epsilon) as non-CFG/single-pass conditional execution, avoiding redundant cond+uncond forwards that were mathematically no-op at CFG=1 and could stall VRAM-limited lightx2v runs.
 - 2026-02-24: `model.py` trace-debug (`CODEX_TRACE_DEBUG=1`) now includes explicit tensor/module `device` fields across WAN block logs (model pre/post, block dispatch/done, self-attn/cross-attn qkv, and block residual checkpoints) to diagnose CUDA→CPU escapes during stale slow-step runs.
+- 2026-02-25: WAN22 SDPA context now carries fused-attention mode (`CODEX_WAN22_FUSED_ATTN_V1_MODE`, `off|auto|force`) and `model.py` now wires optional fused self/cross attention dispatch (`wan_fused_v1`) with fail-loud `force` semantics; cross fused contract requires RoPE tensors for both Q and K (`cross_rotary_emb=(q_cos,q_sin,k_cos,k_sin)`), while non-fused fallback path remains on canonical WAN SDPA flow.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

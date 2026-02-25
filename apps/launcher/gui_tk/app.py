@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Main Tk application for the Codex launcher GUI.
-Builds the window + tabs, wires background tasks, and provides a stable `main()` entrypoint used by `apps/codex_launcher.py`.
+Builds the window + tabs (including `Manual Env Vars`), wires background tasks, and provides a stable `main()` entrypoint used by `apps/codex_launcher.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexLauncherApp` (class): Tk app; orchestrates tabs + controller + polling.
@@ -35,7 +35,7 @@ from apps.launcher.services import default_services
 
 from .controller import LauncherController
 from .styles import Palette, apply_style
-from .tabs import DiagnosticsTab, LogsTab, RuntimeTab, ServicesTab
+from .tabs import DiagnosticsTab, LogsTab, ManualEnvVarsTab, RuntimeTab, ServicesTab
 
 
 _GEOMETRY_RE = re.compile(r"^\d+x\d+(?:[+-]\d+[+-]\d+)?$")
@@ -102,6 +102,11 @@ class CodexLauncherApp(tk.Tk):
             mark_changed=self._mark_changed,
             section="safety",
         )
+        self._manual_env_vars_tab = ManualEnvVarsTab(
+            self._controller,
+            canvas_bg=self._palette.bg1,
+            mark_changed=self._mark_changed,
+        )
         self._diagnostics_tab = DiagnosticsTab(
             self._controller,
             mark_changed=self._mark_changed,
@@ -119,6 +124,7 @@ class CodexLauncherApp(tk.Tk):
             ("Bootstrap", self._runtime_bootstrap_tab.build(self._notebook)),
             ("Engine", self._runtime_engine_tab.build(self._notebook)),
             ("Safety", self._runtime_safety_tab.build(self._notebook)),
+            ("Manual Env Vars", self._manual_env_vars_tab.build(self._notebook)),
             ("Diagnostics", self._diagnostics_tab.build(self._notebook)),
             ("Logs", self._logs_tab.build(self._notebook)),
         ]
@@ -267,9 +273,13 @@ class CodexLauncherApp(tk.Tk):
     # ------------------------------------------------------------------ polling
 
     def _poll(self) -> None:
-        self._services_tab.refresh()
-        self._logs_tab.refresh()
-        self.after(self.POLL_INTERVAL_MS, self._poll)
+        try:
+            self._services_tab.refresh()
+            self._logs_tab.refresh()
+        except Exception as exc:
+            self._log_exception("poll", exc)
+        finally:
+            self.after(self.POLL_INTERVAL_MS, self._poll)
 
     # ------------------------------------------------------------------ save/revert/exit
 
@@ -291,6 +301,7 @@ class CodexLauncherApp(tk.Tk):
         self._runtime_bootstrap_tab.reload()
         self._runtime_engine_tab.reload()
         self._runtime_safety_tab.reload()
+        self._manual_env_vars_tab.reload()
         self._diagnostics_tab.reload()
         self._logs_tab.reload()
         self._apply_advanced_controls_visibility()

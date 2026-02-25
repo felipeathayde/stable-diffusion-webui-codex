@@ -2,14 +2,6 @@
 setlocal
 
 set "ROOT=%~dp0"
-if defined PYTORCH_ALLOC_CONF (
-    echo [webui] Error: unsupported allocator env key PYTORCH_ALLOC_CONF. Use PYTORCH_CUDA_ALLOC_CONF. 1>&2
-    exit /b 2
-)
-if defined CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF (
-    echo [webui] Error: unsupported allocator toggle key CODEX_ENABLE_DEFAULT_PYTORCH_ALLOC_CONF. Use CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF. 1>&2
-    exit /b 2
-)
 set "NODEENV=%ROOT%.nodeenv"
 if exist "%NODEENV%\Scripts\node.exe" set "PATH=%NODEENV%\Scripts;%PATH%"
 if exist "%NODEENV%\bin\node.exe" set "PATH=%NODEENV%\bin;%PATH%"

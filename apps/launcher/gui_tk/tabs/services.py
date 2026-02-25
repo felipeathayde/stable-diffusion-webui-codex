@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Services tab for the Tk launcher.
 Shows API/UI status and provides controls for start/restart/stop/kill, backed by `CodexServiceHandle`.
+Runtime env previews are service-scoped so API-only manual env overlays do not leak into UI service resolution.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ServicesTab` (class): Services tab view/controller for the launcher GUI.
@@ -61,6 +62,7 @@ class ServicesTab:
         self.frame: ttk.Frame | None = None
         self._external_terminal_var = tk.BooleanVar(value=bool(controller.store.meta.external_terminal))
         self._cards: Dict[str, _ServiceCard] = {}
+        self._last_manual_env_preview_error: str | None = None
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
@@ -204,7 +206,25 @@ class ServicesTab:
         service = self._controller.services[service_name]
         env: Dict[str, str] = dict(os.environ)
         env.update(service.spec.base_env)
-        env.update(self._controller.build_env())
+        try:
+            env.update(self._controller.build_env_for_service(service_name))
+            if str(service_name).strip().upper() == "API":
+                self._last_manual_env_preview_error = None
+        except ValueError as exc:
+            if str(service_name).strip().upper() != "API":
+                raise
+            # Preview/open path must remain resilient while editing invalid manual env text.
+            # API start/restart still fail loud in controller.start_service/restart_service.
+            env.update(self._controller.build_env())
+            error_message = str(exc)
+            if error_message != self._last_manual_env_preview_error:
+                self._controller.log_buffer.log(
+                    "launcher",
+                    "Manual Env Vars invalid for API preview/open; ignoring overlay until fixed: "
+                    f"{error_message}",
+                    stream="event",
+                )
+                self._last_manual_env_preview_error = error_message
         return env
 
     @staticmethod

@@ -1,0 +1,91 @@
+// WAN fused attention V1 C++/CUDA extension bindings.
+// Build with: python setup.py build_ext --inplace (requires CUDA toolchain).
+
+#include <torch/extension.h>
+
+torch::Tensor wan_fused_v1_self_fwd_cuda(
+    const torch::Tensor& x,
+    const torch::Tensor& w_qkv,
+    const c10::optional<torch::Tensor>& b_qkv,
+    const torch::Tensor& norm_q_weight,
+    const torch::Tensor& norm_k_weight,
+    const torch::Tensor& rope_cos_qk,
+    const torch::Tensor& rope_sin_qk,
+    const torch::Tensor& w_out,
+    const c10::optional<torch::Tensor>& b_out);
+
+torch::Tensor wan_fused_v1_cross_fwd_cuda(
+    const torch::Tensor& x,
+    const torch::Tensor& context,
+    const torch::Tensor& w_q,
+    const c10::optional<torch::Tensor>& b_q,
+    const torch::Tensor& norm_q_weight,
+    const torch::Tensor& rope_cos_q,
+    const torch::Tensor& rope_sin_q,
+    const torch::Tensor& w_k,
+    const c10::optional<torch::Tensor>& b_k,
+    const torch::Tensor& norm_k_weight,
+    const torch::Tensor& rope_cos_k,
+    const torch::Tensor& rope_sin_k,
+    const torch::Tensor& w_v,
+    const c10::optional<torch::Tensor>& b_v,
+    const torch::Tensor& w_out,
+    const c10::optional<torch::Tensor>& b_out);
+
+TORCH_LIBRARY(wan_fused_v1, m) {
+  m.def(
+      "self_fwd(Tensor x, Tensor w_qkv, Tensor? b_qkv, Tensor norm_q_weight, Tensor norm_k_weight, Tensor rope_cos_qk, Tensor rope_sin_qk, Tensor w_out, Tensor? b_out) -> Tensor");
+  m.def(
+      "cross_fwd(Tensor x, Tensor context, Tensor w_q, Tensor? b_q, Tensor norm_q_weight, Tensor rope_cos_q, Tensor rope_sin_q, Tensor w_k, Tensor? b_k, Tensor norm_k_weight, Tensor rope_cos_k, Tensor rope_sin_k, Tensor w_v, Tensor? b_v, Tensor w_out, Tensor? b_out) -> Tensor");
+}
+
+TORCH_LIBRARY_IMPL(wan_fused_v1, CPU, m) {
+  m.impl(
+      "self_fwd",
+      [](const torch::Tensor& x,
+         const torch::Tensor& w_qkv,
+         const c10::optional<torch::Tensor>& b_qkv,
+         const torch::Tensor& norm_q_weight,
+         const torch::Tensor& norm_k_weight,
+         const torch::Tensor& rope_cos_qk,
+         const torch::Tensor& rope_sin_qk,
+         const torch::Tensor& w_out,
+         const c10::optional<torch::Tensor>& b_out) -> torch::Tensor {
+        TORCH_CHECK(
+            false,
+            "wan_fused_v1.self_fwd: CPU implementation not available. Build CUDA kernels and run on CUDA tensors.");
+      });
+
+  m.impl(
+      "cross_fwd",
+      [](const torch::Tensor& x,
+         const torch::Tensor& context,
+         const torch::Tensor& w_q,
+         const c10::optional<torch::Tensor>& b_q,
+         const torch::Tensor& norm_q_weight,
+         const torch::Tensor& rope_cos_q,
+         const torch::Tensor& rope_sin_q,
+         const torch::Tensor& w_k,
+         const c10::optional<torch::Tensor>& b_k,
+         const torch::Tensor& norm_k_weight,
+         const torch::Tensor& rope_cos_k,
+         const torch::Tensor& rope_sin_k,
+         const torch::Tensor& w_v,
+         const c10::optional<torch::Tensor>& b_v,
+         const torch::Tensor& w_out,
+         const c10::optional<torch::Tensor>& b_out) -> torch::Tensor {
+        TORCH_CHECK(
+            false,
+            "wan_fused_v1.cross_fwd: CPU implementation not available. Build CUDA kernels and run on CUDA tensors.");
+      });
+}
+
+TORCH_LIBRARY_IMPL(wan_fused_v1, CUDA, m) {
+  m.impl("self_fwd", wan_fused_v1_self_fwd_cuda);
+  m.impl("cross_fwd", wan_fused_v1_cross_fwd_cuda);
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("self_fwd", &wan_fused_v1_self_fwd_cuda, "WAN fused V1 self attention forward (CUDA)");
+  m.def("cross_fwd", &wan_fused_v1_cross_fwd_cuda, "WAN fused V1 cross attention forward (CUDA)");
+}

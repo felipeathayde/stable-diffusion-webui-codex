@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Non-UI controller for the Tk launcher.
 Wraps launcher infrastructure (profiles, services, logs) behind a small imperative API so tabs don’t reach into internals.
+Builds service-scoped environments so API-only manual env overlays are applied only to API starts/restarts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LauncherController` (class): Holds store/services/log_buffer and provides service + persistence helpers.
@@ -35,16 +36,23 @@ class LauncherController:
     def build_env(self) -> dict[str, str]:
         return self.store.build_env()
 
+    def build_env_for_service(self, name: str) -> dict[str, str]:
+        env = self.store.build_env()
+        if str(name or "").strip().upper() != "API":
+            return env
+        env.update(self.store.build_manual_api_env_overlay())
+        return env
+
     @property
     def external_terminal_supported(self) -> bool:
         return os.name == "nt"
 
     def start_service(self, name: str, *, external_terminal: bool) -> None:
-        env = self.build_env()
+        env = self.build_env_for_service(name)
         self.services[name].start(env, external_terminal=external_terminal)
 
     def restart_service(self, name: str, *, external_terminal: bool) -> None:
-        env = self.build_env()
+        env = self.build_env_for_service(name)
         self.services[name].restart(env, external_terminal=external_terminal)
 
     def stop_service(self, name: str, *, wait: float = 10.0) -> None:

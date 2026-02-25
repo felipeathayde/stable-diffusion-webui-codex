@@ -7,19 +7,23 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: SDPA backend selection helpers for WAN runtimes.
-Provides a configurable `sdpa(...)` wrapper with optional chunking and strict policy validation, delegating per-call SDPA execution to the central attention dispatcher.
+Provides a configurable `sdpa(...)` wrapper with optional chunking and strict policy validation,
+delegating per-call SDPA execution to the central attention dispatcher and carrying fused-attention mode.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_SDPA_SETTINGS_CTX` (constant): Context-local SDPA settings tuple (`policy`, `mode`, `chunk`).
-- `_normalize_sdpa_settings` (function): Validates and normalizes SDPA policy/chunk/mode inputs.
-- `set_sdpa_settings` (function): Applies policy/chunk settings (explicit args override env overrides).
+- `_SDPA_SETTINGS_CTX` (constant): Context-local SDPA settings tuple (`policy`, `mode`, `chunk`, `fused_mode`).
+- `_normalize_fused_mode` (function): Validates and normalizes WAN fused-attention mode input.
+- `_normalize_sdpa_settings` (function): Validates and normalizes SDPA policy/chunk/mode/fused_mode inputs.
+- `set_sdpa_settings` (function): Applies policy/chunk/mode/fused settings (explicit args override env when provided).
 - `_get_sdpa_settings` (function): Reads effective context-local SDPA settings tuple.
+- `get_wan_fused_mode` (function): Returns the effective WAN fused-attention mode (`off|auto|force`) for the active context.
 - `sdpa` (function): Calls PyTorch SDPA using the configured backend policy and optional chunking.
 """
 
 from __future__ import annotations
 
 from contextvars import ContextVar
+import os
 from typing import Optional
 
 import torch
@@ -33,17 +37,47 @@ _LOG_ONCE = {
 }
 _SDPA_LOG_COUNT = 0
 
-_SDPA_SETTINGS_CTX: ContextVar[tuple[str, str, int]] = ContextVar(
+_FUSED_MODE_ENV = "CODEX_WAN22_FUSED_ATTN_V1_MODE"
+
+_SDPA_SETTINGS_CTX: ContextVar[tuple[str, str, int, str]] = ContextVar(
     "wan22_sdpa_settings",
-    default=("auto", "global", 0),
+    default=("auto", "global", 0, "off"),
 )
+
+
+def _normalize_fused_mode(fused_mode: Optional[str]) -> str:
+    raw = fused_mode
+    if raw is None:
+        raw = os.environ.get(_FUSED_MODE_ENV, "off")
+    normalized = str(raw).strip().lower()
+    aliases = {
+        "0": "off",
+        "false": "off",
+        "no": "off",
+        "off": "off",
+        "1": "auto",
+        "true": "auto",
+        "yes": "auto",
+        "on": "auto",
+        "auto": "auto",
+        "force": "force",
+        "required": "force",
+    }
+    mapped = aliases.get(normalized)
+    if mapped is None:
+        raise RuntimeError(
+            "WAN22 SDPA: unsupported fused attention mode "
+            f"{raw!r} (expected one of: 'off', 'auto', 'force')."
+        )
+    return mapped
 
 
 def _normalize_sdpa_settings(
     policy: Optional[str],
     chunk: Optional[int],
     attention_mode: Optional[str],
-) -> tuple[str, str, int]:
+    fused_mode: Optional[str],
+) -> tuple[str, str, int, str]:
     if policy is not None and not isinstance(policy, str):
         raise TypeError(f"WAN22 SDPA: policy must be a string when provided, got {type(policy).__name__}.")
     pol = str(policy if policy is not None else "auto").strip().lower()
@@ -63,19 +97,30 @@ def _normalize_sdpa_settings(
         except Exception as exc:
             raise RuntimeError(f"WAN22 SDPA: chunk must be an integer when provided, got {chunk!r}.") from exc
         ch = chunk_value if chunk_value > 0 else 0
-    return pol, mode, ch
+    fused = _normalize_fused_mode(fused_mode)
+    return pol, mode, ch, fused
 
 
-def set_sdpa_settings(policy: Optional[str], chunk: Optional[int], attention_mode: Optional[str] = None) -> None:
-    _SDPA_SETTINGS_CTX.set(_normalize_sdpa_settings(policy, chunk, attention_mode))
+def set_sdpa_settings(
+    policy: Optional[str],
+    chunk: Optional[int],
+    attention_mode: Optional[str] = None,
+    fused_mode: Optional[str] = None,
+) -> None:
+    _SDPA_SETTINGS_CTX.set(_normalize_sdpa_settings(policy, chunk, attention_mode, fused_mode))
 
 
-def _get_sdpa_settings() -> tuple[str, str, int]:
+def _get_sdpa_settings() -> tuple[str, str, int, str]:
     return _SDPA_SETTINGS_CTX.get()
 
 
+def get_wan_fused_mode() -> str:
+    _pol, _mode, _chunk, fused_mode = _get_sdpa_settings()
+    return fused_mode
+
+
 def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = False) -> torch.Tensor:
-    pol, mode, ch = _get_sdpa_settings()
+    pol, mode, ch, fused_mode = _get_sdpa_settings()
 
     global _LOG_ONCE, _SDPA_LOG_COUNT
     _SDPA_LOG_COUNT += 1
@@ -94,6 +139,11 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
                 str(q.device),
                 str(q.dtype),
                 (tuple(q.shape), tuple(k.shape), tuple(v.shape)),
+            )
+            logging.getLogger("backend.runtime.wan22.sdpa").info(
+                "wan_fused_mode=%s env=%s",
+                fused_mode,
+                _FUSED_MODE_ENV,
             )
         except Exception:
             pass

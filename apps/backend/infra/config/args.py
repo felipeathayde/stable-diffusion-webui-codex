@@ -22,8 +22,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_has_value` (function): Checks whether a parsed CLI option has a meaningful value (vs unset/default).
 - `_apply_source_overrides` (function): Applies overrides from a source mapping onto the argparse namespace.
 - `_validate_runtime_flags` (function): Validates behavior-changing runtime flag combinations (GGUF exec modes, online LoRA math).
-- `_parse_pytorch_alloc_conf` (function): Parses `PYTORCH_ALLOC_CONF` entries into validated `key:value` pairs.
-- `_allocator_backend_from_env` (function): Extracts and validates allocator backend from `PYTORCH_ALLOC_CONF`.
+- `_parse_pytorch_cuda_alloc_conf` (function): Parses `PYTORCH_CUDA_ALLOC_CONF` entries into validated `key:value` pairs.
+- `_allocator_backend_from_cuda_env` (function): Extracts and validates allocator backend from `PYTORCH_CUDA_ALLOC_CONF`.
 - `_validate_required_devices` (function): Ensures resolved device values obey the main-device invariant.
 - `_normalize_device_choice` (function): Normalizes device choice strings (e.g., cpu/cuda/directml) into canonical form.
 - `_device_backend_for_choice` (function): Maps normalized device choices into `DeviceBackend` values.
@@ -499,7 +499,7 @@ def _apply_source_overrides(
     _ = env_map  # env_map only carries debug/log vars now (settings are payload/options-driven)
 
 
-def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
+def _parse_pytorch_cuda_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     for raw_entry in str(raw_conf or "").split(","):
         token = raw_entry.strip()
@@ -507,7 +507,7 @@ def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
             continue
         if ":" not in token:
             raise RuntimeError(
-                "Invalid PYTORCH_ALLOC_CONF entry "
+                "Invalid PYTORCH_CUDA_ALLOC_CONF entry "
                 f"{token!r}: expected 'key:value' format."
             )
         key, value = token.split(":", 1)
@@ -515,23 +515,23 @@ def _parse_pytorch_alloc_conf(raw_conf: str) -> list[tuple[str, str]]:
         value = value.strip()
         if not key or not value:
             raise RuntimeError(
-                "Invalid PYTORCH_ALLOC_CONF entry "
+                "Invalid PYTORCH_CUDA_ALLOC_CONF entry "
                 f"{token!r}: expected non-empty 'key:value' parts."
             )
         entries.append((key, value))
     return entries
 
 
-def _allocator_backend_from_env(env: Mapping[str, str]) -> str | None:
-    raw_conf = str(env.get("PYTORCH_ALLOC_CONF", "") or "").strip()
+def _allocator_backend_from_cuda_env(env: Mapping[str, str]) -> str | None:
+    raw_conf = str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
     if not raw_conf:
         return None
     backend: str | None = None
-    for key, value in _parse_pytorch_alloc_conf(raw_conf):
+    for key, value in _parse_pytorch_cuda_alloc_conf(raw_conf):
         if key.lower() == "backend":
             if backend is not None:
                 raise RuntimeError(
-                    "Invalid PYTORCH_ALLOC_CONF: multiple 'backend' entries found. "
+                    "Invalid PYTORCH_CUDA_ALLOC_CONF: multiple 'backend' entries found. "
                     "Use exactly one backend directive."
                 )
             backend = value
@@ -577,15 +577,15 @@ def _validate_runtime_flags(ns: argparse.Namespace, env: Mapping[str, str]) -> N
         )
 
     if getattr(ns, "cuda_malloc", False):
-        allocator_backend = _allocator_backend_from_env(env)
+        allocator_backend = _allocator_backend_from_cuda_env(env)
         if allocator_backend is None:
             raise RuntimeError(
-                "--cuda-malloc requires PYTORCH_ALLOC_CONF to include "
+                "--cuda-malloc requires PYTORCH_CUDA_ALLOC_CONF to include "
                 "'backend:cudaMallocAsync'."
             )
         if allocator_backend.replace(" ", "").lower() != "cudamallocasync":
             raise RuntimeError(
-                "--cuda-malloc requires PYTORCH_ALLOC_CONF backend:cudaMallocAsync, "
+                "--cuda-malloc requires PYTORCH_CUDA_ALLOC_CONF backend:cudaMallocAsync, "
                 f"but found backend:{allocator_backend}."
             )
 

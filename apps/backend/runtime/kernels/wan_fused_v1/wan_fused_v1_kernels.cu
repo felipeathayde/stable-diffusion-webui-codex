@@ -1,17 +1,26 @@
 // WAN fused attention V1 CUDA implementations.
 //
-// Note: this V1 CUDA addon is correctness-first. It preserves the strict runtime
-// contract and executes on CUDA, but does not yet implement FA2-class SRAM tiling.
+// Note: v1.1 uses streaming tiled attention with online softmax accumulation to
+// avoid materializing full LxL score/probability tensors in global VRAM.
 
 #include <torch/extension.h>
 
 #include <c10/cuda/CUDAGuard.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <string>
+#include <tuple>
 
 namespace {
 
 constexpr double kRmsNormEps = 1e-6;
+constexpr int64_t kDefaultQChunk = 512;
+constexpr int64_t kDefaultKvChunk = 1024;
+constexpr int64_t kMaxQChunk = 512;
+constexpr int64_t kMaxKvChunk = 1024;
 
 void check_cuda_tensor(const torch::Tensor& tensor, const char* name) {
   TORCH_CHECK(tensor.is_cuda(), "", name, " must be a CUDA tensor");
@@ -65,21 +74,83 @@ torch::Tensor apply_rope_blhd(const torch::Tensor& x_blhd, const torch::Tensor& 
   return out.to(dtype);
 }
 
-torch::Tensor naive_attention_bhld(
+int64_t parse_env_chunk_or_default(const char* key, int64_t default_value, int64_t hard_cap) {
+  const char* raw = std::getenv(key);
+  if (raw == nullptr) {
+    return default_value;
+  }
+  const std::string raw_value(raw);
+  std::size_t consumed = 0;
+  long long parsed = 0;
+  try {
+    parsed = std::stoll(raw_value, &consumed, 10);
+  } catch (...) {
+    TORCH_CHECK(false, key, " must be a positive integer (got '", raw, "')");
+  }
+  TORCH_CHECK(consumed == raw_value.size(), key, " must be a strict integer (got '", raw, "')");
+  TORCH_CHECK(parsed > 0, key, " must be > 0 (got ", parsed, ")");
+  TORCH_CHECK(parsed <= hard_cap, key, " exceeds hard cap ", hard_cap, " for wan_fused_v1 v1.1");
+  return static_cast<int64_t>(parsed);
+}
+
+torch::Tensor streaming_attention_bhld(
     const torch::Tensor& q_bhld,
     const torch::Tensor& k_bhmd,
-    const torch::Tensor& v_bhmd) {
+    const torch::Tensor& v_bhmd,
+    int64_t q_chunk_size,
+    int64_t kv_chunk_size) {
   TORCH_CHECK(q_bhld.dim() == 4 && k_bhmd.dim() == 4 && v_bhmd.dim() == 4, "attention tensors must be rank-4");
   TORCH_CHECK(q_bhld.size(0) == k_bhmd.size(0) && q_bhld.size(0) == v_bhmd.size(0), "batch mismatch");
   TORCH_CHECK(q_bhld.size(1) == k_bhmd.size(1) && q_bhld.size(1) == v_bhmd.size(1), "head mismatch");
   TORCH_CHECK(k_bhmd.size(2) == v_bhmd.size(2), "kv length mismatch");
   TORCH_CHECK(q_bhld.size(3) == k_bhmd.size(3) && q_bhld.size(3) == v_bhmd.size(3), "head_dim mismatch");
 
-  const double scale = 1.0 / std::sqrt(static_cast<double>(q_bhld.size(3)));
-  auto scores = torch::matmul(q_bhld.to(torch::kFloat), k_bhmd.to(torch::kFloat).transpose(-2, -1)) * scale;
-  auto probs = torch::softmax(scores, -1);
-  auto out = torch::matmul(probs, v_bhmd.to(torch::kFloat));
-  return out.to(q_bhld.scalar_type());
+  const auto bsz = q_bhld.size(0);
+  const auto heads = q_bhld.size(1);
+  const auto q_len = q_bhld.size(2);
+  const auto kv_len = k_bhmd.size(2);
+  const auto head_dim = q_bhld.size(3);
+  const auto device = q_bhld.device();
+  const auto options_fp32 = q_bhld.options().dtype(torch::kFloat);
+  const auto scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+
+  const int64_t resolved_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
+  const int64_t resolved_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
+
+  auto out_bhld = torch::empty({bsz, heads, q_len, head_dim}, options_fp32);
+
+  for (int64_t q_start = 0; q_start < q_len; q_start += resolved_q_chunk) {
+    const int64_t q_end = std::min<int64_t>(q_len, q_start + resolved_q_chunk);
+    const int64_t q_span = q_end - q_start;
+
+    auto q_chunk = q_bhld.slice(/*dim=*/2, q_start, q_end).to(torch::kFloat).contiguous();
+    auto m = torch::full({bsz, heads, q_span, 1}, -std::numeric_limits<float>::infinity(), options_fp32.device(device));
+    auto l = torch::zeros({bsz, heads, q_span, 1}, options_fp32.device(device));
+    auto acc = torch::zeros({bsz, heads, q_span, head_dim}, options_fp32.device(device));
+
+    for (int64_t kv_start = 0; kv_start < kv_len; kv_start += resolved_kv_chunk) {
+      const int64_t kv_end = std::min<int64_t>(kv_len, kv_start + resolved_kv_chunk);
+      auto k_chunk = k_bhmd.slice(/*dim=*/2, kv_start, kv_end).to(torch::kFloat).contiguous();
+      auto v_chunk = v_bhmd.slice(/*dim=*/2, kv_start, kv_end).to(torch::kFloat).contiguous();
+
+      auto scores = torch::matmul(q_chunk, k_chunk.transpose(-2, -1)) * scale;
+      auto max_chunk = std::get<0>(scores.max(/*dim=*/-1, /*keepdim=*/true));
+      auto m_new = torch::maximum(m, max_chunk);
+      auto alpha = torch::exp(m - m_new);
+      auto p = torch::exp(scores - m_new);
+      auto l_new = alpha * l + p.sum(/*dim=*/-1, /*keepdim=*/true);
+      auto acc_new = alpha * acc + torch::matmul(p, v_chunk);
+
+      m = m_new;
+      l = l_new;
+      acc = acc_new;
+    }
+
+    auto out_chunk = acc / l.clamp_min(1e-9f);
+    out_bhld.slice(/*dim=*/2, q_start, q_end).copy_(out_chunk);
+  }
+
+  return out_bhld.to(q_bhld.scalar_type());
 }
 
 torch::Tensor linear_lastdim(
@@ -149,6 +220,10 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
               "wan_fused_v1.self_fwd: norm weights must be [C]");
 
   const c10::cuda::CUDAGuard device_guard(x.device());
+  const int64_t q_chunk_size =
+      parse_env_chunk_or_default("CODEX_WAN_FUSED_V1_Q_CHUNK", kDefaultQChunk, kMaxQChunk);
+  const int64_t kv_chunk_size =
+      parse_env_chunk_or_default("CODEX_WAN_FUSED_V1_KV_CHUNK", kDefaultKvChunk, kMaxKvChunk);
 
   auto wq = w_qkv.select(1, 0).contiguous().view({channels, channels});
   auto wk = w_qkv.select(1, 1).contiguous().view({channels, channels});
@@ -183,7 +258,7 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   auto k_bhld = k_blhd.permute({0, 2, 1, 3}).contiguous();
   auto v_bhld = v_blhd.permute({0, 2, 1, 3}).contiguous();
 
-  auto attn_bhld = naive_attention_bhld(q_bhld, k_bhld, v_bhld);
+  auto attn_bhld = streaming_attention_bhld(q_bhld, k_bhld, v_bhld, q_chunk_size, kv_chunk_size);
   auto attn_blc = attn_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, seq_len, channels});
 
   auto w_out_2d = w_out.contiguous().view({channels, channels});
@@ -282,6 +357,10 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
               "wan_fused_v1.cross_fwd: rope_sin_k must be [1,Lk,1,D]");
 
   const c10::cuda::CUDAGuard device_guard(x.device());
+  const int64_t q_chunk_size =
+      parse_env_chunk_or_default("CODEX_WAN_FUSED_V1_Q_CHUNK", kDefaultQChunk, kMaxQChunk);
+  const int64_t kv_chunk_size =
+      parse_env_chunk_or_default("CODEX_WAN_FUSED_V1_KV_CHUNK", kDefaultKvChunk, kMaxKvChunk);
 
   auto wq_2d = w_q.contiguous().view({channels, channels});
   auto wk_2d = w_k.contiguous().view({ctx_dim, channels});
@@ -324,7 +403,7 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
   auto k_bhld = k_blhd.permute({0, 2, 1, 3}).contiguous();
   auto v_bhld = v_blhd.permute({0, 2, 1, 3}).contiguous();
 
-  auto attn_bhld = naive_attention_bhld(q_bhld, k_bhld, v_bhld);
+  auto attn_bhld = streaming_attention_bhld(q_bhld, k_bhld, v_bhld, q_chunk_size, kv_chunk_size);
   auto attn_blc = attn_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, q_len, channels});
 
   auto w_out_2d = w_out.contiguous().view({channels, channels});

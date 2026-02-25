@@ -10,8 +10,7 @@ Purpose: WAN fused-attention V1 contract and extension bridge.
 Provides strict fail-loud validators, mode resolution, and optional CUDA extension dispatch for WAN fused
 self/cross attention (`QKV + RoPE + attention + out-proj`) in inference mode. Resolves projection/norm
 weights through runtime ops dequantization helpers so GGUF-backed modules feed dense floating tensors
-into fused-kernel contracts. Includes explicit naive-attention workspace guards to avoid catastrophic
-VRAM OOM on long-token inputs.
+into fused-kernel contracts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanFusedMode` (enum): Runtime mode for fused attention dispatch (`off|auto|force`).
@@ -60,7 +59,6 @@ E_WAN_FUSED_UNSUPPORTED_ARCH = "E_WAN_FUSED_UNSUPPORTED_ARCH"
 E_WAN_FUSED_INVALID_SHAPE = "E_WAN_FUSED_INVALID_SHAPE"
 E_WAN_FUSED_MISSING_ROPE = "E_WAN_FUSED_MISSING_ROPE"
 E_WAN_FUSED_NONCONTIGUOUS = "E_WAN_FUSED_NONCONTIGUOUS"
-E_WAN_FUSED_ATTN_WORKSPACE_EXCEEDED = "E_WAN_FUSED_ATTN_WORKSPACE_EXCEEDED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,64 +504,6 @@ def _resolve_norm_weight(
     return resolved.contiguous()
 
 
-def _estimate_naive_attention_workspace_bytes(*, batch: int, num_heads: int, q_len: int, kv_len: int) -> int:
-    elements = int(batch) * int(num_heads) * int(q_len) * int(kv_len)
-    # naive_attention_bhld materializes fp32 scores and fp32 softmax probabilities.
-    return int(elements * 8)
-
-
-def _maybe_reject_naive_attention_workspace(
-    *,
-    mode: WanFusedMode,
-    device: torch.device,
-    batch: int,
-    num_heads: int,
-    q_len: int,
-    kv_len: int,
-    label: str,
-) -> WanFusedAttemptResult | None:
-    workspace_bytes = _estimate_naive_attention_workspace_bytes(
-        batch=batch,
-        num_heads=num_heads,
-        q_len=q_len,
-        kv_len=kv_len,
-    )
-    hard_cap_bytes = 4 * 1024 * 1024 * 1024
-    if workspace_bytes > hard_cap_bytes:
-        detail = (
-            f"{label} naive attention workspace too large: estimated={workspace_bytes} bytes "
-            f"(batch={batch} heads={num_heads} q_len={q_len} kv_len={kv_len}); hard_cap={hard_cap_bytes} bytes."
-        )
-        if mode is WanFusedMode.FORCE:
-            _fail(code=E_WAN_FUSED_ATTN_WORKSPACE_EXCEEDED, message=detail)
-        return WanFusedAttemptResult(
-            output=None,
-            reason_code=E_WAN_FUSED_ATTN_WORKSPACE_EXCEEDED,
-            reason_detail=detail,
-        )
-    if device.type != "cuda":
-        return None
-    try:
-        free_bytes, _total_bytes = torch.cuda.mem_get_info(device=device)
-    except Exception:
-        return None
-    budget_bytes = int(float(free_bytes) * 0.85)
-    if workspace_bytes <= budget_bytes:
-        return None
-    detail = (
-        f"{label} naive attention workspace exceeds VRAM budget: estimated={workspace_bytes} bytes "
-        f"budget={budget_bytes} bytes free={int(free_bytes)} bytes "
-        f"(batch={batch} heads={num_heads} q_len={q_len} kv_len={kv_len})."
-    )
-    if mode is WanFusedMode.FORCE:
-        _fail(code=E_WAN_FUSED_ATTN_WORKSPACE_EXCEEDED, message=detail)
-    return WanFusedAttemptResult(
-        output=None,
-        reason_code=E_WAN_FUSED_ATTN_WORKSPACE_EXCEEDED,
-        reason_detail=detail,
-    )
-
-
 def _maybe_return_unavailable(*, mode: WanFusedMode) -> WanFusedAttemptResult | None:
     if is_extension_available():
         return None
@@ -614,17 +554,6 @@ def try_fused_self_attention(
     head_dim = int(rope_cos_qk.shape[-1])
     num_heads = _resolve_head_count(channels=channels, head_dim=head_dim, field_name="self")
     _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
-    workspace_reject = _maybe_reject_naive_attention_workspace(
-        mode=fused_mode,
-        device=x.device,
-        batch=bsz,
-        num_heads=num_heads,
-        q_len=seq_len,
-        kv_len=seq_len,
-        label="self",
-    )
-    if workspace_reject is not None:
-        return workspace_reject
 
     try:
         w_q, b_q = _resolve_linear_weight_bias(
@@ -792,17 +721,6 @@ def try_fused_cross_attention(
         )
 
     _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
-    workspace_reject = _maybe_reject_naive_attention_workspace(
-        mode=fused_mode,
-        device=x.device,
-        batch=bsz,
-        num_heads=num_heads,
-        q_len=q_len,
-        kv_len=kv_len,
-        label="cross",
-    )
-    if workspace_reject is not None:
-        return workspace_reject
 
     try:
         w_q, b_q = _resolve_linear_weight_bias(

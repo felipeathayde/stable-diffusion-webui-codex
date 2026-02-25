@@ -22,3 +22,4 @@ Status: Active
 - 2026-02-25: Self-attention ABI now receives separated projection tensors (`w_q/w_k/w_v` and optional `b_q/b_k/b_v`) to avoid temporary `w_qkv` packing and internal split-copy overhead that inflated VRAM peak.
 - 2026-02-25: Extension ABI version set to `WAN_FUSED_V1_ABI=2`; runtime loader rejects stale modules with older ABI and continues fallback/build path.
 - 2026-02-25: Self-path bias contract remains all-or-none across q/k/v; mixed presence is rejected fail-loud to preserve old semantics.
+- 2026-02-25: Self/cross forward now run chunked projection + RoPE before attention: `q` is produced per query chunk, `k/v` are cached in BHLD chunks, and output projection is written per query chunk. This removes full-sequence `q/k/v` + full `attn_bhld` materialization from the hot path and lowers first-block VRAM peak.

@@ -250,6 +250,45 @@ torch::Tensor linear_lastdim(
   return out;
 }
 
+torch::Tensor project_linear_chunk_bhld(
+    const torch::Tensor& source_blc,
+    int64_t start,
+    int64_t end,
+    const torch::Tensor& weight_ci,
+    const c10::optional<torch::Tensor>& bias_i,
+    int64_t batch,
+    int64_t heads,
+    int64_t head_dim) {
+  TORCH_CHECK(start >= 0 && end >= start && end <= source_blc.size(1), "project_linear_chunk_bhld: invalid chunk range");
+  const int64_t span = end - start;
+  auto projected_blc = linear_lastdim(source_blc.slice(/*dim=*/1, start, end), weight_ci, bias_i);
+  auto projected_blhd = projected_blc.contiguous().view({batch, span, heads, head_dim});
+  return projected_blhd.permute({0, 2, 1, 3}).contiguous();
+}
+
+torch::Tensor project_norm_rope_chunk_bhld(
+    const torch::Tensor& source_blc,
+    int64_t start,
+    int64_t end,
+    const torch::Tensor& weight_ci,
+    const c10::optional<torch::Tensor>& bias_i,
+    const torch::Tensor& norm_weight,
+    const torch::Tensor& rope_cos,
+    const torch::Tensor& rope_sin,
+    int64_t batch,
+    int64_t heads,
+    int64_t head_dim) {
+  TORCH_CHECK(start >= 0 && end >= start && end <= source_blc.size(1), "project_norm_rope_chunk_bhld: invalid chunk range");
+  const int64_t span = end - start;
+  auto projected_blc = linear_lastdim(source_blc.slice(/*dim=*/1, start, end), weight_ci, bias_i);
+  projected_blc = rmsnorm_channels(projected_blc, norm_weight);
+  auto projected_blhd = projected_blc.contiguous().view({batch, span, heads, head_dim});
+  auto rope_cos_chunk = rope_cos.slice(/*dim=*/1, start, end);
+  auto rope_sin_chunk = rope_sin.slice(/*dim=*/1, start, end);
+  projected_blhd = apply_rope_blhd(projected_blhd, rope_cos_chunk, rope_sin_chunk);
+  return projected_blhd.permute({0, 2, 1, 3}).contiguous();
+}
+
 }  // namespace
 
 torch::Tensor wan_fused_v1_self_fwd_cuda(
@@ -352,29 +391,56 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   c10::optional<torch::Tensor> bk = has_k_bias ? c10::optional<torch::Tensor>(b_k->contiguous().view({channels})) : c10::nullopt;
   c10::optional<torch::Tensor> bv = has_v_bias ? c10::optional<torch::Tensor>(b_v->contiguous().view({channels})) : c10::nullopt;
 
-  auto q_blc = linear_lastdim(x, wq, bq);
-  auto k_blc = linear_lastdim(x, wk, bk);
-  auto v_blc = linear_lastdim(x, wv, bv);
+  const StreamingPlan plan =
+      enforce_streaming_invariants(bsz, num_heads, seq_len, seq_len, q_chunk_size, kv_chunk_size);
+  const int64_t resolved_q_chunk = plan.q_chunk;
+  const int64_t resolved_kv_chunk = plan.kv_chunk;
 
-  q_blc = rmsnorm_channels(q_blc, norm_q_weight);
-  k_blc = rmsnorm_channels(k_blc, norm_k_weight);
+  auto k_cache = torch::empty({bsz, num_heads, seq_len, head_dim}, x.options());
+  auto v_cache = torch::empty({bsz, num_heads, seq_len, head_dim}, x.options());
+  for (int64_t kv_start = 0; kv_start < seq_len; kv_start += resolved_kv_chunk) {
+    const int64_t kv_end = std::min<int64_t>(seq_len, kv_start + resolved_kv_chunk);
+    auto k_chunk_bhld = project_norm_rope_chunk_bhld(
+        x,
+        kv_start,
+        kv_end,
+        wk,
+        bk,
+        norm_k_weight,
+        rope_cos_qk,
+        rope_sin_qk,
+        bsz,
+        num_heads,
+        head_dim);
+    auto v_chunk_bhld = project_linear_chunk_bhld(x, kv_start, kv_end, wv, bv, bsz, num_heads, head_dim);
+    k_cache.slice(/*dim=*/2, kv_start, kv_end).copy_(k_chunk_bhld);
+    v_cache.slice(/*dim=*/2, kv_start, kv_end).copy_(v_chunk_bhld);
+  }
 
-  auto q_blhd = q_blc.contiguous().view({bsz, seq_len, num_heads, head_dim});
-  auto k_blhd = k_blc.contiguous().view({bsz, seq_len, num_heads, head_dim});
-  auto v_blhd = v_blc.contiguous().view({bsz, seq_len, num_heads, head_dim});
-
-  q_blhd = apply_rope_blhd(q_blhd, rope_cos_qk, rope_sin_qk);
-  k_blhd = apply_rope_blhd(k_blhd, rope_cos_qk, rope_sin_qk);
-
-  auto q_bhld = q_blhd.permute({0, 2, 1, 3}).contiguous();
-  auto k_bhld = k_blhd.permute({0, 2, 1, 3}).contiguous();
-  auto v_bhld = v_blhd.permute({0, 2, 1, 3}).contiguous();
-
-  auto attn_bhld = streaming_attention_bhld(q_bhld, k_bhld, v_bhld, q_chunk_size, kv_chunk_size);
-  auto attn_blc = attn_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, seq_len, channels});
-
+  auto out = torch::empty({bsz, seq_len, channels}, x.options());
   auto w_out_2d = w_out.contiguous().view({channels, channels});
-  auto out = linear_lastdim(attn_blc, w_out_2d, b_out);
+  for (int64_t q_start = 0; q_start < seq_len; q_start += resolved_q_chunk) {
+    const int64_t q_end = std::min<int64_t>(seq_len, q_start + resolved_q_chunk);
+    const int64_t q_span = q_end - q_start;
+    auto q_chunk_bhld = project_norm_rope_chunk_bhld(
+        x,
+        q_start,
+        q_end,
+        wq,
+        bq,
+        norm_q_weight,
+        rope_cos_qk,
+        rope_sin_qk,
+        bsz,
+        num_heads,
+        head_dim);
+    auto attn_chunk_bhld =
+        streaming_attention_bhld(q_chunk_bhld, k_cache, v_cache, q_span, resolved_kv_chunk);
+    auto attn_chunk_blc =
+        attn_chunk_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, q_span, channels});
+    auto out_chunk = linear_lastdim(attn_chunk_blc, w_out_2d, b_out);
+    out.slice(/*dim=*/1, q_start, q_end).copy_(out_chunk);
+  }
   return out;
 }
 
@@ -497,28 +563,56 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
     bv_flat = b_v->contiguous().view({channels});
   }
 
-  auto q_blc = linear_lastdim(x, wq_2d, bq_flat);
-  auto k_blc = linear_lastdim(context, wk_2d, bk_flat);
-  auto v_blc = linear_lastdim(context, wv_2d, bv_flat);
+  const StreamingPlan plan =
+      enforce_streaming_invariants(bsz, num_heads, q_len, kv_len, q_chunk_size, kv_chunk_size);
+  const int64_t resolved_q_chunk = plan.q_chunk;
+  const int64_t resolved_kv_chunk = plan.kv_chunk;
 
-  q_blc = rmsnorm_channels(q_blc, norm_q_weight);
-  k_blc = rmsnorm_channels(k_blc, norm_k_weight);
+  auto k_cache = torch::empty({bsz, num_heads, kv_len, head_dim}, x.options());
+  auto v_cache = torch::empty({bsz, num_heads, kv_len, head_dim}, x.options());
+  for (int64_t kv_start = 0; kv_start < kv_len; kv_start += resolved_kv_chunk) {
+    const int64_t kv_end = std::min<int64_t>(kv_len, kv_start + resolved_kv_chunk);
+    auto k_chunk_bhld = project_norm_rope_chunk_bhld(
+        context,
+        kv_start,
+        kv_end,
+        wk_2d,
+        bk_flat,
+        norm_k_weight,
+        rope_cos_k,
+        rope_sin_k,
+        bsz,
+        num_heads,
+        head_dim);
+    auto v_chunk_bhld =
+        project_linear_chunk_bhld(context, kv_start, kv_end, wv_2d, bv_flat, bsz, num_heads, head_dim);
+    k_cache.slice(/*dim=*/2, kv_start, kv_end).copy_(k_chunk_bhld);
+    v_cache.slice(/*dim=*/2, kv_start, kv_end).copy_(v_chunk_bhld);
+  }
 
-  auto q_blhd = q_blc.contiguous().view({bsz, q_len, num_heads, head_dim});
-  auto k_blhd = k_blc.contiguous().view({bsz, kv_len, num_heads, head_dim});
-  auto v_blhd = v_blc.contiguous().view({bsz, kv_len, num_heads, head_dim});
-
-  q_blhd = apply_rope_blhd(q_blhd, rope_cos_q, rope_sin_q);
-  k_blhd = apply_rope_blhd(k_blhd, rope_cos_k, rope_sin_k);
-
-  auto q_bhld = q_blhd.permute({0, 2, 1, 3}).contiguous();
-  auto k_bhld = k_blhd.permute({0, 2, 1, 3}).contiguous();
-  auto v_bhld = v_blhd.permute({0, 2, 1, 3}).contiguous();
-
-  auto attn_bhld = streaming_attention_bhld(q_bhld, k_bhld, v_bhld, q_chunk_size, kv_chunk_size);
-  auto attn_blc = attn_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, q_len, channels});
-
+  auto out = torch::empty({bsz, q_len, channels}, x.options());
   auto w_out_2d = w_out.contiguous().view({channels, channels});
-  auto out = linear_lastdim(attn_blc, w_out_2d, b_out);
+  for (int64_t q_start = 0; q_start < q_len; q_start += resolved_q_chunk) {
+    const int64_t q_end = std::min<int64_t>(q_len, q_start + resolved_q_chunk);
+    const int64_t q_span = q_end - q_start;
+    auto q_chunk_bhld = project_norm_rope_chunk_bhld(
+        x,
+        q_start,
+        q_end,
+        wq_2d,
+        bq_flat,
+        norm_q_weight,
+        rope_cos_q,
+        rope_sin_q,
+        bsz,
+        num_heads,
+        head_dim);
+    auto attn_chunk_bhld =
+        streaming_attention_bhld(q_chunk_bhld, k_cache, v_cache, q_span, resolved_kv_chunk);
+    auto attn_chunk_blc =
+        attn_chunk_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, q_span, channels});
+    auto out_chunk = linear_lastdim(attn_chunk_blc, w_out_2d, b_out);
+    out.slice(/*dim=*/1, q_start, q_end).copy_(out_chunk);
+  }
   return out;
 }

@@ -10,8 +10,7 @@ Purpose: WAN fused-attention V1 contract and extension bridge.
 Provides strict fail-loud validators, mode resolution, and optional CUDA extension dispatch for WAN fused
 self/cross attention (`QKV + RoPE + attention + out-proj`) in inference mode. Resolves projection/norm
 weights through runtime ops dequantization helpers so GGUF-backed modules feed dense floating tensors
-into fused-kernel contracts. Adds streaming-workspace preflight guards (self/cross) so forced mode fails
-before kernel dispatch when available VRAM budget is below estimated tiled workspace demand.
+into fused-kernel contracts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanFusedMode` (enum): Runtime mode for fused attention dispatch (`off|auto|force`).
@@ -48,15 +47,6 @@ logger = logging.getLogger("backend.runtime.attention.wan_fused_v1")
 _MODE_ENV_KEY = "CODEX_WAN22_FUSED_ATTN_V1_MODE"
 _JIT_ENV_KEY = "CODEX_WAN_FUSED_V1_JIT"
 _REQUIRED_EXTENSION_ABI = 2
-_Q_CHUNK_ENV_KEY = "CODEX_WAN_FUSED_V1_Q_CHUNK"
-_KV_CHUNK_ENV_KEY = "CODEX_WAN_FUSED_V1_KV_CHUNK"
-_DEFAULT_Q_CHUNK = 512
-_DEFAULT_KV_CHUNK = 1024
-_MAX_Q_CHUNK = 512
-_MAX_KV_CHUNK = 1024
-_STREAMING_WORKSPACE_SAFETY_MULTIPLIER = 1.20
-_STREAMING_WORKSPACE_FREE_BUDGET_FRACTION = 0.90
-_STREAMING_ESTIMATE_MARGIN_FRACTION = 0.20
 
 
 E_WAN_FUSED_DISABLED = "E_WAN_FUSED_DISABLED"
@@ -72,7 +62,6 @@ E_WAN_FUSED_INVALID_SHAPE = "E_WAN_FUSED_INVALID_SHAPE"
 E_WAN_FUSED_MISSING_ROPE = "E_WAN_FUSED_MISSING_ROPE"
 E_WAN_FUSED_NONCONTIGUOUS = "E_WAN_FUSED_NONCONTIGUOUS"
 E_WAN_FUSED_INVALID_ENV = "E_WAN_FUSED_INVALID_ENV"
-E_WAN_FUSED_STREAMING_WORKSPACE_EXCEEDED = "E_WAN_FUSED_STREAMING_WORKSPACE_EXCEEDED"
 E_WAN_FUSED_STREAMING_INVARIANT_VIOLATION = "E_WAN_FUSED_STREAMING_INVARIANT_VIOLATION"
 
 
@@ -548,142 +537,6 @@ def _resolve_norm_weight(
     return resolved.contiguous()
 
 
-def _dtype_nbytes(dtype: torch.dtype) -> int:
-    if dtype in {torch.float16, torch.bfloat16}:
-        return 2
-    if dtype == torch.float32:
-        return 4
-    _fail(code=E_WAN_FUSED_DTYPE_UNSUPPORTED, message=f"unsupported dtype for VRAM estimate: {dtype}.")
-
-
-def _parse_streaming_chunk_env(*, key: str, default_value: int, hard_cap: int) -> int:
-    raw = os.environ.get(key)
-    if raw is None:
-        return int(default_value)
-    normalized = str(raw)
-    if normalized == "":
-        _fail(code=E_WAN_FUSED_INVALID_ENV, message=f"{key} must be a strict integer; got empty value.")
-    if not all("0" <= ch <= "9" for ch in normalized):
-        _fail(code=E_WAN_FUSED_INVALID_ENV, message=f"{key} must be a strict integer; got {raw!r}.")
-    parsed = int(normalized, 10)
-    if parsed <= 0:
-        _fail(code=E_WAN_FUSED_INVALID_ENV, message=f"{key} must be > 0; got {parsed}.")
-    if parsed > int(hard_cap):
-        _fail(
-            code=E_WAN_FUSED_INVALID_ENV,
-            message=f"{key} exceeds hard cap {hard_cap} for wan_fused_v1 v1.1; got {parsed}.",
-        )
-    return parsed
-
-
-def _estimate_streaming_workspace_bytes(
-    *,
-    batch: int,
-    num_heads: int,
-    q_len: int,
-    kv_len: int,
-    head_dim: int,
-    dtype: torch.dtype,
-    q_chunk: int,
-    kv_chunk: int,
-) -> tuple[int, int, int]:
-    resolved_q_chunk = max(1, min(int(q_len), int(q_chunk)))
-    resolved_kv_chunk = max(1, min(int(kv_len), int(kv_chunk)))
-
-    bhq = int(batch) * int(num_heads) * int(resolved_q_chunk)
-    bhkv = int(batch) * int(num_heads) * int(resolved_kv_chunk)
-    score_elems = bhq * int(resolved_kv_chunk)
-    q_elems = bhq * int(head_dim)
-    kv_elems = bhkv * int(head_dim)
-    seq_elems = int(batch) * int(num_heads) * int(q_len) * int(head_dim)
-
-    tile_fp32_elems = score_elems + (4 * q_elems) + (2 * kv_elems) + (10 * bhq)
-    output_bytes = seq_elems * _dtype_nbytes(dtype)
-    out_chunk_bytes = q_elems * _dtype_nbytes(dtype)
-    tile_bytes = (tile_fp32_elems * 4) + out_chunk_bytes
-
-    estimated_total = int((output_bytes + tile_bytes) * _STREAMING_WORKSPACE_SAFETY_MULTIPLIER)
-    return estimated_total, resolved_q_chunk, resolved_kv_chunk
-
-
-def _maybe_reject_streaming_workspace(
-    *,
-    mode: WanFusedMode,
-    device: torch.device,
-    dtype: torch.dtype,
-    batch: int,
-    num_heads: int,
-    q_len: int,
-    kv_len: int,
-    head_dim: int,
-    label: str,
-) -> WanFusedAttemptResult | None:
-    if device.type != "cuda":
-        return None
-    try:
-        q_chunk = _parse_streaming_chunk_env(
-            key=_Q_CHUNK_ENV_KEY,
-            default_value=_DEFAULT_Q_CHUNK,
-            hard_cap=_MAX_Q_CHUNK,
-        )
-        kv_chunk = _parse_streaming_chunk_env(
-            key=_KV_CHUNK_ENV_KEY,
-            default_value=_DEFAULT_KV_CHUNK,
-            hard_cap=_MAX_KV_CHUNK,
-        )
-    except WanFusedContractError as ex:
-        if mode is WanFusedMode.FORCE:
-            raise
-        return WanFusedAttemptResult(
-            output=None,
-            reason_code=E_WAN_FUSED_INVALID_ENV,
-            reason_detail=str(ex),
-        )
-
-    estimated_bytes, resolved_q_chunk, resolved_kv_chunk = _estimate_streaming_workspace_bytes(
-        batch=batch,
-        num_heads=num_heads,
-        q_len=q_len,
-        kv_len=kv_len,
-        head_dim=head_dim,
-        dtype=dtype,
-        q_chunk=q_chunk,
-        kv_chunk=kv_chunk,
-    )
-
-    try:
-        free_bytes, _total_bytes = torch.cuda.mem_get_info(device=device)
-    except Exception as ex:
-        detail = f"{label} streaming preflight unavailable: mem_get_info failed: {type(ex).__name__}: {ex}"
-        if mode is WanFusedMode.FORCE:
-            _fail(code=E_WAN_FUSED_STREAMING_WORKSPACE_EXCEEDED, message=detail)
-        return WanFusedAttemptResult(
-            output=None,
-            reason_code=E_WAN_FUSED_STREAMING_WORKSPACE_EXCEEDED,
-            reason_detail=detail,
-        )
-
-    budget_bytes = int(float(free_bytes) * _STREAMING_WORKSPACE_FREE_BUDGET_FRACTION)
-    tolerated_budget_bytes = int(float(budget_bytes) * (1.0 + _STREAMING_ESTIMATE_MARGIN_FRACTION))
-    if estimated_bytes <= tolerated_budget_bytes:
-        return None
-
-    detail = (
-        f"{label} streaming preflight rejected: estimated_bytes={estimated_bytes} "
-        f"budget_bytes={budget_bytes} tolerated_budget_bytes={tolerated_budget_bytes} "
-        f"estimate_margin_fraction={_STREAMING_ESTIMATE_MARGIN_FRACTION} free_bytes={int(free_bytes)} "
-        f"(batch={batch} heads={num_heads} q_len={q_len} kv_len={kv_len} head_dim={head_dim} "
-        f"q_chunk={resolved_q_chunk} kv_chunk={resolved_kv_chunk})."
-    )
-    if mode is WanFusedMode.FORCE:
-        _fail(code=E_WAN_FUSED_STREAMING_WORKSPACE_EXCEEDED, message=detail)
-    return WanFusedAttemptResult(
-        output=None,
-        reason_code=E_WAN_FUSED_STREAMING_WORKSPACE_EXCEEDED,
-        reason_detail=detail,
-    )
-
-
 def _maybe_return_unavailable(*, mode: WanFusedMode) -> WanFusedAttemptResult | None:
     if is_extension_available():
         return None
@@ -743,20 +596,6 @@ def try_fused_self_attention(
     head_dim = int(rope_cos_qk.shape[-1])
     num_heads = _resolve_head_count(channels=channels, head_dim=head_dim, field_name="self")
     _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
-    workspace_reject = _maybe_reject_streaming_workspace(
-        mode=fused_mode,
-        device=x.device,
-        dtype=x.dtype,
-        batch=bsz,
-        num_heads=num_heads,
-        q_len=seq_len,
-        kv_len=seq_len,
-        head_dim=head_dim,
-        label="self",
-    )
-    if workspace_reject is not None:
-        return workspace_reject
-
     try:
         w_q, b_q = _resolve_linear_weight_bias(
             q_proj,
@@ -926,20 +765,6 @@ def try_fused_cross_attention(
         )
 
     _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
-    workspace_reject = _maybe_reject_streaming_workspace(
-        mode=fused_mode,
-        device=x.device,
-        dtype=x.dtype,
-        batch=bsz,
-        num_heads=num_heads,
-        q_len=q_len,
-        kv_len=kv_len,
-        head_dim=head_dim,
-        label="cross",
-    )
-    if workspace_reject is not None:
-        return workspace_reject
-
     try:
         w_q, b_q = _resolve_linear_weight_bias(
             q_proj,

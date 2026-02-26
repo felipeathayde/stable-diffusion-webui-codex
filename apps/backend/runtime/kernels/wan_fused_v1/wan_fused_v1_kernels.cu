@@ -522,14 +522,8 @@ StreamingPlan enforce_streaming_invariants(
 
 torch::Tensor streaming_attention_self_chunk_bhld(
     const torch::Tensor& q_chunk_bhld,
-    const torch::Tensor& source_blc,
-    const torch::Tensor& wk,
-    const c10::optional<torch::Tensor>& bk,
-    const torch::Tensor& wv,
-    const c10::optional<torch::Tensor>& bv,
-    const torch::Tensor& norm_k_weight,
-    const torch::Tensor& rope_cos_qk,
-    const torch::Tensor& rope_sin_qk,
+    const torch::Tensor& k_cache_bhld,
+    const torch::Tensor& v_cache_bhld,
     int64_t kv_chunk_size,
     int64_t batch,
     int64_t heads,
@@ -539,9 +533,19 @@ torch::Tensor streaming_attention_self_chunk_bhld(
     int64_t q_end,
     int64_t q_len_total) {
   TORCH_CHECK(q_chunk_bhld.dim() == 4, "streaming_attention_self_chunk_bhld: q_chunk must be [B,H,Lq,D]");
-  TORCH_CHECK(source_blc.dim() == 3, "streaming_attention_self_chunk_bhld: source must be [B,L,C]");
+  TORCH_CHECK(k_cache_bhld.dim() == 4, "streaming_attention_self_chunk_bhld: k_cache must be [B,H,Lk,D]");
+  TORCH_CHECK(v_cache_bhld.dim() == 4, "streaming_attention_self_chunk_bhld: v_cache must be [B,H,Lk,D]");
+  TORCH_CHECK(
+      k_cache_bhld.size(0) == batch && k_cache_bhld.size(1) == heads && k_cache_bhld.size(3) == head_dim,
+      "streaming_attention_self_chunk_bhld: k_cache shape mismatch");
+  TORCH_CHECK(
+      v_cache_bhld.size(0) == batch && v_cache_bhld.size(1) == heads && v_cache_bhld.size(3) == head_dim,
+      "streaming_attention_self_chunk_bhld: v_cache shape mismatch");
+  TORCH_CHECK(
+      k_cache_bhld.size(2) == v_cache_bhld.size(2),
+      "streaming_attention_self_chunk_bhld: k_cache/v_cache sequence mismatch");
   const int64_t q_span = q_chunk_bhld.size(2);
-  const int64_t kv_len = source_blc.size(1);
+  const int64_t kv_len = k_cache_bhld.size(2);
   const auto device = q_chunk_bhld.device();
   const auto output_dtype = q_chunk_bhld.scalar_type();
   const auto options_fp32 = q_chunk_bhld.options().dtype(torch::kFloat);
@@ -569,21 +573,10 @@ torch::Tensor streaming_attention_self_chunk_bhld(
     const int64_t kv_index = kv_start / kv_chunk_size;
     const bool trace_kv_chunk =
         kernel_trace_kv_enabled() && should_trace_chunk(kv_index, kv_total_chunks, kv_trace_every);
-    auto k_chunk_bhld = project_norm_rope_chunk_bhld(
-        source_blc,
-        kv_start,
-        kv_end,
-        wk,
-        bk,
-        norm_k_weight,
-        rope_cos_qk,
-        rope_sin_qk,
-        batch,
-        heads,
-        head_dim);
-    auto v_chunk_bhld = project_linear_chunk_bhld(source_blc, kv_start, kv_end, wv, bv, batch, heads, head_dim);
+    auto k_chunk_bhld = k_cache_bhld.slice(/*dim=*/2, kv_start, kv_end);
+    auto v_chunk_bhld = v_cache_bhld.slice(/*dim=*/2, kv_start, kv_end);
     if (trace_kv_chunk) {
-      maybe_trace_kernel_memory("self_attn", "attn_chunk.kv_projected", k_chunk_bhld, q_start, q_end, q_len_total, kv_start, kv_end, kv_len);
+      maybe_trace_kernel_memory("self_attn", "attn_chunk.kv_sliced", k_chunk_bhld, q_start, q_end, q_len_total, kv_start, kv_end, kv_len);
     }
     auto k_chunk = k_chunk_bhld.to(torch::kFloat).contiguous();
     auto v_chunk = v_chunk_bhld.to(torch::kFloat).contiguous();
@@ -624,14 +617,8 @@ torch::Tensor streaming_attention_self_chunk_bhld(
 
 torch::Tensor streaming_attention_cross_chunk_bhld(
     const torch::Tensor& q_chunk_bhld,
-    const torch::Tensor& context_blc,
-    const torch::Tensor& wk,
-    const c10::optional<torch::Tensor>& bk,
-    const torch::Tensor& wv,
-    const c10::optional<torch::Tensor>& bv,
-    const torch::Tensor& norm_k_weight,
-    const torch::Tensor& rope_cos_k,
-    const torch::Tensor& rope_sin_k,
+    const torch::Tensor& k_cache_bhld,
+    const torch::Tensor& v_cache_bhld,
     int64_t kv_chunk_size,
     int64_t batch,
     int64_t heads,
@@ -641,9 +628,19 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
     int64_t q_end,
     int64_t q_len_total) {
   TORCH_CHECK(q_chunk_bhld.dim() == 4, "streaming_attention_cross_chunk_bhld: q_chunk must be [B,H,Lq,D]");
-  TORCH_CHECK(context_blc.dim() == 3, "streaming_attention_cross_chunk_bhld: context must be [B,Lk,Cctx]");
+  TORCH_CHECK(k_cache_bhld.dim() == 4, "streaming_attention_cross_chunk_bhld: k_cache must be [B,H,Lk,D]");
+  TORCH_CHECK(v_cache_bhld.dim() == 4, "streaming_attention_cross_chunk_bhld: v_cache must be [B,H,Lk,D]");
+  TORCH_CHECK(
+      k_cache_bhld.size(0) == batch && k_cache_bhld.size(1) == heads && k_cache_bhld.size(3) == head_dim,
+      "streaming_attention_cross_chunk_bhld: k_cache shape mismatch");
+  TORCH_CHECK(
+      v_cache_bhld.size(0) == batch && v_cache_bhld.size(1) == heads && v_cache_bhld.size(3) == head_dim,
+      "streaming_attention_cross_chunk_bhld: v_cache shape mismatch");
+  TORCH_CHECK(
+      k_cache_bhld.size(2) == v_cache_bhld.size(2),
+      "streaming_attention_cross_chunk_bhld: k_cache/v_cache sequence mismatch");
   const int64_t q_span = q_chunk_bhld.size(2);
-  const int64_t kv_len = context_blc.size(1);
+  const int64_t kv_len = k_cache_bhld.size(2);
   const auto device = q_chunk_bhld.device();
   const auto output_dtype = q_chunk_bhld.scalar_type();
   const auto options_fp32 = q_chunk_bhld.options().dtype(torch::kFloat);
@@ -671,21 +668,10 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
     const int64_t kv_index = kv_start / kv_chunk_size;
     const bool trace_kv_chunk =
         kernel_trace_kv_enabled() && should_trace_chunk(kv_index, kv_total_chunks, kv_trace_every);
-    auto k_chunk_bhld = project_norm_rope_chunk_bhld(
-        context_blc,
-        kv_start,
-        kv_end,
-        wk,
-        bk,
-        norm_k_weight,
-        rope_cos_k,
-        rope_sin_k,
-        batch,
-        heads,
-        head_dim);
-    auto v_chunk_bhld = project_linear_chunk_bhld(context_blc, kv_start, kv_end, wv, bv, batch, heads, head_dim);
+    auto k_chunk_bhld = k_cache_bhld.slice(/*dim=*/2, kv_start, kv_end);
+    auto v_chunk_bhld = v_cache_bhld.slice(/*dim=*/2, kv_start, kv_end);
     if (trace_kv_chunk) {
-      maybe_trace_kernel_memory("cross_attn", "attn_chunk.kv_projected", k_chunk_bhld, q_start, q_end, q_len_total, kv_start, kv_end, kv_len);
+      maybe_trace_kernel_memory("cross_attn", "attn_chunk.kv_sliced", k_chunk_bhld, q_start, q_end, q_len_total, kv_start, kv_end, kv_len);
     }
     auto k_chunk = k_chunk_bhld.to(torch::kFloat).contiguous();
     auto v_chunk = v_chunk_bhld.to(torch::kFloat).contiguous();
@@ -885,9 +871,32 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   const int64_t q_total_chunks = (seq_len + resolved_q_chunk - 1) / resolved_q_chunk;
   const int64_t q_trace_every = kernel_trace_every_q_chunk();
 
+  auto k_cache_bhld = project_norm_rope_chunk_bhld(
+      x,
+      /*start=*/0,
+      /*end=*/seq_len,
+      wk,
+      bk,
+      norm_k_weight,
+      rope_cos_qk,
+      rope_sin_qk,
+      bsz,
+      num_heads,
+      head_dim);
+  auto v_cache_bhld = project_linear_chunk_bhld(
+      x,
+      /*start=*/0,
+      /*end=*/seq_len,
+      wv,
+      bv,
+      bsz,
+      num_heads,
+      head_dim);
+
   auto out = torch::empty({bsz, seq_len, channels}, x.options());
   auto w_out_2d = w_out.contiguous().view({channels, channels});
   maybe_trace_kernel_memory("self_attn", "dispatch", x, 0, 0, seq_len, 0, 0, seq_len);
+  maybe_trace_kernel_memory("self_attn", "kv_cache.ready", k_cache_bhld, 0, 0, seq_len, 0, seq_len, seq_len);
   for (int64_t q_start = 0; q_start < seq_len; q_start += resolved_q_chunk) {
     const int64_t q_end = std::min<int64_t>(seq_len, q_start + resolved_q_chunk);
     const int64_t q_span = q_end - q_start;
@@ -914,14 +923,8 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
     auto attn_chunk_bhld =
         streaming_attention_self_chunk_bhld(
             q_chunk_bhld,
-            x,
-            wk,
-            bk,
-            wv,
-            bv,
-            norm_k_weight,
-            rope_cos_qk,
-            rope_sin_qk,
+            k_cache_bhld,
+            v_cache_bhld,
             resolved_kv_chunk,
             bsz,
             num_heads,
@@ -1059,6 +1062,9 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
                 "wan_fused_v1.cross_fwd: b_v must be [H,D]");
     bv_flat = b_v->contiguous().view({channels});
   }
+  if (q_len == 0) {
+    return torch::empty({bsz, q_len, channels}, x.options());
+  }
 
   const StreamingPlan plan =
       enforce_streaming_invariants(bsz, num_heads, q_len, kv_len, q_chunk_size, kv_chunk_size);
@@ -1067,9 +1073,32 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
   const int64_t q_total_chunks = (q_len + resolved_q_chunk - 1) / resolved_q_chunk;
   const int64_t q_trace_every = kernel_trace_every_q_chunk();
 
+  auto k_cache_bhld = project_norm_rope_chunk_bhld(
+      context,
+      /*start=*/0,
+      /*end=*/kv_len,
+      wk_2d,
+      bk_flat,
+      norm_k_weight,
+      rope_cos_k,
+      rope_sin_k,
+      bsz,
+      num_heads,
+      head_dim);
+  auto v_cache_bhld = project_linear_chunk_bhld(
+      context,
+      /*start=*/0,
+      /*end=*/kv_len,
+      wv_2d,
+      bv_flat,
+      bsz,
+      num_heads,
+      head_dim);
+
   auto out = torch::empty({bsz, q_len, channels}, x.options());
   auto w_out_2d = w_out.contiguous().view({channels, channels});
   maybe_trace_kernel_memory("cross_attn", "dispatch", x, 0, 0, q_len, 0, 0, kv_len);
+  maybe_trace_kernel_memory("cross_attn", "kv_cache.ready", k_cache_bhld, 0, 0, q_len, 0, kv_len, kv_len);
   for (int64_t q_start = 0; q_start < q_len; q_start += resolved_q_chunk) {
     const int64_t q_end = std::min<int64_t>(q_len, q_start + resolved_q_chunk);
     const int64_t q_span = q_end - q_start;
@@ -1096,14 +1125,8 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
     auto attn_chunk_bhld =
         streaming_attention_cross_chunk_bhld(
             q_chunk_bhld,
-            context,
-            wk_2d,
-            bk_flat,
-            wv_2d,
-            bv_flat,
-            norm_k_weight,
-            rope_cos_k,
-            rope_sin_k,
+            k_cache_bhld,
+            v_cache_bhld,
             resolved_kv_chunk,
             bsz,
             num_heads,

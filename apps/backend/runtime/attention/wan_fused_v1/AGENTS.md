@@ -25,9 +25,9 @@ Status: Active
 - 2026-02-25: Loader now purges import cache for extension module names during stage fallback so an ABI-rejected prebuilt module does not poison in-place/JIT resolution in-process.
 - 2026-02-26: Runtime now recognizes kernel-side telemetry controls (`CODEX_WAN_FUSED_V1_KERNEL_TRACE`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_KV`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_EVERY_Q`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_EVERY_KV`) for per-phase VRAM snapshots emitted by fused CUDA path.
 - 2026-02-26: Attention-core resolution contract is explicit and resolver-owned via `resolve_effective_wan_fused_attn_core(mode) -> (attn_core, attn_core_source, attn_core_raw)`. `attn_core_source` tokens are emitted verbatim as `env|force_default|kernel_default` (no caller-side remapping).
-- 2026-02-26: `CODEX_WAN_FUSED_V1_ATTN_CORE=aten|cuda_experimental` remains optional; `cuda` aliases `cuda_experimental`. If unset, resolver defaults by mode: `force -> cuda_experimental (force_default)`, otherwise `aten (kernel_default)`.
+- 2026-02-26: `CODEX_WAN_FUSED_V1_ATTN_CORE=aten|cuda_experimental` remains optional; `cuda` aliases `cuda_experimental`. If unset, resolver defaults by mode: `force -> aten (force_default)`, otherwise `aten (kernel_default)`.
 - 2026-02-26: WAN22 model/run telemetry now plumbs `attn_core`, `attn_core_source`, and `attn_core_raw` directly from resolver output, with no env mutation in the model/run hot path.
-- 2026-02-26: Known performance trap: explicit `CODEX_WAN_FUSED_V1_ATTN_CORE=aten` under long-sequence force-mode debugging can be pathologically slow; prefer `cuda_experimental`.
+- 2026-02-26: Kernel workspace cap env is `CODEX_WAN_FUSED_V1_PRECOMPUTE_WORKSPACE_MB` (strict positive integer MB, default `512`), and invariant errors now report workspace cap plus score-tile-budgeting mode.
 - 2026-02-26: Minimal env recommendations:
-  - Force debugging (fail-loud): `CODEX_WAN22_FUSED_ATTN_V1_MODE=force` (optionally pin `CODEX_WAN_FUSED_V1_ATTN_CORE=cuda_experimental`).
+  - Force debugging (fail-loud, default core): `CODEX_WAN22_FUSED_ATTN_V1_MODE=force` (default effective core is `aten`; optionally pin `CODEX_WAN_FUSED_V1_ATTN_CORE=cuda_experimental`).
   - Production off (disable fused runtime path): `CODEX_WAN22_FUSED_ATTN_V1_MODE=off` (leave `CODEX_WAN_FUSED_V1_ATTN_CORE` unset).

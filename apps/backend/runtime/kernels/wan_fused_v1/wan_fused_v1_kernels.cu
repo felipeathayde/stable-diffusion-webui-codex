@@ -30,10 +30,12 @@ constexpr int64_t kDefaultKvChunk = 1024;
 constexpr int64_t kMaxQChunk = 512;
 constexpr int64_t kMaxKvChunk = 1024;
 constexpr int64_t kMaxScoreTileBytes = 128 * 1024 * 1024;
-constexpr int64_t kMaxKvPrecomputeWorkspaceBytes = 320 * 1024 * 1024;
+constexpr int64_t kDefaultKvPrecomputeWorkspaceMb = 512;
+constexpr int64_t kBytesPerMiB = 1024 * 1024;
 constexpr int64_t kMaxQKvTileAreaElements = 512 * 1024;
 constexpr int64_t kSmallAttentionMatrixElementsBypass = 128 * 1024;
 constexpr int64_t kCudaCoreMaxHeadDim = 128;
+constexpr const char* kPrecomputeWorkspaceEnvKey = "CODEX_WAN_FUSED_V1_PRECOMPUTE_WORKSPACE_MB";
 constexpr const char* kAttentionCoreEnvKey = "CODEX_WAN_FUSED_V1_ATTN_CORE";
 constexpr const char* kAttentionCoreValidValues = "aten | cuda_experimental";
 
@@ -100,7 +102,7 @@ torch::Tensor apply_rope_blhd(const torch::Tensor& x_blhd, const torch::Tensor& 
   return out.to(dtype);
 }
 
-int64_t parse_env_chunk_or_default(const char* key, int64_t default_value, int64_t hard_cap) {
+int64_t parse_env_strict_positive_int_or_default(const char* key, int64_t default_value) {
   const char* raw = std::getenv(key);
   if (raw == nullptr) {
     return default_value;
@@ -119,8 +121,25 @@ int64_t parse_env_chunk_or_default(const char* key, int64_t default_value, int64
   }
   TORCH_CHECK(consumed == raw_value.size(), key, " must be a strict integer (got '", raw, "')");
   TORCH_CHECK(parsed > 0, key, " must be > 0 (got ", parsed, ")");
-  TORCH_CHECK(parsed <= hard_cap, key, " exceeds hard cap ", hard_cap, " for wan_fused_v1 v1.1");
   return static_cast<int64_t>(parsed);
+}
+
+int64_t parse_env_chunk_or_default(const char* key, int64_t default_value, int64_t hard_cap) {
+  const int64_t parsed = parse_env_strict_positive_int_or_default(key, default_value);
+  TORCH_CHECK(parsed <= hard_cap, key, " exceeds hard cap ", hard_cap, " for wan_fused_v1 v1.1");
+  return parsed;
+}
+
+int64_t precompute_workspace_cap_bytes() {
+  static const int64_t cap_mb =
+      parse_env_strict_positive_int_or_default(kPrecomputeWorkspaceEnvKey, kDefaultKvPrecomputeWorkspaceMb);
+  TORCH_CHECK(
+      cap_mb <= std::numeric_limits<int64_t>::max() / kBytesPerMiB,
+      kPrecomputeWorkspaceEnvKey,
+      " overflows int64 bytes conversion (MB=",
+      cap_mb,
+      ").");
+  return cap_mb * kBytesPerMiB;
 }
 
 bool parse_env_flag_or_default(const char* key, bool default_value) {
@@ -454,6 +473,8 @@ void maybe_warn_streaming_chunk_downshift_once(
     int64_t tile_area_budget,
     int64_t tile_area_cap_by_score_bytes,
     int64_t tile_area_cap_by_workspace_bytes,
+    int64_t workspace_cap_bytes,
+    bool score_tile_budgeting_active,
     int64_t remaining_bytes_for_score_tile,
     int64_t kv_cache_bytes) {
   if (requested_q_chunk == chosen_q_chunk && requested_kv_chunk == chosen_kv_chunk) {
@@ -464,7 +485,8 @@ void maybe_warn_streaming_chunk_downshift_once(
     std::fprintf(
         stderr,
         "[wan_fused_v1.warn] streaming chunk auto-downshift requested(q=%lld,kv=%lld) -> chosen(q=%lld,kv=%lld) "
-        "tile_area_budget=%lld cap_area=%lld cap_score_bytes=%lld cap_workspace=%lld remaining_score_tile_bytes=%lld kv_cache_bytes=%lld\n",
+        "tile_area_budget=%lld cap_area=%lld cap_score_bytes=%lld cap_workspace=%lld workspace_cap_bytes=%lld "
+        "score_tile_budgeting_active=%s remaining_score_tile_bytes=%lld kv_cache_bytes=%lld\n",
         static_cast<long long>(requested_q_chunk),
         static_cast<long long>(requested_kv_chunk),
         static_cast<long long>(chosen_q_chunk),
@@ -473,6 +495,8 @@ void maybe_warn_streaming_chunk_downshift_once(
         static_cast<long long>(kMaxQKvTileAreaElements),
         static_cast<long long>(tile_area_cap_by_score_bytes),
         static_cast<long long>(tile_area_cap_by_workspace_bytes),
+        static_cast<long long>(workspace_cap_bytes),
+        score_tile_budgeting_active ? "true" : "false",
         static_cast<long long>(remaining_bytes_for_score_tile),
         static_cast<long long>(kv_cache_bytes));
     std::fflush(stderr);
@@ -521,7 +545,8 @@ StreamingPlan enforce_streaming_invariants(
     int64_t head_dim,
     int64_t kv_cache_element_bytes,
     int64_t q_chunk_size,
-    int64_t kv_chunk_size) {
+    int64_t kv_chunk_size,
+    AttentionCoreMode core_mode) {
   TORCH_CHECK(head_dim > 0, "streaming invariant violated: head_dim must be > 0.");
   TORCH_CHECK(
       kv_cache_element_bytes > 0,
@@ -536,6 +561,9 @@ StreamingPlan enforce_streaming_invariants(
   const int64_t requested_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
   const int64_t requested_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
   const int64_t attention_matrix_elements = checked_mul_int64(q_len, kv_len, "q_len*kv_len");
+  const int64_t workspace_cap_bytes = precompute_workspace_cap_bytes();
+  const bool score_tile_budgeting_active =
+      !(core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && head_dim <= kCudaCoreMaxHeadDim);
 
   TORCH_CHECK(
       bh > 0,
@@ -544,12 +572,13 @@ StreamingPlan enforce_streaming_invariants(
       ").");
   const int64_t score_tile_bytes_per_area_element =
       checked_mul_int64(bh, static_cast<int64_t>(sizeof(float)), "score_tile_bytes_per_area_element");
-  const int64_t tile_area_cap_by_score_bytes = kMaxScoreTileBytes / score_tile_bytes_per_area_element;
+  const int64_t tile_area_cap_by_score_bytes =
+      score_tile_budgeting_active ? (kMaxScoreTileBytes / score_tile_bytes_per_area_element) : kMaxQKvTileAreaElements;
 
-  const int64_t remaining_bytes_for_score_tile = kMaxKvPrecomputeWorkspaceBytes - kv_cache_bytes;
+  const int64_t remaining_bytes_for_score_tile = workspace_cap_bytes - kv_cache_bytes;
   TORCH_CHECK(
-      remaining_bytes_for_score_tile > 0,
-      "streaming invariant violated: full K/V precompute workspace cap exhausted by kv cache alone. "
+      kv_cache_bytes <= workspace_cap_bytes,
+      "streaming invariant violated: full K/V precompute workspace cap exceeded by kv cache alone. "
       "bh=",
       bh,
       ", head_dim=",
@@ -561,14 +590,40 @@ StreamingPlan enforce_streaming_invariants(
       ", kv_cache_bytes=",
       kv_cache_bytes,
       ", workspace_cap_bytes=",
-      kMaxKvPrecomputeWorkspaceBytes,
+      workspace_cap_bytes,
+      ", score_tile_budgeting_active=",
+      score_tile_budgeting_active ? "true" : "false",
       ", requested_q_chunk_size=",
       q_chunk_size,
       ", requested_kv_chunk_size=",
       kv_chunk_size,
       ".");
+  if (score_tile_budgeting_active) {
+    TORCH_CHECK(
+        remaining_bytes_for_score_tile > 0,
+        "streaming invariant violated: full K/V precompute workspace cap leaves no score-tile workspace. "
+        "bh=",
+        bh,
+        ", head_dim=",
+        head_dim,
+        ", q_len=",
+        q_len,
+        ", kv_len=",
+        kv_len,
+        ", kv_cache_bytes=",
+        kv_cache_bytes,
+        ", workspace_cap_bytes=",
+        workspace_cap_bytes,
+        ", score_tile_budgeting_active=",
+        score_tile_budgeting_active ? "true" : "false",
+        ", requested_q_chunk_size=",
+        q_chunk_size,
+        ", requested_kv_chunk_size=",
+        kv_chunk_size,
+        ".");
+  }
   const int64_t tile_area_cap_by_workspace_bytes =
-      remaining_bytes_for_score_tile / score_tile_bytes_per_area_element;
+      score_tile_budgeting_active ? (remaining_bytes_for_score_tile / score_tile_bytes_per_area_element) : kMaxQKvTileAreaElements;
   const int64_t tile_area_budget =
       std::min<int64_t>(kMaxQKvTileAreaElements, std::min<int64_t>(tile_area_cap_by_score_bytes, tile_area_cap_by_workspace_bytes));
 
@@ -586,7 +641,9 @@ StreamingPlan enforce_streaming_invariants(
       ", kv_cache_bytes=",
       kv_cache_bytes,
       ", workspace_cap_bytes=",
-      kMaxKvPrecomputeWorkspaceBytes,
+      workspace_cap_bytes,
+      ", score_tile_budgeting_active=",
+      score_tile_budgeting_active ? "true" : "false",
       ", remaining_bytes_for_score_tile=",
       remaining_bytes_for_score_tile,
       ", tile_area_budget=",
@@ -634,6 +691,10 @@ StreamingPlan enforce_streaming_invariants(
       requested_q_chunk,
       ", requested_clamped_kv_chunk=",
       requested_kv_chunk,
+      ", workspace_cap_bytes=",
+      workspace_cap_bytes,
+      ", score_tile_budgeting_active=",
+      score_tile_budgeting_active ? "true" : "false",
       ".");
 
   bool have_choice = false;
@@ -711,7 +772,9 @@ StreamingPlan enforce_streaming_invariants(
       ", kv_cache_bytes=",
       kv_cache_bytes,
       ", workspace_cap_bytes=",
-      kMaxKvPrecomputeWorkspaceBytes,
+      workspace_cap_bytes,
+      ", score_tile_budgeting_active=",
+      score_tile_budgeting_active ? "true" : "false",
       ", remaining_bytes_for_score_tile=",
       remaining_bytes_for_score_tile,
       ", tile_area_budget=",
@@ -732,6 +795,8 @@ StreamingPlan enforce_streaming_invariants(
       tile_area_budget,
       tile_area_cap_by_score_bytes,
       tile_area_cap_by_workspace_bytes,
+      workspace_cap_bytes,
+      score_tile_budgeting_active,
       remaining_bytes_for_score_tile,
       kv_cache_bytes);
 
@@ -757,55 +822,62 @@ StreamingPlan enforce_streaming_invariants(
           checked_mul_int64(bh, q_len, "batch*heads*q_len"),
           kv_len,
           "full_attention_elements");
-  const int64_t score_tile_elements = checked_mul_int64(
+  const int64_t computed_score_tile_elements = checked_mul_int64(
       checked_mul_int64(bh, resolved_q_chunk, "batch*heads*q_chunk"),
       resolved_kv_chunk,
       "score_tile_elements");
-  const int64_t score_tile_bytes = checked_mul_int64(
-      score_tile_elements,
+  const int64_t computed_score_tile_bytes = checked_mul_int64(
+      computed_score_tile_elements,
       static_cast<int64_t>(sizeof(float)),
       "score_tile_bytes");
-  const int64_t precompute_workspace_bytes =
-      checked_add_int64(score_tile_bytes, kv_cache_bytes, "precompute_workspace_bytes");
+  const int64_t score_tile_elements = score_tile_budgeting_active ? computed_score_tile_elements : 0;
+  const int64_t score_tile_bytes = score_tile_budgeting_active ? computed_score_tile_bytes : 0;
+  const int64_t precompute_workspace_bytes = score_tile_budgeting_active
+      ? checked_add_int64(score_tile_bytes, kv_cache_bytes, "precompute_workspace_bytes")
+      : kv_cache_bytes;
 
-  TORCH_CHECK(
-      score_tile_bytes <= kMaxScoreTileBytes,
-      "streaming invariant violated: score tile bytes exceed cap (",
-      score_tile_bytes,
-      " > ",
-      kMaxScoreTileBytes,
-      "). bh=",
-      bh,
-      ", head_dim=",
-      head_dim,
-      ", q_len=",
-      q_len,
-      ", kv_len=",
-      kv_len,
-      ", kv_cache_bytes=",
-      kv_cache_bytes,
-      ", workspace_cap_bytes=",
-      kMaxKvPrecomputeWorkspaceBytes,
-      ", remaining_bytes_for_score_tile=",
-      remaining_bytes_for_score_tile,
-      ", tile_area_budget=",
-      tile_area_budget,
-      ", requested_q_chunk_size=",
-      q_chunk_size,
-      ", requested_kv_chunk_size=",
-      kv_chunk_size,
-      ". require q_chunk*kv_chunk <= ",
-      tile_area_budget,
-      ".");
+  if (score_tile_budgeting_active) {
+    TORCH_CHECK(
+        score_tile_bytes <= kMaxScoreTileBytes,
+        "streaming invariant violated: score tile bytes exceed cap (",
+        score_tile_bytes,
+        " > ",
+        kMaxScoreTileBytes,
+        "). bh=",
+        bh,
+        ", head_dim=",
+        head_dim,
+        ", q_len=",
+        q_len,
+        ", kv_len=",
+        kv_len,
+        ", kv_cache_bytes=",
+        kv_cache_bytes,
+        ", workspace_cap_bytes=",
+        workspace_cap_bytes,
+        ", score_tile_budgeting_active=",
+        score_tile_budgeting_active ? "true" : "false",
+        ", remaining_bytes_for_score_tile=",
+        remaining_bytes_for_score_tile,
+        ", tile_area_budget=",
+        tile_area_budget,
+        ", requested_q_chunk_size=",
+        q_chunk_size,
+        ", requested_kv_chunk_size=",
+        kv_chunk_size,
+        ". require q_chunk*kv_chunk <= ",
+        tile_area_budget,
+        ".");
+  }
 
   // F2/F7: full K/V precompute persists across the entire Q loop; guard this
   // persistent residency plus score tile workspace, not score tile alone.
   TORCH_CHECK(
-      precompute_workspace_bytes <= kMaxKvPrecomputeWorkspaceBytes,
+      precompute_workspace_bytes <= workspace_cap_bytes,
       "streaming invariant violated: full K/V precompute workspace bytes exceed cap (",
       precompute_workspace_bytes,
       " > ",
-      kMaxKvPrecomputeWorkspaceBytes,
+      workspace_cap_bytes,
       "). bh=",
       bh,
       ", head_dim=",
@@ -817,7 +889,9 @@ StreamingPlan enforce_streaming_invariants(
       ", kv_cache_bytes=",
       kv_cache_bytes,
       ", workspace_cap_bytes=",
-      kMaxKvPrecomputeWorkspaceBytes,
+      workspace_cap_bytes,
+      ", score_tile_budgeting_active=",
+      score_tile_budgeting_active ? "true" : "false",
       ", remaining_bytes_for_score_tile=",
       remaining_bytes_for_score_tile,
       ", tile_area_budget=",
@@ -1231,14 +1305,13 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   c10::optional<torch::Tensor> bk = has_k_bias ? c10::optional<torch::Tensor>(*b_k) : c10::nullopt;
   c10::optional<torch::Tensor> bv = has_v_bias ? c10::optional<torch::Tensor>(*b_v) : c10::nullopt;
 
-  const StreamingPlan plan =
-      enforce_streaming_invariants(
-          bsz, num_heads, seq_len, seq_len, head_dim, kv_cache_element_bytes, q_chunk_size, kv_chunk_size);
+  const AttentionCoreMode core_mode = attention_core_mode(attn_core, "wan_fused_v1.self_fwd: attn_core");
+  const StreamingPlan plan = enforce_streaming_invariants(
+      bsz, num_heads, seq_len, seq_len, head_dim, kv_cache_element_bytes, q_chunk_size, kv_chunk_size, core_mode);
   const int64_t resolved_q_chunk = plan.q_chunk;
   const int64_t resolved_kv_chunk = plan.kv_chunk;
   const int64_t q_total_chunks = (seq_len + resolved_q_chunk - 1) / resolved_q_chunk;
   const int64_t q_trace_every = kernel_trace_every_q_chunk();
-  const AttentionCoreMode core_mode = attention_core_mode(attn_core, "wan_fused_v1.self_fwd: attn_core");
 
   auto k_cache_bhld = project_norm_rope_chunk_bhld(
       x,
@@ -1431,14 +1504,13 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
       std::max<int64_t>(static_cast<int64_t>(context.element_size()),
                         std::max<int64_t>(static_cast<int64_t>(w_k.element_size()), static_cast<int64_t>(w_v.element_size())));
 
-  const StreamingPlan plan =
-      enforce_streaming_invariants(
-          bsz, num_heads, q_len, kv_len, head_dim, kv_cache_element_bytes, q_chunk_size, kv_chunk_size);
+  const AttentionCoreMode core_mode = attention_core_mode(attn_core, "wan_fused_v1.cross_fwd: attn_core");
+  const StreamingPlan plan = enforce_streaming_invariants(
+      bsz, num_heads, q_len, kv_len, head_dim, kv_cache_element_bytes, q_chunk_size, kv_chunk_size, core_mode);
   const int64_t resolved_q_chunk = plan.q_chunk;
   const int64_t resolved_kv_chunk = plan.kv_chunk;
   const int64_t q_total_chunks = (q_len + resolved_q_chunk - 1) / resolved_q_chunk;
   const int64_t q_trace_every = kernel_trace_every_q_chunk();
-  const AttentionCoreMode core_mode = attention_core_mode(attn_core, "wan_fused_v1.cross_fwd: attn_core");
 
   auto k_cache_bhld = project_norm_rope_chunk_bhld(
       context,

@@ -54,7 +54,7 @@ logger = logging.getLogger("backend.runtime.attention.wan_fused_v1")
 _MODE_ENV_KEY = "CODEX_WAN22_FUSED_ATTN_V1_MODE"
 _JIT_ENV_KEY = "CODEX_WAN_FUSED_V1_JIT"
 _ATTN_CORE_ENV_KEY = "CODEX_WAN_FUSED_V1_ATTN_CORE"
-_FORCE_DEFAULT_ATTN_CORE_VALUE = "cuda_experimental"
+_FORCE_DEFAULT_ATTN_CORE_VALUE = "aten"
 _REQUIRED_EXTENSION_ABI = 4
 
 

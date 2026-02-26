@@ -29,15 +29,18 @@ Status: Active
 - 2026-02-26: `cuda_experimental` boots a custom CUDA streaming update kernel (no global score tensor materialization) for head_dim `<=128`; unsupported head dims log trace marker and continue on ATen path.
 - 2026-02-26: WAN22 model/run now plumb resolver output directly (`attn_core`, `attn_core_source`, `attn_core_raw`) and do not mutate env in the model/run hot path.
 - 2026-02-26: Worker1 cache-guard knobs are fail-loud upper bounds: `CODEX_WAN_FUSED_V1_Q_CHUNK` (`1..512`) and `CODEX_WAN_FUSED_V1_KV_CHUNK` (`1..1024`). Kernel picks the largest deterministic feasible power-of-two pair under runtime caps; invalid env values still raise immediately.
+- 2026-02-26: Full K/V precompute workspace cap is now env-configurable via `CODEX_WAN_FUSED_V1_PRECOMPUTE_WORKSPACE_MB` (strict positive integer MB, default `512`). Budgeting is core-aware: score-tile workspace budgeting is active for ATen path (including `cuda_experimental` with `head_dim>128` fallback) and bypassed for actual CUDA streaming core (`cuda_experimental` with `head_dim<=128`).
 
 ## Required Env Matrix (current)
-- Force mode + performance (recommended): `CODEX_WAN22_FUSED_ATTN_V1_MODE=force`; optionally pin `CODEX_WAN_FUSED_V1_ATTN_CORE=cuda_experimental` (resolver default in force mode is already `cuda_experimental` with source `force_default`).
+- Force mode default (fail-loud): `CODEX_WAN22_FUSED_ATTN_V1_MODE=force` (resolver default core is now `aten`, source `force_default`).
+- Force mode experimental CUDA core (opt-in): `CODEX_WAN22_FUSED_ATTN_V1_MODE=force` + `CODEX_WAN_FUSED_V1_ATTN_CORE=cuda_experimental`.
 - Auto mode (caller fallback allowed): `CODEX_WAN22_FUSED_ATTN_V1_MODE=auto`; `CODEX_WAN_FUSED_V1_ATTN_CORE` optional (`aten` default).
 - Fused off: `CODEX_WAN22_FUSED_ATTN_V1_MODE=off` (leave `CODEX_WAN_FUSED_V1_ATTN_CORE` unset).
 - Fail-loud cache/streaming guard upper bounds: `CODEX_WAN_FUSED_V1_Q_CHUNK` (`1..512`) and `CODEX_WAN_FUSED_V1_KV_CHUNK` (`1..1024`).
+- Full K/V precompute workspace cap (MiB): `CODEX_WAN_FUSED_V1_PRECOMPUTE_WORKSPACE_MB` (strict positive integer, default `512`).
 
 ## Slow-Path Troubleshooting (force mode)
-- If force mode is slow, first verify runtime summary fields `attn_core` / `attn_core_source` and ensure core is not explicitly pinned to `aten`.
+- If force mode is slow, first verify runtime summary fields `attn_core` / `attn_core_source` to confirm whether execution resolved to `aten` (`env` pin or `force_default`) versus `cuda_experimental`.
 - Enable `CODEX_WAN_FUSED_V1_KERNEL_TRACE=1` and check phase markers:
   - `aten_long_seq_path`: core resolved to ATen path for a long sequence.
   - `cuda_core_head_dim_unsupported`: `head_dim>128`, so CUDA experimental core cannot be used.

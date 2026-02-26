@@ -366,17 +366,24 @@ class WanSelfAttention(nn.Module):
                 "WAN RoPE expects floating-point hidden states; "
                 f"got dtype={hidden_states.dtype} shape={tuple(hidden_states.shape)}."
             )
-        original_dtype = hidden_states.dtype
         with autocast_disabled(hidden_states.device.type):
-            x1 = hidden_states[..., 0::2].float()
-            x2 = hidden_states[..., 1::2].float()
-            cos = freqs_cos[..., 0::2].float()
-            sin = freqs_sin[..., 1::2].float()
-            out0 = x1 * cos - x2 * sin
-            out1 = x1 * sin + x2 * cos
+            # Keep RoPE math in fp32 for parity, but avoid materializing fp32 copies of the
+            # full Q/K tensors (`.float()` here can be ~GB-scale for WAN22 long sequences).
+            x1 = hidden_states[..., 0::2]
+            x2 = hidden_states[..., 1::2]
+            cos = freqs_cos[..., 0::2]
+            sin = freqs_sin[..., 1::2]
+
+            out0 = torch.empty_like(x1, dtype=torch.float32)
+            torch.mul(x1, cos, out=out0)
+            out0.addcmul_(x2, sin, value=-1.0)
+
+            out1 = torch.empty_like(x2, dtype=torch.float32)
+            torch.mul(x1, sin, out=out1)
+            out1.addcmul_(x2, cos, value=1.0)
         out = torch.empty_like(hidden_states)
-        out[..., 0::2] = out0.to(dtype=original_dtype)
-        out[..., 1::2] = out1.to(dtype=original_dtype)
+        out[..., 0::2].copy_(out0)
+        out[..., 1::2].copy_(out1)
         return out
 
     def forward(
@@ -389,6 +396,7 @@ class WanSelfAttention(nn.Module):
     ) -> torch.Tensor:
         B, L, C = x.shape
         trace_enabled = bool(trace_debug and logger.isEnabledFor(logging.DEBUG))
+        trace_mem_detail = bool(trace_enabled and trace_block_idx is not None and int(trace_block_idx) == 0)
         block_tag = "?" if trace_block_idx is None else str(int(trace_block_idx) + 1)
 
         fused_mode = get_wan_fused_mode()
@@ -484,9 +492,27 @@ class WanSelfAttention(nn.Module):
         v = v.view(B, L, self.num_heads, self.head_dim)
 
         if rotary_emb is not None:
+            if trace_mem_detail:
+                logger.debug(
+                    "[wan22.trace] block[%s] self_attn pre_rope: %s",
+                    block_tag,
+                    _cuda_mem_snapshot_str(x.device),
+                )
             freqs_cos, freqs_sin = rotary_emb
             q = self._apply_rope(q, freqs_cos, freqs_sin)
+            if trace_mem_detail:
+                logger.debug(
+                    "[wan22.trace] block[%s] self_attn post_rope_q: %s",
+                    block_tag,
+                    _cuda_mem_snapshot_str(x.device),
+                )
             k = self._apply_rope(k, freqs_cos, freqs_sin)
+            if trace_mem_detail:
+                logger.debug(
+                    "[wan22.trace] block[%s] self_attn post_rope_k: %s",
+                    block_tag,
+                    _cuda_mem_snapshot_str(x.device),
+                )
 
         q = q.permute(0, 2, 1, 3)
         k = k.permute(0, 2, 1, 3)
@@ -494,11 +520,26 @@ class WanSelfAttention(nn.Module):
 
         # Scaled dot-product attention
         attn_out = wan_sdpa(q, k, v, causal=False)
+        if trace_mem_detail:
+            logger.debug(
+                "[wan22.trace] block[%s] self_attn post_sdpa: %s",
+                block_tag,
+                _cuda_mem_snapshot_str(x.device),
+            )
+        del q, k, v
 
         # Merge heads
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, C)
+        if trace_mem_detail:
+            logger.debug(
+                "[wan22.trace] block[%s] self_attn post_merge_heads: %s",
+                block_tag,
+                _cuda_mem_snapshot_str(x.device),
+            )
 
-        return self.o(attn_out)
+        out = self.o(attn_out)
+        del attn_out
+        return out
 
 
 class WanCrossAttention(nn.Module):
@@ -639,11 +680,14 @@ class WanCrossAttention(nn.Module):
 
         # Scaled dot-product attention
         attn_out = wan_sdpa(q, k, v, causal=False)
+        del q, k, v
 
         # Merge heads
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, C)
 
-        return self.o(attn_out)
+        out = self.o(attn_out)
+        del attn_out
+        return out
 
 
 class WanFFN(nn.Module):

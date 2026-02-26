@@ -676,7 +676,14 @@ def _map_kernel_runtime_error_code(message: str) -> str:
     lowered = normalized.lower()
     if "streaming invariant violated" in lowered:
         return E_WAN_FUSED_STREAMING_INVARIANT_VIOLATION
-    if "strict integer" in lowered and "codex_wan_fused_v1_" in lowered:
+    if "codex_wan_fused_v1_" in lowered and (
+        "strict integer" in lowered
+        or "positive integer" in lowered
+        or "boolean flag" in lowered
+        or "must be > 0" in lowered
+        or "exceeds hard cap" in lowered
+        or "must be one of: aten | cuda_experimental" in lowered
+    ):
         return E_WAN_FUSED_INVALID_ENV
     return E_WAN_FUSED_KERNEL_RUNTIME_ERROR
 

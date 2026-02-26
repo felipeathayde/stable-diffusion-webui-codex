@@ -534,6 +534,7 @@ torch::Tensor streaming_attention_self_chunk_bhld(
     int64_t batch,
     int64_t heads,
     int64_t head_dim,
+    bool trace_q_chunk,
     int64_t q_start,
     int64_t q_end,
     int64_t q_len_total) {
@@ -547,14 +548,16 @@ torch::Tensor streaming_attention_self_chunk_bhld(
   const AttentionCoreMode core_mode = attention_core_mode();
   const bool use_cuda_core = core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && head_dim <= kCudaCoreMaxHeadDim;
   const int64_t attention_elements = checked_mul_int64(q_len_total, kv_len, "self_attention_elements");
-  if (core_mode == AttentionCoreMode::ATE_NAIVE && attention_elements > kSmallAttentionMatrixElementsBypass) {
+  if (trace_q_chunk && core_mode == AttentionCoreMode::ATE_NAIVE && attention_elements > kSmallAttentionMatrixElementsBypass) {
     maybe_trace_kernel_memory("self_attn", "aten_long_seq_path", q_chunk_bhld, q_start, q_end, q_len_total, 0, kv_len, kv_len);
   }
-  if (core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && !use_cuda_core) {
+  if (trace_q_chunk && core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && !use_cuda_core) {
     maybe_trace_kernel_memory("self_attn", "cuda_core_head_dim_unsupported", q_chunk_bhld, q_start, q_end, q_len_total, 0, kv_len, kv_len);
   }
   auto q_chunk = q_chunk_bhld.to(torch::kFloat).contiguous();
-  maybe_trace_kernel_memory("self_attn", "attn_chunk.q_fp32", q_chunk, q_start, q_end, q_len_total, 0, 0, kv_len);
+  if (trace_q_chunk) {
+    maybe_trace_kernel_memory("self_attn", "attn_chunk.q_fp32", q_chunk, q_start, q_end, q_len_total, 0, 0, kv_len);
+  }
   auto m = torch::full({batch, heads, q_span, 1}, -std::numeric_limits<float>::infinity(), options_fp32.device(device));
   auto l = torch::zeros({batch, heads, q_span, 1}, options_fp32.device(device));
   auto acc = torch::zeros({batch, heads, q_span, head_dim}, options_fp32.device(device));
@@ -613,7 +616,9 @@ torch::Tensor streaming_attention_self_chunk_bhld(
   }
 
   auto out = (acc / l.clamp_min(1e-9f)).to(output_dtype);
-  maybe_trace_kernel_memory("self_attn", "attn_chunk.out_ready", out, q_start, q_end, q_len_total, kv_len, kv_len, kv_len);
+  if (trace_q_chunk) {
+    maybe_trace_kernel_memory("self_attn", "attn_chunk.out_ready", out, q_start, q_end, q_len_total, kv_len, kv_len, kv_len);
+  }
   return out;
 }
 
@@ -631,6 +636,7 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
     int64_t batch,
     int64_t heads,
     int64_t head_dim,
+    bool trace_q_chunk,
     int64_t q_start,
     int64_t q_end,
     int64_t q_len_total) {
@@ -644,14 +650,16 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
   const AttentionCoreMode core_mode = attention_core_mode();
   const bool use_cuda_core = core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && head_dim <= kCudaCoreMaxHeadDim;
   const int64_t attention_elements = checked_mul_int64(q_len_total, kv_len, "cross_attention_elements");
-  if (core_mode == AttentionCoreMode::ATE_NAIVE && attention_elements > kSmallAttentionMatrixElementsBypass) {
+  if (trace_q_chunk && core_mode == AttentionCoreMode::ATE_NAIVE && attention_elements > kSmallAttentionMatrixElementsBypass) {
     maybe_trace_kernel_memory("cross_attn", "aten_long_seq_path", q_chunk_bhld, q_start, q_end, q_len_total, 0, kv_len, kv_len);
   }
-  if (core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && !use_cuda_core) {
+  if (trace_q_chunk && core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && !use_cuda_core) {
     maybe_trace_kernel_memory("cross_attn", "cuda_core_head_dim_unsupported", q_chunk_bhld, q_start, q_end, q_len_total, 0, kv_len, kv_len);
   }
   auto q_chunk = q_chunk_bhld.to(torch::kFloat).contiguous();
-  maybe_trace_kernel_memory("cross_attn", "attn_chunk.q_fp32", q_chunk, q_start, q_end, q_len_total, 0, 0, kv_len);
+  if (trace_q_chunk) {
+    maybe_trace_kernel_memory("cross_attn", "attn_chunk.q_fp32", q_chunk, q_start, q_end, q_len_total, 0, 0, kv_len);
+  }
   auto m = torch::full({batch, heads, q_span, 1}, -std::numeric_limits<float>::infinity(), options_fp32.device(device));
   auto l = torch::zeros({batch, heads, q_span, 1}, options_fp32.device(device));
   auto acc = torch::zeros({batch, heads, q_span, head_dim}, options_fp32.device(device));
@@ -710,7 +718,9 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
   }
 
   auto out = (acc / l.clamp_min(1e-9f)).to(output_dtype);
-  maybe_trace_kernel_memory("cross_attn", "attn_chunk.out_ready", out, q_start, q_end, q_len_total, kv_len, kv_len, kv_len);
+  if (trace_q_chunk) {
+    maybe_trace_kernel_memory("cross_attn", "attn_chunk.out_ready", out, q_start, q_end, q_len_total, kv_len, kv_len, kv_len);
+  }
   return out;
 }
 
@@ -916,6 +926,7 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
             bsz,
             num_heads,
             head_dim,
+            trace_q_chunk,
             q_start,
             q_end,
             seq_len);
@@ -1097,6 +1108,7 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
             bsz,
             num_heads,
             head_dim,
+            trace_q_chunk,
             q_start,
             q_end,
             q_len);

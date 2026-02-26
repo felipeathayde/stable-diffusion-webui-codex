@@ -304,7 +304,7 @@ __global__ void streaming_attention_update_fp32_kernel(
   const float* k_base = k_ptr + kv_offset;
   const float* v_base = v_ptr + kv_offset;
 
-  float local_max = -CUDART_INF_F;
+  float local_max = -std::numeric_limits<float>::infinity();
   for (int64_t kv_index = 0; kv_index < kv_span; ++kv_index) {
     const float* k_row = k_base + kv_index * head_dim;
     float dot = 0.0f;

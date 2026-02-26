@@ -17,8 +17,10 @@
 #include <cstdlib>
 #include <cstdio>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <tuple>
+#include <vector>
 
 namespace {
 
@@ -444,6 +446,39 @@ int64_t checked_add_int64(int64_t left, int64_t right, const char* label) {
   return left + right;
 }
 
+void maybe_warn_streaming_chunk_downshift_once(
+    int64_t requested_q_chunk,
+    int64_t requested_kv_chunk,
+    int64_t chosen_q_chunk,
+    int64_t chosen_kv_chunk,
+    int64_t tile_area_budget,
+    int64_t tile_area_cap_by_score_bytes,
+    int64_t tile_area_cap_by_workspace_bytes,
+    int64_t remaining_bytes_for_score_tile,
+    int64_t kv_cache_bytes) {
+  if (requested_q_chunk == chosen_q_chunk && requested_kv_chunk == chosen_kv_chunk) {
+    return;
+  }
+  static std::once_flag warning_once_flag;
+  std::call_once(warning_once_flag, [&]() {
+    std::fprintf(
+        stderr,
+        "[wan_fused_v1.warn] streaming chunk auto-downshift requested(q=%lld,kv=%lld) -> chosen(q=%lld,kv=%lld) "
+        "tile_area_budget=%lld cap_area=%lld cap_score_bytes=%lld cap_workspace=%lld remaining_score_tile_bytes=%lld kv_cache_bytes=%lld\n",
+        static_cast<long long>(requested_q_chunk),
+        static_cast<long long>(requested_kv_chunk),
+        static_cast<long long>(chosen_q_chunk),
+        static_cast<long long>(chosen_kv_chunk),
+        static_cast<long long>(tile_area_budget),
+        static_cast<long long>(kMaxQKvTileAreaElements),
+        static_cast<long long>(tile_area_cap_by_score_bytes),
+        static_cast<long long>(tile_area_cap_by_workspace_bytes),
+        static_cast<long long>(remaining_bytes_for_score_tile),
+        static_cast<long long>(kv_cache_bytes));
+    std::fflush(stderr);
+  });
+}
+
 struct StreamingPlan {
   int64_t q_chunk;
   int64_t kv_chunk;
@@ -493,31 +528,215 @@ StreamingPlan enforce_streaming_invariants(
       "streaming invariant violated: kv cache element bytes must be > 0 (got ",
       kv_cache_element_bytes,
       ").");
-  int64_t resolved_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
-  int64_t resolved_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
+  const int64_t bh = checked_mul_int64(batch, heads, "batch*heads");
+  const int64_t kv_cache_elements_per_tensor =
+      checked_mul_int64(checked_mul_int64(bh, kv_len, "batch*heads*kv_len"), head_dim, "kv_cache_elements_per_tensor");
+  const int64_t kv_cache_elements = checked_mul_int64(kv_cache_elements_per_tensor, 2, "kv_cache_elements");
+  const int64_t kv_cache_bytes = checked_mul_int64(kv_cache_elements, kv_cache_element_bytes, "kv_cache_bytes");
+  const int64_t requested_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
+  const int64_t requested_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
   const int64_t attention_matrix_elements = checked_mul_int64(q_len, kv_len, "q_len*kv_len");
-  if (attention_matrix_elements > kSmallAttentionMatrixElementsBypass &&
-      resolved_q_chunk == q_len &&
-      resolved_kv_chunk == kv_len) {
-    if (kv_len > 1) {
-      int64_t adaptive_kv_chunk =
-          std::max<int64_t>(1, kSmallAttentionMatrixElementsBypass / std::max<int64_t>(1, q_len));
-      adaptive_kv_chunk = std::min<int64_t>(adaptive_kv_chunk, kv_len - 1);
-      if (adaptive_kv_chunk >= 1 && adaptive_kv_chunk < kv_len) {
-        resolved_kv_chunk = adaptive_kv_chunk;
-      }
+
+  TORCH_CHECK(
+      bh > 0,
+      "streaming invariant violated: batch*heads must be > 0 (got ",
+      bh,
+      ").");
+  const int64_t score_tile_bytes_per_area_element =
+      checked_mul_int64(bh, static_cast<int64_t>(sizeof(float)), "score_tile_bytes_per_area_element");
+  const int64_t tile_area_cap_by_score_bytes = kMaxScoreTileBytes / score_tile_bytes_per_area_element;
+
+  const int64_t remaining_bytes_for_score_tile = kMaxKvPrecomputeWorkspaceBytes - kv_cache_bytes;
+  TORCH_CHECK(
+      remaining_bytes_for_score_tile > 0,
+      "streaming invariant violated: full K/V precompute workspace cap exhausted by kv cache alone. "
+      "bh=",
+      bh,
+      ", head_dim=",
+      head_dim,
+      ", q_len=",
+      q_len,
+      ", kv_len=",
+      kv_len,
+      ", kv_cache_bytes=",
+      kv_cache_bytes,
+      ", workspace_cap_bytes=",
+      kMaxKvPrecomputeWorkspaceBytes,
+      ", requested_q_chunk_size=",
+      q_chunk_size,
+      ", requested_kv_chunk_size=",
+      kv_chunk_size,
+      ".");
+  const int64_t tile_area_cap_by_workspace_bytes =
+      remaining_bytes_for_score_tile / score_tile_bytes_per_area_element;
+  const int64_t tile_area_budget =
+      std::min<int64_t>(kMaxQKvTileAreaElements, std::min<int64_t>(tile_area_cap_by_score_bytes, tile_area_cap_by_workspace_bytes));
+
+  TORCH_CHECK(
+      tile_area_budget > 0,
+      "streaming invariant violated: no score-tile area budget remains after caps. "
+      "bh=",
+      bh,
+      ", head_dim=",
+      head_dim,
+      ", q_len=",
+      q_len,
+      ", kv_len=",
+      kv_len,
+      ", kv_cache_bytes=",
+      kv_cache_bytes,
+      ", workspace_cap_bytes=",
+      kMaxKvPrecomputeWorkspaceBytes,
+      ", remaining_bytes_for_score_tile=",
+      remaining_bytes_for_score_tile,
+      ", tile_area_budget=",
+      tile_area_budget,
+      ", requested_q_chunk_size=",
+      q_chunk_size,
+      ", requested_kv_chunk_size=",
+      kv_chunk_size,
+      ". require q_chunk*kv_chunk <= ",
+      tile_area_budget,
+      ".");
+
+  static constexpr int64_t kQChunkCandidatesDesc[] = {512, 256, 128, 64, 32, 16, 8, 4, 2, 1};
+  static constexpr int64_t kKvChunkCandidatesDesc[] = {1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1};
+  std::vector<int64_t> q_candidates;
+  std::vector<int64_t> kv_candidates;
+  q_candidates.reserve(sizeof(kQChunkCandidatesDesc) / sizeof(kQChunkCandidatesDesc[0]));
+  kv_candidates.reserve(sizeof(kKvChunkCandidatesDesc) / sizeof(kKvChunkCandidatesDesc[0]));
+  for (const int64_t candidate_q : kQChunkCandidatesDesc) {
+    if (candidate_q <= requested_q_chunk && candidate_q <= q_len) {
+      q_candidates.push_back(candidate_q);
     }
-    if (resolved_q_chunk == q_len && resolved_kv_chunk == kv_len && q_len > 1) {
-      int64_t adaptive_q_chunk =
-          std::max<int64_t>(1, kSmallAttentionMatrixElementsBypass / std::max<int64_t>(1, kv_len));
-      adaptive_q_chunk = std::min<int64_t>(adaptive_q_chunk, q_len - 1);
-      if (adaptive_q_chunk >= 1 && adaptive_q_chunk < q_len) {
-        resolved_q_chunk = adaptive_q_chunk;
+  }
+  for (const int64_t candidate_kv : kKvChunkCandidatesDesc) {
+    if (candidate_kv <= requested_kv_chunk && candidate_kv <= kv_len) {
+      kv_candidates.push_back(candidate_kv);
+    }
+  }
+  TORCH_CHECK(
+      !q_candidates.empty() && !kv_candidates.empty(),
+      "streaming invariant violated: no valid power-of-two chunk candidates under requested limits. "
+      "bh=",
+      bh,
+      ", head_dim=",
+      head_dim,
+      ", q_len=",
+      q_len,
+      ", kv_len=",
+      kv_len,
+      ", requested_q_chunk_size=",
+      q_chunk_size,
+      ", requested_kv_chunk_size=",
+      kv_chunk_size,
+      ", requested_clamped_q_chunk=",
+      requested_q_chunk,
+      ", requested_clamped_kv_chunk=",
+      requested_kv_chunk,
+      ".");
+
+  bool have_choice = false;
+  int64_t resolved_q_chunk = 0;
+  int64_t resolved_kv_chunk = 0;
+  int64_t best_tile_area = 0;
+  int64_t best_ratio_numerator = 0;
+  int64_t best_ratio_denominator = 1;
+  int64_t best_min_side = 0;
+  const bool forbid_full_tile =
+      attention_matrix_elements > kSmallAttentionMatrixElementsBypass;
+  for (const int64_t candidate_q : q_candidates) {
+    for (const int64_t candidate_kv : kv_candidates) {
+      if (forbid_full_tile && candidate_q == q_len && candidate_kv == kv_len) {
+        continue;
+      }
+      const int64_t candidate_tile_area =
+          checked_mul_int64(candidate_q, candidate_kv, "candidate_q*candidate_kv");
+      if (candidate_tile_area > tile_area_budget) {
+        continue;
+      }
+      const int64_t candidate_min_side = std::min<int64_t>(candidate_q, candidate_kv);
+      const int64_t candidate_max_side = std::max<int64_t>(candidate_q, candidate_kv);
+      const int64_t candidate_ratio_numerator = candidate_max_side;
+      const int64_t candidate_ratio_denominator = candidate_min_side;
+
+      bool choose_candidate = false;
+      if (!have_choice) {
+        choose_candidate = true;
+      } else if (candidate_tile_area > best_tile_area) {
+        choose_candidate = true;
+      } else if (candidate_tile_area == best_tile_area) {
+        const int64_t ratio_left = checked_mul_int64(
+            candidate_ratio_numerator,
+            best_ratio_denominator,
+            "candidate_ratio_numerator*best_ratio_denominator");
+        const int64_t ratio_right = checked_mul_int64(
+            best_ratio_numerator,
+            candidate_ratio_denominator,
+            "best_ratio_numerator*candidate_ratio_denominator");
+        if (ratio_left < ratio_right) {
+          choose_candidate = true;
+        } else if (ratio_left == ratio_right) {
+          if (candidate_min_side > best_min_side) {
+            choose_candidate = true;
+          } else if (candidate_min_side == best_min_side && candidate_q > resolved_q_chunk) {
+            choose_candidate = true;
+          }
+        }
+      }
+
+      if (choose_candidate) {
+        have_choice = true;
+        resolved_q_chunk = candidate_q;
+        resolved_kv_chunk = candidate_kv;
+        best_tile_area = candidate_tile_area;
+        best_ratio_numerator = candidate_ratio_numerator;
+        best_ratio_denominator = candidate_ratio_denominator;
+        best_min_side = candidate_min_side;
       }
     }
   }
 
-  const int64_t tile_area = checked_mul_int64(resolved_q_chunk, resolved_kv_chunk, "q_chunk*kv_chunk");
+  TORCH_CHECK(
+      have_choice,
+      "streaming invariant violated: no feasible (q_chunk,kv_chunk) pair fits computed budgets. "
+      "bh=",
+      bh,
+      ", head_dim=",
+      head_dim,
+      ", q_len=",
+      q_len,
+      ", kv_len=",
+      kv_len,
+      ", kv_cache_bytes=",
+      kv_cache_bytes,
+      ", workspace_cap_bytes=",
+      kMaxKvPrecomputeWorkspaceBytes,
+      ", remaining_bytes_for_score_tile=",
+      remaining_bytes_for_score_tile,
+      ", tile_area_budget=",
+      tile_area_budget,
+      ", requested_q_chunk_size=",
+      q_chunk_size,
+      ", requested_kv_chunk_size=",
+      kv_chunk_size,
+      ". require q_chunk*kv_chunk <= ",
+      tile_area_budget,
+      ".");
+
+  maybe_warn_streaming_chunk_downshift_once(
+      requested_q_chunk,
+      requested_kv_chunk,
+      resolved_q_chunk,
+      resolved_kv_chunk,
+      tile_area_budget,
+      tile_area_cap_by_score_bytes,
+      tile_area_cap_by_workspace_bytes,
+      remaining_bytes_for_score_tile,
+      kv_cache_bytes);
+
+  const int64_t tile_area =
+      checked_mul_int64(resolved_q_chunk, resolved_kv_chunk, "q_chunk*kv_chunk");
   TORCH_CHECK(
       tile_area <= kMaxQKvTileAreaElements,
       "streaming invariant violated: q_chunk*kv_chunk exceeds cap (",
@@ -525,17 +744,27 @@ StreamingPlan enforce_streaming_invariants(
       " > ",
       kMaxQKvTileAreaElements,
       ").");
+  TORCH_CHECK(
+      tile_area <= tile_area_budget,
+      "streaming invariant violated: q_chunk*kv_chunk exceeds computed budget (",
+      tile_area,
+      " > ",
+      tile_area_budget,
+      ").");
 
-  const int64_t bh = checked_mul_int64(batch, heads, "batch*heads");
   const int64_t full_attention_elements =
-      checked_mul_int64(checked_mul_int64(bh, q_len, "batch*heads*q_len"), kv_len, "full_attention_elements");
-  const int64_t score_tile_elements =
-      checked_mul_int64(checked_mul_int64(bh, resolved_q_chunk, "batch*heads*q_chunk"), resolved_kv_chunk, "score_tile_elements");
-  const int64_t score_tile_bytes = checked_mul_int64(score_tile_elements, static_cast<int64_t>(sizeof(float)), "score_tile_bytes");
-  const int64_t kv_cache_elements_per_tensor =
-      checked_mul_int64(checked_mul_int64(bh, kv_len, "batch*heads*kv_len"), head_dim, "kv_cache_elements_per_tensor");
-  const int64_t kv_cache_elements = checked_mul_int64(kv_cache_elements_per_tensor, 2, "kv_cache_elements");
-  const int64_t kv_cache_bytes = checked_mul_int64(kv_cache_elements, kv_cache_element_bytes, "kv_cache_bytes");
+      checked_mul_int64(
+          checked_mul_int64(bh, q_len, "batch*heads*q_len"),
+          kv_len,
+          "full_attention_elements");
+  const int64_t score_tile_elements = checked_mul_int64(
+      checked_mul_int64(bh, resolved_q_chunk, "batch*heads*q_chunk"),
+      resolved_kv_chunk,
+      "score_tile_elements");
+  const int64_t score_tile_bytes = checked_mul_int64(
+      score_tile_elements,
+      static_cast<int64_t>(sizeof(float)),
+      "score_tile_bytes");
   const int64_t precompute_workspace_bytes =
       checked_add_int64(score_tile_bytes, kv_cache_bytes, "precompute_workspace_bytes");
 
@@ -545,8 +774,29 @@ StreamingPlan enforce_streaming_invariants(
       score_tile_bytes,
       " > ",
       kMaxScoreTileBytes,
-      "). Reduce ",
-      "CODEX_WAN_FUSED_V1_Q_CHUNK or CODEX_WAN_FUSED_V1_KV_CHUNK.");
+      "). bh=",
+      bh,
+      ", head_dim=",
+      head_dim,
+      ", q_len=",
+      q_len,
+      ", kv_len=",
+      kv_len,
+      ", kv_cache_bytes=",
+      kv_cache_bytes,
+      ", workspace_cap_bytes=",
+      kMaxKvPrecomputeWorkspaceBytes,
+      ", remaining_bytes_for_score_tile=",
+      remaining_bytes_for_score_tile,
+      ", tile_area_budget=",
+      tile_area_budget,
+      ", requested_q_chunk_size=",
+      q_chunk_size,
+      ", requested_kv_chunk_size=",
+      kv_chunk_size,
+      ". require q_chunk*kv_chunk <= ",
+      tile_area_budget,
+      ".");
 
   // F2/F7: full K/V precompute persists across the entire Q loop; guard this
   // persistent residency plus score tile workspace, not score tile alone.
@@ -556,16 +806,31 @@ StreamingPlan enforce_streaming_invariants(
       precompute_workspace_bytes,
       " > ",
       kMaxKvPrecomputeWorkspaceBytes,
-      ", score_tile=",
-      score_tile_bytes,
-      ", kv_cache=",
+      "). bh=",
+      bh,
+      ", head_dim=",
+      head_dim,
+      ", q_len=",
+      q_len,
+      ", kv_len=",
+      kv_len,
+      ", kv_cache_bytes=",
       kv_cache_bytes,
-      ", kv_element_bytes=",
-      kv_cache_element_bytes,
-      "). Tune CODEX_WAN_FUSED_V1_Q_CHUNK=256 and CODEX_WAN_FUSED_V1_KV_CHUNK=512 (or lower). ",
-      "If this still fails, disable fused v1 with CODEX_WAN22_FUSED_ATTN_V1_MODE=off.");
+      ", workspace_cap_bytes=",
+      kMaxKvPrecomputeWorkspaceBytes,
+      ", remaining_bytes_for_score_tile=",
+      remaining_bytes_for_score_tile,
+      ", tile_area_budget=",
+      tile_area_budget,
+      ", requested_q_chunk_size=",
+      q_chunk_size,
+      ", requested_kv_chunk_size=",
+      kv_chunk_size,
+      ". require q_chunk*kv_chunk <= ",
+      tile_area_budget,
+      ".");
 
-  if (attention_matrix_elements > kSmallAttentionMatrixElementsBypass) {
+  if (forbid_full_tile) {
     TORCH_CHECK(
         resolved_q_chunk < q_len || resolved_kv_chunk < kv_len,
         "streaming invariant violated: long sequence would run as full attention tile (q_chunk==q_len and kv_chunk==kv_len).");

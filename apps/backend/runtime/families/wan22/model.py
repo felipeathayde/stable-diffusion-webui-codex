@@ -526,7 +526,6 @@ class WanSelfAttention(nn.Module):
                 block_tag,
                 _cuda_mem_snapshot_str(x.device),
             )
-        del q, k, v
 
         # Merge heads
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, C)
@@ -538,7 +537,6 @@ class WanSelfAttention(nn.Module):
             )
 
         out = self.o(attn_out)
-        del attn_out
         return out
 
 
@@ -680,13 +678,11 @@ class WanCrossAttention(nn.Module):
 
         # Scaled dot-product attention
         attn_out = wan_sdpa(q, k, v, causal=False)
-        del q, k, v
 
         # Merge heads
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, C)
 
         out = self.o(attn_out)
-        del attn_out
         return out
 
 

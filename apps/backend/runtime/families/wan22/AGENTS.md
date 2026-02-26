@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-23
+Last Review: 2026-02-26
 Status: Active
 
 ## Purpose
@@ -128,6 +128,7 @@ Status: Active
 - 2026-02-24: `model.py` trace-debug (`CODEX_TRACE_DEBUG=1`) now includes explicit tensor/module `device` fields across WAN block logs (model pre/post, block dispatch/done, self-attn/cross-attn qkv, and block residual checkpoints) to diagnose CUDA→CPU escapes during stale slow-step runs.
 - 2026-02-25: WAN22 SDPA context now carries fused-attention mode (`CODEX_WAN22_FUSED_ATTN_V1_MODE`, `off|auto|force`) and `model.py` now wires optional fused self/cross attention dispatch (`wan_fused_v1`) with fail-loud `force` semantics; cross fused contract requires RoPE tensors for both Q and K (`cross_rotary_emb=(q_cos,q_sin,k_cos,k_sin)`), while non-fused fallback path remains on canonical WAN SDPA flow.
 - 2026-02-25: `stage_loader.py::mount_stage_model_from_gguf(...)` now calls `warmup_extension_for_load(...)` after stage materialization so WAN fused kernel extension load/JIT compile can trigger during model load (instead of first denoise forward), with explicit warmup outcome logs (`mode/attempted/available/jit/detail`).
+- 2026-02-26: `model.py` now supports `CODEX_WAN22_FP32_COMPUTE=auto|on|off` (bootstrap-env aware, cached parse). `auto` keeps Diffusers-style full-tensor fp32 compute for `torch.float16` and disables it for `torch.bfloat16`; `on` forces previous fp32-parity behavior; `off` keeps transformer/norm/head hot paths in native input dtype. This exists to cut WAN22 peak VRAM on 12GB-class GPUs during bf16 runs without changing launcher/restart determinism.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

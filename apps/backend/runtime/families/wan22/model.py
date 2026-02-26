@@ -12,8 +12,11 @@ multiple formats (GGUF, safetensors, etc.) via the operations registry; GGUF han
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanArchitectureConfig` (dataclass): Architecture hyperparameters for WAN (dims/heads/blocks/patch size/etc) used for construction/inference.
-- `WanRMSNorm` (class): RMSNorm with optional GGUF dequantization (fp32 compute, dtype-preserving output).
-- `WanFP32LayerNorm` (class): LayerNorm that computes in float32 and casts back (Diffusers parity; improves fp16 stability).
+- `_wan22_fp32_compute_mode` (function): Returns cached `CODEX_WAN22_FP32_COMPUTE` mode (`auto|on|off`) from bootstrap-aware env parsing.
+- `_wan22_use_fp32_compute` (function): Resolves whether WAN norms/residual hot paths should run with full-tensor fp32 casts for a given input dtype.
+- `_wan22_norm_compute_label` (function): Emits trace label (`float32` or `native`) for the effective WAN norm compute mode.
+- `WanRMSNorm` (class): RMSNorm with optional GGUF dequantization and env-controlled compute policy (`fp32` vs native dtype).
+- `WanFP32LayerNorm` (class): LayerNorm with env-controlled compute policy (`fp32` vs native dtype).
 - `_build_1d_rope_embeddings` (function): Builds 1D RoPE tensors shaped `[1,S,1,D]` for fused cross-attention Q/K contracts.
 - `WanRotaryPosEmbed` (class): Rotary positional embedding (RoPE) cache + per-input embedding builder (fp32 caches).
 - `WanSelfAttention` (class): Self-attention block for WAN (QKV projection + SDPA implementation).
@@ -31,13 +34,14 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from apps.backend.infra.config.env_flags import env_flag
+from apps.backend.infra.config.env_flags import env_flag, env_str
 from apps.backend.runtime.attention.wan_fused_v1 import (
     WanFusedContractError,
     resolve_effective_wan_fused_attn_core,
@@ -57,6 +61,30 @@ logger = logging.getLogger("backend.runtime.wan22.model")
 
 def _wan_trace_verbose_enabled() -> bool:
     return env_flag("CODEX_TRACE_DEBUG", default=False)
+
+
+@lru_cache(maxsize=1)
+def _wan22_fp32_compute_mode() -> str:
+    return env_str(
+        "CODEX_WAN22_FP32_COMPUTE",
+        default="auto",
+        allowed={"auto", "on", "off"},
+    )
+
+
+def _wan22_use_fp32_compute(input_dtype: torch.dtype) -> bool:
+    mode = _wan22_fp32_compute_mode()
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    if mode == "auto":
+        return input_dtype == torch.float16
+    raise RuntimeError(f"Unsupported CODEX_WAN22_FP32_COMPUTE mode: {mode!r}")
+
+
+def _wan22_norm_compute_label(input_dtype: torch.dtype) -> str:
+    return "float32" if _wan22_use_fp32_compute(input_dtype) else "native"
 
 
 def _resolve_wan_fused_attn_core_trace_fields(*, fused_mode: str) -> tuple[str, str, str]:
@@ -129,6 +157,7 @@ class WanRMSNorm(nn.Module):
         if not x.is_floating_point():
             raise TypeError(f"WanRMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         original_dtype = x.dtype
+        use_fp32_compute = _wan22_use_fp32_compute(original_dtype)
 
         w = self.weight
         if isinstance(w, CodexParameter) and w.qtype is not None:
@@ -136,22 +165,35 @@ class WanRMSNorm(nn.Module):
         if not torch.is_tensor(w):
             w = torch.as_tensor(w)
         w = w.to(device=x.device)
-        with autocast_disabled(x.device.type):
-            x = x.float()
-            w = w.float()
-            out = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-            out = out * w
-            return out.to(dtype=original_dtype)
+
+        if use_fp32_compute:
+            with autocast_disabled(x.device.type):
+                x_fp32 = x.float()
+                w_fp32 = w.float()
+                out = x_fp32 * torch.rsqrt(x_fp32.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+                out = out * w_fp32
+                return out.to(dtype=original_dtype)
+
+        weight_native = w.to(device=x.device, dtype=original_dtype)
+        return F.rms_norm(x, (self.dim,), weight_native, self.eps)
 
 
 class WanFP32LayerNorm(nn.LayerNorm):
-    """LayerNorm that computes in float32 and casts back to the input dtype.
-
-    Diffusers uses FP32 LayerNorms throughout WAN to avoid fp16 numerical issues that can
-    cascade into unstable sampling (and eventually VAE decode NaNs).
-    """
+    """LayerNorm with env-controlled fp32-vs-native compute policy."""
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        use_fp32_compute = _wan22_use_fp32_compute(inputs.dtype)
+        if not use_fp32_compute:
+            weight_native = self.weight.to(device=inputs.device, dtype=inputs.dtype) if self.weight is not None else None
+            bias_native = self.bias.to(device=inputs.device, dtype=inputs.dtype) if self.bias is not None else None
+            return F.layer_norm(
+                inputs,
+                self.normalized_shape,
+                weight_native,
+                bias_native,
+                self.eps,
+            )
+
         origin_dtype = inputs.dtype
         return F.layer_norm(
             inputs.float(),
@@ -417,10 +459,12 @@ class WanSelfAttention(nn.Module):
         v = self.v(x)
 
         if trace_enabled:
+            q_norm_compute = _wan22_norm_compute_label(q.dtype)
+            k_norm_compute = _wan22_norm_compute_label(k.dtype)
             logger.debug(
                 "[wan22.trace] block[%s] self_attn qkv: x_dtype=%s x_device=%s q_dtype=%s q_device=%s k_dtype=%s k_device=%s "
                 "v_dtype=%s v_device=%s "
-                "norm_q=WanRMSNorm(compute=float32) norm_k=WanRMSNorm(compute=float32)",
+                "norm_q=WanRMSNorm(compute=%s) norm_k=WanRMSNorm(compute=%s)",
                 block_tag,
                 str(x.dtype),
                 str(x.device),
@@ -430,6 +474,8 @@ class WanSelfAttention(nn.Module):
                 str(k.device),
                 str(v.dtype),
                 str(v.device),
+                q_norm_compute,
+                k_norm_compute,
             )
 
         # Reshape to heads (keep token-major layout for RoPE parity with Diffusers)
@@ -565,10 +611,12 @@ class WanCrossAttention(nn.Module):
         v = self.v(context)
 
         if trace_enabled:
+            q_norm_compute = _wan22_norm_compute_label(q.dtype)
+            k_norm_compute = _wan22_norm_compute_label(k.dtype)
             logger.debug(
                 "[wan22.trace] block[%s] cross_attn qkv: x_dtype=%s x_device=%s ctx_dtype=%s ctx_device=%s "
                 "q_dtype=%s q_device=%s k_dtype=%s k_device=%s v_dtype=%s v_device=%s "
-                "norm_q=WanRMSNorm(compute=float32) norm_k=WanRMSNorm(compute=float32)",
+                "norm_q=WanRMSNorm(compute=%s) norm_k=WanRMSNorm(compute=%s)",
                 block_tag,
                 str(x.dtype),
                 str(x.device),
@@ -580,6 +628,8 @@ class WanCrossAttention(nn.Module):
                 str(k.device),
                 str(v.dtype),
                 str(v.device),
+                q_norm_compute,
+                k_norm_compute,
             )
 
         # Reshape to heads
@@ -683,8 +733,15 @@ class WanTransformerBlock(nn.Module):
     ) -> torch.Tensor:
         trace_enabled = bool(trace_debug and logger.isEnabledFor(logging.DEBUG))
         block_tag = "?" if trace_block_idx is None else str(int(trace_block_idx) + 1)
-        # Combine time embedding with per-block modulation in float32 for stability (Diffusers parity).
-        mod = time_emb.float() + self.modulation.float()  # [B, 6, dim]
+        x_dtype = x.dtype
+        use_fp32_compute = _wan22_use_fp32_compute(x_dtype)
+        fp32_mode = _wan22_fp32_compute_mode()
+        norm_compute_label = _wan22_norm_compute_label(x_dtype)
+        # Combine time embedding with per-block modulation in the effective compute dtype.
+        if use_fp32_compute:
+            mod = time_emb.float() + self.modulation.float()  # [B, 6, dim]
+        else:
+            mod = time_emb.to(device=x.device, dtype=x_dtype) + self.modulation.to(device=x.device, dtype=x_dtype)
 
         sa_shift, sa_scale, sa_gate = mod[:, 0], mod[:, 1], mod[:, 2]
         ffn_shift, ffn_scale, ffn_gate = mod[:, 3], mod[:, 4], mod[:, 5]
@@ -693,7 +750,7 @@ class WanTransformerBlock(nn.Module):
             logger.debug(
                 "[wan22.trace] block[%s] pre: x_dtype=%s x_device=%s ctx_dtype=%s ctx_device=%s "
                 "time_emb_dtype=%s time_emb_device=%s mod_device=%s "
-                "norm1/2/3=WanFP32LayerNorm(compute=float32) qk_norm=WanRMSNorm(compute=float32) "
+                "norm1/2/3=WanFP32LayerNorm(compute=%s) qk_norm=WanRMSNorm(compute=%s) fp32_policy=%s "
                 "ffn=Linear->GELU(tanh)->Linear %s",
                 block_tag,
                 str(x.dtype),
@@ -703,19 +760,27 @@ class WanTransformerBlock(nn.Module):
                 str(time_emb.dtype),
                 str(time_emb.device),
                 str(mod.device),
+                norm_compute_label,
+                norm_compute_label,
+                fp32_mode,
                 _cuda_mem_snapshot_str(x.device),
             )
 
         # Self-attention: pre-norm (no affine) + time modulation + gated residual.
-        x_float = x.float()
-        x_sa = (self.norm1(x_float) * (1.0 + sa_scale[:, None, :]) + sa_shift[:, None, :]).to(dtype=x.dtype)
+        x_norm_input = x.float() if use_fp32_compute else x
+        x_sa = self.norm1(x_norm_input) * (1.0 + sa_scale[:, None, :]) + sa_shift[:, None, :]
+        if use_fp32_compute:
+            x_sa = x_sa.to(dtype=x_dtype)
         sa_out = self.self_attn(
             x_sa,
             rotary_emb=rotary_emb,
             trace_debug=trace_enabled,
             trace_block_idx=trace_block_idx,
         )
-        x = (x_float + sa_out.float() * sa_gate[:, None, :]).to(dtype=x.dtype)
+        if use_fp32_compute:
+            x = (x_norm_input + sa_out.float() * sa_gate[:, None, :]).to(dtype=x_dtype)
+        else:
+            x = x + sa_out * sa_gate[:, None, :]
         if trace_enabled:
             logger.debug(
                 "[wan22.trace] block[%s] self_attn: x_sa_dtype=%s x_sa_device=%s sa_out_dtype=%s sa_out_device=%s "
@@ -732,7 +797,10 @@ class WanTransformerBlock(nn.Module):
             )
 
         # Cross-attention: pre-norm3 (affine) + residual (no time modulation).
-        x_ca = self.norm3(x.float()).to(dtype=x.dtype)
+        x_ca_input = x.float() if use_fp32_compute else x
+        x_ca = self.norm3(x_ca_input)
+        if use_fp32_compute:
+            x_ca = x_ca.to(dtype=x_dtype)
         ca_out = self.cross_attn(
             x_ca,
             context,
@@ -756,10 +824,15 @@ class WanTransformerBlock(nn.Module):
             )
 
         # FFN: pre-norm (no affine) + time modulation + gated residual.
-        x_float = x.float()
-        x_ffn = (self.norm2(x_float) * (1.0 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]).to(dtype=x.dtype)
+        x_ffn_input = x.float() if use_fp32_compute else x
+        x_ffn = self.norm2(x_ffn_input) * (1.0 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]
+        if use_fp32_compute:
+            x_ffn = x_ffn.to(dtype=x_dtype)
         ffn_out = self.ffn(x_ffn)
-        x = (x_float + ffn_out.float() * ffn_gate[:, None, :]).to(dtype=x.dtype)
+        if use_fp32_compute:
+            x = (x_ffn_input + ffn_out.float() * ffn_gate[:, None, :]).to(dtype=x_dtype)
+        else:
+            x = x + ffn_out * ffn_gate[:, None, :]
         if trace_enabled:
             logger.debug(
                 "[wan22.trace] block[%s] ffn: x_ffn_dtype=%s x_ffn_device=%s ffn_out_dtype=%s ffn_out_device=%s "
@@ -1004,11 +1077,22 @@ class WanTransformer2DModel(nn.Module):
                     _cuda_mem_snapshot_str(device),
                 )
 
-        # Output head (Diffusers parity: float32 norm + float32 modulation, then cast back before projection).
-        shift, scale = (self.head_modulation.float() + t_emb.float()[:, None, :]).chunk(2, dim=1)  # [B, 1, C] each
+        # Output head uses the effective fp32/native compute policy for modulation + norm.
         tokens_dtype = tokens.dtype
-        tokens = self.norm_out(tokens.float())
-        fused = (tokens * (1.0 + scale) + shift).to(dtype=tokens_dtype)
+        use_fp32_compute = _wan22_use_fp32_compute(tokens_dtype)
+        if use_fp32_compute:
+            shift, scale = (self.head_modulation.float() + t_emb.float()[:, None, :]).chunk(2, dim=1)  # [B, 1, C] each
+            tokens_norm_input = tokens.float()
+        else:
+            shift, scale = (
+                self.head_modulation.to(device=tokens.device, dtype=tokens_dtype)
+                + t_emb.to(device=tokens.device, dtype=tokens_dtype)[:, None, :]
+            ).chunk(2, dim=1)
+            tokens_norm_input = tokens
+        tokens = self.norm_out(tokens_norm_input)
+        fused = tokens * (1.0 + scale) + shift
+        if use_fp32_compute:
+            fused = fused.to(dtype=tokens_dtype)
         patches = self.head(fused)
 
         if trace_debug:

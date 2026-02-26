@@ -1,6 +1,6 @@
 # apps/backend/runtime/attention/wan_fused_v1 Overview
 Date: 2026-02-25
-Last Review: 2026-02-25
+Last Review: 2026-02-26
 Status: Active
 
 ## Purpose
@@ -20,7 +20,13 @@ Status: Active
 - 2026-02-25: Added explicit load-time warmup API (`warmup_extension_for_load`) that resolves fused mode/env gates, triggers extension load/build before denoise, and raises fail-loud when warmup fails under `force` mode.
 - 2026-02-25: Kernel-runtime invariants are now mapped to explicit contract code `E_WAN_FUSED_STREAMING_INVARIANT_VIOLATION` so failures in streaming-only guarantees are surfaced without generic error masking.
 - 2026-02-25: Self fused dispatch no longer packs `w_qkv`/`b_qkv`; wrapper now passes `w_q/w_k/w_v` + optional biases separately to cut transient VRAM overhead before kernel dispatch.
-- 2026-02-25: Runtime loader enforces extension ABI (`WAN_FUSED_V1_ABI=2`) and rejects stale modules to avoid silent signature mismatch after self_fwd contract change.
+- 2026-02-25: Runtime loader enforces extension ABI (`WAN_FUSED_V1_ABI=3`) and rejects stale modules to avoid silent signature mismatch after self_fwd contract change.
 - 2026-02-25: Loader now purges import cache for extension module names during stage fallback so an ABI-rejected prebuilt module does not poison in-place/JIT resolution in-process.
 - 2026-02-26: Runtime now recognizes kernel-side telemetry controls (`CODEX_WAN_FUSED_V1_KERNEL_TRACE`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_KV`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_EVERY_Q`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_EVERY_KV`) for per-phase VRAM snapshots emitted by fused CUDA path.
-- 2026-02-26: Added attention core selector env `CODEX_WAN_FUSED_V1_ATTN_CORE=aten|cuda_experimental` (default `aten`), allowing bootstrap of custom CUDA streaming attention-core updates while preserving ATen path fallback for unsupported tuples.
+- 2026-02-26: Attention-core resolution contract is explicit and resolver-owned via `resolve_effective_wan_fused_attn_core(mode) -> (attn_core, attn_core_source, attn_core_raw)`. `attn_core_source` tokens are emitted verbatim as `env|force_default|kernel_default` (no caller-side remapping).
+- 2026-02-26: `CODEX_WAN_FUSED_V1_ATTN_CORE=aten|cuda_experimental` remains optional; `cuda` aliases `cuda_experimental`. If unset, resolver defaults by mode: `force -> cuda_experimental (force_default)`, otherwise `aten (kernel_default)`.
+- 2026-02-26: WAN22 model/run telemetry now plumbs `attn_core`, `attn_core_source`, and `attn_core_raw` directly from resolver output, with no env mutation in the model/run hot path.
+- 2026-02-26: Known performance trap: explicit `CODEX_WAN_FUSED_V1_ATTN_CORE=aten` under long-sequence force-mode debugging can be pathologically slow; prefer `cuda_experimental`.
+- 2026-02-26: Minimal env recommendations:
+  - Force debugging (fail-loud): `CODEX_WAN22_FUSED_ATTN_V1_MODE=force` (optionally pin `CODEX_WAN_FUSED_V1_ATTN_CORE=cuda_experimental`).
+  - Production off (disable fused runtime path): `CODEX_WAN22_FUSED_ATTN_V1_MODE=off` (leave `CODEX_WAN_FUSED_V1_ATTN_CORE` unset).

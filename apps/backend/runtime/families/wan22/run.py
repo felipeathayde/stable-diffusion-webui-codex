@@ -37,6 +37,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_sample_chunk_stage_with_progress` (function): Run a chunk stage sampler and remap local progress into a global phase percent.
 - `_resolve_stage_prompt_pairs` (function): Resolve high/low stage prompt+negative pairs (stage prompts required; negative falls back only when missing).
 - `_resolve_stage_text_embeddings` (function): Build stage-specific high/low embeddings from a single text-encoder load.
+- `_resolve_wan_fused_summary_fields_for_run` (function): Resolves fused attention-core summary fields (`attn_core`, `attn_core_source`, `attn_core_raw`) once from deterministic run intent (`resolve_effective_wan_fused_mode`).
+- `_WanFusedSummaryLogger` (class): Lightweight logger proxy that augments the fused runtime summary line with stable extra key/value fields.
 - `_resolve_wan_fused_run_label` (function): Builds stable run labels for fused-attention observability lifecycle.
 - `_with_wan_fused_runtime_metrics` (function): Decorator that wraps WAN run/stream entrypoints with fused metrics reset + end-of-run summary.
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
@@ -64,6 +66,8 @@ from typing import Any, Optional
 import torch
 
 from apps.backend.runtime.attention.wan_fused_v1 import (
+    resolve_effective_wan_fused_mode,
+    resolve_effective_wan_fused_attn_core,
     wan_fused_runtime_metrics_is_active,
     wan_fused_runtime_metrics_log_summary,
     wan_fused_runtime_metrics_reset,
@@ -110,6 +114,31 @@ _WAN_CONTINUITY_PROFILE_SVI2_PRO = "svi2_pro"
 _WAN_CHUNK_HYBRID_RAM_BUDGET_MB = 2048.0
 
 
+def _resolve_wan_fused_summary_fields_for_run() -> tuple[str, str, str]:
+    fused_mode = resolve_effective_wan_fused_mode(None)
+    return resolve_effective_wan_fused_attn_core(fused_mode)
+
+
+class _WanFusedSummaryLogger:
+    """Logger proxy that appends deterministic fused-summary metadata fields."""
+
+    def __init__(self, logger_obj: Any, *, summary_fields: tuple[str, str, str]) -> None:
+        self._logger = logger_obj
+        self._summary_fields = summary_fields
+
+    def info(self, msg: str, *args: Any, **kwargs: Any) -> Any:
+        message = str(msg)
+        if "fused runtime summary:" in message:
+            attn_core, attn_core_source, attn_core_raw = self._summary_fields
+            message = message.replace(
+                "fused runtime summary:",
+                "fused runtime summary: attn_core=%s attn_core_source=%s attn_core_raw=%s",
+                1,
+            )
+            args = (attn_core, attn_core_source, attn_core_raw, *args)
+        return self._logger.info(message, *args, **kwargs)
+
+
 def _resolve_wan_fused_run_label(func_name: str, cfg: Any) -> str:
     variant = str(getattr(cfg, "wan_engine_variant", None) or "auto")
     frames = int(getattr(cfg, "num_frames", 0) or 0)
@@ -127,12 +156,14 @@ def _with_wan_fused_runtime_metrics(func):
         if cfg is None and args:
             cfg = args[0]
         log = get_logger(kwargs.get("logger", None))
+        summary_fields = _resolve_wan_fused_summary_fields_for_run()
+        summary_log = _WanFusedSummaryLogger(log, summary_fields=summary_fields)
         run_label = _resolve_wan_fused_run_label(func.__name__, cfg)
         wan_fused_runtime_metrics_reset(run_label=run_label)
         try:
             result = func(*args, **kwargs)
         except Exception:
-            wan_fused_runtime_metrics_log_summary(logger_obj=log, reset=True)
+            wan_fused_runtime_metrics_log_summary(logger_obj=summary_log, reset=True)
             raise
 
         if inspect.isgenerator(result):
@@ -140,11 +171,11 @@ def _with_wan_fused_runtime_metrics(func):
                 try:
                     yield from result
                 finally:
-                    wan_fused_runtime_metrics_log_summary(logger_obj=log, reset=True)
+                    wan_fused_runtime_metrics_log_summary(logger_obj=summary_log, reset=True)
 
             return _generator()
 
-        wan_fused_runtime_metrics_log_summary(logger_obj=log, reset=True)
+        wan_fused_runtime_metrics_log_summary(logger_obj=summary_log, reset=True)
         return result
 
     return _wrapped

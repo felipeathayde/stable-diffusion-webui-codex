@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanFusedWarmupStatus` (dataclass): Load-time warmup result for fused extension readiness.
 - `parse_wan_fused_mode` (function): Parses and validates a fused mode string.
 - `resolve_effective_wan_fused_mode` (function): Resolves fused mode from override/env.
+- `resolve_effective_wan_fused_attn_core` (function): Resolves effective fused attention core telemetry tuple (`core`, `source`, `raw`).
 - `is_extension_available` (function): Returns whether WAN fused CUDA ops are available.
 - `last_extension_error` (function): Returns the last extension load/build error details.
 - `warmup_extension_for_load` (function): Triggers extension load/build during model-load seam and emits explicit readiness logs.
@@ -35,6 +36,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import re
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -51,7 +53,9 @@ logger = logging.getLogger("backend.runtime.attention.wan_fused_v1")
 
 _MODE_ENV_KEY = "CODEX_WAN22_FUSED_ATTN_V1_MODE"
 _JIT_ENV_KEY = "CODEX_WAN_FUSED_V1_JIT"
-_REQUIRED_EXTENSION_ABI = 2
+_ATTN_CORE_ENV_KEY = "CODEX_WAN_FUSED_V1_ATTN_CORE"
+_FORCE_DEFAULT_ATTN_CORE_VALUE = "cuda_experimental"
+_REQUIRED_EXTENSION_ABI = 3
 
 
 E_WAN_FUSED_DISABLED = "E_WAN_FUSED_DISABLED"
@@ -361,9 +365,16 @@ def last_extension_error() -> str | None:
 
 def warmup_extension_for_load(mode: str | WanFusedMode | None = None) -> WanFusedWarmupStatus:
     fused_mode = resolve_effective_wan_fused_mode(mode)
+    effective_core, effective_core_source, effective_core_raw = resolve_effective_wan_fused_attn_core(fused_mode)
     build_enabled = _jit_build_enabled()
     if fused_mode is WanFusedMode.OFF:
-        logger.info("wan_fused_v1 warmup skipped at load (mode=off)")
+        logger.info(
+            "wan_fused_v1 warmup skipped at load (mode=off effective_core=%s effective_core_source=%s "
+            "effective_core_raw=%s)",
+            effective_core,
+            effective_core_source,
+            effective_core_raw,
+        )
         return WanFusedWarmupStatus(
             mode=fused_mode,
             build_enabled=build_enabled,
@@ -373,18 +384,26 @@ def warmup_extension_for_load(mode: str | WanFusedMode | None = None) -> WanFuse
         )
 
     logger.info(
-        "wan_fused_v1 warmup start (mode=%s jit_build=%s)",
+        "wan_fused_v1 warmup start (mode=%s jit_build=%s effective_core=%s effective_core_source=%s "
+        "effective_core_raw=%s)",
         fused_mode.value,
         build_enabled,
+        effective_core,
+        effective_core_source,
+        effective_core_raw,
     )
     _try_load_ext(build=build_enabled)
     available = _ext is not None and _has_ops()
     detail = last_extension_error()
     if available:
         logger.info(
-            "wan_fused_v1 warmup ready (mode=%s jit_build=%s)",
+            "wan_fused_v1 warmup ready (mode=%s jit_build=%s effective_core=%s effective_core_source=%s "
+            "effective_core_raw=%s)",
             fused_mode.value,
             build_enabled,
+            effective_core,
+            effective_core_source,
+            effective_core_raw,
         )
         return WanFusedWarmupStatus(
             mode=fused_mode,
@@ -395,9 +414,13 @@ def warmup_extension_for_load(mode: str | WanFusedMode | None = None) -> WanFuse
         )
 
     logger.warning(
-        "wan_fused_v1 warmup unavailable (mode=%s jit_build=%s detail=%r)",
+        "wan_fused_v1 warmup unavailable (mode=%s jit_build=%s effective_core=%s effective_core_source=%s "
+        "effective_core_raw=%s detail=%r)",
         fused_mode.value,
         build_enabled,
+        effective_core,
+        effective_core_source,
+        effective_core_raw,
         detail,
     )
     if fused_mode is WanFusedMode.FORCE:
@@ -449,6 +472,33 @@ def resolve_effective_wan_fused_mode(mode_override: str | WanFusedMode | None) -
         return parse_wan_fused_mode(mode_override, field_name="wan_fused_mode")
     env_value = os.environ.get(_MODE_ENV_KEY, "off")
     return parse_wan_fused_mode(env_value, field_name=_MODE_ENV_KEY)
+
+
+def _format_attn_core_raw(raw_value: str | None) -> str:
+    if raw_value is None:
+        return "<unset>"
+    raw_str = str(raw_value).strip()
+    raw_token = re.sub(r"[^0-9A-Za-z._:+-]+", "_", raw_str)
+    if not raw_token:
+        return "<empty>"
+    return raw_token
+
+
+def resolve_effective_wan_fused_attn_core(mode_override: str | WanFusedMode | None) -> tuple[str, str, str]:
+    fused_mode = resolve_effective_wan_fused_mode(mode_override)
+    raw_value = os.environ.get(_ATTN_CORE_ENV_KEY)
+    raw_token = _format_attn_core_raw(raw_value)
+    if raw_value is None:
+        if fused_mode is WanFusedMode.FORCE:
+            return _FORCE_DEFAULT_ATTN_CORE_VALUE, "force_default", raw_token
+        return "aten", "kernel_default", raw_token
+
+    normalized = str(raw_value).lower()
+    if normalized in {"aten", "default", "off"}:
+        return "aten", "env", raw_token
+    if normalized in {"cuda", "cuda_experimental"}:
+        return "cuda_experimental", "env", raw_token
+    return "invalid", "env", raw_token
 
 
 def _fail(*, code: str, message: str) -> None:
@@ -652,21 +702,54 @@ def _resolve_norm_weight(
     return resolved.contiguous()
 
 
-def _maybe_return_unavailable(*, mode: WanFusedMode) -> WanFusedAttemptResult | None:
+def _maybe_return_unavailable(
+    *,
+    mode: WanFusedMode,
+    effective_core: str,
+    effective_core_source: str,
+    effective_core_raw: str,
+) -> WanFusedAttemptResult | None:
     if is_extension_available():
         return None
     detail = last_extension_error()
+    detail_with_core = (
+        f"details={detail!r} effective_core={effective_core} "
+        f"effective_core_source={effective_core_source} effective_core_raw={effective_core_raw}"
+    )
     if mode is WanFusedMode.FORCE:
         _fail(
             code=E_WAN_FUSED_EXTENSION_UNAVAILABLE,
             message=(
                 "WAN fused V1 forced mode requested but extension/ops are unavailable. "
-                f"details={detail!r}"
+                f"{detail_with_core}"
             ),
         )
     return WanFusedAttemptResult(
         output=None,
         reason_code=E_WAN_FUSED_EXTENSION_UNAVAILABLE,
+        reason_detail=detail_with_core,
+    )
+
+
+def _maybe_return_invalid_attn_core(
+    *,
+    mode: WanFusedMode,
+    effective_core: str,
+    effective_core_source: str,
+    effective_core_raw: str,
+) -> WanFusedAttemptResult | None:
+    if effective_core != "invalid":
+        return None
+    detail = (
+        f"invalid attention core selector: env={_ATTN_CORE_ENV_KEY} effective_core={effective_core} "
+        f"effective_core_source={effective_core_source} effective_core_raw={effective_core_raw} "
+        "allowed=aten|cuda_experimental"
+    )
+    if mode is WanFusedMode.FORCE:
+        _fail(code=E_WAN_FUSED_INVALID_ENV, message=detail)
+    return WanFusedAttemptResult(
+        output=None,
+        reason_code=E_WAN_FUSED_INVALID_ENV,
         reason_detail=detail,
     )
 
@@ -705,8 +788,13 @@ def try_fused_self_attention(
     fused_mode = resolve_effective_wan_fused_mode(mode)
     if fused_mode is WanFusedMode.OFF:
         return WanFusedAttemptResult(output=None, reason_code=E_WAN_FUSED_DISABLED)
-
-    unavailable = _maybe_return_unavailable(mode=fused_mode)
+    effective_core, effective_core_source, effective_core_raw = resolve_effective_wan_fused_attn_core(fused_mode)
+    unavailable = _maybe_return_unavailable(
+        mode=fused_mode,
+        effective_core=effective_core,
+        effective_core_source=effective_core_source,
+        effective_core_raw=effective_core_raw,
+    )
     if unavailable is not None:
         _record_attempt(
             op_kind="self",
@@ -716,6 +804,21 @@ def try_fused_self_attention(
             reason_detail=unavailable.reason_detail,
         )
         return unavailable
+    invalid_attn_core = _maybe_return_invalid_attn_core(
+        mode=fused_mode,
+        effective_core=effective_core,
+        effective_core_source=effective_core_source,
+        effective_core_raw=effective_core_raw,
+    )
+    if invalid_attn_core is not None:
+        _record_attempt(
+            op_kind="self",
+            mode=fused_mode,
+            success=False,
+            reason_code=invalid_attn_core.reason_code,
+            reason_detail=invalid_attn_core.reason_detail,
+        )
+        return invalid_attn_core
 
     _validate_common_inputs(x=x, dropout_p=dropout_p)
     bsz, seq_len, channels = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]))
@@ -808,6 +911,7 @@ def try_fused_self_attention(
             rope_sin_qk,
             w_out,
             b_o,
+            effective_core,
         )
         if tuple(out.shape) != (bsz, seq_len, channels):
             _fail(
@@ -885,8 +989,13 @@ def try_fused_cross_attention(
     fused_mode = resolve_effective_wan_fused_mode(mode)
     if fused_mode is WanFusedMode.OFF:
         return WanFusedAttemptResult(output=None, reason_code=E_WAN_FUSED_DISABLED)
-
-    unavailable = _maybe_return_unavailable(mode=fused_mode)
+    effective_core, effective_core_source, effective_core_raw = resolve_effective_wan_fused_attn_core(fused_mode)
+    unavailable = _maybe_return_unavailable(
+        mode=fused_mode,
+        effective_core=effective_core,
+        effective_core_source=effective_core_source,
+        effective_core_raw=effective_core_raw,
+    )
     if unavailable is not None:
         _record_attempt(
             op_kind="cross",
@@ -896,6 +1005,21 @@ def try_fused_cross_attention(
             reason_detail=unavailable.reason_detail,
         )
         return unavailable
+    invalid_attn_core = _maybe_return_invalid_attn_core(
+        mode=fused_mode,
+        effective_core=effective_core,
+        effective_core_source=effective_core_source,
+        effective_core_raw=effective_core_raw,
+    )
+    if invalid_attn_core is not None:
+        _record_attempt(
+            op_kind="cross",
+            mode=fused_mode,
+            success=False,
+            reason_code=invalid_attn_core.reason_code,
+            reason_detail=invalid_attn_core.reason_detail,
+        )
+        return invalid_attn_core
 
     _validate_common_inputs(x=x, dropout_p=dropout_p)
     if context.ndim != 3:
@@ -1007,6 +1131,7 @@ def try_fused_cross_attention(
             b_v_contract,
             w_out,
             b_o,
+            effective_core,
         )
         if tuple(out.shape) != (bsz, q_len, channels):
             _fail(

@@ -28,14 +28,23 @@ constexpr int64_t kDefaultKvChunk = 1024;
 constexpr int64_t kMaxQChunk = 512;
 constexpr int64_t kMaxKvChunk = 1024;
 constexpr int64_t kMaxScoreTileBytes = 128 * 1024 * 1024;
+constexpr int64_t kMaxKvPrecomputeWorkspaceBytes = 320 * 1024 * 1024;
 constexpr int64_t kMaxQKvTileAreaElements = 512 * 1024;
 constexpr int64_t kSmallAttentionMatrixElementsBypass = 128 * 1024;
 constexpr int64_t kCudaCoreMaxHeadDim = 128;
+constexpr const char* kAttentionCoreEnvKey = "CODEX_WAN_FUSED_V1_ATTN_CORE";
+constexpr const char* kAttentionCoreValidValues = "aten | cuda_experimental";
 
 enum class AttentionCoreMode {
   ATE_NAIVE = 0,
   CUDA_STREAMING_EXPERIMENTAL = 1,
 };
+
+static_assert(static_cast<int>(AttentionCoreMode::ATE_NAIVE) == 0, "AttentionCoreMode::ATE_NAIVE ABI drift");
+static_assert(
+    static_cast<int>(AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL) == 1,
+    "AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL ABI drift");
+static_assert(kCudaCoreMaxHeadDim <= 128, "CUDA core head_dim bound must remain Ampere-safe (<=128).");
 
 void check_cuda_tensor(const torch::Tensor& tensor, const char* name) {
   TORCH_CHECK(tensor.is_cuda(), "", name, " must be a CUDA tensor");
@@ -136,12 +145,8 @@ bool parse_env_flag_or_default(const char* key, bool default_value) {
   return default_value;
 }
 
-AttentionCoreMode parse_attention_core_mode() {
-  const char* raw = std::getenv("CODEX_WAN_FUSED_V1_ATTN_CORE");
-  if (raw == nullptr) {
-    return AttentionCoreMode::ATE_NAIVE;
-  }
-  std::string value(raw);
+AttentionCoreMode parse_attention_core_mode_token(const std::string& raw_value, const char* source_label) {
+  std::string value(raw_value);
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
   });
@@ -153,15 +158,30 @@ AttentionCoreMode parse_attention_core_mode() {
   }
   TORCH_CHECK(
       false,
-      "CODEX_WAN_FUSED_V1_ATTN_CORE must be one of: aten | cuda_experimental (got '",
-      raw,
+      source_label,
+      " must be one of: ",
+      kAttentionCoreValidValues,
+      " (got '",
+      raw_value,
       "')");
   return AttentionCoreMode::ATE_NAIVE;
 }
 
-AttentionCoreMode attention_core_mode() {
-  static const AttentionCoreMode mode = parse_attention_core_mode();
-  return mode;
+AttentionCoreMode parse_attention_core_mode_from_env() {
+  const char* raw = std::getenv(kAttentionCoreEnvKey);
+  if (raw == nullptr) {
+    return AttentionCoreMode::ATE_NAIVE;
+  }
+  return parse_attention_core_mode_token(std::string(raw), kAttentionCoreEnvKey);
+}
+
+AttentionCoreMode attention_core_mode(
+    const c10::optional<std::string>& explicit_attn_core,
+    const char* explicit_source_label) {
+  if (explicit_attn_core.has_value() && !explicit_attn_core->empty()) {
+    return parse_attention_core_mode_token(*explicit_attn_core, explicit_source_label);
+  }
+  return parse_attention_core_mode_from_env();
 }
 
 bool kernel_trace_enabled() {
@@ -418,12 +438,21 @@ int64_t checked_mul_int64(int64_t left, int64_t right, const char* label) {
   return left * right;
 }
 
+int64_t checked_add_int64(int64_t left, int64_t right, const char* label) {
+  TORCH_CHECK(left >= 0 && right >= 0, label, " must use non-negative factors.");
+  TORCH_CHECK(left <= std::numeric_limits<int64_t>::max() - right, label, " overflow.");
+  return left + right;
+}
+
 struct StreamingPlan {
   int64_t q_chunk;
   int64_t kv_chunk;
   int64_t full_attention_elements;
   int64_t score_tile_elements;
   int64_t score_tile_bytes;
+  int64_t kv_cache_elements;
+  int64_t kv_cache_bytes;
+  int64_t precompute_workspace_bytes;
 };
 
 torch::Tensor project_linear_chunk_bhld(
@@ -454,8 +483,16 @@ StreamingPlan enforce_streaming_invariants(
     int64_t heads,
     int64_t q_len,
     int64_t kv_len,
+    int64_t head_dim,
+    int64_t kv_cache_element_bytes,
     int64_t q_chunk_size,
     int64_t kv_chunk_size) {
+  TORCH_CHECK(head_dim > 0, "streaming invariant violated: head_dim must be > 0.");
+  TORCH_CHECK(
+      kv_cache_element_bytes > 0,
+      "streaming invariant violated: kv cache element bytes must be > 0 (got ",
+      kv_cache_element_bytes,
+      ").");
   int64_t resolved_q_chunk = std::max<int64_t>(1, std::min<int64_t>(q_len, q_chunk_size));
   int64_t resolved_kv_chunk = std::max<int64_t>(1, std::min<int64_t>(kv_len, kv_chunk_size));
   const int64_t attention_matrix_elements = checked_mul_int64(q_len, kv_len, "q_len*kv_len");
@@ -495,6 +532,12 @@ StreamingPlan enforce_streaming_invariants(
   const int64_t score_tile_elements =
       checked_mul_int64(checked_mul_int64(bh, resolved_q_chunk, "batch*heads*q_chunk"), resolved_kv_chunk, "score_tile_elements");
   const int64_t score_tile_bytes = checked_mul_int64(score_tile_elements, static_cast<int64_t>(sizeof(float)), "score_tile_bytes");
+  const int64_t kv_cache_elements_per_tensor =
+      checked_mul_int64(checked_mul_int64(bh, kv_len, "batch*heads*kv_len"), head_dim, "kv_cache_elements_per_tensor");
+  const int64_t kv_cache_elements = checked_mul_int64(kv_cache_elements_per_tensor, 2, "kv_cache_elements");
+  const int64_t kv_cache_bytes = checked_mul_int64(kv_cache_elements, kv_cache_element_bytes, "kv_cache_bytes");
+  const int64_t precompute_workspace_bytes =
+      checked_add_int64(score_tile_bytes, kv_cache_bytes, "precompute_workspace_bytes");
 
   TORCH_CHECK(
       score_tile_bytes <= kMaxScoreTileBytes,
@@ -504,6 +547,23 @@ StreamingPlan enforce_streaming_invariants(
       kMaxScoreTileBytes,
       "). Reduce ",
       "CODEX_WAN_FUSED_V1_Q_CHUNK or CODEX_WAN_FUSED_V1_KV_CHUNK.");
+
+  // F2/F7: full K/V precompute persists across the entire Q loop; guard this
+  // persistent residency plus score tile workspace, not score tile alone.
+  TORCH_CHECK(
+      precompute_workspace_bytes <= kMaxKvPrecomputeWorkspaceBytes,
+      "streaming invariant violated: full K/V precompute workspace bytes exceed cap (",
+      precompute_workspace_bytes,
+      " > ",
+      kMaxKvPrecomputeWorkspaceBytes,
+      ", score_tile=",
+      score_tile_bytes,
+      ", kv_cache=",
+      kv_cache_bytes,
+      ", kv_element_bytes=",
+      kv_cache_element_bytes,
+      "). Tune CODEX_WAN_FUSED_V1_Q_CHUNK=256 and CODEX_WAN_FUSED_V1_KV_CHUNK=512 (or lower). ",
+      "If this still fails, disable fused v1 with CODEX_WAN22_FUSED_ATTN_V1_MODE=off.");
 
   if (attention_matrix_elements > kSmallAttentionMatrixElementsBypass) {
     TORCH_CHECK(
@@ -517,6 +577,9 @@ StreamingPlan enforce_streaming_invariants(
   plan.full_attention_elements = full_attention_elements;
   plan.score_tile_elements = score_tile_elements;
   plan.score_tile_bytes = score_tile_bytes;
+  plan.kv_cache_elements = kv_cache_elements;
+  plan.kv_cache_bytes = kv_cache_bytes;
+  plan.precompute_workspace_bytes = precompute_workspace_bytes;
   return plan;
 }
 
@@ -528,6 +591,7 @@ torch::Tensor streaming_attention_self_chunk_bhld(
     int64_t batch,
     int64_t heads,
     int64_t head_dim,
+    AttentionCoreMode core_mode,
     bool trace_q_chunk,
     int64_t q_start,
     int64_t q_end,
@@ -549,7 +613,6 @@ torch::Tensor streaming_attention_self_chunk_bhld(
   const auto device = q_chunk_bhld.device();
   const auto output_dtype = q_chunk_bhld.scalar_type();
   const auto options_fp32 = q_chunk_bhld.options().dtype(torch::kFloat);
-  const AttentionCoreMode core_mode = attention_core_mode();
   const bool use_cuda_core = core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && head_dim <= kCudaCoreMaxHeadDim;
   const int64_t attention_elements = checked_mul_int64(q_len_total, kv_len, "self_attention_elements");
   if (trace_q_chunk && core_mode == AttentionCoreMode::ATE_NAIVE && attention_elements > kSmallAttentionMatrixElementsBypass) {
@@ -623,6 +686,7 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
     int64_t batch,
     int64_t heads,
     int64_t head_dim,
+    AttentionCoreMode core_mode,
     bool trace_q_chunk,
     int64_t q_start,
     int64_t q_end,
@@ -644,7 +708,6 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
   const auto device = q_chunk_bhld.device();
   const auto output_dtype = q_chunk_bhld.scalar_type();
   const auto options_fp32 = q_chunk_bhld.options().dtype(torch::kFloat);
-  const AttentionCoreMode core_mode = attention_core_mode();
   const bool use_cuda_core = core_mode == AttentionCoreMode::CUDA_STREAMING_EXPERIMENTAL && head_dim <= kCudaCoreMaxHeadDim;
   const int64_t attention_elements = checked_mul_int64(q_len_total, kv_len, "cross_attention_elements");
   if (trace_q_chunk && core_mode == AttentionCoreMode::ATE_NAIVE && attention_elements > kSmallAttentionMatrixElementsBypass) {
@@ -777,7 +840,8 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
     const torch::Tensor& rope_cos_qk,
     const torch::Tensor& rope_sin_qk,
     const torch::Tensor& w_out,
-    const c10::optional<torch::Tensor>& b_out) {
+    const c10::optional<torch::Tensor>& b_out,
+    const c10::optional<std::string>& attn_core) {
   check_cuda_tensor(x, "x");
   check_cuda_tensor(w_q, "w_q");
   check_cuda_tensor(w_k, "w_k");
@@ -838,6 +902,9 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   auto wq = w_q.contiguous().view({channels, channels});
   auto wk = w_k.contiguous().view({channels, channels});
   auto wv = w_v.contiguous().view({channels, channels});
+  const int64_t kv_cache_element_bytes =
+      std::max<int64_t>(static_cast<int64_t>(x.element_size()),
+                        std::max<int64_t>(static_cast<int64_t>(wk.element_size()), static_cast<int64_t>(wv.element_size())));
 
   const bool has_q_bias = b_q.has_value();
   const bool has_k_bias = b_k.has_value();
@@ -865,11 +932,13 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   c10::optional<torch::Tensor> bv = has_v_bias ? c10::optional<torch::Tensor>(b_v->contiguous().view({channels})) : c10::nullopt;
 
   const StreamingPlan plan =
-      enforce_streaming_invariants(bsz, num_heads, seq_len, seq_len, q_chunk_size, kv_chunk_size);
+      enforce_streaming_invariants(
+          bsz, num_heads, seq_len, seq_len, head_dim, kv_cache_element_bytes, q_chunk_size, kv_chunk_size);
   const int64_t resolved_q_chunk = plan.q_chunk;
   const int64_t resolved_kv_chunk = plan.kv_chunk;
   const int64_t q_total_chunks = (seq_len + resolved_q_chunk - 1) / resolved_q_chunk;
   const int64_t q_trace_every = kernel_trace_every_q_chunk();
+  const AttentionCoreMode core_mode = attention_core_mode(attn_core, "wan_fused_v1.self_fwd: attn_core");
 
   auto k_cache_bhld = project_norm_rope_chunk_bhld(
       x,
@@ -929,6 +998,7 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
             bsz,
             num_heads,
             head_dim,
+            core_mode,
             trace_q_chunk,
             q_start,
             q_end,
@@ -960,7 +1030,8 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
     const torch::Tensor& w_v,
     const c10::optional<torch::Tensor>& b_v,
     const torch::Tensor& w_out,
-    const c10::optional<torch::Tensor>& b_out) {
+    const c10::optional<torch::Tensor>& b_out,
+    const c10::optional<std::string>& attn_core) {
   check_cuda_tensor(x, "x");
   check_cuda_tensor(context, "context");
   check_cuda_tensor(w_q, "w_q");
@@ -1065,13 +1136,18 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
   if (q_len == 0) {
     return torch::empty({bsz, q_len, channels}, x.options());
   }
+  const int64_t kv_cache_element_bytes =
+      std::max<int64_t>(static_cast<int64_t>(context.element_size()),
+                        std::max<int64_t>(static_cast<int64_t>(wk_2d.element_size()), static_cast<int64_t>(wv_2d.element_size())));
 
   const StreamingPlan plan =
-      enforce_streaming_invariants(bsz, num_heads, q_len, kv_len, q_chunk_size, kv_chunk_size);
+      enforce_streaming_invariants(
+          bsz, num_heads, q_len, kv_len, head_dim, kv_cache_element_bytes, q_chunk_size, kv_chunk_size);
   const int64_t resolved_q_chunk = plan.q_chunk;
   const int64_t resolved_kv_chunk = plan.kv_chunk;
   const int64_t q_total_chunks = (q_len + resolved_q_chunk - 1) / resolved_q_chunk;
   const int64_t q_trace_every = kernel_trace_every_q_chunk();
+  const AttentionCoreMode core_mode = attention_core_mode(attn_core, "wan_fused_v1.cross_fwd: attn_core");
 
   auto k_cache_bhld = project_norm_rope_chunk_bhld(
       context,
@@ -1131,6 +1207,7 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
             bsz,
             num_heads,
             head_dim,
+            core_mode,
             trace_q_chunk,
             q_start,
             q_end,

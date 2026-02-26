@@ -40,6 +40,7 @@ from torch import nn
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.attention.wan_fused_v1 import (
     WanFusedContractError,
+    resolve_effective_wan_fused_attn_core,
     try_fused_cross_attention,
     try_fused_self_attention,
 )
@@ -56,6 +57,10 @@ logger = logging.getLogger("backend.runtime.wan22.model")
 
 def _wan_trace_verbose_enabled() -> bool:
     return env_flag("CODEX_TRACE_DEBUG", default=False)
+
+
+def _resolve_wan_fused_attn_core_trace_fields(*, fused_mode: str) -> tuple[str, str, str]:
+    return resolve_effective_wan_fused_attn_core(fused_mode)
 
 
 def _module_parameter_dtype(module: nn.Module) -> str:
@@ -345,6 +350,9 @@ class WanSelfAttention(nn.Module):
         block_tag = "?" if trace_block_idx is None else str(int(trace_block_idx) + 1)
 
         fused_mode = get_wan_fused_mode()
+        attn_core = attn_core_source = attn_core_raw = "n/a"
+        if trace_enabled and fused_mode != "off":
+            attn_core, attn_core_source, attn_core_raw = _resolve_wan_fused_attn_core_trace_fields(fused_mode=fused_mode)
         if fused_mode != "off":
             rope_cos_qk: torch.Tensor | None = None
             rope_sin_qk: torch.Tensor | None = None
@@ -367,16 +375,24 @@ class WanSelfAttention(nn.Module):
                 if fused_result.output is not None:
                     if trace_enabled:
                         logger.debug(
-                            "[wan22.trace] block[%s] self_attn fused path used: mode=%s",
+                            "[wan22.trace] block[%s] self_attn fused path used: mode=%s attn_core=%s "
+                            "attn_core_source=%s attn_core_raw=%s",
                             block_tag,
                             fused_mode,
+                            attn_core,
+                            attn_core_source,
+                            attn_core_raw,
                         )
                     return fused_result.output
                 if trace_enabled:
                     logger.debug(
-                        "[wan22.trace] block[%s] self_attn fused fallback: mode=%s reason=%s detail=%s",
+                        "[wan22.trace] block[%s] self_attn fused fallback: mode=%s attn_core=%s "
+                        "attn_core_source=%s attn_core_raw=%s reason=%s detail=%s",
                         block_tag,
                         fused_mode,
+                        attn_core,
+                        attn_core_source,
+                        attn_core_raw,
                         fused_result.reason_code,
                         fused_result.reason_detail,
                     )
@@ -385,8 +401,13 @@ class WanSelfAttention(nn.Module):
                     raise
                 if trace_enabled:
                     logger.debug(
-                        "[wan22.trace] block[%s] self_attn fused contract fallback: %s",
+                        "[wan22.trace] block[%s] self_attn fused contract fallback: mode=%s attn_core=%s "
+                        "attn_core_source=%s attn_core_raw=%s detail=%s",
                         block_tag,
+                        fused_mode,
+                        attn_core,
+                        attn_core_source,
+                        attn_core_raw,
                         str(ex),
                     )
 
@@ -472,6 +493,9 @@ class WanCrossAttention(nn.Module):
         block_tag = "?" if trace_block_idx is None else str(int(trace_block_idx) + 1)
 
         fused_mode = get_wan_fused_mode()
+        attn_core = attn_core_source = attn_core_raw = "n/a"
+        if trace_enabled and fused_mode != "off":
+            attn_core, attn_core_source, attn_core_raw = _resolve_wan_fused_attn_core_trace_fields(fused_mode=fused_mode)
         if fused_mode != "off":
             rope_cos_q: torch.Tensor | None = None
             rope_sin_q: torch.Tensor | None = None
@@ -499,16 +523,24 @@ class WanCrossAttention(nn.Module):
                 if fused_result.output is not None:
                     if trace_enabled:
                         logger.debug(
-                            "[wan22.trace] block[%s] cross_attn fused path used: mode=%s",
+                            "[wan22.trace] block[%s] cross_attn fused path used: mode=%s attn_core=%s "
+                            "attn_core_source=%s attn_core_raw=%s",
                             block_tag,
                             fused_mode,
+                            attn_core,
+                            attn_core_source,
+                            attn_core_raw,
                         )
                     return fused_result.output
                 if trace_enabled:
                     logger.debug(
-                        "[wan22.trace] block[%s] cross_attn fused fallback: mode=%s reason=%s detail=%s",
+                        "[wan22.trace] block[%s] cross_attn fused fallback: mode=%s attn_core=%s "
+                        "attn_core_source=%s attn_core_raw=%s reason=%s detail=%s",
                         block_tag,
                         fused_mode,
+                        attn_core,
+                        attn_core_source,
+                        attn_core_raw,
                         fused_result.reason_code,
                         fused_result.reason_detail,
                     )
@@ -517,8 +549,13 @@ class WanCrossAttention(nn.Module):
                     raise
                 if trace_enabled:
                     logger.debug(
-                        "[wan22.trace] block[%s] cross_attn fused contract fallback: %s",
+                        "[wan22.trace] block[%s] cross_attn fused contract fallback: mode=%s attn_core=%s "
+                        "attn_core_source=%s attn_core_raw=%s detail=%s",
                         block_tag,
+                        fused_mode,
+                        attn_core,
+                        attn_core_source,
+                        attn_core_raw,
                         str(ex),
                     )
 

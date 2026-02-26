@@ -374,16 +374,14 @@ class WanSelfAttention(nn.Module):
             cos = freqs_cos[..., 0::2]
             sin = freqs_sin[..., 1::2]
 
-            out0 = torch.empty_like(x1, dtype=torch.float32)
-            torch.mul(x1, cos, out=out0)
-            out0.addcmul_(x2, sin, value=-1.0)
-
-            out1 = torch.empty_like(x2, dtype=torch.float32)
-            torch.mul(x1, sin, out=out1)
-            out1.addcmul_(x2, cos, value=1.0)
+            tmp = torch.empty_like(x1, dtype=torch.float32)
+            torch.mul(x1, cos, out=tmp)
+            tmp.addcmul_(x2, sin, value=-1.0)
         out = torch.empty_like(hidden_states)
-        out[..., 0::2].copy_(out0)
-        out[..., 1::2].copy_(out1)
+        out[..., 0::2].copy_(tmp)
+        torch.mul(x1, sin, out=tmp)
+        tmp.addcmul_(x2, cos, value=1.0)
+        out[..., 1::2].copy_(tmp)
         return out
 
     def forward(

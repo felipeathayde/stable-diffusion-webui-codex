@@ -55,7 +55,7 @@ _MODE_ENV_KEY = "CODEX_WAN22_FUSED_ATTN_V1_MODE"
 _JIT_ENV_KEY = "CODEX_WAN_FUSED_V1_JIT"
 _ATTN_CORE_ENV_KEY = "CODEX_WAN_FUSED_V1_ATTN_CORE"
 _FORCE_DEFAULT_ATTN_CORE_VALUE = "cuda_experimental"
-_REQUIRED_EXTENSION_ABI = 3
+_REQUIRED_EXTENSION_ABI = 4
 
 
 E_WAN_FUSED_DISABLED = "E_WAN_FUSED_DISABLED"
@@ -210,8 +210,8 @@ def wan_fused_runtime_metrics_log_summary(*, logger_obj: logging.Logger | None =
         return
     log = logger_obj if logger_obj is not None else logger
     log.info(
-        "[wan22.gguf] fused runtime summary: run=%s attempts=%d hits=%d fallback_by_reason=%s attempts_by_stage=%s "
-        "hits_by_stage=%s fallback_by_stage_reason=%s",
+        "wan_fused_v1.summary run=%s attempts=%d hits=%d fallback_by_reason=%s attempts_by_stage=%s hits_by_stage=%s "
+        "fallback_by_stage_reason=%s",
         str(metrics.run_label),
         int(metrics.attempts),
         int(metrics.hits),
@@ -827,7 +827,7 @@ def try_fused_self_attention(
     _validate_rope_tensor(tensor=rope_sin_qk, expected_len=seq_len, label="rope_sin_qk")
 
     head_dim = int(rope_cos_qk.shape[-1])
-    num_heads = _resolve_head_count(channels=channels, head_dim=head_dim, field_name="self")
+    _resolve_head_count(channels=channels, head_dim=head_dim, field_name="self")
     _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
     try:
         w_q, b_q = _resolve_linear_weight_bias(
@@ -878,9 +878,6 @@ def try_fused_self_attention(
             target_dtype=x.dtype,
         )
 
-        w_q_contract = w_q.t().contiguous().view(channels, num_heads, head_dim)
-        w_k_contract = w_k.t().contiguous().view(channels, num_heads, head_dim)
-        w_v_contract = w_v.t().contiguous().view(channels, num_heads, head_dim)
         has_q_bias = b_q is not None
         has_k_bias = b_k is not None
         has_v_bias = b_v is not None
@@ -892,24 +889,19 @@ def try_fused_self_attention(
                     f"got q={has_q_bias} k={has_k_bias} v={has_v_bias}."
                 ),
             )
-        b_q_contract = b_q.contiguous().view(num_heads, head_dim) if has_q_bias else None
-        b_k_contract = b_k.contiguous().view(num_heads, head_dim) if has_k_bias else None
-        b_v_contract = b_v.contiguous().view(num_heads, head_dim) if has_v_bias else None
-
-        w_out = w_o.t().contiguous().view(num_heads, head_dim, channels)
         out = torch.ops.wan_fused_v1.self_fwd(
             x,
-            w_q_contract,
-            b_q_contract,
-            w_k_contract,
-            b_k_contract,
-            w_v_contract,
-            b_v_contract,
+            w_q,
+            b_q,
+            w_k,
+            b_k,
+            w_v,
+            b_v,
             norm_q_weight,
             norm_k_weight,
             rope_cos_qk,
             rope_sin_qk,
-            w_out,
+            w_o,
             b_o,
             effective_core,
         )
@@ -1046,7 +1038,7 @@ def try_fused_cross_attention(
     _validate_rope_tensor(tensor=rope_sin_k, expected_len=kv_len, label="rope_sin_k")
 
     head_dim = int(rope_cos_q.shape[-1])
-    num_heads = _resolve_head_count(channels=channels, head_dim=head_dim, field_name="cross")
+    _resolve_head_count(channels=channels, head_dim=head_dim, field_name="cross")
     if int(rope_cos_k.shape[-1]) != head_dim or int(rope_sin_k.shape[-1]) != head_dim:
         _fail(
             code=E_WAN_FUSED_INVALID_SHAPE,
@@ -1106,30 +1098,22 @@ def try_fused_cross_attention(
             target_dtype=x.dtype,
         )
 
-        w_q_contract = w_q.t().contiguous().view(channels, num_heads, head_dim)
-        w_k_contract = w_k.t().contiguous().view(ctx_dim, num_heads, head_dim)
-        w_v_contract = w_v.t().contiguous().view(ctx_dim, num_heads, head_dim)
-        w_out = w_o.t().contiguous().view(num_heads, head_dim, channels)
-
-        b_q_contract = b_q.contiguous().view(num_heads, head_dim) if b_q is not None else None
-        b_k_contract = b_k.contiguous().view(num_heads, head_dim) if b_k is not None else None
-        b_v_contract = b_v.contiguous().view(num_heads, head_dim) if b_v is not None else None
         out = torch.ops.wan_fused_v1.cross_fwd(
             x,
             context,
-            w_q_contract,
-            b_q_contract,
+            w_q,
+            b_q,
             norm_q_weight,
             rope_cos_q,
             rope_sin_q,
-            w_k_contract,
-            b_k_contract,
+            w_k,
+            b_k,
             norm_k_weight,
             rope_cos_k,
             rope_sin_k,
-            w_v_contract,
-            b_v_contract,
-            w_out,
+            w_v,
+            b_v,
+            w_o,
             b_o,
             effective_core,
         )

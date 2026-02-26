@@ -75,12 +75,12 @@ def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, log
         # If xformers was previously enabled, disable it when possible (failure is an error now)
         if hasattr(pipe, "disable_xformers_memory_efficient_attention"):
             pipe.disable_xformers_memory_efficient_attention()
-        import torch  # type: ignore
         enable_flash, enable_mem_efficient = _selected_sdpa_flags()
-        enable_math = not (enable_flash or enable_mem_efficient)
 
         if enable_flash and not enable_mem_efficient:
             flash_unavailable_reason: str | None = None
+            import torch  # type: ignore
+
             if not torch.cuda.is_available():
                 flash_unavailable_reason = "cuda_unavailable"
             else:
@@ -91,26 +91,19 @@ def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, log
                 except Exception:
                     flash_unavailable_reason = "capability_probe_failed"
             if flash_unavailable_reason is not None:
-                enable_flash = False
-                enable_mem_efficient = True
-                enable_math = True
                 if flash_unavailable_reason not in _FLASH_DIFFUSERS_FALLBACK_LOGGED:
                     _FLASH_DIFFUSERS_FALLBACK_LOGGED.add(flash_unavailable_reason)
                     (logger or _LOGGER).warning(
                         "[attention] requested SDPA flash for diffusers, but flash appears unavailable (%s); "
-                        "falling back to mem_efficient/math.",
+                        "expect internal fallback to non-flash kernels.",
                         flash_unavailable_reason,
                     )
 
-        torch.backends.cuda.enable_flash_sdp(enable_flash)
-        torch.backends.cuda.enable_mem_efficient_sdp(enable_mem_efficient)
-        torch.backends.cuda.enable_math_sdp(enable_math)
         if logger:
             logger.info(
-                "attention backend: pytorch (sdpa flash=%s mem_efficient=%s math=%s)",
+                "attention backend: pytorch (sdpa flash=%s mem_efficient=%s)",
                 enable_flash,
                 enable_mem_efficient,
-                enable_math,
             )
         return "pytorch"
 

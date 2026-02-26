@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Options API routes for reading, updating, and validating settings.
-Exposes the JSON-backed options store and registry-driven validation helpers, applies supported runtime memory overrides immediately
-(device backend + storage/compute dtype) via the memory manager, enforces finite numeric values for number/slider settings,
-and emits apply metadata on `POST /api/options`.
+Exposes the JSON-backed options store and registry-driven validation helpers. Enforces finite numeric values for number/slider settings
+and emits apply metadata on `POST /api/options`. Memory-manager backend and dtype changes are persisted but require a backend restart
+(launcher-owned) to take effect; this endpoint does not hot-apply memory reconfiguration.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for options endpoints.
@@ -34,16 +34,6 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter()
     hot_apply_reasons: Dict[str, str] = {
-        "codex_attention_backend": "hot-applied immediately (runtime attention backend reconfigured).",
-        "codex_core_device": "hot-applied immediately (runtime memory manager backend updated).",
-        "codex_te_device": "hot-applied immediately (runtime memory manager backend updated).",
-        "codex_vae_device": "hot-applied immediately (runtime memory manager backend updated).",
-        "codex_core_dtype": "hot-applied immediately (runtime memory manager storage dtype updated).",
-        "codex_te_dtype": "hot-applied immediately (runtime memory manager storage dtype updated).",
-        "codex_vae_dtype": "hot-applied immediately (runtime memory manager storage dtype updated).",
-        "codex_core_compute_dtype": "hot-applied immediately (runtime memory manager compute dtype updated).",
-        "codex_te_compute_dtype": "hot-applied immediately (runtime memory manager compute dtype updated).",
-        "codex_vae_compute_dtype": "hot-applied immediately (runtime memory manager compute dtype updated).",
         "codex_smart_offload": "hot-applied immediately (effective for the next generation request).",
         "codex_smart_fallback": "hot-applied immediately (effective for the next generation request).",
         "codex_smart_cache": "hot-applied immediately (effective for the next generation request).",
@@ -173,87 +163,13 @@ def build_router(
         previous_values = opts_load_native()
         if not isinstance(previous_values, dict):
             raise HTTPException(status_code=500, detail="failed to read current options before update")
-        hot_applied_keys: set[str] = set()
-        device_keys = ("codex_core_device", "codex_te_device", "codex_vae_device")
-
-        # Apply memory manager overrides when present
-        from apps.backend.runtime import memory_management as mem_management
-
-        requested_devices = {
-            key: str(updates[key]).strip().lower()
-            for key in device_keys
-            if key in updates
-        }
-        if requested_devices:
-            distinct = {value for value in requested_devices.values()}
-            if len(distinct) != 1:
-                joined = ", ".join(f"{key}={value!r}" for key, value in requested_devices.items())
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Main-device invariant violation: core/TE/VAE device updates must match exactly. "
-                        f"Received: {joined}"
-                    ),
-                )
-            resolved = next(iter(distinct))
-            for key in device_keys:
-                updates[key] = resolved
-
-        role_map = {
-            "codex_core_device": ("core", "backend"),
-            "codex_te_device": ("text_encoder", "backend"),
-            "codex_vae_device": ("vae", "backend"),
-            "codex_core_dtype": ("core", "dtype"),
-            "codex_te_dtype": ("text_encoder", "dtype"),
-            "codex_vae_dtype": ("vae", "dtype"),
-            "codex_core_compute_dtype": ("core", "compute_dtype"),
-            "codex_te_compute_dtype": ("text_encoder", "compute_dtype"),
-            "codex_vae_compute_dtype": ("vae", "compute_dtype"),
-        }
-
-        def _apply_runtime_override(key: str, value: Any) -> bool:
-            if key == "codex_attention_backend":
-                mem_management.set_attention_backend(str(value))
-                return True
-            if key not in role_map:
-                return False
-            role, kind = role_map[key]
-            if kind == "backend":
-                mem_management.set_component_backend(role, str(value))
-            elif kind == "dtype":
-                mem_management.set_component_dtype(role, str(value))
-            else:
-                mem_management.set_component_compute_dtype(role, str(value))
-            return True
-
-        for key, value in updates.items():
-            try:
-                applied = _apply_runtime_override(key, value)
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
-            if applied:
-                hot_applied_keys.add(key)
 
         try:
             updated = opts_set_many(updates)
         except Exception as exc:
-            rollback_failures: list[str] = []
-            for key in sorted(hot_applied_keys):
-                if key not in previous_values:
-                    continue
-                try:
-                    _apply_runtime_override(key, previous_values[key])
-                except Exception as rollback_exc:
-                    rollback_failures.append(f"{key}: {rollback_exc}")
-            if rollback_failures:
-                detail = (
-                    "Failed to persist options and failed to rollback runtime hot-applies: "
-                    + "; ".join(rollback_failures)
-                )
-                raise HTTPException(status_code=500, detail=detail) from exc
             raise HTTPException(
                 status_code=500,
-                detail="Failed to persist options; runtime hot-applies were rolled back.",
+                detail="Failed to persist options.",
             ) from exc
         applied_now: List[str] = []
         restart_required: List[str] = []
@@ -261,8 +177,6 @@ def build_router(
             if key == "codex_options_revision":
                 continue
             reason = hot_apply_reasons.get(key)
-            if reason is None and key in hot_applied_keys:
-                reason = "hot-applied immediately."
             if reason is not None:
                 applied_now.append(f"{key}: {reason}")
                 continue

@@ -89,7 +89,11 @@ def _apply_runtime_options(engine: Any, opts: EngineLoadOptions | None) -> Any:
     else:
         try:
             attention_backend = str(memory_management.manager.config.attention.backend.value)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning(
+                "Falling back to attention_backend='pytorch' because runtime memory config is unavailable: %s",
+                exc,
+            )
             attention_backend = "pytorch"
 
     if attention_backend is not None:

@@ -629,6 +629,17 @@ torch::Tensor streaming_attention_self_chunk_bhld(
   auto l = torch::zeros({batch, heads, q_span, 1}, options_fp32.device(device));
   auto acc = torch::zeros({batch, heads, q_span, head_dim}, options_fp32.device(device));
 
+  const int64_t kv_span_full = std::min<int64_t>(kv_len, kv_chunk_size);
+  auto k_chunk_full = torch::empty({batch, heads, kv_span_full, head_dim}, options_fp32.device(device));
+  auto v_chunk_full = torch::empty({batch, heads, kv_span_full, head_dim}, options_fp32.device(device));
+  const int64_t kv_span_tail = (kv_len > kv_chunk_size) ? (kv_len % kv_chunk_size) : 0;
+  c10::optional<torch::Tensor> k_chunk_tail = c10::nullopt;
+  c10::optional<torch::Tensor> v_chunk_tail = c10::nullopt;
+  if (kv_span_tail != 0) {
+    k_chunk_tail = torch::empty({batch, heads, kv_span_tail, head_dim}, options_fp32.device(device));
+    v_chunk_tail = torch::empty({batch, heads, kv_span_tail, head_dim}, options_fp32.device(device));
+  }
+
   const int64_t kv_total_chunks = (kv_len + kv_chunk_size - 1) / kv_chunk_size;
   const int64_t kv_trace_every = kernel_trace_every_kv_chunk();
   for (int64_t kv_start = 0; kv_start < kv_len; kv_start += kv_chunk_size) {
@@ -641,8 +652,16 @@ torch::Tensor streaming_attention_self_chunk_bhld(
     if (trace_kv_chunk) {
       maybe_trace_kernel_memory("self_attn", "attn_chunk.kv_sliced", k_chunk_bhld, q_start, q_end, q_len_total, kv_start, kv_end, kv_len);
     }
-    auto k_chunk = k_chunk_bhld.to(torch::kFloat).contiguous();
-    auto v_chunk = v_chunk_bhld.to(torch::kFloat).contiguous();
+    const int64_t kv_span = kv_end - kv_start;
+    torch::Tensor k_chunk = k_chunk_full;
+    torch::Tensor v_chunk = v_chunk_full;
+    if (kv_span != kv_span_full) {
+      TORCH_CHECK(k_chunk_tail.has_value() && v_chunk_tail.has_value(), "streaming_attention_self_chunk_bhld: missing tail buffers");
+      k_chunk = *k_chunk_tail;
+      v_chunk = *v_chunk_tail;
+    }
+    k_chunk.copy_(k_chunk_bhld);
+    v_chunk.copy_(v_chunk_bhld);
     if (use_cuda_core) {
       launch_streaming_attention_update_fp32(q_chunk, k_chunk, v_chunk, m, l, acc, head_dim);
       if (trace_kv_chunk) {
@@ -724,6 +743,17 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
   auto l = torch::zeros({batch, heads, q_span, 1}, options_fp32.device(device));
   auto acc = torch::zeros({batch, heads, q_span, head_dim}, options_fp32.device(device));
 
+  const int64_t kv_span_full = std::min<int64_t>(kv_len, kv_chunk_size);
+  auto k_chunk_full = torch::empty({batch, heads, kv_span_full, head_dim}, options_fp32.device(device));
+  auto v_chunk_full = torch::empty({batch, heads, kv_span_full, head_dim}, options_fp32.device(device));
+  const int64_t kv_span_tail = (kv_len > kv_chunk_size) ? (kv_len % kv_chunk_size) : 0;
+  c10::optional<torch::Tensor> k_chunk_tail = c10::nullopt;
+  c10::optional<torch::Tensor> v_chunk_tail = c10::nullopt;
+  if (kv_span_tail != 0) {
+    k_chunk_tail = torch::empty({batch, heads, kv_span_tail, head_dim}, options_fp32.device(device));
+    v_chunk_tail = torch::empty({batch, heads, kv_span_tail, head_dim}, options_fp32.device(device));
+  }
+
   const int64_t kv_total_chunks = (kv_len + kv_chunk_size - 1) / kv_chunk_size;
   const int64_t kv_trace_every = kernel_trace_every_kv_chunk();
   for (int64_t kv_start = 0; kv_start < kv_len; kv_start += kv_chunk_size) {
@@ -736,8 +766,16 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
     if (trace_kv_chunk) {
       maybe_trace_kernel_memory("cross_attn", "attn_chunk.kv_sliced", k_chunk_bhld, q_start, q_end, q_len_total, kv_start, kv_end, kv_len);
     }
-    auto k_chunk = k_chunk_bhld.to(torch::kFloat).contiguous();
-    auto v_chunk = v_chunk_bhld.to(torch::kFloat).contiguous();
+    const int64_t kv_span = kv_end - kv_start;
+    torch::Tensor k_chunk = k_chunk_full;
+    torch::Tensor v_chunk = v_chunk_full;
+    if (kv_span != kv_span_full) {
+      TORCH_CHECK(k_chunk_tail.has_value() && v_chunk_tail.has_value(), "streaming_attention_cross_chunk_bhld: missing tail buffers");
+      k_chunk = *k_chunk_tail;
+      v_chunk = *v_chunk_tail;
+    }
+    k_chunk.copy_(k_chunk_bhld);
+    v_chunk.copy_(v_chunk_bhld);
     if (use_cuda_core) {
       launch_streaming_attention_update_fp32(q_chunk, k_chunk, v_chunk, m, l, acc, head_dim);
       if (trace_kv_chunk) {
@@ -775,12 +813,16 @@ torch::Tensor streaming_attention_cross_chunk_bhld(
 
 torch::Tensor linear_lastdim(
     const torch::Tensor& x_blc,
-    const torch::Tensor& w_ci,
-    const c10::optional<torch::Tensor>& bias) {
+    const torch::Tensor& w_oi,
+    const c10::optional<torch::Tensor>& bias_o) {
   auto x2d = x_blc.contiguous().view({-1, x_blc.size(-1)});
-  auto out2d = torch::matmul(x2d, w_ci);
-  if (bias.has_value()) {
-    out2d = out2d + bias->view({1, bias->size(0)});
+  TORCH_CHECK(w_oi.dim() == 2, "linear_lastdim: weight must be 2D");
+  TORCH_CHECK(w_oi.size(1) == x2d.size(1), "linear_lastdim: weight in_features mismatch");
+  auto out2d = torch::matmul(x2d, w_oi.transpose(0, 1));
+  if (bias_o.has_value()) {
+    TORCH_CHECK(bias_o->dim() == 1, "linear_lastdim: bias must be 1D");
+    TORCH_CHECK(bias_o->numel() == w_oi.size(0), "linear_lastdim: bias out_features mismatch");
+    out2d = out2d + bias_o->view({1, bias_o->size(0)});
   }
   auto out = out2d.view({x_blc.size(0), x_blc.size(1), out2d.size(-1)});
   return out;
@@ -790,14 +832,14 @@ torch::Tensor project_linear_chunk_bhld(
     const torch::Tensor& source_blc,
     int64_t start,
     int64_t end,
-    const torch::Tensor& weight_ci,
-    const c10::optional<torch::Tensor>& bias_i,
+    const torch::Tensor& weight_oi,
+    const c10::optional<torch::Tensor>& bias_o,
     int64_t batch,
     int64_t heads,
     int64_t head_dim) {
   TORCH_CHECK(start >= 0 && end >= start && end <= source_blc.size(1), "project_linear_chunk_bhld: invalid chunk range");
   const int64_t span = end - start;
-  auto projected_blc = linear_lastdim(source_blc.slice(/*dim=*/1, start, end), weight_ci, bias_i);
+  auto projected_blc = linear_lastdim(source_blc.slice(/*dim=*/1, start, end), weight_oi, bias_o);
   auto projected_blhd = projected_blc.contiguous().view({batch, span, heads, head_dim});
   return projected_blhd.permute({0, 2, 1, 3}).contiguous();
 }
@@ -806,8 +848,8 @@ torch::Tensor project_norm_rope_chunk_bhld(
     const torch::Tensor& source_blc,
     int64_t start,
     int64_t end,
-    const torch::Tensor& weight_ci,
-    const c10::optional<torch::Tensor>& bias_i,
+    const torch::Tensor& weight_oi,
+    const c10::optional<torch::Tensor>& bias_o,
     const torch::Tensor& norm_weight,
     const torch::Tensor& rope_cos,
     const torch::Tensor& rope_sin,
@@ -816,7 +858,7 @@ torch::Tensor project_norm_rope_chunk_bhld(
     int64_t head_dim) {
   TORCH_CHECK(start >= 0 && end >= start && end <= source_blc.size(1), "project_norm_rope_chunk_bhld: invalid chunk range");
   const int64_t span = end - start;
-  auto projected_blc = linear_lastdim(source_blc.slice(/*dim=*/1, start, end), weight_ci, bias_i);
+  auto projected_blc = linear_lastdim(source_blc.slice(/*dim=*/1, start, end), weight_oi, bias_o);
   projected_blc = rmsnorm_channels(projected_blc, norm_weight);
   auto projected_blhd = projected_blc.contiguous().view({batch, span, heads, head_dim});
   auto rope_cos_chunk = rope_cos.slice(/*dim=*/1, start, end);
@@ -866,30 +908,26 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   check_optional_same_device(x, b_out, "b_out");
 
   TORCH_CHECK(x.dim() == 3, "wan_fused_v1.self_fwd: x must be [B,L,C]");
-  TORCH_CHECK(w_q.dim() == 3 && w_k.dim() == 3 && w_v.dim() == 3, "wan_fused_v1.self_fwd: w_q/w_k/w_v must be [C,H,D]");
-  TORCH_CHECK(w_out.dim() == 3, "wan_fused_v1.self_fwd: w_out must be [H,D,C]");
 
   const auto bsz = x.size(0);
   const auto seq_len = x.size(1);
   const auto channels = x.size(2);
-  TORCH_CHECK(w_q.size(0) == channels, "wan_fused_v1.self_fwd: w_q C mismatch");
-  TORCH_CHECK(w_k.size(0) == channels, "wan_fused_v1.self_fwd: w_k C mismatch");
-  TORCH_CHECK(w_v.size(0) == channels, "wan_fused_v1.self_fwd: w_v C mismatch");
-  const auto num_heads = w_q.size(1);
-  const auto head_dim = w_q.size(2);
-  TORCH_CHECK(w_k.size(1) == num_heads && w_k.size(2) == head_dim, "wan_fused_v1.self_fwd: w_k H/D mismatch");
-  TORCH_CHECK(w_v.size(1) == num_heads && w_v.size(2) == head_dim, "wan_fused_v1.self_fwd: w_v H/D mismatch");
-  TORCH_CHECK(num_heads * head_dim == channels, "wan_fused_v1.self_fwd: H*D must equal C");
-  TORCH_CHECK(w_out.size(0) == num_heads && w_out.size(1) == head_dim && w_out.size(2) == channels,
-              "wan_fused_v1.self_fwd: w_out shape mismatch");
   TORCH_CHECK(
       rope_cos_qk.dim() == 4 && rope_cos_qk.size(0) == 1 && rope_cos_qk.size(1) == seq_len && rope_cos_qk.size(2) == 1 &&
-          rope_cos_qk.size(3) == head_dim,
+          rope_cos_qk.size(3) > 0,
       "wan_fused_v1.self_fwd: rope_cos_qk must be [1,L,1,D]");
   TORCH_CHECK(
       rope_sin_qk.dim() == 4 && rope_sin_qk.size(0) == 1 && rope_sin_qk.size(1) == seq_len && rope_sin_qk.size(2) == 1 &&
-          rope_sin_qk.size(3) == head_dim,
+          rope_sin_qk.size(3) > 0,
       "wan_fused_v1.self_fwd: rope_sin_qk must be [1,L,1,D]");
+  const auto head_dim = rope_cos_qk.size(3);
+  TORCH_CHECK(rope_sin_qk.size(3) == head_dim, "wan_fused_v1.self_fwd: RoPE head_dim mismatch");
+  TORCH_CHECK(channels % head_dim == 0, "wan_fused_v1.self_fwd: channels/head_dim mismatch");
+  const auto num_heads = channels / head_dim;
+  TORCH_CHECK(w_q.dim() == 2 && w_q.size(0) == channels && w_q.size(1) == channels, "wan_fused_v1.self_fwd: w_q must be [C,C]");
+  TORCH_CHECK(w_k.dim() == 2 && w_k.size(0) == channels && w_k.size(1) == channels, "wan_fused_v1.self_fwd: w_k must be [C,C]");
+  TORCH_CHECK(w_v.dim() == 2 && w_v.size(0) == channels && w_v.size(1) == channels, "wan_fused_v1.self_fwd: w_v must be [C,C]");
+  TORCH_CHECK(w_out.dim() == 2 && w_out.size(0) == channels && w_out.size(1) == channels, "wan_fused_v1.self_fwd: w_out must be [C,C]");
   TORCH_CHECK(norm_q_weight.numel() == channels && norm_k_weight.numel() == channels,
               "wan_fused_v1.self_fwd: norm weights must be [C]");
 
@@ -899,12 +937,9 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
   const int64_t kv_chunk_size =
       parse_env_chunk_or_default("CODEX_WAN_FUSED_V1_KV_CHUNK", kDefaultKvChunk, kMaxKvChunk);
 
-  auto wq = w_q.contiguous().view({channels, channels});
-  auto wk = w_k.contiguous().view({channels, channels});
-  auto wv = w_v.contiguous().view({channels, channels});
   const int64_t kv_cache_element_bytes =
       std::max<int64_t>(static_cast<int64_t>(x.element_size()),
-                        std::max<int64_t>(static_cast<int64_t>(wk.element_size()), static_cast<int64_t>(wv.element_size())));
+                        std::max<int64_t>(static_cast<int64_t>(w_k.element_size()), static_cast<int64_t>(w_v.element_size())));
 
   const bool has_q_bias = b_q.has_value();
   const bool has_k_bias = b_k.has_value();
@@ -914,22 +949,22 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
       "wan_fused_v1.self_fwd: requires all-or-none biases for q/k/v.");
   if (has_q_bias) {
     TORCH_CHECK(
-        b_q->dim() == 2 && b_q->size(0) == num_heads && b_q->size(1) == head_dim,
-        "wan_fused_v1.self_fwd: b_q must be [H,D]");
+        b_q->dim() == 1 && b_q->numel() == channels,
+        "wan_fused_v1.self_fwd: b_q must be [C]");
   }
   if (has_k_bias) {
     TORCH_CHECK(
-        b_k->dim() == 2 && b_k->size(0) == num_heads && b_k->size(1) == head_dim,
-        "wan_fused_v1.self_fwd: b_k must be [H,D]");
+        b_k->dim() == 1 && b_k->numel() == channels,
+        "wan_fused_v1.self_fwd: b_k must be [C]");
   }
   if (has_v_bias) {
     TORCH_CHECK(
-        b_v->dim() == 2 && b_v->size(0) == num_heads && b_v->size(1) == head_dim,
-        "wan_fused_v1.self_fwd: b_v must be [H,D]");
+        b_v->dim() == 1 && b_v->numel() == channels,
+        "wan_fused_v1.self_fwd: b_v must be [C]");
   }
-  c10::optional<torch::Tensor> bq = has_q_bias ? c10::optional<torch::Tensor>(b_q->contiguous().view({channels})) : c10::nullopt;
-  c10::optional<torch::Tensor> bk = has_k_bias ? c10::optional<torch::Tensor>(b_k->contiguous().view({channels})) : c10::nullopt;
-  c10::optional<torch::Tensor> bv = has_v_bias ? c10::optional<torch::Tensor>(b_v->contiguous().view({channels})) : c10::nullopt;
+  c10::optional<torch::Tensor> bq = has_q_bias ? c10::optional<torch::Tensor>(*b_q) : c10::nullopt;
+  c10::optional<torch::Tensor> bk = has_k_bias ? c10::optional<torch::Tensor>(*b_k) : c10::nullopt;
+  c10::optional<torch::Tensor> bv = has_v_bias ? c10::optional<torch::Tensor>(*b_v) : c10::nullopt;
 
   const StreamingPlan plan =
       enforce_streaming_invariants(
@@ -944,7 +979,7 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
       x,
       /*start=*/0,
       /*end=*/seq_len,
-      wk,
+      w_k,
       bk,
       norm_k_weight,
       rope_cos_qk,
@@ -956,14 +991,13 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
       x,
       /*start=*/0,
       /*end=*/seq_len,
-      wv,
+      w_v,
       bv,
       bsz,
       num_heads,
       head_dim);
 
   auto out = torch::empty({bsz, seq_len, channels}, x.options());
-  auto w_out_2d = w_out.contiguous().view({channels, channels});
   maybe_trace_kernel_memory("self_attn", "dispatch", x, 0, 0, seq_len, 0, 0, seq_len);
   maybe_trace_kernel_memory("self_attn", "kv_cache.ready", k_cache_bhld, 0, 0, seq_len, 0, seq_len, seq_len);
   for (int64_t q_start = 0; q_start < seq_len; q_start += resolved_q_chunk) {
@@ -978,7 +1012,7 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
         x,
         q_start,
         q_end,
-        wq,
+        w_q,
         bq,
         norm_q_weight,
         rope_cos_qk,
@@ -1005,7 +1039,7 @@ torch::Tensor wan_fused_v1_self_fwd_cuda(
             seq_len);
     auto attn_chunk_blc =
         attn_chunk_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, q_span, channels});
-    out.slice(/*dim=*/1, q_start, q_end).copy_(linear_lastdim(attn_chunk_blc, w_out_2d, b_out));
+    out.slice(/*dim=*/1, q_start, q_end).copy_(linear_lastdim(attn_chunk_blc, w_out, b_out));
     if (trace_q_chunk) {
       maybe_trace_kernel_memory("self_attn", "q_chunk.out_written", out, q_start, q_end, seq_len, seq_len, seq_len, seq_len);
     }
@@ -1071,39 +1105,35 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
   const auto kv_len = context.size(1);
   const auto ctx_dim = context.size(2);
 
-  TORCH_CHECK(w_q.dim() == 3 && w_q.size(0) == channels, "wan_fused_v1.cross_fwd: w_q must be [C,H,D]");
-  TORCH_CHECK(w_k.dim() == 3 && w_k.size(0) == ctx_dim, "wan_fused_v1.cross_fwd: w_k must be [Cctx,H,D]");
-  TORCH_CHECK(w_v.dim() == 3 && w_v.size(0) == ctx_dim, "wan_fused_v1.cross_fwd: w_v must be [Cctx,H,D]");
-
-  const auto num_heads = w_q.size(1);
-  const auto head_dim = w_q.size(2);
-
-  TORCH_CHECK(w_k.size(1) == num_heads && w_k.size(2) == head_dim, "wan_fused_v1.cross_fwd: w_k H/D mismatch");
-  TORCH_CHECK(w_v.size(1) == num_heads && w_v.size(2) == head_dim, "wan_fused_v1.cross_fwd: w_v H/D mismatch");
-  TORCH_CHECK(num_heads * head_dim == channels, "wan_fused_v1.cross_fwd: H*D must equal C");
-
-  TORCH_CHECK(w_out.dim() == 3 && w_out.size(0) == num_heads && w_out.size(1) == head_dim && w_out.size(2) == channels,
-              "wan_fused_v1.cross_fwd: w_out must be [H,D,C]");
-
   TORCH_CHECK(norm_q_weight.numel() == channels && norm_k_weight.numel() == channels,
               "wan_fused_v1.cross_fwd: norm weights must be [C]");
 
   TORCH_CHECK(
       rope_cos_q.dim() == 4 && rope_cos_q.size(0) == 1 && rope_cos_q.size(1) == q_len && rope_cos_q.size(2) == 1 &&
-          rope_cos_q.size(3) == head_dim,
+          rope_cos_q.size(3) > 0,
               "wan_fused_v1.cross_fwd: rope_cos_q must be [1,Lq,1,D]");
   TORCH_CHECK(
       rope_sin_q.dim() == 4 && rope_sin_q.size(0) == 1 && rope_sin_q.size(1) == q_len && rope_sin_q.size(2) == 1 &&
-          rope_sin_q.size(3) == head_dim,
+          rope_sin_q.size(3) > 0,
               "wan_fused_v1.cross_fwd: rope_sin_q must be [1,Lq,1,D]");
   TORCH_CHECK(
       rope_cos_k.dim() == 4 && rope_cos_k.size(0) == 1 && rope_cos_k.size(1) == kv_len && rope_cos_k.size(2) == 1 &&
-          rope_cos_k.size(3) == head_dim,
+          rope_cos_k.size(3) > 0,
               "wan_fused_v1.cross_fwd: rope_cos_k must be [1,Lk,1,D]");
   TORCH_CHECK(
       rope_sin_k.dim() == 4 && rope_sin_k.size(0) == 1 && rope_sin_k.size(1) == kv_len && rope_sin_k.size(2) == 1 &&
-          rope_sin_k.size(3) == head_dim,
+          rope_sin_k.size(3) > 0,
               "wan_fused_v1.cross_fwd: rope_sin_k must be [1,Lk,1,D]");
+  const auto head_dim = rope_cos_q.size(3);
+  TORCH_CHECK(rope_sin_q.size(3) == head_dim, "wan_fused_v1.cross_fwd: RoPE head_dim mismatch (q)");
+  TORCH_CHECK(rope_cos_k.size(3) == head_dim, "wan_fused_v1.cross_fwd: RoPE head_dim mismatch (k_cos)");
+  TORCH_CHECK(rope_sin_k.size(3) == head_dim, "wan_fused_v1.cross_fwd: RoPE head_dim mismatch (k_sin)");
+  TORCH_CHECK(channels % head_dim == 0, "wan_fused_v1.cross_fwd: channels/head_dim mismatch");
+  const auto num_heads = channels / head_dim;
+  TORCH_CHECK(w_q.dim() == 2 && w_q.size(0) == channels && w_q.size(1) == channels, "wan_fused_v1.cross_fwd: w_q must be [C,C]");
+  TORCH_CHECK(w_k.dim() == 2 && w_k.size(0) == channels && w_k.size(1) == ctx_dim, "wan_fused_v1.cross_fwd: w_k must be [C,Cctx]");
+  TORCH_CHECK(w_v.dim() == 2 && w_v.size(0) == channels && w_v.size(1) == ctx_dim, "wan_fused_v1.cross_fwd: w_v must be [C,Cctx]");
+  TORCH_CHECK(w_out.dim() == 2 && w_out.size(0) == channels && w_out.size(1) == channels, "wan_fused_v1.cross_fwd: w_out must be [C,C]");
 
   const c10::cuda::CUDAGuard device_guard(x.device());
   const int64_t q_chunk_size =
@@ -1111,34 +1141,30 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
   const int64_t kv_chunk_size =
       parse_env_chunk_or_default("CODEX_WAN_FUSED_V1_KV_CHUNK", kDefaultKvChunk, kMaxKvChunk);
 
-  auto wq_2d = w_q.contiguous().view({channels, channels});
-  auto wk_2d = w_k.contiguous().view({ctx_dim, channels});
-  auto wv_2d = w_v.contiguous().view({ctx_dim, channels});
-
   c10::optional<torch::Tensor> bq_flat = c10::nullopt;
   c10::optional<torch::Tensor> bk_flat = c10::nullopt;
   c10::optional<torch::Tensor> bv_flat = c10::nullopt;
   if (b_q.has_value()) {
-    TORCH_CHECK(b_q->dim() == 2 && b_q->size(0) == num_heads && b_q->size(1) == head_dim,
-                "wan_fused_v1.cross_fwd: b_q must be [H,D]");
-    bq_flat = b_q->contiguous().view({channels});
+    TORCH_CHECK(b_q->dim() == 1 && b_q->numel() == channels,
+                "wan_fused_v1.cross_fwd: b_q must be [C]");
+    bq_flat = *b_q;
   }
   if (b_k.has_value()) {
-    TORCH_CHECK(b_k->dim() == 2 && b_k->size(0) == num_heads && b_k->size(1) == head_dim,
-                "wan_fused_v1.cross_fwd: b_k must be [H,D]");
-    bk_flat = b_k->contiguous().view({channels});
+    TORCH_CHECK(b_k->dim() == 1 && b_k->numel() == channels,
+                "wan_fused_v1.cross_fwd: b_k must be [C]");
+    bk_flat = *b_k;
   }
   if (b_v.has_value()) {
-    TORCH_CHECK(b_v->dim() == 2 && b_v->size(0) == num_heads && b_v->size(1) == head_dim,
-                "wan_fused_v1.cross_fwd: b_v must be [H,D]");
-    bv_flat = b_v->contiguous().view({channels});
+    TORCH_CHECK(b_v->dim() == 1 && b_v->numel() == channels,
+                "wan_fused_v1.cross_fwd: b_v must be [C]");
+    bv_flat = *b_v;
   }
   if (q_len == 0) {
     return torch::empty({bsz, q_len, channels}, x.options());
   }
   const int64_t kv_cache_element_bytes =
       std::max<int64_t>(static_cast<int64_t>(context.element_size()),
-                        std::max<int64_t>(static_cast<int64_t>(wk_2d.element_size()), static_cast<int64_t>(wv_2d.element_size())));
+                        std::max<int64_t>(static_cast<int64_t>(w_k.element_size()), static_cast<int64_t>(w_v.element_size())));
 
   const StreamingPlan plan =
       enforce_streaming_invariants(
@@ -1153,7 +1179,7 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
       context,
       /*start=*/0,
       /*end=*/kv_len,
-      wk_2d,
+      w_k,
       bk_flat,
       norm_k_weight,
       rope_cos_k,
@@ -1165,14 +1191,13 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
       context,
       /*start=*/0,
       /*end=*/kv_len,
-      wv_2d,
+      w_v,
       bv_flat,
       bsz,
       num_heads,
       head_dim);
 
   auto out = torch::empty({bsz, q_len, channels}, x.options());
-  auto w_out_2d = w_out.contiguous().view({channels, channels});
   maybe_trace_kernel_memory("cross_attn", "dispatch", x, 0, 0, q_len, 0, 0, kv_len);
   maybe_trace_kernel_memory("cross_attn", "kv_cache.ready", k_cache_bhld, 0, 0, q_len, 0, kv_len, kv_len);
   for (int64_t q_start = 0; q_start < q_len; q_start += resolved_q_chunk) {
@@ -1187,7 +1212,7 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
         x,
         q_start,
         q_end,
-        wq_2d,
+        w_q,
         bq_flat,
         norm_q_weight,
         rope_cos_q,
@@ -1214,7 +1239,7 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
             q_len);
     auto attn_chunk_blc =
         attn_chunk_bhld.permute({0, 2, 1, 3}).contiguous().view({bsz, q_span, channels});
-    out.slice(/*dim=*/1, q_start, q_end).copy_(linear_lastdim(attn_chunk_blc, w_out_2d, b_out));
+    out.slice(/*dim=*/1, q_start, q_end).copy_(linear_lastdim(attn_chunk_blc, w_out, b_out));
     if (trace_q_chunk) {
       maybe_trace_kernel_memory("cross_attn", "q_chunk.out_written", out, q_start, q_end, q_len, kv_len, kv_len, kv_len);
     }

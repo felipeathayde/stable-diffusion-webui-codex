@@ -6,7 +6,7 @@
 #include <string>
 
 namespace {
-constexpr int kWanFusedV1AbiVersion = 3;
+constexpr int kWanFusedV1AbiVersion = 4;
 }
 
 torch::Tensor wan_fused_v1_self_fwd_cuda(

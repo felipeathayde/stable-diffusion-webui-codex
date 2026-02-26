@@ -142,9 +142,8 @@ If you touch dependencies or configs, you update the proper manifest or lockfile
 	- Explicit and fail-loud errors.
 	- Readable names.
 
-When working on tests (especially pipeline semantics and task/SSE events), **YOU MUST FOLLOW** `.sangoi/howto/TESTS_GUIDE.md`.
-Do not create bloat and unnecessary tests.
-Tests live in `.sangoi/dev/tests` (repo-root `tests/` must not exist; move any tests there and delete `tests/`)
+Testing policy: do not add or maintain automated tests unless explicitly requested by the repo owner.
+Prefer fail-loud runtime contracts and manual validation workflows.
 
 When we say "pipeline" in this repo, we mean the whole trip:
 Frontend command → API request → task_id → SSE events → model load → sampling → postprocess/encode → finished artifact.

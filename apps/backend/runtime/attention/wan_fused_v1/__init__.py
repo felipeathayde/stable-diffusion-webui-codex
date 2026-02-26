@@ -673,9 +673,10 @@ def _maybe_return_unavailable(*, mode: WanFusedMode) -> WanFusedAttemptResult | 
 
 def _map_kernel_runtime_error_code(message: str) -> str:
     normalized = str(message)
-    if "streaming invariant violated" in normalized:
+    lowered = normalized.lower()
+    if "streaming invariant violated" in lowered:
         return E_WAN_FUSED_STREAMING_INVARIANT_VIOLATION
-    if "strict integer" in normalized and "CODEX_WAN_FUSED_V1_" in normalized:
+    if "strict integer" in lowered and "codex_wan_fused_v1_" in lowered:
         return E_WAN_FUSED_INVALID_ENV
     return E_WAN_FUSED_KERNEL_RUNTIME_ERROR
 

@@ -22,3 +22,5 @@ Status: Active
 - 2026-02-25: Self fused dispatch no longer packs `w_qkv`/`b_qkv`; wrapper now passes `w_q/w_k/w_v` + optional biases separately to cut transient VRAM overhead before kernel dispatch.
 - 2026-02-25: Runtime loader enforces extension ABI (`WAN_FUSED_V1_ABI=2`) and rejects stale modules to avoid silent signature mismatch after self_fwd contract change.
 - 2026-02-25: Loader now purges import cache for extension module names during stage fallback so an ABI-rejected prebuilt module does not poison in-place/JIT resolution in-process.
+- 2026-02-26: Runtime now recognizes kernel-side telemetry controls (`CODEX_WAN_FUSED_V1_KERNEL_TRACE`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_KV`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_EVERY_Q`, `CODEX_WAN_FUSED_V1_KERNEL_TRACE_EVERY_KV`) for per-phase VRAM snapshots emitted by fused CUDA path.
+- 2026-02-26: Added attention core selector env `CODEX_WAN_FUSED_V1_ATTN_CORE=aten|cuda_experimental` (default `aten`), allowing bootstrap of custom CUDA streaming attention-core updates while preserving ATen path fallback for unsupported tuples.

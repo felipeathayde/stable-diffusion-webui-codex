@@ -10,7 +10,7 @@ Purpose: Rotary positional embedding (RoPE) utilities and timestep embeddings fo
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_rotary_frequencies` (function): Construct fp32 RoPE rotation matrices for positional indices.
-- `apply_rotary_embeddings` (function): Apply RoPE in fp32 and preserve query/key dtypes.
+- `apply_rotary_embeddings` (function): Apply RoPE while preserving query/key dtypes without fp32 query/key upcasts.
 - `timestep_embedding` (function): Stable diffusion-style sinusoidal timestep embedding used by Flux variants.
 """
 
@@ -66,14 +66,23 @@ def apply_rotary_embeddings(
         freqs = freqs.unsqueeze(1)
     if freqs.dim() != q.dim() + 2:
         raise ValueError("Unexpected rotary frequency shape")
-    freqs = freqs.float()
-    freqs = freqs.expand(q.shape[0], q.shape[1], *freqs.shape[2:])
+    if freqs.shape[0] != q.shape[0]:
+        raise ValueError("Unexpected rotary frequency batch shape")
+    if freqs.shape[1] not in (1, q.shape[1]):
+        raise ValueError("Unexpected rotary frequency head shape")
     with autocast_disabled(q.device.type):
-        q_view = q.float().reshape(q.shape[0], q.shape[1], q.shape[2], -1, 1, 2)
-        k_view = k.float().reshape(k.shape[0], k.shape[1], k.shape[2], -1, 1, 2)
-        q_out = freqs[..., 0] * q_view[..., 0] + freqs[..., 1] * q_view[..., 1]
-        k_out = freqs[..., 0] * k_view[..., 0] + freqs[..., 1] * k_view[..., 1]
-        return q_out.reshape_as(q).type_as(q), k_out.reshape_as(k).type_as(k)
+        q_view = q.reshape(q.shape[0], q.shape[1], q.shape[2], -1, 1, 2)
+        k_view = k.reshape(k.shape[0], k.shape[1], k.shape[2], -1, 1, 2)
+
+        q_freqs = freqs.to(device=q.device, dtype=q.dtype)
+        if k.device == q.device and k.dtype == q.dtype:
+            k_freqs = q_freqs
+        else:
+            k_freqs = freqs.to(device=k.device, dtype=k.dtype)
+
+        q_out = q_freqs[..., 0] * q_view[..., 0] + q_freqs[..., 1] * q_view[..., 1]
+        k_out = k_freqs[..., 0] * k_view[..., 0] + k_freqs[..., 1] * k_view[..., 1]
+        return q_out.reshape_as(q), k_out.reshape_as(k)
 
 
 def timestep_embedding(

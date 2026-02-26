@@ -75,7 +75,7 @@ def _pil_to_tensor_01_rgb(image: Image.Image) -> torch.Tensor:
 def _tensor_01_rgb_to_pil(image: torch.Tensor) -> Image.Image:
     if image.ndim != 3:
         raise ValueError(f"expected CHW tensor; got shape={tuple(image.shape)}")
-    arr = image.detach().float().cpu().clamp(0, 1)
+    arr = image.detach().cpu().float().clamp(0, 1)
     arr = (arr * 255.0).round().byte().movedim(0, -1).numpy()
     return Image.fromarray(arr, mode="RGB")
 

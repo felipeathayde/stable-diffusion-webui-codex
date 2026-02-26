@@ -715,7 +715,7 @@ class CodexMemoryManager:
 
         Default policy:
         - CORE/TEXT_ENCODER compute in fp16 on accelerator devices.
-        - VAE compute stays fp32 by default.
+        - VAE compute defaults to storage dtype on accelerator devices.
         - CPU execution uses fp32 (fail-loud guard against implicit reduced precision).
         - Other roles compute in the selected storage dtype unless overridden.
         """
@@ -748,10 +748,7 @@ class CodexMemoryManager:
                 else:
                     compute = storage_dtype
             elif role == DeviceRole.VAE:
-                if torch.float32 in supported:
-                    compute = torch.float32
-                else:
-                    compute = storage_dtype
+                compute = storage_dtype
             else:
                 compute = storage_dtype
 

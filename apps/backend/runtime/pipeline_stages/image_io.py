@@ -32,7 +32,7 @@ def latents_to_pil(decoded: torch.Tensor) -> list[Image.Image]:
     """Convert decoded latent tensor into RGB PIL images."""
     images: list[Image.Image] = []
     for sample in decoded:
-        arr = sample.detach().float().cpu().clamp(-1, 1)
+        arr = sample.detach().cpu().float().clamp(-1, 1)
         arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
         images.append(Image.fromarray(arr, mode="RGB"))
     return images

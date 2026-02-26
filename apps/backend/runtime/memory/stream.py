@@ -82,7 +82,7 @@ def stream_context():
 def get_current_stream():
     try:
         if torch.cuda.is_available():
-            device = torch.device(torch.cuda.current_device())
+            device = torch.device("cuda", torch.cuda.current_device())
             current = torch.cuda.current_stream(device)
             with torch.cuda.stream(current):
                 torch.zeros((1, 1)).to(device, torch.float32)
@@ -103,7 +103,7 @@ def get_current_stream():
 def get_new_stream():
     try:
         if torch.cuda.is_available():
-            device = torch.device(torch.cuda.current_device())
+            device = torch.device("cuda", torch.cuda.current_device())
             mover = torch.cuda.Stream(device)
             with torch.cuda.stream(mover):
                 torch.zeros((1, 1)).to(device, torch.float32)
@@ -145,11 +145,16 @@ def _refresh_stream_state() -> None:
     mover_stream = get_new_stream()
     stream_activated = current_stream is not None and mover_stream is not None
     if not stream_activated:
-        logger.debug(
-            "Swap stream method requested but streams are unavailable. method=%s cuda=%s xpu=%s",
+        cuda_available = torch.cuda.is_available()
+        log_fn = logger.warning if cuda_available else logger.debug
+        log_fn(
+            "Swap stream method requested but streams are unavailable. method=%s cuda=%s xpu=%s "
+            "current_stream=%s mover_stream=%s",
             method,
-            torch.cuda.is_available(),
+            cuda_available,
             torch.xpu.is_available(),
+            current_stream is not None,
+            mover_stream is not None,
         )
 
 

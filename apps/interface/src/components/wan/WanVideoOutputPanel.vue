@@ -84,27 +84,26 @@ Symbols (top-level; keep in sync; no ghosts):
           <span class="caption">{{ interpolationCaption }}</span>
         </template>
       </SliderField>
-    </div>
-
-    <div class="cdx-form-row wan-video-output-toggle-row">
-      <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.pingpong ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :disabled="disabled"
-        :aria-pressed="video.pingpong"
-        @click="updateVideo({ pingpong: !video.pingpong })"
-      >
-        Ping-pong
-      </button>
-      <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.returnFrames ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :disabled="disabled"
-        :aria-pressed="video.returnFrames"
-        @click="updateVideo({ returnFrames: !video.returnFrames })"
-      >
-        Return frames
-      </button>
+      <div class="gc-col gc-col--compact wan-video-output-toggle-row">
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.pingpong ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          type="button"
+          :disabled="disabled"
+          :aria-pressed="video.pingpong"
+          @click="updateVideo({ pingpong: !video.pingpong })"
+        >
+          Ping-pong
+        </button>
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.returnFrames ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          type="button"
+          :disabled="disabled"
+          :aria-pressed="video.returnFrames"
+          @click="updateVideo({ returnFrames: !video.returnFrames })"
+        >
+          Return frames
+        </button>
+      </div>
     </div>
   </div>
 </template>

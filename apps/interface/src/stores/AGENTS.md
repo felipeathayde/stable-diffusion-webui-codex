@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-02-25
+Last Review: 2026-02-27
 Status: Active
 
 ## Purpose
@@ -74,3 +74,4 @@ Status: Active
 - 2026-02-21: `model_tabs.ts` WAN img2vid temporal controls now use `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`) as source-of-truth; chunk and window params (`img2vid_chunk*`, `img2vid_window*`) are persisted together with strict normalization/migration from legacy `img2vidChunkingEnabled`.
 - 2026-02-22: `model_tabs.ts` WAN img2vid temporal mode now includes `svi2` and `svi2_pro`, with shared window normalization via `utils/wan_img2vid_temporal.ts`; default window params were tightened to `stride=8` and `commit=12` so persisted values satisfy the continuity guards (`stride % 4 == 0`, `commit - stride >= 4`).
 - 2026-02-22: `model_tabs.ts` WAN `video` params now persist `img2vidResetAnchorToBase`; normalization applies mode defaults (`chunk=true`, `sliding/solo=false`) and forces `false` for `svi2|svi2_pro`.
+- 2026-02-27: `model_tabs.ts` WAN `video` params removed obsolete output flags (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and migrated interpolation state to one `interpolationMultiplier` field (`0` off, active values normalized to `>=2`), with legacy `rifeEnabled/rifeTimes` persisted data normalized into the new contract.

@@ -19,8 +19,8 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 	- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
 	- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
 	- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
-	- `WanVideoOutputInput` (interface): Output options (filename prefix, output folder, format) mapped into payload.
-	- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
+	- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames) mapped into payload.
+	- `WanInterpolationInput` (interface): Interpolation multiplier input (`0`=off, `>=2` sends backend interpolation).
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
 - `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|chunk|sliding|svi2|svi2_pro`).
@@ -67,6 +67,7 @@ const Img2VidChunkSeedModeEnum = z.enum(['fixed', 'increment', 'random'])
 const WAN_DIM_STEP = 16
 const WAN_FRAMES_MIN = 9
 const WAN_FRAMES_MAX = 401
+const WAN_INTERPOLATION_MODEL = 'rife47.pth'
 const Img2VidWindowStrideSchema = z.number().int().min(1).max(WAN_FRAMES_MAX - 1)
 const Img2VidWindowCommitSchema = z.number().int().min(1).max(WAN_FRAMES_MAX)
 
@@ -89,9 +90,9 @@ const RepoIdSchema = z
 
 const VideoInterpolationSchema = z
   .object({
-    enabled: z.boolean(),
-    model: z.string().min(1).optional(),
-    times: z.number().int().min(1).optional(),
+    enabled: z.literal(true),
+    model: z.string().min(1),
+    times: z.number().int().min(2),
   })
   .strict()
 
@@ -117,15 +118,13 @@ const CommonWanVideoPayloadSchema = z
     settings_revision: z.number().int().min(0),
 
     video_return_frames: z.boolean().optional(),
-    video_filename_prefix: z.string().min(1).optional(),
     video_format: z.string().min(1).optional(),
     video_pix_fmt: z.string().min(1).optional(),
     video_crf: z.number().int().min(0).max(51).optional(),
     video_loop_count: z.number().int().min(0).optional(),
     video_pingpong: z.boolean().optional(),
-    video_save_metadata: z.boolean().optional(),
-    video_save_output: z.boolean().optional(),
-    video_trim_to_audio: z.boolean().optional(),
+    video_save_metadata: z.literal(true),
+    video_save_output: z.literal(true),
 
     video_interpolation: VideoInterpolationSchema.optional(),
 
@@ -378,22 +377,16 @@ export interface WanStageInput {
 }
 
 export interface WanVideoOutputInput {
-  filenamePrefix: string
   format: string
   pixFmt: string
   crf: number
   loopCount: number
   pingpong: boolean
-  trimToAudio: boolean
-  saveMetadata: boolean
-  saveOutput: boolean
   returnFrames?: boolean
 }
 
 export interface WanInterpolationInput {
-  enabled: boolean
-  model: string
-  times: number
+  multiplier: number
 }
 
 export interface WanAssetsInput {
@@ -571,8 +564,6 @@ function addWanAssets(payload: Record<string, unknown>, assets: WanAssetsInput):
 }
 
 function addWanOutput(payload: Record<string, unknown>, out: WanVideoOutputInput): void {
-  const prefix = String(out.filenamePrefix || '').trim()
-  if (prefix) payload.video_filename_prefix = prefix
   const format = String(out.format || '').trim()
   if (format) payload.video_format = format
   const pixFmt = String(out.pixFmt || '').trim()
@@ -580,19 +571,21 @@ function addWanOutput(payload: Record<string, unknown>, out: WanVideoOutputInput
   if (Number.isFinite(out.crf)) payload.video_crf = out.crf
   if (Number.isFinite(out.loopCount)) payload.video_loop_count = out.loopCount
   payload.video_pingpong = Boolean(out.pingpong)
-  payload.video_save_metadata = Boolean(out.saveMetadata)
-  payload.video_save_output = Boolean(out.saveOutput)
-  payload.video_trim_to_audio = Boolean(out.trimToAudio)
+  payload.video_save_metadata = true
+  payload.video_save_output = true
   if (out.returnFrames) payload.video_return_frames = true
 }
 
 function addWanInterpolation(payload: Record<string, unknown>, interpolation: WanInterpolationInput): void {
-  if (!interpolation.enabled) return
-  const model = String(interpolation.model || '').trim()
+  const numericMultiplier = Number(interpolation.multiplier)
+  if (!Number.isFinite(numericMultiplier)) return
+  const multiplier = Math.trunc(numericMultiplier)
+  if (multiplier <= 0) return
+  const times = Math.max(2, multiplier)
   payload.video_interpolation = {
     enabled: true,
-    model: model || undefined,
-    times: Number.isFinite(interpolation.times) ? interpolation.times : undefined,
+    model: WAN_INTERPOLATION_MODEL,
+    times,
   }
 }
 

@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-02-22
+Last Review: 2026-02-27
 Status: Active
 
 ## Purpose
@@ -33,6 +33,7 @@ Status: Active
 - 2026-02-21: `payloads_video.ts` img2vid temporal contract now requires `img2vid_mode` (`solo|chunk|sliding`), with mode-scoped validation for chunk fields (`img2vid_chunk_*`) versus sliding-window fields (`img2vid_window_frames/stride/commit_frames`); `payloads_video.test.ts` covers chunk, solo, and sliding payload builds.
 - 2026-02-22: `payloads_video.ts` now supports `img2vid_mode='svi2'|'svi2_pro'` with the same windowed contract as sliding, and `payloads_video.test.ts` adds SVI2/SVI2 Pro window-normalization regressions; temporal normalization is centralized in `utils/wan_img2vid_temporal.ts` (`stride % 4 == 0`, `commit >= stride + 4`).
 - 2026-02-22: `payloads_video.ts` now includes optional `img2vid_reset_anchor_to_base` for img2vid temporal modes, allows it in `chunk|sliding`, and enforces fail-loud `false` for `svi2|svi2_pro`; builders map `WanImg2VidInput.resetAnchorToBase` directly to payload field.
+- 2026-02-27: `payloads_video.ts` WAN output contract now hard-sets `video_save_output=true` and `video_save_metadata=true`, removed obsolete output fields (`video_filename_prefix`, `video_trim_to_audio`), and maps interpolation through one `multiplier` input (`0` disables; active values emit `video_interpolation.times >= 2` with fixed model `rife47.pth`).
 - 2026-02-22: `client.ts` adds `fetchObliterateVram(payload?)` for `POST /api/obliterate-vram` with default `external_kill_mode='disabled'`; `types.ts` defines request/response DTOs (including external kill mode + skip/failure rows) so quick settings can report safe-default cleanup status fail-loud.
 - Inventory helpers (`InventoryResponse`) are served by `/api/models/inventory`; the client exposes both a cached fetch (`fetchModelInventory`) and a rescan path (`refreshModelInventory`) that posts to `/api/models/inventory/refresh` (assets like VAEs/Text Encoders/metadata roots).
 - `ModelsResponse` is served by `/api/models`; the client exposes a rescan path (`refreshModels`) that calls `/api/models?refresh=1` so the UI can pick up newly copied checkpoints without restarting the backend.

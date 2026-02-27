@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-25
+Last Review: 2026-02-27
 Status: Active
 
 ## Purpose
@@ -56,3 +56,4 @@ Status: Active
 - 2026-02-22: `useVideoGeneration(tabId)` now forwards `img2vidResetAnchorToBase` through img2vid temporal payload input (`chunk` + windowed modes) and includes `img2vid.resetAnchorToBase` in params snapshots/history metadata.
 - 2026-02-21: `useVideoGeneration(tabId)` resume-state parsing is now strict for mode (`txt2vid|img2vid` only): unsupported legacy values (e.g. `vid2vid`) are rejected fail-loud, the stale resume marker is cleared, and UI surfaces a clear resume notice instead of silently downgrading mode.
 - 2026-02-21: `useVideoGeneration(tabId)` now logs structured start-failure diagnostics to browser console (`status`, backend `detail`, parsed `body`, message, mode/tab) before surfacing UI error text, improving visibility for hidden request-contract failures.
+- 2026-02-27: `useVideoGeneration(tabId)` removed obsolete WAN output fields (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) from snapshots/common payload input and now carries interpolation as one `interpolation.multiplier` field (`0` disables, active values are treated as FPS multipliers).

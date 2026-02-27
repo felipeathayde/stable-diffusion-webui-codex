@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-25
+Last Review: 2026-02-27
 Status: Active
 
 ## Purpose
@@ -82,6 +82,7 @@ Status: Active
 - 2026-02-23: `WANTab.vue` relabels the img2vid temporal card header from `Temporal` to `Temporal Loom`.
 - 2026-02-22: `WANTab.vue` adds `SVI 2.0` and `SVI 2.0 Pro` to img2vid temporal mode options, reuses window controls for all windowed modes (`sliding|svi2|svi2_pro`), and tightens slider contracts (`stride` nudge/step `=4`, `commit` minimum `= stride + 4`) to keep temporal handoff settings valid at input time.
 - 2026-02-22: `WANTab.vue` now exposes `img2vidResetAnchorToBase` as a visible temporal toggle (chunk + windowed rows) and includes `Anchor Alpha` slider in the windowed row; SVI windowed modes force the reset toggle off to match backend continuity contracts.
+- 2026-02-27: `WANTab.vue` WAN video state defaults/history/snapshot wiring removed obsolete output fields (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and now use one `interpolationMultiplier` contract (`0` off, active values normalized to `>=2`).
 - 2026-02-21: `Settings.vue` renamed the inner content layout hook from `.layout` to `.settings-layout` to avoid collisions with the global app-shell `.layout` contract.
 - 2026-02-21: `WANTab.vue` history apply/details/title mode labeling is now strict for legacy snapshots: unsupported modes no longer silently coerce to `txt2vid`; apply fails loud with toast (`Unsupported history mode ...`) and labels render explicit `Unsupported (<mode>)`.
 - 2026-02-22: `ImageModelTab.vue`, `WANTab.vue`, and `Upscale.vue` now render run errors/notices inside `RunCard` through `RunProgressStatus` variants (error/info/progress). `panel-error` was removed from Prompt/caption regions so run status always appears in the RUN panel.

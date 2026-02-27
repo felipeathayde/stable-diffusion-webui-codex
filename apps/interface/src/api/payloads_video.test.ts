@@ -63,22 +63,14 @@ describe('WAN video payload builders', () => {
         vaeSha: vaeSha,
       },
       output: {
-        filenamePrefix: 'wan22',
         format: 'video/h264-mp4',
         pixFmt: 'yuv420p',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
         returnFrames: true,
       },
-      interpolation: {
-        enabled: true,
-        model: 'rife47.pth',
-        times: 2,
-      },
+      interpolation: { multiplier: 2 },
     })
 
     expect(payload.codex_device).toBe('cuda')
@@ -143,21 +135,13 @@ describe('WAN video payload builders', () => {
         vaeSha: sha,
       },
       output: {
-        filenamePrefix: '',
         format: '',
         pixFmt: '',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: {
-        enabled: false,
-        model: '',
-        times: 2,
-      },
+      interpolation: { multiplier: 0 },
     })
 
     expect(payload.codex_device).toBe('cpu')
@@ -171,7 +155,7 @@ describe('WAN video payload builders', () => {
     expect(payload.img2vid_mode).toBe('chunk')
     expect(payload.gguf_attention_mode).toBe('sliding')
     expect(payload.img2vid_chunk_frames).toBe(37)
-    expect(payload.img2vid_overlap_frames).toBe(8)
+    expect(payload.img2vid_overlap_frames).toBe(9)
     expect(payload.img2vid_anchor_alpha).toBe(0.35)
     expect(payload.img2vid_chunk_seed_mode).toBe('increment')
     expect(payload).not.toHaveProperty('img2vid_scheduler')
@@ -217,21 +201,13 @@ describe('WAN video payload builders', () => {
         vaeSha: sha,
       },
       output: {
-        filenamePrefix: '',
         format: '',
         pixFmt: '',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: {
-        enabled: false,
-        model: '',
-        times: 2,
-      },
+      interpolation: { multiplier: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('solo')
@@ -289,21 +265,13 @@ describe('WAN video payload builders', () => {
         vaeSha: sha,
       },
       output: {
-        filenamePrefix: '',
         format: '',
         pixFmt: '',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: {
-        enabled: false,
-        model: '',
-        times: 2,
-      },
+      interpolation: { multiplier: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('sliding')
@@ -360,21 +328,13 @@ describe('WAN video payload builders', () => {
         vaeSha: sha,
       },
       output: {
-        filenamePrefix: '',
         format: '',
         pixFmt: '',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: {
-        enabled: false,
-        model: '',
-        times: 2,
-      },
+      interpolation: { multiplier: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('svi2')
@@ -428,21 +388,13 @@ describe('WAN video payload builders', () => {
         vaeSha: sha,
       },
       output: {
-        filenamePrefix: '',
         format: '',
         pixFmt: '',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: {
-        enabled: false,
-        model: '',
-        times: 2,
-      },
+      interpolation: { multiplier: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('svi2_pro')
@@ -488,21 +440,13 @@ describe('WAN video payload builders', () => {
         vaeSha: sha,
       },
       output: {
-        filenamePrefix: '',
         format: '',
         pixFmt: '',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: {
-        enabled: false,
-        model: '',
-        times: 2,
-      },
+      interpolation: { multiplier: 0 },
     }
 
     expect(() =>
@@ -552,17 +496,13 @@ describe('WAN video payload builders', () => {
       format: 'gguf',
       assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
       output: {
-        filenamePrefix: 'wan22',
         format: 'video/h264-mp4',
         pixFmt: 'yuv420p',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: { enabled: false, model: '', times: 2 },
+      interpolation: { multiplier: 0 },
     })
 
     expect(payload.codex_device).toBe('cuda')
@@ -594,17 +534,13 @@ describe('WAN video payload builders', () => {
       format: 'auto',
       assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
       output: {
-        filenamePrefix: '',
         format: '',
         pixFmt: '',
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        trimToAudio: false,
-        saveMetadata: true,
-        saveOutput: true,
       },
-      interpolation: { enabled: false, model: '', times: 2 },
+      interpolation: { multiplier: 0 },
     })
 
     expect(payload.txt2vid_width).toBe(480)
@@ -629,17 +565,13 @@ describe('WAN video payload builders', () => {
         format: 'auto',
         assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
         output: {
-          filenamePrefix: '',
           format: '',
           pixFmt: '',
           crf: 15,
           loopCount: 0,
           pingpong: false,
-          trimToAudio: false,
-          saveMetadata: true,
-          saveOutput: true,
         },
-        interpolation: { enabled: false, model: '', times: 2 },
+        interpolation: { multiplier: 0 },
       }),
     ).toThrow('WAN stage prompt must not be empty.')
   })

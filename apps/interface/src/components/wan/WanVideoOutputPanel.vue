@@ -7,12 +7,17 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN video output options panel.
-Configures export format/CRF/pixel format/loop options and output toggles (pingpong/save/metadata/trim/return-frames + optional RIFE interpolation) for WAN video tasks.
+Configures export format/pixel format/CRF/loop options, compact output toggles (`pingpong`, `returnFrames`), and RIFE interpolation multiplier (`0=off`) for WAN video tasks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoOutputPanel` (component): Video output settings panel used by WANTab.
 - `updateVideo` (function): Emits a partial `video` patch (`update:video`).
-- `toInt` (function): Parses an event target value as an integer (fallback on invalid).
+- `normalizeNonNegativeInteger` (function): Parses/clamps integer inputs to non-negative range with optional max.
+- `normalizeInterpolationMultiplier` (function): Normalizes interpolation multiplier (`0` or `>=2`).
+- `onLoopCountChange` (function): Applies normalized loop-count updates.
+- `onCrfChange` (function): Applies normalized CRF updates.
+- `onInterpolationMultiplierChange` (function): Applies normalized interpolation multiplier updates.
+- `interpolationCaption` (computed): User-facing interpolation summary (`Off`/`xN`) plus resulting FPS when available.
 -->
 
 <template>
@@ -22,16 +27,6 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <div class="gc-row">
-      <div class="gc-col gc-col--wide">
-        <label class="label-muted">Filename Prefix</label>
-        <input
-          class="ui-input"
-          type="text"
-          :disabled="disabled"
-          :value="video.filenamePrefix"
-          @change="updateVideo({ filenamePrefix: ($event.target as HTMLInputElement).value })"
-        />
-      </div>
       <div class="gc-col">
         <label class="label-muted">Format</label>
         <select class="select-md" :disabled="disabled" :value="video.format" @change="updateVideo({ format: ($event.target as HTMLSelectElement).value })">
@@ -42,21 +37,6 @@ Symbols (top-level; keep in sync; no ghosts):
         </select>
       </div>
       <div class="gc-col">
-        <label class="label-muted">CRF</label>
-        <input
-          class="ui-input"
-          type="number"
-          min="0"
-          max="51"
-          :disabled="disabled"
-          :value="video.crf"
-          @change="updateVideo({ crf: toInt($event, video.crf) })"
-        />
-      </div>
-    </div>
-
-    <div class="gc-row">
-      <div class="gc-col">
         <label class="label-muted">Pixel Format</label>
         <select class="select-md" :disabled="disabled" :value="video.pixFmt" @change="updateVideo({ pixFmt: ($event.target as HTMLSelectElement).value })">
           <option value="yuv420p">yuv420p</option>
@@ -64,20 +44,34 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="yuv422p">yuv422p</option>
         </select>
       </div>
-      <div class="gc-col">
-        <label class="label-muted">Loop Count</label>
-        <input
-          class="ui-input"
-          type="number"
-          min="0"
-          :disabled="disabled"
-          :value="video.loopCount"
-          @change="updateVideo({ loopCount: toInt($event, video.loopCount) })"
-        />
-      </div>
     </div>
 
-    <div class="cdx-form-row">
+    <div class="gc-row">
+      <SliderField
+        class="gc-col gc-col--compact"
+        label="Loop Count"
+        :modelValue="video.loopCount"
+        :min="0"
+        :max="32"
+        :step="1"
+        :disabled="disabled"
+        inputClass="cdx-input-w-md"
+        @update:modelValue="onLoopCountChange"
+      />
+      <SliderField
+        class="gc-col gc-col--compact"
+        label="CRF"
+        :modelValue="video.crf"
+        :min="0"
+        :max="51"
+        :step="1"
+        :disabled="disabled"
+        inputClass="cdx-input-w-md"
+        @update:modelValue="onCrfChange"
+      />
+    </div>
+
+    <div class="cdx-form-row wan-video-output-toggle-row">
       <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.pingpong ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
@@ -88,15 +82,6 @@ Symbols (top-level; keep in sync; no ghosts):
         Ping-pong
       </button>
       <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.saveOutput ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :disabled="disabled"
-        :aria-pressed="video.saveOutput"
-        @click="updateVideo({ saveOutput: !video.saveOutput })"
-      >
-        Save output
-      </button>
-      <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.returnFrames ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
         :disabled="disabled"
@@ -105,64 +90,31 @@ Symbols (top-level; keep in sync; no ghosts):
       >
         Return frames
       </button>
-      <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.saveMetadata ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :disabled="disabled"
-        :aria-pressed="video.saveMetadata"
-        @click="updateVideo({ saveMetadata: !video.saveMetadata })"
-      >
-        Save metadata
-      </button>
-      <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.trimToAudio ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :disabled="disabled"
-        :aria-pressed="video.trimToAudio"
-        @click="updateVideo({ trimToAudio: !video.trimToAudio })"
-      >
-        Trim to audio
-      </button>
-      <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.rifeEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :disabled="disabled"
-        :aria-pressed="video.rifeEnabled"
-        @click="updateVideo({ rifeEnabled: !video.rifeEnabled })"
-      >
-        Interpolation (RIFE)
-      </button>
     </div>
-    <div v-if="!disabled && !video.saveOutput" class="mt-2 text-xs opacity-80">
-      Save output is OFF: no video file will be written. Frames will still be returned so you can download them from the Results viewer.
-    </div>
-    <div v-if="video.rifeEnabled" class="gc-row">
-      <div class="gc-col">
-        <label class="label-muted">Model</label>
-        <input
-          class="ui-input"
-          type="text"
-          :disabled="disabled"
-          :value="video.rifeModel"
-          @change="updateVideo({ rifeModel: ($event.target as HTMLInputElement).value })"
-        />
-      </div>
-      <div class="gc-col">
-        <label class="label-muted">Times</label>
-        <input
-          class="ui-input"
-          type="number"
-          min="1"
-          :disabled="disabled"
-          :value="video.rifeTimes"
-          @change="updateVideo({ rifeTimes: toInt($event, video.rifeTimes) })"
-        />
-      </div>
+
+    <div class="gc-row">
+      <SliderField
+        class="gc-col"
+        label="Interpolation (RIFE)"
+        :modelValue="video.interpolationMultiplier"
+        :min="0"
+        :max="8"
+        :step="1"
+        :disabled="disabled"
+        inputClass="cdx-input-w-md"
+        @update:modelValue="onInterpolationMultiplierChange"
+      >
+        <template #below>
+          <span class="caption">{{ interpolationCaption }}</span>
+        </template>
+      </SliderField>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import SliderField from '../ui/SliderField.vue'
 import type { WanVideoParams } from '../../stores/model_tabs'
 
 const props = withDefaults(defineProps<{
@@ -182,8 +134,52 @@ function updateVideo(patch: Partial<WanVideoParams>): void {
   emit('update:video', patch)
 }
 
-function toInt(e: Event, fallback: number): number {
-  const v = Number((e.target as HTMLInputElement).value)
-  return Number.isFinite(v) ? Math.trunc(v) : fallback
+function normalizeNonNegativeInteger(value: unknown, fallback: number, max?: number): number {
+  const fallbackInt = Number.isFinite(fallback) ? Math.max(0, Math.trunc(fallback)) : 0
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallbackInt
+  const parsed = Math.max(0, Math.trunc(numeric))
+  if (typeof max === 'number' && Number.isFinite(max)) {
+    return Math.min(Math.max(0, Math.trunc(max)), parsed)
+  }
+  return parsed
 }
+
+function normalizeInterpolationMultiplier(value: unknown, fallback: number): number {
+  const fallbackValue = Number.isFinite(fallback)
+    ? (Math.trunc(fallback) <= 0 ? 0 : Math.max(2, Math.trunc(fallback)))
+    : 0
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallbackValue
+  const parsed = Math.trunc(numeric)
+  if (parsed <= 0) return 0
+  return Math.max(2, parsed)
+}
+
+function onLoopCountChange(value: number): void {
+  updateVideo({ loopCount: normalizeNonNegativeInteger(value, props.video.loopCount, 32) })
+}
+
+function onCrfChange(value: number): void {
+  updateVideo({ crf: normalizeNonNegativeInteger(value, props.video.crf, 51) })
+}
+
+function onInterpolationMultiplierChange(value: number): void {
+  updateVideo({
+    interpolationMultiplier: normalizeInterpolationMultiplier(value, props.video.interpolationMultiplier),
+  })
+}
+
+const interpolationCaption = computed<string>(() => {
+  const multiplier = normalizeInterpolationMultiplier(
+    props.video.interpolationMultiplier,
+    0,
+  )
+  const baseFps = normalizeNonNegativeInteger(props.video.fps, 0)
+  if (multiplier <= 0) {
+    return baseFps > 0 ? `Off · Output: ${baseFps} fps` : 'Off'
+  }
+  const outputFps = baseFps > 0 ? baseFps * multiplier : 0
+  return outputFps > 0 ? `x${multiplier} · Output: ${outputFps} fps` : `x${multiplier}`
+})
 </script>

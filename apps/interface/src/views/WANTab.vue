@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|chunk|sliding|svi2|svi2_pro`).
 - `normalizeImg2VidTemporalEnabledMode` (function): Normalizes temporal-mode selector values to non-solo modes (`chunk|sliding|svi2|svi2_pro`).
 - `normalizeChunkSeedMode` (function): Normalizes UI img2vid chunk-seed mode values.
+- `normalizeInterpolationMultiplier` (function): Normalizes interpolation multiplier (`0` off, active values clamped to `>=2`).
 - `img2vidTemporalEnabledModeStorageKey` (function): Returns localStorage key for the last non-solo temporal mode per tab.
 - `readImg2VidTemporalEnabledMode` (function): Loads the persisted non-solo temporal mode used when temporal controls are re-enabled.
 - `writeImg2VidTemporalEnabledMode` (function): Persists the last non-solo temporal mode for toggle round-trips.
@@ -800,9 +801,9 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-	import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
-	import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
-	import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
+import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
+import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
+import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
@@ -889,19 +890,13 @@ function defaultVideo(): WanVideoParams {
     img2vidWindowFrames: 13,
     img2vidWindowStride: 8,
     img2vidWindowCommitFrames: 12,
-    filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
     crf: 15,
     loopCount: 0,
     pingpong: false,
-    trimToAudio: false,
-    saveMetadata: true,
-    saveOutput: true,
     returnFrames: false,
-    rifeEnabled: true,
-    rifeModel: 'rife47.pth',
-    rifeTimes: 2,
+    interpolationMultiplier: 2,
   }
 }
 
@@ -978,6 +973,16 @@ function normalizeChunkSeedMode(rawValue: unknown): 'fixed' | 'increment' | 'ran
   const v = String(rawValue || '').trim().toLowerCase()
   if (v === 'fixed' || v === 'random') return v
   return 'increment'
+}
+
+function normalizeInterpolationMultiplier(rawValue: unknown, fallback: number): number {
+  const fallbackNumeric = Number.isFinite(Number(fallback)) ? Math.trunc(Number(fallback)) : 0
+  const fallbackNormalized = fallbackNumeric <= 0 ? 0 : Math.max(2, fallbackNumeric)
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) return fallbackNormalized
+  const parsed = Math.trunc(numeric)
+  if (parsed <= 0) return 0
+  return Math.max(2, parsed)
 }
 
 function img2vidTemporalEnabledModeStorageKey(): string {
@@ -1214,6 +1219,12 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
     || didAdjustWindowStride
   ) {
     nextPatch.img2vidWindowCommitFrames = normalizedCommit
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'interpolationMultiplier')) {
+    nextPatch.interpolationMultiplier = normalizeInterpolationMultiplier(
+      nextPatch.interpolationMultiplier,
+      current.interpolationMultiplier,
+    )
   }
   return nextPatch
 }
@@ -1882,21 +1893,15 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       flowShift: low.value.flowShift,
     },
     output: {
-      filenamePrefix: video.value.filenamePrefix,
       format: video.value.format,
       pixFmt: video.value.pixFmt,
       crf: video.value.crf,
       loopCount: video.value.loopCount,
       pingpong: video.value.pingpong,
-      trimToAudio: video.value.trimToAudio,
-      saveMetadata: video.value.saveMetadata,
-      saveOutput: video.value.saveOutput,
       returnFrames: video.value.returnFrames,
     },
     interpolation: {
-      enabled: video.value.rifeEnabled,
-      model: video.value.rifeModel,
-      times: video.value.rifeTimes,
+      multiplier: video.value.interpolationMultiplier,
     },
   }
 }
@@ -1960,6 +1965,16 @@ function applyHistory(item: VideoRunHistoryItem): void {
       : (typeof i2v.enabled === 'boolean'
         ? (Boolean(i2v.enabled) ? 'chunk' : 'solo')
         : (hasSnapshotChunkFrames ? 'chunk' : normalizeImg2VidMode(video.value.img2vidMode))))
+  const historyInterpolationMultiplier = (() => {
+    if (typeof interpolation.multiplier === 'number' && Number.isFinite(interpolation.multiplier)) {
+      return Number(interpolation.multiplier)
+    }
+    const legacyTimes = typeof interpolation.times === 'number' && Number.isFinite(interpolation.times)
+      ? Number(interpolation.times)
+      : video.value.interpolationMultiplier
+    if (typeof interpolation.enabled === 'boolean' && !interpolation.enabled) return 0
+    return legacyTimes
+  })()
 
   setVideo({
     width: Number(snap.width) || video.value.width,
@@ -1978,19 +1993,13 @@ function applyHistory(item: VideoRunHistoryItem): void {
     img2vidWindowFrames: typeof i2v.windowFrames === 'number' && Number.isFinite(i2v.windowFrames) ? Number(i2v.windowFrames) : video.value.img2vidWindowFrames,
     img2vidWindowStride: typeof i2v.windowStride === 'number' && Number.isFinite(i2v.windowStride) ? Number(i2v.windowStride) : video.value.img2vidWindowStride,
     img2vidWindowCommitFrames: typeof i2v.windowCommitFrames === 'number' && Number.isFinite(i2v.windowCommitFrames) ? Number(i2v.windowCommitFrames) : video.value.img2vidWindowCommitFrames,
-    filenamePrefix: String(output.filenamePrefix || video.value.filenamePrefix),
     format: String(output.format || video.value.format),
     pixFmt: String(output.pixFmt || video.value.pixFmt),
     crf: typeof output.crf === 'number' && Number.isFinite(output.crf) ? Number(output.crf) : video.value.crf,
     loopCount: typeof output.loopCount === 'number' && Number.isFinite(output.loopCount) ? Number(output.loopCount) : video.value.loopCount,
     pingpong: Boolean(output.pingpong),
-    trimToAudio: Boolean(output.trimToAudio),
-    saveMetadata: Boolean(output.saveMetadata),
-    saveOutput: Boolean(output.saveOutput),
     returnFrames: typeof output.returnFrames === 'boolean' ? output.returnFrames : video.value.returnFrames,
-    rifeEnabled: Boolean(interpolation.enabled),
-    rifeModel: String(interpolation.model || ''),
-    rifeTimes: typeof interpolation.times === 'number' && Number.isFinite(interpolation.times) ? Number(interpolation.times) : video.value.rifeTimes,
+    interpolationMultiplier: historyInterpolationMultiplier,
   })
 
   const hi = isRecord(snap.high) ? snap.high : {}

@@ -6,15 +6,16 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-	Purpose: Unified video generation composable for WAN (txt2vid/img2vid).
-	Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
-	to update UI state and fetch final results. Every start payload includes `settings_revision`, and stale-revision conflicts (`409` + `current_revision`)
-	trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
-	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
-	mode prompt fields from the High stage in payload builders for backend compatibility. Includes `output.returnFrames` and stage `flowShift` pass-through in
-	common WAN payload input. Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`), and stage-level
-	WAN LoRA fields are not emitted from this composable (LoRA control is prompt-level). Start failures now log structured diagnostics to the browser console
-	(status/detail/body/message + mode/tab) before surfacing UI error text.
+Purpose: Unified video generation composable for WAN (txt2vid/img2vid).
+Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
+to update UI state and fetch final results. Every start payload includes `settings_revision`, and stale-revision conflicts (`409` + `current_revision`)
+trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
+via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
+mode prompt fields from the High stage in payload builders for backend compatibility. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/
+`pingpong`/`returnFrames`), interpolation multiplier (`0` off, active values as FPS multiplier), and stage `flowShift` pass-through in common WAN payload input.
+Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`), and stage-level WAN LoRA fields are not emitted from this
+composable (LoRA control is prompt-level). Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
+before surfacing UI error text.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -292,19 +293,13 @@ function defaultVideo(): WanVideoParams {
     img2vidWindowFrames: 13,
     img2vidWindowStride: 8,
     img2vidWindowCommitFrames: 12,
-    filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
     crf: 15,
     loopCount: 0,
     pingpong: false,
-    trimToAudio: false,
-    saveMetadata: true,
-    saveOutput: true,
     returnFrames: false,
-    rifeEnabled: true,
-    rifeModel: 'rife47.pth',
-    rifeTimes: 2,
+    interpolationMultiplier: 2,
   }
 }
 
@@ -512,21 +507,15 @@ export function useVideoGeneration(tabId: string) {
         flowShift: lo.flowShift,
       },
       output: {
-        filenamePrefix: v.filenamePrefix,
         format: v.format,
         pixFmt: v.pixFmt,
         crf: v.crf,
         loopCount: v.loopCount,
         pingpong: v.pingpong,
-        trimToAudio: v.trimToAudio,
-        saveMetadata: v.saveMetadata,
-        saveOutput: v.saveOutput,
         returnFrames: v.returnFrames,
       },
       interpolation: {
-        enabled: v.rifeEnabled,
-        model: v.rifeModel,
-        times: v.rifeTimes,
+        multiplier: v.interpolationMultiplier,
       },
     }
   }
@@ -583,21 +572,15 @@ export function useVideoGeneration(tabId: string) {
         vaeSha: vaeSha,
       },
       output: {
-        filenamePrefix: v.filenamePrefix,
         format: v.format,
         pixFmt: v.pixFmt,
         crf: v.crf,
         loopCount: v.loopCount,
         pingpong: v.pingpong,
-        trimToAudio: v.trimToAudio,
-        saveMetadata: v.saveMetadata,
-        saveOutput: v.saveOutput,
         returnFrames: v.returnFrames,
       },
       interpolation: {
-        enabled: v.rifeEnabled,
-        model: v.rifeModel,
-        times: v.rifeTimes,
+        multiplier: v.interpolationMultiplier,
       },
     }
   }

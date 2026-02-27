@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
 - `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|chunk|sliding|svi2|svi2_pro`).
 - `WanChunkSeedMode` (type): WAN chunk/sliding per-window seed strategy (`fixed|increment|random`).
-- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output/interpolation controls).
+- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output controls + interpolation multiplier).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
@@ -148,20 +148,14 @@ export interface WanVideoParams {
   img2vidWindowStride: number
   img2vidWindowCommitFrames: number
   // Export options
-  filenamePrefix: string
   format: string
   pixFmt: string
   crf: number
   loopCount: number
   pingpong: boolean
-  trimToAudio: boolean
-  saveMetadata: boolean
-  saveOutput: boolean
   returnFrames: boolean
   // Interpolation (RIFE)
-  rifeEnabled: boolean
-  rifeModel: string
-  rifeTimes: number
+  interpolationMultiplier: number
 }
 
 export interface WanAssetsParams {
@@ -346,19 +340,13 @@ function defaultParams<T extends BaseTabType>(
       img2vidWindowFrames: 13,
       img2vidWindowStride: 8,
       img2vidWindowCommitFrames: 12,
-      filenamePrefix: 'wan22',
       format: 'video/h264-mp4',
       pixFmt: 'yuv420p',
       crf: 15,
       loopCount: 0,
       pingpong: false,
-      trimToAudio: false,
-      saveMetadata: true,
-      saveOutput: true,
       returnFrames: false,
-      rifeEnabled: true,
-      rifeModel: 'rife47.pth',
-      rifeTimes: 2,
+      interpolationMultiplier: 2,
     }
     const assets: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
     const wanDefaults: TabParamsByType['wan'] = {
@@ -511,6 +499,16 @@ function normalizeWanFrameCount(rawValue: number, min = 9, max = 401): number {
   return min
 }
 
+function normalizeInterpolationMultiplier(rawValue: unknown, fallback: number): number {
+  const fallbackNumeric = Number.isFinite(Number(fallback)) ? Math.trunc(Number(fallback)) : 0
+  const fallbackNormalized = fallbackNumeric <= 0 ? 0 : Math.max(2, fallbackNumeric)
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) return fallbackNormalized
+  const parsed = Math.trunc(numeric)
+  if (parsed <= 0) return 0
+  return Math.max(2, parsed)
+}
+
 function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVideoParams): WanVideoParams {
   const merged: WanVideoParams = { ...defaults, ...raw }
   merged.frames = normalizeWanFrameCount(Number(merged.frames))
@@ -606,6 +604,32 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     defaults.img2vidWindowCommitFrames,
   )
 
+  const hasInterpolationMultiplier = Object.prototype.hasOwnProperty.call(rawRecord, 'interpolationMultiplier')
+  const defaultInterpolationMultiplier = normalizeInterpolationMultiplier(defaults.interpolationMultiplier, 2)
+  if (hasInterpolationMultiplier) {
+    merged.interpolationMultiplier = normalizeInterpolationMultiplier(
+      rawRecord.interpolationMultiplier,
+      defaultInterpolationMultiplier,
+    )
+  } else {
+    const legacyInterpolationEnabled = typeof rawRecord.rifeEnabled === 'boolean'
+      ? Boolean(rawRecord.rifeEnabled)
+      : null
+    const legacyInterpolationTimes = normalizeInterpolationMultiplier(
+      rawRecord.rifeTimes,
+      defaultInterpolationMultiplier,
+    )
+    if (legacyInterpolationEnabled === false) {
+      merged.interpolationMultiplier = 0
+    } else if (legacyInterpolationEnabled === true) {
+      merged.interpolationMultiplier = legacyInterpolationTimes > 0
+        ? legacyInterpolationTimes
+        : defaultInterpolationMultiplier
+    } else {
+      merged.interpolationMultiplier = legacyInterpolationTimes
+    }
+  }
+
   return {
     width: merged.width,
     height: merged.height,
@@ -624,19 +648,13 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     img2vidWindowFrames: merged.img2vidWindowFrames,
     img2vidWindowStride: merged.img2vidWindowStride,
     img2vidWindowCommitFrames: merged.img2vidWindowCommitFrames,
-    filenamePrefix: merged.filenamePrefix,
     format: merged.format,
     pixFmt: merged.pixFmt,
     crf: merged.crf,
     loopCount: merged.loopCount,
     pingpong: merged.pingpong,
-    trimToAudio: merged.trimToAudio,
-    saveMetadata: merged.saveMetadata,
-    saveOutput: merged.saveOutput,
     returnFrames: merged.returnFrames,
-    rifeEnabled: merged.rifeEnabled,
-    rifeModel: merged.rifeModel,
-    rifeTimes: merged.rifeTimes,
+    interpolationMultiplier: merged.interpolationMultiplier,
   }
 }
 

@@ -34,3 +34,4 @@ Status: Active
 - 2026-02-27: `WanVideoOutputPanel.vue` removed `Filename Prefix`, `Save output`, `Save metadata`, and `Trim to audio` controls; output controls now render as `Format + Pixel Format` row, `Loop Count + CRF` slider row, compact `Ping-pong + Return frames` toggle row, and one interpolation output-FPS slider (`0=Off`, active values map to backend interpolation times).
 - 2026-02-27: `WanVideoOutputPanel.vue` now renders `Interpolation (RIFE)` in the same slider row as `Loop Count` and `CRF` (three compact sliders on one row).
 - 2026-02-27: `WanVideoOutputPanel.vue` interpolation now represents output target FPS (not a multiplier), and `Ping-pong`/`Return frames` render stacked vertically.
+- 2026-02-27: `WanVideoOutputPanel.vue` output-toggle column now uses `gc-col--presets` so the toggle stack is content-width and the three sliders consume the remaining row space.

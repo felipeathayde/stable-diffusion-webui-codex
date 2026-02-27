@@ -84,7 +84,7 @@ Symbols (top-level; keep in sync; no ghosts):
           <span class="caption">{{ interpolationCaption }}</span>
         </template>
       </SliderField>
-      <div class="gc-col gc-col--compact wan-video-output-toggle-row">
+      <div class="gc-col gc-col--presets wan-video-output-toggle-row">
         <button
           :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.pingpong ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
           type="button"

@@ -403,30 +403,24 @@ Symbols (top-level; keep in sync; no ghosts):
                       @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
                     />
                     <div class="field">
-                      <label class="label-muted">
-                        <HoverTooltip
-                          class="cdx-slider-field__label-tooltip"
-                          title="Reset Anchor to Base"
-                          :content="[
-                            'When enabled, the first overlap slot resets to init-image anchor every boundary.',
-                            'When disabled, overlap follows previous chunk output and uses anchor_alpha blend.',
-                          ]"
-                        >
-                          <span class="cdx-slider-field__label-trigger">
-                            <span>Reset Anchor</span>
-                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
-                          </span>
-                        </HoverTooltip>
-                      </label>
-                      <button
-                        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                        type="button"
-                        :disabled="isRunning"
-                        :aria-pressed="video.img2vidResetAnchorToBase"
-                        @click="setVideo({ img2vidResetAnchorToBase: !video.img2vidResetAnchorToBase })"
+                      <HoverTooltip
+                        class="cdx-slider-field__label-tooltip"
+                        title="Reset Anchor to Base"
+                        :content="[
+                          'When enabled, the first overlap slot resets to init-image anchor every boundary.',
+                          'When disabled, overlap follows previous chunk output and uses anchor_alpha blend.',
+                        ]"
                       >
-                        {{ video.img2vidResetAnchorToBase ? 'Enabled' : 'Disabled' }}
-                      </button>
+                        <button
+                          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                          type="button"
+                          :disabled="isRunning"
+                          :aria-pressed="video.img2vidResetAnchorToBase"
+                          @click="setVideo({ img2vidResetAnchorToBase: !video.img2vidResetAnchorToBase })"
+                        >
+                          Reset Anchor
+                        </button>
+                      </HoverTooltip>
                     </div>
                   </div>
                   <div v-else-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
@@ -504,35 +498,25 @@ Symbols (top-level; keep in sync; no ghosts):
                       @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
                     />
                     <div class="field">
-                      <label class="label-muted">
-                        <HoverTooltip
-                          class="cdx-slider-field__label-tooltip"
-                          title="Reset Anchor to Base"
-                          :content="[
-                            'Enabled: hard reset anchor at every window handoff.',
-                            'Disabled: keeps temporal carry-over and only applies soft anchor blend.',
-                            'SVI 2.0 / Pro force this option off by design.',
-                          ]"
-                        >
-                          <span class="cdx-slider-field__label-trigger">
-                            <span>Reset Anchor</span>
-                            <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
-                          </span>
-                        </HoverTooltip>
-                      </label>
-                      <button
-                        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                        type="button"
-                        :disabled="isRunning || video.img2vidMode === 'svi2' || video.img2vidMode === 'svi2_pro'"
-                        :aria-pressed="video.img2vidResetAnchorToBase"
-                        @click="setVideo({ img2vidResetAnchorToBase: !video.img2vidResetAnchorToBase })"
+                      <HoverTooltip
+                        class="cdx-slider-field__label-tooltip"
+                        title="Reset Anchor to Base"
+                        :content="[
+                          'Enabled: hard reset anchor at every window handoff.',
+                          'Disabled: keeps temporal carry-over and only applies soft anchor blend.',
+                          'SVI 2.0 / Pro force this option off by design.',
+                        ]"
                       >
-                        {{
-                          video.img2vidMode === 'svi2' || video.img2vidMode === 'svi2_pro'
-                            ? 'Forced Off (SVI)'
-                            : (video.img2vidResetAnchorToBase ? 'Enabled' : 'Disabled')
-                        }}
-                      </button>
+                        <button
+                          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                          type="button"
+                          :disabled="isRunning || video.img2vidMode === 'svi2' || video.img2vidMode === 'svi2_pro'"
+                          :aria-pressed="video.img2vidResetAnchorToBase"
+                          @click="setVideo({ img2vidResetAnchorToBase: !video.img2vidResetAnchorToBase })"
+                        >
+                          Reset Anchor
+                        </button>
+                      </HoverTooltip>
                     </div>
                   </div>
                 </div>

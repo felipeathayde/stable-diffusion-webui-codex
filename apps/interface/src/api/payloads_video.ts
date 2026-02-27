@@ -20,7 +20,7 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 	- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
 	- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
 	- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames) mapped into payload.
-	- `WanInterpolationInput` (interface): Interpolation multiplier input (`0`=off, `>=2` sends backend interpolation).
+	- `WanInterpolationInput` (interface): Interpolation target FPS input (`0`=off, values above base FPS enable backend interpolation).
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
 - `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|chunk|sliding|svi2|svi2_pro`).
@@ -386,7 +386,7 @@ export interface WanVideoOutputInput {
 }
 
 export interface WanInterpolationInput {
-  multiplier: number
+  targetFps: number
 }
 
 export interface WanAssetsInput {
@@ -576,12 +576,21 @@ function addWanOutput(payload: Record<string, unknown>, out: WanVideoOutputInput
   if (out.returnFrames) payload.video_return_frames = true
 }
 
-function addWanInterpolation(payload: Record<string, unknown>, interpolation: WanInterpolationInput): void {
-  const numericMultiplier = Number(interpolation.multiplier)
-  if (!Number.isFinite(numericMultiplier)) return
-  const multiplier = Math.trunc(numericMultiplier)
-  if (multiplier <= 0) return
-  const times = Math.max(2, multiplier)
+function addWanInterpolation(
+  payload: Record<string, unknown>,
+  interpolation: WanInterpolationInput,
+  baseFpsValue: number,
+): void {
+  const numericTargetFps = Number(interpolation.targetFps)
+  if (!Number.isFinite(numericTargetFps)) return
+  const targetFps = Math.trunc(numericTargetFps)
+  if (targetFps <= 0) return
+  const numericBaseFps = Number(baseFpsValue)
+  if (!Number.isFinite(numericBaseFps)) return
+  const baseFps = Math.trunc(numericBaseFps)
+  if (baseFps <= 0) return
+  if (targetFps <= baseFps) return
+  const times = Math.max(2, Math.ceil(targetFps / baseFps))
   payload.video_interpolation = {
     enabled: true,
     model: WAN_INTERPOLATION_MODEL,
@@ -614,7 +623,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.txt2vid_sampler = sampler
   addWanOutput(payload, input.output)
-  addWanInterpolation(payload, input.interpolation)
+  addWanInterpolation(payload, input.interpolation, input.fps)
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
@@ -704,7 +713,7 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
     )
   }
   addWanOutput(payload, input.output)
-  addWanInterpolation(payload, input.interpolation)
+  addWanInterpolation(payload, input.interpolation, input.fps)
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
@@ -758,7 +767,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
   if (vp) payload.vid2vid_video_path = vp
 
   addWanOutput(payload, input.output)
-  addWanInterpolation(payload, input.interpolation)
+  addWanInterpolation(payload, input.interpolation, input.fps)
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)

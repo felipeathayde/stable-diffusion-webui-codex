@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Vitest coverage for WAN video payload builders (txt2vid/img2vid/vid2vid).
 Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields, including
 WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity), `settings_revision` propagation, scheduler-override omission, stage-owned prompt mapping,
-and img2vid temporal mode contracts (`solo|chunk|sliding|svi2|svi2_pro`).
+img2vid temporal mode contracts (`solo|chunk|sliding|svi2|svi2_pro`), and interpolation target-FPS conversion into backend `video_interpolation.times`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `payloads_video.test` (module): WAN video payload builder tests (field mapping + defaults).
@@ -70,7 +70,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
         returnFrames: true,
       },
-      interpolation: { multiplier: 2 },
+      interpolation: { targetFps: 48 },
     })
 
     expect(payload.codex_device).toBe('cuda')
@@ -89,6 +89,104 @@ describe('WAN video payload builders', () => {
     expect(payload).not.toHaveProperty('txt2vid_scheduler')
     expect(payload.wan_high).not.toHaveProperty('scheduler')
     expect(payload.wan_low).not.toHaveProperty('scheduler')
+  })
+
+  it('omits interpolation payload when target FPS is not above base FPS', () => {
+    const sha = 'f'.repeat(64)
+    const payload = buildWanTxt2VidPayload({
+      device: 'cpu',
+      settingsRevision: 9,
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 17,
+      attentionMode: 'global',
+      high: {
+        modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      low: {
+        modelSha: sha,
+        prompt: 'p low',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      format: 'auto',
+      assets: {
+        metadataRepo: 'Wan-AI/Wan2.2-T2V-A14B-Diffusers',
+        textEncoderSha: sha,
+        vaeSha: sha,
+      },
+      output: {
+        format: '',
+        pixFmt: '',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+      },
+      interpolation: { targetFps: 24 },
+    })
+
+    expect(payload).not.toHaveProperty('video_interpolation')
+  })
+
+  it('rounds interpolation factor up when target FPS is not divisible by base FPS', () => {
+    const sha = 'f'.repeat(64)
+    const payload = buildWanTxt2VidPayload({
+      device: 'cpu',
+      settingsRevision: 9,
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 17,
+      attentionMode: 'global',
+      high: {
+        modelSha: sha,
+        prompt: 'p',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      low: {
+        modelSha: sha,
+        prompt: 'p low',
+        negativePrompt: '',
+        sampler: '',
+        scheduler: '',
+        steps: 8,
+        cfgScale: 6,
+        seed: -1,
+      },
+      format: 'auto',
+      assets: {
+        metadataRepo: 'Wan-AI/Wan2.2-T2V-A14B-Diffusers',
+        textEncoderSha: sha,
+        vaeSha: sha,
+      },
+      output: {
+        format: '',
+        pixFmt: '',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+      },
+      interpolation: { targetFps: 50 },
+    })
+
+    expect(payload.video_interpolation).toMatchObject({ enabled: true, model: 'rife47.pth', times: 3 })
   })
 
   it('builds an img2vid payload with sha-selected assets', () => {
@@ -141,7 +239,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     })
 
     expect(payload.codex_device).toBe('cpu')
@@ -207,7 +305,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('solo')
@@ -271,7 +369,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('sliding')
@@ -334,7 +432,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('svi2')
@@ -394,7 +492,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     })
 
     expect(payload.img2vid_mode).toBe('svi2_pro')
@@ -446,7 +544,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     }
 
     expect(() =>
@@ -502,7 +600,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     })
 
     expect(payload.codex_device).toBe('cuda')
@@ -540,7 +638,7 @@ describe('WAN video payload builders', () => {
         loopCount: 0,
         pingpong: false,
       },
-      interpolation: { multiplier: 0 },
+      interpolation: { targetFps: 0 },
     })
 
     expect(payload.txt2vid_width).toBe(480)
@@ -571,7 +669,7 @@ describe('WAN video payload builders', () => {
           loopCount: 0,
           pingpong: false,
         },
-        interpolation: { multiplier: 0 },
+        interpolation: { targetFps: 0 },
       }),
     ).toThrow('WAN stage prompt must not be empty.')
   })

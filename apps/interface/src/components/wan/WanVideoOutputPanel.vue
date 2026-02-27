@@ -7,17 +7,17 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN video output options panel.
-Configures export format/pixel format/CRF/loop options, compact output toggles (`pingpong`, `returnFrames`), and RIFE interpolation multiplier (`0=off`) for WAN video tasks.
+Configures export format/pixel format/CRF/loop options, compact output toggles (`pingpong`, `returnFrames`), and RIFE interpolation target FPS (`0=off`) for WAN video tasks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoOutputPanel` (component): Video output settings panel used by WANTab.
 - `updateVideo` (function): Emits a partial `video` patch (`update:video`).
 - `normalizeNonNegativeInteger` (function): Parses/clamps integer inputs to non-negative range with optional max.
-- `normalizeInterpolationMultiplier` (function): Normalizes interpolation multiplier (`0` or `>=2`).
+- `normalizeInterpolationTargetFps` (function): Normalizes interpolation target FPS (`0` disables interpolation).
 - `onLoopCountChange` (function): Applies normalized loop-count updates.
 - `onCrfChange` (function): Applies normalized CRF updates.
-- `onInterpolationMultiplierChange` (function): Applies normalized interpolation multiplier updates.
-- `interpolationCaption` (computed): User-facing interpolation summary (`Off`/`xN`) plus resulting FPS when available.
+- `onInterpolationTargetFpsChange` (function): Applies normalized interpolation target FPS updates.
+- `interpolationCaption` (computed): User-facing interpolation summary (`Off`/`Target`) with effective backend output FPS.
 -->
 
 <template>
@@ -71,14 +71,14 @@ Symbols (top-level; keep in sync; no ghosts):
       />
       <SliderField
         class="gc-col gc-col--compact"
-        label="Interpolation (RIFE)"
-        :modelValue="video.interpolationMultiplier"
+        label="Interpolation FPS (RIFE)"
+        :modelValue="video.interpolationFps"
         :min="0"
-        :max="8"
+        :max="240"
         :step="1"
         :disabled="disabled"
         inputClass="cdx-input-w-md"
-        @update:modelValue="onInterpolationMultiplierChange"
+        @update:modelValue="onInterpolationTargetFpsChange"
       >
         <template #below>
           <span class="caption">{{ interpolationCaption }}</span>
@@ -142,15 +142,13 @@ function normalizeNonNegativeInteger(value: unknown, fallback: number, max?: num
   return parsed
 }
 
-function normalizeInterpolationMultiplier(value: unknown, fallback: number): number {
-  const fallbackValue = Number.isFinite(fallback)
-    ? (Math.trunc(fallback) <= 0 ? 0 : Math.max(2, Math.trunc(fallback)))
-    : 0
+const MAX_INTERPOLATION_FPS = 240
+
+function normalizeInterpolationTargetFps(value: unknown, fallback: number): number {
+  const fallbackValue = Number.isFinite(fallback) ? Math.trunc(fallback) : 0
   const numeric = Number(value)
-  if (!Number.isFinite(numeric)) return fallbackValue
-  const parsed = Math.trunc(numeric)
-  if (parsed <= 0) return 0
-  return Math.max(2, parsed)
+  if (!Number.isFinite(numeric)) return Math.max(0, Math.min(MAX_INTERPOLATION_FPS, fallbackValue))
+  return Math.max(0, Math.min(MAX_INTERPOLATION_FPS, Math.trunc(numeric)))
 }
 
 function onLoopCountChange(value: number): void {
@@ -161,22 +159,25 @@ function onCrfChange(value: number): void {
   updateVideo({ crf: normalizeNonNegativeInteger(value, props.video.crf, 51) })
 }
 
-function onInterpolationMultiplierChange(value: number): void {
+function onInterpolationTargetFpsChange(value: number): void {
   updateVideo({
-    interpolationMultiplier: normalizeInterpolationMultiplier(value, props.video.interpolationMultiplier),
+    interpolationFps: normalizeInterpolationTargetFps(value, props.video.interpolationFps),
   })
 }
 
 const interpolationCaption = computed<string>(() => {
-  const multiplier = normalizeInterpolationMultiplier(
-    props.video.interpolationMultiplier,
+  const targetFps = normalizeInterpolationTargetFps(
+    props.video.interpolationFps,
     0,
   )
-  const baseFps = normalizeNonNegativeInteger(props.video.fps, 0)
-  if (multiplier <= 0) {
+  const baseFps = normalizeNonNegativeInteger(props.video.fps, 0, MAX_INTERPOLATION_FPS)
+  if (targetFps <= 0) {
     return baseFps > 0 ? `Off · Output: ${baseFps} fps` : 'Off'
   }
-  const outputFps = baseFps > 0 ? baseFps * multiplier : 0
-  return outputFps > 0 ? `x${multiplier} · Output: ${outputFps} fps` : `x${multiplier}`
+  if (baseFps <= 0) return `Target: ${targetFps} fps`
+  if (targetFps <= baseFps) return `Disabled · Target (${targetFps} fps) <= base (${baseFps} fps)`
+  const times = Math.max(2, Math.ceil(targetFps / baseFps))
+  const outputFps = baseFps * times
+  return `Target: ${targetFps} fps · Output: ${outputFps} fps`
 })
 </script>

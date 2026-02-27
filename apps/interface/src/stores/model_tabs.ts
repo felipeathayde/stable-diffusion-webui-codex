@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
 - `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|chunk|sliding|svi2|svi2_pro`).
 - `WanChunkSeedMode` (type): WAN chunk/sliding per-window seed strategy (`fixed|increment|random`).
-- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output controls + interpolation multiplier).
+- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output controls + interpolation target FPS).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
@@ -154,8 +154,8 @@ export interface WanVideoParams {
   loopCount: number
   pingpong: boolean
   returnFrames: boolean
-  // Interpolation (RIFE)
-  interpolationMultiplier: number
+  // Interpolation (RIFE target FPS; 0 disables interpolation)
+  interpolationFps: number
 }
 
 export interface WanAssetsParams {
@@ -346,7 +346,7 @@ function defaultParams<T extends BaseTabType>(
       loopCount: 0,
       pingpong: false,
       returnFrames: false,
-      interpolationMultiplier: 2,
+      interpolationFps: 0,
     }
     const assets: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
     const wanDefaults: TabParamsByType['wan'] = {
@@ -499,14 +499,13 @@ function normalizeWanFrameCount(rawValue: number, min = 9, max = 401): number {
   return min
 }
 
-function normalizeInterpolationMultiplier(rawValue: unknown, fallback: number): number {
+function normalizeInterpolationTargetFps(rawValue: unknown, fallback: number): number {
+  const maxFps = 240
   const fallbackNumeric = Number.isFinite(Number(fallback)) ? Math.trunc(Number(fallback)) : 0
-  const fallbackNormalized = fallbackNumeric <= 0 ? 0 : Math.max(2, fallbackNumeric)
+  const fallbackNormalized = Math.max(0, Math.min(maxFps, fallbackNumeric))
   const numeric = Number(rawValue)
   if (!Number.isFinite(numeric)) return fallbackNormalized
-  const parsed = Math.trunc(numeric)
-  if (parsed <= 0) return 0
-  return Math.max(2, parsed)
+  return Math.max(0, Math.min(maxFps, Math.trunc(numeric)))
 }
 
 function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVideoParams): WanVideoParams {
@@ -604,31 +603,10 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     defaults.img2vidWindowCommitFrames,
   )
 
-  const hasInterpolationMultiplier = Object.prototype.hasOwnProperty.call(rawRecord, 'interpolationMultiplier')
-  const defaultInterpolationMultiplier = normalizeInterpolationMultiplier(defaults.interpolationMultiplier, 2)
-  if (hasInterpolationMultiplier) {
-    merged.interpolationMultiplier = normalizeInterpolationMultiplier(
-      rawRecord.interpolationMultiplier,
-      defaultInterpolationMultiplier,
-    )
-  } else {
-    const legacyInterpolationEnabled = typeof rawRecord.rifeEnabled === 'boolean'
-      ? Boolean(rawRecord.rifeEnabled)
-      : null
-    const legacyInterpolationTimes = normalizeInterpolationMultiplier(
-      rawRecord.rifeTimes,
-      defaultInterpolationMultiplier,
-    )
-    if (legacyInterpolationEnabled === false) {
-      merged.interpolationMultiplier = 0
-    } else if (legacyInterpolationEnabled === true) {
-      merged.interpolationMultiplier = legacyInterpolationTimes > 0
-        ? legacyInterpolationTimes
-        : defaultInterpolationMultiplier
-    } else {
-      merged.interpolationMultiplier = legacyInterpolationTimes
-    }
-  }
+  merged.interpolationFps = normalizeInterpolationTargetFps(
+    merged.interpolationFps,
+    defaults.interpolationFps,
+  )
 
   return {
     width: merged.width,
@@ -654,7 +632,7 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     loopCount: merged.loopCount,
     pingpong: merged.pingpong,
     returnFrames: merged.returnFrames,
-    interpolationMultiplier: merged.interpolationMultiplier,
+    interpolationFps: merged.interpolationFps,
   }
 }
 

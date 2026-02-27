@@ -12,7 +12,8 @@ to update UI state and fetch final results. Every start payload includes `settin
 trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 mode prompt fields from the High stage in payload builders for backend compatibility. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/
-`pingpong`/`returnFrames`), interpolation multiplier (`0` off, active values as FPS multiplier), and stage `flowShift` pass-through in common WAN payload input.
+`pingpong`/`returnFrames`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), and stage `flowShift`
+pass-through in common WAN payload input.
 Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`), and stage-level WAN LoRA fields are not emitted from this
 composable (LoRA control is prompt-level). Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
 before surfacing UI error text.
@@ -299,7 +300,7 @@ function defaultVideo(): WanVideoParams {
     loopCount: 0,
     pingpong: false,
     returnFrames: false,
-    interpolationMultiplier: 2,
+    interpolationFps: 0,
   }
 }
 
@@ -515,7 +516,7 @@ export function useVideoGeneration(tabId: string) {
         returnFrames: v.returnFrames,
       },
       interpolation: {
-        multiplier: v.interpolationMultiplier,
+        targetFps: v.interpolationFps,
       },
     }
   }
@@ -580,7 +581,7 @@ export function useVideoGeneration(tabId: string) {
         returnFrames: v.returnFrames,
       },
       interpolation: {
-        multiplier: v.interpolationMultiplier,
+        targetFps: v.interpolationFps,
       },
     }
   }

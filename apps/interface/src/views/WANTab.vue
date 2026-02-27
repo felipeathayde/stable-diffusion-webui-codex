@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|chunk|sliding|svi2|svi2_pro`).
 - `normalizeImg2VidTemporalEnabledMode` (function): Normalizes temporal-mode selector values to non-solo modes (`chunk|sliding|svi2|svi2_pro`).
 - `normalizeChunkSeedMode` (function): Normalizes UI img2vid chunk-seed mode values.
-- `normalizeInterpolationMultiplier` (function): Normalizes interpolation multiplier (`0` off, active values clamped to `>=2`).
+- `normalizeInterpolationTargetFps` (function): Normalizes interpolation output target FPS (`0` disables interpolation).
 - `img2vidTemporalEnabledModeStorageKey` (function): Returns localStorage key for the last non-solo temporal mode per tab.
 - `readImg2VidTemporalEnabledMode` (function): Loads the persisted non-solo temporal mode used when temporal controls are re-enabled.
 - `writeImg2VidTemporalEnabledMode` (function): Persists the last non-solo temporal mode for toggle round-trips.
@@ -695,7 +695,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 <template v-else>No results yet</template>
               </div>
               <div v-if="videoUrl" class="caption">
-                Enable “Return frames” in Video Output to include frames in the result payload (or disable Save output to force frames).
+                Enable “Return frames” in Video Output to include frames in the result payload.
               </div>
               <div v-else-if="!isRunning" class="caption">Need help? Press Generate to see what is missing.</div>
             </div>
@@ -896,7 +896,7 @@ function defaultVideo(): WanVideoParams {
     loopCount: 0,
     pingpong: false,
     returnFrames: false,
-    interpolationMultiplier: 2,
+    interpolationFps: 0,
   }
 }
 
@@ -975,14 +975,13 @@ function normalizeChunkSeedMode(rawValue: unknown): 'fixed' | 'increment' | 'ran
   return 'increment'
 }
 
-function normalizeInterpolationMultiplier(rawValue: unknown, fallback: number): number {
+function normalizeInterpolationTargetFps(rawValue: unknown, fallback: number): number {
+  const maxFps = 240
   const fallbackNumeric = Number.isFinite(Number(fallback)) ? Math.trunc(Number(fallback)) : 0
-  const fallbackNormalized = fallbackNumeric <= 0 ? 0 : Math.max(2, fallbackNumeric)
+  const fallbackNormalized = Math.max(0, Math.min(maxFps, fallbackNumeric))
   const numeric = Number(rawValue)
   if (!Number.isFinite(numeric)) return fallbackNormalized
-  const parsed = Math.trunc(numeric)
-  if (parsed <= 0) return 0
-  return Math.max(2, parsed)
+  return Math.max(0, Math.min(maxFps, Math.trunc(numeric)))
 }
 
 function img2vidTemporalEnabledModeStorageKey(): string {
@@ -1220,10 +1219,10 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
   ) {
     nextPatch.img2vidWindowCommitFrames = normalizedCommit
   }
-  if (Object.prototype.hasOwnProperty.call(nextPatch, 'interpolationMultiplier')) {
-    nextPatch.interpolationMultiplier = normalizeInterpolationMultiplier(
-      nextPatch.interpolationMultiplier,
-      current.interpolationMultiplier,
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'interpolationFps')) {
+    nextPatch.interpolationFps = normalizeInterpolationTargetFps(
+      nextPatch.interpolationFps,
+      current.interpolationFps,
     )
   }
   return nextPatch
@@ -1901,7 +1900,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       returnFrames: video.value.returnFrames,
     },
     interpolation: {
-      multiplier: video.value.interpolationMultiplier,
+      targetFps: video.value.interpolationFps,
     },
   }
 }
@@ -1965,15 +1964,11 @@ function applyHistory(item: VideoRunHistoryItem): void {
       : (typeof i2v.enabled === 'boolean'
         ? (Boolean(i2v.enabled) ? 'chunk' : 'solo')
         : (hasSnapshotChunkFrames ? 'chunk' : normalizeImg2VidMode(video.value.img2vidMode))))
-  const historyInterpolationMultiplier = (() => {
-    if (typeof interpolation.multiplier === 'number' && Number.isFinite(interpolation.multiplier)) {
-      return Number(interpolation.multiplier)
+  const historyInterpolationFps = (() => {
+    if (typeof interpolation.targetFps === 'number' && Number.isFinite(interpolation.targetFps)) {
+      return Number(interpolation.targetFps)
     }
-    const legacyTimes = typeof interpolation.times === 'number' && Number.isFinite(interpolation.times)
-      ? Number(interpolation.times)
-      : video.value.interpolationMultiplier
-    if (typeof interpolation.enabled === 'boolean' && !interpolation.enabled) return 0
-    return legacyTimes
+    return video.value.interpolationFps
   })()
 
   setVideo({
@@ -1999,7 +1994,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     loopCount: typeof output.loopCount === 'number' && Number.isFinite(output.loopCount) ? Number(output.loopCount) : video.value.loopCount,
     pingpong: Boolean(output.pingpong),
     returnFrames: typeof output.returnFrames === 'boolean' ? output.returnFrames : video.value.returnFrames,
-    interpolationMultiplier: historyInterpolationMultiplier,
+    interpolationFps: historyInterpolationFps,
   })
 
   const hi = isRecord(snap.high) ? snap.high : {}

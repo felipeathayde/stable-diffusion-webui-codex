@@ -123,15 +123,15 @@
   }
 
   .wan-video-output-toggle-row {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-sm);
-    align-items: stretch;
+    display: inline-grid;
+    grid-template-columns: minmax(0, max-content);
+    gap: 0.35rem;
+    align-items: start;
   }
 
   .wan-video-output-toggle-row .qs-toggle-btn {
-    width: 100%;
-    justify-content: center;
+    width: auto;
+    justify-content: flex-start;
   }
 
   .wan-results-empty {

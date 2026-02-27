@@ -11,7 +11,7 @@ Status: Active
 - `WanStagePanel.vue` — High/Low stage controls (sampler/scheduler/steps/cfg/seed + optional flow-shift), no stage-level LoRA controls.
 - `WanStageLoraField.vue` — Legacy stage-level LoRA selector component (currently not wired by `WanStagePanel.vue`).
 - `WanSubHeader.vue` — Small section sub-header used by `WANTab.vue` to keep “Video / High / Low” headers consistent.
-- `WanVideoOutputPanel.vue` — Video export + interpolation controls (format/pix_fmt/loop/CRF/pingpong/return-frames + interpolation multiplier slider).
+- `WanVideoOutputPanel.vue` — Video export + interpolation controls (format/pix_fmt/loop/CRF/pingpong/return-frames + interpolation output-FPS slider).
 
 ## Notes
 - Keep these components dumb: props in, emits out. Do not fetch inventory or call backend APIs here.
@@ -31,5 +31,6 @@ Status: Active
 - 2026-01-27: Added a `Return frames` toggle to `WanVideoOutputPanel.vue` (default off) and an inline note when `Save output` is off (frames still returned so users can download them).
 - 2026-02-20: `WanSubHeader.vue` now supports opt-in full-row toggle behavior (`clickable` + `header-click`), with built-in interactive-target exclusion and Enter/Space keyboard parity for collapsible cards.
 - 2026-02-21: `WanStagePanel.vue` dropped stage-level LoRA UI; WAN LoRA insertion is now prompt-level in `WANTab.vue` using prompt token chips.
-- 2026-02-27: `WanVideoOutputPanel.vue` removed `Filename Prefix`, `Save output`, `Save metadata`, and `Trim to audio` controls; output controls now render as `Format + Pixel Format` row, `Loop Count + CRF` slider row, compact `Ping-pong + Return frames` toggle row, and one interpolation multiplier slider (`0=Off`, `>=2` active multiplier).
+- 2026-02-27: `WanVideoOutputPanel.vue` removed `Filename Prefix`, `Save output`, `Save metadata`, and `Trim to audio` controls; output controls now render as `Format + Pixel Format` row, `Loop Count + CRF` slider row, compact `Ping-pong + Return frames` toggle row, and one interpolation output-FPS slider (`0=Off`, active values map to backend interpolation times).
 - 2026-02-27: `WanVideoOutputPanel.vue` now renders `Interpolation (RIFE)` in the same slider row as `Loop Count` and `CRF` (three compact sliders on one row).
+- 2026-02-27: `WanVideoOutputPanel.vue` interpolation now represents output target FPS (not a multiplier), and `Ping-pong`/`Return frames` render stacked vertically.

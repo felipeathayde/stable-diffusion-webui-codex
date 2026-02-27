@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
 Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks, I2V conditioning channels are cached once per stage loop to avoid redundant per-step buffer copies, and scheduler aliases are rejected fail-loud while unsupported sampler overrides are logged and ignored by metadata-driven scheduler construction, except for experimental FlowMatch-Euler sampler lanes.
+Per-step compute runs under `torch.inference_mode()` to reduce overhead (model assembly/load stays outside inference mode).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PatchGeometry` (dataclass): Patch/tile geometry configuration used to infer latent/video shapes.
@@ -775,7 +776,7 @@ def sample_stage_latents_generator(
                 str(timestep),
             )
 
-        with torch.no_grad():
+        with torch.inference_mode():
             if not has_conditioning:
                 if int(state.shape[1]) != cout:
                     raise RuntimeError(

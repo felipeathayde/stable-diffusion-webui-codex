@@ -15,6 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_wan22_fp32_compute_mode` (function): Returns cached `CODEX_WAN22_FP32_COMPUTE` mode (`auto|on|off`) from bootstrap-aware env parsing.
 - `_wan22_use_fp32_compute` (function): Resolves whether WAN norms/residual hot paths should run with full-tensor fp32 casts for a given input dtype.
 - `_wan22_norm_compute_label` (function): Emits trace label (`float32` or `native`) for the effective WAN norm compute mode.
+- `_WAN22_FFN_ACTIVATION_BUDGET_BYTES` (constant): Default byte budget used to bound FFN fc1 activation footprint via sequence chunking.
+- `_wan22_resolve_ffn_chunk_tokens` (function): Determines token chunk size for FFN to reduce peak VRAM on long sequences.
 - `WanRMSNorm` (class): RMSNorm with optional GGUF dequantization and env-controlled compute policy (`fp32` vs native dtype).
 - `WanFP32LayerNorm` (class): LayerNorm with env-controlled compute policy (`fp32` vs native dtype).
 - `_build_1d_rope_embeddings` (function): Builds 1D RoPE tensors shaped `[1,S,1,D]` for fused cross-attention Q/K contracts.
@@ -44,6 +46,7 @@ from torch import nn
 from apps.backend.infra.config.env_flags import env_flag, env_str
 from apps.backend.runtime.attention.wan_fused_v1 import (
     WanFusedContractError,
+    is_extension_available,
     resolve_effective_wan_fused_attn_core,
     try_fused_cross_attention,
     try_fused_self_attention,
@@ -85,6 +88,40 @@ def _wan22_use_fp32_compute(input_dtype: torch.dtype) -> bool:
 
 def _wan22_norm_compute_label(input_dtype: torch.dtype) -> str:
     return "float32" if _wan22_use_fp32_compute(input_dtype) else "native"
+
+
+_WAN22_FFN_ACTIVATION_BUDGET_BYTES = 128 * 1024 * 1024
+
+
+def _wan22_resolve_ffn_chunk_tokens(*, x_blc: torch.Tensor, hidden_dim: int) -> int:
+    """Returns a token chunk size for WAN22 FFN that bounds the fc1 activation footprint.
+
+    The FFN is token-independent (operates on the last dim), so chunking over sequence
+    preserves outputs while reducing peak VRAM. This is a perf/memory tradeoff tuned
+    for 12GB-class GPUs.
+    """
+    if not x_blc.is_cuda:
+        return 0
+    if x_blc.ndim != 3:
+        return 0
+    batch, seq_len, _channels = (int(x_blc.shape[0]), int(x_blc.shape[1]), int(x_blc.shape[2]))
+    if seq_len <= 0 or batch <= 0 or hidden_dim <= 0:
+        return 0
+
+    bytes_per_token = int(hidden_dim) * int(x_blc.element_size())
+    denom = batch * bytes_per_token
+    if denom <= 0:
+        return 0
+    max_tokens = int(_WAN22_FFN_ACTIVATION_BUDGET_BYTES // denom)
+    if max_tokens <= 0:
+        return 1
+    if seq_len <= max_tokens:
+        return 0
+
+    for candidate in (4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1):
+        if candidate <= max_tokens:
+            return candidate
+    return 1
 
 
 def _resolve_wan_fused_attn_core_trace_fields(*, fused_mode: str) -> tuple[str, str, str]:
@@ -366,6 +403,33 @@ class WanSelfAttention(nn.Module):
                 "WAN RoPE expects floating-point hidden states; "
                 f"got dtype={hidden_states.dtype} shape={tuple(hidden_states.shape)}."
             )
+        if (
+            hidden_states.is_cuda
+            and hidden_states.is_contiguous()
+            and hidden_states.dtype in {torch.float16, torch.bfloat16}
+            and freqs_cos.is_cuda
+            and freqs_sin.is_cuda
+            and freqs_cos.dtype == torch.float32
+            and freqs_sin.dtype == torch.float32
+            and freqs_cos.is_contiguous()
+            and freqs_sin.is_contiguous()
+            and freqs_cos.ndim == 4
+            and freqs_sin.ndim == 4
+            and freqs_cos.shape == freqs_sin.shape
+            and freqs_cos.shape[0] == 1
+            and freqs_cos.shape[2] == 1
+            and freqs_cos.shape[1] == hidden_states.shape[1]
+            and freqs_cos.shape[3] == hidden_states.shape[3]
+        ):
+            # Prefer the fused CUDA RoPE op when available. This is an in-place update
+            # of [B,L,H,D] hidden_states and avoids fp32 full-tensor materialization.
+            if not hasattr(torch.ops.wan_fused_v1, "rope_blhd_"):
+                # Try loading the extension once (prebuilt/in-place; JIT if enabled).
+                is_extension_available()
+            if hasattr(torch.ops.wan_fused_v1, "rope_blhd_"):
+                torch.ops.wan_fused_v1.rope_blhd_(hidden_states, freqs_cos, freqs_sin)
+                return hidden_states
+
         with autocast_disabled(hidden_states.device.type):
             # Keep RoPE math in fp32 for parity, but avoid materializing fp32 copies of the
             # full Q/K tensors (`.float()` here can be ~GB-scale for WAN22 long sequences).
@@ -818,7 +882,7 @@ class WanTransformerBlock(nn.Module):
         if use_fp32_compute:
             x = (x_norm_input + sa_out.float() * sa_gate[:, None, :]).to(dtype=x_dtype)
         else:
-            x = x + sa_out * sa_gate[:, None, :]
+            x.addcmul_(sa_out, sa_gate[:, None, :])
         if trace_enabled:
             logger.debug(
                 "[wan22.trace] block[%s] self_attn: x_sa_dtype=%s x_sa_device=%s sa_out_dtype=%s sa_out_device=%s "
@@ -846,7 +910,7 @@ class WanTransformerBlock(nn.Module):
             trace_debug=trace_enabled,
             trace_block_idx=trace_block_idx,
         )
-        x = x + ca_out
+        x.add_(ca_out)
         if trace_enabled:
             logger.debug(
                 "[wan22.trace] block[%s] cross_attn: x_ca_dtype=%s x_ca_device=%s ca_out_dtype=%s ca_out_device=%s "
@@ -866,11 +930,46 @@ class WanTransformerBlock(nn.Module):
         x_ffn = self.norm2(x_ffn_input) * (1.0 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]
         if use_fp32_compute:
             x_ffn = x_ffn.to(dtype=x_dtype)
-        ffn_out = self.ffn(x_ffn)
-        if use_fp32_compute:
-            x = (x_ffn_input + ffn_out.float() * ffn_gate[:, None, :]).to(dtype=x_dtype)
+
+        ffn_hidden_dim = None
+        if isinstance(self.ffn, nn.Sequential) and len(self.ffn) > 0 and isinstance(self.ffn[0], nn.Linear):
+            ffn_hidden_dim = int(self.ffn[0].out_features)
+        ffn_chunk_tokens = 0 if ffn_hidden_dim is None else _wan22_resolve_ffn_chunk_tokens(x_blc=x_ffn, hidden_dim=ffn_hidden_dim)
+        if trace_enabled and ffn_chunk_tokens > 0:
+            logger.debug(
+                "[wan22.trace] block[%s] ffn chunking active: tokens=%d hidden_dim=%d budget_mb=%d",
+                block_tag,
+                int(ffn_chunk_tokens),
+                int(ffn_hidden_dim) if ffn_hidden_dim is not None else -1,
+                int(_WAN22_FFN_ACTIVATION_BUDGET_BYTES // (1024 * 1024)),
+            )
+
+        ffn_out_for_trace: torch.Tensor | None = None
+        if ffn_chunk_tokens > 0 and not use_fp32_compute:
+            # Chunked FFN path: avoid materializing the full fc1 activation and also
+            # avoid allocating a full-sized ffn_out buffer by updating the residual
+            # in-place per token chunk.
+            seq_len = int(x_ffn.shape[1])
+            for start in range(0, seq_len, int(ffn_chunk_tokens)):
+                end = min(seq_len, int(start + ffn_chunk_tokens))
+                out_chunk = self.ffn(x_ffn[:, start:end, :])
+                x[:, start:end, :].addcmul_(out_chunk, ffn_gate[:, None, :])
+                ffn_out_for_trace = out_chunk
         else:
-            x = x + ffn_out * ffn_gate[:, None, :]
+            if ffn_chunk_tokens > 0:
+                ffn_out = torch.empty_like(x_ffn)
+                seq_len = int(x_ffn.shape[1])
+                for start in range(0, seq_len, int(ffn_chunk_tokens)):
+                    end = min(seq_len, int(start + ffn_chunk_tokens))
+                    ffn_out[:, start:end, :].copy_(self.ffn(x_ffn[:, start:end, :]))
+            else:
+                ffn_out = self.ffn(x_ffn)
+            ffn_out_for_trace = ffn_out
+
+            if use_fp32_compute:
+                x = (x_ffn_input + ffn_out.float() * ffn_gate[:, None, :]).to(dtype=x_dtype)
+            else:
+                x.addcmul_(ffn_out, ffn_gate[:, None, :])
         if trace_enabled:
             logger.debug(
                 "[wan22.trace] block[%s] ffn: x_ffn_dtype=%s x_ffn_device=%s ffn_out_dtype=%s ffn_out_device=%s "
@@ -878,8 +977,8 @@ class WanTransformerBlock(nn.Module):
                 block_tag,
                 str(x_ffn.dtype),
                 str(x_ffn.device),
-                str(ffn_out.dtype),
-                str(ffn_out.device),
+                str(ffn_out_for_trace.dtype if ffn_out_for_trace is not None else "<none>"),
+                str(ffn_out_for_trace.device if ffn_out_for_trace is not None else "<none>"),
                 str(ffn_gate.dtype),
                 str(x.dtype),
                 str(x.device),

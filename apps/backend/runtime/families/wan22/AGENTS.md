@@ -129,6 +129,8 @@ Status: Active
 - 2026-02-25: WAN22 SDPA context now carries fused-attention mode (`CODEX_WAN22_FUSED_ATTN_V1_MODE`, `off|auto|force`) and `model.py` now wires optional fused self/cross attention dispatch (`wan_fused_v1`) with fail-loud `force` semantics; cross fused contract requires RoPE tensors for both Q and K (`cross_rotary_emb=(q_cos,q_sin,k_cos,k_sin)`), while non-fused fallback path remains on canonical WAN SDPA flow.
 - 2026-02-25: `stage_loader.py::mount_stage_model_from_gguf(...)` now calls `warmup_extension_for_load(...)` after stage materialization so WAN fused kernel extension load/JIT compile can trigger during model load (instead of first denoise forward), with explicit warmup outcome logs (`mode/attempted/available/jit/detail`).
 - 2026-02-26: `model.py` now supports `CODEX_WAN22_FP32_COMPUTE=auto|on|off` (bootstrap-env aware, cached parse). `auto` keeps Diffusers-style full-tensor fp32 compute for `torch.float16` and disables it for `torch.bfloat16`; `on` forces previous fp32-parity behavior; `off` keeps transformer/norm/head hot paths in native input dtype. This exists to cut WAN22 peak VRAM on 12GB-class GPUs during bf16 runs without changing launcher/restart determinism.
+- 2026-02-27: WAN22 `model.py` self-attn RoPE now prefers the CUDA in-place op `torch.ops.wan_fused_v1.rope_blhd_` when available (falls back to the pure PyTorch RoPE path when not).
+- 2026-02-27: WAN22 `model.py` FFN now auto-chunks over sequence length to bound the fc1 activation footprint (reduces peak reserved VRAM on 12GB GPUs; perf/memory tradeoff). Residual adds use in-place ops in bf16-native mode.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

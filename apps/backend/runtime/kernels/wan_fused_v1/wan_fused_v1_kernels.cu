@@ -6,6 +6,7 @@
 #include <torch/extension.h>
 
 #include <c10/core/Allocator.h>
+#include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
@@ -81,25 +82,116 @@ torch::Tensor rmsnorm_channels(const torch::Tensor& x_blc, const torch::Tensor& 
   return scaled.to(x_blc.scalar_type());
 }
 
-torch::Tensor apply_rope_blhd(const torch::Tensor& x_blhd, const torch::Tensor& rope_cos, const torch::Tensor& rope_sin) {
-  TORCH_CHECK(x_blhd.dim() == 4, "apply_rope_blhd expects x as [B,L,H,D]");
-  TORCH_CHECK(rope_cos.dim() == 4 && rope_sin.dim() == 4, "apply_rope_blhd expects rope tensors as [1,L,1,D]");
+int64_t checked_mul_int64(int64_t left, int64_t right, const char* label);
 
-  auto dtype = x_blhd.scalar_type();
-  auto x_fp32 = x_blhd.to(torch::kFloat);
+template <typename scalar_t>
+__global__ void rope_blhd_inplace_kernel(
+    scalar_t* __restrict__ x,
+    const float* __restrict__ rope_cos,
+    const float* __restrict__ rope_sin,
+    int64_t batch,
+    int64_t seq_len,
+    int64_t heads,
+    int64_t head_dim) {
+  const int64_t pair_index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const int64_t half_dim = head_dim / 2;
+  const int64_t total_pairs = batch * seq_len * heads * half_dim;
+  if (pair_index >= total_pairs) {
+    return;
+  }
 
-  auto x_even = x_fp32.slice(-1, 0, x_fp32.size(-1), 2);
-  auto x_odd = x_fp32.slice(-1, 1, x_fp32.size(-1), 2);
-  auto cos = rope_cos.slice(-1, 0, rope_cos.size(-1), 2).to(torch::kFloat);
-  auto sin = rope_sin.slice(-1, 1, rope_sin.size(-1), 2).to(torch::kFloat);
+  int64_t idx = pair_index;
+  const int64_t d_pair = idx % half_dim;
+  idx /= half_dim;
+  const int64_t h = idx % heads;
+  idx /= heads;
+  const int64_t l = idx % seq_len;
+  const int64_t b = idx / seq_len;
 
-  auto out_even = x_even * cos - x_odd * sin;
-  auto out_odd = x_even * sin + x_odd * cos;
+  const int64_t d_even = d_pair * 2;
+  const int64_t x_base = (((b * seq_len) + l) * heads + h) * head_dim + d_even;
+  const int64_t rope_base = l * head_dim + d_even;
 
-  auto out = torch::empty_like(x_fp32);
-  out.slice(-1, 0, out.size(-1), 2).copy_(out_even);
-  out.slice(-1, 1, out.size(-1), 2).copy_(out_odd);
-  return out.to(dtype);
+  const float x_even = static_cast<float>(x[x_base]);
+  const float x_odd = static_cast<float>(x[x_base + 1]);
+  const float cos = rope_cos[rope_base];
+  const float sin = rope_sin[rope_base + 1];
+
+  const float out_even = x_even * cos - x_odd * sin;
+  const float out_odd = x_even * sin + x_odd * cos;
+
+  x[x_base] = static_cast<scalar_t>(out_even);
+  x[x_base + 1] = static_cast<scalar_t>(out_odd);
+}
+
+void rope_blhd_inplace_cuda_impl(
+    const char* op_name,
+    torch::Tensor& x_blhd,
+    const torch::Tensor& rope_cos,
+    const torch::Tensor& rope_sin) {
+  TORCH_CHECK(x_blhd.dim() == 4, op_name, " expects x as [B,L,H,D]");
+  TORCH_CHECK(rope_cos.dim() == 4 && rope_sin.dim() == 4, op_name, " expects rope tensors as [1,L,1,D]");
+  check_cuda_tensor(x_blhd, "x");
+  check_cuda_tensor(rope_cos, "rope_cos");
+  check_cuda_tensor(rope_sin, "rope_sin");
+  check_same_device(x_blhd, rope_cos, "rope_cos");
+  check_same_device(x_blhd, rope_sin, "rope_sin");
+
+  TORCH_CHECK(x_blhd.is_contiguous(), op_name, " requires x to be contiguous");
+  TORCH_CHECK(rope_cos.is_contiguous(), op_name, " requires rope_cos to be contiguous");
+  TORCH_CHECK(rope_sin.is_contiguous(), op_name, " requires rope_sin to be contiguous");
+  TORCH_CHECK(rope_cos.scalar_type() == torch::kFloat, op_name, " requires rope_cos to be float32");
+  TORCH_CHECK(rope_sin.scalar_type() == torch::kFloat, op_name, " requires rope_sin to be float32");
+
+  const int64_t batch = x_blhd.size(0);
+  const int64_t seq_len = x_blhd.size(1);
+  const int64_t heads = x_blhd.size(2);
+  const int64_t head_dim = x_blhd.size(3);
+  TORCH_CHECK(head_dim > 0 && (head_dim % 2) == 0, op_name, " requires an even head_dim (got ", head_dim, ")");
+  TORCH_CHECK(rope_cos.size(0) == 1 && rope_cos.size(2) == 1, op_name, " requires rope_cos to be [1,L,1,D]");
+  TORCH_CHECK(rope_sin.size(0) == 1 && rope_sin.size(2) == 1, op_name, " requires rope_sin to be [1,L,1,D]");
+  TORCH_CHECK(rope_cos.size(1) == seq_len && rope_cos.size(3) == head_dim, op_name, " rope_cos shape mismatch");
+  TORCH_CHECK(rope_sin.size(1) == seq_len && rope_sin.size(3) == head_dim, op_name, " rope_sin shape mismatch");
+
+  const int64_t half_dim = head_dim / 2;
+  const int64_t total_pairs = checked_mul_int64(
+      checked_mul_int64(checked_mul_int64(batch, seq_len, "batch*seq_len"), heads, "batch*seq_len*heads"),
+      half_dim,
+      "total_pairs");
+  if (total_pairs == 0) {
+    return;
+  }
+
+  TORCH_CHECK(
+      x_blhd.scalar_type() == torch::kFloat16 || x_blhd.scalar_type() == torch::kBFloat16 ||
+          x_blhd.scalar_type() == torch::kFloat,
+      op_name,
+      " supports x dtype float16|bfloat16|float32 (got ",
+      c10::toString(x_blhd.scalar_type()),
+      ")");
+
+  const int threads = 256;
+  const int blocks = static_cast<int>((total_pairs + threads - 1) / threads);
+  const auto stream = c10::cuda::getCurrentCUDAStream(x_blhd.get_device());
+
+  const float* cos_ptr = rope_cos.data_ptr<float>();
+  const float* sin_ptr = rope_sin.data_ptr<float>();
+  if (x_blhd.scalar_type() == torch::kFloat16) {
+    rope_blhd_inplace_kernel<c10::Half><<<blocks, threads, 0, stream.stream()>>>(
+        x_blhd.data_ptr<c10::Half>(), cos_ptr, sin_ptr, batch, seq_len, heads, head_dim);
+  } else if (x_blhd.scalar_type() == torch::kBFloat16) {
+    rope_blhd_inplace_kernel<c10::BFloat16><<<blocks, threads, 0, stream.stream()>>>(
+        x_blhd.data_ptr<c10::BFloat16>(), cos_ptr, sin_ptr, batch, seq_len, heads, head_dim);
+  } else {
+    rope_blhd_inplace_kernel<float><<<blocks, threads, 0, stream.stream()>>>(
+        x_blhd.data_ptr<float>(), cos_ptr, sin_ptr, batch, seq_len, heads, head_dim);
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+torch::Tensor apply_rope_blhd(torch::Tensor x_blhd, const torch::Tensor& rope_cos, const torch::Tensor& rope_sin) {
+  rope_blhd_inplace_cuda_impl("apply_rope_blhd", x_blhd, rope_cos, rope_sin);
+  return x_blhd;
 }
 
 int64_t parse_env_strict_positive_int_or_default(const char* key, int64_t default_value) {
@@ -1207,6 +1299,14 @@ torch::Tensor project_norm_rope_chunk_bhld(
 }
 
 }  // namespace
+
+torch::Tensor wan_fused_v1_rope_blhd_inplace_cuda(
+    torch::Tensor x_blhd,
+    const torch::Tensor& rope_cos,
+    const torch::Tensor& rope_sin) {
+  rope_blhd_inplace_cuda_impl("wan_fused_v1.rope_blhd_", x_blhd, rope_cos, rope_sin);
+  return x_blhd;
+}
 
 torch::Tensor wan_fused_v1_self_fwd_cuda(
     const torch::Tensor& x,

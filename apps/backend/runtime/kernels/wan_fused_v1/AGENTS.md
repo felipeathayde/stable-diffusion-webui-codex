@@ -5,7 +5,7 @@ Status: Active
 
 ## Purpose
 - Build sources for WAN fused attention V1 CUDA addon (`wan_fused_v1_cuda`).
-- Registers `torch.ops.wan_fused_v1.self_fwd` and `torch.ops.wan_fused_v1.cross_fwd` used by runtime contract wrappers.
+- Registers `torch.ops.wan_fused_v1.self_fwd`, `torch.ops.wan_fused_v1.cross_fwd`, and `torch.ops.wan_fused_v1.rope_blhd_` used by runtime contract wrappers (and WAN22 native RoPE fast-path).
 
 ## Key Files
 - `apps/backend/runtime/kernels/wan_fused_v1/setup.py` — CUDA extension build script.
@@ -30,6 +30,7 @@ Status: Active
 - 2026-02-26: WAN22 model/run now plumb resolver output directly (`attn_core`, `attn_core_source`, `attn_core_raw`) and do not mutate env in the model/run hot path.
 - 2026-02-26: Worker1 cache-guard knobs are fail-loud upper bounds: `CODEX_WAN_FUSED_V1_Q_CHUNK` (`1..512`) and `CODEX_WAN_FUSED_V1_KV_CHUNK` (`1..1024`). Kernel picks the largest deterministic feasible power-of-two pair under runtime caps; invalid env values still raise immediately.
 - 2026-02-26: Full K/V precompute workspace cap is now env-configurable via `CODEX_WAN_FUSED_V1_PRECOMPUTE_WORKSPACE_MB` (strict positive integer MB, default `512`). Budgeting is core-aware: score-tile workspace budgeting is active for ATen path (including `cuda_experimental` with `head_dim>128` fallback) and bypassed for actual CUDA streaming core (`cuda_experimental` with `head_dim<=128`).
+- 2026-02-27: Added `torch.ops.wan_fused_v1.rope_blhd_` (CUDA-only, in-place) for `[B,L,H,D]` RoPE application using float32 `rope_cos/rope_sin` shaped `[1,L,1,D]`. This avoids Python-side fp32 temporaries and large `[B,L,H,D]` output materialization.
 
 ## Required Env Matrix (current)
 - Force mode default (fail-loud): `CODEX_WAN22_FUSED_ATTN_V1_MODE=force` (resolver default core is now `aten`, source `force_default`).

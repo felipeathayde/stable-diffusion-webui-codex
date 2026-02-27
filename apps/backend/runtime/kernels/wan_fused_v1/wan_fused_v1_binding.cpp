@@ -44,11 +44,17 @@ torch::Tensor wan_fused_v1_cross_fwd_cuda(
     const c10::optional<torch::Tensor>& b_out,
     const c10::optional<std::string>& attn_core);
 
+torch::Tensor wan_fused_v1_rope_blhd_inplace_cuda(
+    torch::Tensor x_blhd,
+    const torch::Tensor& rope_cos,
+    const torch::Tensor& rope_sin);
+
 TORCH_LIBRARY(wan_fused_v1, m) {
   m.def(
       "self_fwd(Tensor x, Tensor w_q, Tensor? b_q, Tensor w_k, Tensor? b_k, Tensor w_v, Tensor? b_v, Tensor norm_q_weight, Tensor norm_k_weight, Tensor rope_cos_qk, Tensor rope_sin_qk, Tensor w_out, Tensor? b_out, str? attn_core=None) -> Tensor");
   m.def(
       "cross_fwd(Tensor x, Tensor context, Tensor w_q, Tensor? b_q, Tensor norm_q_weight, Tensor rope_cos_q, Tensor rope_sin_q, Tensor w_k, Tensor? b_k, Tensor norm_k_weight, Tensor rope_cos_k, Tensor rope_sin_k, Tensor w_v, Tensor? b_v, Tensor w_out, Tensor? b_out, str? attn_core=None) -> Tensor");
+  m.def("rope_blhd_(Tensor x_blhd, Tensor rope_cos, Tensor rope_sin) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(wan_fused_v1, CPU, m) {
@@ -96,11 +102,20 @@ TORCH_LIBRARY_IMPL(wan_fused_v1, CPU, m) {
             false,
             "wan_fused_v1.cross_fwd: CPU implementation not available. Build CUDA kernels and run on CUDA tensors.");
       });
+
+  m.impl(
+      "rope_blhd_",
+      [](torch::Tensor /*x_blhd*/, const torch::Tensor& /*rope_cos*/, const torch::Tensor& /*rope_sin*/) -> torch::Tensor {
+        TORCH_CHECK(
+            false,
+            "wan_fused_v1.rope_blhd_: CPU implementation not available. Build CUDA kernels and run on CUDA tensors.");
+      });
 }
 
 TORCH_LIBRARY_IMPL(wan_fused_v1, CUDA, m) {
   m.impl("self_fwd", wan_fused_v1_self_fwd_cuda);
   m.impl("cross_fwd", wan_fused_v1_cross_fwd_cuda);
+  m.impl("rope_blhd_", wan_fused_v1_rope_blhd_inplace_cuda);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

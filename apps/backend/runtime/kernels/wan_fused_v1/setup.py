@@ -7,6 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Build script for `wan_fused_v1_cuda` CUDA extension (WAN fused attention V1 ops).
+Emits a small build-time summary (arch list and default attention-core policy) to keep build logs diagnosable.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `apps.backend.runtime.kernels.wan_fused_v1.setup` (module): Setup script configuring `CUDAExtension` sources/flags for `wan_fused_v1_cuda`.
@@ -58,7 +59,7 @@ print(
 )
 print(
     "[wan_fused_v1.build] "
-    "attn_core_default_force=cuda_experimental attn_core_default_other=aten "
+    "attn_core_default_force=aten attn_core_default_other=aten "
     "attn_core_env=CODEX_WAN_FUSED_V1_ATTN_CORE"
 )
 

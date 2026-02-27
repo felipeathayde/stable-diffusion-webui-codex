@@ -69,6 +69,21 @@ Symbols (top-level; keep in sync; no ghosts):
         inputClass="cdx-input-w-md"
         @update:modelValue="onCrfChange"
       />
+      <SliderField
+        class="gc-col gc-col--compact"
+        label="Interpolation (RIFE)"
+        :modelValue="video.interpolationMultiplier"
+        :min="0"
+        :max="8"
+        :step="1"
+        :disabled="disabled"
+        inputClass="cdx-input-w-md"
+        @update:modelValue="onInterpolationMultiplierChange"
+      >
+        <template #below>
+          <span class="caption">{{ interpolationCaption }}</span>
+        </template>
+      </SliderField>
     </div>
 
     <div class="cdx-form-row wan-video-output-toggle-row">
@@ -90,24 +105,6 @@ Symbols (top-level; keep in sync; no ghosts):
       >
         Return frames
       </button>
-    </div>
-
-    <div class="gc-row">
-      <SliderField
-        class="gc-col"
-        label="Interpolation (RIFE)"
-        :modelValue="video.interpolationMultiplier"
-        :min="0"
-        :max="8"
-        :step="1"
-        :disabled="disabled"
-        inputClass="cdx-input-w-md"
-        @update:modelValue="onInterpolationMultiplierChange"
-      >
-        <template #below>
-          <span class="caption">{{ interpolationCaption }}</span>
-        </template>
-      </SliderField>
     </div>
   </div>
 </template>

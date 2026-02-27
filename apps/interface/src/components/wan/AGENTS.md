@@ -32,3 +32,4 @@ Status: Active
 - 2026-02-20: `WanSubHeader.vue` now supports opt-in full-row toggle behavior (`clickable` + `header-click`), with built-in interactive-target exclusion and Enter/Space keyboard parity for collapsible cards.
 - 2026-02-21: `WanStagePanel.vue` dropped stage-level LoRA UI; WAN LoRA insertion is now prompt-level in `WANTab.vue` using prompt token chips.
 - 2026-02-27: `WanVideoOutputPanel.vue` removed `Filename Prefix`, `Save output`, `Save metadata`, and `Trim to audio` controls; output controls now render as `Format + Pixel Format` row, `Loop Count + CRF` slider row, compact `Ping-pong + Return frames` toggle row, and one interpolation multiplier slider (`0=Off`, `>=2` active multiplier).
+- 2026-02-27: `WanVideoOutputPanel.vue` now renders `Interpolation (RIFE)` in the same slider row as `Loop Count` and `CRF` (three compact sliders on one row).

@@ -278,7 +278,7 @@ function defaultVideo(): WanVideoParams {
   return {
     width: 768,
     height: 432,
-    fps: 24,
+    fps: 15,
     frames: 17,
     attentionMode: 'global',
     useInitImage: false,

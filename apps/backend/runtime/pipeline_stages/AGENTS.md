@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-02-25
+Last Review: 2026-02-27
 Status: Active
 
 ## Purpose
@@ -41,6 +41,7 @@ Status: Active
 - 2026-02-13: `video.py` now computes effective output FPS after interpolation (`resolve_video_output_fps`) and enforces fail-loud export semantics when `save_output=true` but the engine export does not return a saved artifact.
 - 2026-02-21: `video.py::read_video_interpolation_options(...)` now parses `video_interpolation.enabled` via shared strict bool parsing and fails loud for non-string `model` or non-int/invalid `times` values (no permissive truthy coercion such as `bool(\"false\")`); `video.py::export_video(...)` also parses `save_output`/`saved` via strict bool parsing.
 - 2026-02-21: `video.py` now preserves list-backed frame sequences through interpolation/result assembly instead of unconditional `list(...)` copies, reducing per-request frame duplication in WAN video pipelines.
+- 2026-02-27: `video.py` now owns shared SeedVR2 upscaling stage parsing/execution (`read_video_upscaling_options`, `apply_video_upscaling`) and returns structured `video_upscaling` metadata for txt2vid/img2vid/vid2vid use-cases.
 - 2026-02-01: Added `hires_fix.py` to centralize hires pass prep and fix `denoise` semantics (no more inverted `start_at_step` mapping).
 - 2026-02-08: Sampling stages now carry typed ER-SDE options (`SamplingPlan.er_sde`) from plan build to execution; `execute_sampling(...)` forwards options into `CodexSampler.sample(...)` and latent diagnostics include effective ER-SDE metadata when sampler is `er sde`.
 - 2026-02-09: `sampling_execute` now gates LoRA apply/reset on `codex_objects_after_applying_lora` capability and fails loud only when LoRA selections are present without engine support, while still resetting stale LoRA state for no-selection runs.

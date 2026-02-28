@@ -12,6 +12,7 @@ Holds ffmpeg export options and optional interpolation settings to be passed thr
 Symbols (top-level; keep in sync; no ghosts):
 - `VideoExportOptions` (dataclass): Export parameters for video output (format/codec knobs + metadata/save flags).
 - `VideoInterpolationOptions` (dataclass): Optional interpolation settings (enable + model + times).
+- `VideoUpscalingOptions` (dataclass): Optional SeedVR2 upscaling settings (enable + model/runtime knobs).
 """
 
 from __future__ import annotations
@@ -46,4 +47,22 @@ class VideoInterpolationOptions:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
 
-__all__ = ["VideoExportOptions", "VideoInterpolationOptions"]
+@dataclass
+class VideoUpscalingOptions:
+    enabled: bool = False
+    dit_model: Optional[str] = None
+    resolution: Optional[int] = None
+    max_resolution: Optional[int] = None
+    batch_size: Optional[int] = None
+    uniform_batch_size: Optional[bool] = None
+    temporal_overlap: Optional[int] = None
+    prepend_frames: Optional[int] = None
+    color_correction: Optional[str] = None
+    input_noise_scale: Optional[float] = None
+    latent_noise_scale: Optional[float] = None
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+__all__ = ["VideoExportOptions", "VideoInterpolationOptions", "VideoUpscalingOptions"]

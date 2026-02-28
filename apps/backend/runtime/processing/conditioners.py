@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `encode_image_batch` (function): Encode a BCHW image tensor via `sd_model.encode_first_stage`, with optional smart-offload pre-VAE guard.
 - `txt2img_conditioning` (function): Build txt2img image-conditioning tensor (inpaint vs non-inpaint layouts).
 - `_prepare_mask` (function): Normalize mask inputs (tensor/PIL/array) into a batched float tensor (optionally rounded).
-- `img2img_conditioning` (function): Build img2img image-conditioning tensor (handles inpaint mask + VAE encoding when required).
+- `img2img_conditioning` (function): Build img2img image-conditioning tensor (Forge/A1111 parity: masks-out conditioning image for inpaint).
 """
 
 from __future__ import annotations
@@ -91,14 +91,28 @@ def img2img_conditioning(sd_model: Any, source_image: torch.Tensor, latent_image
     source_image = source_image.to(dtype=torch.float32)
 
     if getattr(sd_model, "is_inpaint", False):
-        mask_tensor = _prepare_mask(image_mask, round_mask=round_mask)
-        if mask_tensor is None:
-            mask_tensor = torch.ones(1, 1, source_image.shape[-2], source_image.shape[-1], device=source_image.device, dtype=source_image.dtype)
+        conditioning_mask = _prepare_mask(image_mask, round_mask=round_mask)
+        if conditioning_mask is None:
+            conditioning_mask = torch.ones(
+                1,
+                1,
+                source_image.shape[-2],
+                source_image.shape[-1],
+                device=source_image.device,
+                dtype=source_image.dtype,
+            )
         else:
-            mask_tensor = mask_tensor.to(device=source_image.device, dtype=source_image.dtype)
-        conditioning_image = source_image
+            conditioning_mask = conditioning_mask.to(device=source_image.device, dtype=source_image.dtype)
+
+        # Forge/A1111 parity: conditioning image is masked-out (default inpainting_mask_weight=1.0).
+        conditioning_image = torch.lerp(
+            source_image,
+            source_image * (1.0 - conditioning_mask),
+            1.0,
+        )
         conditioning_image = sd_model.get_first_stage_encoding(sd_model.encode_first_stage(conditioning_image))
-        mask_tensor = F.interpolate(mask_tensor, size=latent_image.shape[-2:])
+
+        mask_tensor = F.interpolate(conditioning_mask, size=latent_image.shape[-2:])
         mask_tensor = mask_tensor.expand(conditioning_image.shape[0], -1, -1, -1)
         return torch.cat([mask_tensor, conditioning_image], dim=1)
 

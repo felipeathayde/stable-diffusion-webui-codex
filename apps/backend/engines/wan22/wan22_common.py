@@ -12,13 +12,14 @@ Defines dataclasses for engine/runtime wiring and strict resolution helpers for 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineOpts` (dataclass): Minimal WAN engine load options (device/dtype).
 - `WanComponents` (dataclass): Holder for instantiated WAN components/pipelines and resolved paths.
-- `WanStageOptions` (dataclass): Stage-specific overrides for WAN pipelines (prompt/negative + sampler/scheduler/steps/cfg/LoRA/lightning).
+- `WanStageOptions` (dataclass): Stage-specific overrides for WAN pipelines (prompt/negative + sampler/scheduler/steps/cfg + ordered stage `loras[]` + lightning).
 - `resolve_wan_repo_candidates` (function): Strict resolution of WAN Diffusers repo candidates (env override or known map; raises otherwise).
 - `resolve_user_supplied_assets` (function): Extracts user-supplied asset paths (high/low stage dirs, VAE/text encoder) from extras payload.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass, asdict
@@ -60,8 +61,7 @@ class WanStageOptions:
     scheduler: Optional[str] = None
     steps: int = 12
     cfg_scale: Optional[float] = None
-    lora_path: Optional[str] = None
-    lora_weight: Optional[float] = None
+    loras: tuple[tuple[str, float], ...] = ()
     lightning: bool = False
 
     def as_dict(self) -> Dict[str, Any]:
@@ -72,26 +72,56 @@ class WanStageOptions:
         if not isinstance(obj, dict):
             return WanStageOptions(steps=default_steps, cfg_scale=default_cfg)
         if obj.get("lora_path") not in (None, ""):
-            raise ValueError("WAN stage 'lora_path' is unsupported; use 'lora_sha' instead.")
+            raise ValueError("WAN stage 'lora_path' is unsupported; use 'loras'.")
+        if obj.get("lora_sha") not in (None, ""):
+            raise ValueError("WAN stage 'lora_sha' is unsupported; use 'loras'.")
+        if obj.get("lora_weight") not in (None, ""):
+            raise ValueError("WAN stage 'lora_weight' is unsupported; use 'loras'.")
 
-        lora_sha = str(obj.get("lora_sha") or "").strip().lower() or None
-        lora_weight = float(obj.get("lora_weight")) if obj.get("lora_weight") is not None else None
-        if lora_weight is not None and not lora_sha:
-            raise ValueError("WAN stage 'lora_weight' requires 'lora_sha'.")
-        lora_path = None
-        if lora_sha:
-            if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
-                raise ValueError("WAN stage 'lora_sha' must be sha256 (64 lowercase hex).")
-            from apps.backend.inventory.cache import resolve_asset_by_sha
+        raw_loras = obj.get("loras")
+        loras: list[tuple[str, float]] = []
+        if raw_loras is None:
+            pass
+        elif not isinstance(raw_loras, list):
+            raise ValueError("WAN stage 'loras' must be an array when provided.")
+        else:
+            for index, raw_lora in enumerate(raw_loras):
+                if not isinstance(raw_lora, dict):
+                    raise ValueError(f"WAN stage 'loras[{index}]' must be an object.")
+                unknown_keys = sorted(set(raw_lora.keys()) - {"sha", "weight"})
+                if unknown_keys:
+                    raise ValueError(
+                        f"WAN stage 'loras[{index}]' has unexpected key(s): {', '.join(unknown_keys)}."
+                    )
+                lora_sha = str(raw_lora.get("sha") or "").strip().lower()
+                if not lora_sha:
+                    raise ValueError(f"WAN stage 'loras[{index}].sha' is required.")
+                if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
+                    raise ValueError(f"WAN stage 'loras[{index}].sha' must be sha256 (64 lowercase hex).")
+                from apps.backend.inventory.cache import resolve_asset_by_sha
 
-            resolved = resolve_asset_by_sha(lora_sha)
-            if not resolved:
-                raise ValueError(f"WAN stage LoRA not found for sha: {lora_sha}")
-            lora_path = os.path.expanduser(str(resolved))
-            if not lora_path.lower().endswith(".safetensors"):
-                raise ValueError(f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
-            if not os.path.isfile(lora_path):
-                raise ValueError(f"WAN stage LoRA file not found: {lora_path}")
+                resolved = resolve_asset_by_sha(lora_sha)
+                if not resolved:
+                    raise ValueError(f"WAN stage LoRA not found for sha: {lora_sha}")
+                lora_path = os.path.expanduser(str(resolved))
+                if not lora_path.lower().endswith(".safetensors"):
+                    raise ValueError(f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
+                if not os.path.isfile(lora_path):
+                    raise ValueError(f"WAN stage LoRA file not found: {lora_path}")
+                raw_weight = raw_lora.get("weight")
+                if raw_weight is None:
+                    lora_weight = 1.0
+                else:
+                    if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
+                        raise ValueError(
+                            f"WAN stage 'loras[{index}].weight' must be numeric when provided."
+                        )
+                    lora_weight = float(raw_weight)
+                    if not math.isfinite(lora_weight):
+                        raise ValueError(
+                            f"WAN stage 'loras[{index}].weight' must be finite, got: {raw_weight!r}."
+                        )
+                loras.append((lora_path, lora_weight))
 
         raw_steps = obj.get("steps")
         if raw_steps is None:
@@ -135,8 +165,7 @@ class WanStageOptions:
             scheduler=str(obj.get("scheduler")) if obj.get("scheduler") else None,
             steps=steps,
             cfg_scale=(float(obj.get("cfg_scale")) if obj.get("cfg_scale") is not None else default_cfg),
-            lora_path=lora_path,
-            lora_weight=lora_weight,
+            loras=tuple(loras),
             lightning=lightning,
         )
 

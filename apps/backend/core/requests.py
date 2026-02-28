@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `InferenceEvent` (type alias): Union of `ProgressEvent` and `ResultEvent` produced by engines.
 - `BaseRequest` (dataclass): Shared request fields across tasks (prompt/sampler/seed/LoRA/etc), plus `settings_revision` contract marker and runtime smart flags.
 - `Txt2ImgRequest` (dataclass): Text-to-image request.
-- `Img2ImgRequest` (dataclass): Image-to-image/inpaint request (init image + optional mask).
+- `Img2ImgRequest` (dataclass): Image-to-image/inpaint request (init image + optional inpaint mask; supports optional mask-region split multi-pass).
 - `Txt2VidRequest` (dataclass): Text-to-video request.
 - `Img2VidRequest` (dataclass): Image-to-video request.
 - `Vid2VidRequest` (dataclass): Video-to-video request (source video + optional reference/pose/background inputs).
@@ -96,8 +96,8 @@ class Img2ImgRequest(BaseRequest):
     init_image: Any = None
     mask: Any = None
     mask_enforcement: Optional[str] = None
+    mask_region_split: bool = False
     inpainting_fill: int = 1
-    inpaint_full_res: bool = True
     inpaint_full_res_padding: int = 32
     inpainting_mask_invert: int = 0
     mask_blur: int = 4

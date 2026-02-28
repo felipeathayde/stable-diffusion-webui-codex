@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Backend vid2vid use-case orchestration (WAN pipeline + optional flow guidance + interpolation/export).
+Purpose: Backend vid2vid use-case orchestration (WAN pipeline + optional flow guidance + upscaling/interpolation/export).
 Takes an input video (or frames), runs a chosen vid2vid method (native WAN pipeline or WAN animate), optionally applies optical-flow-based
-warping/guidance and shared frame interpolation, and returns task events/results.
+warping/guidance plus shared SeedVR2 upscaling/interpolation stages, and returns task events/results.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_blend` (function): Alpha-blends two PIL images (resizes `b` to `a` when needed).
@@ -43,9 +43,11 @@ from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.infra.config.repo_root import repo_scratch_path
 from apps.backend.runtime.pipeline_stages.video import (
     apply_video_interpolation,
+    apply_video_upscaling,
     assemble_video_metadata,
     build_video_plan,
     read_video_interpolation_options,
+    read_video_upscaling_options,
     resolve_video_output_fps,
 )
 from apps.backend.video.export.ffmpeg_exporter import export_video
@@ -218,17 +220,35 @@ def _run_native_pipeline(
         raise RuntimeError("vid2vid method 'native' requires a Diffusers WAN pipeline (comp.pipeline)")
 
     # Optional: stage LoRA (WAN extras) for lightx2v-style adapters.
-    try:
-        extras = getattr(request, "extras", {}) or {}
-        wan_high_cfg = extras.get("wan_high") if isinstance(extras, dict) else None
-        wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
-        if wan_hi_opts and wan_hi_opts.lora_path and hasattr(pipe, "load_lora_weights"):
-            logger = getattr(engine, "_logger", None)
+    extras = getattr(request, "extras", {}) or {}
+    wan_high_cfg = extras.get("wan_high") if isinstance(extras, dict) else None
+    wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
+    if wan_hi_opts and wan_hi_opts.loras and hasattr(pipe, "load_lora_weights"):
+        logger = getattr(engine, "_logger", None)
+        total_stage_loras = len(wan_hi_opts.loras)
+        for index, (lora_path, lora_weight) in enumerate(wan_hi_opts.loras):
             if logger:
-                logger.info("[wan] loading stage LoRA (vid2vid native): %s", wan_hi_opts.lora_path)
-            pipe.load_lora_weights(wan_hi_opts.lora_path)  # type: ignore[attr-defined]
-    except Exception:
-        pass
+                logger.info(
+                    "[wan] loading stage LoRA (vid2vid native) %d/%d: %s (weight=%s)",
+                    index + 1,
+                    total_stage_loras,
+                    lora_path,
+                    lora_weight,
+                )
+            try:
+                pipe.load_lora_weights(lora_path)  # type: ignore[attr-defined]
+            except Exception as exc:
+                if logger:
+                    logger.error(
+                        "[wan] failed stage LoRA apply (vid2vid native) %d/%d: %s",
+                        index + 1,
+                        total_stage_loras,
+                        lora_path,
+                    )
+                raise RuntimeError(
+                    "vid2vid native stage LoRA apply failed "
+                    f"(index={index + 1}/{total_stage_loras}, path={lora_path})"
+                ) from exc
 
     strength = request.strength
     if strength is None:
@@ -688,6 +708,21 @@ def run_vid2vid(
             )
             audio_source = video_path if has_audio else None
 
+        upscaling_options = read_video_upscaling_options(extras)
+        if upscaling_options is not None and upscaling_options.enabled:
+            yield ProgressEvent(stage="upscale", percent=0.9, message="Upscaling frames (SeedVR2)")
+        frames_out, upscaling_opts = apply_video_upscaling(
+            frames_out,
+            options=upscaling_options,
+            logger_=logger,
+            component_device=getattr(comp, "device", None),
+        )
+        if frames_out:
+            first_size = getattr(frames_out[0], "size", None)
+            if isinstance(first_size, tuple) and len(first_size) == 2:
+                plan.width = int(first_size[0])
+                plan.height = int(first_size[1])
+
         vfi_options = read_video_interpolation_options(extras)
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=0.95, message="Interpolating frames (VFI)")
@@ -733,6 +768,8 @@ def run_vid2vid(
             info["animate_mode"] = getattr(request, "animate_mode", None)
             info["segment_frame_length"] = int(getattr(request, "segment_frame_length", 77) or 77)
             info["prev_segment_conditioning_frames"] = int(getattr(request, "prev_segment_conditioning_frames", 1) or 1)
+        if upscaling_opts is not None:
+            info["video_upscaling"] = upscaling_opts
         if vfi_opts is not None:
             info["video_interpolation"] = vfi_opts
 

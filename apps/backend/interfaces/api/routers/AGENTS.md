@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-25
+Last Review: 2026-02-27
 Status: Active
 
 ## Purpose
@@ -39,8 +39,9 @@ Status: Active
 - 2026-01-25: `generation.py` now accepts `clip_skip` in `[0..12]` for txt2img (0 = “use default”), and validates `img2img_clip_skip` in `[0..12]` when provided.
 - 2026-01-27: Video endpoints accept optional `video_return_frames` and pass it through request extras; WAN txt2vid/img2vid/vid2vid results can include `video {rel_path,mime}` for the UI player and omit frames by default.
 - 2026-01-28: `generation.py` accepts `extras.zimage_variant="turbo"|"base"` (and `img2img_extras.zimage_variant`) and forwards it into `engine_options["zimage_variant"]` so the orchestrator can reload Z-Image when the variant changes.
-- 2026-01-29: `generation.py` `img2img_*` now accepts explicit mask/inpaint controls when `img2img_mask` is provided (`img2img_mask_enforcement`, `img2img_inpaint_full_res[_padding]`, `img2img_inpainting_fill`, `img2img_inpainting_mask_invert`, `img2img_mask_blur[_x/_y]`, `img2img_mask_round`).
+- 2026-01-29: `generation.py` `img2img_*` now accepts explicit mask/inpaint controls when `img2img_mask` is provided (`img2img_mask_enforcement`, `img2img_inpaint_full_res_padding`, `img2img_inpainting_fill`, `img2img_inpainting_mask_invert`, `img2img_mask_blur[_x/_y]`, `img2img_mask_round`).
 - 2026-02-25: `generation.py` img2img mask-path defaults now align with ADetailer-like baseline (`img2img_inpainting_fill` default `1`, `img2img_inpaint_full_res_padding` default `32`) when mask payload omits explicit values.
+- 2026-02-27: `generation.py` img2img masking now supports Forge/A1111 “Only masked” semantics only (removed `img2img_inpaint_full_res`) and adds `img2img_mask_region_split` for ADetailer-style multi-region passes.
 - 2026-01-29: `tools.py` adds `POST /api/tools/pnginfo/analyze` to extract PNG text metadata for the `/pnginfo` UI (no file persistence).
 - 2026-01-29: `tools.py` CodexPack v1 output can be produced either as the primary output of `POST /api/tools/convert-gguf` (`codexpack_v1=true`; `output_path=*.codexpack.gguf`; base GGUF is temp-only and deleted on success) or from an existing base GGUF via `POST /api/tools/codexpack/pack-v1` (Z-Image Base/Turbo; `Q4_K`; Comfy Layout metadata required).
 - 2026-01-30: `tools.py` GGUF conversion jobs now set `job["error"]` before flipping `job["status"]="error"` to avoid clients observing an error state with a missing error message.
@@ -107,5 +108,7 @@ Status: Active
 - 2026-02-22: `generation.py` now validates `gguf_cache_policy`/`gguf_cache_limit_mb` fail-loud in video prepare paths (`txt2vid` + `img2vid`): invalid policy, non-integer/negative limits, missing-policy limit, and incompatible policy-limit combinations now return HTTP 400 synchronously.
 - 2026-02-22: `generation.py` now validates `gguf_te_device` fail-loud in WAN video prepare paths (`txt2vid` + `img2vid`), accepting only `auto|cpu|cuda|cuda:<index>` (with `gpu` normalized to `cuda`).
 - 2026-02-22: `generation.py` gate-release failure handling now logs warning-level diagnostics instead of swallowing exceptions silently in video worker teardown.
+- 2026-02-27: `generation.py` now accepts optional WAN `video_upscaling` object (`enabled` required bool + strict typed SeedVR2 options), rejects unknown keys, and forwards normalized values into request extras as `extras.video_upscaling`.
 - 2026-02-23: `options.py` now enforces main-device invariant on runtime updates: any device update to `codex_core_device`/`codex_te_device`/`codex_vae_device` is normalized to one shared value, and mixed values are rejected with HTTP 400.
 - 2026-02-23: `tools.py` GGUF conversion API now accepts `precision_mode` (`FULL_BF16|FULL_FP16|FULL_FP32|FP16_PLUS_FP32|BF16_PLUS_FP32`) and rejects ambiguous payloads that combine `precision_mode` with legacy `float_group_overrides`.
+- 2026-02-27: `generation.py` now rejects unknown top-level `/api/img2img` payload keys (allowlist) to prevent silent contract drift (txt2img already enforced this).

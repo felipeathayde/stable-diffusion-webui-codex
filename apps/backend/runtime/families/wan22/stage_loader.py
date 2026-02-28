@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model mounting.
 Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize` resolved from GGUF exec mode; `computation_dtype=dtype`) so placement policy remains centralized. Also triggers WAN fused-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
-Optionally applies a per-stage LoRA file (merge/online) for LightX2V-style stage patches.
+Optionally applies an ordered per-stage LoRA sequence (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `pick_stage_gguf` (function): Validates and returns the stage GGUF file path (strict: must be an explicit `.gguf` file).
@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import torch
 
@@ -90,8 +90,7 @@ def mount_stage_model_from_gguf(
     *,
     stage: str,
     dtype: torch.dtype,
-    lora_path: Optional[str] = None,
-    lora_weight: Optional[float] = None,
+    loras: Optional[Sequence[tuple[str, float]]] = None,
     logger: Any,
 ):
     log = get_logger(logger)
@@ -114,8 +113,7 @@ def mount_stage_model_from_gguf(
     apply_wan22_stage_lora(
         model,
         stage=stage,
-        lora_path=lora_path,
-        lora_weight=lora_weight,
+        loras=loras,
         logger=logger,
     )
     fused_mode_raw = str(os.environ.get("CODEX_WAN22_FUSED_ATTN_V1_MODE", "off")).strip().lower()

@@ -8,7 +8,7 @@ Status: Active
 
 ## Subdirectories
 - `interpolation/` — Video frame interpolation utilities (e.g., RIFE wrappers).
-- `upscaling/` — SeedVR2 external CLI upscaling runner (repo-local runtime bootstrap + isolated venv; fail loud on missing deps/runtime requirements).
+- `upscaling/` — SeedVR2 native in-process upscaling runner (repo-local runtime bootstrap + fail-loud runtime/module validation).
 - `io/` — Input video probing/decoding (ffprobe/ffmpeg wrappers).
 - `flow/` — Optical flow estimation + frame warping (torchvision RAFT).
 - `export/` — Frame → video encoding (ffmpeg exporter; writes under `CODEX_ROOT/output`).
@@ -20,5 +20,5 @@ Status: Active
 - Flow guidance requires `torch` + `torchvision`.
 - 2026-01-02: Added standardized file header docstrings to video export modules (doc-only change; part of rollout).
 - 2026-02-23: RIFE/RAFT runtime defaults now derive device identity from memory-manager mount-device authority; unsupported device/backend combinations fail loud instead of implicit CUDA→CPU fallback.
-- 2026-02-27: Added `upscaling/seedvr2_cli.py` to run SeedVR2 as an external CLI post-process stage (lossless ffmpeg intermediate, deterministic repo/model-dir resolution, strict frame count/size validation).
-- 2026-02-27: SeedVR2 upscaling runtime default no longer couples to `.refs/**`; default repo bootstrap now targets `.uv/xdg-data/seedvr2/repo` (pinned ref) and CLI execution uses isolated `.uv/xdg-data/seedvr2/venv` dependency provisioning.
+- 2026-02-27: Added `upscaling/seedvr2.py` for SeedVR2 post-process upscaling with deterministic repo/model-dir resolution and strict frame count/size validation.
+- 2026-02-28: SeedVR2 upscaling now executes natively in-process (no CLI subprocess/ffmpeg intermediate path); runtime module/dependency failures are fail-loud.

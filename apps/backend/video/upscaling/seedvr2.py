@@ -6,9 +6,10 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Fail-loud SeedVR2 CLI runner for WAN video frame upscaling.
-Validates frame inputs, provisions deterministic repo-local SeedVR2 runtime assets (repo checkout + isolated venv), encodes a
-lossless ffmpeg intermediate video, invokes the external SeedVR2 CLI, and loads PNG outputs back into PIL frames.
+Purpose: Fail-loud SeedVR2 in-process runner for WAN video frame upscaling.
+Validates frame inputs, provisions deterministic repo-local SeedVR2 runtime assets (repo checkout),
+loads SeedVR2 Python modules directly from the checkout, runs upscaling in-process on tensors, and
+returns validated PIL output frames.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `run_seedvr2_upscaling` (function): Executes SeedVR2 upscaling from in-memory frames and returns `(frames_out, metadata)`.
@@ -18,13 +19,13 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import json
+import importlib.util
 import logging
 import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -32,7 +33,6 @@ from uuid import uuid4
 
 from apps.backend.core.params.video import VideoUpscalingOptions
 from apps.backend.infra.config.repo_root import get_repo_root, repo_scratch_path
-from apps.backend.video.runtime_dependencies import VideoDependencyResolutionError, resolve_ffmpeg_binary
 
 _SEEDVR2_REPO_ENV = "CODEX_SEEDVR2_REPO_DIR"
 _SEEDVR2_REPO_URL_ENV = "CODEX_SEEDVR2_REPO_URL"
@@ -43,12 +43,8 @@ _DEFAULT_SEEDVR2_REPO_URL = "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscal
 _DEFAULT_SEEDVR2_REPO_REF = "4490bd1f482e026674543386bb2a4d176da245b9"
 _DEFAULT_SEEDVR2_RUNTIME_ROOT_RELATIVE = Path(".uv/xdg-data/seedvr2")
 _DEFAULT_SEEDVR2_REPO_RELATIVE = _DEFAULT_SEEDVR2_RUNTIME_ROOT_RELATIVE / "repo"
-_DEFAULT_SEEDVR2_VENV_RELATIVE = _DEFAULT_SEEDVR2_RUNTIME_ROOT_RELATIVE / "venv"
 _DEFAULT_SEEDVR2_MODEL_DIR_RELATIVE = Path(".uv/xdg-data/seedvr2")
-_SEEDVR2_RUNTIME_STAMP_FILE = ".seedvr2-runtime-stamp.json"
 _SEEDVR2_REPO_LOCK_FILE = ".seedvr2-repo.lock"
-_SEEDVR2_VENV_LOCK_FILE = ".seedvr2-venv.lock"
-_INTERMEDIATE_VIDEO_FPS = 24
 _STDERR_PREVIEW_LIMIT = 4000
 
 try:
@@ -107,14 +103,6 @@ def _run_checked_subprocess(
         f"{purpose} failed (exit {proc.returncode}; command={list(cmd)!r}).\n"
         f"stderr:\n{stderr_preview}"
     )
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _resolve_seedvr2_repo_url() -> str:
@@ -247,10 +235,10 @@ def _resolve_seedvr2_repo_dir() -> _SeedVR2RepoResolution:
             f"Expected '{resolved}'. Set {_SEEDVR2_REPO_ENV} to a valid checkout path."
         )
 
-    cli_path = resolved / "inference_cli.py"
-    if not cli_path.is_file():
+    entrypoint_path = resolved / "inference_cli.py"
+    if not entrypoint_path.is_file():
         raise RuntimeError(
-            f"SeedVR2 CLI entrypoint not found at '{cli_path}'. "
+            f"SeedVR2 runtime entrypoint not found at '{entrypoint_path}'. "
             "Verify the repository checkout contains inference_cli.py."
         )
     return _SeedVR2RepoResolution(
@@ -258,114 +246,6 @@ def _resolve_seedvr2_repo_dir() -> _SeedVR2RepoResolution:
         uses_default_repo_path=uses_default_repo_path,
         pinned_ref=pinned_ref,
     )
-
-
-def _resolve_seedvr2_venv_dir() -> Path:
-    return (get_repo_root() / _DEFAULT_SEEDVR2_VENV_RELATIVE).resolve()
-
-
-def _seedvr2_venv_python_path(venv_dir: Path) -> Path:
-    if os.name == "nt":
-        return venv_dir / "Scripts" / "python.exe"
-    return venv_dir / "bin" / "python"
-
-
-def _create_seedvr2_venv(venv_dir: Path) -> None:
-    try:
-        import venv
-    except Exception as exc:
-        raise RuntimeError(
-            "SeedVR2 isolated runtime requires Python's 'venv' module, but it is unavailable."
-        ) from exc
-
-    venv_dir.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        builder = venv.EnvBuilder(with_pip=True, clear=False, symlinks=os.name != "nt")
-        builder.create(str(venv_dir))
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to create SeedVR2 isolated runtime venv at '{venv_dir}': {exc}"
-        ) from exc
-
-
-def _read_seedvr2_runtime_stamp(stamp_path: Path) -> dict[str, str] | None:
-    if not stamp_path.is_file():
-        return None
-    try:
-        payload = json.loads(stamp_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    requirements_sha256 = payload.get("requirements_sha256")
-    repo_ref = payload.get("repo_ref")
-    if not isinstance(requirements_sha256, str) or not isinstance(repo_ref, str):
-        return None
-    return {
-        "requirements_sha256": requirements_sha256,
-        "repo_ref": repo_ref,
-    }
-
-
-def _write_seedvr2_runtime_stamp(stamp_path: Path, payload: dict[str, str]) -> None:
-    stamp_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = stamp_path.with_suffix(stamp_path.suffix + ".tmp")
-    try:
-        tmp_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-        tmp_path.replace(stamp_path)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to persist SeedVR2 runtime stamp at '{stamp_path}': {exc}") from exc
-
-
-def _ensure_seedvr2_runtime_venv(*, repo_resolution: _SeedVR2RepoResolution) -> Path:
-    with _exclusive_seedvr2_lock(_resolve_seedvr2_runtime_root_dir() / _SEEDVR2_VENV_LOCK_FILE):
-        requirements_path = repo_resolution.repo_dir / "requirements.txt"
-        if not requirements_path.is_file():
-            raise RuntimeError(
-                f"SeedVR2 runtime requirements file is missing: '{requirements_path}'. "
-                "The SeedVR2 checkout must include requirements.txt."
-            )
-
-        venv_dir = _resolve_seedvr2_venv_dir()
-        venv_python = _seedvr2_venv_python_path(venv_dir)
-        if not venv_python.is_file():
-            _create_seedvr2_venv(venv_dir)
-        if not venv_python.is_file():
-            raise RuntimeError(
-                f"SeedVR2 isolated runtime venv is missing Python executable at '{venv_python}'."
-            )
-
-        _run_checked_subprocess(
-            [str(venv_python), "-m", "pip", "--version"],
-            purpose="SeedVR2 isolated runtime pip validation",
-        )
-
-        repo_ref_token = (
-            repo_resolution.pinned_ref if repo_resolution.uses_default_repo_path else "external-repo-path"
-        )
-        desired_stamp = {
-            "requirements_sha256": _sha256_file(requirements_path),
-            "repo_ref": repo_ref_token,
-        }
-        stamp_path = venv_dir / _SEEDVR2_RUNTIME_STAMP_FILE
-        current_stamp = _read_seedvr2_runtime_stamp(stamp_path)
-        if current_stamp == desired_stamp:
-            return venv_python
-
-        _run_checked_subprocess(
-            [
-                str(venv_python),
-                "-m",
-                "pip",
-                "--disable-pip-version-check",
-                "install",
-                "-r",
-                str(requirements_path),
-            ],
-            purpose="SeedVR2 isolated runtime dependency install",
-        )
-        _write_seedvr2_runtime_stamp(stamp_path, desired_stamp)
-        return venv_python
 
 
 def _resolve_seedvr2_model_dir() -> Path:
@@ -439,30 +319,6 @@ def _normalize_cuda_device_index(component_device: str | None) -> int | None:
     return None
 
 
-def _resolve_fallback_output_pngs(output_dir: Path) -> list[Path]:
-    discovered_pngs = sorted(path for path in output_dir.rglob("*.png"))
-    indexed_paths: list[tuple[int, Path]] = []
-    index_to_path: dict[int, Path] = {}
-    for path in discovered_pngs:
-        index_matches = re.findall(r"\d+", path.stem)
-        if not index_matches:
-            raise RuntimeError(
-                "SeedVR2 CLI fallback PNG discovery requires numeric frame indices in output filenames, "
-                f"but '{path.name}' has no numeric token."
-            )
-        frame_index = int(index_matches[-1])
-        previous = index_to_path.get(frame_index)
-        if previous is not None:
-            raise RuntimeError(
-                "SeedVR2 CLI fallback PNG discovery found ambiguous frame ordering: "
-                f"duplicate frame index {frame_index} in '{previous.name}' and '{path.name}'."
-            )
-        index_to_path[frame_index] = path
-        indexed_paths.append((frame_index, path))
-    indexed_paths.sort(key=lambda item: item[0])
-    return [path for _, path in indexed_paths]
-
-
 def _sanitize_metadata_path(path: Path) -> str:
     resolved = path.resolve()
     repo_root = get_repo_root().resolve()
@@ -504,138 +360,280 @@ def _validate_input_frames(frames: Sequence[Any]) -> tuple[list[Any], tuple[int,
     return frames_list, size
 
 
-def _encode_lossless_input_video(frames_in_dir: Path, video_path: Path) -> None:
-    try:
-        ffmpeg_bin = resolve_ffmpeg_binary("ffmpeg")
-    except VideoDependencyResolutionError as exc:
+def _load_seedvr2_inference_module(repo_dir: Path) -> Any:
+    module_path = repo_dir / "inference_cli.py"
+    if not module_path.is_file():
         raise RuntimeError(
-            "SeedVR2 upscaling requires ffmpeg but it could not be resolved. "
-            f"{exc}"
+            f"SeedVR2 runtime entrypoint not found at '{module_path}'. "
+            "Verify the repository checkout contains inference_cli.py."
+        )
+
+    module_name = f"codex_seedvr2_runtime_{os.getpid()}_{uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, str(module_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to build import spec for SeedVR2 module at '{module_path}'.")
+
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as exc:
+        missing_name = str(exc.name or "<unknown>")
+        requirements_path = repo_dir / "requirements.txt"
+        raise RuntimeError(
+            "SeedVR2 in-process runtime import failed due to missing dependency "
+            f"'{missing_name}'. Install runtime dependencies from '{requirements_path}' into this backend environment."
         ) from exc
-
-    cmd = [
-        ffmpeg_bin,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-framerate",
-        str(_INTERMEDIATE_VIDEO_FPS),
-        "-i",
-        str(frames_in_dir / "frame_%06d.png"),
-        "-an",
-        "-c:v",
-        "ffv1",
-        "-pix_fmt",
-        "rgb24",
-        str(video_path),
-    ]
-    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    if proc.returncode == 0:
-        return
-    stderr_preview = _truncate_text(proc.stderr or proc.stdout or "", max_chars=_STDERR_PREVIEW_LIMIT)
-    raise RuntimeError(
-        "SeedVR2 upscaling failed to encode lossless intermediate video "
-        f"(exit {proc.returncode}). ffmpeg output:\n{stderr_preview}"
-    )
+    except Exception as exc:
+        raise RuntimeError(f"Failed to import SeedVR2 runtime module from '{module_path}': {exc}") from exc
+    return module
 
 
-def _run_seedvr2_cli(
+def _build_seedvr2_runtime_args(
     *,
-    python_executable: Path,
-    input_video_path: Path,
-    output_dir: Path,
+    module: Any,
     options: VideoUpscalingOptions,
     model_dir: Path,
-    repo_dir: Path,
     cuda_device_index: int | None,
-) -> None:
-    cli_path = repo_dir / "inference_cli.py"
-    cmd: list[str] = [
-        str(python_executable),
-        str(cli_path),
-        str(input_video_path),
-        "--output",
-        str(output_dir),
-        "--output_format",
-        "png",
-        "--model_dir",
-        str(model_dir),
-    ]
+) -> Any:
+    if not hasattr(module, "parse_arguments"):
+        raise RuntimeError("SeedVR2 runtime module is missing parse_arguments().")
+
+    original_argv = list(sys.argv)
+    try:
+        sys.argv = ["inference_cli.py", "__codex_in_memory__.png", "--output_format", "png"]
+        try:
+            args = module.parse_arguments()
+        except SystemExit as exc:
+            raise RuntimeError(
+                "Failed to build SeedVR2 runtime argument namespace for in-process execution. "
+                f"parse_arguments exited with code {exc.code!r}."
+            ) from exc
+    finally:
+        sys.argv = original_argv
+
+    args.input = "__codex_in_memory__.png"
+    args.output = None
+    args.output_format = "png"
+    args.model_dir = str(model_dir)
+    args.debug = False
+    args.chunk_size = 0
+    args.skip_first_frames = 0
+    args.load_cap = 0
+    args.cache_dit = False
+    args.cache_vae = False
 
     if options.dit_model:
-        cmd.extend(["--dit_model", str(options.dit_model)])
+        args.dit_model = str(options.dit_model)
     if options.resolution is not None:
-        cmd.extend(["--resolution", str(int(options.resolution))])
+        args.resolution = int(options.resolution)
     if options.max_resolution is not None:
-        cmd.extend(["--max_resolution", str(int(options.max_resolution))])
+        args.max_resolution = int(options.max_resolution)
     if options.batch_size is not None:
-        cmd.extend(["--batch_size", str(int(options.batch_size))])
-    if options.uniform_batch_size:
-        cmd.append("--uniform_batch_size")
+        args.batch_size = int(options.batch_size)
+    if options.uniform_batch_size is not None:
+        args.uniform_batch_size = bool(options.uniform_batch_size)
     if options.temporal_overlap is not None:
-        cmd.extend(["--temporal_overlap", str(int(options.temporal_overlap))])
+        args.temporal_overlap = int(options.temporal_overlap)
     if options.prepend_frames is not None:
-        cmd.extend(["--prepend_frames", str(int(options.prepend_frames))])
+        args.prepend_frames = int(options.prepend_frames)
     if options.color_correction:
-        cmd.extend(["--color_correction", str(options.color_correction)])
+        args.color_correction = str(options.color_correction)
     if options.input_noise_scale is not None:
-        cmd.extend(["--input_noise_scale", str(float(options.input_noise_scale))])
+        args.input_noise_scale = float(options.input_noise_scale)
     if options.latent_noise_scale is not None:
-        cmd.extend(["--latent_noise_scale", str(float(options.latent_noise_scale))])
-    if cuda_device_index is not None:
-        cmd.extend(["--cuda_device", str(int(cuda_device_index))])
+        args.latent_noise_scale = float(options.latent_noise_scale)
 
-    proc = subprocess.run(
-        cmd,
-        check=False,
-        capture_output=True,
-        text=True,
-        cwd=str(repo_dir),
-    )
-    if proc.returncode == 0:
-        return
+    args.cuda_device = str(cuda_device_index) if cuda_device_index is not None else None
+    return args
 
-    stderr_preview = _truncate_text(proc.stderr or proc.stdout or "", max_chars=_STDERR_PREVIEW_LIMIT)
+
+def _resolve_seedvr2_runtime_device_id(*, module: Any, cuda_device_index: int | None) -> str:
+    if not hasattr(module, "get_gpu_backend"):
+        raise RuntimeError("SeedVR2 runtime module is missing get_gpu_backend().")
+    if not hasattr(module, "torch"):
+        raise RuntimeError("SeedVR2 runtime module did not initialize torch runtime.")
+
+    backend = str(module.get_gpu_backend() or "").strip().lower()
+    if backend == "cuda":
+        torch_mod = module.torch
+        if not bool(torch_mod.cuda.is_available()):
+            raise RuntimeError(
+                "SeedVR2 in-process runtime selected CUDA backend but torch reports CUDA unavailable."
+            )
+        visible_count = int(torch_mod.cuda.device_count())
+        if visible_count <= 0:
+            raise RuntimeError(
+                "SeedVR2 in-process runtime selected CUDA backend but no visible CUDA devices were found."
+            )
+        requested_index = 0 if cuda_device_index is None else int(cuda_device_index)
+        if requested_index < 0 or requested_index >= visible_count:
+            raise RuntimeError(
+                "SeedVR2 in-process CUDA device index is out of range for visible devices: "
+                f"requested={requested_index}, visible_count={visible_count}. "
+                f"Set {_SEEDVR2_CUDA_DEVICE_ENV} to a valid visible index."
+            )
+        return str(requested_index)
+
+    if backend == "mps":
+        return "0"
+
     raise RuntimeError(
-        "SeedVR2 CLI upscaling failed "
-        f"(exit {proc.returncode}; command={cmd!r}).\n"
-        f"stderr:\n{stderr_preview}"
+        "SeedVR2 in-process runtime requires CUDA or MPS backend, "
+        f"but detected backend={backend!r}."
     )
 
 
-def _collect_output_frames(output_dir: Path, *, expected_count: int, input_stem: str) -> list[Any]:
+def _frames_to_seedvr2_tensor(*, module: Any, frames_list: list[Any]) -> Any:
+    np_mod = getattr(module, "np", None)
+    torch_mod = getattr(module, "torch", None)
+    if np_mod is None:
+        raise RuntimeError("SeedVR2 runtime module did not provide numpy (np) namespace.")
+    if torch_mod is None:
+        raise RuntimeError("SeedVR2 runtime module did not provide torch namespace.")
+
+    frame_arrays: list[Any] = []
+    for index, frame in enumerate(frames_list, start=1):
+        rgb_frame = frame.convert("RGB")
+        frame_array = np_mod.asarray(rgb_frame, dtype=np_mod.float32)
+        if frame_array.ndim != 3 or int(frame_array.shape[2]) != 3:
+            raise RuntimeError(
+                "SeedVR2 input frame conversion produced invalid array shape for frame "
+                f"{index - 1}: {tuple(frame_array.shape)!r}."
+            )
+        frame_arrays.append(frame_array / 255.0)
+
+    stacked = np_mod.stack(frame_arrays, axis=0)
+    return torch_mod.from_numpy(stacked).to(torch_mod.float16)
+
+
+def _collect_in_process_output_frames(*, module: Any, result_tensor: Any, expected_count: int) -> list[Any]:
     from PIL import Image  # type: ignore
 
-    preferred = output_dir / input_stem
-    candidate_paths: list[Path]
-    if preferred.is_dir():
-        candidate_paths = sorted(path for path in preferred.iterdir() if path.suffix.lower() == ".png")
-    else:
-        candidate_paths = _resolve_fallback_output_pngs(output_dir)
-    if not candidate_paths:
-        raise RuntimeError(f"SeedVR2 CLI produced no PNG output frames under '{output_dir}'.")
+    torch_mod = getattr(module, "torch", None)
+    if torch_mod is None:
+        raise RuntimeError("SeedVR2 runtime module did not provide torch namespace.")
+    if not bool(torch_mod.is_tensor(result_tensor)):
+        raise RuntimeError(
+            "SeedVR2 in-process runtime returned a non-tensor result "
+            f"({type(result_tensor).__name__})."
+        )
+
+    output_tensor = result_tensor.detach()
+    if output_tensor.ndim != 4:
+        raise RuntimeError(
+            "SeedVR2 in-process runtime returned tensor with invalid rank; "
+            f"expected 4D [T,H,W,C], got shape={tuple(output_tensor.shape)!r}."
+        )
+
+    frame_count = int(output_tensor.shape[0])
+    height = int(output_tensor.shape[1])
+    width = int(output_tensor.shape[2])
+    channels = int(output_tensor.shape[3])
+
+    if frame_count != int(expected_count):
+        raise RuntimeError(
+            "SeedVR2 in-process output frame count mismatch: "
+            f"expected {expected_count}, got {frame_count}."
+        )
+    if height <= 0 or width <= 0:
+        raise RuntimeError(
+            "SeedVR2 in-process output contains non-positive frame dimensions: "
+            f"shape={tuple(output_tensor.shape)!r}."
+        )
+    if channels != 3:
+        raise RuntimeError(
+            "SeedVR2 in-process output channel mismatch: expected RGB (3 channels), "
+            f"got {channels}."
+        )
+
+    output_cpu = output_tensor.to(device="cpu", dtype=torch_mod.float32).clamp_(0.0, 1.0)
+    output_np = (output_cpu.numpy() * 255.0).round().astype("uint8")
 
     out_frames: list[Any] = []
-    for path in candidate_paths:
-        with Image.open(path) as image:
-            out_frames.append(image.convert("RGB").copy())
-
-    if len(out_frames) != int(expected_count):
-        raise RuntimeError(
-            "SeedVR2 CLI output frame count mismatch: "
-            f"expected {expected_count}, got {len(out_frames)}."
-        )
+    for frame_index in range(frame_count):
+        out_frames.append(Image.fromarray(output_np[frame_index], mode="RGB"))
 
     first_size = out_frames[0].size
     for index, frame in enumerate(out_frames, start=1):
         if frame.size != first_size:
             raise RuntimeError(
-                "SeedVR2 CLI produced inconsistent output frame sizes: "
+                "SeedVR2 in-process produced inconsistent output frame sizes: "
                 f"frame[0]={first_size!r} frame[{index - 1}]={frame.size!r}."
             )
 
     return out_frames
+
+
+def _run_seedvr2_in_process(
+    *,
+    frames_list: list[Any],
+    options: VideoUpscalingOptions,
+    repo_dir: Path,
+    model_dir: Path,
+    cuda_device_index: int | None,
+) -> list[Any]:
+    module = _load_seedvr2_inference_module(repo_dir)
+
+    required_symbols = (
+        "Debug",
+        "DEFAULT_VAE",
+        "download_weight",
+        "_single_gpu_direct_processing",
+    )
+    missing = [name for name in required_symbols if not hasattr(module, name)]
+    if missing:
+        raise RuntimeError(
+            "SeedVR2 runtime module is missing required symbols for in-process execution: "
+            f"{', '.join(sorted(missing))}."
+        )
+
+    runtime_args = _build_seedvr2_runtime_args(
+        module=module,
+        options=options,
+        model_dir=model_dir,
+        cuda_device_index=cuda_device_index,
+    )
+
+    try:
+        module.debug = module.Debug(enabled=False)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to initialize SeedVR2 runtime debug context: {exc}") from exc
+
+    try:
+        download_ok = bool(
+            module.download_weight(
+                dit_model=runtime_args.dit_model,
+                vae_model=module.DEFAULT_VAE,
+                model_dir=str(model_dir),
+                debug=module.debug,
+            )
+        )
+    except Exception as exc:
+        raise RuntimeError(f"SeedVR2 model preparation failed: {exc}") from exc
+    if not download_ok:
+        raise RuntimeError(
+            "SeedVR2 model preparation failed: download_weight reported failure. "
+            f"DiT model={runtime_args.dit_model!r}, VAE model={module.DEFAULT_VAE!r}, model_dir='{model_dir}'."
+        )
+
+    device_id = _resolve_seedvr2_runtime_device_id(module=module, cuda_device_index=cuda_device_index)
+    input_tensor = _frames_to_seedvr2_tensor(module=module, frames_list=frames_list)
+
+    try:
+        output_tensor = module._single_gpu_direct_processing(
+            frames_tensor=input_tensor,
+            args=runtime_args,
+            device_id=device_id,
+            runner_cache=None,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"SeedVR2 in-process runtime execution failed: {exc}") from exc
+
+    return _collect_in_process_output_frames(
+        module=module,
+        result_tensor=output_tensor,
+        expected_count=len(frames_list),
+    )
 
 
 def run_seedvr2_upscaling(
@@ -648,66 +646,46 @@ def run_seedvr2_upscaling(
     if not options.enabled:
         raise RuntimeError("SeedVR2 upscaling runner called with disabled options.")
 
-    frames_list, _input_size = _validate_input_frames(frames)
-
+    frames_list, input_size = _validate_input_frames(frames)
     repo_resolution = _resolve_seedvr2_repo_dir()
     repo_dir = repo_resolution.repo_dir
-    seedvr2_python = _ensure_seedvr2_runtime_venv(repo_resolution=repo_resolution)
     model_dir = _resolve_seedvr2_model_dir()
     cuda_device_index = _normalize_cuda_device_index(component_device)
 
-    run_id = uuid4().hex
-    work_dir = repo_scratch_path("seedvr2", run_id)
-    frames_in_dir = work_dir / "frames_in"
-    output_dir = work_dir / "out"
-    input_video_path = work_dir / "input_lossless.mkv"
-    frames_in_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    from PIL import Image  # type: ignore
-
-    for index, frame in enumerate(frames_list, start=1):
-        frame_rgb = frame.convert("RGB")
-        frame_rgb.save(frames_in_dir / f"frame_{index:06d}.png", format="PNG")
-
-    _encode_lossless_input_video(frames_in_dir, input_video_path)
-    _run_seedvr2_cli(
-        input_video_path=input_video_path,
-        output_dir=output_dir,
+    out_frames = _run_seedvr2_in_process(
+        frames_list=frames_list,
         options=options,
-        model_dir=model_dir,
         repo_dir=repo_dir,
-        python_executable=seedvr2_python,
+        model_dir=model_dir,
         cuda_device_index=cuda_device_index,
     )
 
-    out_frames = _collect_output_frames(
-        output_dir,
-        expected_count=len(frames_list),
-        input_stem=input_video_path.stem,
-    )
-
     output_size = out_frames[0].size
+    run_id = uuid4().hex
+    work_dir = repo_scratch_path("seedvr2", run_id)
     meta: dict[str, Any] = {
         "applied": True,
-        "runner": "seedvr2_cli",
+        "runner": "seedvr2",
+        "execution_mode": "in_process",
         "input_frames": len(frames_list),
         "output_frames": len(out_frames),
-        "input_size": {"width": int(_input_size[0]), "height": int(_input_size[1])},
+        "input_size": {"width": int(input_size[0]), "height": int(input_size[1])},
         "output_size": {"width": int(output_size[0]), "height": int(output_size[1])},
         "work_dir": _sanitize_metadata_path(work_dir),
         "repo_dir": _sanitize_metadata_path(repo_dir),
         "model_dir": _sanitize_metadata_path(model_dir),
     }
+    if repo_resolution.uses_default_repo_path:
+        meta["repo_ref"] = repo_resolution.pinned_ref
     if cuda_device_index is not None:
         meta["cuda_device"] = int(cuda_device_index)
 
     if logger_ is not None:
         logger_.info(
-            "video upscaling (SeedVR2): %d frame(s) %dx%d -> %dx%d",
+            "video upscaling (SeedVR2 in-process): %d frame(s) %dx%d -> %dx%d",
             len(frames_list),
-            int(_input_size[0]),
-            int(_input_size[1]),
+            int(input_size[0]),
+            int(input_size[1]),
             int(output_size[0]),
             int(output_size[1]),
         )

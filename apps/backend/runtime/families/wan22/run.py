@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF run entrypoints (txt2vid/img2vid; batch + streaming).
-Orchestrates text context, per-stage sampling, and VAE encode/decode (including file-VAE metadata config forwarding) while keeping GGUF support anchored in the shared quantization/ops layer.
+Orchestrates text context, per-stage sampling, ordered stage-LoRA application (`high/low.loras`), and VAE encode/decode (including file-VAE metadata config forwarding) while keeping GGUF support anchored in the shared quantization/ops layer.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
@@ -1078,8 +1078,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             hi_path,
             stage="high",
             dtype=dt,
-            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            loras=(getattr(cfg.high, "loras", ()) if cfg.high else ()),
             logger=log,
         )
         hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
@@ -1211,8 +1210,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             lo_path,
             stage="low",
             dtype=dt,
-            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            loras=(getattr(cfg.low, "loras", ()) if cfg.low else ()),
             logger=log,
         )
         latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
@@ -1335,8 +1333,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             hi_path,
             stage="high",
             dtype=dt,
-            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            loras=(getattr(cfg.high, "loras", ()) if cfg.high else ()),
             logger=log,
         )
         hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
@@ -1433,8 +1430,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             lo_path,
             stage="low",
             dtype=dt,
-            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            loras=(getattr(cfg.low, "loras", ()) if cfg.low else ()),
             logger=log,
         )
         latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
@@ -1609,8 +1605,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             hi_path,
             stage="high",
             dtype=dt,
-            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            loras=(getattr(cfg.high, "loras", ()) if cfg.high else ()),
             logger=log,
         )
         hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
@@ -1709,8 +1704,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             lo_path,
             stage="low",
             dtype=dt,
-            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            loras=(getattr(cfg.low, "loras", ()) if cfg.low else ()),
             logger=log,
         )
         latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
@@ -1870,8 +1864,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             hi_path,
             stage="high",
             dtype=dt,
-            lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-            lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+            loras=(getattr(cfg.high, "loras", ()) if cfg.high else ()),
             logger=log,
         )
         hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
@@ -1963,8 +1956,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             lo_path,
             stage="low",
             dtype=dt,
-            lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-            lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+            loras=(getattr(cfg.low, "loras", ()) if cfg.low else ()),
             logger=log,
         )
         latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)
@@ -2428,8 +2420,7 @@ def stream_img2vid_chunked(
                     hi_path,
                     stage="high",
                     dtype=dt,
-                    lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
-                    lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+                    loras=(getattr(cfg.high, "loras", ()) if cfg.high else ()),
                     logger=log,
                 )
                 hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
@@ -2506,8 +2497,7 @@ def stream_img2vid_chunked(
                     lo_path,
                     stage="low",
                     dtype=dt,
-                    lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
-                    lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+                    loras=(getattr(cfg.low, "loras", ()) if cfg.low else ()),
                     logger=log,
                 )
                 latent_channels_lo = int(getattr(getattr(lo_model, "config", None), "latent_channels", 0) or 0)

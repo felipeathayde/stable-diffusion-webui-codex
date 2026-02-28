@@ -13,7 +13,7 @@ config-source contract checks (bundle dir or file+config), plus strict `gguf_sdp
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
-- `StageConfig` (dataclass): Stage-level configuration (stage model selection + prompt/negative + sampler/scheduler/steps/cfg/flow_shift + optional LoRA).
+- `StageConfig` (dataclass): Stage-level configuration (stage model selection + prompt/negative + sampler/scheduler/steps/cfg/flow_shift + ordered LoRA sequence).
 - `RunConfig` (dataclass): Full run configuration (geometry, prompts, devices/dtypes, assets, and both stages).
 - `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
 - `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import os
 import re
 from typing import Any, Mapping, Optional
@@ -53,8 +54,7 @@ class StageConfig:
     steps: int
     cfg_scale: Optional[float]
     flow_shift: float
-    lora_path: Optional[str] = None
-    lora_weight: Optional[float] = None
+    loras: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -358,7 +358,7 @@ def build_wan22_gguf_run_config(
     wh_raw = extras.get("wan_high") if isinstance(extras.get("wan_high"), dict) else None
     wl_raw = extras.get("wan_low") if isinstance(extras.get("wan_low"), dict) else None
 
-    forbidden = ("lightning", "lora_path")
+    forbidden = ("lightning", "lora_path", "lora_sha", "lora_weight")
     for stage_name, stage_cfg in (("wan_high", wh_raw), ("wan_low", wl_raw)):
         if not isinstance(stage_cfg, dict):
             continue
@@ -366,7 +366,11 @@ def build_wan22_gguf_run_config(
             if stage_cfg.get(key) not in (None, ""):
                 if key == "lora_path":
                     raise RuntimeError(
-                        f"WAN22 GGUF: '{stage_name}.lora_path' is not supported (use '{stage_name}.lora_sha')."
+                        f"WAN22 GGUF: '{stage_name}.lora_path' is not supported (use '{stage_name}.loras')."
+                    )
+                if key in {"lora_sha", "lora_weight"}:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: '{stage_name}.{key}' is not supported (use '{stage_name}.loras')."
                     )
                 raise RuntimeError(f"WAN22 GGUF: '{stage_name}.{key}' is not supported (use Diffusers path).")
 
@@ -489,7 +493,7 @@ def build_wan22_gguf_run_config(
         *,
         stage: str,
         default_steps: int,
-    ) -> tuple[str, Optional[str], Optional[str], int, Optional[float], Optional[str], Optional[str], Optional[float], Optional[int], Optional[str], Optional[float]]:
+    ) -> tuple[str, Optional[str], Optional[str], int, Optional[float], Optional[str], Optional[str], Optional[float], Optional[int], tuple[tuple[str, float], ...]]:
         if not isinstance(raw, dict):
             raise RuntimeError(f"WAN22 GGUF requires {stage}.model_dir (resolved from model_sha).")
         model_dir = str(raw.get("model_dir") or "").strip()
@@ -563,24 +567,54 @@ def build_wan22_gguf_run_config(
             if seed is None:
                 raise RuntimeError(f"WAN22 GGUF: {stage}.seed must be an int, got: {raw_seed!r}")
 
-        lora_sha = str(raw.get("lora_sha") or "").strip().lower() or None
-        lora_weight = _coerce_float(raw.get("lora_weight")) if raw.get("lora_weight") is not None else None
-        if lora_weight is not None and not lora_sha:
-            raise RuntimeError(f"WAN22 GGUF: {stage}.lora_weight requires {stage}.lora_sha.")
-        lora_path = None
-        if lora_sha:
-            if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
-                raise RuntimeError(f"WAN22 GGUF: {stage}.lora_sha must be sha256 (64 lowercase hex).")
-            from apps.backend.inventory.cache import resolve_asset_by_sha
+        raw_loras = raw.get("loras")
+        loras: list[tuple[str, float]] = []
+        if raw_loras is None:
+            pass
+        elif not isinstance(raw_loras, list):
+            raise RuntimeError(f"WAN22 GGUF: {stage}.loras must be an array when provided.")
+        else:
+            for index, raw_lora in enumerate(raw_loras):
+                if not isinstance(raw_lora, dict):
+                    raise RuntimeError(f"WAN22 GGUF: {stage}.loras[{index}] must be an object.")
+                unknown_lora_keys = sorted(set(raw_lora.keys()) - {"sha", "weight"})
+                if unknown_lora_keys:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: {stage}.loras[{index}] has unexpected key(s): {', '.join(unknown_lora_keys)}."
+                    )
+                lora_sha = str(raw_lora.get("sha") or "").strip().lower()
+                if not lora_sha:
+                    raise RuntimeError(f"WAN22 GGUF: {stage}.loras[{index}].sha is required.")
+                if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
+                    raise RuntimeError(
+                        f"WAN22 GGUF: {stage}.loras[{index}].sha must be sha256 (64 lowercase hex)."
+                    )
+                from apps.backend.inventory.cache import resolve_asset_by_sha
 
-            resolved = resolve_asset_by_sha(lora_sha)
-            if not resolved:
-                raise RuntimeError(f"WAN22 GGUF: {stage}.lora_sha not found in inventory: {lora_sha}")
-            lora_path = normalize_win_path(os.path.expanduser(str(resolved)))
-            if not lora_path.lower().endswith(".safetensors"):
-                raise RuntimeError(f"WAN22 GGUF: {stage}.lora_sha must resolve to a .safetensors file: {lora_sha}")
-            if not os.path.isfile(lora_path):
-                raise RuntimeError(f"WAN22 GGUF: {stage} LoRA file not found: {lora_path}")
+                resolved = resolve_asset_by_sha(lora_sha)
+                if not resolved:
+                    raise RuntimeError(f"WAN22 GGUF: {stage}.loras[{index}].sha not found in inventory: {lora_sha}")
+                lora_path = normalize_win_path(os.path.expanduser(str(resolved)))
+                if not lora_path.lower().endswith(".safetensors"):
+                    raise RuntimeError(
+                        f"WAN22 GGUF: {stage}.loras[{index}].sha must resolve to a .safetensors file: {lora_sha}"
+                    )
+                if not os.path.isfile(lora_path):
+                    raise RuntimeError(f"WAN22 GGUF: {stage} LoRA file not found: {lora_path}")
+                raw_weight = raw_lora.get("weight")
+                if raw_weight is None:
+                    lora_weight = 1.0
+                else:
+                    if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
+                        raise RuntimeError(
+                            f"WAN22 GGUF: {stage}.loras[{index}].weight must be numeric when provided, got: {raw_weight!r}"
+                        )
+                    lora_weight = float(raw_weight)
+                    if not math.isfinite(lora_weight):
+                        raise RuntimeError(
+                            f"WAN22 GGUF: {stage}.loras[{index}].weight must be finite, got: {raw_weight!r}"
+                        )
+                loras.append((lora_path, lora_weight))
         return (
             model_dir,
             stage_prompt,
@@ -591,14 +625,13 @@ def build_wan22_gguf_run_config(
             scheduler,
             flow_shift,
             seed,
-            lora_path,
-            lora_weight,
+            tuple(loras),
         )
 
-    hi_dir, hi_prompt, hi_negative_prompt, hi_steps, hi_cfg, hi_sampler, hi_scheduler, hi_flow_shift, hi_seed, hi_lora_path, hi_lora_weight = _stage_opts(
+    hi_dir, hi_prompt, hi_negative_prompt, hi_steps, hi_cfg, hi_sampler, hi_scheduler, hi_flow_shift, hi_seed, hi_loras = _stage_opts(
         wh_raw, stage="wan_high", default_steps=default_steps_high
     )
-    lo_dir, lo_prompt, lo_negative_prompt, lo_steps, lo_cfg, lo_sampler, lo_scheduler, lo_flow_shift, _lo_seed, lo_lora_path, lo_lora_weight = _stage_opts(
+    lo_dir, lo_prompt, lo_negative_prompt, lo_steps, lo_cfg, lo_sampler, lo_scheduler, lo_flow_shift, _lo_seed, lo_loras = _stage_opts(
         wl_raw, stage="wan_low", default_steps=default_steps_low
     )
 
@@ -797,8 +830,7 @@ def build_wan22_gguf_run_config(
             steps=max(1, int(hi_steps)),
             cfg_scale=hi_cfg,
             flow_shift=float(hi_flow_shift),
-            lora_path=hi_lora_path,
-            lora_weight=hi_lora_weight,
+            loras=hi_loras,
         ),
         low=StageConfig(
             model_dir=lo_dir,
@@ -809,7 +841,6 @@ def build_wan22_gguf_run_config(
             steps=max(1, int(lo_steps)),
             cfg_scale=lo_cfg,
             flow_shift=float(lo_flow_shift),
-            lora_path=lo_lora_path,
-            lora_weight=lo_lora_weight,
+            loras=lo_loras,
         ),
     )

@@ -8,10 +8,10 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 transformer key-style detection + remapping (Diffusers/WAN-export/Codex).
 Normalizes multiple upstream key layouts into the canonical Codex WAN22 runtime layout and fails loud on unknown/ambiguous inputs.
-Also owns WAN22 request-key allowlists used by generation routers, including img2vid temporal mode/window controls and canonical sampler keys (`*_sampler`, no legacy `*_sampling` aliases).
+Also owns WAN22 request-key allowlists used by generation routers, including img2vid temporal mode/window controls, optional `video_upscaling`, and canonical sampler keys (`*_sampler`, no legacy `*_sampling` aliases).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields).
+- `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields and optional `video_upscaling` key).
 - `WAN22_REQUEST_KEYS` (constant): Singleton request-key map used by WAN22 request validators.
 - `remap_wan22_transformer_state_dict` (function): Returns (detected_style, remapped_view) for WAN22 transformer keys.
 """
@@ -127,6 +127,7 @@ class Wan22RequestKeys:
         }
     )
     VIDEO_INTERPOLATION: FrozenSet[str] = frozenset({"video_interpolation"})
+    VIDEO_UPSCALING: FrozenSet[str] = frozenset({"video_upscaling"})
     WAN_STAGE_CONTAINERS: FrozenSet[str] = frozenset({"wan_high", "wan_low"})
     WAN_STAGE_ALLOWED: FrozenSet[str] = frozenset(
         {
@@ -140,6 +141,7 @@ class Wan22RequestKeys:
             "cfg_scale",
             "seed",
             "lightning",
+            "loras",
             "lora_sha",
             "lora_path",
             "lora_weight",
@@ -223,6 +225,7 @@ class Wan22RequestKeys:
             | self.REVISION
             | self.VIDEO_EXPORT
             | self.VIDEO_INTERPOLATION
+            | self.VIDEO_UPSCALING
             | self.WAN_STAGE_CONTAINERS
             | self.WAN_ASSETS
             | self.GGUF_RUNTIME

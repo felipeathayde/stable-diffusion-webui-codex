@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Vitest coverage for WAN video payload builders (txt2vid/img2vid/vid2vid).
 Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields, including
 WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity), `settings_revision` propagation, scheduler-override omission, stage-owned prompt mapping,
-img2vid temporal mode contracts (`solo|chunk|sliding|svi2|svi2_pro`), and interpolation target-FPS conversion into backend `video_interpolation.times`.
+img2vid temporal mode contracts (`solo|chunk|sliding|svi2|svi2_pro`), interpolation target-FPS conversion into backend `video_interpolation.times`, and
+optional SeedVR2 `video_upscaling` emission when enabled.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `payloads_video.test` (module): WAN video payload builder tests (field mapping + defaults).
@@ -19,12 +20,28 @@ import { describe, expect, it } from 'vitest'
 
 import { buildWanImg2VidPayload, buildWanTxt2VidPayload, buildWanVid2VidPayload } from './payloads_video'
 
+const DEFAULT_UPSCALING = {
+  enabled: false,
+  model: 'seedvr2_ema_3b_fp16.safetensors',
+  resolution: 1080,
+  maxResolution: 0,
+  batchSize: 5,
+  uniformBatchSize: false,
+  temporalOverlap: 0,
+  prependFrames: 0,
+  colorCorrection: 'lab' as const,
+  inputNoiseScale: 0,
+  latentNoiseScale: 0,
+}
+
 describe('WAN video payload builders', () => {
   it('builds a txt2vid payload with stage overrides and video options', () => {
     const hiSha = 'a'.repeat(64)
     const loSha = 'b'.repeat(64)
     const vaeSha = 'c'.repeat(64)
     const tencSha = 'd'.repeat(64)
+    const loraShaOne = '1'.repeat(64)
+    const loraShaTwo = '2'.repeat(64)
     const metaRepo = 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
 
     const payload = buildWanTxt2VidPayload({
@@ -44,6 +61,10 @@ describe('WAN video payload builders', () => {
         steps: 4,
         cfgScale: 7,
         seed: 42,
+        loras: [
+          { sha: loraShaOne, weight: 0.8 },
+          { sha: loraShaTwo },
+        ],
         flowShift: 8.2,
       },
       low: {
@@ -71,6 +92,7 @@ describe('WAN video payload builders', () => {
         returnFrames: true,
       },
       interpolation: { targetFps: 48 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.codex_device).toBe('cuda')
@@ -80,7 +102,11 @@ describe('WAN video payload builders', () => {
     expect(payload.txt2vid_cfg_scale).toBe(7)
     expect(payload.wan_format).toBe('gguf')
     expect(payload.wan_high).toMatchObject({ model_sha: hiSha, steps: 4, cfg_scale: 7, flow_shift: 8.2 })
-    expect(payload.wan_low).toMatchObject({ model_sha: loSha, steps: 2, cfg_scale: 5 })
+    expect(payload.wan_low).toMatchObject({ model_sha: loSha, steps: 2, cfg_scale: 5, loras: [] })
+    expect(payload.wan_high.loras).toEqual([
+      { sha: loraShaOne, weight: 0.8 },
+      { sha: loraShaTwo },
+    ])
     expect(payload.video_interpolation).toMatchObject({ enabled: true, model: 'rife47.pth', times: 2 })
     expect(payload.wan_tenc_sha).toBe(tencSha)
     expect(payload.wan_vae_sha).toBe(vaeSha)
@@ -89,6 +115,52 @@ describe('WAN video payload builders', () => {
     expect(payload).not.toHaveProperty('txt2vid_scheduler')
     expect(payload.wan_high).not.toHaveProperty('scheduler')
     expect(payload.wan_low).not.toHaveProperty('scheduler')
+    expect(payload).not.toHaveProperty('video_upscaling')
+  })
+
+  it('emits video_upscaling only when enabled', () => {
+    const sha = 'a'.repeat(64)
+    const payload = buildWanTxt2VidPayload({
+      device: 'cuda',
+      settingsRevision: 2,
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 17,
+      attentionMode: 'global',
+      high: { modelSha: sha, prompt: 'p', negativePrompt: '', sampler: '', scheduler: '', steps: 4, cfgScale: 6, seed: -1 },
+      low: { modelSha: sha, prompt: 'p low', negativePrompt: '', sampler: '', scheduler: '', steps: 4, cfgScale: 6, seed: -1 },
+      format: 'auto',
+      assets: { metadataRepo: 'Wan-AI/Wan2.2-T2V-A14B-Diffusers', textEncoderSha: sha, vaeSha: sha },
+      output: {
+        format: '',
+        pixFmt: '',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+      },
+      interpolation: { targetFps: 0 },
+      upscaling: {
+        ...DEFAULT_UPSCALING,
+        enabled: true,
+        model: 'seedvr2_ema_7b_fp16.safetensors',
+        batchSize: 6,
+      },
+    })
+
+    expect(payload.video_upscaling).toMatchObject({
+      enabled: true,
+      dit_model: 'seedvr2_ema_7b_fp16.safetensors',
+      resolution: 1080,
+      max_resolution: 0,
+      batch_size: 9,
+      uniform_batch_size: false,
+      temporal_overlap: 0,
+      prepend_frames: 0,
+      color_correction: 'lab',
+      input_noise_scale: 0,
+      latent_noise_scale: 0,
+    })
   })
 
   it('omits interpolation payload when target FPS is not above base FPS', () => {
@@ -135,6 +207,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 24 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload).not.toHaveProperty('video_interpolation')
@@ -184,6 +257,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 50 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.video_interpolation).toMatchObject({ enabled: true, model: 'rife47.pth', times: 3 })
@@ -240,6 +314,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.codex_device).toBe('cpu')
@@ -306,6 +381,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.img2vid_mode).toBe('solo')
@@ -370,6 +446,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.img2vid_mode).toBe('sliding')
@@ -433,6 +510,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.img2vid_mode).toBe('svi2')
@@ -493,6 +571,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.img2vid_mode).toBe('svi2_pro')
@@ -545,6 +624,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     }
 
     expect(() =>
@@ -601,6 +681,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.codex_device).toBe('cuda')
@@ -639,6 +720,7 @@ describe('WAN video payload builders', () => {
         pingpong: false,
       },
       interpolation: { targetFps: 0 },
+      upscaling: DEFAULT_UPSCALING,
     })
 
     expect(payload.txt2vid_width).toBe(480)
@@ -670,6 +752,7 @@ describe('WAN video payload builders', () => {
           pingpong: false,
         },
         interpolation: { targetFps: 0 },
+        upscaling: DEFAULT_UPSCALING,
       }),
     ).toThrow('WAN stage prompt must not be empty.')
   })

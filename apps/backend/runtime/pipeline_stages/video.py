@@ -16,6 +16,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
 - `read_video_interpolation_options` (function): Parses `extras.video_interpolation` into typed interpolation options when present.
 - `apply_video_interpolation` (function): Applies the shared interpolation stage and returns `(frames_out, interpolation_metadata)`.
+- `read_video_upscaling_options` (function): Parses `extras.video_upscaling` into typed upscaling options when present.
+- `apply_video_upscaling` (function): Applies the shared SeedVR2 upscaling stage and returns `(frames_out, upscaling_metadata)`.
 - `resolve_video_output_fps` (function): Computes output fps from request/base fps and interpolation metadata.
 - `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
 - `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
@@ -28,14 +30,16 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping, Sequence
 
-from apps.backend.core.params.video import VideoInterpolationOptions
+from apps.backend.core.params.video import VideoInterpolationOptions, VideoUpscalingOptions
 from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.runtime.adapters.lora import selections as lora_selections
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
 from apps.backend.video.interpolation import maybe_interpolate
+from apps.backend.video.upscaling.seedvr2 import run_seedvr2_upscaling
 
 logger = logging.getLogger(__name__)
+_VIDEO_UPSCALING_COLOR_CORRECTIONS = {"lab", "wavelet", "wavelet_adaptive", "hsv", "adain", "none"}
 
 
 def build_video_plan(request: Any) -> VideoPlan:
@@ -165,6 +169,131 @@ def apply_video_interpolation(
     return frames_list, opts
 
 
+def read_video_upscaling_options(extras: Mapping[str, Any] | None) -> VideoUpscalingOptions | None:
+    if not isinstance(extras, Mapping):
+        return None
+    cfg = extras.get("video_upscaling")
+    if not isinstance(cfg, Mapping):
+        return None
+
+    def _optional_int(field: str, minimum: int | None = None) -> int | None:
+        value = cfg.get(field)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise RuntimeError(f"video_upscaling.{field} must be an integer when provided (got {type(value).__name__}).")
+        parsed = int(value)
+        if minimum is not None and parsed < minimum:
+            raise RuntimeError(f"video_upscaling.{field} must be >= {minimum} when provided (got {parsed}).")
+        return parsed
+
+    def _optional_float(field: str, minimum: float, maximum: float) -> float | None:
+        value = cfg.get(field)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RuntimeError(f"video_upscaling.{field} must be a number when provided (got {type(value).__name__}).")
+        parsed = float(value)
+        if parsed < minimum or parsed > maximum:
+            raise RuntimeError(
+                f"video_upscaling.{field} must be within [{minimum}, {maximum}] when provided (got {parsed})."
+            )
+        return parsed
+
+    enabled = parse_bool_value(cfg.get("enabled"), field="video_upscaling.enabled", default=False)
+
+    dit_model_raw = cfg.get("dit_model")
+    if dit_model_raw is None:
+        dit_model = None
+    else:
+        if not isinstance(dit_model_raw, str):
+            raise RuntimeError(
+                "video_upscaling.dit_model must be a string when provided "
+                f"(got {type(dit_model_raw).__name__})."
+            )
+        dit_model_text = dit_model_raw.strip()
+        dit_model = dit_model_text if dit_model_text else None
+
+    resolution = _optional_int("resolution", minimum=16)
+    max_resolution = _optional_int("max_resolution", minimum=0)
+    batch_size = _optional_int("batch_size", minimum=1)
+    if batch_size is not None and (batch_size - 1) % 4 != 0:
+        raise RuntimeError(f"video_upscaling.batch_size must satisfy 4n+1 when provided (got {batch_size}).")
+
+    uniform_batch_size_raw = cfg.get("uniform_batch_size")
+    if uniform_batch_size_raw is None:
+        uniform_batch_size = None
+    else:
+        uniform_batch_size = parse_bool_value(
+            uniform_batch_size_raw,
+            field="video_upscaling.uniform_batch_size",
+            default=False,
+        )
+
+    temporal_overlap = _optional_int("temporal_overlap", minimum=0)
+    prepend_frames = _optional_int("prepend_frames", minimum=0)
+
+    color_correction_raw = cfg.get("color_correction")
+    if color_correction_raw is None:
+        color_correction = None
+    else:
+        if not isinstance(color_correction_raw, str):
+            raise RuntimeError(
+                "video_upscaling.color_correction must be a string when provided "
+                f"(got {type(color_correction_raw).__name__})."
+            )
+        normalized_color = color_correction_raw.strip().lower()
+        if normalized_color not in _VIDEO_UPSCALING_COLOR_CORRECTIONS:
+            allowed = ", ".join(sorted(_VIDEO_UPSCALING_COLOR_CORRECTIONS))
+            raise RuntimeError(
+                f"video_upscaling.color_correction must be one of {{{allowed}}} when provided "
+                f"(got {color_correction_raw!r})."
+            )
+        color_correction = normalized_color
+
+    input_noise_scale = _optional_float("input_noise_scale", 0.0, 1.0)
+    latent_noise_scale = _optional_float("latent_noise_scale", 0.0, 1.0)
+
+    return VideoUpscalingOptions(
+        enabled=enabled,
+        dit_model=dit_model,
+        resolution=resolution,
+        max_resolution=max_resolution,
+        batch_size=batch_size,
+        uniform_batch_size=uniform_batch_size,
+        temporal_overlap=temporal_overlap,
+        prepend_frames=prepend_frames,
+        color_correction=color_correction,
+        input_noise_scale=input_noise_scale,
+        latent_noise_scale=latent_noise_scale,
+    )
+
+
+def apply_video_upscaling(
+    frames: Sequence[Any],
+    *,
+    options: VideoUpscalingOptions | None,
+    logger_: logging.Logger | None = None,
+    component_device: str | None = None,
+) -> tuple[list[Any], dict[str, Any] | None]:
+    frames_list = frames if isinstance(frames, list) else list(frames)
+    if options is None:
+        return frames_list, None
+
+    opts = options.as_dict()
+    if not options.enabled:
+        return frames_list, opts
+
+    out_frames, run_meta = run_seedvr2_upscaling(
+        frames_list,
+        options=options,
+        component_device=component_device,
+        logger_=logger_ if logger_ is not None else logger,
+    )
+    out_list = out_frames if isinstance(out_frames, list) else list(out_frames)
+    return out_list, {**opts, "result": run_meta}
+
+
 def resolve_video_output_fps(base_fps: int, interpolation_meta: Mapping[str, Any] | None) -> int:
     fps_base = int(base_fps) if int(base_fps) > 0 else 1
     if not isinstance(interpolation_meta, Mapping):
@@ -289,6 +418,8 @@ __all__ = [
     "configure_sampler",
     "read_video_interpolation_options",
     "apply_video_interpolation",
+    "read_video_upscaling_options",
+    "apply_video_upscaling",
     "resolve_video_output_fps",
     "export_video",
     "assemble_video_metadata",

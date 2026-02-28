@@ -18,15 +18,16 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
-- `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt and optional explicit `flowShift`, used by video tabs and payload builders.
+- `WanStageLoraParams` (interface): UI WAN stage LoRA entry (`sha` + optional `weight`) for ordered stage `loras[]` payload wiring.
+- `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt, ordered `loras[]`, and optional explicit `flowShift`, used by video tabs and payload builders.
 - `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|chunk|sliding|svi2|svi2_pro`).
 - `WanChunkSeedMode` (type): WAN chunk/sliding per-window seed strategy (`fixed|increment|random`).
-- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output controls + interpolation target FPS).
+- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output controls + interpolation target FPS + SeedVR2 upscaling controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
   (includes optional family-specific fields like `zimageTurbo`, img2img layout state `img2imgResizeMode`/`img2imgUpscaler`,
-  and advanced guidance policy controls).
+  inpaint mask controls (`maskRegionSplit` and related toggles), and advanced guidance policy controls).
 - `GuidanceAdvancedParams` (interface): Per-tab advanced guidance policy state (APG/rescale/trunc/renorm).
 - `DEFAULT_GUIDANCE_ADVANCED_PARAMS` (constant): Canonical defaults for `ImageBaseParams.guidanceAdvanced`.
 - `TabParamsByType` (type): Canonical params map by tab type.
@@ -110,6 +111,11 @@ export class ModelTabsStoreError extends Error {
   }
 }
 
+export interface WanStageLoraParams {
+  sha: string
+  weight?: number
+}
+
 export interface WanStageParams {
   modelDir: string
   prompt: string
@@ -119,8 +125,7 @@ export interface WanStageParams {
   steps: number
   cfgScale: number
   seed: number
-  loraSha: string
-  loraWeight: number
+  loras: WanStageLoraParams[]
   flowShift?: number
 }
 
@@ -156,6 +161,18 @@ export interface WanVideoParams {
   returnFrames: boolean
   // Interpolation (RIFE target FPS; 0 disables interpolation)
   interpolationFps: number
+  // Optional SeedVR2 upscaling (global post-process)
+  upscalingEnabled: boolean
+  upscalingModel: string
+  upscalingResolution: number
+  upscalingMaxResolution: number
+  upscalingBatchSize: number
+  upscalingUniformBatchSize: boolean
+  upscalingTemporalOverlap: number
+  upscalingPrependFrames: number
+  upscalingColorCorrection: 'lab' | 'wavelet' | 'wavelet_adaptive' | 'hsv' | 'adain' | 'none'
+  upscalingInputNoiseScale: number
+  upscalingLatentNoiseScale: number
 }
 
 export interface WanAssetsParams {
@@ -202,12 +219,12 @@ export interface ImageBaseParams {
   maskImageData: string
   maskImageName: string
   maskEnforcement: 'post_blend' | 'per_step_clamp'
-  inpaintFullRes: boolean
   inpaintFullResPadding: number
   inpaintingFill: number
   maskInvert: boolean
   maskBlur: number
   maskRound: boolean
+  maskRegionSplit: boolean
   zimageTurbo?: boolean
 }
 
@@ -319,8 +336,7 @@ function defaultParams<T extends BaseTabType>(
       steps: 30,
       cfgScale: 7,
       seed: -1,
-      loraSha: '',
-      loraWeight: 1.0,
+      loras: [],
     })
     const video: WanVideoParams = {
       width: 768,
@@ -347,6 +363,17 @@ function defaultParams<T extends BaseTabType>(
       pingpong: false,
       returnFrames: false,
       interpolationFps: 0,
+      upscalingEnabled: false,
+      upscalingModel: 'seedvr2_ema_3b_fp16.safetensors',
+      upscalingResolution: 1080,
+      upscalingMaxResolution: 0,
+      upscalingBatchSize: 5,
+      upscalingUniformBatchSize: false,
+      upscalingTemporalOverlap: 0,
+      upscalingPrependFrames: 0,
+      upscalingColorCorrection: 'lab',
+      upscalingInputNoiseScale: 0,
+      upscalingLatentNoiseScale: 0,
     }
     const assets: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
     const wanDefaults: TabParamsByType['wan'] = {
@@ -422,12 +449,12 @@ function defaultParams<T extends BaseTabType>(
     maskImageData: '',
     maskImageName: '',
     maskEnforcement: 'per_step_clamp',
-    inpaintFullRes: true,
     inpaintFullResPadding: 32,
     inpaintingFill: 1,
     maskInvert: false,
     maskBlur: 4,
     maskRound: true,
+    maskRegionSplit: true,
   }
   if (type === 'zimage') {
     imageDefaults.zimageTurbo = true
@@ -506,6 +533,45 @@ function normalizeInterpolationTargetFps(rawValue: unknown, fallback: number): n
   const numeric = Number(rawValue)
   if (!Number.isFinite(numeric)) return fallbackNormalized
   return Math.max(0, Math.min(maxFps, Math.trunc(numeric)))
+}
+
+function normalizeUpscalingBatchSize(rawValue: unknown, fallback: number): number {
+  const fallbackInt = Number.isFinite(Number(fallback)) ? Math.max(1, Math.trunc(Number(fallback))) : 5
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) return fallbackInt
+  const intValue = Math.max(1, Math.trunc(numeric))
+  const remainder = (intValue - 1) % 4
+  if (remainder === 0) return intValue
+  const down = intValue - remainder
+  const up = down + 4
+  const downValid = down >= 1
+  if (downValid) {
+    const downDistance = Math.abs(intValue - down)
+    const upDistance = Math.abs(up - intValue)
+    return downDistance <= upDistance ? down : up
+  }
+  return up
+}
+
+function normalizeUpscalingColorCorrection(rawValue: unknown, fallback: WanVideoParams['upscalingColorCorrection']): WanVideoParams['upscalingColorCorrection'] {
+  const value = String(rawValue || '').trim().toLowerCase()
+  if (
+    value === 'lab'
+    || value === 'wavelet'
+    || value === 'wavelet_adaptive'
+    || value === 'hsv'
+    || value === 'adain'
+    || value === 'none'
+  ) {
+    return value
+  }
+  return fallback
+}
+
+function normalizeUnitInterval(rawValue: unknown, fallback: number): number {
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) return Math.min(1, Math.max(0, Number(fallback) || 0))
+  return Math.min(1, Math.max(0, numeric))
 }
 
 function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVideoParams): WanVideoParams {
@@ -607,6 +673,33 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     merged.interpolationFps,
     defaults.interpolationFps,
   )
+  merged.upscalingEnabled = Boolean(merged.upscalingEnabled)
+  merged.upscalingUniformBatchSize = Boolean(merged.upscalingUniformBatchSize)
+  const upscalingModel = String(merged.upscalingModel || '').trim()
+  merged.upscalingModel = upscalingModel || defaults.upscalingModel
+  const resolution = Number(merged.upscalingResolution)
+  merged.upscalingResolution = Number.isFinite(resolution)
+    ? Math.max(16, Math.trunc(resolution))
+    : defaults.upscalingResolution
+  const maxResolution = Number(merged.upscalingMaxResolution)
+  merged.upscalingMaxResolution = Number.isFinite(maxResolution)
+    ? Math.max(0, Math.trunc(maxResolution))
+    : defaults.upscalingMaxResolution
+  merged.upscalingBatchSize = normalizeUpscalingBatchSize(merged.upscalingBatchSize, defaults.upscalingBatchSize)
+  const overlap = Number(merged.upscalingTemporalOverlap)
+  merged.upscalingTemporalOverlap = Number.isFinite(overlap)
+    ? Math.max(0, Math.trunc(overlap))
+    : defaults.upscalingTemporalOverlap
+  const prepend = Number(merged.upscalingPrependFrames)
+  merged.upscalingPrependFrames = Number.isFinite(prepend)
+    ? Math.max(0, Math.trunc(prepend))
+    : defaults.upscalingPrependFrames
+  merged.upscalingColorCorrection = normalizeUpscalingColorCorrection(
+    merged.upscalingColorCorrection,
+    defaults.upscalingColorCorrection,
+  )
+  merged.upscalingInputNoiseScale = normalizeUnitInterval(merged.upscalingInputNoiseScale, defaults.upscalingInputNoiseScale)
+  merged.upscalingLatentNoiseScale = normalizeUnitInterval(merged.upscalingLatentNoiseScale, defaults.upscalingLatentNoiseScale)
 
   return {
     width: merged.width,
@@ -633,6 +726,17 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     pingpong: merged.pingpong,
     returnFrames: merged.returnFrames,
     interpolationFps: merged.interpolationFps,
+    upscalingEnabled: merged.upscalingEnabled,
+    upscalingModel: merged.upscalingModel,
+    upscalingResolution: merged.upscalingResolution,
+    upscalingMaxResolution: merged.upscalingMaxResolution,
+    upscalingBatchSize: merged.upscalingBatchSize,
+    upscalingUniformBatchSize: merged.upscalingUniformBatchSize,
+    upscalingTemporalOverlap: merged.upscalingTemporalOverlap,
+    upscalingPrependFrames: merged.upscalingPrependFrames,
+    upscalingColorCorrection: merged.upscalingColorCorrection,
+    upscalingInputNoiseScale: merged.upscalingInputNoiseScale,
+    upscalingLatentNoiseScale: merged.upscalingLatentNoiseScale,
   }
 }
 

@@ -200,13 +200,28 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
     img2img_extras: { ...args.extras },
   }
   if (params.useMask) {
+    const maskData = String(params.maskImageData || '').trim()
+    if (!maskData) {
+      throw new Error('INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.')
+    }
+    payload.img2img_mask = maskData
     payload.img2img_mask_enforcement = normalizeMaskEnforcement(params.maskEnforcement)
     payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(params.inpaintingFill))))
-    payload.img2img_inpaint_full_res = Boolean(params.inpaintFullRes)
     payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(params.inpaintFullResPadding)))
     payload.img2img_inpainting_mask_invert = params.maskInvert ? 1 : 0
     payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(params.maskBlur)))
     payload.img2img_mask_round = Boolean(params.maskRound)
+
+    const wantsRegionSplit = Boolean(params.maskRegionSplit)
+    if (wantsRegionSplit) {
+      if (params.maskInvert) {
+        throw new Error('Mask region splitting is not supported with "Invert mask".')
+      }
+      if (args.batchSize !== 1) {
+        throw new Error('Mask region splitting currently requires batch size = 1.')
+      }
+    }
+    payload.img2img_mask_region_split = wantsRegionSplit
   }
   for (const key of Object.keys(payload)) {
     if (key.startsWith('img2img_hires_')) {

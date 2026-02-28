@@ -11,6 +11,8 @@ Contains request parsing and payload validation (including hires tile config via
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`).
+Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), and supports optional multi-region inpaint passes via
+`img2img_mask_region_split`.
 Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope enforcement for sampler fields and
 prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
@@ -48,7 +50,7 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
@@ -102,9 +104,61 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
     _IMG2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
+    _IMG2IMG_ALLOWED_KEYS = {
+        "device",
+        "engine",
+        "img2img_batch_count",
+        "img2img_batch_size",
+        "img2img_cfg_scale",
+        "img2img_clip_skip",
+        "img2img_denoising_strength",
+        "img2img_distilled_cfg_scale",
+        "img2img_eta_noise_seed_delta",
+        "img2img_extras",
+        "img2img_height",
+        "img2img_hires_cfg",
+        "img2img_hires_denoise",
+        "img2img_hires_distilled_cfg",
+        "img2img_hires_enable",
+        "img2img_hires_neg_prompt",
+        "img2img_hires_prompt",
+        "img2img_hires_resize_x",
+        "img2img_hires_resize_y",
+        "img2img_hires_sampling",
+        "img2img_hires_scale",
+        "img2img_hires_scheduler",
+        "img2img_hires_steps",
+        "img2img_hires_tile",
+        "img2img_hires_upscaler",
+        "img2img_image_cfg_scale",
+        "img2img_init_image",
+        "img2img_inpaint_full_res_padding",
+        "img2img_inpainting_fill",
+        "img2img_inpainting_mask_invert",
+        "img2img_mask",
+        "img2img_mask_blur",
+        "img2img_mask_blur_x",
+        "img2img_mask_blur_y",
+        "img2img_mask_enforcement",
+        "img2img_mask_region_split",
+        "img2img_mask_round",
+        "img2img_neg_prompt",
+        "img2img_noise_source",
+        "img2img_prompt",
+        "img2img_randn_source",
+        "img2img_sampling",
+        "img2img_scheduler",
+        "img2img_seed",
+        "img2img_steps",
+        "img2img_styles",
+        "img2img_width",
+        "model",
+        "settings_revision",
+    }
     _TXT2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.TXT2VID_ALL)
     _IMG2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.IMG2VID_ALL)
     _WAN_STAGE_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.WAN_STAGE_ALLOWED)
+    _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
     _GUIDANCE_OPTION_KEYS = {
         "apg_enabled",
@@ -262,6 +316,70 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=f"'{key}' must be sha256 (64 lowercase hex)")
         return normalized
 
+    def _normalize_wan_stage_loras(
+        *,
+        stage_raw: Mapping[str, Any],
+        stage_key: str,
+        resolve_asset_by_sha_fn: Callable[[str], object | None],
+    ) -> list[dict[str, object]]:
+        if stage_raw.get("lora_path") not in (None, ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.loras'",
+            )
+        if stage_raw.get("lora_sha") not in (None, ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{stage_key}.lora_sha' is unsupported; use '{stage_key}.loras'",
+            )
+        if stage_raw.get("lora_weight") not in (None, ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{stage_key}.lora_weight' is unsupported; use '{stage_key}.loras'",
+            )
+
+        raw_loras = stage_raw.get("loras")
+        if raw_loras is None:
+            return []
+        if not isinstance(raw_loras, list):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{stage_key}.loras' must be an array when provided",
+            )
+
+        normalized_loras: list[dict[str, object]] = []
+        for index, raw_lora in enumerate(raw_loras):
+            lora_context = f"{stage_key}.loras[{index}]"
+            if not isinstance(raw_lora, dict):
+                raise HTTPException(status_code=400, detail=f"'{lora_context}' must be an object")
+            _reject_unknown_keys(raw_lora, _WAN_STAGE_LORA_ALLOWED_KEYS, lora_context)
+            lora_sha = _require_sha256_field(raw_lora, "sha")
+            lora_path = resolve_asset_by_sha_fn(lora_sha)
+            if not lora_path:
+                raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
+            if not str(lora_path).lower().endswith(".safetensors"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}",
+                )
+            raw_weight = raw_lora.get("weight")
+            if raw_weight is None:
+                lora_weight = 1.0
+            else:
+                if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{lora_context}.weight' must be numeric when provided",
+                    )
+                lora_weight = float(raw_weight)
+                if not math.isfinite(lora_weight):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{lora_context}.weight' must be finite",
+                    )
+            normalized_loras.append({"sha": lora_sha, "weight": lora_weight})
+        return normalized_loras
+
 
     def _require_bool_field(payload: Dict[str, Any], key: str) -> bool:
         if key not in payload:
@@ -396,6 +514,154 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if times_value < 2:
                 raise HTTPException(status_code=400, detail="'video_interpolation.times' must be >= 2 when provided")
             normalized["times"] = times_value
+
+        return normalized
+
+    _VIDEO_UPSCALING_COLOR_CORRECTIONS = {
+        "lab",
+        "wavelet",
+        "wavelet_adaptive",
+        "hsv",
+        "adain",
+        "none",
+    }
+
+    def _optional_video_upscaling_field(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if "video_upscaling" not in payload:
+            return None
+        raw = payload.get("video_upscaling")
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="'video_upscaling' must be an object when provided")
+        _reject_unknown_keys(
+            raw,
+            {
+                "enabled",
+                "dit_model",
+                "resolution",
+                "max_resolution",
+                "batch_size",
+                "uniform_batch_size",
+                "temporal_overlap",
+                "prepend_frames",
+                "color_correction",
+                "input_noise_scale",
+                "latent_noise_scale",
+            },
+            "video_upscaling",
+        )
+
+        if "enabled" not in raw:
+            raise HTTPException(
+                status_code=400,
+                detail="'video_upscaling.enabled' is required when video_upscaling is provided",
+            )
+        enabled = raw.get("enabled")
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=400, detail="'video_upscaling.enabled' must be a boolean")
+
+        normalized: Dict[str, Any] = {"enabled": enabled}
+
+        def _optional_int(field: str, *, minimum: int) -> None:
+            if field not in raw:
+                return
+            value = raw.get(field)
+            if value is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'video_upscaling.{field}' must be an integer when provided",
+                )
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'video_upscaling.{field}' must be an integer when provided",
+                )
+            parsed = int(value)
+            if parsed < minimum:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'video_upscaling.{field}' must be >= {minimum} when provided",
+                )
+            normalized[field] = parsed
+
+        _optional_int("resolution", minimum=16)
+        _optional_int("max_resolution", minimum=0)
+        _optional_int("batch_size", minimum=1)
+        _optional_int("temporal_overlap", minimum=0)
+        _optional_int("prepend_frames", minimum=0)
+
+        batch_size = normalized.get("batch_size")
+        if isinstance(batch_size, int) and ((batch_size - 1) % 4 != 0):
+            raise HTTPException(
+                status_code=400,
+                detail="'video_upscaling.batch_size' must satisfy 4n+1 when provided",
+            )
+
+        if "uniform_batch_size" in raw:
+            uniform_raw = raw.get("uniform_batch_size")
+            if not isinstance(uniform_raw, bool):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'video_upscaling.uniform_batch_size' must be a boolean when provided",
+                )
+            normalized["uniform_batch_size"] = uniform_raw
+
+        if "dit_model" in raw:
+            model_raw = raw.get("dit_model")
+            if not isinstance(model_raw, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'video_upscaling.dit_model' must be a string when provided",
+                )
+            model = model_raw.strip()
+            if not model:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'video_upscaling.dit_model' must be a non-empty string when provided",
+                )
+            normalized["dit_model"] = model
+
+        if "color_correction" in raw:
+            color_raw = raw.get("color_correction")
+            if not isinstance(color_raw, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'video_upscaling.color_correction' must be a string when provided",
+                )
+            color_value = color_raw.strip().lower()
+            if color_value not in _VIDEO_UPSCALING_COLOR_CORRECTIONS:
+                allowed = ", ".join(sorted(_VIDEO_UPSCALING_COLOR_CORRECTIONS))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'video_upscaling.color_correction' must be one of {{{allowed}}}",
+                )
+            normalized["color_correction"] = color_value
+
+        def _optional_float(field: str) -> None:
+            if field not in raw:
+                return
+            value = raw.get(field)
+            if value is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'video_upscaling.{field}' must be a number when provided",
+                )
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'video_upscaling.{field}' must be a number when provided",
+                )
+            parsed = float(value)
+            if parsed < 0.0 or parsed > 1.0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'video_upscaling.{field}' must be within [0, 1] when provided",
+                )
+            normalized[field] = parsed
+
+        _optional_float("input_noise_scale")
+        _optional_float("latent_noise_scale")
 
         return normalized
 
@@ -2065,6 +2331,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
+        _reject_unknown_keys(payload, _IMG2IMG_ALLOWED_KEYS, "img2img")
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         init_image_data = _p.require(payload, 'img2img_init_image')
         init_image = media.decode_image(init_image_data)
@@ -2078,13 +2345,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         mask_enforcement = None
         inpainting_fill = 1
-        inpaint_full_res = True
         inpaint_full_res_padding = 32
         inpainting_mask_invert = 0
         mask_blur = 4
         mask_blur_x = 4
         mask_blur_y = 4
         mask_round = True
+        mask_region_split = False
 
         if mask_image is not None:
             raw_enforcement = payload.get("img2img_mask_enforcement")
@@ -2105,8 +2372,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if inpainting_fill not in (0, 1, 2, 3):
                 raise HTTPException(status_code=400, detail="'img2img_inpainting_fill' must be 0,1,2,3")
 
-            if "img2img_inpaint_full_res" in payload:
-                inpaint_full_res = _p.as_bool(payload, "img2img_inpaint_full_res")
             if "img2img_inpaint_full_res_padding" in payload:
                 inpaint_full_res_padding = _require_int_field(payload, "img2img_inpaint_full_res_padding")
             if inpaint_full_res_padding < 0:
@@ -2130,10 +2395,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
             if "img2img_mask_round" in payload:
                 mask_round = _p.as_bool(payload, "img2img_mask_round")
+            if "img2img_mask_region_split" in payload:
+                mask_region_split = _p.as_bool(payload, "img2img_mask_region_split")
         else:
             raw_enforcement = payload.get("img2img_mask_enforcement")
             if isinstance(raw_enforcement, str) and raw_enforcement.strip():
                 raise HTTPException(status_code=400, detail="'img2img_mask_enforcement' requires 'img2img_mask'")
+            if "img2img_mask_region_split" in payload:
+                raise HTTPException(status_code=400, detail="'img2img_mask_region_split' requires 'img2img_mask'")
 
         core = _parse_img2img_core_dto(payload, init_w=init_w, init_h=init_h)
         engine_key = core.engine_key
@@ -2359,8 +2628,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             init_image=init_image,
             mask=mask_image,
             mask_enforcement=mask_enforcement,
+            mask_region_split=mask_region_split,
             inpainting_fill=inpainting_fill,
-            inpaint_full_res=inpaint_full_res,
             inpaint_full_res_padding=inpaint_full_res_padding,
             inpainting_mask_invert=inpainting_mask_invert,
             mask_blur=mask_blur,
@@ -2486,6 +2755,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         video_interpolation = _optional_video_interpolation_field(payload)
         if video_interpolation is not None:
             extras["video_interpolation"] = video_interpolation
+        video_upscaling = _optional_video_upscaling_field(payload)
+        if video_upscaling is not None:
+            extras["video_upscaling"] = video_upscaling
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
@@ -2499,8 +2771,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
-            if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
             sha = _require_sha256_field(raw, "model_sha")
             model_path = resolve_asset_by_sha(sha)
             if not model_path:
@@ -2558,16 +2828,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     )
                 else:
                     out.pop("scheduler", None)
-            if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
-            if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
-                lora_sha = _require_sha256_field(out, "lora_sha")
-                lora_path = resolve_asset_by_sha(lora_sha)
-                if not lora_path:
-                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
-                if not str(lora_path).lower().endswith(".safetensors"):
-                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
-                out["lora_sha"] = lora_sha
+            out["loras"] = _normalize_wan_stage_loras(
+                stage_raw=raw,
+                stage_key=stage_key,
+                resolve_asset_by_sha_fn=resolve_asset_by_sha,
+            )
+            out.pop("lora_path", None)
+            out.pop("lora_sha", None)
+            out.pop("lora_weight", None)
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -2732,6 +3000,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         video_interpolation = _optional_video_interpolation_field(payload)
         if video_interpolation is not None:
             extras["video_interpolation"] = video_interpolation
+        video_upscaling = _optional_video_upscaling_field(payload)
+        if video_upscaling is not None:
+            extras["video_upscaling"] = video_upscaling
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
@@ -2745,8 +3016,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
-            if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
             sha = _require_sha256_field(raw, "model_sha")
             model_path = resolve_asset_by_sha(sha)
             if not model_path:
@@ -2804,16 +3073,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     )
                 else:
                     out.pop("scheduler", None)
-            if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
-            if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
-                lora_sha = _require_sha256_field(out, "lora_sha")
-                lora_path = resolve_asset_by_sha(lora_sha)
-                if not lora_path:
-                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
-                if not str(lora_path).lower().endswith(".safetensors"):
-                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
-                out["lora_sha"] = lora_sha
+            out["loras"] = _normalize_wan_stage_loras(
+                stage_raw=raw,
+                stage_key=stage_key,
+                resolve_asset_by_sha_fn=resolve_asset_by_sha,
+            )
+            out.pop("lora_path", None)
+            out.pop("lora_sha", None)
+            out.pop("lora_weight", None)
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -3164,23 +3431,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if not (resolved.is_file() or resolved.is_dir()):
                 raise HTTPException(status_code=400, detail=f"'{field}.model_dir' not found: {resolved}")
             out["model_dir"] = str(resolved)
-        if isinstance(out.get("lora_path"), str) and str(out.get("lora_path")).strip():
-            raise HTTPException(status_code=400, detail=f"'{field}.lora_path' is unsupported; use '{field}.lora_sha'")
+        from apps.backend.inventory.cache import resolve_asset_by_sha
 
-        if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
-            raise HTTPException(status_code=400, detail=f"'{field}.lora_weight' requires '{field}.lora_sha'")
-        if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
-            from apps.backend.inventory.cache import resolve_asset_by_sha
-
-            lora_sha = str(out.get("lora_sha")).strip().lower()
-            if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
-                raise HTTPException(status_code=400, detail=f"'{field}.lora_sha' must be sha256 (64 lowercase hex)")
-            lora_path = resolve_asset_by_sha(lora_sha)
-            if not lora_path:
-                raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
-            if not str(lora_path).lower().endswith(".safetensors"):
-                raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
-            out["lora_sha"] = lora_sha
+        out["loras"] = _normalize_wan_stage_loras(
+            stage_raw=out,
+            stage_key=field,
+            resolve_asset_by_sha_fn=resolve_asset_by_sha,
+        )
+        out.pop("lora_path", None)
+        out.pop("lora_sha", None)
+        out.pop("lora_weight", None)
         return out
 
     def prepare_vid2vid(payload: Dict[str, Any]) -> Tuple[Vid2VidRequest, str, Optional[str]]:

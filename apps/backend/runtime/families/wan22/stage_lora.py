@@ -12,14 +12,14 @@ with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_stage_lora_offload_device` (function): Resolves stage-LoRA offload device from memory-manager policy.
-- `apply_wan22_stage_lora` (function): Applies a LoRA file to a loaded stage model (merge or online).
+- `apply_wan22_stage_lora` (function): Applies an ordered LoRA sequence to a loaded stage model (merge or online).
 """
 
 from __future__ import annotations
 
 import math
 import os
-from typing import Any, Dict, Mapping, Optional, Set
+from typing import Any, Dict, Mapping, Optional, Sequence, Set
 
 import safetensors.torch as sf
 import torch
@@ -204,68 +204,97 @@ def apply_wan22_stage_lora(
     model: torch.nn.Module,
     *,
     stage: str,
-    lora_path: Optional[str],
-    lora_weight: Optional[float],
+    loras: Optional[Sequence[tuple[str, float]]],
     logger: Any,
 ) -> None:
-    """Apply a LoRA file to a loaded stage model (WAN22 GGUF runtime)."""
+    """Apply an ordered LoRA sequence to a loaded stage model (WAN22 GGUF runtime)."""
 
-    if not lora_path:
+    if not loras:
         return
 
     log = get_logger(logger)
-
-    resolved_path = normalize_win_path(os.path.expanduser(str(lora_path)))
-    if not resolved_path.lower().endswith(".safetensors"):
-        raise RuntimeError(f"WAN22 GGUF stage '{stage}': lora_path must be a .safetensors file, got: {resolved_path}")
-    if not os.path.isfile(resolved_path):
-        raise RuntimeError(f"WAN22 GGUF stage '{stage}': lora_path not found: {resolved_path}")
-
-    strength = float(lora_weight) if lora_weight is not None else 1.0
-    if not math.isfinite(strength):
-        raise RuntimeError(f"WAN22 GGUF stage '{stage}': lora_weight must be finite, got: {lora_weight!r}")
-
-    try:
-        tensors = sf.load_file(resolved_path)
-    except Exception as exc:
-        raise RuntimeError(f"WAN22 GGUF stage '{stage}': failed to load LoRA file {resolved_path}: {exc}") from exc
-
-    logical_key_count = len(_extract_logical_keys(tensors))
-    to_load = _build_to_load_map(model, tensors)
-    if not to_load:
-        raise RuntimeError(
-            "WAN22 GGUF stage '{stage}': LoRA file matched 0 targets; "
-            "this LoRA key layout is not supported by the WAN transformer mapping. "
-            "file={path}".format(stage=stage, path=resolved_path)
-        )
-    matched_count = len(to_load)
-    coverage = (matched_count / logical_key_count) if logical_key_count > 0 else 0.0
     min_match_ratio = _read_min_match_ratio()
-    if min_match_ratio > 0.0 and coverage < min_match_ratio:
-        raise RuntimeError(
-            "WAN22 GGUF stage '{stage}': LoRA logical-key coverage below threshold "
-            f"(matched={matched_count}/{logical_key_count} ratio={coverage:.4f} required>={min_match_ratio:.4f}). "
-            "Adjust CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO or use a compatible adapter mapping. "
-            "file={path}".format(stage=stage, path=resolved_path)
-        )
-    if logical_key_count > 0 and coverage < 1.0:
-        log.warning(
-            "[wan22.gguf] stage LoRA partial logical-key coverage: stage=%s matched=%d total=%d ratio=%.4f required_ratio=%.4f",
-            stage,
-            matched_count,
-            logical_key_count,
-            coverage,
-            min_match_ratio,
-        )
+    parsed_loras: list[tuple[str, float, dict[str, list[tuple]], int]] = []
+    for index, raw_spec in enumerate(loras):
+        if not isinstance(raw_spec, (tuple, list)) or len(raw_spec) != 2:
+            raise RuntimeError(
+                f"WAN22 GGUF stage '{stage}': loras[{index}] must be a [path, weight] pair."
+            )
+        raw_path = raw_spec[0]
+        raw_weight = raw_spec[1]
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise RuntimeError(
+                f"WAN22 GGUF stage '{stage}': loras[{index}][0] must be a non-empty path string."
+            )
+        resolved_path = normalize_win_path(os.path.expanduser(raw_path.strip()))
+        if not resolved_path.lower().endswith(".safetensors"):
+            raise RuntimeError(
+                f"WAN22 GGUF stage '{stage}': loras[{index}] path must be a .safetensors file, got: {resolved_path}"
+            )
+        if not os.path.isfile(resolved_path):
+            raise RuntimeError(f"WAN22 GGUF stage '{stage}': loras[{index}] path not found: {resolved_path}")
+        if raw_weight is None:
+            strength = 1.0
+        else:
+            if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
+                raise RuntimeError(
+                    f"WAN22 GGUF stage '{stage}': loras[{index}] weight must be numeric, got: {raw_weight!r}"
+                )
+            strength = float(raw_weight)
+            if not math.isfinite(strength):
+                raise RuntimeError(
+                    f"WAN22 GGUF stage '{stage}': loras[{index}] weight must be finite, got: {raw_weight!r}"
+                )
 
-    patch_dict = build_patch_dicts(tensors, to_load)
-    if not patch_dict:
-        raise RuntimeError(
-            "WAN22 GGUF stage '{stage}': LoRA produced 0 patches after parsing; "
-            "this usually indicates incomplete tensors for the mapped keys. "
-            "file={path}".format(stage=stage, path=resolved_path)
-        )
+        try:
+            tensors = sf.load_file(resolved_path)
+        except Exception as exc:
+            raise RuntimeError(
+                f"WAN22 GGUF stage '{stage}': failed to load LoRA file at loras[{index}] ({resolved_path}): {exc}"
+            ) from exc
 
+        logical_key_count = len(_extract_logical_keys(tensors))
+        to_load = _build_to_load_map(model, tensors)
+        if not to_load:
+            raise RuntimeError(
+                "WAN22 GGUF stage '{stage}': LoRA file matched 0 targets; "
+                "this LoRA key layout is not supported by the WAN transformer mapping. "
+                "file={path}".format(stage=stage, path=resolved_path)
+            )
+        matched_count = len(to_load)
+        coverage = (matched_count / logical_key_count) if logical_key_count > 0 else 0.0
+        if min_match_ratio > 0.0 and coverage < min_match_ratio:
+            raise RuntimeError(
+                "WAN22 GGUF stage '{stage}': LoRA logical-key coverage below threshold "
+                f"(matched={matched_count}/{logical_key_count} ratio={coverage:.4f} required>={min_match_ratio:.4f}). "
+                "Adjust CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO or use a compatible adapter mapping. "
+                "file={path}".format(stage=stage, path=resolved_path)
+            )
+        if logical_key_count > 0 and coverage < 1.0:
+            log.warning(
+                "[wan22.gguf] stage LoRA partial logical-key coverage: stage=%s index=%d matched=%d total=%d ratio=%.4f required_ratio=%.4f",
+                stage,
+                index,
+                matched_count,
+                logical_key_count,
+                coverage,
+                min_match_ratio,
+            )
+
+        patch_dict = build_patch_dicts(tensors, to_load)
+        if not patch_dict:
+            raise RuntimeError(
+                "WAN22 GGUF stage '{stage}': LoRA produced 0 patches after parsing; "
+                "this usually indicates incomplete tensors for the mapped keys. "
+                "file={path}".format(stage=stage, path=resolved_path)
+            )
+        lora_patch_map = {
+            key: [(strength, payload, 1.0, None, None)] for key, payload in patch_dict.items()
+        }
+        parsed_loras.append((resolved_path, strength, lora_patch_map, len(patch_dict)))
+
+    if not parsed_loras:
+        return
     apply_mode = read_lora_apply_mode()
     online_mode = apply_mode is LoraApplyMode.ONLINE
 
@@ -274,22 +303,27 @@ def apply_wan22_stage_lora(
         loader = CodexLoraLoader(model)
         model.lora_loader = loader
 
-    lora_patches: dict[tuple[str, float, float, bool], dict[str, list[tuple]]] = {
-        (resolved_path, strength, 1.0, online_mode): {
-            key: [(strength, payload, 1.0, None, None)] for key, payload in patch_dict.items()
-        }
-    }
+    lora_patches: dict[tuple[str, float, float, bool], dict[str, list[tuple]]] = {}
+    for index, (resolved_path, strength, lora_patch_map, _patch_count) in enumerate(parsed_loras):
+        patch_source = f"{resolved_path}#stage_index={index}"
+        lora_patches[(patch_source, strength, 1.0, online_mode)] = lora_patch_map
+
     offload_device = _resolve_stage_lora_offload_device()
     loader.refresh(lora_patches, offload_device=offload_device, force_refresh=True)
 
-    log.info(
-        "[wan22.gguf] stage LoRA applied: stage=%s mode=%s file=%s params=%d offload_device=%s",
-        stage,
-        apply_mode.value,
-        os.path.basename(resolved_path),
-        len(patch_dict),
-        offload_device,
-    )
+    total_loras = len(parsed_loras)
+    for index, (resolved_path, strength, _lora_patch_map, patch_count) in enumerate(parsed_loras):
+        log.info(
+            "[wan22.gguf] stage LoRA applied: stage=%s index=%d/%d mode=%s file=%s params=%d weight=%s offload_device=%s",
+            stage,
+            index + 1,
+            total_loras,
+            apply_mode.value,
+            os.path.basename(resolved_path),
+            patch_count,
+            strength,
+            offload_device,
+        )
 
 
 __all__ = ["apply_wan22_stage_lora"]

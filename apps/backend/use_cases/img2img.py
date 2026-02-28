@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass.
+Masked img2img (“inpaint”) uses Forge/A1111 “Only masked” semantics and supports optional ADetailer-style multi-region passes for disconnected masks.
 The hires pass init is prepared via the global hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
@@ -72,6 +73,7 @@ from apps.backend.runtime.pipeline_stages.masked_img2img import (
     MASK_ENFORCEMENT_PER_STEP_CLAMP,
     MASK_ENFORCEMENT_POST_BLEND,
     apply_inpaint_full_res_composite,
+    compute_mask_connected_component_bboxes,
     prepare_masked_img2img_bundle,
 )
 from apps.backend.runtime.pipeline_stages.prompt_context import (
@@ -652,6 +654,14 @@ def generate_img2img(
 
     run_process_scripts(processing)
 
+    payload = _compute_conditioning_payload(
+        processing,
+        prompt_context,
+        prompts,
+        conditioning,
+        unconditional_conditioning,
+    )
+
     pre_denoiser_hook = None
     post_denoiser_hook = None
     post_step_hook = None
@@ -660,6 +670,119 @@ def generate_img2img(
     if processing.has_mask():
         if bool(getattr(getattr(processing, "hires", None), "enabled", False)):
             raise NotImplementedError("HiRes is not supported for masked img2img yet")
+
+        mask_region_split = bool(getattr(processing, "mask_region_split", False))
+        if mask_region_split:
+            invert_value = int(getattr(processing, "inpainting_mask_invert", 0) or 0)
+            if invert_value != 0:
+                raise ValueError("mask_region_split is not supported with inpainting_mask_invert=1")
+            batch_total = int(getattr(processing, "batch_total", 1) or 1)
+            if batch_total != 1:
+                raise NotImplementedError("mask_region_split is only supported for batch_total=1")
+
+            raw_mask = getattr(processing, "mask", None) or getattr(processing, "image_mask", None)
+            if raw_mask is None:
+                raise ValueError("mask_region_split requires a non-null mask")
+
+            component_bboxes = compute_mask_connected_component_bboxes(
+                raw_mask,
+                round_mask=bool(getattr(processing, "mask_round", True)),
+            )
+            if len(component_bboxes) > 1:
+                processing.update_extra_param("Mask regions", len(component_bboxes))
+                current = processing.init_image.convert("RGB")
+
+                def _region_mask_from_bbox(
+                    *,
+                    source_mask: Image.Image,
+                    bbox: tuple[int, int, int, int],
+                ) -> Image.Image:
+                    x1, y1, x2, y2 = bbox
+                    source = source_mask.convert("RGBA")
+                    region = Image.new("RGBA", source.size, (0, 0, 0, 0))
+                    region_crop = source.crop((x1, y1, x2, y2))
+                    region.alpha_composite(region_crop, dest=(x1, y1))
+                    return region
+
+                last_samples: torch.Tensor | None = None
+                for index, bbox in enumerate(component_bboxes):
+                    processing.update_extra_param("Mask region", f"{index + 1}/{len(component_bboxes)}")
+                    processing.init_image = current
+                    processing.set_mask(_region_mask_from_bbox(source_mask=raw_mask, bbox=bbox))
+
+                    enforcement = getattr(processing, "mask_enforcement", None)
+                    masked_bundle, enforcer = prepare_masked_img2img_bundle(
+                        processing,
+                        plan,
+                        enforce_mode=enforcement,
+                    )
+                    if masked_bundle.full_res is None:
+                        raise RuntimeError("mask_region_split requires an inpaint crop plan (internal bug)")
+
+                    processing.init_latent = masked_bundle.init_latent
+                    processing.image_conditioning = masked_bundle.image_conditioning
+
+                    enforcement_value = str(enforcement).strip()
+                    if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
+                        pre_denoiser_hook = enforcer.pre_denoiser
+                        post_denoiser_hook = enforcer.post_denoiser
+                        post_sample_hook = enforcer.post_sample
+                    elif enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
+                        pre_denoiser_hook = None
+                        post_denoiser_hook = None
+                        post_sample_hook = enforcer.post_sample
+                    else:
+                        raise ValueError(
+                            f"Unknown mask enforcement '{enforcement_value}' (internal validation bug)"
+                        )
+
+                    init_latent = masked_bundle.init_latent
+                    image_conditioning = masked_bundle.image_conditioning
+                    pass_rng = ensure_sampler_and_rng(processing, plan)
+                    noise = pass_rng.next().to(init_latent)
+                    denoise_strength = float(getattr(processing, "denoising_strength", 0.5) or 0.5)
+
+                    tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
+                    try:
+                        samples = execute_sampling(
+                            processing,
+                            plan,
+                            payload,
+                            prompt_context,
+                            prompt_context.loras,
+                            prompt_context.controls,
+                            rng=pass_rng,
+                            noise=noise,
+                            image_conditioning=image_conditioning,
+                            init_latent=init_latent,
+                            start_at_step=0,
+                            denoise_strength=denoise_strength,
+                            pre_denoiser_hook=pre_denoiser_hook,
+                            post_denoiser_hook=post_denoiser_hook,
+                            post_step_hook=post_step_hook,
+                            post_sample_hook=post_sample_hook,
+                        )
+                    finally:
+                        finalize_tiling(tiling_applied, old_tiled)
+
+                    last_samples = samples
+                    decoded = decode_latent_batch(processing.sd_model, samples)
+                    patch_images = latents_to_pil(decoded)
+                    composited = apply_inpaint_full_res_composite(patch_images, plan=masked_bundle.full_res)
+                    if len(composited) != 1:
+                        raise RuntimeError(
+                            "mask_region_split requires single-image batches (internal bug)"
+                        )
+                    current = composited[0]
+
+                if last_samples is None:
+                    raise RuntimeError("mask_region_split produced no passes (internal bug)")
+                return GenerationResult(
+                    samples=last_samples,
+                    decoded=[current],
+                    metadata=_conditioning_cache_hit_metadata(processing),
+                )
+
         enforcement = getattr(processing, "mask_enforcement", None)
         masked_bundle, enforcer = prepare_masked_img2img_bundle(
             processing,
@@ -695,14 +818,6 @@ def generate_img2img(
         )
         processing.image_conditioning = image_conditioning
         init_latent = bundle.latents
-
-    payload = _compute_conditioning_payload(
-        processing,
-        prompt_context,
-        prompts,
-        conditioning,
-        unconditional_conditioning,
-    )
 
     noise = rng.next().to(init_latent)
     denoise_value = float(getattr(processing, "denoising_strength", 0.5) or 0.5)

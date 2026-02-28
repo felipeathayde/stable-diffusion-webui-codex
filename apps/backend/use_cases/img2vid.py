@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
-Runs high/low stages, configures sampler settings, applies LoRAs, runs the shared video interpolation stage when requested, exports video, and yields
+Runs high/low stages, configures sampler settings, applies LoRAs, runs shared SeedVR2 upscaling/interpolation stages when requested, exports video, and yields
 progress/result events.
 Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and `extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when missing.
 Temporal routing requires explicit `extras.img2vid_mode` (`solo|chunk|sliding|svi2|svi2_pro`) and rejects implicit mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity while SVI modes default to incremented per-window seeding, and result metadata includes frame-count diagnostics across generation/interpolation/export stages.
@@ -35,11 +35,13 @@ from apps.backend.runtime.processing.datatypes import VideoPlan
 from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
     apply_video_interpolation,
+    apply_video_upscaling,
     build_video_plan,
     build_video_result,
     configure_sampler,
     export_video,
     read_video_interpolation_options,
+    read_video_upscaling_options,
     resolve_video_output_fps,
 )
 
@@ -716,6 +718,21 @@ def run_img2vid(
             raise RuntimeError("WAN22 GGUF: runtime config resolution failed (cfg is None).")
         generated_frame_count = int(len(frames))
 
+        upscaling_options = read_video_upscaling_options(plan.extras)
+        if upscaling_options is not None and upscaling_options.enabled:
+            yield ProgressEvent(stage="upscale", percent=1.0, message="Upscaling frames (SeedVR2)")
+        frames, upscaling_opts = apply_video_upscaling(
+            frames,
+            options=upscaling_options,
+            logger_=logger,
+            component_device=getattr(comp, "device", None),
+        )
+        if frames:
+            first_size = getattr(frames[0], "size", None)
+            if isinstance(first_size, tuple) and len(first_size) == 2:
+                plan.width = int(first_size[0])
+                plan.height = int(first_size[1])
+
         vfi_options = read_video_interpolation_options(plan.extras)
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
@@ -742,6 +759,8 @@ def run_img2vid(
             warnings: tuple[str, ...] = ()
 
         extra_meta: dict[str, Any] = dict(plan.extras) if isinstance(plan.extras, dict) else {}
+        if upscaling_opts is not None:
+            extra_meta["video_upscaling"] = upscaling_opts
         if vfi_opts is not None:
             extra_meta["video_interpolation"] = vfi_opts
         extra_meta["frame_counts"] = {
@@ -805,10 +824,18 @@ def run_img2vid(
         if wan_hi_opts and wan_hi_opts.negative_prompt is not None
         else str(getattr(request, "negative_prompt", "") or "").strip()
     )
-    if wan_hi_opts and wan_hi_opts.lora_path and hasattr(active_pipe_hi, "load_lora_weights"):
-        if logger:
-            logger.info("[wan] loading high-stage LoRA: %s", wan_hi_opts.lora_path)
-        active_pipe_hi.load_lora_weights(wan_hi_opts.lora_path)  # type: ignore[attr-defined]
+    if wan_hi_opts and wan_hi_opts.loras and hasattr(active_pipe_hi, "load_lora_weights"):
+        total_stage_loras = len(wan_hi_opts.loras)
+        for index, (lora_path, lora_weight) in enumerate(wan_hi_opts.loras):
+            if logger:
+                logger.info(
+                    "[wan] loading high-stage LoRA %d/%d: %s (weight=%s)",
+                    index + 1,
+                    total_stage_loras,
+                    lora_path,
+                    lora_weight,
+                )
+            active_pipe_hi.load_lora_weights(lora_path)  # type: ignore[attr-defined]
 
     outcome_hi = configure_sampler(active_pipe_hi, plan, logger)
 
@@ -837,10 +864,18 @@ def run_img2vid(
             if wan_opts and wan_opts.negative_prompt is not None
             else str(getattr(request, "negative_prompt", "") or "").strip()
         )
-        if wan_opts and wan_opts.lora_path and hasattr(active_pipe_lo, "load_lora_weights"):
-            if logger:
-                logger.info("[wan] loading low-stage LoRA: %s", wan_opts.lora_path)
-            active_pipe_lo.load_lora_weights(wan_opts.lora_path)  # type: ignore[attr-defined]
+        if wan_opts and wan_opts.loras and hasattr(active_pipe_lo, "load_lora_weights"):
+            total_stage_loras = len(wan_opts.loras)
+            for index, (lora_path, lora_weight) in enumerate(wan_opts.loras):
+                if logger:
+                    logger.info(
+                        "[wan] loading low-stage LoRA %d/%d: %s (weight=%s)",
+                        index + 1,
+                        total_stage_loras,
+                        lora_path,
+                        lora_weight,
+                    )
+                active_pipe_lo.load_lora_weights(lora_path)  # type: ignore[attr-defined]
 
         outcome_lo = configure_sampler(active_pipe_lo, plan, logger)
         yield ProgressEvent(stage="run_low", percent=50.0, message="Stage 2 (Low Noise)")
@@ -852,6 +887,21 @@ def run_img2vid(
             init_image=frames[-1],
         )
 
+    upscaling_options = read_video_upscaling_options(extras)
+    if upscaling_options is not None and upscaling_options.enabled:
+        yield ProgressEvent(stage="upscale", percent=1.0, message="Upscaling frames (SeedVR2)")
+    frames, upscaling_opts = apply_video_upscaling(
+        frames,
+        options=upscaling_options,
+        logger_=logger,
+        component_device=getattr(comp, "device", None),
+    )
+    if frames:
+        first_size = getattr(frames[0], "size", None)
+        if isinstance(first_size, tuple) and len(first_size) == 2:
+            plan.width = int(first_size[0])
+            plan.height = int(first_size[1])
+
     vfi_options = read_video_interpolation_options(extras)
     if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
         yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
@@ -861,6 +911,8 @@ def run_img2vid(
     video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
 
     extra_meta: dict[str, Any] = dict(extras) if isinstance(extras, dict) else {}
+    if upscaling_opts is not None:
+        extra_meta["video_upscaling"] = upscaling_opts
     if vfi_opts is not None:
         extra_meta["video_interpolation"] = vfi_opts
     if outcome_lo is not None:

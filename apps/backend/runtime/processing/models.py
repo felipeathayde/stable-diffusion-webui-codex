@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `CodexHiresConfig` (dataclass): Hires configuration (target scale/steps/denoise + upscaler tile config) with override serialization.
 - `CodexProcessingBase` (dataclass): Shared processing fields for image generation runs (prompt/negative/seed/steps/cfg/dims + hi-res/refiner).
 - `CodexProcessingTxt2Img` (dataclass): Txt2img processing container (extends base with txt2img-specific fields).
-- `CodexProcessingImg2Img` (dataclass): Img2img processing container (extends base with init image/mask/strength and related fields).
+- `CodexProcessingImg2Img` (dataclass): Img2img processing container (extends base with init image/mask/strength and inpaint mask controls).
 """
 
 from __future__ import annotations
@@ -376,10 +376,10 @@ class CodexProcessingImg2Img(CodexProcessingBase):
     mask_blur_y: int = 4
     mask_round: bool = True
     inpainting_fill: int = 0
-    inpaint_full_res: bool = True
     inpaint_full_res_padding: int = 0
     inpainting_mask_invert: int = 0
     mask_enforcement: Optional[str] = None
+    mask_region_split: bool = False
     initial_noise_multiplier: Optional[float] = None
     latent_mask: Any = None
     resize_mode: int = 0

@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_hires_config` (function): Builds a `CodexHiresConfig` from request payload data (including hires tile config + nested hires refiner).
 - `_build_refiner_config` (function): Builds a `RefinerConfig` from request payload data.
 - `build_txt2img_processing` (function): Converts a `Txt2ImgRequest` into a fully-populated `CodexProcessingTxt2Img`.
-- `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img`.
+- `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img` (including inpaint mask wiring).
 """
 
 from __future__ import annotations
@@ -252,6 +252,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
     except Exception:
         image_cfg_scale = None
 
+    mask_round = bool(getattr(req, "mask_round", True))
     processing = CodexProcessingImg2Img(
         prompt=req.prompt,
         negative_prompt=req.negative_prompt,
@@ -268,12 +269,14 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         init_image=req.init_image,
         mask=req.mask,
         mask_enforcement=getattr(req, "mask_enforcement", None),
+        mask_region_split=bool(getattr(req, "mask_region_split", False)),
         mask_blur=int(getattr(req, "mask_blur", 4) or 0),
         mask_blur_x=int(getattr(req, "mask_blur_x", getattr(req, "mask_blur", 4)) or 0),
         mask_blur_y=int(getattr(req, "mask_blur_y", getattr(req, "mask_blur", 4)) or 0),
-        mask_round=bool(getattr(req, "mask_round", True)),
+        mask_round=mask_round,
+        round_image_mask=mask_round,
+        image_mask=req.mask,
         inpainting_fill=int(getattr(req, "inpainting_fill", 0) or 0),
-        inpaint_full_res=bool(getattr(req, "inpaint_full_res", True)),
         inpaint_full_res_padding=int(getattr(req, "inpaint_full_res_padding", 0) or 0),
         inpainting_mask_invert=int(getattr(req, "inpainting_mask_invert", 0) or 0),
         denoising_strength=float(req.denoise_strength),

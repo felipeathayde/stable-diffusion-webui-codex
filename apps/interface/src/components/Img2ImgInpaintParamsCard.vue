@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + mask toggles/sliders),
+Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + only-masked padding + region splitting + mask toggles/sliders),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 
@@ -94,18 +94,9 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
 
-      <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', inpaintFullRes ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :aria-pressed="inpaintFullRes"
-        :disabled="disabled"
-        @click="emit('toggle:inpaintFullRes')"
-      >
-        Inpaint area: Only masked (full-res)
-      </button>
+      <p class="caption img2img-caption">Inpaint area: Only masked (full-res)</p>
 
       <SliderField
-        v-if="inpaintFullRes"
         label="Only masked padding"
         :modelValue="inpaintFullResPadding"
         :min="0"
@@ -116,6 +107,16 @@ Symbols (top-level; keep in sync; no ghosts):
         :disabled="disabled"
         @update:modelValue="(value) => emit('update:inpaintFullResPadding', value)"
       />
+
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :aria-pressed="maskRegionSplit"
+        :disabled="disabled || maskInvert"
+        @click="emit('toggle:maskRegionSplit')"
+      >
+        Split mask regions (ADetailer-style)
+      </button>
 
       <div class="img2img-toggle-row">
         <button
@@ -188,11 +189,11 @@ withDefaults(defineProps<{
   maskImageName?: string
   maskEnforcement: MaskEnforcement
   inpaintingFill: number
-  inpaintFullRes: boolean
   inpaintFullResPadding: number
   maskInvert: boolean
   maskRound: boolean
   maskBlur: number
+  maskRegionSplit?: boolean
 }>(), {
   disabled: false,
   embedded: false,
@@ -204,6 +205,7 @@ withDefaults(defineProps<{
   maskImageData: '',
   maskImageName: '',
   maskEnforcement: 'per_step_clamp',
+  maskRegionSplit: false,
 })
 
 const emit = defineEmits<{
@@ -215,10 +217,10 @@ const emit = defineEmits<{
   (e: 'notice:maskEditorReset', message: string): void
   (e: 'update:maskEnforcement', value: string): void
   (e: 'update:inpaintingFill', value: number): void
-  (e: 'toggle:inpaintFullRes'): void
   (e: 'update:inpaintFullResPadding', value: number): void
   (e: 'toggle:maskInvert'): void
   (e: 'toggle:maskRound'): void
+  (e: 'toggle:maskRegionSplit'): void
   (e: 'update:maskBlur', value: number): void
 }>()
 

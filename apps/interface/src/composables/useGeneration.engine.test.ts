@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Unit tests for generation request helpers (engine mapping, img2img payload contract, revision-conflict parsing).
 Locks alias parity so UI disable-state and request engine selection remain consistent, and verifies stale-revision conflict helper behavior
-plus img2img payload invariants (no hires-prefixed keys) and advanced-guidance payload wiring.
+plus img2img payload invariants (no hires-prefixed keys, inpaint mask controls) and advanced-guidance payload wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useGeneration.engine.test` (module): resolveEngineForRequest mapping + img2img payload contract + advanced-guidance payload + revision-conflict helper tests.
@@ -81,12 +81,12 @@ function makeImageParams(overrides: Partial<ImageBaseParams> = {}): ImageBasePar
     maskImageData: '',
     maskImageName: '',
     maskEnforcement: 'post_blend',
-    inpaintFullRes: true,
     inpaintFullResPadding: 32,
     inpaintingFill: 1,
     maskInvert: false,
     maskBlur: 4,
     maskRound: false,
+    maskRegionSplit: true,
     zimageTurbo: true,
     ...overrides,
   }

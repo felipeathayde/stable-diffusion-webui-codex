@@ -37,5 +37,6 @@ Notes:
 - 2026-02-21: `keymap_wan22_transformer.py` WAN22 img2vid request allowlist now also includes `img2vid_chunk_buffer_mode` for strict passthrough ownership.
 - 2026-02-21: `keymap_wan22_transformer.py` WAN22 img2vid request allowlist now includes temporal-mode keys (`img2vid_mode`, `img2vid_window_frames`, `img2vid_window_stride`, `img2vid_window_commit_frames`) so router unknown-key checks remain strict with sliding-window mode.
 - 2026-02-21: Removed legacy WAN22 request aliases `txt2vid_sampling`/`img2vid_sampling` from transformer allowlists; canonical sampler fields are `txt2vid_sampler` and `img2vid_sampler` only (old aliases now fail unknown-key checks).
+- 2026-02-27: `keymap_wan22_transformer.py` WAN22 request allowlist now includes top-level `video_upscaling` in `COMMON` so strict unknown-key checks accept SeedVR2 upscaling payloads for txt2vid/img2vid.
 
-Last Review: 2026-02-21
+Last Review: 2026-02-27

@@ -18,9 +18,11 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 	- `WanTxt2VidPayload` (type): Zod-inferred payload type for WAN `/api/txt2vid`.
 	- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
 	- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
+	- `WanStageLoraInput` (interface): UI-friendly stage LoRA entry (`sha` + optional `weight`) mapped to stage `loras[]`.
 	- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
 	- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames) mapped into payload.
-	- `WanInterpolationInput` (interface): Interpolation target FPS input (`0`=off, values above base FPS enable backend interpolation).
+- `WanInterpolationInput` (interface): Interpolation target FPS input (`0`=off, values above base FPS enable backend interpolation).
+- `WanVideoUpscalingInput` (interface): Optional SeedVR2 upscaling input mapped to backend `video_upscaling`.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
 - `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|chunk|sliding|svi2|svi2_pro`).
@@ -34,6 +36,7 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 - `addWanAssets` (function): Injects selected WAN assets into the payload (skips unset/empty values).
 - `addWanOutput` (function): Injects output-related fields into the payload.
 - `addWanInterpolation` (function): Injects interpolation config into the payload.
+- `addWanUpscaling` (function): Injects optional SeedVR2 upscaling config into the payload when enabled.
 - `buildWanTxt2VidPayload` (function): Builds a validated txt2vid payload from UI common input.
 - `buildWanImg2VidPayload` (function): Builds a validated img2vid payload from UI input plus init image data.
 - `buildWanVid2VidPayload` (function): Builds a validated vid2vid payload from UI vid2vid input.
@@ -96,6 +99,40 @@ const VideoInterpolationSchema = z
   })
   .strict()
 
+const VideoUpscalingColorCorrectionEnum = z.enum([
+  'lab',
+  'wavelet',
+  'wavelet_adaptive',
+  'hsv',
+  'adain',
+  'none',
+])
+
+const VideoUpscalingSchema = z
+  .object({
+    enabled: z.boolean(),
+    dit_model: z.string().min(1).optional(),
+    resolution: z.number().int().min(16).optional(),
+    max_resolution: z.number().int().min(0).optional(),
+    batch_size: z.number().int().min(1).optional(),
+    uniform_batch_size: z.boolean().optional(),
+    temporal_overlap: z.number().int().min(0).optional(),
+    prepend_frames: z.number().int().min(0).optional(),
+    color_correction: VideoUpscalingColorCorrectionEnum.optional(),
+    input_noise_scale: z.number().min(0).max(1).optional(),
+    latent_noise_scale: z.number().min(0).max(1).optional(),
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (payload.batch_size !== undefined && (payload.batch_size - 1) % 4 !== 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'video_upscaling.batch_size must satisfy 4n+1',
+        path: ['batch_size'],
+      })
+    }
+  })
+
 const WanStageSchema = z
   .object({
     model_sha: Sha256Schema,
@@ -106,8 +143,16 @@ const WanStageSchema = z
     cfg_scale: z.number(),
     seed: z.number().int().optional(),
     lightning: z.boolean().optional(),
-    lora_sha: Sha256Schema.optional(),
-    lora_weight: z.number().optional(),
+    loras: z
+      .array(
+        z
+          .object({
+            sha: Sha256Schema,
+            weight: z.number().finite().optional(),
+          })
+          .strict(),
+      )
+      .default([]),
     flow_shift: z.number().optional(),
   })
   .strict()
@@ -127,6 +172,7 @@ const CommonWanVideoPayloadSchema = z
     video_save_output: z.literal(true),
 
     video_interpolation: VideoInterpolationSchema.optional(),
+    video_upscaling: VideoUpscalingSchema.optional(),
 
     wan_high: WanStageSchema.optional(),
     wan_low: WanStageSchema.optional(),
@@ -363,6 +409,7 @@ export const WanVid2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
 export type WanVid2VidPayload = z.infer<typeof WanVid2VidPayloadSchema>
 
 export interface WanStageInput {
+  loras?: WanStageLoraInput[]
   modelSha: string
   prompt: string
   negativePrompt: string
@@ -371,9 +418,12 @@ export interface WanStageInput {
   steps: number
   cfgScale: number
   seed: number
-  loraSha?: string
-  loraWeight?: number
   flowShift?: number
+}
+
+export interface WanStageLoraInput {
+  sha: string
+  weight?: number
 }
 
 export interface WanVideoOutputInput {
@@ -387,6 +437,20 @@ export interface WanVideoOutputInput {
 
 export interface WanInterpolationInput {
   targetFps: number
+}
+
+export interface WanVideoUpscalingInput {
+  enabled: boolean
+  model: string
+  resolution: number
+  maxResolution: number
+  batchSize: number
+  uniformBatchSize: boolean
+  temporalOverlap: number
+  prependFrames: number
+  colorCorrection: 'lab' | 'wavelet' | 'wavelet_adaptive' | 'hsv' | 'adain' | 'none'
+  inputNoiseScale: number
+  latentNoiseScale: number
 }
 
 export interface WanAssetsInput {
@@ -410,6 +474,7 @@ export interface WanVideoCommonInput {
   assets: WanAssetsInput
   output: WanVideoOutputInput
   interpolation: WanInterpolationInput
+  upscaling: WanVideoUpscalingInput
 }
 
 export interface WanImg2VidInput extends WanVideoCommonInput {
@@ -521,14 +586,25 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
     }
     payload.sampler = sampler
   }
-  const loraSha = String(stage.loraSha || '').trim().toLowerCase()
-  if (loraSha) {
-    if (!/^[0-9a-f]{64}$/.test(loraSha)) {
-      throw new Error(`WAN stage lora_sha must be sha256 (64 lowercase hex), got '${stage.loraSha}'`)
+  const rawLoras = Array.isArray(stage.loras) ? stage.loras : []
+  const normalizedLoras = rawLoras.map((lora, index) => {
+    const loraSha = String(lora?.sha || '').trim().toLowerCase()
+    if (!loraSha) {
+      throw new Error(`WAN stage loras[${index}].sha is required`)
     }
-    payload.lora_sha = loraSha
-    if (typeof stage.loraWeight === 'number') payload.lora_weight = stage.loraWeight
-  }
+    if (!/^[0-9a-f]{64}$/.test(loraSha)) {
+      throw new Error(`WAN stage loras[${index}].sha must be sha256 (64 lowercase hex), got '${lora?.sha}'`)
+    }
+    const normalized: { sha: string; weight?: number } = { sha: loraSha }
+    if (lora?.weight !== undefined) {
+      if (typeof lora.weight !== 'number' || !Number.isFinite(lora.weight)) {
+        throw new Error(`WAN stage loras[${index}].weight must be a finite number`)
+      }
+      normalized.weight = lora.weight
+    }
+    return normalized
+  })
+  payload.loras = normalizedLoras
   if (typeof stage.flowShift === 'number') payload.flow_shift = stage.flowShift
 
   return payload
@@ -598,6 +674,56 @@ function addWanInterpolation(
   }
 }
 
+function addWanUpscaling(
+  payload: Record<string, unknown>,
+  upscaling: WanVideoUpscalingInput,
+): void {
+  if (!upscaling.enabled) return
+  const normalizedModel = String(upscaling.model || '').trim()
+  const upscalingPayload: Record<string, unknown> = {
+    enabled: true,
+  }
+  if (normalizedModel) upscalingPayload.dit_model = normalizedModel
+  if (Number.isFinite(Number(upscaling.resolution))) {
+    upscalingPayload.resolution = Math.max(16, Math.trunc(Number(upscaling.resolution)))
+  }
+  if (Number.isFinite(Number(upscaling.maxResolution))) {
+    upscalingPayload.max_resolution = Math.max(0, Math.trunc(Number(upscaling.maxResolution)))
+  }
+  if (Number.isFinite(Number(upscaling.batchSize))) {
+    const batch = Math.max(1, Math.trunc(Number(upscaling.batchSize)))
+    const remainder = (batch - 1) % 4
+    upscalingPayload.batch_size = remainder === 0 ? batch : batch + (4 - remainder)
+  }
+  upscalingPayload.uniform_batch_size = Boolean(upscaling.uniformBatchSize)
+  if (Number.isFinite(Number(upscaling.temporalOverlap))) {
+    upscalingPayload.temporal_overlap = Math.max(0, Math.trunc(Number(upscaling.temporalOverlap)))
+  }
+  if (Number.isFinite(Number(upscaling.prependFrames))) {
+    upscalingPayload.prepend_frames = Math.max(0, Math.trunc(Number(upscaling.prependFrames)))
+  }
+  const colorCorrection = String(upscaling.colorCorrection || '').trim().toLowerCase()
+  if (
+    colorCorrection === 'lab'
+    || colorCorrection === 'wavelet'
+    || colorCorrection === 'wavelet_adaptive'
+    || colorCorrection === 'hsv'
+    || colorCorrection === 'adain'
+    || colorCorrection === 'none'
+  ) {
+    upscalingPayload.color_correction = colorCorrection
+  }
+  if (Number.isFinite(Number(upscaling.inputNoiseScale))) {
+    const value = Number(upscaling.inputNoiseScale)
+    upscalingPayload.input_noise_scale = Math.min(1, Math.max(0, value))
+  }
+  if (Number.isFinite(Number(upscaling.latentNoiseScale))) {
+    const value = Number(upscaling.latentNoiseScale)
+    upscalingPayload.latent_noise_scale = Math.min(1, Math.max(0, value))
+  }
+  payload.video_upscaling = upscalingPayload
+}
+
 export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPayload {
   const totalSteps = input.high.steps + input.low.steps
   const width = snapWanDim(input.width)
@@ -624,6 +750,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
   if (sampler) payload.txt2vid_sampler = sampler
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation, input.fps)
+  addWanUpscaling(payload, input.upscaling)
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
@@ -714,6 +841,7 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
   }
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation, input.fps)
+  addWanUpscaling(payload, input.upscaling)
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
@@ -768,6 +896,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
 
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation, input.fps)
+  addWanUpscaling(payload, input.upscaling)
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)

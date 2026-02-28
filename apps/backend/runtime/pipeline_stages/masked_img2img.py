@@ -9,12 +9,14 @@ Required Notice: see NOTICE
 Purpose: Masked img2img (“inpaint”) helpers for SD-family pipelines.
 Normalizes masks (RGBA alpha semantics), applies invert/blur/round options, optionally builds an inpaint-full-res crop plan
 (Forge-style zoom-crop + paste-back overlay), and produces latent-space masks for sampler enforcement.
-When init/mask dimensions differ from target `processing.width/height`, normalizes both to target before latent encode.
+Keeps init/mask at the original image resolution and resizes only the cropped patch to `processing.width/height` for
+sampling (Forge/A1111 “Only masked” semantics).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InpaintFullResPlan` (dataclass): Full-res inpaint plan (crop region + overlay composite inputs).
 - `MaskedImg2ImgBundle` (dataclass): Prepared init tensor/latents + latent masks + optional full-res plan.
 - `LatentMaskEnforcer` (class): Latent masking helper implementing post-blend and per-step clamp hooks.
+- `compute_mask_connected_component_bboxes` (function): Returns connected-component bounding boxes for a binary inpaint mask (for multi-region flows).
 - `prepare_masked_img2img_bundle` (function): Build a masked img2img bundle from a processing object and sampling plan.
 - `apply_inpaint_full_res_composite` (function): Paste-back + overlay composite for full-res inpaint outputs.
 """
@@ -333,6 +335,103 @@ def _expand_crop_region(
     return int(x1), int(y1), int(x2), int(y2)
 
 
+def compute_mask_connected_component_bboxes(
+    raw_mask: Image.Image,
+    *,
+    round_mask: bool,
+    min_component_pixels: int = 8,
+    max_components: int = 16,
+    max_foreground_pixels: int = 250_000,
+) -> list[tuple[int, int, int, int]]:
+    """Return connected-component bounding boxes for a raw inpaint mask.
+
+    This is a best-effort helper intended for ADetailer-like multi-region flows.
+
+    Notes:
+    - Runs on a binary view of the mask (alpha semantics supported for RGBA inputs).
+    - Uses 8-connectivity.
+    - Caps work for extremely dense masks; in that case, returns a single bbox to avoid worst-case runtime.
+    """
+
+    if min_component_pixels <= 0:
+        raise ValueError("min_component_pixels must be >= 1")
+    if max_components <= 0:
+        raise ValueError("max_components must be >= 1")
+    if max_foreground_pixels <= 0:
+        raise ValueError("max_foreground_pixels must be >= 1")
+
+    mask = _create_binary_mask(raw_mask, round_mask=round_mask).convert("L")
+    array = np.array(mask, dtype=np.uint8)
+    foreground = array > 0
+    foreground_pixels = int(np.count_nonzero(foreground))
+    if foreground_pixels <= 0:
+        return []
+    if foreground_pixels > max_foreground_pixels:
+        box = mask.getbbox()
+        return [tuple(int(v) for v in box)] if box is not None else []
+
+    height, width = foreground.shape
+    ys, xs = np.nonzero(foreground)
+    if ys.size == 0:
+        return []
+
+    # Mutate `foreground` in-place to avoid a separate visited array.
+    components: list[tuple[int, int, int, int, int]] = []
+    stack: list[tuple[int, int]] = []
+    neighbors = (
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (0, -1),
+        (0, 1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+    )
+
+    for y0, x0 in zip(ys, xs):
+        y0_i = int(y0)
+        x0_i = int(x0)
+        if not foreground[y0_i, x0_i]:
+            continue
+        foreground[y0_i, x0_i] = False
+        stack.append((y0_i, x0_i))
+        min_x = max_x = x0_i
+        min_y = max_y = y0_i
+        area = 0
+
+        while stack:
+            y, x = stack.pop()
+            area += 1
+            if x < min_x:
+                min_x = x
+            elif x > max_x:
+                max_x = x
+            if y < min_y:
+                min_y = y
+            elif y > max_y:
+                max_y = y
+
+            for dy, dx in neighbors:
+                ny = y + dy
+                nx = x + dx
+                if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                    continue
+                if not foreground[ny, nx]:
+                    continue
+                foreground[ny, nx] = False
+                stack.append((ny, nx))
+
+        if area < min_component_pixels:
+            continue
+        components.append((min_x, min_y, max_x + 1, max_y + 1, int(area)))
+        if len(components) >= max_components:
+            break
+
+    components.sort(key=lambda item: item[4], reverse=True)
+    return [(x1, y1, x2, y2) for x1, y1, x2, y2, _area in components]
+
+
 def _overlay_from_mask(*, image: Image.Image, mask_for_overlay: Image.Image) -> Image.Image:
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     inv = ImageOps.invert(mask_for_overlay.convert("L"))
@@ -393,7 +492,8 @@ def prepare_masked_img2img_bundle(
 
     Notes:
     - Requires `processing.init_image` and `processing.mask`.
-    - If init image size differs from `processing.width/height`, init image + mask are resized to target before latent encode.
+    - Init image + mask are kept full-res; only the crop patch is resized to `processing.width/height` for sampling
+      (Forge/A1111 “Only masked” semantics).
     """
     init_image = getattr(processing, "init_image", None)
     if init_image is None:
@@ -415,20 +515,6 @@ def prepare_masked_img2img_bundle(
             f"Mask size must match init image size; got mask={raw_mask.size} init={init_image.size}"
         )
 
-    init_w, init_h = init_image.size
-    if (init_w, init_h) != (width, height):
-        original_width, original_height = init_w, init_h
-        init_image = init_image.convert("RGB").resize((width, height), resample=_RESAMPLE_LANCZOS)
-        raw_mask = raw_mask.resize((width, height), resample=_RESAMPLE_NEAREST)
-
-        setattr(processing, "init_image", init_image)
-        if hasattr(processing, "mask") and getattr(processing, "mask", None) is not None:
-            setattr(processing, "mask", raw_mask)
-        if hasattr(processing, "image_mask") and getattr(processing, "image_mask", None) is not None:
-            setattr(processing, "image_mask", raw_mask)
-        if hasattr(processing, "update_extra_param") and callable(getattr(processing, "update_extra_param")):
-            processing.update_extra_param("Init resize", f"{original_width}x{original_height} -> {width}x{height}")
-
     mask_round = bool(getattr(processing, "mask_round", True))
     invert = bool(int(getattr(processing, "inpainting_mask_invert", 0) or 0))
     blur_x = float(getattr(processing, "mask_blur_x", getattr(processing, "mask_blur", 0)) or 0)
@@ -447,31 +533,30 @@ def prepare_masked_img2img_bundle(
     mask_for_sampling = mask
     image_for_sampling = init_image.convert("RGB")
 
-    if bool(getattr(processing, "inpaint_full_res", True)):
-        pad = int(getattr(processing, "inpaint_full_res_padding", 0) or 0)
-        crop_region = _get_crop_region(mask.convert("L"), pad=pad)
-        if crop_region is None:
-            raise ValueError('Unable to perform "Inpaint only masked" because mask is blank')
-        crop_region = _expand_crop_region(
-            crop_region,
-            processing_width=width,
-            processing_height=height,
-            image_width=mask.size[0],
-            image_height=mask.size[1],
-        )
-        x1, y1, x2, y2 = crop_region
-        paste_to = (x1, y1, x2 - x1, y2 - y1)
-        full_res_plan = InpaintFullResPlan(
-            crop_region=crop_region,
-            paste_to=paste_to,
-            overlay=_overlay_from_mask(image=init_image.convert("RGB"), mask_for_overlay=mask),
-        )
-        mask_crop = mask.crop(crop_region)
-        mask_for_sampling = mask_crop.resize((width, height), resample=_RESAMPLE_LANCZOS)
-        image_crop = image_for_sampling.crop(crop_region)
-        image_for_sampling = image_crop.resize((width, height), resample=_RESAMPLE_LANCZOS)
-        processing.update_extra_param("Inpaint area", "Only masked")
-        processing.update_extra_param("Masked area padding", int(pad))
+    pad = int(getattr(processing, "inpaint_full_res_padding", 0) or 0)
+    crop_region = _get_crop_region(mask.convert("L"), pad=pad)
+    if crop_region is None:
+        raise ValueError('Unable to perform "Inpaint only masked" because mask is blank')
+    crop_region = _expand_crop_region(
+        crop_region,
+        processing_width=width,
+        processing_height=height,
+        image_width=init_image.size[0],
+        image_height=init_image.size[1],
+    )
+    x1, y1, x2, y2 = crop_region
+    paste_to = (x1, y1, x2 - x1, y2 - y1)
+    full_res_plan = InpaintFullResPlan(
+        crop_region=crop_region,
+        paste_to=paste_to,
+        overlay=_overlay_from_mask(image=init_image.convert("RGB"), mask_for_overlay=mask),
+    )
+    mask_crop = mask.crop(crop_region)
+    mask_for_sampling = mask_crop.resize((width, height), resample=_RESAMPLE_LANCZOS)
+    image_crop = image_for_sampling.crop(crop_region)
+    image_for_sampling = image_crop.resize((width, height), resample=_RESAMPLE_LANCZOS)
+    processing.update_extra_param("Inpaint area", "Only masked")
+    processing.update_extra_param("Masked area padding", int(pad))
 
     inpainting_fill = int(getattr(processing, "inpainting_fill", 0) or 0)
     if inpainting_fill != 1:
@@ -578,6 +663,7 @@ def apply_inpaint_full_res_composite(
 
 __all__ = [
     "ALLOWED_MASK_ENFORCEMENTS",
+    "compute_mask_connected_component_bboxes",
     "InpaintFullResPlan",
     "LatentMaskEnforcer",
     "MASK_ENFORCEMENT_PER_STEP_CLAMP",

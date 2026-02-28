@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-25
+Last Review: 2026-02-27
 Status: Active
 
 ## Purpose
@@ -50,6 +50,7 @@ Status: Active
 - 2026-02-21: WAN video result/export booleans in `txt2vid.py`, `img2vid.py`, and `vid2vid.py` now use shared strict parsing (`core.strict_values.parse_bool_value`) for `video_return_frames`, `video_options.save_output`, and export/probe flags (no permissive `bool("false")==True` coercion).
 - 2026-02-21: `txt2vid.py`/`img2vid.py` WAN22 GGUF result handling now avoids unconditional `list(...)` copies when `frames` is already a list, and Diffusers `img2vid` high→low transition now reuses the high-stage frame list instead of duplicating it before stage-2 seed extraction.
 - 2026-02-21: `img2vid.py` temporal parser now defaults `img2vid_chunk_seed_mode` to `fixed` in `img2vid_mode='sliding'` (chunk mode keeps `increment` default), emits continuity warnings when sliding uses non-fixed seed mode, and records `frame_counts {requested, generated, after_interpolation, after_export}` in result metadata for clearer frame-stage diagnostics.
+- 2026-02-27: WAN video use-cases (`txt2vid.py`, `img2vid.py`, `vid2vid.py`) now apply shared SeedVR2 upscaling before interpolation/export when `extras.video_upscaling.enabled=true`, emit `upscale` progress stage, update plan width/height from post-upscale frame size, and include `video_upscaling` metadata in result info.
 - 2026-02-22: `img2vid.py` extends explicit temporal mode routing to `img2vid_mode='svi2'|'svi2_pro'`, reusing windowed controls with fail-loud stride/commit continuity guards (`stride % 4 == 0`, `commit - stride >= 4`), dispatching `wan22.stream_img2vid_svi2(...)`/`wan22.stream_img2vid_svi2_pro(...)`, and defaulting `img2vid_chunk_seed_mode` to `increment` for SVI window progression.
 - 2026-02-22: `img2vid.py` now parses and forwards `img2vid_reset_anchor_to_base` explicitly for chunk/sliding modes (mode defaults: chunk=`true`, sliding=`false`), keeps SVI modes fail-loud on `reset_anchor_to_base=true`, and logs reset state in temporal mode summaries.
 - 2026-02-23: WAN22 use-cases (`txt2vid.py`, `img2vid.py`) no longer inject hardcoded `"auto"` device defaults when building GGUF run configs; they now pass `None` and keep device authority centralized in WAN runtime `resolve_device_name(...)` via memory-manager mount policy.

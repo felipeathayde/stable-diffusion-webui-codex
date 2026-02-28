@@ -52,10 +52,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `readFileAsDataURL` (function): Reads a File into a data URL (used for init-image handling).
 - `readImageDimensions` (function): Reads width/height from an image source URL (used for init-image dimension sync).
 - `syncInitImageDims` (function): Synchronizes init-image derived dimensions into width/height params (async).
+- `maskEditorImageWidth`/`maskEditorImageHeight` (const): Derived init-image dimensions used by the inpaint mask editor canvas (keeps backend mask-dimension contract).
 - `maybeApplyKontextDefaults` (function): Applies Kontext-specific default params when relevant to the current engine/tab.
 - `syncPreviewHeight` (function): Keeps the preview panel height aligned with layout changes (uses DOM measurements).
 - `onGenerate` (function): Run handler for the Run card; dispatches standard generation or XYZ sweep depending on XYZ enable state.
 - `runGenerateDisabled`/`runGenerateTitle` (const): Run CTA state/title derived from capabilities + active mode + XYZ running/enabled state.
+- `missingInpaintMask` (const): Derived guard flag used to disable generation when INPAINT is enabled without an applied mask.
 - `xyzSamplerChoices`/`xyzSchedulerChoices` (const): Sampler/scheduler names passed to embedded XYZ autofill (scheduler list is sampler-compatible).
 -->
 
@@ -78,18 +80,18 @@ Symbols (top-level; keep in sync; no ghosts):
             :disabled="isRunning"
             :initImageData="params.initImageData"
             :initImageName="params.initImageName"
-            :imageWidth="params.width"
-            :imageHeight="params.height"
+            :imageWidth="maskEditorImageWidth"
+            :imageHeight="maskEditorImageHeight"
             :useMask="params.useMask"
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"
             :maskEnforcement="params.maskEnforcement"
             :inpaintingFill="params.inpaintingFill"
-            :inpaintFullRes="params.inpaintFullRes"
             :inpaintFullResPadding="params.inpaintFullResPadding"
             :maskInvert="params.maskInvert"
             :maskRound="params.maskRound"
             :maskBlur="params.maskBlur"
+            :maskRegionSplit="params.maskRegionSplit"
             @set:initImage="onInitFileSet"
             @clear:initImage="clearInit"
             @reject:initImage="onInitImageRejected"
@@ -98,11 +100,11 @@ Symbols (top-level; keep in sync; no ghosts):
             @notice:maskEditorReset="onMaskEditorResetNotice"
             @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
             @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
-            @toggle:inpaintFullRes="setParams({ inpaintFullRes: !params.inpaintFullRes })"
             @update:inpaintFullResPadding="(v) => setParams({ inpaintFullResPadding: normalizeNonNegativeInt(v) })"
-            @toggle:maskInvert="setParams({ maskInvert: !params.maskInvert })"
+            @toggle:maskInvert="toggleMaskInvert"
             @toggle:maskRound="setParams({ maskRound: !params.maskRound })"
             @update:maskBlur="(v) => setParams({ maskBlur: normalizeNonNegativeInt(v) })"
+            @toggle:maskRegionSplit="setParams({ maskRegionSplit: !params.maskRegionSplit })"
           />
         </div>
       </PromptCard>
@@ -613,6 +615,66 @@ const imageTab = computed<ImageTab | null>(() => {
 })
 const fallbackParams = computed<ImageBaseParams>(() => defaultImageParamsForType(props.type))
 const params = computed<ImageBaseParams>(() => imageTab.value?.params ?? fallbackParams.value)
+
+const initImageNaturalWidth = ref(0)
+const initImageNaturalHeight = ref(0)
+const initImageDimsToken = ref(0)
+
+const maskEditorImageWidth = computed(() => {
+  if (!String(params.value.initImageData || '').trim()) return params.value.width
+  const w = Math.trunc(Number(initImageNaturalWidth.value))
+  return Number.isFinite(w) && w > 0 ? w : params.value.width
+})
+const maskEditorImageHeight = computed(() => {
+  if (!String(params.value.initImageData || '').trim()) return params.value.height
+  const h = Math.trunc(Number(initImageNaturalHeight.value))
+  return Number.isFinite(h) && h > 0 ? h : params.value.height
+})
+
+watch(
+  () => String(params.value.initImageData || '').trim(),
+  (src) => {
+    const token = (initImageDimsToken.value += 1)
+    if (!src) {
+      initImageNaturalWidth.value = 0
+      initImageNaturalHeight.value = 0
+      return
+    }
+
+    readImageDimensions(src)
+      .then(({ width, height }) => {
+        if (initImageDimsToken.value !== token) return
+        const initW = Math.max(0, Math.trunc(width))
+        const initH = Math.max(0, Math.trunc(height))
+        initImageNaturalWidth.value = initW
+        initImageNaturalHeight.value = initH
+
+        const maskSrc = String(params.value.maskImageData || '').trim()
+        if (!maskSrc) return
+        readImageDimensions(maskSrc)
+          .then(({ width: maskW, height: maskH }) => {
+            if (initImageDimsToken.value !== token) return
+            if (Math.trunc(maskW) === initW && Math.trunc(maskH) === initH) return
+            toast(
+              `Mask cleared: init image size is ${initW}×${initH}, but mask is ${maskW}×${maskH}. Re-open the editor to reapply.`,
+            )
+            setParams({ maskImageData: '', maskImageName: '' })
+          })
+          .catch(() => {
+            if (initImageDimsToken.value !== token) return
+            toast('Mask cleared: failed to load the stored mask image.')
+            setParams({ maskImageData: '', maskImageName: '' })
+          })
+      })
+      .catch(() => {
+        if (initImageDimsToken.value !== token) return
+        initImageNaturalWidth.value = 0
+        initImageNaturalHeight.value = 0
+      })
+  },
+  { immediate: true },
+)
+
 const engineConfig = computed(() => getEngineConfig(props.type))
 const resolvedEngineForMode = computed(() => resolveEngineForRequest(props.type, Boolean(params.value.useInitImage)))
 const engineSurface = computed(() => engineCaps.get(resolvedEngineForMode.value))
@@ -661,16 +723,25 @@ const xyzProgressPercent = computed(() => {
   if (!xyzStore.progress.total) return null
   return (xyzStore.progress.completed / xyzStore.progress.total) * 100
 })
+const missingInpaintMask = computed(() =>
+  Boolean(params.value.useInitImage)
+  && Boolean(params.value.useMask)
+  && !String(params.value.maskImageData || '').trim(),
+)
 const runGenerateDisabled = computed(() => {
   if (isRunBusy.value) return true
   if (xyzStore.enabled) {
     return !(dependencyReady.value && Boolean(familyCapabilities.value) && supportsTxt2Img.value)
   }
+  if (missingInpaintMask.value) return true
   return !canGenerateForCurrentMode.value
 })
 const runGenerateTitle = computed(() => {
   if (xyzRunning.value) return 'XYZ sweep is running.'
-  if (!xyzStore.enabled) return generateDisabledReason.value
+  if (!xyzStore.enabled) {
+    if (missingInpaintMask.value) return 'INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.'
+    return generateDisabledReason.value
+  }
   if (!dependencyStatus.value) return `Dependency checks for '${resolvedEngineForMode.value}' are not available.`
   if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
   if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
@@ -1125,6 +1196,14 @@ function setParams(patch: Partial<ImageBaseParams>): void {
   })
 }
 
+function toggleMaskInvert(): void {
+  const next = !params.value.maskInvert
+  setParams({
+    maskInvert: next,
+    maskRegionSplit: next ? false : params.value.maskRegionSplit,
+  })
+}
+
 function setGuidanceAdvanced(patch: Partial<GuidanceAdvancedParams>): void {
   const next = normalizeGuidanceAdvancedPatch(
     patch,
@@ -1230,16 +1309,26 @@ async function onMaskEditorApply(maskDataUrl: string): Promise<void> {
     toast('Select an initial image before editing a mask.')
     return
   }
+
+  let initDims: { width: number; height: number }
+  try {
+    initDims = await readImageDimensions(params.value.initImageData)
+  } catch {
+    toast('Failed to load init image for mask validation.')
+    return
+  }
+
   try {
     const { width, height } = await readImageDimensions(maskDataUrl)
-    if (width !== params.value.width || height !== params.value.height) {
-      toast(`Mask size must match init image size: expected ${params.value.width}×${params.value.height}, got ${width}×${height}.`)
+    if (width !== initDims.width || height !== initDims.height) {
+      toast(`Mask size must match init image size: expected ${initDims.width}×${initDims.height}, got ${width}×${height}.`)
       return
     }
   } catch {
     toast('Failed to load edited mask image.')
     return
   }
+
   setParams({ useMask: true, maskImageData: maskDataUrl, maskImageName: 'edited-mask.png' })
 }
 

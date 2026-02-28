@@ -13,9 +13,9 @@ trigger revision refresh + manual-retry UX. Persists a minimal resume marker to 
 via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 mode prompt fields from the High stage in payload builders for backend compatibility. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/
 `pingpong`/`returnFrames`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), and stage `flowShift`
-pass-through in common WAN payload input.
-Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`), and stage-level WAN LoRA fields are not emitted from this
-composable (LoRA control is prompt-level). Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
+pass-through in common WAN payload input. Also snapshots and forwards optional SeedVR2 upscaling controls as `video_upscaling`.
+Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`), and stage-level WAN LoRA arrays (`high.loras`/`low.loras`) are
+threaded into payload builders when present. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
 before surfacing UI error text.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -270,8 +270,7 @@ function defaultStage(): WanStageParams {
     steps: 30,
     cfgScale: 7,
     seed: -1,
-    loraSha: '',
-    loraWeight: 1.0,
+    loras: [],
   }
 }
 
@@ -301,6 +300,17 @@ function defaultVideo(): WanVideoParams {
     pingpong: false,
     returnFrames: false,
     interpolationFps: 0,
+    upscalingEnabled: false,
+    upscalingModel: 'seedvr2_ema_3b_fp16.safetensors',
+    upscalingResolution: 1080,
+    upscalingMaxResolution: 0,
+    upscalingBatchSize: 5,
+    upscalingUniformBatchSize: false,
+    upscalingTemporalOverlap: 0,
+    upscalingPrependFrames: 0,
+    upscalingColorCorrection: 'lab',
+    upscalingInputNoiseScale: 0,
+    upscalingLatentNoiseScale: 0,
   }
 }
 
@@ -455,7 +465,8 @@ export function useVideoGeneration(tabId: string) {
     const fps = Number(v.fps) || 0
     const seconds = fps > 0 ? (frames / fps) : 0
     const loraTag = lightx2v.value ? ' · lightx2v' : ''
-    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${loraTag}`
+    const upscalingTag = v.upscalingEnabled ? ' · seedvr2' : ''
+    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${loraTag}${upscalingTag}`
   }
 
   function buildParamsSnapshot(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): Record<string, unknown> {
@@ -494,6 +505,7 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
+        loras: hi.loras,
         flowShift: hi.flowShift,
       },
       low: {
@@ -505,6 +517,7 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
+        loras: lo.loras,
         flowShift: lo.flowShift,
       },
       output: {
@@ -517,6 +530,19 @@ export function useVideoGeneration(tabId: string) {
       },
       interpolation: {
         targetFps: v.interpolationFps,
+      },
+      upscaling: {
+        enabled: v.upscalingEnabled,
+        model: v.upscalingModel,
+        resolution: v.upscalingResolution,
+        maxResolution: v.upscalingMaxResolution,
+        batchSize: v.upscalingBatchSize,
+        uniformBatchSize: v.upscalingUniformBatchSize,
+        temporalOverlap: v.upscalingTemporalOverlap,
+        prependFrames: v.upscalingPrependFrames,
+        colorCorrection: v.upscalingColorCorrection,
+        inputNoiseScale: v.upscalingInputNoiseScale,
+        latentNoiseScale: v.upscalingLatentNoiseScale,
       },
     }
   }
@@ -553,6 +579,7 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
+        loras: Array.isArray(hi.loras) ? hi.loras : [],
         flowShift: hi.flowShift,
       },
       low: {
@@ -564,6 +591,7 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
+        loras: Array.isArray(lo.loras) ? lo.loras : [],
         flowShift: lo.flowShift,
       },
       format: 'auto' as const,
@@ -582,6 +610,19 @@ export function useVideoGeneration(tabId: string) {
       },
       interpolation: {
         targetFps: v.interpolationFps,
+      },
+      upscaling: {
+        enabled: v.upscalingEnabled,
+        model: v.upscalingModel,
+        resolution: v.upscalingResolution,
+        maxResolution: v.upscalingMaxResolution,
+        batchSize: v.upscalingBatchSize,
+        uniformBatchSize: v.upscalingUniformBatchSize,
+        temporalOverlap: v.upscalingTemporalOverlap,
+        prependFrames: v.upscalingPrependFrames,
+        colorCorrection: v.upscalingColorCorrection,
+        inputNoiseScale: v.upscalingInputNoiseScale,
+        latentNoiseScale: v.upscalingLatentNoiseScale,
       },
     }
   }

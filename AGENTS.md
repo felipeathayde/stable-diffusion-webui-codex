@@ -88,6 +88,11 @@ The `AGENTS.md` files across the project tell the truth or they shut up.
 Git execution rules and commit mechanics are centralized in global instructions.
 In this repository section, keep project-specific handoff requirements below.
 
+`.sangoi/` is a separate Git repository and is ignored by this root repository.
+- Root commits (`git add/commit` from this repo) do not include `.sangoi/**`.
+- When a task targets `.sangoi`, run Git commands explicitly against that repo (`git -C .sangoi ...`).
+- Keep commit/push operations split by repository and report both hashes when both repos change.
+
 When your turn is done:
 - You verify the **file header block** (top-of-file `Repository/SPDX/Purpose/Symbols`) for **every touched file** under `apps/**` (even if the diff "seems small”), and update Purpose/Symbols if needed. 
 - Use `python3 .sangoi/.tools/review_apps_header_updates.py --show-body-diff` to review "changed body, unchanged header” cases.

@@ -13,6 +13,7 @@ Also owns WAN22 request-key allowlists used by generation routers, including img
 Symbols (top-level; keep in sync; no ghosts):
 - `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields and optional `video_upscaling` key).
 - `WAN22_REQUEST_KEYS` (constant): Singleton request-key map used by WAN22 request validators.
+- `remap_wan22_lora_logical_key` (function): Maps WAN22 LoRA logical keys to canonical WAN22 transformer weight keys.
 - `remap_wan22_transformer_state_dict` (function): Returns (detected_style, remapped_view) for WAN22 transformer keys.
 """
 
@@ -58,6 +59,25 @@ _RX_BLOCK_FFN_PROJ = re.compile(
 _RX_BLOCK_NORM2 = re.compile(r"^blocks\.(?P<idx>\d+)\.norm2\.(?P<param>weight|bias)$")
 _RX_BLOCK_NORM3 = re.compile(r"^blocks\.(?P<idx>\d+)\.norm3\.(?P<param>weight|bias)$")
 _RX_BLOCK_SCALE_SHIFT = re.compile(r"^blocks\.(?P<idx>\d+)\.scale_shift_table$")
+_RX_LORA_CANONICAL_ATTN_DOT = re.compile(
+    r"^blocks\.(?P<idx>\d+)\.(?P<which>self_attn|cross_attn)\.(?P<proj>q|k|v|o)$"
+)
+_RX_LORA_CANONICAL_FFN_DOT = re.compile(r"^blocks\.(?P<idx>\d+)\.ffn\.(?P<which>0|2)$")
+_RX_LORA_CANONICAL_ATTN_UNDERSCORE = re.compile(
+    r"^blocks_(?P<idx>\d+)_(?P<which>self_attn|cross_attn)_(?P<proj>q|k|v|o)$"
+)
+_RX_LORA_CANONICAL_FFN_UNDERSCORE = re.compile(r"^blocks_(?P<idx>\d+)_ffn_(?P<which>0|2)$")
+_RX_LORA_DIFFUSERS_ATTN_DOT = re.compile(
+    r"^blocks\.(?P<idx>\d+)\.(?P<which>attn1|attn2)\.to_(?P<proj>q|k|v)$"
+)
+_RX_LORA_DIFFUSERS_ATTN_UNDERSCORE = re.compile(
+    r"^blocks_(?P<idx>\d+)_(?P<which>attn1|attn2)_to_(?P<proj>q|k|v)$"
+)
+_RX_LORA_DIFFUSERS_OUT_DOT = re.compile(r"^blocks\.(?P<idx>\d+)\.(?P<which>attn1|attn2)\.to_out\.0$")
+_RX_LORA_DIFFUSERS_OUT_UNDERSCORE = re.compile(r"^blocks_(?P<idx>\d+)_(?P<which>attn1|attn2)_to_out_0$")
+_RX_LORA_DIFFUSERS_FFN_DOT = re.compile(r"^blocks\.(?P<idx>\d+)\.ffn\.net\.(?P<which>0\.proj|2)$")
+_RX_LORA_DIFFUSERS_FFN_UNDERSCORE = re.compile(r"^blocks_(?P<idx>\d+)_ffn_net_(?P<which>0_proj|2)$")
+_LORA_LOGICAL_PREFIXES = ("lora_unet_", "lycoris_")
 
 _DETECTOR = KeyStyleDetector(
     name="wan22_transformer_key_style",
@@ -243,6 +263,73 @@ class Wan22RequestKeys:
 WAN22_REQUEST_KEYS = Wan22RequestKeys()
 
 
+def remap_wan22_lora_logical_key(logical_key: str) -> str | None:
+    """Map a WAN22 LoRA logical key to a canonical WAN22 transformer `.weight` key.
+
+    Supported logical-key families:
+    - Canonical Codex style (`blocks.N.self_attn.q`, `blocks_N_self_attn_q`, `blocks.N.ffn.0`, `blocks_N_ffn_0`)
+    - Diffusers style (`blocks.N.attn1.to_q`, `blocks_N_attn1_to_q`, `blocks.N.attn1.to_out.0`, `blocks_N_attn1_to_out_0`,
+      `blocks.N.ffn.net.0.proj`, `blocks_N_ffn_net_0_proj`)
+    - Optional LoRA wrappers (`lora_unet_`, `lycoris_`)
+    """
+
+    key = strip_repeated_prefixes(str(logical_key), _PREFIXES)
+    if key.endswith(".weight"):
+        key = key[: -len(".weight")]
+    for prefix in _LORA_LOGICAL_PREFIXES:
+        if key.startswith(prefix):
+            key = key[len(prefix) :]
+            break
+
+    m = _RX_LORA_CANONICAL_ATTN_DOT.match(key)
+    if m:
+        return f"blocks.{m.group('idx')}.{m.group('which')}.{m.group('proj')}.weight"
+
+    m = _RX_LORA_CANONICAL_FFN_DOT.match(key)
+    if m:
+        return f"blocks.{m.group('idx')}.ffn.{m.group('which')}.weight"
+
+    m = _RX_LORA_CANONICAL_ATTN_UNDERSCORE.match(key)
+    if m:
+        return f"blocks.{m.group('idx')}.{m.group('which')}.{m.group('proj')}.weight"
+
+    m = _RX_LORA_CANONICAL_FFN_UNDERSCORE.match(key)
+    if m:
+        return f"blocks.{m.group('idx')}.ffn.{m.group('which')}.weight"
+
+    m = _RX_LORA_DIFFUSERS_ATTN_DOT.match(key)
+    if m:
+        which = "self_attn" if m.group("which") == "attn1" else "cross_attn"
+        return f"blocks.{m.group('idx')}.{which}.{m.group('proj')}.weight"
+
+    m = _RX_LORA_DIFFUSERS_ATTN_UNDERSCORE.match(key)
+    if m:
+        which = "self_attn" if m.group("which") == "attn1" else "cross_attn"
+        return f"blocks.{m.group('idx')}.{which}.{m.group('proj')}.weight"
+
+    m = _RX_LORA_DIFFUSERS_OUT_DOT.match(key)
+    if m:
+        which = "self_attn" if m.group("which") == "attn1" else "cross_attn"
+        return f"blocks.{m.group('idx')}.{which}.o.weight"
+
+    m = _RX_LORA_DIFFUSERS_OUT_UNDERSCORE.match(key)
+    if m:
+        which = "self_attn" if m.group("which") == "attn1" else "cross_attn"
+        return f"blocks.{m.group('idx')}.{which}.o.weight"
+
+    m = _RX_LORA_DIFFUSERS_FFN_DOT.match(key)
+    if m:
+        which = "0" if m.group("which") == "0.proj" else "2"
+        return f"blocks.{m.group('idx')}.ffn.{which}.weight"
+
+    m = _RX_LORA_DIFFUSERS_FFN_UNDERSCORE.match(key)
+    if m:
+        which = "0" if m.group("which") == "0_proj" else "2"
+        return f"blocks.{m.group('idx')}.ffn.{which}.weight"
+
+    return None
+
+
 def remap_wan22_transformer_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
     def _normalize(key: str) -> str:
         return strip_repeated_prefixes(str(key), _PREFIXES)
@@ -386,5 +473,6 @@ def remap_wan22_transformer_state_dict(state_dict: MutableMapping[str, _T]) -> t
 __all__ = [
     "Wan22RequestKeys",
     "WAN22_REQUEST_KEYS",
+    "remap_wan22_lora_logical_key",
     "remap_wan22_transformer_state_dict",
 ]

@@ -38,5 +38,6 @@ Notes:
 - 2026-02-21: `keymap_wan22_transformer.py` WAN22 img2vid request allowlist now includes temporal-mode keys (`img2vid_mode`, `img2vid_window_frames`, `img2vid_window_stride`, `img2vid_window_commit_frames`) so router unknown-key checks remain strict with sliding-window mode.
 - 2026-02-21: Removed legacy WAN22 request aliases `txt2vid_sampling`/`img2vid_sampling` from transformer allowlists; canonical sampler fields are `txt2vid_sampler` and `img2vid_sampler` only (old aliases now fail unknown-key checks).
 - 2026-02-27: `keymap_wan22_transformer.py` WAN22 request allowlist now includes top-level `video_upscaling` in `COMMON` so strict unknown-key checks accept SeedVR2 upscaling payloads for txt2vid/img2vid.
+- 2026-02-28: `keymap_wan22_transformer.py` now exposes `remap_wan22_lora_logical_key(...)` as canonical WAN22 LoRA logical-key → transformer-weight mapping authority (supports codex and diffusers-style logical keys, optional `lora_unet_`/`lycoris_` wrappers).
 
-Last Review: 2026-02-27
+Last Review: 2026-02-28

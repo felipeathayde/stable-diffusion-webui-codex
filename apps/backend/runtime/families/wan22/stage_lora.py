@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Apply per-stage LoRA patches to WAN22 GGUF stage models (merge or online).
-Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys (direct match or via `remap_wan22_gguf_state_dict`),
+Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys via
+`remap_wan22_lora_logical_key` from `keymap_wan22_transformer.py` (canonical keymap authority),
 with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -29,9 +30,9 @@ from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_a
 from apps.backend.patchers.lora_loader import CodexLoraLoader
 from apps.backend.runtime.adapters.lora.pipeline import build_patch_dicts
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.state_dict.keymap_wan22_transformer import remap_wan22_lora_logical_key
 
 from .diagnostics import get_logger
-from .model import remap_wan22_gguf_state_dict
 from .paths import normalize_win_path
 
 _WAN22_LORA_PREFIXES = (
@@ -153,9 +154,9 @@ def _extract_logical_keys(tensors: Mapping[str, torch.Tensor]) -> Set[str]:
 def _build_to_load_map(model: torch.nn.Module, tensors: Mapping[str, torch.Tensor]) -> Dict[str, str]:
     """Return LoRA logical-key → model-param mappings for a WAN stage model.
 
-    This is designed for WAN22 stage LoRAs (including LightX2V) that may be authored in:
-    - Codex-native module naming, or
-    - Diffusers/WAN export naming (converted via remap).
+    Mapping authority is `remap_wan22_lora_logical_key` from WAN22 state-dict keymap;
+    unsupported logical keys are left unmatched and handled by coverage/zero-match fail-loud
+    checks at apply time.
     """
 
     model_keys = set(str(k) for k in model.state_dict().keys())
@@ -166,24 +167,20 @@ def _build_to_load_map(model: torch.nn.Module, tensors: Mapping[str, torch.Tenso
     out: dict[str, str] = {}
     target_owner: dict[str, str] = {}
 
-    from apps.backend.runtime.state_dict.key_mapping import KeyStyleDetectionError
-
     for logical_key in logical_keys:
         stripped = _strip_known_prefixes(logical_key)
-        direct_weight_key = f"{stripped}.weight"
+        logical_candidates: tuple[str, ...] = (
+            (logical_key, stripped) if stripped != logical_key else (logical_key,)
+        )
 
         target: str | None = None
-        if direct_weight_key in model_keys:
-            target = direct_weight_key
-        else:
-            try:
-                remapped = remap_wan22_gguf_state_dict({direct_weight_key: 0})
-            except KeyStyleDetectionError:
-                remapped = {}
-            if len(remapped) == 1:
-                candidate = next(iter(remapped.keys()))
-                if candidate in model_keys:
-                    target = candidate
+        for candidate_logical in logical_candidates:
+            mapped_weight_key = remap_wan22_lora_logical_key(candidate_logical)
+            if mapped_weight_key is None:
+                continue
+            if mapped_weight_key in model_keys:
+                target = mapped_weight_key
+                break
 
         if target is None:
             continue

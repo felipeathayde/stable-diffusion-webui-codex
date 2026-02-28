@@ -25,7 +25,7 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 - `WanVideoUpscalingInput` (interface): Optional SeedVR2 upscaling input mapped to backend `video_upscaling`.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
-- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|chunk|sliding|svi2|svi2_pro`).
+- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|sliding|svi2|svi2_pro`).
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
@@ -45,7 +45,6 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 import { z } from 'zod'
 import {
   isWanWindowedImg2VidMode,
-  normalizeWanChunkOverlap,
   normalizeWanImg2VidMode,
   normalizeWanWindowCommit,
   normalizeWanWindowStride,
@@ -64,7 +63,7 @@ const PromptSchema = z
 
 const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
 const WanAttentionModeEnum = z.enum(['global', 'sliding'])
-const Img2VidModeEnum = z.enum(['solo', 'chunk', 'sliding', 'svi2', 'svi2_pro'])
+const Img2VidModeEnum = z.enum(['solo', 'sliding', 'svi2', 'svi2_pro'])
 const Img2VidChunkSeedModeEnum = z.enum(['fixed', 'increment', 'random'])
 
 const WAN_DIM_STEP = 16
@@ -244,7 +243,7 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "img2vid_mode='solo' does not allow chunking fields",
+          message: "img2vid_mode='solo' does not allow temporal fields",
           path: ['img2vid_mode'],
         })
       }
@@ -256,30 +255,6 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
         })
       }
       return
-    }
-
-    if (mode === 'chunk') {
-      if (chunkFrames === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "img2vid_mode='chunk' requires img2vid_chunk_frames",
-          path: ['img2vid_chunk_frames'],
-        })
-      }
-      if (chunkFrames !== undefined && chunkFrames >= payload.img2vid_num_frames) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'img2vid_chunk_frames must be smaller than img2vid_num_frames',
-          path: ['img2vid_chunk_frames'],
-        })
-      }
-      if (windowFrames !== undefined || windowStride !== undefined || windowCommitFrames !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "img2vid_mode='chunk' does not allow sliding-window fields",
-          path: ['img2vid_mode'],
-        })
-      }
     }
 
     if (isWanWindowedImg2VidMode(mode)) {
@@ -343,35 +318,6 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
         })
       }
       return
-    }
-
-    if (overlapFrames !== undefined && chunkFrames === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "img2vid_overlap_frames requires img2vid_chunk_frames",
-        path: ['img2vid_overlap_frames'],
-      })
-      return
-    }
-    if (chunkFrames !== undefined && overlapFrames !== undefined && overlapFrames >= chunkFrames) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'img2vid_overlap_frames must be smaller than img2vid_chunk_frames',
-        path: ['img2vid_overlap_frames'],
-      })
-    }
-    if (
-      mode === 'chunk'
-      && chunkFrames !== undefined
-      && overlapFrames !== undefined
-      && ((chunkFrames - overlapFrames) % WAN_WINDOW_STRIDE_ALIGNMENT !== 0)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          `img2vid_overlap_frames must keep (img2vid_chunk_frames - img2vid_overlap_frames) aligned to temporal scale=${WAN_WINDOW_STRIDE_ALIGNMENT}`,
-        path: ['img2vid_overlap_frames'],
-      })
     }
   })
 
@@ -479,9 +425,7 @@ export interface WanVideoCommonInput {
 
 export interface WanImg2VidInput extends WanVideoCommonInput {
   initImageData: string
-  img2vidMode: 'solo' | 'chunk' | 'sliding' | 'svi2' | 'svi2_pro'
-  chunkFrames?: number
-  overlapFrames?: number
+  img2vidMode: 'solo' | 'sliding' | 'svi2' | 'svi2_pro'
   anchorAlpha?: number
   resetAnchorToBase?: boolean
   chunkSeedMode?: 'fixed' | 'increment' | 'random'
@@ -800,21 +744,7 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
       payload.img2vid_chunk_seed_mode = chunkSeedMode
     }
   }
-  if (img2vidMode === 'chunk') {
-    const rawChunkFrames = Number(input.chunkFrames)
-    const normalizedChunkFrames =
-      Number.isFinite(rawChunkFrames) && rawChunkFrames > 0 ? normalizeWanFrameCount(rawChunkFrames) : undefined
-    if (normalizedChunkFrames !== undefined) {
-      payload.img2vid_chunk_frames = normalizedChunkFrames
-      const rawOverlap = Number(input.overlapFrames)
-      const fallbackOverlap = Math.max(1, Math.trunc(normalizedChunkFrames / 4))
-      payload.img2vid_overlap_frames = normalizeWanChunkOverlap(
-        rawOverlap,
-        normalizedChunkFrames,
-        fallbackOverlap,
-      )
-    }
-  } else if (isWanWindowedImg2VidMode(img2vidMode)) {
+  if (isWanWindowedImg2VidMode(img2vidMode)) {
     const rawWindowFrames = Number(input.windowFrames)
     if (Number.isFinite(rawWindowFrames) && rawWindowFrames > 0) {
       payload.img2vid_window_frames = normalizeWanFrameCount(rawWindowFrames)

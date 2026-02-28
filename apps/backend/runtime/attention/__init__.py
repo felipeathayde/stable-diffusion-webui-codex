@@ -32,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import logging
 import math
+from contextvars import ContextVar
 from contextlib import nullcontext
 from typing import Literal
 
@@ -52,8 +53,9 @@ _XFORMERS_OPS = None
 _XFORMERS_BROKEN = None
 _XFORMERS_VERSION = None
 _XFORMERS_IMPORT_ERROR: Exception | None = None
-_SDPA_POLICY_LOGGED: set[tuple[str, str, str]] = set()
-_SDPA_FLASH_FALLBACK_LOGGED: set[tuple[str, str, str, str]] = set()
+_SDPA_POLICY_LOGGED: set[tuple[str, str, str, str]] = set()
+_SDPA_FLASH_FALLBACK_LOGGED: set[tuple[str, str, str, str, str]] = set()
+_ATTENTION_REQUEST_ID_CTX: ContextVar[str] = ContextVar("attention_request_id", default="-")
 
 
 def _require_xformers_ops():
@@ -78,6 +80,18 @@ def _require_xformers_ops():
     _XFORMERS_OPS = xformers.ops
 
     return _XFORMERS_OPS, bool(_XFORMERS_BROKEN), version
+
+
+def set_attention_request_id(request_id: str | None) -> str:
+    normalized = str(request_id or "").strip() or "-"
+    _ATTENTION_REQUEST_ID_CTX.set(normalized)
+    return normalized
+
+
+def get_attention_request_id() -> str:
+    rid = _ATTENTION_REQUEST_ID_CTX.get()
+    return rid if rid else "-"
+
 
 __all__ = [name for name in globals() if not name.startswith("_")]
 
@@ -142,12 +156,14 @@ def _sdpa_context(*, sdpa_policy: _SDPAPolicy, device: torch.device):
 
 
 def _log_sdpa_policy_once(*, sdpa_policy: _SDPAPolicy, device: torch.device, dtype: torch.dtype) -> None:
-    key = (sdpa_policy, device.type, str(dtype))
+    request_id = get_attention_request_id()
+    key = (request_id, sdpa_policy, device.type, str(dtype))
     if key in _SDPA_POLICY_LOGGED:
         return
     _SDPA_POLICY_LOGGED.add(key)
     _LOGGER.info(
-        "[attention] pytorch sdpa policy=%s device=%s dtype=%s",
+        "[attention][req=%s] pytorch sdpa policy=%s device=%s dtype=%s",
+        request_id,
         sdpa_policy,
         str(device),
         str(dtype),
@@ -161,13 +177,15 @@ def _log_sdpa_flash_fallback_once(
     fallback_policy: _SDPAPolicy,
     reason: str,
 ) -> None:
-    key = (str(device), str(dtype), fallback_policy, reason)
+    request_id = get_attention_request_id()
+    key = (request_id, str(device), str(dtype), fallback_policy, reason)
     if key in _SDPA_FLASH_FALLBACK_LOGGED:
         return
     _SDPA_FLASH_FALLBACK_LOGGED.add(key)
     _LOGGER.warning(
-        "[attention] requested sdpa policy=flash but flash is unavailable; "
+        "[attention][req=%s] requested sdpa policy=flash but flash is unavailable; "
         "falling back to policy=%s device=%s dtype=%s reason=%s",
+        request_id,
         fallback_policy,
         str(device),
         str(dtype),
@@ -443,6 +461,11 @@ def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
     r1 = torch.zeros(q.shape[0], q.shape[1], v.shape[2], device=q.device, dtype=q.dtype)
 
     mem_free_total = memory_management.manager.get_free_memory(q.device)
+    if mem_free_total <= 0:
+        raise RuntimeError(
+            "Not enough memory for attention: free memory estimate is non-positive "
+            f"(have={mem_free_total} bytes, device={q.device})."
+        )
 
     if attn_precision == torch.float32:
         element_size = 4
@@ -599,6 +622,11 @@ def slice_attention_single_head_spatial(q, k, v):
     scale = (int(q.shape[-1]) ** (-0.5))
 
     mem_free_total = memory_management.manager.get_free_memory(q.device)
+    if mem_free_total <= 0:
+        raise RuntimeError(
+            "Not enough memory for spatial attention: free memory estimate is non-positive "
+            f"(have={mem_free_total} bytes, device={q.device})."
+        )
 
     tensor_size = q.shape[0] * q.shape[1] * k.shape[2] * q.element_size()
     modifier = 3 if q.element_size() == 2 else 2.5

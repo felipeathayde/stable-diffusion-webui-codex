@@ -70,6 +70,8 @@ if %AHEAD% GTR 0 call :die E_AHEAD_OF_UPSTREAM "Local branch is ahead by %AHEAD%
 if errorlevel 1 exit /b 1
 call :prepare_refresh_requirements
 if errorlevel 1 exit /b 1
+call :validate_torch_mode_guard
+if errorlevel 1 exit /b 1
 call :resolve_torch_backend
 if errorlevel 1 exit /b 1
 
@@ -118,6 +120,7 @@ echo   - Ignored paths do not block update ^(P2=B^).
 echo   - Frontend refresh uses lock-preserving mode: npm ci.
 echo.
 echo Optional env:
+echo   CODEX_TORCH_MODE=custom  ^(updater aborts before dependency sync to avoid overwriting custom PyTorch installs^)
 echo   CODEX_TORCH_BACKEND=cpu^|cu126^|cu128^|cu130^|rocm64
 echo   CODEX_CUDA_VARIANT=12.6^|12.8^|13^|cu126^|cu128^|cu130  ^(validated whenever set; used when CODEX_TORCH_BACKEND is not set^)
 echo   CODEX_NODE_VERSION=^<version^>  ^(default 24.13.0; used for nodeenv auto-provisioning^)
@@ -310,6 +313,13 @@ exit /b 1
 call :die E_NODEENV_CORRUPT "Found '%NODEENV_DIR%', but node/npm are missing or invalid. Recreate '%NODEENV_DIR%' or run install-webui.cmd."
 exit /b 1
 
+:validate_torch_mode_guard
+if /I "%CODEX_TORCH_MODE%"=="custom" (
+  call :die E_CUSTOM_TORCH_MODE_UNSUPPORTED "CODEX_TORCH_MODE=custom is not supported by update-webui.bat. Aborting before dependency sync to avoid overwriting a custom PyTorch install."
+  exit /b 1
+)
+exit /b 0
+
 :resolve_torch_backend
 set "TORCH_BACKEND="
 call :resolve_cuda_variant_override
@@ -331,7 +341,7 @@ if defined VARIANT_BACKEND (
   exit /b 0
 )
 
-for /f "usebackq delims=" %%I in (`"%PYTHON_BIN%" -c "import importlib.util,sys; spec=importlib.util.find_spec('torch'); spec or sys.exit(2); import torch; v=str(getattr(torch,'__version__','')).lower(); m=[('+cu126','cu126'),('+cu128','cu128'),('+cu130','cu130'),('+rocm','rocm64'),('+cpu','cpu')]; r=next((name for token,name in m if token in v),None); tv=getattr(torch,'version',None); cuda=getattr(tv,'cuda',None); hip=getattr(tv,'hip',None); c=str(cuda or ''); p=[x for x in c.split('.') if x.isdigit()]; major=int(p[0]) if p else 0; minor=int(p[1]) if len(p)>1 else 0; r=r or ('rocm64' if hip else None) or ('cu130' if major>=13 else ('cu126' if major==12 and minor<=6 else ('cu128' if major==12 else None))) or 'cpu'; print(r)" 2^>nul`) do set "TORCH_BACKEND=%%I"
+for /f "usebackq delims=" %%I in (`"%PYTHON_BIN%" -c "import importlib.util,sys; spec=importlib.util.find_spec('torch'); spec or sys.exit(2); import torch; v=str(getattr(torch,'__version__','')).lower(); m=[('+cu126','cu126'),('+cu128','cu128'),('+cu130','cu130'),('+rocm','rocm64'),('+cpu','cpu')]; r=next((name for token,name in m if token in v),None); tv=getattr(torch,'version',None); cuda=getattr(tv,'cuda',None); hip=getattr(tv,'hip',None); c=str(cuda or ''); p=[x for x in c.split('.') if x.isdigit()]; major=int(p[0]) if p else 0; minor=int(p[1]) if len(p)>1 else 0; r=r or ('rocm64' if hip else None) or ('cu130' if major>=13 else ('cu126' if major==12 and minor<=7 else ('cu128' if major==12 else None))) or 'cpu'; print(r)" 2^>nul`) do set "TORCH_BACKEND=%%I"
 
 if not defined TORCH_BACKEND (
   call :resolve_torch_backend_from_system
@@ -400,7 +410,7 @@ if "%CUDA_MAJOR%"=="13" (
   set "TORCH_BACKEND=cu128"
   if %DRIVER_MAJOR_SAFE% GEQ 580 set "TORCH_BACKEND=cu130"
 ) else if "%CUDA_MAJOR%"=="12" (
-  if %CUDA_MINOR% LEQ 6 (
+  if %CUDA_MINOR% LEQ 7 (
     set "TORCH_BACKEND=cu126"
   ) else (
     set "TORCH_BACKEND=cu128"

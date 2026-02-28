@@ -20,9 +20,10 @@ Status: Active
 - The GUI code should live under `apps/launcher/` so the entrypoint stays stable while the implementation evolves.
 - 2026-01-20: Deprecated the curses TUI launcher (`apps/tui_launcher.py` + `run-tui.bat`) by moving it to repo-local `/.deprecated/` (ignored by Git).
 - When adding new subpackages, create an `AGENTS.md` describing responsibilities to keep this overview accurate.
-- 2025-11-02: Launcher surfaces device/dtype configuration via persisted WebUI options (`apps/settings_values.json`); env overrides for runtime settings were removed.
-- 2025-11-02: launcher services persist selections in `apps/settings_values.json`; when unset, backend startup defaults components to CPU with a warning.
-- 2025-11-03: Launcher runtime settings (device/dtype/attention/cache/offload) are configured via Web UI; launchers no longer write CODEX_* device/dtype/attention/cache/offload env vars.
+- 2026-02-28: Launcher bootstrap authority is `CODEX_MAIN_DEVICE`/`--main-device`; launcher services mirror it to `--core-device/--te-device/--vae-device` for parity and keep legacy per-component keys only as fallback input.
+- 2026-02-28: Launcher runtime defaults persist in the launcher profile store (`.sangoi/launcher/profiles/*`); `run-webui.sh` also reads fallback device defaults from `apps/settings_values.json` (`codex_main_device` + component keys).
+- 2026-02-28: Launcher/API startup actively forwards `CODEX_*` bootstrap/runtime knobs and allocator keys (for example `CODEX_MAIN_DEVICE`, `CODEX_MOUNT_DEVICE`, `CODEX_OFFLOAD_DEVICE`, `PYTORCH_CUDA_ALLOC_CONF`) instead of stripping them.
+- 2026-02-28: Manual API env overlay (`manual_api_env_enabled`) is a GUI-launcher API-start feature; shell launcher paths (`run-webui.sh`) do not consume the launcher manual overlay text.
 - 2026-01-20: Launchers can set `CODEX_LORA_APPLY_MODE` (merge|online) to control whether native LoRA selections are merged into weights (default) or applied on-the-fly; backend CLI also supports `--lora-apply-mode`.
 - 2026-01-23: Launcher now exposes GGUF exec and online LoRA math settings and forwards them to the backend as CLI flags (`--gguf-exec`, `--lora-online-math`).
 - 2026-01-21: Launchers can set `PYTORCH_CUDA_ALLOC_CONF` to tune the PyTorch CUDA caching allocator (e.g. reduce fragmentation via `max_split_size_mb`).

@@ -49,8 +49,8 @@ class SmartOffloadAction(str, Enum):
     LOAD = "load"
     UNLOAD = "unload"
     UNLOAD_NOOP = "unload_noop"
-    CPU_STAGE_LOAD = "cpu_stage_load"
-    DIRECT_CPU_OFFLOAD = "direct_cpu_offload"
+    STAGE_LOAD = "stage_load"
+    DIRECT_OFFLOAD = "direct_offload"
     PIN_HOST_MEMORY = "pin_host_memory"
 
 

@@ -23,6 +23,7 @@ Status: Active
 
 ## Notes
 - Routers should not mutate global state in `run_api.py`; prefer explicit dependency injection via `build_router(...)`.
+- 2026-02-28: `generation.py` removed public `img2vid_mode='chunk'`; API now accepts only `solo|sliding|svi2|svi2_pro` and returns fail-loud HTTP 400 when `chunk` is provided.
 - 2026-01-13: `tools.py` supports GGUF conversion cancellation (`POST /api/tools/convert-gguf/:job_id/cancel`) and an `overwrite` flag (default false; fails with 409 if the output path exists).
 - 2026-01-14: `tools.py` accepts a `comfy_layout` flag for GGUF conversion to control Flux/ZImage Comfy/Codex remapping (default true).
 - 2026-01-13: `models.py` adds `/api/models/checkpoint-metadata` so the UI can fetch the full metadata modal payload without constructing it client-side.
@@ -85,6 +86,7 @@ Status: Active
 - 2026-02-21: `generation.py` video core parser removed legacy sampler aliases (`txt2vid_sampling`/`img2vid_sampling`); canonical request keys are `*_sampler` only, and old aliases now fail strict unknown-key validation.
 - 2026-02-20: `generation.py` WAN video parsing now validates `gguf_sdpa_policy` strictly (`auto|mem_efficient|flash|math`) and normalizes accepted values to lowercase before request dispatch.
 - 2026-02-21: `generation.py` WAN stage parsing now requires non-empty `wan_high.prompt` and `wan_low.prompt` (txt2vid/img2vid + strict stage normalizer); `negative_prompt` remains optional and preserves `None` vs explicit empty-string semantics for downstream stage-level fallback logic.
+- 2026-02-28: `generation.py` WAN video stage parsers (`txt2vid`/`img2vid` + strict vid2vid stage normalizer) consume stage LoRAs from explicit `wan_high/wan_low.loras[]`; duplicate entries are deduplicated by SHA (last entry wins). Prompt-token LoRA parsing is frontend-owned in `useVideoGeneration`.
 - 2026-02-21: `generation.py` video worker exception path now invokes shared `tasks/generation_tasks.py::force_runtime_memory_cleanup(...)` to enforce best-effort RAM/VRAM/gguf-cache purge when task execution fails.
 - 2026-02-20: `paths.py` now treats persistence failures fail-loud: `/api/paths` GET/POST map JSON read/write failures to HTTP 500 (no success-on-failure), and payload/config list entries are validated as string arrays (invalid types reject with 400/500).
 - 2026-02-17: `generation.py` video worker now resolves core dtype overrides from persisted options (`codex_core_compute_dtype` with fallback to `codex_core_dtype`) and forwards `engine_options["dtype"]` to WAN loads; invalid option types/values fail loud.

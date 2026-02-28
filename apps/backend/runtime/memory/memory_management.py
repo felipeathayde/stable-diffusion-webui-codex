@@ -137,12 +137,9 @@ def set_attention_backend(backend: str) -> bool:
 
     new_cfg = deepcopy(current_cfg)
     new_cfg.attention.backend = target
-    if target == AttentionBackend.PYTORCH:
-        new_cfg.attention.enable_flash = True
-        new_cfg.attention.enable_mem_efficient = True
-    else:
-        new_cfg.attention.enable_flash = False
-        new_cfg.attention.enable_mem_efficient = False
+    # Preserve SDPA policy flags when backend changes. They are only consumed when
+    # backend==PYTORCH, so mutating them on xformers/split/quad switches causes
+    # silent policy drift when users switch back to pytorch.
 
     reinitialize(new_cfg)
     logger.info("[memory] attention backend set to %s", target.value)

@@ -4,8 +4,8 @@ Regra essencial: sem estilos inline. Use apenas utilitários Tailwind + tokens d
 
 ## Dev
 - WSL/Linux: `./run-webui.sh` (na raiz do repo) — sobe API + Vite juntos usando `.venv`.
-- Ou manualmente:
-  - API: `API_PORT_OVERRIDE=7850 .venv/bin/python apps/backend/interfaces/api/run_api.py`
+- Ou manualmente (na raiz do repositório):
+  - API: `CODEX_ROOT="$(pwd)" PYTHONPATH="$(pwd)" API_PORT_OVERRIDE=7850 .venv/bin/python apps/backend/interfaces/api/run_api.py`
   - UI: `cd apps/interface && npm install && npm run dev -- --host`
 - Proxy `/api` aponta para `API_HOST:API_PORT` (env vars).
 

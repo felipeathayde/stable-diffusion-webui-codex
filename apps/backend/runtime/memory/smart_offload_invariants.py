@@ -63,6 +63,23 @@ def _is_model_loaded_on_accelerator(model: object) -> bool:
     return _is_accelerator_device(current_device)
 
 
+def _require_patcher_target(entry: object, *, component_name: str) -> object:
+    """Return canonical patcher target or raise when contract is violated."""
+
+    patcher = getattr(entry, "patcher", entry)
+    if patcher is None:
+        raise RuntimeError(
+            "smart_offload invariant requires canonical patcher targets "
+            f"(got null patcher for '{component_name}')."
+        )
+    if not hasattr(patcher, "codex_patch_model") or not hasattr(patcher, "codex_unpatch_model"):
+        raise RuntimeError(
+            "smart_offload invariant requires patcher targets exposing "
+            f"codex_patch_model/codex_unpatch_model for '{component_name}'."
+        )
+    return patcher
+
+
 def _iter_text_encoder_patchers(sd_model: Any) -> Iterable[tuple[str, object]]:
     codex_objects = getattr(sd_model, "codex_objects", None)
     if codex_objects is None:
@@ -85,6 +102,11 @@ def _iter_text_encoder_patchers(sd_model: Any) -> Iterable[tuple[str, object]]:
                 "smart_offload invariant requires TextEncoderHandle with non-null patcher "
                 f"for text_encoders['{name}']."
             )
+        if not hasattr(patcher, "codex_patch_model") or not hasattr(patcher, "codex_unpatch_model"):
+            raise RuntimeError(
+                "smart_offload invariant requires TextEncoderHandle patchers exposing "
+                f"codex_patch_model/codex_unpatch_model for text_encoders['{name}']."
+            )
         yield str(name), patcher
 
 
@@ -95,8 +117,7 @@ def _resolve_vae_patcher(sd_model: Any) -> object | None:
     vae = getattr(codex_objects, "vae", None)
     if vae is None:
         return None
-    patcher = getattr(vae, "patcher", None)
-    return patcher if patcher is not None else vae
+    return _require_patcher_target(vae, component_name="vae")
 
 
 def _resolve_denoiser_target(sd_model: Any) -> object | None:
@@ -106,8 +127,7 @@ def _resolve_denoiser_target(sd_model: Any) -> object | None:
     denoiser = getattr(codex_objects, "denoiser", None)
     if denoiser is None:
         return None
-    patcher = getattr(denoiser, "patcher", None)
-    return patcher if patcher is not None else denoiser
+    return _require_patcher_target(denoiser, component_name="denoiser")
 
 
 def enforce_smart_offload_pre_conditioning_residency(sd_model: Any, *, stage: str) -> None:

@@ -26,9 +26,10 @@ resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
 WAN sampler fields accept any non-empty string at API parse-time (known names canonicalized when possible); scheduler fields remain strict (`simple`) for WAN22 requests.
-Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|chunk|sliding|svi2|svi2_pro`) with mode-scoped validation for chunk/window fields.
+Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|sliding|svi2|svi2_pro`) with mode-scoped validation for chunk/window fields.
 Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
-missing vs explicit-empty semantics for downstream runtime fallback behavior.
+missing vs explicit-empty semantics for downstream runtime fallback behavior. WAN stage LoRAs are provided via `wan_high/wan_low.loras[]`
+(frontend parses `<lora:...>` tags) and duplicate stage entries are deduplicated by SHA (last wins).
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
 resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
 Worker exception paths trigger shared runtime memory cleanup (`tasks/generation_tasks.py::force_runtime_memory_cleanup`) so task failures best-effort purge engine/runtime caches.
@@ -316,6 +317,38 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=f"'{key}' must be sha256 (64 lowercase hex)")
         return normalized
 
+    def _merge_wan_stage_loras(*segments: list[dict[str, object]]) -> list[dict[str, object]]:
+        merged: list[dict[str, object]] = []
+        index_by_sha: dict[str, int] = {}
+        for segment in segments:
+            for entry in segment:
+                sha_raw = str(entry.get("sha") or "").strip().lower()
+                if not re.fullmatch(r"[0-9a-f]{64}", sha_raw):
+                    raise HTTPException(status_code=400, detail="WAN stage LoRA entry has invalid sha256")
+                weight_raw = entry.get("weight", 1.0)
+                if isinstance(weight_raw, bool) or not isinstance(weight_raw, (int, float)):
+                    raise HTTPException(status_code=400, detail="WAN stage LoRA entry has non-numeric weight")
+                weight = float(weight_raw)
+                if not math.isfinite(weight):
+                    raise HTTPException(status_code=400, detail="WAN stage LoRA entry has non-finite weight")
+                normalized_entry = {"sha": sha_raw, "weight": weight}
+                existing_index = index_by_sha.get(sha_raw)
+                if isinstance(existing_index, int):
+                    merged[existing_index] = normalized_entry
+                    continue
+                index_by_sha[sha_raw] = len(merged)
+                merged.append(normalized_entry)
+        return merged
+
+    def _parse_wan_stage_prompt_loras(
+        *,
+        stage_key: str,
+        prompt: str,
+        negative_prompt: str | None,
+    ) -> tuple[str, str | None, list[dict[str, object]]]:
+        del stage_key
+        return prompt, negative_prompt, []
+
     def _normalize_wan_stage_loras(
         *,
         stage_raw: Mapping[str, Any],
@@ -378,7 +411,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         detail=f"'{lora_context}.weight' must be finite",
                     )
             normalized_loras.append({"sha": lora_sha, "weight": lora_weight})
-        return normalized_loras
+        return _merge_wan_stage_loras(normalized_loras)
 
 
     def _require_bool_field(payload: Dict[str, Any], key: str) -> bool:
@@ -461,6 +494,21 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             extras["gguf_cache_policy"] = policy
         if has_limit and limit_mb is not None:
             extras["gguf_cache_limit_mb"] = int(limit_mb)
+
+    def _normalize_gguf_runtime_controls(extras: Dict[str, Any]) -> None:
+        if "gguf_offload" in extras:
+            offload_raw = extras.get("gguf_offload")
+            if not isinstance(offload_raw, bool):
+                raise HTTPException(status_code=400, detail="'gguf_offload' must be a boolean")
+
+        for key in ("gguf_offload_level", "gguf_attn_chunk", "gguf_log_mem_interval"):
+            if key not in extras:
+                continue
+            parsed = _parse_optional_non_negative_int(extras.get(key), field_name=key)
+            if parsed is None:
+                extras.pop(key, None)
+            else:
+                extras[key] = int(parsed)
 
     def _normalize_gguf_te_device(extras: Dict[str, Any]) -> None:
         if "gguf_te_device" not in extras:
@@ -2314,34 +2362,64 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, *, device: str) -> None:
         from apps.backend.interfaces.api.tasks.generation_tasks import run_image_task as _run_image_task
 
-        _run_image_task(
-            task_id=task_id,
-            payload=payload,
-            entry=entry,
-            device=device,
-            task_type=TaskType.TXT2IMG,
-            prepare=prepare_txt2img,
-            orch=_ORCH,
-            ensure_default_engines_registered=_ensure_default_engines_registered,
-            live_preview=live_preview,
-            opts_get=_opts_get,
-            opts_snapshot=_opts_snapshot,
-            generation_provenance=_GENERATION_PROVENANCE,
-            save_generated_images=_save_generated_images,
-        )
+        try:
+            _run_image_task(
+                task_id=task_id,
+                payload=payload,
+                entry=entry,
+                device=device,
+                task_type=TaskType.TXT2IMG,
+                prepare=prepare_txt2img,
+                orch=_ORCH,
+                ensure_default_engines_registered=_ensure_default_engines_registered,
+                live_preview=live_preview,
+                opts_get=_opts_get,
+                opts_snapshot=_opts_snapshot,
+                generation_provenance=_GENERATION_PROVENANCE,
+                save_generated_images=_save_generated_images,
+            )
+        except HTTPException:
+            raise
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid txt2img payload configuration"),
+            ) from None
 
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
         _reject_unknown_keys(payload, _IMG2IMG_ALLOWED_KEYS, "img2img")
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
-        init_image_data = _p.require(payload, 'img2img_init_image')
-        init_image = media.decode_image(init_image_data)
+        if "img2img_init_image" not in payload:
+            raise HTTPException(status_code=400, detail="Missing 'img2img_init_image'")
+        init_image_data = payload.get("img2img_init_image")
+        try:
+            if not isinstance(init_image_data, str) or not init_image_data.strip():
+                raise ValueError("'img2img_init_image' must be a non-empty string")
+            init_image = media.decode_image(init_image_data)
+        except Exception as exc:
+            _router_log.warning("img2img init image validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid 'img2img_init_image' payload"),
+            ) from None
         init_w, init_h = 0, 0
         try:
             init_w, init_h = init_image.size  # type: ignore[attr-defined]
         except Exception:
             init_w, init_h = 0, 0
         mask_data = payload.get('img2img_mask')
-        mask_image = media.decode_image(mask_data) if mask_data else None
+        mask_image = None
+        if mask_data:
+            try:
+                if not isinstance(mask_data, str) or not mask_data.strip():
+                    raise ValueError("'img2img_mask' must be a non-empty string")
+                mask_image = media.decode_image(mask_data)
+            except Exception as exc:
+                _router_log.warning("img2img mask validation failed: %s", exc)
+                raise HTTPException(
+                    status_code=400,
+                    detail=public_http_error_detail(exc, fallback="Invalid 'img2img_mask' payload"),
+                ) from None
 
         mask_enforcement = None
         inpainting_fill = 1
@@ -2394,9 +2472,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail="'img2img_mask_blur' must be >= 0")
 
             if "img2img_mask_round" in payload:
-                mask_round = _p.as_bool(payload, "img2img_mask_round")
+                mask_round = _require_bool_field(payload, "img2img_mask_round")
             if "img2img_mask_region_split" in payload:
-                mask_region_split = _p.as_bool(payload, "img2img_mask_region_split")
+                mask_region_split = _require_bool_field(payload, "img2img_mask_region_split")
         else:
             raw_enforcement = payload.get("img2img_mask_enforcement")
             if isinstance(raw_enforcement, str) and raw_enforcement.strip():
@@ -2440,7 +2518,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         _reject_legacy_hires_keys(payload)
 
-        enable_hires = _p.as_bool(payload, 'img2img_hires_enable') if 'img2img_hires_enable' in payload else False
+        enable_hires = _require_bool_field(payload, "img2img_hires_enable") if "img2img_hires_enable" in payload else False
         if enable_hires:
             try:
                 hr_tile_cfg = tile_config_from_payload(payload.get("img2img_hires_tile"), context="img2img_hires_tile")
@@ -2653,21 +2731,29 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, *, device: str) -> None:
         from apps.backend.interfaces.api.tasks.generation_tasks import run_image_task as _run_image_task
 
-        _run_image_task(
-            task_id=task_id,
-            payload=payload,
-            entry=entry,
-            device=device,
-            task_type=TaskType.IMG2IMG,
-            prepare=prepare_img2img,
-            orch=_ORCH,
-            ensure_default_engines_registered=_ensure_default_engines_registered,
-            live_preview=live_preview,
-            opts_get=_opts_get,
-            opts_snapshot=_opts_snapshot,
-            generation_provenance=_GENERATION_PROVENANCE,
-            save_generated_images=_save_generated_images,
-        )
+        try:
+            _run_image_task(
+                task_id=task_id,
+                payload=payload,
+                entry=entry,
+                device=device,
+                task_type=TaskType.IMG2IMG,
+                prepare=prepare_img2img,
+                orch=_ORCH,
+                ensure_default_engines_registered=_ensure_default_engines_registered,
+                live_preview=live_preview,
+                opts_get=_opts_get,
+                opts_snapshot=_opts_snapshot,
+                generation_provenance=_GENERATION_PROVENANCE,
+                save_generated_images=_save_generated_images,
+            )
+        except HTTPException:
+            raise
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid img2img payload configuration"),
+            ) from None
 
     def _wan_require_dims_multiple_of_16(*, task: str, width: int, height: int) -> None:
         """WAN video geometry guard (Diffusers parity).
@@ -2786,18 +2872,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             stage_prompt = str(raw_stage_prompt).strip()
             if not stage_prompt:
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
-            out["prompt"] = stage_prompt
             raw_stage_negative_prompt = out.get("negative_prompt")
             if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
                 raise HTTPException(
                     status_code=400,
                     detail=f"'{stage_key}.negative_prompt' must be a string when provided",
                 )
-            out["negative_prompt"] = (
+            stage_negative_prompt = (
                 str(raw_stage_negative_prompt).strip()
                 if isinstance(raw_stage_negative_prompt, str)
                 else None
             )
+            stage_prompt, stage_negative_prompt, prompt_stage_loras = _parse_wan_stage_prompt_loras(
+                stage_key=stage_key,
+                prompt=stage_prompt,
+                negative_prompt=stage_negative_prompt,
+            )
+            out["prompt"] = stage_prompt
+            out["negative_prompt"] = stage_negative_prompt
             raw_stage_sampler = out.get("sampler")
             if raw_stage_sampler is not None:
                 if not isinstance(raw_stage_sampler, str):
@@ -2828,11 +2920,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     )
                 else:
                     out.pop("scheduler", None)
-            out["loras"] = _normalize_wan_stage_loras(
+            explicit_stage_loras = _normalize_wan_stage_loras(
                 stage_raw=raw,
                 stage_key=stage_key,
                 resolve_asset_by_sha_fn=resolve_asset_by_sha,
             )
+            out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
             out.pop("lora_path", None)
             out.pop("lora_sha", None)
             out.pop("lora_weight", None)
@@ -2892,6 +2985,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if sdpa_policy not in {'auto', 'mem_efficient', 'flash', 'math'}:
                 raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
             extras['gguf_sdpa_policy'] = sdpa_policy
+        _normalize_gguf_runtime_controls(extras)
         _normalize_gguf_te_device(extras)
         _normalize_gguf_cache_controls(extras)
 
@@ -3031,18 +3125,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             stage_prompt = str(raw_stage_prompt).strip()
             if not stage_prompt:
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
-            out["prompt"] = stage_prompt
             raw_stage_negative_prompt = out.get("negative_prompt")
             if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
                 raise HTTPException(
                     status_code=400,
                     detail=f"'{stage_key}.negative_prompt' must be a string when provided",
                 )
-            out["negative_prompt"] = (
+            stage_negative_prompt = (
                 str(raw_stage_negative_prompt).strip()
                 if isinstance(raw_stage_negative_prompt, str)
                 else None
             )
+            stage_prompt, stage_negative_prompt, prompt_stage_loras = _parse_wan_stage_prompt_loras(
+                stage_key=stage_key,
+                prompt=stage_prompt,
+                negative_prompt=stage_negative_prompt,
+            )
+            out["prompt"] = stage_prompt
+            out["negative_prompt"] = stage_negative_prompt
             raw_stage_sampler = out.get("sampler")
             if raw_stage_sampler is not None:
                 if not isinstance(raw_stage_sampler, str):
@@ -3073,11 +3173,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     )
                 else:
                     out.pop("scheduler", None)
-            out["loras"] = _normalize_wan_stage_loras(
+            explicit_stage_loras = _normalize_wan_stage_loras(
                 stage_raw=raw,
                 stage_key=stage_key,
                 resolve_asset_by_sha_fn=resolve_asset_by_sha,
             )
+            out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
             out.pop("lora_path", None)
             out.pop("lora_sha", None)
             out.pop("lora_weight", None)
@@ -3137,13 +3238,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if sdpa_policy not in {'auto', 'mem_efficient', 'flash', 'math'}:
                 raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
             extras['gguf_sdpa_policy'] = sdpa_policy
+        _normalize_gguf_runtime_controls(extras)
         _normalize_gguf_te_device(extras)
         _normalize_gguf_cache_controls(extras)
         img2vid_mode = str(payload.get('img2vid_mode') or '').strip().lower()
-        if img2vid_mode not in {'solo', 'chunk', 'sliding', 'svi2', 'svi2_pro'}:
+        if img2vid_mode == 'chunk':
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid img2vid_mode: {payload.get('img2vid_mode')!r} (expected 'solo'|'chunk'|'sliding'|'svi2'|'svi2_pro').",
+                detail="img2vid_mode='chunk' is no longer supported (expected 'solo'|'sliding'|'svi2'|'svi2_pro').",
+            )
+        if img2vid_mode not in {'solo', 'sliding', 'svi2', 'svi2_pro'}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid img2vid_mode: {payload.get('img2vid_mode')!r} (expected 'solo'|'sliding'|'svi2'|'svi2_pro').",
             )
         extras['img2vid_mode'] = img2vid_mode
 
@@ -3180,39 +3287,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         "(chunk/window/anchor/reset/seed/buffer)."
                     ),
                 )
-        elif img2vid_mode == 'chunk':
-            if not has_chunk_frames:
-                raise HTTPException(status_code=400, detail="img2vid_mode='chunk' requires 'img2vid_chunk_frames'.")
-            if has_window_frames or has_window_stride or has_window_commit:
-                raise HTTPException(
-                    status_code=400,
-                    detail="img2vid_mode='chunk' does not allow 'img2vid_window_*' fields.",
-                )
-            chunk_frames = _require_int_field(payload, 'img2vid_chunk_frames', minimum=9, maximum=401)
-            if (chunk_frames - 1) % 4 != 0:
-                raise HTTPException(status_code=400, detail=f"'img2vid_chunk_frames' must satisfy 4n+1, got {chunk_frames}.")
-            if int(chunk_frames) >= int(frames_val):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "'img2vid_chunk_frames' must be smaller than 'img2vid_num_frames' "
-                        f"(chunk={int(chunk_frames)} total={int(frames_val)})."
-                    ),
-                )
-            extras['img2vid_chunk_frames'] = chunk_frames
-            if has_overlap_frames:
-                overlap_frames = _require_int_field(payload, 'img2vid_overlap_frames', minimum=0, maximum=400)
-                if int(overlap_frames) >= int(chunk_frames):
-                    raise HTTPException(status_code=400, detail="'img2vid_overlap_frames' must be smaller than 'img2vid_chunk_frames'.")
-                if (int(chunk_frames) - int(overlap_frames)) % 4 != 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "'img2vid_overlap_frames' must keep "
-                            "('img2vid_chunk_frames' - 'img2vid_overlap_frames') aligned to temporal scale=4."
-                        ),
-                    )
-                extras['img2vid_overlap_frames'] = overlap_frames
         else:
             mode_label = str(img2vid_mode)
             if has_chunk_frames or has_overlap_frames:
@@ -3271,12 +3345,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             extras['img2vid_window_stride'] = window_stride
             extras['img2vid_window_commit_frames'] = window_commit
 
-        if img2vid_mode in {'chunk', 'sliding', 'svi2', 'svi2_pro'} and has_anchor_alpha:
+        if img2vid_mode in {'sliding', 'svi2', 'svi2_pro'} and has_anchor_alpha:
             anchor_alpha = _require_float_field(payload, 'img2vid_anchor_alpha')
             if anchor_alpha < 0.0 or anchor_alpha > 1.0:
                 raise HTTPException(status_code=400, detail="'img2vid_anchor_alpha' must be within [0, 1].")
             extras['img2vid_anchor_alpha'] = anchor_alpha
-        if img2vid_mode in {'chunk', 'sliding'} and has_reset_anchor_to_base:
+        if img2vid_mode in {'sliding'} and has_reset_anchor_to_base:
             extras['img2vid_reset_anchor_to_base'] = _require_bool_field(payload, 'img2vid_reset_anchor_to_base')
         if img2vid_mode in {'svi2', 'svi2_pro'} and has_reset_anchor_to_base:
             reset_anchor_to_base = _require_bool_field(payload, 'img2vid_reset_anchor_to_base')
@@ -3286,12 +3360,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     detail=f"img2vid_mode='{img2vid_mode}' requires 'img2vid_reset_anchor_to_base=false'.",
                 )
             extras['img2vid_reset_anchor_to_base'] = False
-        if img2vid_mode in {'chunk', 'sliding', 'svi2', 'svi2_pro'} and has_chunk_seed_mode:
+        if img2vid_mode in {'sliding', 'svi2', 'svi2_pro'} and has_chunk_seed_mode:
             seed_mode = str(payload.get('img2vid_chunk_seed_mode') or '').strip().lower()
             if seed_mode not in {'fixed', 'increment', 'random'}:
                 raise HTTPException(status_code=400, detail=f"Invalid img2vid_chunk_seed_mode: {payload.get('img2vid_chunk_seed_mode')!r}")
             extras['img2vid_chunk_seed_mode'] = seed_mode
-        if img2vid_mode in {'chunk', 'sliding', 'svi2', 'svi2_pro'} and has_chunk_buffer_mode:
+        if img2vid_mode in {'sliding', 'svi2', 'svi2_pro'} and has_chunk_buffer_mode:
             chunk_buffer_mode = str(payload.get('img2vid_chunk_buffer_mode') or '').strip().lower()
             if chunk_buffer_mode not in {'hybrid', 'ram', 'ram+hd'}:
                 raise HTTPException(
@@ -3399,13 +3473,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         prompt_value = str(out.get("prompt") or "").strip()
         if not prompt_value:
             raise HTTPException(status_code=400, detail=f"'{field}.prompt' must be a non-empty string")
-        out["prompt"] = prompt_value
         raw_negative_prompt = out.get("negative_prompt")
-        out["negative_prompt"] = (
+        normalized_negative_prompt = (
             str(raw_negative_prompt).strip()
             if isinstance(raw_negative_prompt, str)
             else None
         )
+        prompt_value, normalized_negative_prompt, prompt_stage_loras = _parse_wan_stage_prompt_loras(
+            stage_key=field,
+            prompt=prompt_value,
+            negative_prompt=normalized_negative_prompt,
+        )
+        out["prompt"] = prompt_value
+        out["negative_prompt"] = normalized_negative_prompt
         if isinstance(out.get("model_dir"), str) and str(out.get("model_dir")).strip():
             # model_dir may refer to a GGUF file or a diffusers directory; enforce repo-root scoping either way.
             raw_model_dir = str(out.get("model_dir") or "")
@@ -3433,11 +3513,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             out["model_dir"] = str(resolved)
         from apps.backend.inventory.cache import resolve_asset_by_sha
 
-        out["loras"] = _normalize_wan_stage_loras(
+        explicit_stage_loras = _normalize_wan_stage_loras(
             stage_raw=out,
             stage_key=field,
             resolve_asset_by_sha_fn=resolve_asset_by_sha,
         )
+        out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
         out.pop("lora_path", None)
         out.pop("lora_sha", None)
         out.pop("lora_weight", None)
@@ -3453,6 +3534,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         from apps.backend.runtime.diagnostics.contract_trace import error_meta
         from apps.backend.runtime.diagnostics.contract_trace import emit_event as emit_contract_trace
         from apps.backend.runtime.diagnostics.contract_trace import hash_request_prompt
+        from apps.backend.runtime.diagnostics.fallback_state import fallback_used as fallback_state_used
+        from apps.backend.runtime.diagnostics.fallback_state import reset_fallback_state
 
         def push(event: Dict[str, Any]) -> None:
             entry.push_event(event)
@@ -3494,6 +3577,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         mode = str(getattr(task_type, "value", "unknown"))
         prompt_hash_value = hash_request_prompt(req)
         fallback_enabled = bool(getattr(req, "smart_fallback", False))
+        single_flight = single_flight_enabled()
+
+        def _fallback_used_now() -> bool:
+            return bool(fallback_enabled and fallback_state_used())
 
         emit_contract_trace(
             task_id=task_id,
@@ -3506,16 +3593,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
             strict=True,
             fallback_enabled=fallback_enabled,
-            fallback_used=False,
+            fallback_used=_fallback_used_now(),
             prompt_hash_value=prompt_hash_value,
-            meta={"engine_key": engine_key},
+            meta={"engine_key": engine_key, "single_flight_enabled": single_flight},
         )
 
         def worker() -> None:
             acquired = False
             success = False
+            reset_fallback_state()
             try:
-                if single_flight_enabled():
+                if single_flight:
                     push({"type": "status", "stage": "waiting_for_inference"})
                     emit_contract_trace(
                         task_id=task_id,
@@ -3528,8 +3616,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                         strict=True,
                         fallback_enabled=fallback_enabled,
-                        fallback_used=False,
+                        fallback_used=_fallback_used_now(),
                         prompt_hash_value=prompt_hash_value,
+                        meta={"single_flight_enabled": single_flight},
                     )
 
                 acquired = acquire_inference_gate(
@@ -3548,8 +3637,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                         strict=True,
                         fallback_enabled=fallback_enabled,
-                        fallback_used=False,
+                        fallback_used=_fallback_used_now(),
                         prompt_hash_value=prompt_hash_value,
+                        meta={"single_flight_enabled": single_flight},
                     )
                     return
 
@@ -3568,8 +3658,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                     strict=True,
                     fallback_enabled=fallback_enabled,
-                    fallback_used=False,
+                    fallback_used=_fallback_used_now(),
                     prompt_hash_value=prompt_hash_value,
+                    meta={"single_flight_enabled": single_flight},
                 )
 
                 engine_opts: dict[str, object] = {
@@ -3621,7 +3712,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                                 compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                                 strict=True,
                                 fallback_enabled=fallback_enabled,
-                                fallback_used=False,
+                                fallback_used=_fallback_used_now(),
                                 prompt_hash_value=prompt_hash_value,
                                 meta={
                                     "step": ev.step,
@@ -3652,7 +3743,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                                 compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                                 strict=True,
                                 fallback_enabled=fallback_enabled,
-                                fallback_used=False,
+                                fallback_used=_fallback_used_now(),
                                 prompt_hash_value=prompt_hash_value,
                                 meta={
                                     "image_count": len(payload_obj.get("images", []) or []),
@@ -3681,6 +3772,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         )
                 except Exception:
                     pass
+                cleanup_err: Exception | None = None
                 try:
                     from apps.backend.interfaces.api.tasks.generation_tasks import (
                         force_runtime_memory_cleanup as _force_runtime_memory_cleanup,
@@ -3690,10 +3782,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         reason=f"{mode}:worker_error",
                         orch=_ORCH,
                     )
-                except Exception:
-                    pass
+                except Exception as cleanup_exc:
+                    cleanup_err = cleanup_exc
+                    _router_log.error(
+                        "Runtime memory cleanup failed after %s worker error (task_id=%s): %s",
+                        label,
+                        task_id,
+                        cleanup_exc,
+                        exc_info=False,
+                    )
+                if cleanup_err is not None:
+                    err = RuntimeError(f"{err} [runtime_cleanup_error: {cleanup_err}]")
                 entry.error = public_task_error_message(err)
-                fallback_used = fallback_enabled and ("fallback" in str(err).lower())
+                fallback_used = _fallback_used_now() or (fallback_enabled and ("fallback" in str(err).lower()))
                 emit_contract_trace(
                     task_id=task_id,
                     mode=mode,
@@ -3724,7 +3825,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                     strict=True,
                     fallback_enabled=fallback_enabled,
-                    fallback_used=False,
+                    fallback_used=_fallback_used_now(),
                     prompt_hash_value=prompt_hash_value,
                     meta={"success": success},
                 )
@@ -3762,10 +3863,21 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                                     continue
                                 try:
                                     resolved.unlink()
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
+                                except Exception as exc:
+                                    _router_log.warning(
+                                        "vid2vid upload cleanup failed (task_id=%s path=%s): %s",
+                                        task_id,
+                                        str(resolved),
+                                        exc,
+                                        exc_info=False,
+                                    )
+                    except Exception as exc:
+                        _router_log.warning(
+                            "vid2vid upload cleanup crashed (task_id=%s): %s",
+                            task_id,
+                            exc,
+                            exc_info=False,
+                        )
 
         label = "txt2vid" if task_type == TaskType.TXT2VID else ("img2vid" if task_type == TaskType.IMG2VID else "vid2vid")
         thread = threading.Thread(target=worker, name=f"{label}-task-{task_id}", daemon=True)

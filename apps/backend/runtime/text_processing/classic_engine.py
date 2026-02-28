@@ -15,6 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PromptChunk` (class): Container for tokens, multipliers, and embedding fixes produced by parsing/chunking.
 - `CLIPEmbeddingForTextualInversion` (class): Wrapper module that intercepts CLIP embedding lookups and injects textual inversion vectors
   (contains nested logic for batching fixes and restoring state).
+- `clear_last_extra_generation_params` (function): Clears thread-local extra generation params at request boundaries.
+- `snapshot_last_extra_generation_params` (function): Returns a copy of thread-local extra generation params for response metadata.
 - `ClassicTextProcessingEngine` (class): Main text processing engine; parses prompts (including negative/emphasis), manages embeddings DB,
   and produces encoder inputs/embeddings for downstream diffusion runtimes (contains nested helpers for chunking and extra params tracking).
 """
@@ -23,8 +25,10 @@ import logging
 import math
 import torch
 import os
+import threading
 
 from collections import namedtuple
+from collections.abc import Iterator, MutableMapping
 from . import parsing, emphasis
 from .textual_inversion import EmbeddingDatabase
 from apps.backend.runtime.memory import memory_management
@@ -33,8 +37,50 @@ from apps.backend.infra.config.args import dynamic_args
 
 
 PromptChunkFix = namedtuple('PromptChunkFix', ['offset', 'embedding'])
-last_extra_generation_params = {}
 logger = logging.getLogger("backend.text_processing.classic")
+
+_last_extra_generation_params_local = threading.local()
+
+
+def _current_extra_generation_params() -> dict[str, str]:
+    params = getattr(_last_extra_generation_params_local, "params", None)
+    if params is None:
+        params = {}
+        _last_extra_generation_params_local.params = params
+    return params
+
+
+class _ThreadLocalExtraGenerationParams(MutableMapping[str, str]):
+    """Dict-like proxy backed by thread-local storage."""
+
+    def _state(self) -> dict[str, str]:
+        return _current_extra_generation_params()
+
+    def __getitem__(self, key: str) -> str:
+        return self._state()[key]
+
+    def __setitem__(self, key: str, value: str) -> None:
+        self._state()[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._state()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._state())
+
+    def __len__(self) -> int:
+        return len(self._state())
+
+
+last_extra_generation_params: MutableMapping[str, str] = _ThreadLocalExtraGenerationParams()
+
+
+def clear_last_extra_generation_params() -> None:
+    _current_extra_generation_params().clear()
+
+
+def snapshot_last_extra_generation_params() -> dict[str, str]:
+    return dict(_current_extra_generation_params())
 
 
 class PromptChunk:
@@ -389,8 +435,6 @@ class ClassicTextProcessingEngine:
 
             z = self.process_tokens(tokens, multipliers)
             zs.append(z)
-
-        global last_extra_generation_params
 
         if used_embeddings:
             names = []

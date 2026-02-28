@@ -7,16 +7,18 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Global Python function-call tracer for deep Codex debugging.
-Implements a sys/thread profile hook that logs function calls under `apps.*` with indentation and per-function call caps, and provides env-driven
-enable/disable helpers to avoid flooding logs by default.
+Implements a sys/thread profile hook that logs function calls under configurable module scopes with indentation and per-function call caps, and
+provides env-driven enable/disable helpers to avoid flooding logs by default.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_profiler` (function): Profile hook used by `sys.setprofile` / `threading.setprofile` (logs `call`/`return` events).
 - `_set_max_per_func` (function): Configures the per-function call cap (0 disables the cap).
+- `_set_module_prefixes` (function): Configures module scope prefixes (`None` means trace any module).
 - `_reset_counters` (function): Clears per-function call counters and “muted” notifications.
 - `enable` (function): Enables global call tracing (optionally configuring caps) and installs the profiler hooks.
 - `disable` (function): Disables call tracing and restores prior profiler hooks.
 - `_env_trace_limit` (function): Reads the max-per-func cap from environment variables.
+- `_env_trace_module_prefixes` (function): Reads module-scope prefixes from environment (`CODEX_TRACE_DEBUG_MODULE_PREFIXES`).
 - `enable_from_env` (function): Enables tracing when env flags request it (launcher/API entrypoint integration).
 """
 
@@ -38,9 +40,42 @@ _local = threading.local()
 _prev_profile: Optional[Callable[..., Any]] = None
 
 _DEFAULT_MAX_PER_FUNC = 10
+_DEFAULT_MODULE_PREFIXES: tuple[str, ...] = ("apps.",)
 _max_per_func: int = _DEFAULT_MAX_PER_FUNC
+_module_prefixes: tuple[str, ...] | None = _DEFAULT_MODULE_PREFIXES
 _call_counts: dict[Tuple[str, str], int] = {}
 _muted_notified: set[Tuple[str, str]] = set()
+
+
+def _set_module_prefixes(prefixes: tuple[str, ...] | None) -> None:
+    global _module_prefixes
+    if prefixes is None:
+        _module_prefixes = None
+        return
+    normalized = tuple(str(prefix).strip() for prefix in prefixes if str(prefix).strip())
+    _module_prefixes = normalized or _DEFAULT_MODULE_PREFIXES
+
+
+def _env_trace_module_prefixes() -> tuple[str, ...] | None:
+    raw = os.getenv("CODEX_TRACE_DEBUG_MODULE_PREFIXES")
+    if raw is None:
+        return _DEFAULT_MODULE_PREFIXES
+    tokens = [part.strip() for part in str(raw).split(",") if part.strip()]
+    if not tokens:
+        return _DEFAULT_MODULE_PREFIXES
+    lowered = {token.lower() for token in tokens}
+    if lowered & {"*", "all", "any"}:
+        return None
+    return tuple(tokens)
+
+
+def _should_trace_module(module_name: object) -> bool:
+    if not isinstance(module_name, str):
+        return False
+    prefixes = _module_prefixes
+    if prefixes is None:
+        return True
+    return any(module_name.startswith(prefix) for prefix in prefixes)
 
 def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - runtime hook
     # Guard: prevent recursion while we log
@@ -51,8 +86,7 @@ def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - run
         try:
             mod = frame.f_globals.get("__name__", "<unknown>")
 
-            # Limit noise: only log modules inside the Codex apps package
-            if not isinstance(mod, str) or not mod.startswith("apps."):
+            if not _should_trace_module(mod):
                 return _profiler
             _local.busy = True
             depth = getattr(_local, "depth", 0) + 1
@@ -129,11 +163,13 @@ def enable(*, max_calls_per_func: Optional[int] = None) -> None:
     if max_calls_per_func is None:
         max_calls_per_func = _env_trace_limit()
     _set_max_per_func(max_calls_per_func)
+    _set_module_prefixes(_env_trace_module_prefixes())
     if _enabled:
         _reset_counters()
         _logger.debug(
-            "call-trace limit set to %s per function",
+            "call-trace limit set to %s per function (scope=%s)",
             "unlimited" if _max_per_func == 0 else _max_per_func,
+            "all-modules" if _module_prefixes is None else ",".join(_module_prefixes),
         )
         return
 
@@ -154,8 +190,9 @@ def enable(*, max_calls_per_func: Optional[int] = None) -> None:
     threading.setprofile(_profiler)
     _enabled = True
     _logger.debug(
-        "call-trace enabled (sys.setprofile, limit=%s per function)",
+        "call-trace enabled (sys.setprofile, limit=%s per function, scope=%s)",
         "unlimited" if _max_per_func == 0 else _max_per_func,
+        "all-modules" if _module_prefixes is None else ",".join(_module_prefixes),
     )
 
 

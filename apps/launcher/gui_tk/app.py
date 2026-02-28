@@ -283,15 +283,21 @@ class CodexLauncherApp(tk.Tk):
 
     # ------------------------------------------------------------------ save/revert/exit
 
-    def _save(self) -> None:
+    def _save(self) -> bool:
         try:
             self._diagnostics_tab.validate_int_settings()
         except Exception as exc:
             messagebox.showerror("Invalid settings", str(exc))
-            return
-        self._controller.save_settings()
+            return False
+        try:
+            self._controller.save_settings()
+        except Exception as exc:
+            self._log_exception("save", exc)
+            messagebox.showerror("Save failed", str(exc))
+            return False
         self._unsaved_changes = False
         self._set_status("Settings saved")
+        return True
 
     def _revert(self) -> None:
         if self._unsaved_changes and not messagebox.askyesno("Revert changes", "Discard unsaved changes?"):
@@ -313,11 +319,12 @@ class CodexLauncherApp(tk.Tk):
         self.destroy()
 
     def _on_close(self) -> None:
-        self._services_tab.dispose()
         self._persist_ui_state()
         if self._unsaved_changes:
             if messagebox.askyesno("Unsaved changes", "Save settings before exiting?"):
-                self._save()
+                if not self._save():
+                    return
+        self._services_tab.dispose()
         self.destroy()
 
     # ------------------------------------------------------------------ UI state (tab index)

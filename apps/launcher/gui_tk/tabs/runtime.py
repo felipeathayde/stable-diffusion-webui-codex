@@ -473,29 +473,37 @@ class RuntimeTab:
             attn_backend, attn_sdpa_policy = normalize_attention_env(env)
         except SettingValidationError as exc:
             self._controller.store.env["CODEX_ATTENTION_BACKEND"] = "pytorch"
-            self._controller.store.env["CODEX_ATTENTION_SDPA_POLICY"] = "mem_efficient"
+            self._controller.store.env["CODEX_ATTENTION_SDPA_POLICY"] = "auto"
             attn_backend, attn_sdpa_policy = normalize_attention_env(self._controller.store.env)
             messagebox.showerror("Invalid runtime setting", str(exc))
         attention_mode = backend_policy_to_attention_mode(attn_backend, attn_sdpa_policy)
-        self._var_attention_mode.set(_ATTENTION_MODE_TO_LABEL.get(attention_mode, "SDPA - Mem Efficient"))
+        self._var_attention_mode.set(_ATTENTION_MODE_TO_LABEL.get(attention_mode, "SDPA - Auto"))
 
         self._var_lora_apply_mode.set(_get("CODEX_LORA_APPLY_MODE", "merge"))
         self._var_gguf_exec.set(_get("CODEX_GGUF_EXEC", "dequant_forward"))
         self._var_gguf_dequant_cache.set(_get("CODEX_GGUF_DEQUANT_CACHE", "off"))
         self._var_wan_chunk_buffer_mode.set(_get("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"))
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
+        runtime_settings_sanitized = False
+
+        default_alloc_setting = BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True)
         try:
-            default_alloc_enabled = BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True).get(env)
-        except SettingValidationError:
+            default_alloc_enabled = default_alloc_setting.get(env)
+        except SettingValidationError as exc:
             default_alloc_enabled = True
-            BoolSetting(ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY, default=True).set(env, default_alloc_enabled)
+            default_alloc_setting.set(env, default_alloc_enabled)
+            messagebox.showerror("Invalid runtime setting", str(exc))
+            runtime_settings_sanitized = True
         self._var_default_alloc_conf_enabled.set(bool(default_alloc_enabled))
 
+        cuda_malloc_setting = BoolSetting(CODEX_CUDA_MALLOC_KEY, default=False)
         try:
-            cuda_malloc_enabled = BoolSetting(CODEX_CUDA_MALLOC_KEY, default=False).get(env)
-        except SettingValidationError:
+            cuda_malloc_enabled = cuda_malloc_setting.get(env)
+        except SettingValidationError as exc:
             cuda_malloc_enabled = False
-            BoolSetting(CODEX_CUDA_MALLOC_KEY, default=False).set(env, cuda_malloc_enabled)
+            cuda_malloc_setting.set(env, cuda_malloc_enabled)
+            messagebox.showerror("Invalid runtime setting", str(exc))
+            runtime_settings_sanitized = True
         self._var_cuda_malloc.set(bool(cuda_malloc_enabled))
         self._var_manual_api_env_enabled.set(bool(getattr(self._controller.store.meta, "manual_api_env_enabled", False)))
 
@@ -522,6 +530,8 @@ class RuntimeTab:
         self._var_task_buffer_max_mb.set(str(int(max_mb)))
 
         self._sync_runtime_deps(mark_changed=False)
+        if runtime_settings_sanitized:
+            self._mark_changed()
         self._apply_advanced_visibility()
 
     def set_advanced_visible(self, visible: bool) -> None:
@@ -679,11 +689,11 @@ class RuntimeTab:
             backend, sdpa_policy = attention_mode_to_backend_policy(attention_mode)
         except SettingValidationError as exc:
             messagebox.showerror("Invalid runtime setting", str(exc))
-            backend, sdpa_policy = "pytorch", "mem_efficient"
+            backend, sdpa_policy = "pytorch", "auto"
         env["CODEX_ATTENTION_BACKEND"] = backend
         env["CODEX_ATTENTION_SDPA_POLICY"] = sdpa_policy
         attention_mode = backend_policy_to_attention_mode(backend, sdpa_policy)
-        self._var_attention_mode.set(_ATTENTION_MODE_TO_LABEL.get(attention_mode, "SDPA - Mem Efficient"))
+        self._var_attention_mode.set(_ATTENTION_MODE_TO_LABEL.get(attention_mode, "SDPA - Auto"))
         self._mark_changed()
 
     def _on_alloc_conf_changed(self) -> None:

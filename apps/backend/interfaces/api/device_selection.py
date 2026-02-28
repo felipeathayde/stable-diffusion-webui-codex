@@ -52,18 +52,37 @@ def _normalize_backend_label(raw: str) -> str:
 
 
 def configured_main_device() -> str:
+    mem_management = None
     try:
         from apps.backend.runtime.memory import memory_management as mem_management
-    except Exception:
-        mem_management = None  # type: ignore[assignment]
+    except ModuleNotFoundError as exc:
+        missing_name = str(getattr(exc, "name", "") or "")
+        if missing_name not in {
+            "apps.backend.runtime.memory",
+            "apps.backend.runtime.memory.memory_management",
+        }:
+            raise RuntimeError(
+                "Failed to import runtime memory manager dependencies for primary device authority."
+            ) from exc
+        mem_management = None
+    except Exception as exc:
+        raise RuntimeError("Failed to import runtime memory manager for primary device authority.") from exc
 
     manager = getattr(mem_management, "manager", None) if mem_management is not None else None
-    if manager is not None and hasattr(manager, "primary_device"):
+    if manager is not None:
+        if not hasattr(manager, "primary_device"):
+            raise RuntimeError(
+                "Runtime memory manager contract violation: missing primary_device() authority."
+            )
         try:
             primary_device = manager.primary_device()
         except Exception as exc:
             raise RuntimeError("Failed to read primary device from runtime memory manager.") from exc
         return _normalize_backend_label(str(primary_device))
+    if mem_management is not None:
+        raise RuntimeError(
+            "Runtime memory manager contract violation: imported memory module has no `manager` authority."
+        )
 
     from apps.backend.infra.config import args as runtime_args
 

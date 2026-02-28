@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-27
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -77,12 +77,14 @@ Status: Active
 - 2026-02-21: `ImageModelTab.vue` removed direct mask-file selection wiring; inpaint mask authoring/import is now owned by the canvas editor path (`Img2ImgInpaintParamsCard.vue` + `InpaintMaskEditorOverlay.vue`), while inpaint runtime params remain parent-owned.
 - 2026-02-27: `ImageModelTab.vue` now derives the mask editor canvas size from the init image’s natural dimensions (not the generation width/height), clears stale masks whose dimensions no longer match the init image, and disables Generate when INPAINT is enabled without an applied mask.
 - 2026-02-21: `WANTab.vue` Prompt UI is now stage-scoped: `High Prompt` and `Low Prompt` render as separate cards (Low is collapsible), guided-generation validation targets missing stage prompts explicitly, and history modal/apply paths read/write prompt fields under `high.*` and `low.*` (with legacy root-prompt fallback for old snapshots).
-- 2026-02-21: `WANTab.vue` now exposes SDXL-style LoRA modal insertion on both `High Prompt` and `Low Prompt` cards (token chips in prompt editors), and stage-level LoRA selector/weight controls were removed from `High Noise`/`Low Noise`.
+- 2026-02-21: `WANTab.vue` now exposes SDXL-style LoRA modal controls on both `High Prompt` and `Low Prompt` cards, and stage-level LoRA selector/weight controls were removed from `High Noise`/`Low Noise`.
+- 2026-02-28: `WANTab.vue` WAN LoRA modal inserts now mutate prompt text only (`+` -> prompt, `-` -> negative prompt); stage `wan_high/wan_low.loras[]` is derived at request build time by `useVideoGeneration` from prompt tags (`<lora:...>`) with SHA resolution + dedupe.
 - 2026-02-21: `WANTab.vue` now exposes WAN generation modes as `txt2vid|img2vid` only; vid2vid input cards/controls and vid2vid history apply branches were removed.
 - 2026-02-23: `WANTab.vue` img2vid temporal controls now use an explicit enable/disable toggle (`disabled => solo` native WAN22 mode), rendered in the `Temporal Loom` subheader (Hires-style clickable header + status pill), while enabled mode selection is limited to `chunk|sliding|svi2|svi2_pro`; per-mode localStorage snapshots remain active and the last non-solo mode is persisted for toggle round-trips.
 - 2026-02-23: `WANTab.vue` relabels the img2vid temporal card header from `Temporal` to `Temporal Loom`.
 - 2026-02-22: `WANTab.vue` adds `SVI 2.0` and `SVI 2.0 Pro` to img2vid temporal mode options, reuses window controls for all windowed modes (`sliding|svi2|svi2_pro`), and tightens slider contracts (`stride` nudge/step `=4`, `commit` minimum `= stride + 4`) to keep temporal handoff settings valid at input time.
 - 2026-02-22: `WANTab.vue` now exposes `img2vidResetAnchorToBase` as a visible temporal toggle (chunk + windowed rows) and includes `Anchor Alpha` slider in the windowed row; SVI windowed modes force the reset toggle off to match backend continuity contracts.
+- 2026-02-28: `WANTab.vue` removed `chunk` from temporal mode selection and removed chunk-only UI rows; temporal controls now expose only `sliding|svi2|svi2_pro` when enabled, and legacy chunk history snapshots are rejected fail-loud with user toasts.
 - 2026-02-27: `WANTab.vue` WAN video state defaults/history/snapshot wiring removed obsolete output fields (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and now use one `interpolationFps` contract (`0` off, active values normalized as output-FPS targets mapped to backend interpolation times).
 - 2026-02-27: `WANTab.vue` WAN default video FPS is now `15` and the output panel renders interpolation in the same slider row as Loop Count/CRF.
 - 2026-02-27: `WANTab.vue` now snapshots/applies SeedVR2 upscaling controls under `paramsSnapshot.upscaling`, and the embedded `WanVideoOutputPanel.vue` exposes compact upscaling controls plus an advanced block.

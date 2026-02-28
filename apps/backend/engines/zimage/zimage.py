@@ -26,6 +26,7 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.model_scopes import stage_scoped_model_load
 from apps.backend.engines.common.prompt_wrappers import PromptListBase
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.common.tensor_tree import detach_to_cpu, move_to_device
@@ -166,9 +167,27 @@ class ZImageEngine(CodexDiffusionEngine):
             options=options,
         )
         runtime = assembly.runtime
+        runtime_device = getattr(runtime, "device", None)
+        if runtime_device is None:
+            raise RuntimeError("Z-Image runtime contract violation: assembled runtime is missing `device`.")
+        expected_core_device = str(memory_management.manager.get_device(DeviceRole.CORE))
+        if str(runtime_device) != expected_core_device:
+            raise RuntimeError(
+                "Z-Image runtime contract violation: assembled runtime device does not match memory-manager CORE "
+                f"device (runtime={runtime_device}, expected={expected_core_device})."
+            )
+        runtime_dtype = getattr(runtime, "core_compute_dtype", None)
+        if runtime_dtype is None:
+            raise RuntimeError("Z-Image runtime contract violation: assembled runtime is missing `core_compute_dtype`.")
+        runtime_dtype_name = str(runtime_dtype)
+        if runtime_dtype_name not in {"bf16", "fp16", "fp32"}:
+            raise RuntimeError(
+                "Z-Image runtime contract violation: assembled runtime has invalid `core_compute_dtype` "
+                f"{runtime_dtype_name!r} (allowed: bf16, fp16, fp32)."
+            )
         self._runtime = runtime
-        self._device = str(getattr(runtime, "device", memory_management.manager.mount_device()))
-        self._dtype = str(getattr(runtime, "core_compute_dtype", "fp32"))
+        self._device = str(runtime_device)
+        self._dtype = runtime_dtype_name
 
         if vendor_dir is not None:
             tokenizer_dir = vendor_dir / "tokenizer"
@@ -215,6 +234,7 @@ class ZImageEngine(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
         runtime = self._require_runtime()
+        qwen_patcher = self.codex_objects.text_encoders["qwen3"].patcher
         debug_dtype = env_flag("CODEX_PIPELINE_DEBUG", False) and logger.isEnabledFor(logging.DEBUG)
 
         texts = tuple(str(x or "") for x in prompts)
@@ -238,22 +258,19 @@ class ZImageEngine(CodexDiffusionEngine):
                 )
             return move_to_device(cached, device=target_device, dtype=core_dtype)
 
-        # Load text encoder to GPU using memory management (same pattern as Flux)
-        patcher = runtime.qwen.patcher
-        already_loaded = memory_management.manager.is_model_loaded(patcher)
-        memory_management.manager.load_model(patcher)
-        unload_qwen = self.smart_offload_enabled and not already_loaded
-        
-        # Per diffusers reference: pass prompts directly - the tokenizer's
-        # apply_chat_template with enable_thinking=True handles formatting.
-        # Do NOT add manual system prompt or <Prompt Start> markers.
-        if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False) and prompts:
-            logger.info(
-                "[zimage-debug] prompt0=%s",
-                truncate_text(prompts[0], limit=env_int("CODEX_ZIMAGE_DEBUG_TEXT_MAX", 400)),
-            )
-        
-        try:
+        with stage_scoped_model_load(
+            qwen_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
+            # Per diffusers reference: pass prompts directly - the tokenizer's
+            # apply_chat_template with enable_thinking=True handles formatting.
+            # Do NOT add manual system prompt or <Prompt Start> markers.
+            if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False) and prompts:
+                logger.info(
+                    "[zimage-debug] prompt0=%s",
+                    truncate_text(prompts[0], limit=env_int("CODEX_ZIMAGE_DEBUG_TEXT_MAX", 400)),
+                )
             cond = runtime.text.qwen3_text(prompts)
             core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
             if cond.dtype != core_dtype:
@@ -266,9 +283,6 @@ class ZImageEngine(CodexDiffusionEngine):
                 cond = cond.to(dtype=core_dtype)
             if use_cache:
                 self._set_cached_cond(cache_key, detach_to_cpu(cond), enabled=use_cache)
-        finally:
-            if unload_qwen:
-                memory_management.manager.unload_model(patcher)
 
         raw_cfg = getattr(prompts, "cfg_scale", None)
         default_scale = 1.0

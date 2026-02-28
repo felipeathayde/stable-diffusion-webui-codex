@@ -7,13 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: LoRA picker + token insertion modal.
-Fetches LoRAs via the backend API, filters by search query, and emits `<lora:filename:weight>` tokens targeting either the positive or negative prompt.
+Fetches LoRAs via the backend API, filters by search query, and emits `<lora:filename:weight>` tokens targeting positive/negative prompt inputs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LoraModal` (component): Modal for browsing LoRAs and emitting insertion tokens.
 - `filtered` (const): Filtered LoRA list based on the current search query.
 - `loadItems` (function): Loads LoRA inventory (cached or forced refresh) into the modal list.
 - `resolveTokenName` (function): Resolves token filename from inventory row data.
+- `normalizeInsertWeight` (function): Normalizes user-entered LoRA weight to a finite numeric value.
 - `refreshList` (function): Forces a backend inventory refresh and reloads the modal list.
 - `insert` (function): Emits a formatted LoRA token from a selected inventory row into a prompt target.
 -->
@@ -68,7 +69,6 @@ const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('
 interface LoraItem {
   name: string
   path: string
-  sha256?: string
 }
 const items = ref<LoraItem[]>([])
 const q = ref('')
@@ -119,13 +119,20 @@ function resolveTokenName(item: LoraItem): string {
   return normalizedPath ? (normalizedPath.split('/').pop() || '').trim() : ''
 }
 
+function normalizeInsertWeight(rawWeight: unknown): number {
+  const numeric = Number(rawWeight)
+  if (!Number.isFinite(numeric)) return 1.0
+  return numeric
+}
+
 function insert(item: LoraItem, target: 'positive' | 'negative'): void {
   const tokenName = resolveTokenName(item)
   if (!tokenName) {
     loadError.value = `LoRA '${item.name || item.path}' has no valid filename; refresh and retry.`
     return
   }
-  const t = `<lora:${tokenName}:${(weight.value ?? 1.0).toFixed(2)}>`
+  const resolvedWeight = normalizeInsertWeight(weight.value)
+  const t = `<lora:${tokenName}:${resolvedWeight.toFixed(2)}>`
   emit('insert', { token: t, target })
 }
 </script>

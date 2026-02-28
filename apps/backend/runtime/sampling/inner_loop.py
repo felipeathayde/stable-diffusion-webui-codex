@@ -348,10 +348,10 @@ def compute_cond_indices(cond_or_uncond, sigmas):
 
 def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
     out_cond = torch.zeros_like(x_in)
-    out_count = torch.ones_like(x_in) * 1e-37
+    out_count = torch.full_like(x_in, 1e-37)
 
     out_uncond = torch.zeros_like(x_in)
-    out_uncond_count = torch.ones_like(x_in) * 1e-37
+    out_uncond_count = torch.full_like(x_in, 1e-37)
 
     COND = 0
     UNCOND = 1
@@ -368,6 +368,7 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         allowed={"0", "1"},
     ) == "1"
     fused_disabled_logged = False
+    timestep_repeat_cache: dict[int, torch.Tensor] = {}
 
     to_run = [
         (prepared, COND)
@@ -433,8 +434,17 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                 c_dict['y'] = c_dict['y'].to(device=dev)
             if 'c_concat' in c_dict and isinstance(c_dict['c_concat'], torch.Tensor):
                 c_dict['c_concat'] = c_dict['c_concat'].to(device=dev)
-            timestep_repeat_shape = (batch_chunks,) + (1,) * max(timestep.ndim - 1, 0)
-            timestep_ = timestep.repeat(timestep_repeat_shape)
+            if batch_chunks <= 1:
+                timestep_ = timestep
+            else:
+                timestep_ = timestep_repeat_cache.get(batch_chunks)
+                if timestep_ is None:
+                    if timestep.shape[0] == 1:
+                        timestep_ = timestep.expand((batch_chunks,) + tuple(timestep.shape[1:]))
+                    else:
+                        timestep_repeat_shape = (batch_chunks,) + (1,) * max(timestep.ndim - 1, 0)
+                        timestep_ = timestep.repeat(timestep_repeat_shape)
+                    timestep_repeat_cache[batch_chunks] = timestep_
 
         transformer_options = {}
         if 'transformer_options' in model_options:
@@ -544,7 +554,7 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                     if not fused_disabled_logged:
                         logger.warning(
                             "[cfg-batch] fused attempt OOM; falling back to split (mode=%s). "
-                            "Try disabling GGUF dequant cache or reducing resolution/CFG.",
+                            "Try reducing resolution/CFG or disabling fused CFG batching.",
                             cfg_batch_mode,
                         )
                         fused_disabled_logged = True
@@ -564,7 +574,7 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
             if not fused_disabled_logged:
                 logger.warning(
                     "[cfg-batch] fused batch OOM; falling back to split (mode=%s). "
-                    "Try disabling GGUF dequant cache or reducing resolution/CFG.",
+                    "Try reducing resolution/CFG or disabling fused CFG batching.",
                     cfg_batch_mode,
                 )
                 fused_disabled_logged = True
@@ -719,25 +729,31 @@ def sampling_prepare(denoiser, x):
     additional_model_patchers = list(getattr(denoiser, "extra_model_patchers_during_sampling", []) or [])
 
     control_runtime = denoiser.activate_control() if hasattr(denoiser, "activate_control") else None
-    if control_runtime:
-        additional_inference_memory += control_runtime.inference_memory_requirements(denoiser.model_dtype())
-        additional_model_patchers += control_runtime.get_models()
-        logger.debug(
-            "Control runtime activated: extra_memory=%s models=%d",
-            additional_inference_memory,
-            len(additional_model_patchers),
-        )
+    real_model = denoiser.model
 
-    if denoiser.has_online_lora():
-        lora_memory = utils.nested_compute_size(
-            denoiser.lora_patches,
-            element_size=utils.dtype_to_element_size(denoiser.model.computation_dtype),
-        )
-        additional_inference_memory += lora_memory
+    def percent_to_timestep_function(p):  # type: ignore[no-untyped-def]
+        return real_model.predictor.percent_to_sigma(p)
 
-    models_to_load = [denoiser] + additional_model_patchers
     setattr(denoiser, "_codex_smart_offload_models", [])
     try:
+        if control_runtime:
+            control_runtime.prepare(real_model, percent_to_timestep_function)
+            additional_inference_memory += control_runtime.inference_memory_requirements(denoiser.model_dtype())
+            additional_model_patchers += control_runtime.get_models()
+            logger.debug(
+                "Control runtime activated: extra_memory=%s models=%d",
+                additional_inference_memory,
+                len(additional_model_patchers),
+            )
+
+        if denoiser.has_online_lora():
+            lora_memory = utils.nested_compute_size(
+                denoiser.lora_patches,
+                element_size=utils.dtype_to_element_size(denoiser.model.computation_dtype),
+            )
+            additional_inference_memory += lora_memory
+
+        models_to_load = [denoiser] + additional_model_patchers
         memory_management.manager.load_models(
             models=models_to_load,
             memory_required=denoiser_inference_memory,
@@ -756,13 +772,7 @@ def sampling_prepare(denoiser, x):
                 dtype=denoiser.model.computation_dtype,
             )
 
-        real_model = denoiser.model
-
-        def percent_to_timestep_function(p):  # type: ignore[no-untyped-def]
-            return real_model.predictor.percent_to_sigma(p)
-
         if control_runtime:
-            control_runtime.prepare(real_model, percent_to_timestep_function)
             logger.debug("Control runtime prepared with model %s", type(real_model).__name__)
     except Exception as exc:
         try:

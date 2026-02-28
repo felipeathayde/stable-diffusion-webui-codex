@@ -161,7 +161,7 @@ class IntSetting:
 def attention_mode_to_backend_policy(mode: str) -> tuple[str, str]:
     normalized_mode = ChoiceSetting(
         "CODEX_ATTENTION_MODE",
-        default="sdpa_mem_efficient",
+        default="sdpa_auto",
         choices=LAUNCHER_ATTENTION_MODE_CHOICES,
     ).parse(mode)
     if normalized_mode == "sdpa_auto":

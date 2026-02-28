@@ -26,6 +26,9 @@ from apps.backend.runtime.models.state_dict import state_dict_prefix_replace
 from apps.backend.runtime.families.sd.cnets import t2i_adapter
 from apps.backend.runtime.misc.image_resize import adaptive_resize
 from apps.backend.runtime.logging import get_backend_logger
+from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
+from apps.backend.patchers.base import ModelPatcher
 
 from ...base import ControlModuleBase
 from ...weighting import broadcast_image_to
@@ -37,6 +40,11 @@ class T2IAdapter(ControlModuleBase):
     def __init__(self, t2i_model, channels_in: int, *, device=None) -> None:
         super().__init__(device=device)
         self.t2i_model = t2i_model
+        self.t2i_model_wrapped = ModelPatcher(
+            self.t2i_model,
+            load_device=memory_management.manager.get_device(DeviceRole.CORE),
+            offload_device=memory_management.manager.get_offload_device(DeviceRole.CORE),
+        )
         self.channels_in = channels_in
         self.control_input = None
 
@@ -68,8 +76,7 @@ class T2IAdapter(ControlModuleBase):
             self.cond_hint = self.cond_hint.to(device=x_noisy.device, dtype=x_noisy.dtype)
 
         if self.control_input is None:
-            self.t2i_model.to(x_noisy.dtype)
-            self.t2i_model.to(self.device)
+            self.t2i_model.to(dtype=x_noisy.dtype)
 
             wrapper = transformer_options.get("controlnet_model_function_wrapper")
             if wrapper is not None:
@@ -81,8 +88,6 @@ class T2IAdapter(ControlModuleBase):
                 )
             else:
                 self.control_input = self.t2i_model(self.cond_hint)
-
-            self.t2i_model.cpu()
 
         control_input = [tensor.clone() if tensor is not None else None for tensor in self.control_input]
         middle = None
@@ -100,6 +105,11 @@ class T2IAdapter(ControlModuleBase):
     def cleanup(self) -> None:
         self.control_input = None
         super().cleanup()
+
+    def get_models(self) -> list[object]:
+        models = super().get_models()
+        models.append(self.t2i_model_wrapped)
+        return models
 
     def copy(self):
         clone = T2IAdapter(self.t2i_model, self.channels_in, device=self.device)

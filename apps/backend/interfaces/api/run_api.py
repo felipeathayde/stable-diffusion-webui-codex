@@ -652,6 +652,14 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         allocator_backend or "<default>",
         bool(getattr(ns, "cuda_malloc", False)),
     )
+    _LOG.info(
+        "startup: attention_backend=%s attention_sdpa_policy=%s (resolved_backend=%s, flash=%s, mem_efficient=%s)",
+        str(getattr(ns, "attention_backend", "<unset>") or "<unset>"),
+        str(getattr(ns, "attention_sdpa_policy", "<unset>") or "<unset>"),
+        str(getattr(runtime_config.attention, "backend", "<unknown>")),
+        bool(getattr(runtime_config.attention, "enable_flash", False)),
+        bool(getattr(runtime_config.attention, "enable_mem_efficient", False)),
+    )
     _try_disable_windows_power_throttling()
     # Publish resolved bootstrap values (after CLI/env/settings precedence) without mutating os.environ.
     try:

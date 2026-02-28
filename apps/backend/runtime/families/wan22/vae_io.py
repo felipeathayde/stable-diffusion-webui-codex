@@ -70,6 +70,21 @@ class WanVAEDecodeSession:
     decode_dtype: torch.dtype
 
 
+def _require_offload_device(*, context: str) -> torch.device:
+    manager = getattr(memory_management, "manager", None)
+    if manager is None or not hasattr(manager, "offload_device"):
+        raise WAN22VAEContractError(
+            f"WAN22 GGUF: {context} requires an active memory manager with offload_device()."
+        )
+    offload_device = manager.offload_device()
+    if not isinstance(offload_device, torch.device):
+        raise WAN22VAEContractError(
+            f"WAN22 GGUF: {context} expected offload_device() -> torch.device, "
+            f"got {type(offload_device).__name__}."
+        )
+    return offload_device
+
+
 def _detect_wan_vae_lane(state_dict: Mapping[str, Any]) -> str:
     evidence_keys = (
         "encoder.conv_in.weight",
@@ -543,9 +558,9 @@ def close_vae_decode_session(session: WanVAEDecodeSession | None, *, logger: Any
     if session is None:
         return
     try:
-        session.vae.to("cpu")
+        session.vae.to(_require_offload_device(context="VAE decode session close"))
     except Exception as exc:
-        raise WAN22VAEContractError("WAN22 GGUF: failed to offload VAE decode session to CPU.") from exc
+        raise WAN22VAEContractError("WAN22 GGUF: failed to offload VAE decode session.") from exc
     try:
         del session.vae
     except Exception as exc:
@@ -729,10 +744,10 @@ def vae_encode_video_condition(
         finally:
             if offload_after and vae is not None:
                 try:
-                    vae.to("cpu")
+                    vae.to(_require_offload_device(context="VAE encode offload"))
                 except Exception as exc:
                     raise WAN22VAEContractError(
-                        "WAN22 GGUF: failed to offload VAE to CPU after encode stage."
+                        "WAN22 GGUF: failed to offload VAE after encode stage."
                     ) from exc
                 del vae
                 cuda_empty_cache(logger, label="after-vae-encode")
@@ -983,10 +998,10 @@ def vae_decode_video(
                     _append_decoded_chunk(img_chunk, lane_name=lane, chunk_label="full")
         if local_vae_loaded and offload_after:
             try:
-                vae.to("cpu")
+                vae.to(_require_offload_device(context="VAE decode offload"))
             except Exception as exc:
                 raise WAN22VAEContractError(
-                    "WAN22 GGUF: failed to offload VAE to CPU after decode stage."
+                    "WAN22 GGUF: failed to offload VAE after decode stage."
                 ) from exc
             del vae
             cuda_empty_cache(logger, label="after-vae-decode")

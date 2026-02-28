@@ -118,10 +118,6 @@ def _compute_transfer_totals_ms(key_averages: Iterable[object]) -> dict[str, flo
             else:
                 totals_us["memcpy_other_us"] += cuda_us
 
-        # Some builds use CUDA runtime names instead of explicit Memcpy HtoD/DtoH markers.
-        if "cudamemcpy" in key_l:
-            totals_us["memcpy_other_us"] += cuda_us
-
     return {k.replace("_us", "_ms"): _ms(v) for k, v in totals_us.items()}
 
 

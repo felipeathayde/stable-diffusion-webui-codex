@@ -12,7 +12,9 @@ Re-exports text processing engines (CLIP/T5), prompt parsing/emphasis utilities,
 Symbols (top-level; keep in sync; no ghosts):
 - `ClassicTextProcessingEngine` (class): CLIP-based prompt encoder (chunking, emphasis, textual inversion integration).
 - `PromptChunkFix` (namedtuple): Single embedding “fix” applied at a specific token offset (used by textual inversion).
-- `last_extra_generation_params` (constant): Mutable dict carrying extra generation params (best-effort telemetry for downstream consumers).
+- `last_extra_generation_params` (constant): Thread-local mutable mapping carrying extra generation params for current worker/job.
+- `clear_last_extra_generation_params` (function): Clears thread-local extra generation params at request boundaries.
+- `snapshot_last_extra_generation_params` (function): Returns a copy of current thread-local extra generation params.
 - `T5TextProcessingEngine` (class): T5-based prompt encoder used by engines that rely on T5 text encoders.
 - `emphasis` (module): Emphasis registry and implementations.
 - `parsing` (module): Prompt attention parsing (`(...)`/`[...]` weights and BREAK tokens).
@@ -23,7 +25,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `__all__` (constant): Export list for the text processing facade.
 """
 
-from .classic_engine import ClassicTextProcessingEngine, PromptChunkFix, last_extra_generation_params
+from .classic_engine import (
+    ClassicTextProcessingEngine,
+    PromptChunkFix,
+    clear_last_extra_generation_params,
+    last_extra_generation_params,
+    snapshot_last_extra_generation_params,
+)
 from .t5_engine import T5TextProcessingEngine
 from . import emphasis, parsing, textual_inversion
 from .textual_inversion import EmbeddingDatabase, embedding_to_b64, embedding_from_b64
@@ -33,10 +41,12 @@ __all__ = [
     "EmbeddingDatabase",
     "PromptChunkFix",
     "T5TextProcessingEngine",
+    "clear_last_extra_generation_params",
     "embedding_from_b64",
     "embedding_to_b64",
     "emphasis",
     "last_extra_generation_params",
     "parsing",
+    "snapshot_last_extra_generation_params",
     "textual_inversion",
 ]

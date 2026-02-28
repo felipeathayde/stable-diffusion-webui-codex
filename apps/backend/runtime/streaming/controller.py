@@ -210,9 +210,20 @@ class StreamingController(Generic[SegmentT]):
 
         self._segments_by_name[next_segment.name] = next_segment
         self._prefetch_segment = next_segment
+        start = time.perf_counter()
         next_segment.to_device(self.compute_device, non_blocking=True)
+        elapsed_ms = (time.perf_counter() - start) * 1000
         self._on_gpu.add(next_segment.name)
-        self.logger.debug("Prefetching segment '%s'", next_segment.name)
+        if next_segment.name in self._access_order:
+            self._access_order.remove(next_segment.name)
+        self._access_order.append(next_segment.name)
+        self._stats.record_to_gpu(next_segment.param_bytes, elapsed_ms)
+        self.logger.debug(
+            "Prefetched segment '%s' to compute device (%.2f MB, %.1f ms)",
+            next_segment.name,
+            next_segment.param_bytes / (1024 * 1024),
+            elapsed_ms,
+        )
 
     def evict_all(self) -> None:
         """Evict all known segments from compute device."""

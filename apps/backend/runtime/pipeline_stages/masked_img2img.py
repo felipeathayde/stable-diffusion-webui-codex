@@ -31,6 +31,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageFilter, ImageOps
 
+from apps.backend.runtime.processing.conditioners import encode_image_batch, encode_inpaint_latent_pair
 from apps.backend.runtime.pipeline_stages.image_io import pil_to_tensor
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
@@ -565,7 +566,23 @@ def prepare_masked_img2img_bundle(
             processing.update_extra_param("Masked content", "fill")
 
     init_tensor = pil_to_tensor([image_for_sampling])
-    init_latent = processing.sd_model.encode_first_stage(init_tensor)
+    round_conditioning_mask = bool(getattr(processing, "round_image_mask", True))
+    conditioning_latent: torch.Tensor | None = None
+    if getattr(processing.sd_model, "is_inpaint", False):
+        init_latent, conditioning_latent, _conditioning_mask = encode_inpaint_latent_pair(
+            processing.sd_model,
+            init_tensor,
+            image_mask=mask_for_sampling,
+            round_mask=round_conditioning_mask,
+            stage_prefix="runtime.pipeline_stages.masked_img2img.prepare_masked_img2img_bundle",
+        )
+        del _conditioning_mask
+    else:
+        init_latent = encode_image_batch(
+            processing.sd_model,
+            init_tensor,
+            stage="runtime.pipeline_stages.masked_img2img.prepare_masked_img2img_bundle.encode",
+        )
 
     latent_h = int(init_latent.shape[2])
     latent_w = int(init_latent.shape[3])
@@ -602,7 +619,8 @@ def prepare_masked_img2img_bundle(
         init_tensor,
         init_latent,
         image_mask=mask_for_sampling,
-        round_mask=bool(getattr(processing, "round_image_mask", True)),
+        round_mask=round_conditioning_mask,
+        precomputed_conditioning_latent=conditioning_latent,
     )
 
     bundle = MaskedImg2ImgBundle(

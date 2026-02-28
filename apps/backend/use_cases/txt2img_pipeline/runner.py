@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, is_dataclass, replace
 import time
 from typing import Any, Mapping, Sequence
@@ -57,6 +58,7 @@ from apps.backend.runtime.processing.datatypes import (
     PromptContext,
     SamplingPlan,
 )
+from apps.backend.runtime.processing.conditioners import encode_image_batch
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 from apps.backend.runtime.pipeline_stages.image_io import maybe_decode_for_hr
@@ -75,8 +77,9 @@ from apps.backend.runtime.pipeline_stages.sampling_plan import (
     ensure_sampler_and_rng,
     resolve_sampler_scheduler_override,
 )
+from apps.backend.patchers.lora_apply import selection_hash_for_request
 from apps.backend.runtime.logging import emit_backend_event
-from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
+from apps.backend.runtime.pipeline_stages.scripts import collect_lora_selections, run_process_scripts
 from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
@@ -236,6 +239,7 @@ class Txt2ImgPipelineRunner:
             codex_objects = None
 
         denoiser_obj = getattr(codex_objects, "denoiser", None) if codex_objects is not None else None
+        denoiser_target = getattr(denoiser_obj, "patcher", denoiser_obj) if denoiser_obj is not None else None
         vae_obj = getattr(codex_objects, "vae", None) if codex_objects is not None else None
         vae_patcher = getattr(vae_obj, "patcher", vae_obj) if vae_obj is not None else None
 
@@ -268,7 +272,7 @@ class Txt2ImgPipelineRunner:
             cls._freeze_cache_value(model_ref),
             cls._freeze_cache_value(load_options),
             cls._freeze_cache_value(lora_hash),
-            int(id(denoiser_obj)),
+            int(id(denoiser_target)),
             int(id(vae_patcher)),
             text_encoder_ids,
         )
@@ -332,6 +336,14 @@ class Txt2ImgPipelineRunner:
         sd_model = getattr(processing, "sd_model", None)
         if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
             return None, None
+
+        try:
+            merged_loras = collect_lora_selections(getattr(context, "loras", ()) or ())
+            setattr(sd_model, "current_lora_hash", selection_hash_for_request(merged_loras))
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "txt2img conditioning requires deterministic LoRA selection identity before cache lookup."
+            ) from exc
 
         setattr(processing, "_codex_conditioning_cache_hit", False)
 
@@ -573,66 +585,77 @@ class Txt2ImgPipelineRunner:
         subseed_strength: float,
         prompts: Sequence[str],
     ) -> GenerationResult:
-        setattr(processing, "_codex_last_decode_engine", None)
-        t_start = time.perf_counter()
-        t_prepare_end: float | None = None
-        t_base_end: float | None = None
-        t_hires_end: float | None = None
-        t_refiner_end: float | None = None
+        from apps.backend.runtime.diagnostics.timeline import auto_save_and_print, timeline as runtime_timeline
 
-        model_device, model_dtype = self._sd_model_device_info(processing)
-        if model_device is not None:
-            self._logger.info("SDXL sd_model device=%s dtype=%s", model_device, model_dtype)
+        timeline_capture = None
+        capture_context = runtime_timeline.capture(name="txt2img_pipeline_run") if runtime_timeline.enabled else nullcontext(None)
 
-        state = self._prepare_state(
-            processing,
-            conditioning_data,
-            unconditional_data,
-            seeds,
-            subseeds,
-            subseed_strength,
-            prompts,
-        )
-        base_result = self._execute_base_sampling(processing, state)
-        t_prepare_end = time.perf_counter()
+        with capture_context as timeline_capture:
+            setattr(processing, "_codex_last_decode_engine", None)
+            t_start = time.perf_counter()
+            t_prepare_end: float | None = None
+            t_base_end: float | None = None
+            t_hires_end: float | None = None
+            t_refiner_end: float | None = None
 
-        final_samples = base_result.samples
-        t_base_end = time.perf_counter()
+            model_device, model_dtype = self._sd_model_device_info(processing)
+            if model_device is not None:
+                self._logger.info("SDXL sd_model device=%s dtype=%s", model_device, model_dtype)
 
-        if state.hires_plan is not None:
-            self._reload_for_hires(processing, state)
-            final_samples = self._run_hires_pass(processing, state, base_result)
-            t_hires_end = time.perf_counter()
-        else:
-            t_hires_end = t_base_end
+            state = self._prepare_state(
+                processing,
+                conditioning_data,
+                unconditional_data,
+                seeds,
+                subseeds,
+                subseed_strength,
+                prompts,
+            )
+            base_result = self._execute_base_sampling(processing, state)
+            t_prepare_end = time.perf_counter()
 
-        final_samples = self._maybe_run_refiner_pass(processing, state, final_samples)
-        t_refiner_end = time.perf_counter()
+            final_samples = base_result.samples
+            t_base_end = time.perf_counter()
 
-        try:
-            timings: dict[str, float] = {}
-            if t_prepare_end is not None:
-                timings["prepare_ms"] = (t_prepare_end - t_start) * 1000.0
-            if t_base_end is not None and t_prepare_end is not None:
-                timings["base_sampling_ms"] = (t_base_end - t_prepare_end) * 1000.0
-            if state.hires_plan is not None and t_hires_end is not None and t_base_end is not None:
-                timings["hires_ms"] = (t_hires_end - t_base_end) * 1000.0
-            if t_refiner_end is not None and t_hires_end is not None:
-                timings["refiner_ms"] = max(0.0, (t_refiner_end - t_hires_end) * 1000.0)
-            timings["total_pipeline_ms"] = max(0.0, (t_refiner_end or time.perf_counter()) - t_start) * 1000.0
-            processing.update_extra_param("Timings (ms)", timings)
-        except Exception:
-            # Timings must never break generation; swallow errors defensively.
-            pass
+            if state.hires_plan is not None:
+                self._reload_for_hires(processing, state)
+                final_samples = self._run_hires_pass(processing, state, base_result)
+                t_hires_end = time.perf_counter()
+            else:
+                t_hires_end = t_base_end
+
+            final_samples = self._maybe_run_refiner_pass(processing, state, final_samples)
+            t_refiner_end = time.perf_counter()
+
+            try:
+                timings: dict[str, float] = {}
+                if t_prepare_end is not None:
+                    timings["prepare_ms"] = (t_prepare_end - t_start) * 1000.0
+                if t_base_end is not None and t_prepare_end is not None:
+                    timings["base_sampling_ms"] = (t_base_end - t_prepare_end) * 1000.0
+                if state.hires_plan is not None and t_hires_end is not None and t_base_end is not None:
+                    timings["hires_ms"] = (t_hires_end - t_base_end) * 1000.0
+                if t_refiner_end is not None and t_hires_end is not None:
+                    timings["refiner_ms"] = max(0.0, (t_refiner_end - t_hires_end) * 1000.0)
+                timings["total_pipeline_ms"] = max(0.0, (t_refiner_end or time.perf_counter()) - t_start) * 1000.0
+                processing.update_extra_param("Timings (ms)", timings)
+            except Exception:
+                # Timings must never break generation; swallow errors defensively.
+                pass
 
         # Auto-print and save timeline trace if enabled
-        try:
-            from apps.backend.runtime.diagnostics.timeline import auto_save_and_print
-            trace_path = auto_save_and_print()
-            if trace_path:
-                processing.update_extra_param("Timeline Trace", trace_path)
-        except Exception:
-            pass  # Timeline should never break generation
+        if runtime_timeline.enabled:
+            try:
+                captured_events = getattr(timeline_capture, "events", None)
+                if not captured_events:
+                    self._logger.warning(
+                        "CODEX_TIMELINE is enabled, but txt2img run captured zero timeline events."
+                    )
+                trace_path = auto_save_and_print(timeline_capture)
+                if trace_path:
+                    processing.update_extra_param("Timeline Trace", trace_path)
+            except Exception:
+                pass  # Timeline should never break generation
 
         return GenerationResult(
             samples=final_samples,
@@ -730,7 +753,11 @@ class Txt2ImgPipelineRunner:
                 device=devices.default_device(),
                 dtype=torch.float32,
             )
-            base_samples = processing.sd_model.encode_first_stage(tensor)
+            base_samples = encode_image_batch(
+                processing.sd_model,
+                tensor,
+                stage="use_cases.txt2img.runner.execute_base_sampling.encode",
+            )
 
         if base_samples is None:
             raise RuntimeError("txt2img failed to produce initial samples")
@@ -988,7 +1015,11 @@ class Txt2ImgPipelineRunner:
             dtype=torch.float32,
         )
 
-        samples = processing.sd_model.encode_first_stage(tensor)
+        samples = encode_image_batch(
+            processing.sd_model,
+            tensor,
+            stage="use_cases.txt2img.runner.prepare_first_pass_from_image.encode",
+        )
         devices.torch_gc()
         return samples, None
 

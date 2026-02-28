@@ -41,6 +41,8 @@ from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.runtime.diagnostics.contract_trace import error_meta
 from apps.backend.runtime.diagnostics.contract_trace import emit_event as emit_contract_trace
 from apps.backend.runtime.diagnostics.contract_trace import hash_request_prompt
+from apps.backend.runtime.diagnostics.fallback_state import fallback_used as fallback_state_used
+from apps.backend.runtime.diagnostics.fallback_state import reset_fallback_state
 
 logger = logging.getLogger("backend.api.tasks.generation")
 
@@ -146,11 +148,14 @@ def resolve_request_smart_flags(req: Any) -> tuple[bool, bool, bool]:
 
 
 def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> None:
+    cleanup_failures: list[str] = []
+
     clear_cache = getattr(orch, "clear_cache", None)
     if callable(clear_cache):
         try:
             clear_cache()
         except Exception as exc:
+            cleanup_failures.append(f"orchestrator_cache:{exc}")
             logger.warning(
                 "Failed to clear orchestrator cache during runtime cleanup (%s): %s",
                 reason,
@@ -161,6 +166,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
     try:
         from apps.backend.runtime.memory import memory_management as memory_state
     except Exception as exc:
+        cleanup_failures.append(f"memory_manager_import:{exc}")
         logger.warning(
             "Runtime memory-manager import failed during cleanup (%s): %s",
             reason,
@@ -171,6 +177,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
         try:
             memory_state.manager.unload_all_models()
         except Exception as exc:
+            cleanup_failures.append(f"unload_all_models:{exc}")
             logger.warning(
                 "Runtime unload_all_models failed during cleanup (%s): %s",
                 reason,
@@ -180,6 +187,7 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
         try:
             memory_state.manager.soft_empty_cache(force=True)
         except Exception as exc:
+            cleanup_failures.append(f"soft_empty_cache:{exc}")
             logger.warning(
                 "Runtime soft_empty_cache failed during cleanup (%s): %s",
                 reason,
@@ -190,13 +198,21 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
     gguf_clear_cache: Callable[[], None] | None = None
     try:
         from apps.backend.runtime.ops.operations_gguf import clear_cache as gguf_clear_cache
-    except Exception:
+    except Exception as exc:
+        cleanup_failures.append(f"gguf_cache_import:{exc}")
+        logger.warning(
+            "GGUF cache cleanup helper unavailable during runtime cleanup (%s): %s",
+            reason,
+            exc,
+            exc_info=False,
+        )
         gguf_clear_cache = None
 
     if callable(gguf_clear_cache):
         try:
             gguf_clear_cache()
         except Exception as exc:
+            cleanup_failures.append(f"gguf_cache:{exc}")
             logger.warning(
                 "Failed to clear GGUF cache during runtime cleanup (%s): %s",
                 reason,
@@ -213,12 +229,19 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
     except Exception as exc:
+        cleanup_failures.append(f"torch_cache:{exc}")
         logger.warning(
             "Torch cache cleanup failed during runtime cleanup (%s): %s",
             reason,
             exc,
             exc_info=False,
         )
+
+    if cleanup_failures:
+        detail = "; ".join(cleanup_failures[:3])
+        if len(cleanup_failures) > 3:
+            detail = f"{detail}; ... (+{len(cleanup_failures) - 3} more)"
+        raise RuntimeError(f"Runtime memory cleanup failed ({reason}): {detail}")
 
     logger.info("Runtime memory cleanup completed (%s).", reason)
 
@@ -461,6 +484,10 @@ def run_image_task(
     fallback_enabled = smart_fallback
     storage_dtype = getattr(req, "core_dtype", None)
     compute_dtype = getattr(req, "core_compute_dtype", None)
+    single_flight = single_flight_enabled()
+
+    def _fallback_used_now() -> bool:
+        return bool(fallback_enabled and fallback_state_used())
 
     emit_contract_trace(
         task_id=task_id,
@@ -473,16 +500,17 @@ def run_image_task(
         compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
         strict=True,
         fallback_enabled=fallback_enabled,
-        fallback_used=False,
+        fallback_used=_fallback_used_now(),
         prompt_hash_value=prompt_hash_value,
-        meta={"engine_key": engine_key},
+        meta={"engine_key": engine_key, "single_flight_enabled": single_flight},
     )
 
     def worker() -> None:
         acquired = False
         success = False
+        reset_fallback_state()
         try:
-            if single_flight_enabled():
+            if single_flight:
                 push({"type": "status", "stage": "waiting_for_inference"})
                 emit_contract_trace(
                     task_id=task_id,
@@ -495,8 +523,9 @@ def run_image_task(
                     compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                     strict=True,
                     fallback_enabled=fallback_enabled,
-                    fallback_used=False,
+                    fallback_used=_fallback_used_now(),
                     prompt_hash_value=prompt_hash_value,
+                    meta={"single_flight_enabled": single_flight},
                 )
 
             acquired = acquire_inference_gate(
@@ -515,8 +544,9 @@ def run_image_task(
                     compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                     strict=True,
                     fallback_enabled=fallback_enabled,
-                    fallback_used=False,
+                    fallback_used=_fallback_used_now(),
                     prompt_hash_value=prompt_hash_value,
+                    meta={"single_flight_enabled": single_flight},
                 )
                 return
 
@@ -535,8 +565,9 @@ def run_image_task(
                 compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                 strict=True,
                 fallback_enabled=fallback_enabled,
-                fallback_used=False,
+                fallback_used=_fallback_used_now(),
                 prompt_hash_value=prompt_hash_value,
+                meta={"single_flight_enabled": single_flight},
             )
 
             preview_cfg = live_preview.build_task_config(opts_get)
@@ -592,7 +623,7 @@ def run_image_task(
                             compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                             strict=True,
                             fallback_enabled=fallback_enabled,
-                            fallback_used=False,
+                            fallback_used=_fallback_used_now(),
                             prompt_hash_value=prompt_hash_value,
                             meta={
                                 "step": ev.step,
@@ -645,7 +676,7 @@ def run_image_task(
                         compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                         strict=True,
                         fallback_enabled=fallback_enabled,
-                        fallback_used=False,
+                        fallback_used=_fallback_used_now(),
                         prompt_hash_value=prompt_hash_value,
                         meta={"image_count": len(payload_obj.get("images", []) or [])},
                     )
@@ -673,12 +704,25 @@ def run_image_task(
             except Exception:
                 pass
 
-            force_runtime_memory_cleanup(
-                reason=f"{mode}:worker_error",
-                orch=orch,
-            )
+            cleanup_err: Exception | None = None
+            try:
+                force_runtime_memory_cleanup(
+                    reason=f"{mode}:worker_error",
+                    orch=orch,
+                )
+            except Exception as cleanup_exc:
+                cleanup_err = cleanup_exc
+                logger.error(
+                    "Runtime memory cleanup failed after worker error (task_id=%s mode=%s): %s",
+                    task_id,
+                    mode,
+                    cleanup_exc,
+                    exc_info=False,
+                )
+            if cleanup_err is not None:
+                err = RuntimeError(f"{err} [runtime_cleanup_error: {cleanup_err}]")
             entry.error = public_task_error_message(err)
-            fallback_used = fallback_enabled and ("fallback" in str(err).lower())
+            fallback_used = _fallback_used_now() or (fallback_enabled and ("fallback" in str(err).lower()))
             emit_contract_trace(
                 task_id=task_id,
                 mode=mode,
@@ -709,7 +753,7 @@ def run_image_task(
                 compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
                 strict=True,
                 fallback_enabled=fallback_enabled,
-                fallback_used=False,
+                fallback_used=_fallback_used_now(),
                 prompt_hash_value=prompt_hash_value,
                 meta={"success": success},
             )

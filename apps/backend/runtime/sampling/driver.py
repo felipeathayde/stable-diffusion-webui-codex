@@ -520,7 +520,7 @@ class CodexSampler:
         context: SamplingContext | None = None,
         er_sde_options: Any = None,
     ) -> torch.Tensor:
-        base_noise = noise.detach().clone()
+        base_noise = noise.detach()
         base_context = context
         warned_full_preview = False
 

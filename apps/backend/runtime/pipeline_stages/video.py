@@ -72,12 +72,22 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
     from apps.backend.patchers.lora_apply import apply_loras_to_engine
 
     try:
-        selections = lora_selections.get_selections()
+        selections = list(lora_selections.get_selections())
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         raise RuntimeError(f"Failed to fetch LoRA selections: {exc}") from exc
 
-    if not selections or not hasattr(engine, "codex_objects_after_applying_lora"):
-        return None
+    has_lora_capability = hasattr(engine, "codex_objects_after_applying_lora")
+    if not selections:
+        if not has_lora_capability:
+            return None
+        # Empty-selection runs must still clear any stale LoRA state from prior requests.
+        return apply_loras_to_engine(engine, [])
+
+    if not has_lora_capability:
+        raise RuntimeError(
+            "Video pipeline LoRA selections were provided, but the active engine does not expose "
+            "`codex_objects_after_applying_lora`."
+        )
 
     stats = apply_loras_to_engine(engine, selections)
     if logger_:
@@ -87,7 +97,6 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
             getattr(stats, "params_touched", 0),
         )
     return stats
-
 
 def configure_sampler(component: Any, plan: VideoPlan, logger_: logging.Logger | None = None) -> Any:
     """Apply sampler/scheduler selection on a Diffusers pipeline component."""

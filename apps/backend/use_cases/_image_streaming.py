@@ -290,10 +290,13 @@ def _decode_generation_output(
                     )
                 gc.collect()
                 memory_management.manager.soft_empty_cache(force=True)
+                # Intentional exception: this egress path materializes decoded tensors on CPU
+                # for immediate PIL conversion (`latents_to_pil`), independent of model offload policy.
+                cpu_decode_target = memory_management.manager.cpu_device
                 decoded = decode_latent_batch(
                     decode_engine,
                     latents,
-                    target_device=memory_management.manager.cpu_device,
+                    target_device=cpu_decode_target,
                     stage=f"{task_label}.decode(pre)",
                 )
                 images = latents_to_pil(decoded)

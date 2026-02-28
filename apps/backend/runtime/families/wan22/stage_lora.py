@@ -309,7 +309,7 @@ def apply_wan22_stage_lora(
         lora_patches[(patch_source, strength, 1.0, online_mode)] = lora_patch_map
 
     offload_device = _resolve_stage_lora_offload_device()
-    loader.refresh(lora_patches, offload_device=offload_device, force_refresh=True)
+    loader.refresh(lora_patches, offload_device=offload_device, force_refresh=False)
 
     total_loras = len(parsed_loras)
     for index, (resolved_path, strength, _lora_patch_map, patch_count) in enumerate(parsed_loras):

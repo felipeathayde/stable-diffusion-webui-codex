@@ -891,7 +891,10 @@ def run_img2img(
 
     from apps.backend.core.requests import Img2ImgRequest, ProgressEvent, ResultEvent
     from apps.backend.engines.util.adapters import build_img2img_processing
-    from apps.backend.runtime.text_processing import last_extra_generation_params
+    from apps.backend.runtime.text_processing import (
+        clear_last_extra_generation_params,
+        snapshot_last_extra_generation_params,
+    )
 
     from ._image_streaming import (
         _build_common_info,
@@ -935,6 +938,7 @@ def run_img2img(
         active_decode_engine: Any = engine
 
         try:
+            clear_last_extra_generation_params()
             sampling_start = time.perf_counter()
             output = generate_img2img(
                 proc,
@@ -961,7 +965,7 @@ def run_img2img(
 
             extra_params: dict[str, object] = {}
             try:
-                extra_params.update(last_extra_generation_params)
+                extra_params.update(snapshot_last_extra_generation_params())
                 extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
             except Exception:  # noqa: BLE001
                 extra_params = getattr(proc, "extra_generation_params", {}) or {}

@@ -113,10 +113,11 @@ def _load_paths_config() -> Dict[str, List[str]]:
     path = _paths_json_path()
     try:
         stat = path.stat()
-    except FileNotFoundError:
-        _PATHS_CACHE = {}
-        _PATHS_MTIME = None
-        return {}
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Required paths.json is missing at {path}. "
+            "Create apps/paths.json with explicit model path entries before starting the backend."
+        ) from exc
 
     if _PATHS_CACHE is not None and _PATHS_MTIME == stat.st_mtime:
         return _PATHS_CACHE
@@ -137,14 +138,25 @@ def _load_paths_config() -> Dict[str, List[str]]:
     cfg: Dict[str, List[str]] = {}
     for key, value in raw.items():
         if not isinstance(key, str):
-            continue
+            raise RuntimeError(f"paths.json key must be a string (got {type(key).__name__}).")
+        if not isinstance(value, list):
+            raise RuntimeError(
+                f"paths.json entry for key {key!r} must be an array of strings "
+                f"(got {type(value).__name__})."
+            )
         items: List[str] = []
-        if isinstance(value, list):
-            for entry in value:
-                if isinstance(entry, str):
-                    v = entry.strip()
-                    if v:
-                        items.append(v)
+        for index, entry in enumerate(value):
+            if not isinstance(entry, str):
+                raise RuntimeError(
+                    f"paths.json entry for key {key!r} at index {index} must be a string "
+                    f"(got {type(entry).__name__})."
+                )
+            v = entry.strip()
+            if not v:
+                raise RuntimeError(
+                    f"paths.json entry for key {key!r} at index {index} must not be empty."
+                )
+            items.append(v)
         cfg[key] = items
 
     _ensure_model_dirs(cfg)

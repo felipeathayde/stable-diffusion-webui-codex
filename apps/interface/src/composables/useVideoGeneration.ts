@@ -14,8 +14,8 @@ via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses sta
 mode prompt fields from the High stage in payload builders for backend compatibility. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/
 `pingpong`/`returnFrames`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), and stage `flowShift`
 pass-through in common WAN payload input. Also snapshots and forwards optional SeedVR2 upscaling controls as `video_upscaling`.
-Img2vid temporal payload fields are gated by `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`), and stage-level WAN LoRA arrays (`high.loras`/`low.loras`) are
-threaded into payload builders when present. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
+Img2vid temporal payload fields are gated by `img2vidMode` (`solo|sliding|svi2|svi2_pro`), and WAN prompt `<lora:...>` tags are parsed client-side into
+stage-level LoRA arrays (`wan_high/wan_low.loras[]` with `sha+weight`) before payload dispatch. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
 before surfacing UI error text.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -136,6 +136,7 @@ export interface VideoGenerationState {
 const DEFAULT_PROGRESS: VideoProgressState = { stage: 'idle', percent: null, etaSeconds: null, step: null, totalSteps: null }
 const MAX_HISTORY = 8
 const MAX_QUEUE = 3
+const WAN_LORA_TAG_RE = /<\s*lora\s*:\s*([^:>]+)\s*(?::\s*([^>]*))?\s*>/gi
 
 // Per-tab generation state (keyed by tab ID)
 const tabStates = new Map<string, VideoGenerationState>()
@@ -552,6 +553,88 @@ export function useVideoGeneration(tabId: string) {
     if (state.value.history.length > MAX_HISTORY) state.value.history.length = MAX_HISTORY
   }
 
+  function normalizeWanLoraSha(rawValue: unknown): string | null {
+    const normalized = String(rawValue || '').trim().toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(normalized)) return null
+    return normalized
+  }
+
+  function normalizeWanPromptText(rawValue: unknown): string {
+    return String(rawValue || '').replace(/\s{2,}/g, ' ').trim()
+  }
+
+  function dedupeWanStageLoras(entries: WanStageParams['loras']): WanStageParams['loras'] {
+    const deduped: WanStageParams['loras'] = []
+    const indexBySha = new Map<string, number>()
+    for (const entry of entries) {
+      const normalizedSha = normalizeWanLoraSha(entry?.sha)
+      if (!normalizedSha) {
+        throw new Error('WAN LoRA SHA must be a 64-character hex string.')
+      }
+      const rawWeight = entry?.weight
+      const weight = rawWeight === undefined ? 1.0 : Number(rawWeight)
+      if (!Number.isFinite(weight)) {
+        throw new Error(`WAN LoRA weight must be a finite number for sha '${normalizedSha}'.`)
+      }
+      const normalizedEntry = { sha: normalizedSha, weight }
+      const existingIndex = indexBySha.get(normalizedSha)
+      if (typeof existingIndex === 'number') {
+        deduped[existingIndex] = normalizedEntry
+      } else {
+        indexBySha.set(normalizedSha, deduped.length)
+        deduped.push(normalizedEntry)
+      }
+    }
+    return deduped
+  }
+
+  function parseWanStagePromptLoras(
+    stageName: 'high' | 'low',
+    promptValue: string,
+    negativePromptValue: string,
+  ): { prompt: string; negativePrompt: string; loras: WanStageParams['loras'] } {
+    const collected: WanStageParams['loras'] = []
+    const collectFromText = (field: 'prompt' | 'negative_prompt', rawText: string): string => {
+      WAN_LORA_TAG_RE.lastIndex = 0
+      return String(rawText || '').replace(WAN_LORA_TAG_RE, (_fullMatch, rawName: string, rawWeight?: string) => {
+        const tokenName = String(rawName || '').trim()
+        if (!tokenName) {
+          throw new Error(`WAN ${stageName}.${field} contains an empty LoRA token name.`)
+        }
+        const resolvedSha = normalizeWanLoraSha(quicksettings.resolveLoraSha(tokenName))
+        if (!resolvedSha) {
+          throw new Error(`WAN ${stageName}.${field}: LoRA SHA not found for '${tokenName}'. Refresh inventory and retry.`)
+        }
+        let weight = 1.0
+        if (rawWeight !== undefined) {
+          const weightText = String(rawWeight || '').trim()
+          if (!weightText) {
+            throw new Error(`WAN ${stageName}.${field}: LoRA token '${tokenName}' has an empty weight.`)
+          }
+          const parsedWeight = Number(weightText)
+          if (!Number.isFinite(parsedWeight)) {
+            throw new Error(`WAN ${stageName}.${field}: LoRA token '${tokenName}' has invalid weight '${weightText}'.`)
+          }
+          weight = parsedWeight
+        }
+        collected.push({ sha: resolvedSha, weight })
+        return ''
+      })
+    }
+
+    const cleanedPrompt = normalizeWanPromptText(collectFromText('prompt', promptValue))
+    if (!cleanedPrompt) {
+      throw new Error(`WAN ${stageName}.prompt must not be empty after LoRA token parsing.`)
+    }
+    const cleanedNegative = normalizeWanPromptText(collectFromText('negative_prompt', negativePromptValue))
+
+    return {
+      prompt: cleanedPrompt,
+      negativePrompt: cleanedNegative,
+      loras: dedupeWanStageLoras(collected),
+    }
+  }
+
   function buildCommonInput(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): WanVideoCommonInput {
     const metaRepo = effectiveWanMetadataRepo(v, hi, lo)
     const teLabel = String(assets.value.textEncoder || '').trim()
@@ -561,6 +644,12 @@ export function useVideoGeneration(tabId: string) {
     const loSha = quicksettings.resolveWanGgufSha(lo.modelDir) || ''
     const tencSha = quicksettings.resolveTextEncoderSha(teLabel) || ''
     const vaeSha = quicksettings.resolveVaeSha(vaeLabel) || ''
+    const parsedHighStage = parseWanStagePromptLoras('high', hi.prompt, hi.negativePrompt)
+    const parsedLowStage = parseWanStagePromptLoras('low', lo.prompt, lo.negativePrompt)
+    const explicitHighLoras = Array.isArray(hi.loras) ? hi.loras : []
+    const explicitLowLoras = Array.isArray(lo.loras) ? lo.loras : []
+    const mergedHighLoras = dedupeWanStageLoras([...explicitHighLoras, ...parsedHighStage.loras])
+    const mergedLowLoras = dedupeWanStageLoras([...explicitLowLoras, ...parsedLowStage.loras])
 
     return {
       device: quicksettings.currentDevice || 'cpu',
@@ -572,26 +661,26 @@ export function useVideoGeneration(tabId: string) {
       attentionMode: v.attentionMode,
       high: {
         modelSha: hiSha,
-        prompt: hi.prompt,
-        negativePrompt: hi.negativePrompt,
+        prompt: parsedHighStage.prompt,
+        negativePrompt: parsedHighStage.negativePrompt,
         sampler: hi.sampler,
         scheduler: hi.scheduler,
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
-        loras: Array.isArray(hi.loras) ? hi.loras : [],
+        loras: mergedHighLoras,
         flowShift: hi.flowShift,
       },
       low: {
         modelSha: loSha,
-        prompt: lo.prompt,
-        negativePrompt: lo.negativePrompt,
+        prompt: parsedLowStage.prompt,
+        negativePrompt: parsedLowStage.negativePrompt,
         sampler: lo.sampler,
         scheduler: lo.scheduler,
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
-        loras: Array.isArray(lo.loras) ? lo.loras : [],
+        loras: mergedLowLoras,
         flowShift: lo.flowShift,
       },
       format: 'auto' as const,
@@ -638,13 +727,7 @@ export function useVideoGeneration(tabId: string) {
     if (v.useInitImage) {
       const img2vidMode = normalizeImg2VidMode(v.img2vidMode)
       const img2vidTemporalInput: Partial<WanImg2VidInput> = {}
-      if (img2vidMode === 'chunk') {
-        img2vidTemporalInput.chunkFrames = v.img2vidChunkFrames
-        img2vidTemporalInput.overlapFrames = v.img2vidOverlapFrames
-        img2vidTemporalInput.anchorAlpha = v.img2vidAnchorAlpha
-        img2vidTemporalInput.resetAnchorToBase = v.img2vidResetAnchorToBase
-        img2vidTemporalInput.chunkSeedMode = v.img2vidChunkSeedMode
-      } else if (isWanWindowedImg2VidMode(img2vidMode)) {
+      if (isWanWindowedImg2VidMode(img2vidMode)) {
         img2vidTemporalInput.windowFrames = v.img2vidWindowFrames
         img2vidTemporalInput.windowStride = v.img2vidWindowStride
         img2vidTemporalInput.windowCommitFrames = v.img2vidWindowCommitFrames

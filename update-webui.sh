@@ -33,6 +33,7 @@ Policy:
 - Frontend refresh uses lock-preserving mode: npm ci.
 
 Environment overrides:
+- CODEX_TORCH_MODE=custom (updater aborts before dependency sync to avoid overwriting custom PyTorch installs)
 - CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64
 - CODEX_CUDA_VARIANT=12.6|12.8|13|cu126|cu128|cu130 (validated whenever set; used for backend selection when CODEX_TORCH_BACKEND is not set)
 - CODEX_NODE_VERSION=<version> (default: 24.13.0; used for nodeenv auto-provisioning)
@@ -209,6 +210,16 @@ resolve_cuda_variant_override() {
   esac
 }
 
+validate_torch_mode_guard() {
+  local mode_raw="${CODEX_TORCH_MODE:-auto}"
+  local mode_lc
+  mode_lc="$(printf '%s' "$mode_raw" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$mode_lc" == "custom" ]]; then
+    abort "E_CUSTOM_TORCH_MODE_UNSUPPORTED" \
+      "CODEX_TORCH_MODE=custom is not supported by update-webui.sh. Aborting before dependency sync to avoid overwriting a custom PyTorch install."
+  fi
+}
+
 resolve_torch_backend() {
   local variant_backend
   variant_backend="$(resolve_cuda_variant_override)"
@@ -276,7 +287,7 @@ if cuda_version:
     minor = int(parts[1]) if len(parts) > 1 else 0
     if major >= 13:
         print("cu130")
-    elif major == 12 and minor <= 6:
+    elif major == 12 and minor <= 7:
         print("cu126")
     elif major == 12:
         print("cu128")
@@ -341,7 +352,7 @@ resolve_torch_backend_from_system() {
     else
       printf 'cu128\n'
     fi
-  elif (( cuda_major == 12 && cuda_minor <= 6 )); then
+  elif (( cuda_major == 12 && cuda_minor <= 7 )); then
     printf 'cu126\n'
   else
     printf 'cu128\n'
@@ -409,6 +420,8 @@ main() {
   if (( ALLOW_UNTRACKED == 1 )); then
     log "Force mode enabled: untracked paths are ignored in dirty check."
   fi
+
+  validate_torch_mode_guard
 
   local head_before
   head_before="$(git -C "$ROOT_DIR" rev-parse HEAD)"

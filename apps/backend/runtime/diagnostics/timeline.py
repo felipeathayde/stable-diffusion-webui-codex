@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import contextlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
@@ -101,8 +102,20 @@ class TimelineCollector:
         self._track_vram = env_flag("CODEX_TIMELINE_VRAM", True)
         self._captures: List[TimelineCapture] = []
         self._active_capture: Optional[TimelineCapture] = None
+        self._capture_stack = threading.local()
         self._depth = threading.local()
         self._enter_times: dict[int, dict[str, float]] = {}  # thread_id -> {key: start_time}
+
+    def _capture_stack_for_thread(self) -> List[TimelineCapture]:
+        stack = getattr(self._capture_stack, "value", None)
+        if stack is None:
+            stack = []
+            self._capture_stack.value = stack
+        return stack
+
+    def _current_capture(self) -> Optional[TimelineCapture]:
+        stack = self._capture_stack_for_thread()
+        return stack[-1] if stack else None
     
     @property
     def enabled(self) -> bool:
@@ -134,12 +147,10 @@ class TimelineCollector:
     
     def enter(self, stage: str, name: str, **extra: Any) -> None:
         """Record entering a timeline node."""
-        if not self._enabled or self._active_capture is None:
+        active_capture = self._current_capture()
+        if not self._enabled or active_capture is None:
             return
-        
-        if len(self._active_capture.events) >= self._max_events:
-            return
-        
+
         thread_id = threading.get_ident()
         depth = self._get_depth()
         self._set_depth(depth + 1)
@@ -163,19 +174,18 @@ class TimelineCollector:
             vram_mb=vram,
             extra=extra,
         )
-        self._active_capture.events.append(event)
-        
-        if vram and vram > self._active_capture.peak_vram_mb:
-            self._active_capture.peak_vram_mb = vram
+        if len(active_capture.events) < self._max_events:
+            active_capture.events.append(event)
+
+        if vram and vram > active_capture.peak_vram_mb:
+            active_capture.peak_vram_mb = vram
     
     def exit(self, stage: str, name: str, **extra: Any) -> None:
         """Record exiting a timeline node."""
-        if not self._enabled or self._active_capture is None:
+        active_capture = self._current_capture()
+        if not self._enabled or active_capture is None:
             return
-        
-        if len(self._active_capture.events) >= self._max_events:
-            return
-        
+
         thread_id = threading.get_ident()
         depth = max(0, self._get_depth() - 1)
         self._set_depth(depth)
@@ -201,10 +211,11 @@ class TimelineCollector:
             vram_mb=vram,
             extra=extra,
         )
-        self._active_capture.events.append(event)
-        
-        if vram and vram > self._active_capture.peak_vram_mb:
-            self._active_capture.peak_vram_mb = vram
+        if len(active_capture.events) < self._max_events:
+            active_capture.events.append(event)
+
+        if vram and vram > active_capture.peak_vram_mb:
+            active_capture.peak_vram_mb = vram
     
     @contextmanager
     def capture(self, name: str = "inference"):
@@ -212,16 +223,23 @@ class TimelineCollector:
         if not self._enabled:
             yield
             return
-        
+
+        stack = self._capture_stack_for_thread()
         cap = TimelineCapture(name=name, start_time=time.perf_counter())
+        stack.append(cap)
         self._active_capture = cap
         self._captures.append(cap)
-        
+
         try:
             yield cap
         finally:
             cap.end_time = time.perf_counter()
-            self._active_capture = None
+            if stack and stack[-1] is cap:
+                stack.pop()
+            else:
+                with contextlib.suppress(ValueError):
+                    stack.remove(cap)
+            self._active_capture = stack[-1] if stack else None
     
     def get_last_capture(self) -> Optional[TimelineCapture]:
         """Get the most recent capture."""
@@ -231,6 +249,8 @@ class TimelineCollector:
         """Clear all captures."""
         self._captures.clear()
         self._enter_times.clear()
+        self._active_capture = None
+        self._capture_stack.value = []
 
 
 # Global singleton

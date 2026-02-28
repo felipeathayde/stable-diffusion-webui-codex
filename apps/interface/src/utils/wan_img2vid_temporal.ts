@@ -11,17 +11,17 @@ Provides canonical normalization helpers for mode values and windowed temporal c
 `sliding|svi2|svi2_pro` contract (`stride % 4 == 0`, `commit - stride >= 4`) without drift.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WanImg2VidMode` (type): Allowed WAN img2vid temporal mode values (`solo|chunk|sliding|svi2|svi2_pro`).
+- `WanImg2VidMode` (type): Allowed WAN img2vid temporal mode values (`solo|sliding|svi2|svi2_pro`).
 - `WAN_WINDOW_STRIDE_ALIGNMENT` (const): Required stride alignment for WAN temporal scale.
 - `WAN_WINDOW_COMMIT_OVERLAP_MIN` (const): Minimum committed overlap beyond stride.
-- `normalizeWanImg2VidMode` (function): Normalizes unknown mode input into canonical `WanImg2VidMode`.
+- `normalizeWanImg2VidMode` (function): Normalizes unknown mode input into canonical `WanImg2VidMode` and fails loud for removed/unsupported values.
 - `isWanWindowedImg2VidMode` (function): Type guard for windowed temporal modes (`sliding|svi2|svi2_pro`).
 - `normalizeWanChunkOverlap` (function): Normalizes chunk overlap so `(chunk_frames - overlap_frames) % 4 == 0`.
 - `normalizeWanWindowStride` (function): Normalizes stride to window-bounded aligned values compatible with commit-overlap contract.
 - `normalizeWanWindowCommit` (function): Normalizes commit into `[stride + overlap_min, window]`.
 */
 
-export type WanImg2VidMode = 'solo' | 'chunk' | 'sliding' | 'svi2' | 'svi2_pro'
+export type WanImg2VidMode = 'solo' | 'sliding' | 'svi2' | 'svi2_pro'
 
 export const WAN_WINDOW_STRIDE_ALIGNMENT = 4
 export const WAN_WINDOW_COMMIT_OVERLAP_MIN = 4
@@ -30,8 +30,12 @@ const WAN_FRAMES_MIN = 9
 
 export function normalizeWanImg2VidMode(value: unknown): WanImg2VidMode {
   const mode = String(value || '').trim().toLowerCase()
-  if (mode === 'chunk' || mode === 'sliding' || mode === 'svi2' || mode === 'svi2_pro') return mode
-  return 'solo'
+  if (!mode || mode === 'solo') return 'solo'
+  if (mode === 'sliding' || mode === 'svi2' || mode === 'svi2_pro') return mode
+  if (mode === 'chunk') {
+    throw new Error("img2vid_mode='chunk' is no longer supported (expected 'solo'|'sliding'|'svi2'|'svi2_pro').")
+  }
+  throw new Error(`Unsupported img2vid_mode: '${mode}' (expected 'solo'|'sliding'|'svi2'|'svi2_pro').`)
 }
 
 export function isWanWindowedImg2VidMode(mode: WanImg2VidMode): mode is 'sliding' | 'svi2' | 'svi2_pro' {

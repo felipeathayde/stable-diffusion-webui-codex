@@ -26,6 +26,7 @@ from typing import Any, Iterator, Sequence
 from apps.backend.runtime.processing.datatypes import GenerationResult
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
 from apps.backend.runtime.diagnostics.pipeline_debug import pipeline_trace
+from apps.backend.runtime.diagnostics.timeline import timeline
 from .txt2img_pipeline.runner import Txt2ImgPipelineRunner
 
 
@@ -46,15 +47,30 @@ def generate_txt2img(
     if not isinstance(processing, CodexProcessingTxt2Img):
         raise TypeError("generate_txt2img expects CodexProcessingTxt2Img")
 
-    return _RUNNER.run(
-        processing=processing,
-        conditioning_data=conditioning,
-        unconditional_data=unconditional_conditioning,
-        seeds=seeds,
-        subseeds=subseeds,
-        subseed_strength=subseed_strength,
-        prompts=prompts,
-    )
+    timeline_enabled = bool(timeline.enabled)
+    model_engine_id = str(getattr(getattr(processing, "sd_model", None), "engine_id", "unknown") or "unknown")
+    capture_name = f"txt2img:{model_engine_id}"
+    with timeline.capture(name=capture_name) as capture:
+        result = _RUNNER.run(
+            processing=processing,
+            conditioning_data=conditioning,
+            unconditional_data=unconditional_conditioning,
+            seeds=seeds,
+            subseeds=subseeds,
+            subseed_strength=subseed_strength,
+            prompts=prompts,
+        )
+    if timeline_enabled:
+        if capture is None:
+            raise RuntimeError(
+                "CODEX_TIMELINE is enabled but timeline capture context did not produce a capture object."
+            )
+        if len(capture.events) == 0:
+            raise RuntimeError(
+                "CODEX_TIMELINE is enabled but txt2img captured zero timeline events. "
+                "Ensure timeline_node instrumentation remains active."
+            )
+    return result
 
 
 def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
@@ -68,7 +84,10 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
 
     from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2ImgRequest
     from apps.backend.engines.util.adapters import build_txt2img_processing
-    from apps.backend.runtime.text_processing import last_extra_generation_params
+    from apps.backend.runtime.text_processing import (
+        clear_last_extra_generation_params,
+        snapshot_last_extra_generation_params,
+    )
 
     from ._image_streaming import (
         _build_common_info,
@@ -111,6 +130,7 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
         active_decode_engine: Any = engine
 
         try:
+            clear_last_extra_generation_params()
             sampling_start = time.perf_counter()
             output = generate_txt2img(
                 processing=proc,
@@ -143,7 +163,7 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
 
             extra_params: dict[str, object] = {}
             try:
-                extra_params.update(last_extra_generation_params)
+                extra_params.update(snapshot_last_extra_generation_params())
                 extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
             except Exception:  # noqa: BLE001
                 extra_params = getattr(proc, "extra_generation_params", {}) or {}

@@ -61,7 +61,8 @@ class ControlLora(ControlModuleBase):
             self.control_model = cldm.ControlNet(**controlnet_config)
 
         core_device = memory_management.manager.get_device(DeviceRole.CORE)
-        self.control_model.to(device=core_device, dtype=dtype)
+        offload_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
+        self.control_model.to(device=offload_device, dtype=dtype)
         diffusion_model = model.diffusion_model
         state_dict = diffusion_model.state_dict()
 
@@ -77,7 +78,7 @@ class ControlLora(ControlModuleBase):
             utils.set_attr(
                 self.control_model,
                 key,
-                weight.to(device=core_device, dtype=dtype),
+                weight.to(device=offload_device, dtype=dtype),
             )
 
         self.control_proxy = ControlNet(
@@ -117,6 +118,8 @@ class ControlLora(ControlModuleBase):
         super().cleanup()
 
     def get_models(self) -> list[object]:
+        if self.control_proxy is not None:
+            return self.control_proxy.get_models()
         return super().get_models()
 
     def copy(self):

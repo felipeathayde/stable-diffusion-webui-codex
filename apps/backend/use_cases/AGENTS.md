@@ -14,6 +14,7 @@ Status: Active
 - Shared orchestration logic now lives in `apps/backend/runtime/pipeline_stages/`; use cases should prefer these helpers over bespoke copies of sampler/prompt setup.
 
 ## Notes
+- 2026-02-28: `img2vid.py` removed runtime `chunk` mode routing; accepted temporal modes are now `solo|sliding|svi2|svi2_pro`, and `img2vid_mode='chunk'` fails loud.
 - Introduza novos use cases sempre que uma combinação de tarefa + modo precisar de orquestração própria; mantenha a lógica focalizada em preparar entradas, chamar engines e relatar progresso, delegando detalhes de modelo para `engines/` ou `runtime/`.
 - Quando adicionar um novo use case, espelhe o padrão existente e registre com o orquestrador e os contratos de API.
 - 2026-01-22: `txt2img.py` now includes a canonical event wrapper (`run_txt2img`) used by engines to keep mode orchestration in the use-case layer (Option A).

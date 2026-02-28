@@ -13,12 +13,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `EngineOpts` (dataclass): Minimal WAN engine load options (device/dtype).
 - `WanComponents` (dataclass): Holder for instantiated WAN components/pipelines and resolved paths.
 - `WanStageOptions` (dataclass): Stage-specific overrides for WAN pipelines (prompt/negative + sampler/scheduler/steps/cfg + ordered stage `loras[]` + lightning).
+- `unload_wan_components` (function): Deterministic WAN wrapper teardown for heavy component refs/resources.
 - `resolve_wan_repo_candidates` (function): Strict resolution of WAN Diffusers repo candidates (env override or known map; raises otherwise).
 - `resolve_user_supplied_assets` (function): Extracts user-supplied asset paths (high/low stage dirs, VAE/text encoder) from extras payload.
 """
 
 from __future__ import annotations
 
+import gc
 import math
 import os
 import re
@@ -170,6 +172,117 @@ class WanStageOptions:
         )
 
 
+def _canonical_memory_target(component: Any | None) -> Any | None:
+    if component is None:
+        return None
+    patcher = getattr(component, "patcher", None)
+    return patcher if patcher is not None else component
+
+
+def unload_wan_components(comp: WanComponents | None, *, engine_id: str, logger: Any | None = None) -> None:
+    """Release WAN wrapper-held heavy resources deterministically."""
+    if comp is None:
+        return
+
+    from apps.backend.runtime.memory import memory_management
+
+    manager = getattr(memory_management, "manager", None)
+    offload_device = None
+    if manager is not None and hasattr(manager, "offload_device"):
+        try:
+            offload_device = manager.offload_device()
+        except Exception:
+            offload_device = None
+
+    source = "engines.wan22.wan22_common.unload_wan_components"
+    seen_ids: set[int] = set()
+    candidates: list[Any] = [
+        comp.pipeline,
+        comp.pipeline_high,
+        comp.pipeline_low,
+        comp.transformer,
+        comp.vae,
+        comp.text_encoder,
+    ]
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        candidate_id = id(candidate)
+        if candidate_id in seen_ids:
+            continue
+        seen_ids.add(candidate_id)
+
+        if hasattr(candidate, "unload_lora_weights"):
+            try:
+                candidate.unload_lora_weights()  # type: ignore[attr-defined]
+            except Exception:
+                if logger is not None and hasattr(logger, "debug"):
+                    logger.debug(
+                        "[%s] best-effort unload_lora_weights failed for %s",
+                        engine_id,
+                        type(candidate).__name__,
+                        exc_info=True,
+                    )
+
+        target = _canonical_memory_target(candidate)
+        if manager is not None and target is not None:
+            try:
+                manager.unload_model_clones(target)
+            except Exception:
+                if logger is not None and hasattr(logger, "debug"):
+                    logger.debug(
+                        "[%s] best-effort unload_model_clones failed for %s",
+                        engine_id,
+                        type(target).__name__,
+                        exc_info=True,
+                    )
+            try:
+                manager.unload_model(
+                    target,
+                    source=source,
+                    stage="engine_unload",
+                    component_hint=type(target).__name__,
+                    event_reason=engine_id,
+                )
+            except Exception:
+                if logger is not None and hasattr(logger, "debug"):
+                    logger.debug(
+                        "[%s] best-effort unload_model failed for %s",
+                        engine_id,
+                        type(target).__name__,
+                        exc_info=True,
+                    )
+
+        if offload_device is not None and hasattr(candidate, "to"):
+            try:
+                candidate.to(offload_device)  # type: ignore[attr-defined]
+            except Exception:
+                if logger is not None and hasattr(logger, "debug"):
+                    logger.debug(
+                        "[%s] best-effort offload move failed for %s -> %s",
+                        engine_id,
+                        type(candidate).__name__,
+                        offload_device,
+                        exc_info=True,
+                    )
+
+    comp.text_encoder = None
+    comp.transformer = None
+    comp.vae = None
+    comp.pipeline = None
+    comp.pipeline_high = None
+    comp.pipeline_low = None
+    gc.collect()
+
+    if manager is not None and hasattr(manager, "soft_empty_cache"):
+        try:
+            manager.soft_empty_cache()
+        except Exception:
+            if logger is not None and hasattr(logger, "debug"):
+                logger.debug("[%s] best-effort soft_empty_cache failed", engine_id, exc_info=True)
+
+
 WAN_DIFFUSERS_REPO_CANDIDATES = {
     # Known, published Diffusers repos only (avoid ambiguous non-diffusers names)
     "wan22_14b": (
@@ -228,7 +341,14 @@ def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
     return uniq
 
 
-__all__ = ["EngineOpts", "WanComponents", "WanStageOptions", "resolve_wan_repo_candidates", "WAN_DIFFUSERS_REPO_CANDIDATES"]
+__all__ = [
+    "EngineOpts",
+    "WanComponents",
+    "WanStageOptions",
+    "unload_wan_components",
+    "resolve_wan_repo_candidates",
+    "WAN_DIFFUSERS_REPO_CANDIDATES",
+]
 
 
 def resolve_user_supplied_assets(extras: dict | None) -> tuple[Optional[str], Optional[str], Optional[str]]:

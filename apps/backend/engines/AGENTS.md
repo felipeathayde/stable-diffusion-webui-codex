@@ -32,7 +32,8 @@ Status: Active
 - 2026-01-31: Engine-common helpers expanded to reduce drift:
   - Generic conditioning cache helpers (overrideable per call) + shared tensor move helpers for CPU↔device caching.
   - Runtime guard helper (`require_runtime`) for consistent “call load() first” errors across engines.
-- 2026-02-05: Added the `anima` engine key and a stub `AnimaEngine` facade (fail-loud until runtime is ported).
+- 2026-02-05: Added the `anima` engine key.
+- 2026-02-28: `AnimaEngine` is an implemented runtime-backed engine (`apps/backend/engines/anima/anima.py`) and is registered by default (`registration.register_anima` / `register_default_engines`); it is no longer a stub facade.
 - 2026-02-08: Engine adapters now map swap-model pointer semantics using `switch_at_step` (`RefinerConfig.swap_at_step`) for both global and hires nested refiner config.
 - 2026-02-17: WAN22 canonical registration now maps `wan22_14b` to a dedicated GGUF 14B lane (`Wan2214BEngine`) with no inheritance from `wan22_5b`, preventing 14B dispatch from collapsing into 5B behavior.
 - 2026-02-20: WAN22 14B lane is now single-key only (`wan22_14b`); explicit `wan22_14b_native` registration was removed.

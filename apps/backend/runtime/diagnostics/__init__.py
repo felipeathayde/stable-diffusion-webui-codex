@@ -13,6 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `call_trace` (module): Global `sys.setprofile` call tracer.
 - `contract_trace` (module): JSONL contract-trace sink with prompt hashing only.
 - `exception_hook` (module): Sys/thread/asyncio exception dump hooks.
+- `fallback_state` (module): Thread-local fallback usage tracker used by task contract traces.
 - `pipeline_debug` (module): Pipeline debug flag + decorator helpers.
 - `profiler` (module): Global opt-in torch profiler wrapper (trace export + transfer totals).
 - `timeline` (module): Timeline tracer for inference pipelines.
@@ -23,6 +24,7 @@ __all__ = [
     "call_trace",
     "contract_trace",
     "exception_hook",
+    "fallback_state",
     "pipeline_debug",
     "profiler",
     "timeline",

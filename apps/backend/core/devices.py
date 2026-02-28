@@ -7,14 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Small device helpers for backend runtime code.
-Provides canonical device helpers backed by memory-manager authority (`mount_device`/`cpu_device`) and best-effort
-GC helpers to reduce VRAM fragmentation between runs.
+Provides canonical device helpers backed by memory-manager authority (`mount_device`/`cpu_device`) and a centralized
+GC/cache hook (`torch_gc`) that delegates cache-clear policy to the memory manager.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_require_memory_manager` (function): Resolves the active memory-manager instance or fails loud when unavailable.
 - `default_device` (function): Returns memory-manager mount device.
 - `cpu` (function): Returns memory-manager CPU device.
-- `torch_gc` (function): Best-effort cleanup (CUDA cache/IPCs + Python `gc.collect()`).
+- `torch_gc` (function): Centralized best-effort cleanup hook (`gc.collect()` + manager-gated cache clear).
 """
 
 from __future__ import annotations
@@ -54,9 +54,19 @@ def cpu() -> torch.device:
     return cpu_device
 
 
-def torch_gc() -> None:
+def torch_gc(*, force: bool = False) -> None:
+    manager = None
     try:
-        if torch.cuda.is_available():
+        manager = _require_memory_manager()
+    except Exception:
+        manager = None
+
+    try:
+        if manager is not None and hasattr(manager, "soft_empty_cache"):
+            should_clear = bool(force or getattr(manager, "signal_empty_cache", False))
+            if should_clear:
+                manager.soft_empty_cache(force=bool(force))
+        elif torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
     except Exception:

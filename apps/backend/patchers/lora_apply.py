@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_set_engine_lora_hash` (function): Updates `engine.current_lora_hash` with fail-loud checks.
 - `_reset_engine_lora_state` (function): Clears+refreshes all patchers and persists empty LoRA hash.
 - `_raise_apply_failure` (function): Raises fail-loud errors after best-effort reset recovery.
-- `_build_to_load_maps` (function): Builds LoRA-key → model patch-target maps for UNet and CLIP encoders.
+- `_build_to_load_maps` (function): Builds LoRA-key → model patch-target maps for UNet and one text encoder.
 - `_apply_patches` (function): Adds patches to a patcher and returns the number of matched parameters.
 - `apply_loras_to_engine` (function): Applies selected LoRAs to the engine's patchers and refreshes LoRA application (merge or online).
 """
@@ -80,6 +80,39 @@ def _collect_text_encoder_patchers(text_encoders: Any) -> Dict[str, Any]:
     for key, entry in text_encoders.items():
         patchers[str(key)] = _unwrap_patcher(entry, label=f"text_encoders[{key!r}]")
     return patchers
+
+
+def _resolve_text_encoder_entry(text_encoders: Any) -> tuple[str, Any]:
+    """Resolve the primary text-encoder handle for LoRA key mapping."""
+
+    if not isinstance(text_encoders, Mapping):
+        raise RuntimeError("Engine does not expose text_encoders mapping required for LoRA key mapping.")
+
+    for key in ("clip", "t5"):
+        entry = text_encoders.get(key)
+        if entry is not None:
+            return key, entry
+
+    for key, entry in text_encoders.items():
+        if entry is not None:
+            return str(key), entry
+
+    raise RuntimeError("Engine does not expose any text encoder entry required for LoRA key mapping.")
+
+
+def _resolve_primary_text_patcher(text_patchers: Mapping[str, Any]) -> tuple[str, Any]:
+    """Resolve the primary text-encoder patcher for LoRA application."""
+
+    for key in ("clip", "t5"):
+        patcher = text_patchers.get(key)
+        if patcher is not None:
+            return key, patcher
+
+    for key, patcher in text_patchers.items():
+        if patcher is not None:
+            return str(key), patcher
+
+    raise RuntimeError("Engine does not expose any text encoder patcher required for LoRA application.")
 
 
 def _clear_lora_state(patcher: Any, *, label: str) -> None:
@@ -144,6 +177,35 @@ def _serialize_selection_hash(
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+def _normalize_unique_selections(selections: Iterable[dict | Any]) -> list[tuple[str, float]]:
+    """Normalize selections and de-duplicate by path while preserving first-seen order."""
+
+    normalized_unique: list[tuple[str, float]] = []
+    seen_paths: set[str] = set()
+    for sel in selections:
+        normalized = _normalize_selection(sel)
+        if normalized is None:
+            continue
+        path, weight = normalized
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        normalized_unique.append((path, weight))
+    return normalized_unique
+
+
+def selection_hash_for_request(
+    selections: Iterable[dict | Any],
+    *,
+    apply_mode: LoraApplyMode | None = None,
+) -> str:
+    """Return deterministic LoRA selection hash without mutating patchers."""
+
+    mode = apply_mode if apply_mode is not None else read_lora_apply_mode()
+    normalized = _normalize_unique_selections(selections or [])
+    return _serialize_selection_hash(normalized, apply_mode=mode)
+
+
 def _set_engine_lora_hash(engine: Any, *, hash_value: str) -> None:
     """Update `engine.current_lora_hash` with fail-loud contract checks."""
 
@@ -185,28 +247,38 @@ def _raise_apply_failure(
     ) from original_error
 
 
-def _build_to_load_maps(engine) -> Tuple[Dict[str, PatchTarget], Dict[str, PatchTarget]]:
-    """Return LoRA-key → model-param maps for UNet and CLIP encoders."""
+def _build_to_load_maps(
+    engine,
+    *,
+    text_encoder_key: str | None = None,
+) -> Tuple[Dict[str, PatchTarget], Dict[str, PatchTarget]]:
+    """Return LoRA-key → model-param maps for UNet and one text encoder."""
     unet_model = engine.codex_objects_after_applying_lora.denoiser.model
     text_encoders = engine.codex_objects_after_applying_lora.text_encoders
-    clip_entry = text_encoders.get("clip") if isinstance(text_encoders, Mapping) else None
-    if clip_entry is None:
-        raise RuntimeError("Engine does not expose required text_encoders['clip'] entry for LoRA key mapping.")
+    if text_encoder_key is None:
+        text_encoder_key, text_entry = _resolve_text_encoder_entry(text_encoders)
+    else:
+        text_entry = text_encoders.get(text_encoder_key) if isinstance(text_encoders, Mapping) else None
+        if text_entry is None:
+            raise RuntimeError(
+                f"Engine does not expose required text_encoders[{text_encoder_key!r}] entry for LoRA key mapping."
+            )
     try:
-        clip_runtime = clip_entry.runtime
+        text_runtime = text_entry.runtime
     except AttributeError as exc:
         raise RuntimeError(
-            "Engine exposes non-canonical text_encoders['clip']; expected TextEncoderHandle with `.runtime`."
+            f"Engine exposes non-canonical text_encoders[{text_encoder_key!r}]; "
+            "expected TextEncoderHandle with `.runtime`."
         ) from exc
-    clip_model = getattr(clip_runtime, "cond_stage_model", None) if clip_runtime is not None else None
-    if clip_model is None:
+    text_model = getattr(text_runtime, "cond_stage_model", None) if text_runtime is not None else None
+    if text_model is None:
         raise RuntimeError(
-            "Engine does not expose CLIP runtime cond_stage_model required for LoRA key mapping "
-            "(expected text_encoders['clip'].runtime.cond_stage_model)."
+            "Engine does not expose text encoder runtime cond_stage_model required for LoRA key mapping "
+            f"(expected text_encoders[{text_encoder_key!r}].runtime.cond_stage_model)."
         )
     unet_map = model_lora_keys_unet(unet_model)
-    clip_map = model_lora_keys_clip(clip_model)
-    return unet_map, clip_map
+    text_map = model_lora_keys_clip(text_model)
+    return unet_map, text_map
 
 
 def _apply_patches(patcher, filename: str, patch_dict: Dict[PatchTarget, Any], strength: float, *, online_mode: bool) -> int:
@@ -227,7 +299,7 @@ def _apply_patches(patcher, filename: str, patch_dict: Dict[PatchTarget, Any], s
 
 
 def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedStats:
-    """Apply a list of LoRA selections to the engine (UNet + CLIP).
+    """Apply a list of LoRA selections to the engine (UNet + primary text encoder).
 
     Each selection item must carry `path` and optional `weight` fields.
     """
@@ -241,7 +313,6 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
     unet_patcher = getattr(codex_objects, "denoiser", None)
     text_encoders = getattr(codex_objects, "text_encoders", None)
     text_patchers = _collect_text_encoder_patchers(text_encoders)
-    clip_patcher = text_patchers.get("clip")
 
     if not selected:
         if unet_patcher is None and not text_patchers:
@@ -258,32 +329,25 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
             raise RuntimeError(f"LoRA empty-selection reset failed ({exc}); engine state is unreliable.") from exc
         return stats
 
-    if unet_patcher is None or clip_patcher is None:
-            raise RuntimeError(
-                "LoRA selections were provided, but the active engine does not expose required LoRA patchers "
-                "(expected denoiser + text_encoders['clip'].patcher)."
-            )
+    if unet_patcher is None:
+        raise RuntimeError(
+            "LoRA selections were provided, but the active engine does not expose required LoRA patchers "
+            "(missing denoiser patcher)."
+        )
+    text_encoder_key, text_patcher = _resolve_primary_text_patcher(text_patchers)
 
     apply_mode = read_lora_apply_mode()
     online_mode = apply_mode == LoraApplyMode.ONLINE
 
-    normalized_applied: list[tuple[str, float]] = []
-    seen_paths: set[str] = set()
+    normalized_selected = _normalize_unique_selections(selected)
     try:
         # Single-owner semantics: each non-empty apply starts from a clean patch state.
         _clear_lora_state(unet_patcher, label="denoiser")
         for encoder_name, patcher in text_patchers.items():
             _clear_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
 
-        unet_map, clip_map = _build_to_load_maps(engine)
-        for sel in selected:
-            normalized = _normalize_selection(sel)
-            if normalized is None:
-                continue
-            path, weight = normalized
-            if path in seen_paths:
-                continue
-            seen_paths.add(path)
+        unet_map, text_map = _build_to_load_maps(engine, text_encoder_key=text_encoder_key)
+        for path, weight in normalized_selected:
 
             # Load weights once
             try:
@@ -293,8 +357,8 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
 
             # Build per-model patch dictionaries
             unet_patch, _ = load_lora(tensor_map, to_load=unet_map)
-            clip_patch, _ = load_lora(tensor_map, to_load=clip_map)
-            if not unet_patch and not clip_patch:
+            text_patch, _ = load_lora(tensor_map, to_load=text_map)
+            if not unet_patch and not text_patch:
                 raise RuntimeError(
                     "LoRA key layout mismatch: no compatible layers were found for "
                     f"'{path}' on the active model keymap."
@@ -308,14 +372,14 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
                 strength=weight,
                 online_mode=online_mode,
             )
-            clip_touched = _apply_patches(
-                clip_patcher,
+            text_touched = _apply_patches(
+                text_patcher,
                 filename=path,
-                patch_dict=clip_patch,
+                patch_dict=text_patch,
                 strength=weight,
                 online_mode=online_mode,
             )
-            touched_total = unet_touched + clip_touched
+            touched_total = unet_touched + text_touched
             if touched_total <= 0:
                 raise RuntimeError(
                     "LoRA apply mismatch: zero parameters were touched for "
@@ -323,7 +387,6 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
                 )
             stats.params_touched += touched_total
             stats.files += 1
-            normalized_applied.append((path, weight))
 
         # Materialize merges onto actual model parameters.
         _refresh_lora_state(unet_patcher, label="denoiser")
@@ -342,7 +405,7 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
     try:
         _set_engine_lora_hash(
             engine,
-            hash_value=_serialize_selection_hash(normalized_applied, apply_mode=apply_mode),
+            hash_value=_serialize_selection_hash(normalized_selected, apply_mode=apply_mode),
         )
     except Exception as exc:  # noqa: BLE001
         _raise_apply_failure(
@@ -356,4 +419,4 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
     return stats
 
 
-__all__ = ["apply_loras_to_engine", "AppliedStats"]
+__all__ = ["apply_loras_to_engine", "AppliedStats", "selection_hash_for_request"]

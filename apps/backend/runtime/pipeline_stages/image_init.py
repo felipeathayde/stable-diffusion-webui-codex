@@ -24,6 +24,7 @@ import torch
 from PIL import Image
 
 from apps.backend.core import devices
+from apps.backend.runtime.processing.conditioners import encode_image_batch
 from apps.backend.runtime.processing.datatypes import InitImageBundle
 
 
@@ -54,7 +55,11 @@ def prepare_init_bundle(processing: Any) -> InitImageBundle:
     tensor = torch.from_numpy(np.expand_dims(array, axis=0)).to(
         devices.default_device(), dtype=torch.float32
     )
-    latents = processing.sd_model.encode_first_stage(tensor)
+    latents = encode_image_batch(
+        processing.sd_model,
+        tensor,
+        stage="runtime.pipeline_stages.image_init.prepare_init_bundle.encode",
+    )
     bundle = InitImageBundle(
         tensor=tensor,
         latents=latents,

@@ -47,6 +47,10 @@ class Chroma(CodexDiffusionEngine):
     engine_id = "flux1_chroma"
     expected_family = ModelFamily.CHROMA
 
+    @property
+    def required_text_encoders(self) -> tuple[str, ...]:
+        return ("t5",)
+
     def __init__(self) -> None:
         super().__init__()
         self._runtime: Optional[FluxEngineRuntime] = None
@@ -86,9 +90,9 @@ class Chroma(CodexDiffusionEngine):
     @torch.no_grad()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        clip_patcher = self.codex_objects.text_encoders["clip"].patcher
+        t5_patcher = self.codex_objects.text_encoders["t5"].patcher
         with stage_scoped_model_load(
-            clip_patcher,
+            t5_patcher,
             smart_offload_enabled=self.smart_offload_enabled,
             manager=memory_management.manager,
         ):

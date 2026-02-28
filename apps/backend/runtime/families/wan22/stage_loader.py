@@ -25,7 +25,7 @@ from typing import Any, Optional, Sequence
 import torch
 
 from apps.backend.infra.config.args import args as runtime_args
-from apps.backend.infra.config.gguf_exec_mode import GgufExecMode, parse_gguf_exec_mode
+from apps.backend.infra.config.gguf_exec_mode import GgufExecMode, resolve_gguf_exec_mode
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
@@ -52,15 +52,12 @@ def pick_stage_gguf(dir_path: Optional[str], *, stage: str) -> Optional[str]:
 
 
 def _resolve_stage_mount_dequantize() -> bool:
-    raw_mode = str(os.getenv("CODEX_GGUF_EXEC") or "").strip().lower()
-    if not raw_mode:
-        raw_mode = str(getattr(runtime_args, "gguf_exec", GgufExecMode.DEQUANT_FORWARD.value)).strip().lower()
     try:
-        mode = parse_gguf_exec_mode(raw_mode)
+        mode = resolve_gguf_exec_mode(runtime_args)
     except ValueError as exc:
         raise RuntimeError(
             "WAN22 GGUF stage mount received invalid gguf exec mode: "
-            f"{raw_mode!r} (expected dequant_forward or dequant_upfront)."
+            f"{exc}"
         ) from exc
     if mode == GgufExecMode.DEQUANT_UPFRONT:
         return True

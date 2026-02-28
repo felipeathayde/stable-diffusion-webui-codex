@@ -103,11 +103,15 @@ def run_spandrel_upscale(
 
     oom_exc = memory_management.manager.oom_exception
 
-    offload_device = None
     try:
         offload_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
-    except Exception:
-        offload_device = None
+    except Exception as exc:
+        raise UpscalerRuntimeError("Failed to resolve CORE offload device for upscaler cleanup.") from exc
+    if not isinstance(offload_device, torch.device):
+        raise UpscalerRuntimeError(
+            "Memory manager returned invalid CORE offload device type "
+            f"{type(offload_device).__name__}; expected torch.device."
+        )
 
     # Move model and input to the requested device/dtype.
     try:
@@ -117,6 +121,7 @@ def run_spandrel_upscale(
 
     x = image.to(device=device, dtype=dtype)
 
+    run_error: Exception | None = None
     try:
         # Fast path: no tiling (tile <= 0).
         if int(tile.tile) <= 0:
@@ -160,19 +165,32 @@ def run_spandrel_upscale(
                     memory_management.manager.soft_empty_cache(force=True)
                 except Exception:
                     pass
+    except Exception as exc:
+        run_error = exc
+        raise
     finally:
         # Avoid leaving the SR model resident on the primary device. The memory manager
         # does not track upscaler models (v1), so we explicitly offload to the role's
         # configured offload device.
+        cleanup_error: Exception | None = None
         try:
-            if offload_device is not None and offload_device != device:
+            if offload_device != device:
                 model.to(device=offload_device, dtype=torch.float32)
-        except Exception:
-            pass
+        except Exception as exc:
+            cleanup_error = UpscalerRuntimeError(
+                "Failed to offload upscaler model after inference "
+                f"(from_device={device} to_device={offload_device}): {exc}"
+            )
         try:
             memory_management.manager.soft_empty_cache(force=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            if cleanup_error is None:
+                cleanup_error = UpscalerRuntimeError(f"Failed to empty cache after upscaler inference: {exc}")
+        if cleanup_error is not None:
+            if run_error is not None and hasattr(run_error, "add_note"):
+                run_error.add_note(str(cleanup_error))
+            elif run_error is None:
+                raise cleanup_error
 
 
 __all__ = ["SpandrelModelHandle", "load_spandrel_model", "run_spandrel_upscale"]

@@ -20,8 +20,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
 - `WanStageLoraParams` (interface): UI WAN stage LoRA entry (`sha` + optional `weight`) for ordered stage `loras[]` payload wiring.
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt, ordered `loras[]`, and optional explicit `flowShift`, used by video tabs and payload builders.
-- `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|chunk|sliding|svi2|svi2_pro`).
-- `WanChunkSeedMode` (type): WAN chunk/sliding per-window seed strategy (`fixed|increment|random`).
+- `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|sliding|svi2|svi2_pro`).
+- `WanChunkSeedMode` (type): WAN sliding/SVI per-window seed strategy (`fixed|increment|random`).
 - `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output controls + interpolation target FPS + SeedVR2 upscaling controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
@@ -49,7 +49,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeSerializableForPersist` (function): Recursively unwraps reactive/proxy branches into plain clone-safe structures for persistence.
 - `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
-- `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/chunk/sliding/attention controls) with `img2vidMode` as source of truth.
+- `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/window/attention controls) with `img2vidMode` as source of truth.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler and mask-enforcement fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
@@ -574,6 +574,20 @@ function normalizeUnitInterval(rawValue: unknown, fallback: number): number {
   return Math.min(1, Math.max(0, numeric))
 }
 
+function normalizeBoolean(rawValue: unknown, fallback: boolean): boolean {
+  if (typeof rawValue === 'boolean') return rawValue
+  if (typeof rawValue === 'number') {
+    if (rawValue === 1) return true
+    if (rawValue === 0) return false
+  }
+  if (typeof rawValue === 'string') {
+    const normalized = rawValue.trim().toLowerCase()
+    if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true
+    if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false
+  }
+  return fallback
+}
+
 function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVideoParams): WanVideoParams {
   const merged: WanVideoParams = { ...defaults, ...raw }
   merged.frames = normalizeWanFrameCount(Number(merged.frames))
@@ -582,24 +596,43 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   merged.attentionMode = attnMode === 'sliding' ? 'sliding' : 'global'
 
   const rawRecord = raw as Record<string, unknown>
-  const rawMode = String(merged.img2vidMode || '').trim().toLowerCase()
-  if (rawMode === 'solo' || rawMode === 'chunk' || rawMode === 'sliding' || rawMode === 'svi2' || rawMode === 'svi2_pro') {
-    merged.img2vidMode = rawMode
+  const hasExplicitMode = Object.prototype.hasOwnProperty.call(rawRecord, 'img2vidMode')
+  const explicitMode = String(rawRecord.img2vidMode || '').trim().toLowerCase()
+  if (hasExplicitMode && explicitMode === 'chunk') {
+    throw new ModelTabsStoreError(
+      'invalid_response',
+      "img2vidMode='chunk' was removed. Set mode to 'solo', 'sliding', 'svi2', or 'svi2_pro'.",
+      { details: { field: 'img2vidMode', value: rawRecord.img2vidMode } },
+    )
+  }
+  if (hasExplicitMode && explicitMode && explicitMode !== 'solo' && explicitMode !== 'sliding' && explicitMode !== 'svi2' && explicitMode !== 'svi2_pro') {
+    throw new ModelTabsStoreError(
+      'invalid_response',
+      `Unsupported img2vidMode '${explicitMode}'. Expected 'solo', 'sliding', 'svi2', or 'svi2_pro'.`,
+      { details: { field: 'img2vidMode', value: rawRecord.img2vidMode } },
+    )
+  }
+  if (explicitMode === 'solo' || explicitMode === 'sliding' || explicitMode === 'svi2' || explicitMode === 'svi2_pro') {
+    merged.img2vidMode = explicitMode
   } else {
     const legacyEnabled = rawRecord.img2vidChunkingEnabled
     const hasLegacyChunkToggle = typeof legacyEnabled === 'boolean'
     const legacyChunkEnabled = hasLegacyChunkToggle ? Boolean(legacyEnabled) : false
     const hasSlidingWindow = Number.isFinite(Number(rawRecord.img2vidWindowFrames)) && Number(rawRecord.img2vidWindowFrames) > 0
     const hasChunkFrames = Number.isFinite(Number(rawRecord.img2vidChunkFrames)) && Number(rawRecord.img2vidChunkFrames) > 0
-    if (hasLegacyChunkToggle) {
-      merged.img2vidMode = legacyChunkEnabled ? 'chunk' : 'solo'
-    } else if (hasSlidingWindow) {
-      merged.img2vidMode = 'sliding'
-    } else if (hasChunkFrames) {
-      merged.img2vidMode = 'chunk'
-    } else {
-      merged.img2vidMode = 'solo'
+    if (legacyChunkEnabled || hasChunkFrames) {
+      throw new ModelTabsStoreError(
+        'invalid_response',
+        "Legacy chunk-mode persistence is no longer supported. Set mode to 'solo', 'sliding', 'svi2', or 'svi2_pro'.",
+        {
+          details: {
+            img2vidChunkingEnabled: rawRecord.img2vidChunkingEnabled,
+            img2vidChunkFrames: rawRecord.img2vidChunkFrames,
+          },
+        },
+      )
     }
+    merged.img2vidMode = hasSlidingWindow ? 'sliding' : 'solo'
   }
 
   const chunkRaw = Number(merged.img2vidChunkFrames)
@@ -612,7 +645,7 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   const anchorRaw = Number(merged.img2vidAnchorAlpha)
   merged.img2vidAnchorAlpha = Number.isFinite(anchorRaw) ? Math.min(1, Math.max(0, anchorRaw)) : defaults.img2vidAnchorAlpha
 
-  const modeDefaultResetAnchor = merged.img2vidMode === 'chunk'
+  const modeDefaultResetAnchor = false
   const hasExplicitResetAnchor = Object.prototype.hasOwnProperty.call(rawRecord, 'img2vidResetAnchorToBase')
   if (merged.img2vidMode === 'svi2' || merged.img2vidMode === 'svi2_pro') {
     merged.img2vidResetAnchorToBase = false
@@ -818,6 +851,15 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
       ...defaults.refiner,
       ...(refinerPatch as Partial<RefinerFormState>),
     },
+  }
+
+  merged.useInitImage = normalizeBoolean(merged.useInitImage, defaults.useInitImage)
+  merged.useMask = normalizeBoolean(merged.useMask, defaults.useMask)
+  merged.maskInvert = normalizeBoolean(merged.maskInvert, defaults.maskInvert)
+  merged.maskRound = normalizeBoolean(merged.maskRound, defaults.maskRound)
+  merged.maskRegionSplit = normalizeBoolean(merged.maskRegionSplit, defaults.maskRegionSplit)
+  if (typeof merged.zimageTurbo !== 'undefined') {
+    merged.zimageTurbo = normalizeBoolean(merged.zimageTurbo, Boolean(defaults.zimageTurbo))
   }
 
   const globalSwapAtStep = Number(merged.refiner.swapAtStep)

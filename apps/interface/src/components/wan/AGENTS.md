@@ -31,6 +31,7 @@ Status: Active
 - 2026-01-27: Added a `Return frames` toggle to `WanVideoOutputPanel.vue` (default off) and an inline note when `Save output` is off (frames still returned so users can download them).
 - 2026-02-20: `WanSubHeader.vue` now supports opt-in full-row toggle behavior (`clickable` + `header-click`), with built-in interactive-target exclusion and Enter/Space keyboard parity for collapsible cards.
 - 2026-02-21: `WanStagePanel.vue` dropped stage-level LoRA UI; WAN LoRA insertion is now prompt-level in `WANTab.vue` using prompt token chips.
+- 2026-02-28: WAN prompt-level LoRA inserts in `WANTab.vue` now also maintain stage `loras[]` SHA arrays (`high/low`, dedupe-by-sha with latest weight), while these WAN components remain presentational-only.
 - 2026-02-27: `WanVideoOutputPanel.vue` removed `Filename Prefix`, `Save output`, `Save metadata`, and `Trim to audio` controls; output controls now render as `Format + Pixel Format` row, `Loop Count + CRF` slider row, compact `Ping-pong + Return frames` toggle row, and one interpolation output-FPS slider (`0=Off`, active values map to backend interpolation times).
 - 2026-02-27: `WanVideoOutputPanel.vue` now renders `Interpolation (RIFE)` in the same slider row as `Loop Count` and `CRF` (three compact sliders on one row).
 - 2026-02-27: `WanVideoOutputPanel.vue` interpolation now represents output target FPS (not a multiplier), and `Ping-pong`/`Return frames` render stacked vertically.

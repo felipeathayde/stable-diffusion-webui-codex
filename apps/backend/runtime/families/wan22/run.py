@@ -253,6 +253,28 @@ def _try_clear_cache() -> None:
         return
 
 
+def _should_clear_stage_cache(*, offload_level: int) -> bool:
+    """Return whether WAN stage transitions should force cache clearing.
+
+    Policy:
+    - `offload_level >= 3`: always clear (aggressive profile).
+    - `offload_level == 2`: clear only when runtime signals cache pressure.
+    - `offload_level <= 1`: do not clear at stage boundaries.
+    """
+
+    if offload_level >= 3:
+        return True
+    if offload_level < 2:
+        return False
+    manager = getattr(memory_management, "manager", None)
+    if manager is None:
+        return True
+    try:
+        return bool(getattr(manager, "signal_empty_cache", False))
+    except Exception:
+        return True
+
+
 def _teardown_stage(
     *,
     stage: str,
@@ -264,6 +286,7 @@ def _teardown_stage(
     """Finalize a stage deterministically, even when sampling raises/cancels."""
 
     has_upstream_error = sys.exc_info()[0] is not None
+    should_clear_stage_cache = _should_clear_stage_cache(offload_level=offload_level)
     try:
         if mm is not None:
             try:
@@ -281,8 +304,9 @@ def _teardown_stage(
     finally:
         del mm
         del model
-        gc.collect()
-        if offload_level >= 2:
+        if has_upstream_error or should_clear_stage_cache:
+            gc.collect()
+        if should_clear_stage_cache:
             _try_clear_cache()
             cuda_empty_cache(logger, label=f"after-{stage}")
     return None, None
@@ -296,8 +320,8 @@ def _stage_transition_barrier(
 ) -> None:
     log = get_logger(logger)
     log_cuda_mem(log, label=f"{label}:pre-barrier")
-    gc.collect()
-    if offload_level >= 2:
+    if _should_clear_stage_cache(offload_level=offload_level):
+        gc.collect()
         _try_clear_cache()
         cuda_empty_cache(log, label=f"{label}-barrier")
     log_cuda_mem(log, label=f"{label}:post-barrier")
@@ -312,13 +336,13 @@ def _resolve_offload_level(cfg: RunConfig) -> int:
         if cfg.offload_level < 0:
             raise RuntimeError(f"WAN22 GGUF: offload_level must be >= 0, got {cfg.offload_level}.")
         return cfg.offload_level
-    aggressive_offload = getattr(cfg, "aggressive_offload", True)
+    aggressive_offload = getattr(cfg, "aggressive_offload", False)
     if not isinstance(aggressive_offload, bool):
         raise RuntimeError(
             "WAN22 GGUF: aggressive_offload must be a boolean in RunConfig "
             f"(got {type(aggressive_offload).__name__})."
         )
-    return 3 if aggressive_offload else 0
+    return 2 if aggressive_offload else 0
 
 
 def _require_flow_shift(stage: str, value: object | None) -> float:

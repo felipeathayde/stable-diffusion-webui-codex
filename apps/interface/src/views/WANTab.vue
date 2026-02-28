@@ -13,7 +13,8 @@ renders progress/results via task events (frames and/or exported video), with Ru
 Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled in WAN flows).
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
-and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled at prompt level through the shared LoRA modal + prompt-token chips.
+and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
+payload parsing/LoRA SHA resolution is handled in `useVideoGeneration`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/cancel, history apply/reuse, and guided-generation UX.
@@ -24,9 +25,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultAssets` (function): Returns default (empty) assets selection.
 - `normalizeFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes UI attention mode values (`global|sliding`).
-- `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|chunk|sliding|svi2|svi2_pro`).
-- `normalizeImg2VidTemporalEnabledMode` (function): Normalizes temporal-mode selector values to non-solo modes (`chunk|sliding|svi2|svi2_pro`).
-- `normalizeChunkSeedMode` (function): Normalizes UI img2vid chunk-seed mode values.
+- `normalizeImg2VidMode` (function): Normalizes UI img2vid temporal mode values (`solo|sliding|svi2|svi2_pro`).
+- `normalizeImg2VidTemporalEnabledMode` (function): Normalizes temporal-mode selector values to non-solo modes (`sliding|svi2|svi2_pro`).
+- `normalizeChunkSeedMode` (function): Normalizes UI img2vid temporal seed-mode values.
 - `normalizeInterpolationTargetFps` (function): Normalizes interpolation output target FPS (`0` disables interpolation).
 - `img2vidTemporalEnabledModeStorageKey` (function): Returns localStorage key for the last non-solo temporal mode per tab.
 - `readImg2VidTemporalEnabledMode` (function): Loads the persisted non-solo temporal mode used when temporal controls are re-enabled.
@@ -43,8 +44,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `toggleHighPrompt` (function): Toggles High Prompt section visibility.
 - `toggleLowPrompt` (function): Toggles Low Prompt section visibility.
 - `appendPromptToken` (function): Appends a prompt token string with whitespace-safe formatting.
-- `onHighPromptLoraInsert` (function): Inserts a selected LoRA token into High prompt/negative prompt based on modal target.
-- `onLowPromptLoraInsert` (function): Inserts a selected LoRA token into Low prompt/negative prompt based on modal target.
+- `normalizeLoraSha` (function): Normalizes candidate LoRA SHA values to lowercase 64-hex format.
+- `normalizeStageLoraList` (function): Sanitizes stage LoRA arrays (valid sha + optional finite numeric weight), preserving order and de-duplicating by SHA.
+- `onHighPromptLoraInsert` (function): Inserts LoRA token text into High prompt/negative prompt.
+- `onLowPromptLoraInsert` (function): Inserts LoRA token text into Low prompt/negative prompt.
 - `setImg2VidTemporalEnabled` (function): Toggles temporal controls on/off (`enabled => non-solo`, `disabled => solo` native mode).
 - `setImg2VidTemporalMode` (function): Switches img2vid temporal mode and restores per-mode UI snapshot.
 - `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
@@ -285,7 +288,6 @@ Symbols (top-level; keep in sync; no ghosts):
                         :value="temporalEnabledMode"
                         @change="setImg2VidTemporalMode(normalizeImg2VidTemporalEnabledMode(($event.target as HTMLSelectElement).value))"
                       >
-                        <option value="chunk">Chunk</option>
                         <option value="sliding">Sliding Window</option>
                         <option value="svi2">SVI 2.0</option>
                         <option value="svi2_pro">SVI 2.0 Pro</option>
@@ -321,15 +323,15 @@ Symbols (top-level; keep in sync; no ghosts):
                       <label class="label-muted">
                         <HoverTooltip
                           class="cdx-slider-field__label-tooltip"
-                          title="Chunk Seed Mode"
+                          title="Temporal Seed Mode"
                           :content="[
-                            'Fixed: same seed for every chunk.',
-                            'Increment: adds chunk index to the base seed.',
-                            'Random: independent seed per chunk.',
+                            'Fixed: same seed for every window.',
+                            'Increment: adds window index to the base seed.',
+                            'Random: independent seed per window.',
                           ]"
                         >
                           <span class="cdx-slider-field__label-trigger">
-                            <span>Chunk Seed Mode</span>
+                            <span>Temporal Seed Mode</span>
                             <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
                           </span>
                         </HoverTooltip>
@@ -346,84 +348,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       </select>
                     </div>
                   </div>
-                  <div v-if="video.img2vidMode === 'chunk'" class="param-grid wan-temporal-row" data-cols="4">
-                    <SliderField
-                      class="field"
-                      label="Chunk Frames"
-                      :modelValue="video.img2vidChunkFrames"
-                      :min="9"
-                      :max="401"
-                      :step="4"
-                      :inputStep="1"
-                      :nudgeStep="4"
-                      :disabled="isRunning"
-                      inputClass="cdx-input-w-sm"
-                      tooltipTitle="Chunk Frames"
-                      :tooltip="[
-                        'Splits img2vid into overlapping chunks.',
-                        'Must satisfy 4n+1 (e.g. 9, 13, 17...).',
-                      ]"
-                      @update:modelValue="(value: number) => setVideo({ img2vidChunkFrames: value })"
-                    />
-                    <SliderField
-                      class="field"
-                      label="Overlap"
-                      :modelValue="video.img2vidOverlapFrames"
-                      :min="0"
-                      :max="400"
-                      :step="1"
-                      :inputStep="1"
-                      :nudgeStep="1"
-                      :disabled="isRunning"
-                      inputClass="cdx-input-w-sm"
-                      tooltipTitle="Overlap"
-                      :tooltip="[
-                        'Crossfades chunk seams.',
-                        'Keep overlap smaller than Chunk Frames.',
-                      ]"
-                      @update:modelValue="(value: number) => setVideo({ img2vidOverlapFrames: value })"
-                    />
-                    <SliderField
-                      class="field"
-                      label="Anchor Alpha"
-                      :modelValue="video.img2vidAnchorAlpha"
-                      :min="0"
-                      :max="1"
-                      :step="0.05"
-                      :inputStep="0.05"
-                      :nudgeStep="0.05"
-                      :disabled="isRunning"
-                      inputClass="cdx-input-w-sm"
-                      tooltipTitle="Anchor Alpha"
-                      :tooltip="[
-                        'Re-injects the init image at chunk boundaries.',
-                        '0 = continue from previous output only.',
-                        '1 = stronger re-anchor to init image.',
-                      ]"
-                      @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
-                    />
-                    <div class="field">
-                      <HoverTooltip
-                        class="cdx-slider-field__label-tooltip"
-                        title="Reset Anchor to Base"
-                        :content="[
-                          'When enabled, the first overlap slot resets to init-image anchor every boundary.',
-                          'When disabled, overlap follows previous chunk output and uses anchor_alpha blend.',
-                        ]"
-                      >
-                        <button
-                          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                          type="button"
-                          :disabled="isRunning"
-                          :aria-pressed="video.img2vidResetAnchorToBase"
-                          @click="setVideo({ img2vidResetAnchorToBase: !video.img2vidResetAnchorToBase })"
-                        >
-                          Reset Anchor
-                        </button>
-                      </HoverTooltip>
-                    </div>
-                  </div>
-                  <div v-else-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
+                  <div v-if="isWindowedTemporalMode(video.img2vidMode)" class="param-grid wan-temporal-row" data-cols="5">
                     <SliderField
                       class="field"
                       label="Window Frames"
@@ -520,7 +445,7 @@ Symbols (top-level; keep in sync; no ghosts):
                     </div>
                   </div>
                 </div>
-                <div v-else class="caption">Native WAN22 mode runs img2vid without temporal chunk/window partitioning.</div>
+                <div v-else class="caption">Native WAN22 mode runs img2vid without temporal window partitioning.</div>
               </div>
             </div>
           </div>
@@ -939,7 +864,7 @@ function normalizeImg2VidMode(rawValue: unknown): WanVideoParams['img2vidMode'] 
 
 type WanTemporalEnabledMode = Exclude<WanVideoParams['img2vidMode'], 'solo'>
 
-const DEFAULT_TEMPORAL_ENABLED_MODE: WanTemporalEnabledMode = 'chunk'
+const DEFAULT_TEMPORAL_ENABLED_MODE: WanTemporalEnabledMode = 'sliding'
 
 function normalizeImg2VidTemporalEnabledMode(rawValue: unknown): WanTemporalEnabledMode {
   const mode = normalizeImg2VidMode(rawValue)
@@ -951,9 +876,8 @@ function isWindowedTemporalMode(rawValue: unknown): boolean {
   return isWanWindowedImg2VidMode(normalizeImg2VidMode(rawValue))
 }
 
-function defaultResetAnchorToBase(mode: WanVideoParams['img2vidMode']): boolean {
-  const normalizedMode = normalizeImg2VidMode(mode)
-  return normalizedMode === 'chunk'
+function defaultResetAnchorToBase(_mode: WanVideoParams['img2vidMode']): boolean {
+  return false
 }
 
 function maxAlignedWindowStride(windowFrames: number): number {
@@ -1047,16 +971,6 @@ function readImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode']): Parti
     if (typeof record.img2vidResetAnchorToBase === 'boolean') {
       patch.img2vidResetAnchorToBase = Boolean(record.img2vidResetAnchorToBase)
     }
-    if (mode === 'chunk') {
-      if (record.img2vidChunkFrames !== undefined) {
-        const chunkFrames = Number(record.img2vidChunkFrames)
-        if (Number.isFinite(chunkFrames) && chunkFrames > 0) patch.img2vidChunkFrames = chunkFrames
-      }
-      if (record.img2vidOverlapFrames !== undefined) {
-        const overlap = Number(record.img2vidOverlapFrames)
-        if (Number.isFinite(overlap)) patch.img2vidOverlapFrames = Math.trunc(overlap)
-      }
-    }
     if (isWindowedTemporalMode(mode)) {
       if (record.img2vidWindowFrames !== undefined) {
         const windowFrames = Number(record.img2vidWindowFrames)
@@ -1084,10 +998,6 @@ function writeImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode'], sourc
     img2vidChunkSeedMode: source.img2vidChunkSeedMode,
     img2vidAnchorAlpha: source.img2vidAnchorAlpha,
     img2vidResetAnchorToBase: source.img2vidResetAnchorToBase,
-  }
-  if (mode === 'chunk') {
-    payload.img2vidChunkFrames = source.img2vidChunkFrames
-    payload.img2vidOverlapFrames = source.img2vidOverlapFrames
   }
   if (isWindowedTemporalMode(mode)) {
     payload.img2vidWindowFrames = source.img2vidWindowFrames
@@ -1423,6 +1333,41 @@ function appendPromptToken(current: string, token: string): string {
   if (!trimmedToken) return String(current || '')
   const base = String(current || '').trim()
   return base ? `${base} ${trimmedToken}` : trimmedToken
+}
+
+function normalizeLoraSha(rawValue: unknown): string | undefined {
+  const normalized = String(rawValue || '').trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(normalized)) return undefined
+  return normalized
+}
+
+function normalizeStageLoraList(rawValue: unknown): WanStageParams['loras'] {
+  if (!Array.isArray(rawValue)) return []
+
+  const normalized: WanStageParams['loras'] = []
+  const indexBySha = new Map<string, number>()
+  for (const candidate of rawValue) {
+    if (!isRecord(candidate)) continue
+    const sha = normalizeLoraSha(candidate.sha)
+    if (!sha) continue
+
+    const hasWeight = Object.prototype.hasOwnProperty.call(candidate, 'weight')
+    let weight: number | undefined
+    if (hasWeight) {
+      if (typeof candidate.weight !== 'number' || !Number.isFinite(candidate.weight)) continue
+      weight = Number(candidate.weight)
+    }
+
+    const nextEntry = weight === undefined ? { sha } : { sha, weight }
+    const existingIndex = indexBySha.get(sha)
+    if (typeof existingIndex === 'number') {
+      normalized[existingIndex] = nextEntry
+      continue
+    }
+    indexBySha.set(sha, normalized.length)
+    normalized.push(nextEntry)
+  }
+  return normalized
 }
 
 function onHighPromptLoraInsert(payload: PromptTokenInsertPayload): void {
@@ -1888,6 +1833,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: high.value.steps,
       cfgScale: high.value.cfgScale,
       seed: high.value.seed,
+      loras: normalizeStageLoraList(high.value.loras),
       flowShift: high.value.flowShift,
     },
     low: {
@@ -1899,6 +1845,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: low.value.steps,
       cfgScale: low.value.cfgScale,
       seed: low.value.seed,
+      loras: normalizeStageLoraList(low.value.loras),
       flowShift: low.value.flowShift,
     },
     output: {
@@ -1981,13 +1928,23 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const i2vModeRaw = typeof i2v.mode === 'string' ? i2v.mode : ''
   const hasSnapshotWindowFrames = typeof i2v.windowFrames === 'number' && Number.isFinite(i2v.windowFrames) && Number(i2v.windowFrames) > 0
   const hasSnapshotChunkFrames = typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) && Number(i2v.chunkFrames) > 0
+  if (String(i2vModeRaw || '').trim().toLowerCase() === 'chunk') {
+    toast("History snapshot uses removed img2vid_mode='chunk'. Update the snapshot to 'sliding'/'svi2'/'svi2_pro' or 'solo'.")
+    return
+  }
+  if (typeof i2v.enabled === 'boolean' && Boolean(i2v.enabled)) {
+    toast("History snapshot uses removed legacy img2vid chunk toggle (img2vid.enabled=true).")
+    return
+  }
+  if (hasSnapshotChunkFrames) {
+    toast("History snapshot carries removed chunk-frame fields. Use sliding/SVI window controls instead.")
+    return
+  }
   const nextImg2VidMode = i2vModeRaw
     ? normalizeImg2VidMode(i2vModeRaw)
     : (hasSnapshotWindowFrames
       ? 'sliding'
-      : (typeof i2v.enabled === 'boolean'
-        ? (Boolean(i2v.enabled) ? 'chunk' : 'solo')
-        : (hasSnapshotChunkFrames ? 'chunk' : normalizeImg2VidMode(video.value.img2vidMode))))
+      : normalizeImg2VidMode(video.value.img2vidMode))
   const historyInterpolationFps = (() => {
     if (typeof interpolation.targetFps === 'number' && Number.isFinite(interpolation.targetFps)) {
       return Number(interpolation.targetFps)
@@ -2056,6 +2013,12 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const nextHighNegative = typeof hi.negativePrompt === 'string' ? hi.negativePrompt : legacyNegativePrompt
   const nextLowPrompt = typeof lo.prompt === 'string' ? lo.prompt : legacyPrompt
   const nextLowNegative = typeof lo.negativePrompt === 'string' ? lo.negativePrompt : legacyNegativePrompt
+  const nextHighLoras = Object.prototype.hasOwnProperty.call(hi, 'loras')
+    ? normalizeStageLoraList(hi.loras)
+    : normalizeStageLoraList(high.value.loras)
+  const nextLowLoras = Object.prototype.hasOwnProperty.call(lo, 'loras')
+    ? normalizeStageLoraList(lo.loras)
+    : normalizeStageLoraList(low.value.loras)
   const snapLightx2v = typeof snap.lightx2v === 'boolean' ? Boolean(snap.lightx2v) : lightx2v.value
   store.updateParams(props.tabId, { lightx2v: snapLightx2v }).catch(reportTabMutationError)
 
@@ -2073,6 +2036,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(hi.steps) || high.value.steps,
     cfgScale: Number(hi.cfgScale) || high.value.cfgScale,
     seed: typeof hi.seed === 'number' && Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
+    loras: nextHighLoras,
     flowShift: typeof hi.flowShift === 'number' && Number.isFinite(hi.flowShift) ? Number(hi.flowShift) : high.value.flowShift,
   })
 
@@ -2085,6 +2049,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(lo.steps) || low.value.steps,
     cfgScale: Number(lo.cfgScale) || low.value.cfgScale,
     seed: typeof lo.seed === 'number' && Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
+    loras: nextLowLoras,
     flowShift: typeof lo.flowShift === 'number' && Number.isFinite(lo.flowShift) ? Number(lo.flowShift) : low.value.flowShift,
   })
 

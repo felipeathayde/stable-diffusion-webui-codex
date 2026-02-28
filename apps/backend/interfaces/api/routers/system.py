@@ -261,11 +261,33 @@ def build_router(*, app_version: str) -> APIRouter:
         torch_stats = snap.get("torch", {}) or {}
         attention = snap.get("attention", {}) or {}
 
-        total_vram_mb = probe.get("total_vram_mb") or 0
-        try:
-            total_vram_mb = int(total_vram_mb)
-        except Exception:
+        raw_total_vram_mb = probe.get("total_vram_mb", None)
+        if raw_total_vram_mb is None:
             total_vram_mb = 0
+        else:
+            if isinstance(raw_total_vram_mb, bool):
+                raise HTTPException(
+                    status_code=500,
+                    detail="memory snapshot contract error: probe.total_vram_mb must be int-like, got bool.",
+                )
+            try:
+                total_vram_mb = int(raw_total_vram_mb)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "memory snapshot contract error: invalid probe.total_vram_mb "
+                        f"value={raw_total_vram_mb!r}."
+                    ),
+                ) from exc
+            if total_vram_mb < 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "memory snapshot contract error: probe.total_vram_mb must be >= 0 "
+                        f"(got {total_vram_mb})."
+                    ),
+                )
 
         return {
             "device_backend": snap.get("device_backend"),

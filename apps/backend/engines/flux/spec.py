@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Flux engine spec + runtime assembly (components + text pipelines + optional streaming core).
 Defines the Flux engine runtime containers (denoiser/CLIP/T5/VAE + streaming policy) and assembles a runnable runtime from selected models,
-with strict validation (no implicit fallbacks) and optional streamed core execution.
+with strict role validation (no implicit class-name fallbacks) and optional streamed core execution.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FluxTextPipelines` (dataclass): Holds the text processing engines used by Flux (optional CLIP classic + required T5).
@@ -128,37 +128,27 @@ def _maybe_enable_streaming_core(
 
 
 def _is_clip_encoder(model: object) -> bool:
-    """Detect if a text encoder is CLIP (has text_model attribute) vs T5."""
+    """Detect if a text encoder is CLIP using structural shape only."""
     if model is None:
         return False
-    # Check for CLIP-specific structure
-    if hasattr(model, 'transformer'):
+    if hasattr(model, "transformer"):
         transformer = model.transformer
-        if hasattr(transformer, 'text_model'):
+        if hasattr(transformer, "text_model"):
             return True
-    if hasattr(model, 'text_model'):
-        return True
-    # Check class name as fallback
-    cls_name = type(model).__name__
-    if 'CLIP' in cls_name or 'clip' in cls_name.lower():
+    if hasattr(model, "text_model"):
         return True
     return False
 
 
 def _is_t5_encoder(model: object) -> bool:
-    """Detect if a text encoder is T5 (has encoder.block structure)."""
+    """Detect if a text encoder is T5 using structural shape only."""
     if model is None:
         return False
-    # Check for T5-specific structure
-    if hasattr(model, 'transformer'):
+    if hasattr(model, "transformer"):
         transformer = model.transformer
-        if hasattr(transformer, 'encoder') and hasattr(transformer.encoder, 'block'):
+        if hasattr(transformer, "encoder") and hasattr(transformer.encoder, "block"):
             return True
-    if hasattr(model, 'encoder') and hasattr(model.encoder, 'block'):
-        return True
-    # Check class name as fallback
-    cls_name = type(model).__name__
-    if 'T5' in cls_name or 't5' in cls_name.lower():
+    if hasattr(model, "encoder") and hasattr(model.encoder, "block"):
         return True
     return False
 
@@ -181,59 +171,45 @@ def assemble_flux_runtime(
     
     if spec.uses_clip_branch:
         # Flux needs both CLIP and T5 - detect which is which by model structure
-        clip_encoder, clip_tokenizer = None, None
-        t5_encoder, t5_tokenizer = None, None
-        
-        # Also detect tokenizer types - CLIPTokenizer uses 'eos_token', T5 uses 'unk_token'
-        def _is_clip_tokenizer(tok):
-            if tok is None:
-                return False
-            cls_name = type(tok).__name__
-            return 'CLIP' in cls_name or 'clip' in cls_name.lower()
-        
-        def _is_t5_tokenizer(tok):
-            if tok is None:
-                return False
-            cls_name = type(tok).__name__
-            return 'T5' in cls_name or 't5' in cls_name.lower()
-        
-        # Match tokenizers by type, not by slot
-        clip_tok_candidate = tok1 if _is_clip_tokenizer(tok1) else (tok2 if _is_clip_tokenizer(tok2) else tok1)
-        t5_tok_candidate = tok2 if _is_t5_tokenizer(tok2) else (tok1 if _is_t5_tokenizer(tok1) else tok2)
-        
-        # Check te1
-        if _is_clip_encoder(te1):
-            clip_encoder = te1
-        elif _is_t5_encoder(te1):
-            t5_encoder = te1
-        
-        # Check te2
-        if _is_clip_encoder(te2):
-            clip_encoder = te2
-        elif _is_t5_encoder(te2):
-            t5_encoder = te2
-        
-        # Assign tokenizers by type, not by slot position
-        clip_tokenizer = clip_tok_candidate
-        t5_tokenizer = t5_tok_candidate
-        
-        # Fallback to position-based if detection fails
-        if clip_encoder is None and t5_encoder is None:
-            logger.warning("Could not detect encoder types; falling back to position-based assignment")
-            clip_encoder, clip_tokenizer = te1, tok1
-            t5_encoder, t5_tokenizer = te2, tok2
-        elif clip_encoder is None:
-            # T5 detected but no CLIP - check if there's another encoder
-            clip_encoder = te1 if t5_encoder is not te1 else te2
-        elif t5_encoder is None:
-            # CLIP detected but no T5 - check if there's another encoder
-            t5_encoder = te1 if clip_encoder is not te1 else te2
-        
+        encoder_slots = (te1, te2)
+        tokenizer_slots = (tok1, tok2)
+        clip_encoder_indices = [idx for idx, te in enumerate(encoder_slots) if _is_clip_encoder(te)]
+        t5_encoder_indices = [idx for idx, te in enumerate(encoder_slots) if _is_t5_encoder(te)]
+
+        if len(clip_encoder_indices) != 1 or len(t5_encoder_indices) != 1:
+            raise RuntimeError(
+                "Flux encoder role resolution failed: expected exactly one CLIP and one T5 encoder; "
+                f"got clip_candidates={len(clip_encoder_indices)} t5_candidates={len(t5_encoder_indices)} "
+                f"slot_types={[type(v).__name__ if v is not None else None for v in encoder_slots]}"
+            )
+        clip_slot = clip_encoder_indices[0]
+        t5_slot = t5_encoder_indices[0]
+        if clip_slot == t5_slot:
+            raise RuntimeError("Flux encoder role resolution failed: CLIP and T5 resolved to the same slot.")
+
+        clip_encoder = encoder_slots[clip_slot]
+        t5_encoder = encoder_slots[t5_slot]
+        if clip_encoder is t5_encoder:
+            raise RuntimeError("Flux encoder role resolution failed: CLIP and T5 resolved to the same component.")
+
+        clip_tokenizer = tokenizer_slots[clip_slot]
+        t5_tokenizer = tokenizer_slots[t5_slot]
+        if clip_tokenizer is None or t5_tokenizer is None:
+            raise RuntimeError(
+                "Flux tokenizer role resolution failed: expected tokenizer pair aligned with encoder slots; "
+                f"resolved clip_slot={clip_slot} t5_slot={t5_slot} "
+                f"slot_types={[type(v).__name__ if v is not None else None for v in tokenizer_slots]}"
+            )
+        if clip_tokenizer is t5_tokenizer:
+            raise RuntimeError("Flux tokenizer role resolution failed: CLIP and T5 resolved to the same component.")
+
         logger.debug(
-            "Encoder detection: CLIP=%s (tok=%s) T5=%s (tok=%s)", 
+            "Encoder detection: CLIP=%s@slot%s (tok=%s) T5=%s@slot%s (tok=%s)",
             type(clip_encoder).__name__ if clip_encoder else None,
+            clip_slot,
             type(clip_tokenizer).__name__ if clip_tokenizer else None,
             type(t5_encoder).__name__ if t5_encoder else None,
+            t5_slot,
             type(t5_tokenizer).__name__ if t5_tokenizer else None,
         )
         

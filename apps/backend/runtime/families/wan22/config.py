@@ -86,10 +86,10 @@ class RunConfig:
     gguf_cache_limit_mb: Optional[int] = None  # dequant cache removed; must be omitted or 0
     log_mem_interval: Optional[int] = None  # log CUDA mem every N steps if >0
     # Aggressive offload controls
-    aggressive_offload: bool = True  # legacy switch; see offload_level
+    aggressive_offload: bool = False  # legacy switch; maps to offload_level=2 (balanced) when offload_level is unset
     te_device: Optional[str] = None  # 'cuda' | 'cpu' (None = follow cfg.device)
     # New: coarse-grained offload profile (takes precedence over aggressive_offload if provided)
-    # 0 = off (keep resident), 1 = light (offload TE/VAE only), 2 = balanced (also clear between stages), 3 = aggressive (current behavior)
+    # 0 = off (keep resident), 1 = light (offload TE/VAE only), 2 = balanced (stage cache clear only when pressured), 3 = aggressive (always clear between stages)
     offload_level: Optional[int] = None
     chunk_buffer_mode: str = "hybrid"  # img2vid chunk buffering strategy: 'hybrid' | 'ram' | 'ram+hd'
 
@@ -734,7 +734,7 @@ def build_wan22_gguf_run_config(
     if height % 16 != 0 or width % 16 != 0:
         raise RuntimeError(f"WAN22 GGUF: height and width have to be divisible by 16 but are {height} and {width}.")
 
-    aggressive_offload_raw = extras.get("gguf_offload", True)
+    aggressive_offload_raw = extras.get("gguf_offload", False)
     aggressive_offload = _coerce_bool(aggressive_offload_raw)
     if aggressive_offload is None:
         raise RuntimeError(
@@ -789,6 +789,39 @@ def build_wan22_gguf_run_config(
                 f"got {chunk_buffer_mode_raw!r}."
             )
 
+    cache_policy_raw = extras.get("gguf_cache_policy")
+    cache_policy: str | None = None
+    if cache_policy_raw is not None:
+        if not isinstance(cache_policy_raw, str):
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_cache_policy' must be a string when provided, "
+                f"got {cache_policy_raw!r}."
+            )
+        normalized_cache_policy = str(cache_policy_raw).strip().lower()
+        if normalized_cache_policy in {"", "none", "off"}:
+            cache_policy = "none"
+        else:
+            raise RuntimeError(
+                "WAN22 GGUF: invalid 'gguf_cache_policy'. "
+                f"Expected 'none' or 'off', got {cache_policy_raw!r}."
+            )
+
+    cache_limit_raw = extras.get("gguf_cache_limit_mb")
+    cache_limit_mb: int | None = None
+    if cache_limit_raw not in (None, "", 0):
+        cache_limit_mb = _coerce_int(cache_limit_raw)
+        if cache_limit_mb is None or cache_limit_mb < 0:
+            raise RuntimeError(
+                "WAN22 GGUF: 'gguf_cache_limit_mb' must be a non-negative integer when provided, "
+                f"got {cache_limit_raw!r}."
+            )
+    if cache_policy is None and cache_limit_mb is not None:
+        raise RuntimeError("WAN22 GGUF: 'gguf_cache_limit_mb' requires 'gguf_cache_policy'.")
+    if cache_policy == "none" and cache_limit_mb not in (None, 0):
+        raise RuntimeError(
+            "WAN22 GGUF: 'gguf_cache_limit_mb' must be omitted or 0 when cache policy is 'none'/'off'."
+        )
+
     return RunConfig(
         width=width,
         height=height,
@@ -810,10 +843,8 @@ def build_wan22_gguf_run_config(
         sdpa_policy=sdpa_policy,
         attention_mode=attention_mode,
         attn_chunk_size=attn_chunk_size,
-        gguf_cache_policy=(extras.get("gguf_cache_policy") if extras.get("gguf_cache_policy") is not None else None),
-        gguf_cache_limit_mb=(
-            int(extras.get("gguf_cache_limit_mb", 0)) if extras.get("gguf_cache_limit_mb") not in (None, "", 0) else None
-        ),
+        gguf_cache_policy=cache_policy,
+        gguf_cache_limit_mb=cache_limit_mb,
         log_mem_interval=(
             int(extras.get("gguf_log_mem_interval", 0)) if extras.get("gguf_log_mem_interval") not in (None, "", 0) else None
         ),

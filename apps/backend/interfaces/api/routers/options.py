@@ -118,7 +118,13 @@ def build_router(
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="invalid payload")
         if not settings_registry_ok:
-            return dict(payload)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "settings registry unavailable; options validation is disabled until backend restart "
+                    "restores registry health"
+                ),
+            )
         try:
             idx = field_index()
         except Exception as exc:
@@ -198,7 +204,13 @@ def build_router(
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="invalid payload")
         if not settings_registry_ok:
-            return {"accepted": dict(payload), "rejected": {}}
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "settings registry unavailable; options validation is disabled until backend restart "
+                    "restores registry health"
+                ),
+            )
         try:
             idx = field_index()
         except Exception as exc:

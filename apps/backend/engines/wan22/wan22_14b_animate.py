@@ -24,7 +24,12 @@ from apps.backend.core.exceptions import EngineLoadError
 from apps.backend.core.requests import InferenceEvent, Vid2VidRequest
 from apps.backend.engines.common.base_video import BaseVideoEngine
 from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipeline
-from apps.backend.engines.wan22.wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates
+from apps.backend.engines.wan22.wan22_common import (
+    EngineOpts,
+    WanComponents,
+    resolve_wan_repo_candidates,
+    unload_wan_components,
+)
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime.memory import memory_management
@@ -54,9 +59,14 @@ class Wan22Animate14BEngine(BaseVideoEngine):
 
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         default_mount_device = str(memory_management.manager.mount_device())
-        dev = str(options.get("device") or default_mount_device)
+        requested_device = options.get("device")
+        if requested_device not in (None, "", "auto"):
+            raise EngineLoadError(
+                "WAN22 engine-local 'device' override is not supported; "
+                "configure the runtime main device via launcher/API canonical selection."
+            )
         dty = str(options.get("dtype", "fp16"))
-        self._opts = EngineOpts(device=dev, dtype=dty)
+        self._opts = EngineOpts(device=default_mount_device, dtype=dty)
 
         p = str(model_ref)
         try:
@@ -99,13 +109,7 @@ class Wan22Animate14BEngine(BaseVideoEngine):
             )
 
         comp.dtype = dty
-        try:
-            from apps.backend.runtime.families.wan22.config import resolve_device_name
-
-            resolved = resolve_device_name(dev)
-            comp.device = resolved
-        except Exception as exc:
-            raise EngineLoadError(str(exc)) from exc
+        comp.device = default_mount_device
         comp.model_dir = p
 
         try:
@@ -126,6 +130,7 @@ class Wan22Animate14BEngine(BaseVideoEngine):
         self.mark_loaded()
 
     def unload(self) -> None:  # type: ignore[override]
+        unload_wan_components(self._comp, engine_id=self.engine_id, logger=self._logger)
         self._comp = None
         self.mark_unloaded()
 

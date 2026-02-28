@@ -48,11 +48,12 @@ class CodexFluxFamilyFactory:
             codex_components=bundle.components,
             engine_options=options,
         )
+        text_encoder_key = "clip" if self._spec.uses_clip_branch else "t5"
         codex_objects = CodexObjects(
             denoiser=runtime.denoiser,
             vae=runtime.vae,
             text_encoders={
-                "clip": TextEncoderHandle(
+                text_encoder_key: TextEncoderHandle(
                     patcher=runtime.clip.patcher,
                     runtime=runtime.clip,
                 )

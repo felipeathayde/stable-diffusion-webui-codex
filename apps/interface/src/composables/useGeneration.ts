@@ -160,6 +160,20 @@ export function resolveEngineForRequest(tabType: string, useInitImage: boolean):
   return resolveImageRequestEngineId(tabType, useInitImage)
 }
 
+function normalizeBooleanParam(rawValue: unknown, fallback: boolean): boolean {
+  if (typeof rawValue === 'boolean') return rawValue
+  if (typeof rawValue === 'number') {
+    if (rawValue === 1) return true
+    if (rawValue === 0) return false
+  }
+  if (typeof rawValue === 'string') {
+    const normalized = rawValue.trim().toLowerCase()
+    if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true
+    if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false
+  }
+  return fallback
+}
+
 export interface BuildImg2ImgPayloadArgs {
   params: ImageBaseParams
   supportsNegativePrompt: boolean
@@ -175,9 +189,13 @@ export interface BuildImg2ImgPayloadArgs {
 
 export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<string, unknown> {
   const params = args.params
+  const useMask = normalizeBooleanParam(params.useMask, false)
+  const maskInvert = normalizeBooleanParam(params.maskInvert, false)
+  const maskRound = normalizeBooleanParam(params.maskRound, true)
+  const maskRegionSplit = normalizeBooleanParam(params.maskRegionSplit, false)
   const payload: Record<string, unknown> = {
     img2img_init_image: params.initImageData,
-    img2img_mask: params.useMask ? params.maskImageData : '',
+    img2img_mask: useMask ? params.maskImageData : '',
     img2img_prompt: params.prompt,
     img2img_neg_prompt: args.supportsNegativePrompt ? params.negativePrompt : '',
     img2img_styles: [],
@@ -199,7 +217,7 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
     model: args.modelOverride,
     img2img_extras: { ...args.extras },
   }
-  if (params.useMask) {
+  if (useMask) {
     const maskData = String(params.maskImageData || '').trim()
     if (!maskData) {
       throw new Error('INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.')
@@ -208,13 +226,13 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
     payload.img2img_mask_enforcement = normalizeMaskEnforcement(params.maskEnforcement)
     payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(params.inpaintingFill))))
     payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(params.inpaintFullResPadding)))
-    payload.img2img_inpainting_mask_invert = params.maskInvert ? 1 : 0
+    payload.img2img_inpainting_mask_invert = maskInvert ? 1 : 0
     payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(params.maskBlur)))
-    payload.img2img_mask_round = Boolean(params.maskRound)
+    payload.img2img_mask_round = maskRound
 
-    const wantsRegionSplit = Boolean(params.maskRegionSplit)
+    const wantsRegionSplit = maskRegionSplit
     if (wantsRegionSplit) {
-      if (params.maskInvert) {
+      if (maskInvert) {
         throw new Error('Mask region splitting is not supported with "Invert mask".')
       }
       if (args.batchSize !== 1) {
@@ -417,9 +435,11 @@ export function useGeneration(tabId: string) {
     const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
     const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
     const settingsRevision = quicksettings.getSettingsRevision()
+    const useInitImage = normalizeBooleanParam(p.useInitImage, false)
+    const useMask = normalizeBooleanParam(p.useMask, false)
 
     const tabType = String(engineType.value)
-    const engineOverrideForRequest = resolveEngineForRequest(tabType, Boolean(p.useInitImage))
+    const engineOverrideForRequest = resolveEngineForRequest(tabType, useInitImage)
 
     const engineSurface = backendCaps.get(engineOverrideForRequest)
     if (!engineSurface) {
@@ -442,7 +462,7 @@ export function useGeneration(tabId: string) {
 
     const assetContract = backendCaps.getAssetContract(engineOverrideForRequest, { checkpointCoreOnly: modelIsCoreOnly })
 
-    if (!p.useInitImage && !engineSurface.supports_txt2img) {
+    if (!useInitImage && !engineSurface.supports_txt2img) {
       const message = `This engine does not support txt2img (${engineOverrideForRequest}).`
       console.error(`[useGeneration] ${message}`)
       state.value.status = 'error'
@@ -450,7 +470,7 @@ export function useGeneration(tabId: string) {
       return
     }
 
-    if (p.useInitImage) {
+    if (useInitImage) {
       if (!engineSurface.supports_img2img) {
         const message = `This engine does not support img2img (${engineOverrideForRequest}).`
         console.error(`[useGeneration] ${message}`)
@@ -463,7 +483,7 @@ export function useGeneration(tabId: string) {
         state.value.errorMessage = 'Select an initial image for img2img.'
         return
       }
-      if (p.useMask) {
+      if (useMask) {
         if (engineOverrideForRequest === 'flux1_kontext') {
           state.value.status = 'error'
           state.value.errorMessage = 'Masking is not supported for Flux.1 img2img (Kontext) yet.'
@@ -587,7 +607,7 @@ export function useGeneration(tabId: string) {
 
     try {
       let taskId = ''
-      if (p.useInitImage) {
+      if (useInitImage) {
         const payload = buildImg2ImgPayload({
           params: p,
           supportsNegativePrompt: supportsNegative,
@@ -639,7 +659,7 @@ export function useGeneration(tabId: string) {
       state.value.taskId = taskId
       state.value.currentRun = {
         taskId,
-        mode: p.useInitImage ? 'img2img' : 'txt2img',
+        mode: useInitImage ? 'img2img' : 'txt2img',
         createdAtMs,
         status: 'completed',
         summary,

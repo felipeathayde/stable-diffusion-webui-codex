@@ -30,6 +30,8 @@ from typing import Any
 import torch
 
 from apps.backend.infra.config.env_flags import env_flag
+from apps.backend.runtime.diagnostics.fallback_state import mark_fallback_used
+from apps.backend.runtime.memory import memory_management
 
 
 def log_sigmas_enabled() -> bool:
@@ -42,6 +44,7 @@ def log_numerics_enabled() -> bool:
 
 def warn_fallback(logger: Any, *, component: str, detail: str, reason: str) -> None:
     log = get_logger(logger)
+    mark_fallback_used()
     # Intentionally loud: fallbacks must be visible in logs.
     log.warning("!!! [WAN22][FALLBACK] %s: %s (reason=%s) !!!", component, detail, reason)
 
@@ -104,12 +107,14 @@ def get_logger(logger: Any) -> logging.Logger:
 def cuda_empty_cache(logger: Any, *, label: str) -> None:
     if not (getattr(torch, "cuda", None) and torch.cuda.is_available()):
         return
+    manager = getattr(memory_management, "manager", None)
+    if manager is None or not hasattr(manager, "soft_empty_cache"):
+        return
     log = get_logger(logger)
     try:
-        torch.cuda.synchronize()
         alloc_before = int(torch.cuda.memory_allocated() // (1024 * 1024))
         reserved_before = int(torch.cuda.memory_reserved() // (1024 * 1024))
-        torch.cuda.empty_cache()
+        manager.soft_empty_cache(force=True)
         alloc_after = int(torch.cuda.memory_allocated() // (1024 * 1024))
         reserved_after = int(torch.cuda.memory_reserved() // (1024 * 1024))
         log.info(

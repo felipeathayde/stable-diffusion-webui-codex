@@ -9,9 +9,9 @@ Status: Active
 ## Notes
 - Ensure scheduler and runtime dependencies stay in sync with `apps/backend/runtime/families/flux/`.
 - Shared assembly helpers live in `spec.py`; Flux-family engines assemble runtimes via `CodexFluxFamilyFactory` (`apps/backend/engines/flux/factory.py`) which wraps `assemble_flux_runtime`.
-- `assemble_flux_runtime` now accepts `engine_options` and can wrap the Flux transformer core in a `StreamedFluxCore` when `StreamingConfig` (built from engine options) decides streaming should be enabled based on VRAM state.
-- Streaming is currently gated to the Flux.1 engine (`spec.name == "flux1"`) and uses devices from the memory manager (`get_torch_device` / `core_offload_device`); when disabled, the runtime is identical to the previous non-streaming path.
-- `_maybe_enable_streaming_core` also unwraps an already-streamed core when streaming is disabled, so turning streaming off does not keep a stale `StreamedFluxCore` wrapper alive across reloads.
+- `assemble_flux_runtime` accepts `engine_options` and validates streaming directives via `StreamingConfig` for Flux family assembly.
+- `_maybe_enable_streaming_core` currently enforces a fail-loud contract: for `flux1`, any explicit/auto streaming enable request raises `NotImplementedError` until the capability contract is finalized.
+- When streaming is disabled, `_maybe_enable_streaming_core` unwraps an already-streamed core so reloads stay on the canonical non-streaming runtime path.
 - Flux-family engines expose `EngineCapabilities` and set distilled-CFG behaviour during `load()`; keep bundle assembly side-effect free.
 - 2025-12-30: Flux.1 now wraps prompts with per-job metadata (`distilled_cfg_scale`, `smart_cache`) and the conditioning cache respects `smart_cache` and includes `distilled_cfg_scale` in its key (avoids stale embeddings when toggling cache or changing distilled CFG).
 - 2026-01-01: `Flux.set_clip_skip(...)` now clears the conditioning cache to avoid returning stale pooled embeddings when `smart_cache` is enabled.

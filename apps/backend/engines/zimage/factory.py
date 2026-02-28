@@ -45,7 +45,7 @@ class CodexZImageFactory:
         options: Mapping[str, Any],
     ) -> CodexZImageAssembly:
         core_device = memory_management.manager.get_device(DeviceRole.CORE)
-        device = str(getattr(core_device, "type", core_device))
+        device = str(core_device)
         runtime = assemble_zimage_runtime(
             spec=self._spec,
             codex_components=bundle.components,

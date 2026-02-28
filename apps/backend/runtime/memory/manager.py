@@ -37,6 +37,8 @@ from typing import Dict, List, MutableSequence, Optional, Sequence, Set, Tuple
 
 import torch
 
+from apps.backend.runtime.diagnostics.fallback_state import mark_fallback_used
+
 from .config import (
     AttentionBackend,
     DeviceBackend,
@@ -823,6 +825,7 @@ class CodexMemoryManager:
             self._dtype_label(next_dtype),
             reason,
         )
+        mark_fallback_used()
         return next_dtype
 
     # --------------------------------------------------------------------- tensor helpers
@@ -1254,7 +1257,18 @@ class CodexMemoryManager:
     ) -> None:
         device = device or self._primary_device
         keep_loaded = keep_loaded or ()
-        release_candidates = [record for record in self._loaded_models if record not in keep_loaded]
+        def _targets_requested_device(record: _LoadedModelRecord) -> bool:
+            if record.load_device.type != device.type:
+                return False
+            if record.load_device.index is None or device.index is None:
+                return True
+            return int(record.load_device.index) == int(device.index)
+
+        release_candidates = [
+            record
+            for record in self._loaded_models
+            if record not in keep_loaded and _targets_requested_device(record)
+        ]
         released = 0
 
         for record in release_candidates:

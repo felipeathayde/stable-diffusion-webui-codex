@@ -24,7 +24,7 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.core.exceptions import EngineLoadError
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, Txt2VidRequest, Vid2VidRequest
 from apps.backend.engines.common.base_video import BaseVideoEngine
-from apps.backend.engines.wan22.wan22_common import WanComponents
+from apps.backend.engines.wan22.wan22_common import WanComponents, unload_wan_components
 from apps.backend.runtime.memory import memory_management
 from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
 from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
@@ -52,7 +52,12 @@ class Wan2214BEngine(BaseVideoEngine):
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         self._logger.debug("[%s] before load()", self.engine_id)
         default_mount_device = str(memory_management.manager.mount_device())
-        dev = str(options.get("device") or default_mount_device)
+        requested_device = options.get("device")
+        if requested_device not in (None, "", "auto"):
+            raise EngineLoadError(
+                "WAN22 engine-local 'device' override is not supported; "
+                "configure the runtime main device via launcher/API canonical selection."
+            )
         dty = str(options.get("dtype", "fp16"))
         comp = WanComponents()
         engine_label = self.engine_id
@@ -86,13 +91,7 @@ class Wan2214BEngine(BaseVideoEngine):
 
         comp.model_dir = path
         comp.dtype = dty
-        try:
-            from apps.backend.runtime.families.wan22.config import resolve_device_name
-
-            resolved = resolve_device_name(dev)
-            comp.device = resolved
-        except Exception as exc:
-            raise EngineLoadError(str(exc)) from exc
+        comp.device = default_mount_device
 
         comp.pipeline = None
         ref_base = os.path.basename(str(model_ref or "")).lower()
@@ -121,6 +120,7 @@ class Wan2214BEngine(BaseVideoEngine):
 
     def unload(self) -> None:  # type: ignore[override]
         self._logger.debug("[%s] before unload()", self.engine_id)
+        unload_wan_components(self._comp, engine_id=self.engine_id, logger=self._logger)
         self._comp = None
         self._logger.debug("[%s] after unload()", self.engine_id)
         self.mark_unloaded()

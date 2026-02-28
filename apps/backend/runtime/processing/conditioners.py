@@ -71,23 +71,101 @@ def _prepare_mask(mask: Any, *, round_mask: bool = True) -> torch.Tensor:
     if mask is None:
         return mask
     if torch.is_tensor(mask):
-        tensor = mask
-        if tensor.ndim == 3:
-            tensor = tensor.unsqueeze(0)
-        return tensor.float()
-    if isinstance(mask, Image.Image):
-        array = np.array(mask.convert("L"), dtype=np.float32) / 255.0
+        tensor = mask.float()
     else:
-        array = np.array(mask, dtype=np.float32)
+        if isinstance(mask, Image.Image):
+            array = np.array(mask.convert("L"), dtype=np.float32) / 255.0
+        else:
+            array = np.array(mask, dtype=np.float32)
+        tensor = torch.from_numpy(array)
+
     if round_mask:
-        array = (array > 0.5).astype(np.float32)
-    tensor = torch.from_numpy(array)
+        tensor = (tensor > 0.5).to(dtype=torch.float32)
+    else:
+        tensor = tensor.to(dtype=torch.float32)
+
     if tensor.ndim == 2:
+        tensor = tensor.unsqueeze(0).unsqueeze(0)
+    elif tensor.ndim == 3:
         tensor = tensor.unsqueeze(0)
-    return tensor.unsqueeze(0)
+    elif tensor.ndim != 4:
+        raise ValueError(
+            "image_mask must be 2D/3D/4D after normalization; "
+            f"got ndim={tensor.ndim}."
+        )
+    return tensor
 
 
-def img2img_conditioning(sd_model: Any, source_image: torch.Tensor, latent_image: torch.Tensor, *, image_mask: Optional[Any] = None, round_mask: bool = True) -> torch.Tensor:
+def encode_inpaint_latent_pair(
+    sd_model: Any,
+    source_image: torch.Tensor,
+    *,
+    image_mask: Optional[Any] = None,
+    round_mask: bool = True,
+    stage_prefix: str = "runtime.processing.conditioners.inpaint_pair",
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Encode source + masked-conditioning images in a single VAE pass.
+
+    Returns `(source_latent, conditioning_latent, conditioning_mask)`.
+    """
+
+    source_image = source_image.to(dtype=torch.float32)
+    if source_image.ndim != 4:
+        raise ValueError(f"source_image must be BCHW; got shape={tuple(source_image.shape)}")
+
+    conditioning_mask = _prepare_mask(image_mask, round_mask=round_mask)
+    if conditioning_mask is None:
+        conditioning_mask = torch.ones(
+            source_image.shape[0],
+            1,
+            source_image.shape[-2],
+            source_image.shape[-1],
+            device=source_image.device,
+            dtype=source_image.dtype,
+        )
+    else:
+        conditioning_mask = conditioning_mask.to(device=source_image.device, dtype=source_image.dtype)
+        if conditioning_mask.shape[0] == 1 and source_image.shape[0] > 1:
+            conditioning_mask = conditioning_mask.expand(source_image.shape[0], -1, -1, -1)
+        elif conditioning_mask.shape[0] != source_image.shape[0]:
+            raise ValueError(
+                "image_mask batch size must be 1 or match source_image batch size; "
+                f"got mask_batch={conditioning_mask.shape[0]} source_batch={source_image.shape[0]}."
+            )
+
+    conditioning_image = torch.lerp(
+        source_image,
+        source_image * (1.0 - conditioning_mask),
+        1.0,
+    )
+    paired = torch.cat([source_image, conditioning_image], dim=0)
+    paired_latents = sd_model.get_first_stage_encoding(
+        encode_image_batch(
+            sd_model,
+            paired,
+            stage=f"{stage_prefix}.encode_pair",
+        )
+    )
+    batch = int(source_image.shape[0])
+    if paired_latents.shape[0] != batch * 2:
+        raise RuntimeError(
+            "encode_inpaint_latent_pair received unexpected latent batch shape "
+            f"{tuple(paired_latents.shape)} (expected first dimension {batch * 2})."
+        )
+    source_latent = paired_latents[:batch]
+    conditioning_latent = paired_latents[batch:]
+    return source_latent, conditioning_latent, conditioning_mask
+
+
+def img2img_conditioning(
+    sd_model: Any,
+    source_image: torch.Tensor,
+    latent_image: torch.Tensor,
+    *,
+    image_mask: Optional[Any] = None,
+    round_mask: bool = True,
+    precomputed_conditioning_latent: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     source_image = source_image.to(dtype=torch.float32)
 
     if getattr(sd_model, "is_inpaint", False):
@@ -103,17 +181,45 @@ def img2img_conditioning(sd_model: Any, source_image: torch.Tensor, latent_image
             )
         else:
             conditioning_mask = conditioning_mask.to(device=source_image.device, dtype=source_image.dtype)
+            if conditioning_mask.shape[0] == 1 and source_image.shape[0] > 1:
+                conditioning_mask = conditioning_mask.expand(source_image.shape[0], -1, -1, -1)
+            elif conditioning_mask.shape[0] != source_image.shape[0]:
+                raise ValueError(
+                    "image_mask batch size must be 1 or match source_image batch size; "
+                    f"got mask_batch={conditioning_mask.shape[0]} source_batch={source_image.shape[0]}."
+                )
 
-        # Forge/A1111 parity: conditioning image is masked-out (default inpainting_mask_weight=1.0).
-        conditioning_image = torch.lerp(
-            source_image,
-            source_image * (1.0 - conditioning_mask),
-            1.0,
-        )
-        conditioning_image = sd_model.get_first_stage_encoding(sd_model.encode_first_stage(conditioning_image))
+        if precomputed_conditioning_latent is None:
+            # Forge/A1111 parity: conditioning image is masked-out
+            # (default inpainting_mask_weight=1.0).
+            conditioning_image = torch.lerp(
+                source_image,
+                source_image * (1.0 - conditioning_mask),
+                1.0,
+            )
+            conditioning_latent = sd_model.get_first_stage_encoding(
+                encode_image_batch(
+                    sd_model,
+                    conditioning_image,
+                    stage="runtime.processing.conditioners.img2img_conditioning.encode",
+                )
+            )
+        else:
+            conditioning_latent = precomputed_conditioning_latent
+            if not torch.is_tensor(conditioning_latent) or conditioning_latent.ndim != 4:
+                raise ValueError(
+                    "precomputed_conditioning_latent must be a 4D torch.Tensor "
+                    f"(got {type(conditioning_latent).__name__}, ndim={getattr(conditioning_latent, 'ndim', None)})."
+                )
+            conditioning_latent = conditioning_latent.to(device=latent_image.device, dtype=latent_image.dtype)
+            if conditioning_latent.shape[0] != latent_image.shape[0]:
+                raise ValueError(
+                    "precomputed_conditioning_latent batch size must match latent_image batch size "
+                    f"(got {conditioning_latent.shape[0]} vs {latent_image.shape[0]})."
+                )
 
-        mask_tensor = F.interpolate(conditioning_mask, size=latent_image.shape[-2:])
-        mask_tensor = mask_tensor.expand(conditioning_image.shape[0], -1, -1, -1)
-        return torch.cat([mask_tensor, conditioning_image], dim=1)
+        mask_tensor = F.interpolate(conditioning_mask, size=conditioning_latent.shape[-2:])
+        mask_tensor = mask_tensor.expand(conditioning_latent.shape[0], -1, -1, -1)
+        return torch.cat([mask_tensor, conditioning_latent], dim=1)
 
     return latent_image.new_zeros(latent_image.shape[0], 5, 1, 1)

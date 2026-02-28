@@ -30,7 +30,7 @@ from apps.backend.runtime.memory import memory_management
 
 import os
 
-from apps.backend.engines.wan22.wan22_common import WanComponents
+from apps.backend.engines.wan22.wan22_common import WanComponents, unload_wan_components
 
 class Wan225BEngine(BaseVideoEngine):
     engine_id = "wan22_5b"
@@ -54,7 +54,12 @@ class Wan225BEngine(BaseVideoEngine):
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         self._logger.debug("[%s] before load()", self.engine_id)
         default_mount_device = str(memory_management.manager.mount_device())
-        dev = str(options.get("device") or default_mount_device)
+        requested_device = options.get("device")
+        if requested_device not in (None, "", "auto"):
+            raise EngineLoadError(
+                "WAN22 engine-local 'device' override is not supported; "
+                "configure the runtime main device via launcher/API canonical selection."
+            )
         dty = str(options.get("dtype", "fp16"))
         comp = WanComponents()
         engine_label = self.engine_id
@@ -88,13 +93,7 @@ class Wan225BEngine(BaseVideoEngine):
 
         comp.model_dir = p
         comp.dtype = dty
-        try:
-            from apps.backend.runtime.families.wan22.config import resolve_device_name
-
-            resolved = resolve_device_name(dev)
-            comp.device = resolved
-        except Exception as exc:
-            raise EngineLoadError(str(exc)) from exc
+        comp.device = default_mount_device
 
         # GGUF path: assets are payload-driven (sha-only); avoid any local/online HF metadata probing here.
         comp.pipeline = None
@@ -124,6 +123,7 @@ class Wan225BEngine(BaseVideoEngine):
 
     def unload(self) -> None:  # type: ignore[override]
         self._logger.debug("[%s] before unload()", self.engine_id)
+        unload_wan_components(self._comp, engine_id=self.engine_id, logger=self._logger)
         self._comp = None
         self._logger.debug("[%s] after unload()", self.engine_id)
         self.mark_unloaded()

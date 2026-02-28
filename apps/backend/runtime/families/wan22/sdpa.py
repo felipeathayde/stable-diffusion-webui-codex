@@ -23,25 +23,28 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from contextvars import ContextVar
+import logging
 import os
 from typing import Optional
+from uuid import uuid4
 
 import torch
 
-from apps.backend.runtime.attention import attention_function_pre_shaped
+from apps.backend.runtime.attention import attention_function_pre_shaped, set_attention_request_id
 from apps.backend.runtime.memory.config import AttentionBackend
 
-_LOG_ONCE = {
-    "sdpa": False,
-    "cross_attn_sliding_fallback": False,
-}
-_SDPA_LOG_COUNT = 0
+_LOGGER = logging.getLogger("backend.runtime.wan22.sdpa")
+_SDPA_CALL_COUNT_CTX: ContextVar[int] = ContextVar("wan22_sdpa_call_count", default=0)
+_CROSS_ATTN_SLIDING_FALLBACK_LOGGED_CTX: ContextVar[bool] = ContextVar(
+    "wan22_cross_attn_sliding_fallback_logged",
+    default=False,
+)
 
 _FUSED_MODE_ENV = "CODEX_WAN22_FUSED_ATTN_V1_MODE"
 
-_SDPA_SETTINGS_CTX: ContextVar[tuple[str, str, int, str]] = ContextVar(
+_SDPA_SETTINGS_CTX: ContextVar[tuple[str, str, int, str, str]] = ContextVar(
     "wan22_sdpa_settings",
-    default=("auto", "global", 0, "off"),
+    default=("auto", "global", 0, "off", "wan22-unknown"),
 )
 
 
@@ -106,47 +109,52 @@ def set_sdpa_settings(
     chunk: Optional[int],
     attention_mode: Optional[str] = None,
     fused_mode: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> None:
-    _SDPA_SETTINGS_CTX.set(_normalize_sdpa_settings(policy, chunk, attention_mode, fused_mode))
+    pol, mode, ch, fused = _normalize_sdpa_settings(policy, chunk, attention_mode, fused_mode)
+    rid = str(request_id or "").strip() or f"wan22-{uuid4().hex[:12]}"
+    _SDPA_SETTINGS_CTX.set((pol, mode, ch, fused, rid))
+    _SDPA_CALL_COUNT_CTX.set(0)
+    _CROSS_ATTN_SLIDING_FALLBACK_LOGGED_CTX.set(False)
+    set_attention_request_id(rid)
+    _LOGGER.info(
+        "[wan22.sdpa][req=%s] configured policy=%s mode=%s chunk=%d backend=%s fused_mode=%s",
+        rid,
+        pol,
+        mode,
+        ch,
+        AttentionBackend.PYTORCH.value,
+        fused,
+    )
 
 
-def _get_sdpa_settings() -> tuple[str, str, int, str]:
+def _get_sdpa_settings() -> tuple[str, str, int, str, str]:
     return _SDPA_SETTINGS_CTX.get()
 
 
 def get_wan_fused_mode() -> str:
-    _pol, _mode, _chunk, fused_mode = _get_sdpa_settings()
+    _pol, _mode, _chunk, fused_mode, _request_id = _get_sdpa_settings()
     return fused_mode
 
 
 def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = False) -> torch.Tensor:
-    pol, mode, ch, fused_mode = _get_sdpa_settings()
-
-    global _LOG_ONCE, _SDPA_LOG_COUNT
-    _SDPA_LOG_COUNT += 1
-    should_log = not _LOG_ONCE.get("sdpa", False)
-    _LOG_ONCE["sdpa"] = True
-    if should_log:
-        try:
-            import logging
-
-            logging.getLogger("backend.runtime.wan22.sdpa").info(
-                "sdpa[n=%d]: policy=%s mode=%s chunk=%d device=%s dtype=%s qkv=%s",
-                _SDPA_LOG_COUNT,
-                pol,
-                mode,
-                ch,
-                str(q.device),
-                str(q.dtype),
-                (tuple(q.shape), tuple(k.shape), tuple(v.shape)),
-            )
-            logging.getLogger("backend.runtime.wan22.sdpa").info(
-                "wan_fused_mode=%s env=%s",
-                fused_mode,
-                _FUSED_MODE_ENV,
-            )
-        except Exception:
-            pass
+    pol, mode, ch, fused_mode, request_id = _get_sdpa_settings()
+    set_attention_request_id(request_id)
+    call_count = int(_SDPA_CALL_COUNT_CTX.get()) + 1
+    _SDPA_CALL_COUNT_CTX.set(call_count)
+    if call_count == 1:
+        _LOGGER.info(
+            "[wan22.sdpa][req=%s] first_call policy=%s mode=%s chunk=%d device=%s dtype=%s qkv=%s fused_mode=%s env=%s",
+            request_id,
+            pol,
+            mode,
+            ch,
+            str(q.device),
+            str(q.dtype),
+            (tuple(q.shape), tuple(k.shape), tuple(v.shape)),
+            fused_mode,
+            _FUSED_MODE_ENV,
+        )
 
     if mode == "sliding":
         if ch <= 0:
@@ -154,18 +162,14 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
         q_length = int(q.shape[2])
         kv_length = int(k.shape[2])
         if kv_length != q_length:
-            if not _LOG_ONCE.get("cross_attn_sliding_fallback", False):
-                _LOG_ONCE["cross_attn_sliding_fallback"] = True
-                try:
-                    import logging
-
-                    logging.getLogger("backend.runtime.wan22.sdpa").warning(
-                        "sliding mode fallback: q_len=%d differs from kv_len=%d; using full K/V per query chunk",
-                        q_length,
-                        kv_length,
-                    )
-                except Exception:
-                    pass
+            if not bool(_CROSS_ATTN_SLIDING_FALLBACK_LOGGED_CTX.get()):
+                _CROSS_ATTN_SLIDING_FALLBACK_LOGGED_CTX.set(True)
+                _LOGGER.warning(
+                    "[wan22.sdpa][req=%s] sliding mode fallback: q_len=%d differs from kv_len=%d; using full K/V per query chunk",
+                    request_id,
+                    q_length,
+                    kv_length,
+                )
             out_accum: torch.Tensor | None = None
             for start in range(0, q_length, ch):
                 end = min(q_length, start + ch)

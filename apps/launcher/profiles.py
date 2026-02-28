@@ -97,7 +97,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_GGUF_EXEC": "dequant_forward",
         "CODEX_GGUF_DEQUANT_CACHE": "off",
         "CODEX_ATTENTION_BACKEND": "pytorch",
-        "CODEX_ATTENTION_SDPA_POLICY": "mem_efficient",
+        "CODEX_ATTENTION_SDPA_POLICY": "auto",
         "CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE": os.getenv("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"),
         "CODEX_LORA_APPLY_MODE": "merge",
         "CODEX_LORA_ONLINE_MATH": "weight_merge",
@@ -157,7 +157,7 @@ def parse_manual_api_env_text(raw_text: str) -> Dict[str, str]:
 @dataclass
 class LauncherMeta:
     external_terminal: bool = False
-    sdpa_policy: str = "mem_efficient"
+    sdpa_policy: str = "auto"
     tab_index: int = 0
     active_model: str = DEFAULT_MODEL_NAME
     window_geometry: str = ""
@@ -290,6 +290,8 @@ class LauncherProfileStore:
 
     def lookup_env(self, key: str) -> str | None:
         with self._lock:
+            if key == "PYTORCH_CUDA_ALLOC_CONF":
+                return self.build_env().get(key)
             for prefix, area in ENV_PREFIX_AREAS.items():
                 if key.startswith(prefix):
                     return self.areas.get(area, {}).get(key)
@@ -538,7 +540,7 @@ def _load_meta(root: Path) -> LauncherMeta:
         raise RuntimeError(f"Failed to read launcher meta {meta_path}: {exc}") from exc
     return LauncherMeta(
         external_terminal=bool(data.get("external_terminal", False)),
-        sdpa_policy=str(data.get("sdpa_policy", "mem_efficient")),
+        sdpa_policy=str(data.get("sdpa_policy", "auto")),
         tab_index=int(data.get("tab_index", 0)),
         active_model=str(data.get("active_model", DEFAULT_MODEL_NAME)),
         window_geometry=str(data.get("window_geometry", "") or ""),
@@ -642,7 +644,7 @@ def _maybe_migrate_legacy(root: Path) -> None:
     legacy_env = {str(k): str(v) for k, v in (legacy.get("env") or {}).items()}
     meta = LauncherMeta(
         external_terminal=bool(legacy.get("external_terminal", False)),
-        sdpa_policy=str(legacy.get("sdpa_policy", "mem_efficient")),
+        sdpa_policy=str(legacy.get("sdpa_policy", "auto")),
         tab_index=int(legacy.get("tab_index", 0)),
         active_model=DEFAULT_MODEL_NAME,
     )

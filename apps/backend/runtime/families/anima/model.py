@@ -92,6 +92,8 @@ class AnimaDiT(MiniTrainDiT):
         super().__init__(config=_to_dit_config(config.dit), device=device, dtype=dtype)
         self.anima_config = config
         self.llm_adapter = LLMAdapter(config=config.adapter, device=device, dtype=dtype)
+        self._cross_attn_cache_key: tuple[object, ...] | None = None
+        self._cross_attn_cache_value: torch.Tensor | None = None
 
     def preprocess_text_embeds(self, text_embeds: torch.Tensor, text_ids: torch.Tensor | None) -> torch.Tensor:
         if text_ids is None:
@@ -107,10 +109,32 @@ class AnimaDiT(MiniTrainDiT):
         t5xxl_weights: torch.Tensor | None,
         min_seq_len: int = 512,
     ) -> torch.Tensor:
+        def _tensor_identity(t: torch.Tensor | None) -> tuple[object, ...] | None:
+            if t is None:
+                return None
+            return (
+                int(t.data_ptr()),
+                tuple(int(dim) for dim in t.shape),
+                str(t.dtype),
+                str(t.device),
+                int(getattr(t, "_version", 0)),
+            )
+
         if t5xxl_ids is None:
+            diffusion_model._cross_attn_cache_key = None
+            diffusion_model._cross_attn_cache_value = None
             return cross_attn
 
         ids = _normalize_t5_ids(t5xxl_ids, batch_size=int(cross_attn.shape[0]))
+        cache_key = (
+            _tensor_identity(cross_attn),
+            _tensor_identity(ids),
+            _tensor_identity(t5xxl_weights),
+            int(min_seq_len),
+        )
+        if diffusion_model._cross_attn_cache_key == cache_key and isinstance(diffusion_model._cross_attn_cache_value, torch.Tensor):
+            return diffusion_model._cross_attn_cache_value
+
         out = diffusion_model.preprocess_text_embeds(cross_attn, ids)
 
         if t5xxl_weights is not None:
@@ -120,6 +144,8 @@ class AnimaDiT(MiniTrainDiT):
         if out.shape[1] < int(min_seq_len):
             pad = int(min_seq_len) - int(out.shape[1])
             out = torch.nn.functional.pad(out, (0, 0, 0, pad))
+        diffusion_model._cross_attn_cache_key = cache_key
+        diffusion_model._cross_attn_cache_value = out
         return out
 
     def forward(

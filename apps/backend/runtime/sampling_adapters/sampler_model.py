@@ -58,7 +58,9 @@ class SamplerModel(torch.nn.Module):
         else:
             self.predictor = predictor
 
-    def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
+    def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options=None, **kwargs):
+        if transformer_options is None:
+            transformer_options = {}
         debug_enabled = env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_APPLY_MODEL")
         debug_limit = env_int("CODEX_ZIMAGE_DEBUG_APPLY_MODEL_N", 3, min_value=0)
         debug_count = int(getattr(self, "_codex_apply_model_debug_count", 0) or 0)
@@ -186,18 +188,21 @@ class SamplerModel(torch.nn.Module):
 
     def memory_required(self, input_shape):
         area = input_shape[0] * input_shape[2] * input_shape[3]
-        dtype_size = torch.empty((), dtype=self.computation_dtype).element_size()
+        compute_dtype_size = torch.empty((), dtype=self.computation_dtype).element_size()
+        # Keep the estimator aligned with apply_model(), which always upcasts
+        # the denoiser output to fp32 before predictor math.
+        dtype_size = max(compute_dtype_size, torch.empty((), dtype=torch.float32).element_size())
 
         if attention.attention_function in [attention.attention_pytorch, attention.attention_xformers]:
             scaler = 1.28
         else:
             scaler = 1.65
             if attention.get_attn_precision() == torch.float32:
-                dtype_size = 4
+                dtype_size = max(dtype_size, torch.empty((), dtype=torch.float32).element_size())
 
         return scaler * area * dtype_size * 16384
 
-    def forward(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
+    def forward(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options=None, **kwargs):
         """Standard forward method that delegates to apply_model.
         
         This is required by the memory management system which expects a 'forward' method.

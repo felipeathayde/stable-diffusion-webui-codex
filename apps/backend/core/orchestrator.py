@@ -208,7 +208,7 @@ class InferenceOrchestrator:
         try:
             from apps.backend.runtime.ops.operations_gguf import clear_cache as clear_gguf_cache
         except Exception as exc:  # noqa: BLE001
-            logger.warning("GGUF cache cleanup helper unavailable during VRAM purge (%s): %s", reason, exc)
+            purge_failures.append(f"gguf_cache_import:{exc}")
         else:
             try:
                 clear_gguf_cache()

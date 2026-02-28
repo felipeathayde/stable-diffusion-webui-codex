@@ -35,6 +35,7 @@ Launcher args:
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
   - PYTHON           (default: \$CODEX_VENV_DIR/bin/python)
+  - CODEX_MAIN_DEVICE (auto|cuda|cpu|mps|xpu|directml; global device authority mirrored to core/TE/VAE when explicit component values are unset)
   - CODEX_CORE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
   - CODEX_TE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
   - CODEX_VAE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
@@ -255,6 +256,27 @@ has_backend_flag() {
   return 1
 }
 
+get_backend_flag_value() {
+  local name="$1"
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    local arg="$1"
+    shift
+    if [[ "${arg}" == "${name}="* ]]; then
+      echo "${arg#*=}"
+      return 0
+    fi
+    if [[ "${arg}" == "${name}" ]]; then
+      if [[ $# -lt 1 ]]; then
+        return 1
+      fi
+      echo "$1"
+      return 0
+    fi
+  done
+  return 1
+}
+
 read_saved_device() {
   local key="$1"
   "${PY_BIN}" - "$ROOT_DIR/apps/settings_values.json" "$key" <<'PY'
@@ -319,66 +341,111 @@ prompt_device() {
 core_device=""
 te_device=""
 vae_device=""
+main_device=""
 
-if ! has_backend_flag "--core-device" "$@"; then
-  raw_core_env="$(echo "${CODEX_CORE_DEVICE:-}" | xargs)"
-  if [[ -n "${raw_core_env}" ]]; then
-    core_device="$(normalize_device_choice "${raw_core_env}")" || {
-      echo "[webui] Error: invalid CODEX_CORE_DEVICE='${CODEX_CORE_DEVICE}'." >&2
+if has_backend_flag "--main-device" "$@"; then
+  raw_main_arg="$(get_backend_flag_value "--main-device" "$@" || true)"
+  if [[ -z "${raw_main_arg}" ]]; then
+    echo "[webui] Error: --main-device requires a value (auto|cuda|cpu|mps|xpu|directml)." >&2
+    exit 2
+  fi
+  main_device="$(normalize_device_choice "${raw_main_arg}")" || {
+    echo "[webui] Error: invalid --main-device value '${raw_main_arg}'." >&2
+    echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+    exit 2
+  }
+else
+  raw_main_env="$(echo "${CODEX_MAIN_DEVICE:-}" | xargs)"
+  if [[ -n "${raw_main_env}" ]]; then
+    main_device="$(normalize_device_choice "${raw_main_env}")" || {
+      echo "[webui] Error: invalid CODEX_MAIN_DEVICE='${CODEX_MAIN_DEVICE}'." >&2
       echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
       exit 2
     }
   fi
-  if [[ -z "${core_device}" ]]; then
-    core_device="$(read_saved_device "codex_core_device")"
-    if [[ -n "${core_device}" ]]; then
-      core_device="$(normalize_device_choice "${core_device}")" || {
-        echo "[webui] Error: invalid saved setting codex_core_device='${core_device}' in apps/settings_values.json." >&2
+  if [[ -z "${main_device}" ]]; then
+    main_device="$(read_saved_device "codex_main_device")"
+    if [[ -n "${main_device}" ]]; then
+      main_device="$(normalize_device_choice "${main_device}")" || {
+        echo "[webui] Error: invalid saved setting codex_main_device='${main_device}' in apps/settings_values.json." >&2
         echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
         exit 2
       }
+    fi
+  fi
+fi
+
+if ! has_backend_flag "--core-device" "$@"; then
+  if [[ -n "${main_device}" ]]; then
+    core_device="${main_device}"
+  else
+    raw_core_env="$(echo "${CODEX_CORE_DEVICE:-}" | xargs)"
+    if [[ -n "${raw_core_env}" ]]; then
+      core_device="$(normalize_device_choice "${raw_core_env}")" || {
+        echo "[webui] Error: invalid CODEX_CORE_DEVICE='${CODEX_CORE_DEVICE}'." >&2
+        echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+        exit 2
+      }
+    fi
+    if [[ -z "${core_device}" ]]; then
+      core_device="$(read_saved_device "codex_core_device")"
+      if [[ -n "${core_device}" ]]; then
+        core_device="$(normalize_device_choice "${core_device}")" || {
+          echo "[webui] Error: invalid saved setting codex_core_device='${core_device}' in apps/settings_values.json." >&2
+          echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+          exit 2
+        }
+      fi
     fi
   fi
 fi
 
 if ! has_backend_flag "--te-device" "$@"; then
-  raw_te_env="$(echo "${CODEX_TE_DEVICE:-}" | xargs)"
-  if [[ -n "${raw_te_env}" ]]; then
-    te_device="$(normalize_device_choice "${raw_te_env}")" || {
-      echo "[webui] Error: invalid CODEX_TE_DEVICE='${CODEX_TE_DEVICE}'." >&2
-      echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
-      exit 2
-    }
-  fi
-  if [[ -z "${te_device}" ]]; then
-    te_device="$(read_saved_device "codex_te_device")"
-    if [[ -n "${te_device}" ]]; then
-      te_device="$(normalize_device_choice "${te_device}")" || {
-        echo "[webui] Error: invalid saved setting codex_te_device='${te_device}' in apps/settings_values.json." >&2
+  if [[ -n "${main_device}" ]]; then
+    te_device="${main_device}"
+  else
+    raw_te_env="$(echo "${CODEX_TE_DEVICE:-}" | xargs)"
+    if [[ -n "${raw_te_env}" ]]; then
+      te_device="$(normalize_device_choice "${raw_te_env}")" || {
+        echo "[webui] Error: invalid CODEX_TE_DEVICE='${CODEX_TE_DEVICE}'." >&2
         echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
         exit 2
       }
+    fi
+    if [[ -z "${te_device}" ]]; then
+      te_device="$(read_saved_device "codex_te_device")"
+      if [[ -n "${te_device}" ]]; then
+        te_device="$(normalize_device_choice "${te_device}")" || {
+          echo "[webui] Error: invalid saved setting codex_te_device='${te_device}' in apps/settings_values.json." >&2
+          echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+          exit 2
+        }
+      fi
     fi
   fi
 fi
 
 if ! has_backend_flag "--vae-device" "$@"; then
-  raw_vae_env="$(echo "${CODEX_VAE_DEVICE:-}" | xargs)"
-  if [[ -n "${raw_vae_env}" ]]; then
-    vae_device="$(normalize_device_choice "${raw_vae_env}")" || {
-      echo "[webui] Error: invalid CODEX_VAE_DEVICE='${CODEX_VAE_DEVICE}'." >&2
-      echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
-      exit 2
-    }
-  fi
-  if [[ -z "${vae_device}" ]]; then
-    vae_device="$(read_saved_device "codex_vae_device")"
-    if [[ -n "${vae_device}" ]]; then
-      vae_device="$(normalize_device_choice "${vae_device}")" || {
-        echo "[webui] Error: invalid saved setting codex_vae_device='${vae_device}' in apps/settings_values.json." >&2
+  if [[ -n "${main_device}" ]]; then
+    vae_device="${main_device}"
+  else
+    raw_vae_env="$(echo "${CODEX_VAE_DEVICE:-}" | xargs)"
+    if [[ -n "${raw_vae_env}" ]]; then
+      vae_device="$(normalize_device_choice "${raw_vae_env}")" || {
+        echo "[webui] Error: invalid CODEX_VAE_DEVICE='${CODEX_VAE_DEVICE}'." >&2
         echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
         exit 2
       }
+    fi
+    if [[ -z "${vae_device}" ]]; then
+      vae_device="$(read_saved_device "codex_vae_device")"
+      if [[ -n "${vae_device}" ]]; then
+        vae_device="$(normalize_device_choice "${vae_device}")" || {
+          echo "[webui] Error: invalid saved setting codex_vae_device='${vae_device}' in apps/settings_values.json." >&2
+          echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+          exit 2
+        }
+      fi
     fi
   fi
 fi
@@ -397,7 +464,7 @@ fi
 if (( need_prompt == 1 )); then
   if [[ ! -t 0 || ! -t 1 ]]; then
     echo "[webui] Error: backend device defaults are not configured and no TTY is available for prompting." >&2
-    echo "[webui] Provide flags: --core-device/--te-device/--vae-device, or set CODEX_CORE_DEVICE/CODEX_TE_DEVICE/CODEX_VAE_DEVICE." >&2
+    echo "[webui] Provide flags: --main-device/--core-device/--te-device/--vae-device, or set CODEX_MAIN_DEVICE/CODEX_CORE_DEVICE/CODEX_TE_DEVICE/CODEX_VAE_DEVICE." >&2
     exit 2
   fi
   if [[ -z "${core_device}" ]] && ! has_backend_flag "--core-device" "$@"; then
@@ -411,6 +478,9 @@ if (( need_prompt == 1 )); then
   fi
 fi
 
+if [[ -n "${main_device}" ]] && ! has_backend_flag "--main-device" "$@"; then
+  set -- "--main-device=${main_device}" "$@"
+fi
 if [[ -n "${core_device}" ]] && ! has_backend_flag "--core-device" "$@"; then
   set -- "--core-device=${core_device}" "$@"
 fi

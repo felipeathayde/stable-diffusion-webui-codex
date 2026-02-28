@@ -92,7 +92,8 @@ def load_gguf_state_dict(
 ):
     """Load a GGUF state dict, with optional explicit dequantization policy.
 
-    - When `dequantize` is None, honors the global runtime flag `--gguf-exec=dequant_upfront` for normal GGUFs.
+    - When `dequantize` is None, resolves GGUF exec mode with `CODEX_GGUF_EXEC`
+      env precedence over `--gguf-exec`, and applies `dequant_upfront` for normal GGUFs.
       CodexPack `*.codexpack.gguf` files are auto-detected by metadata and never use load-time dequantization.
     - Callers with an explicit policy (e.g. "VAE GGUFs always dequantize") should pass
       `dequantize=True` to make the intent unambiguous and avoid drift.
@@ -100,11 +101,17 @@ def load_gguf_state_dict(
 
     from apps.backend.quantization.gguf_loader import load_gguf_state_dict as _load
     from apps.backend.infra.config.args import args as runtime_args
-    from apps.backend.infra.config.gguf_exec_mode import GgufExecMode
+    from apps.backend.infra.config.gguf_exec_mode import GgufExecMode, resolve_gguf_exec_mode
 
     if dequantize is None:
-        exec_mode = str(getattr(runtime_args, "gguf_exec", "dequant_forward"))
-        if exec_mode != GgufExecMode.DEQUANT_UPFRONT.value:
+        try:
+            exec_mode = resolve_gguf_exec_mode(runtime_args)
+        except ValueError as exc:
+            raise RuntimeError(
+                "GGUF checkpoint loader received invalid gguf exec mode "
+                f"(CODEX_GGUF_EXEC/--gguf-exec): {exc}"
+            ) from exc
+        if exec_mode != GgufExecMode.DEQUANT_UPFRONT:
             dequantize = False
         else:
             # CodexPack files are auto-detected by metadata and never support "dequant upfront".

@@ -15,6 +15,7 @@ Temporal routing requires explicit `extras.img2vid_mode` (`solo|chunk|sliding|sv
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
+- `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
 - `_parse_img2vid_temporal_options` (function): Parses and validates explicit img2vid temporal controls from request extras (`solo|chunk|sliding|svi2|svi2_pro`).
 - `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
@@ -130,6 +131,39 @@ def _run_stage(
     if hasattr(output, "frames"):
         return list(output.frames[0])
     raise RuntimeError("img2vid pipeline returned no frames")
+
+
+def _apply_stage_loras_to_pipeline(*, pipe: Any, stage_loras: tuple[tuple[str, float], ...], logger: Any, stage_label: str) -> None:
+    if hasattr(pipe, "unload_lora_weights"):
+        pipe.unload_lora_weights()  # type: ignore[attr-defined]
+
+    if not stage_loras:
+        return
+    if not hasattr(pipe, "load_lora_weights"):
+        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'load_lora_weights'.")
+    if not hasattr(pipe, "set_adapters"):
+        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'set_adapters' for multi-LoRA support.")
+
+    adapter_names: list[str] = []
+    adapter_weights: list[float] = []
+    total_stage_loras = len(stage_loras)
+    for index, (lora_path, lora_weight) in enumerate(stage_loras):
+        adapter_name = f"wan_{stage_label}_stage_lora_{index}"
+        if logger:
+            logger.info(
+                "[wan] loading %s-stage LoRA %d/%d: %s (weight=%s adapter=%s)",
+                stage_label,
+                index + 1,
+                total_stage_loras,
+                lora_path,
+                lora_weight,
+                adapter_name,
+            )
+        pipe.load_lora_weights(lora_path, adapter_name=adapter_name)  # type: ignore[attr-defined]
+        adapter_names.append(adapter_name)
+        adapter_weights.append(float(lora_weight))
+
+    pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)  # type: ignore[attr-defined]
 
 
 def _yield_wan22_gguf_progress(ev: dict) -> Optional[ProgressEvent]:
@@ -824,18 +858,13 @@ def run_img2vid(
         if wan_hi_opts and wan_hi_opts.negative_prompt is not None
         else str(getattr(request, "negative_prompt", "") or "").strip()
     )
-    if wan_hi_opts and wan_hi_opts.loras and hasattr(active_pipe_hi, "load_lora_weights"):
-        total_stage_loras = len(wan_hi_opts.loras)
-        for index, (lora_path, lora_weight) in enumerate(wan_hi_opts.loras):
-            if logger:
-                logger.info(
-                    "[wan] loading high-stage LoRA %d/%d: %s (weight=%s)",
-                    index + 1,
-                    total_stage_loras,
-                    lora_path,
-                    lora_weight,
-                )
-            active_pipe_hi.load_lora_weights(lora_path)  # type: ignore[attr-defined]
+    if wan_hi_opts and wan_hi_opts.loras:
+        _apply_stage_loras_to_pipeline(
+            pipe=active_pipe_hi,
+            stage_loras=wan_hi_opts.loras,
+            logger=logger,
+            stage_label="high",
+        )
 
     outcome_hi = configure_sampler(active_pipe_hi, plan, logger)
 
@@ -864,18 +893,13 @@ def run_img2vid(
             if wan_opts and wan_opts.negative_prompt is not None
             else str(getattr(request, "negative_prompt", "") or "").strip()
         )
-        if wan_opts and wan_opts.loras and hasattr(active_pipe_lo, "load_lora_weights"):
-            total_stage_loras = len(wan_opts.loras)
-            for index, (lora_path, lora_weight) in enumerate(wan_opts.loras):
-                if logger:
-                    logger.info(
-                        "[wan] loading low-stage LoRA %d/%d: %s (weight=%s)",
-                        index + 1,
-                        total_stage_loras,
-                        lora_path,
-                        lora_weight,
-                    )
-                active_pipe_lo.load_lora_weights(lora_path)  # type: ignore[attr-defined]
+        if wan_opts and wan_opts.loras:
+            _apply_stage_loras_to_pipeline(
+                pipe=active_pipe_lo,
+                stage_loras=wan_opts.loras,
+                logger=logger,
+                stage_label="low",
+            )
 
         outcome_lo = configure_sampler(active_pipe_lo, plan, logger)
         yield ProgressEvent(stage="run_low", percent=50.0, message="Stage 2 (Low Noise)")

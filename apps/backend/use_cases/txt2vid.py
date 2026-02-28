@@ -14,6 +14,7 @@ Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage n
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_pipeline` (function): Runs a Diffusers txt2vid pipeline and returns generated frames.
+- `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
 - `run_txt2vid` (function): Orchestrates txt2vid generation and yields an `InferenceEvent` stream.
 """
@@ -134,6 +135,39 @@ def _run_pipeline(
     if hasattr(output, "images"):
         return list(output.images)
     raise RuntimeError("txt2vid pipeline returned no frames")
+
+
+def _apply_stage_loras_to_pipeline(*, pipe: Any, stage_loras: tuple[tuple[str, float], ...], logger: Any, stage_label: str) -> None:
+    if hasattr(pipe, "unload_lora_weights"):
+        pipe.unload_lora_weights()  # type: ignore[attr-defined]
+
+    if not stage_loras:
+        return
+    if not hasattr(pipe, "load_lora_weights"):
+        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'load_lora_weights'.")
+    if not hasattr(pipe, "set_adapters"):
+        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'set_adapters' for multi-LoRA support.")
+
+    adapter_names: list[str] = []
+    adapter_weights: list[float] = []
+    total_stage_loras = len(stage_loras)
+    for index, (lora_path, lora_weight) in enumerate(stage_loras):
+        adapter_name = f"wan_{stage_label}_stage_lora_{index}"
+        if logger:
+            logger.info(
+                "[wan] loading %s-stage LoRA %d/%d: %s (weight=%s adapter=%s)",
+                stage_label,
+                index + 1,
+                total_stage_loras,
+                lora_path,
+                lora_weight,
+                adapter_name,
+            )
+        pipe.load_lora_weights(lora_path, adapter_name=adapter_name)  # type: ignore[attr-defined]
+        adapter_names.append(adapter_name)
+        adapter_weights.append(float(lora_weight))
+
+    pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)  # type: ignore[attr-defined]
 
 
 def _yield_wan22_gguf_progress(ev: dict) -> Optional[ProgressEvent]:
@@ -286,18 +320,13 @@ def run_txt2vid(
         if wan_hi_opts and wan_hi_opts.negative_prompt is not None
         else str(getattr(request, "negative_prompt", None) or "").strip()
     )
-    if wan_hi_opts and wan_hi_opts.loras and hasattr(pipe, "load_lora_weights"):
-        total_stage_loras = len(wan_hi_opts.loras)
-        for index, (lora_path, lora_weight) in enumerate(wan_hi_opts.loras):
-            if logger:
-                logger.info(
-                    "[wan] loading stage LoRA %d/%d: %s (weight=%s)",
-                    index + 1,
-                    total_stage_loras,
-                    lora_path,
-                    lora_weight,
-                )
-            pipe.load_lora_weights(lora_path)  # type: ignore[attr-defined]
+    if wan_hi_opts and wan_hi_opts.loras:
+        _apply_stage_loras_to_pipeline(
+            pipe=pipe,
+            stage_loras=wan_hi_opts.loras,
+            logger=logger,
+            stage_label="high",
+        )
 
     apply_engine_loras(engine, logger)
 

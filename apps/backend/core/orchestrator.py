@@ -389,9 +389,9 @@ class InferenceOrchestrator:
                     f"Additional cleanup failure: {purge_failure}"
                 ) from exc
             raise EngineExecutionError(f"Engine '{engine_key}' failed during '{task.value}': {exc}") from exc
-        finally:
-            elapsed = time.perf_counter() - start
-            yield ProgressEvent(stage="end", percent=100.0, message="Inference complete", data={"elapsed": elapsed})
+
+        elapsed = time.perf_counter() - start
+        yield ProgressEvent(stage="end", percent=100.0, message="Inference complete", data={"elapsed": elapsed})
 
     # ------------------------------------------------------------------
     def _resolve_engine(self, engine_key: str, engine_options: Mapping[str, object]) -> BaseInferenceEngine:

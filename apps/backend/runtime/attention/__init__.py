@@ -89,8 +89,8 @@ _SDPAPolicy = Literal["auto", "flash", "mem_efficient", "math"]
 def _resolve_default_sdpa_policy() -> _SDPAPolicy:
     try:
         cfg = memory_management.manager.config.attention
-    except Exception:
-        return "auto"
+    except Exception as exc:
+        raise RuntimeError("Failed to resolve attention config while deriving default SDPA policy.") from exc
     if cfg.backend != AttentionBackend.PYTORCH:
         return "auto"
     if cfg.enable_flash and cfg.enable_mem_efficient:
@@ -690,8 +690,8 @@ def _selected_backend(*, backend_override: AttentionBackend | None = None) -> At
         return backend_override
     try:
         backend = memory_management.manager.config.attention.backend
-    except Exception:
-        backend = AttentionBackend.PYTORCH
+    except Exception as exc:
+        raise RuntimeError("Failed to resolve runtime attention backend from memory manager config.") from exc
     return backend
 
 
@@ -764,16 +764,9 @@ def attention_function(
             skip_reshape=skip_reshape,
             is_causal=is_causal,
         )
-    return attention_pytorch(
-        q,
-        k,
-        v,
-        heads,
-        mask=mask,
-        attn_precision=attn_precision,
-        skip_reshape=skip_reshape,
-        is_causal=is_causal,
-        sdpa_policy=normalized_sdpa_policy,
+    raise RuntimeError(
+        f"Unsupported attention backend {backend_selected!r} in attention_function; "
+        f"expected one of {[backend.value for backend in AttentionBackend]}."
     )
 
 

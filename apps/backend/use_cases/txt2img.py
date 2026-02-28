@@ -186,14 +186,15 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
         runtime_overrides=smart_flags,
     )
 
-    for step, total, block_index, block_total, eta in _iter_sampling_progress(done=done):
+    for step, total, block_index, block_total, eta in _iter_sampling_progress(done=done, outcome=outcome):
+        has_block_progress = 0 < block_index < block_total
         completed_units = float(step)
-        if block_total > 0 and step < total:
+        if has_block_progress:
             completed_units += float(block_index) / float(block_total)
         progress_percent = (min(float(total), completed_units) / float(total)) * 100.0
         pct = max(5.0, min(99.0, progress_percent))
 
-        if block_total > 0 and step < total:
+        if has_block_progress:
             message = (
                 f"Sampling step {min(step + 1, total)}/{total} "
                 f"(block {block_index}/{block_total})"

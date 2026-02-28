@@ -64,6 +64,8 @@ class T2IAdapter(ControlModuleBase):
             self.cond_hint = self._resize_hint(width, height)
         if x_noisy.shape[0] != self.cond_hint.shape[0]:
             self.cond_hint = broadcast_image_to(self.cond_hint, x_noisy.shape[0], batched_number)
+        if self.cond_hint.dtype != x_noisy.dtype or self.cond_hint.device != x_noisy.device:
+            self.cond_hint = self.cond_hint.to(device=x_noisy.device, dtype=x_noisy.dtype)
 
         if self.control_input is None:
             self.t2i_model.to(x_noisy.dtype)
@@ -75,10 +77,10 @@ class T2IAdapter(ControlModuleBase):
                     model=self,
                     inner_model=self.t2i_model,
                     inner_t2i_model=self.t2i_model,
-                    hint=self.cond_hint.to(x_noisy.dtype),
+                    hint=self.cond_hint,
                 )
             else:
-                self.control_input = self.t2i_model(self.cond_hint.to(x_noisy))
+                self.control_input = self.t2i_model(self.cond_hint)
 
             self.t2i_model.cpu()
 
@@ -118,8 +120,10 @@ class T2IAdapter(ControlModuleBase):
     def _resize_hint(self, width: int, height: int) -> torch.Tensor:
         if self.cond_hint is not None:
             del self.cond_hint
-        hint = adaptive_resize(self.cond_hint_original, width, height, "nearest-exact", "center").float()
+        hint = adaptive_resize(self.cond_hint_original, width, height, "nearest-exact", "center")
         if self.channels_in == 1 and hint.shape[1] > 1:
+            if not hint.is_floating_point():
+                hint = hint.to(dtype=torch.float32)
             hint = torch.mean(hint, 1, keepdim=True)
         return hint
 

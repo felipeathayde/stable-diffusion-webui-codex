@@ -363,8 +363,8 @@ class CodexMemoryManager:
                 torch.backends.cuda.enable_math_sdp(True)
                 torch.backends.cuda.enable_flash_sdp(bool(self._attention.enable_flash))
                 torch.backends.cuda.enable_mem_efficient_sdp(bool(self._attention.enable_mem_efficient))
-            except Exception:  # pragma: no cover
-                logger.debug("Failed to enable PyTorch SDP backends.", exc_info=True)
+            except Exception as exc:  # pragma: no cover
+                raise RuntimeError("Failed to configure PyTorch SDP backends from runtime attention config.") from exc
         self._log_attention_runtime()
 
     @staticmethod
@@ -961,6 +961,14 @@ class CodexMemoryManager:
             "hard_reservation_mb": int(self._budgets.hard_reservation_mb),
             "safety_margin_mb": int(self._budgets.safety_margin_mb),
         }
+        attention = {
+            "backend": self._attention.backend.value,
+            "sdpa_policy": self._sdpa_policy_label(),
+            "force_upcast": bool(self._attention.force_upcast),
+            "enable_flash": bool(self._attention.enable_flash),
+            "enable_mem_efficient": bool(self._attention.enable_mem_efficient),
+            "pytorch_sdp_enabled": self._attention.backend == AttentionBackend.PYTORCH,
+        }
 
         device_backend = getattr(self._config.device_backend, "value", str(self._config.device_backend))
 
@@ -969,6 +977,7 @@ class CodexMemoryManager:
             "primary_device": str(device),
             "probe": probe_dict,
             "budgets": budgets,
+            "attention": attention,
             "torch": torch_stats,
             "models": models,
             "totals": {

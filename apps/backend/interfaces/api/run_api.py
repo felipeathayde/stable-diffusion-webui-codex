@@ -687,8 +687,8 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
             signature_value = str(lora_refresh_signature).strip()
             if signature_value and signature_value != DEFAULT_LORA_REFRESH_SIGNATURE_MODE.value:
                 _set_bootstrap_env("CODEX_LORA_REFRESH_SIGNATURE", signature_value)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("startup: failed while publishing resolved bootstrap environment values.") from exc
     mem_management.reinitialize(runtime_config)
     # Pre-warm model inventory at process bootstrap so `/api/models/inventory`
     # is already hot when the UI first loads quicksettings. This avoids paying

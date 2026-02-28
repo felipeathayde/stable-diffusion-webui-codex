@@ -282,8 +282,11 @@ def load_vae(
         if enable_tiling and hasattr(vae, "enable_tiling"):
             try:
                 vae.enable_tiling()
-            except Exception:
-                pass
+            except Exception as exc:
+                raise WAN22VAEContractError(
+                    "WAN22 GGUF: failed to enable VAE tiling after directory load "
+                    f"(weights={state_dict_path!r} config_dir={path!r})."
+                ) from exc
         return vae
     if os.path.isfile(path):
         config_dirs: list[str] = []
@@ -306,8 +309,11 @@ def load_vae(
         if enable_tiling and hasattr(vae, "enable_tiling"):
             try:
                 vae.enable_tiling()
-            except Exception:
-                pass
+            except Exception as exc:
+                raise WAN22VAEContractError(
+                    "WAN22 GGUF: failed to enable VAE tiling after single-file load "
+                    f"(weights={path!r} config_dir={chosen_config_dir!r})."
+                ) from exc
         return vae
     raise WAN22VAEContractError(f"WAN22 GGUF: VAE path not found: {path}")
 
@@ -538,12 +544,12 @@ def close_vae_decode_session(session: WanVAEDecodeSession | None, *, logger: Any
         return
     try:
         session.vae.to("cpu")
-    except Exception:
-        pass
+    except Exception as exc:
+        raise WAN22VAEContractError("WAN22 GGUF: failed to offload VAE decode session to CPU.") from exc
     try:
         del session.vae
-    except Exception:
-        pass
+    except Exception as exc:
+        raise WAN22VAEContractError("WAN22 GGUF: failed to release VAE decode session state.") from exc
     cuda_empty_cache(logger, label="after-vae-decode-session")
 
 
@@ -724,8 +730,10 @@ def vae_encode_video_condition(
             if offload_after and vae is not None:
                 try:
                     vae.to("cpu")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    raise WAN22VAEContractError(
+                        "WAN22 GGUF: failed to offload VAE to CPU after encode stage."
+                    ) from exc
                 del vae
                 cuda_empty_cache(logger, label="after-vae-encode")
 
@@ -976,8 +984,10 @@ def vae_decode_video(
         if local_vae_loaded and offload_after:
             try:
                 vae.to("cpu")
-            except Exception:
-                pass
+            except Exception as exc:
+                raise WAN22VAEContractError(
+                    "WAN22 GGUF: failed to offload VAE to CPU after decode stage."
+                ) from exc
             del vae
             cuda_empty_cache(logger, label="after-vae-decode")
         if not attempt_frames:

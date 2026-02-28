@@ -275,6 +275,14 @@ export interface TaskResult {
 
 export interface MemoryResponse {
   total_vram_mb: number
+  attention?: {
+    backend?: string
+    sdpa_policy?: string
+    force_upcast?: boolean
+    enable_flash?: boolean
+    enable_mem_efficient?: boolean
+    pytorch_sdp_enabled?: boolean
+  }
 }
 
 export interface ObliterateVramProcessInfo {

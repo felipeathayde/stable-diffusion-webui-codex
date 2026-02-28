@@ -90,11 +90,7 @@ def _apply_runtime_options(engine: Any, opts: EngineLoadOptions | None) -> Any:
         try:
             attention_backend = str(memory_management.manager.config.attention.backend.value)
         except Exception as exc:  # noqa: BLE001
-            _LOG.warning(
-                "Falling back to attention_backend='pytorch' because runtime memory config is unavailable: %s",
-                exc,
-            )
-            attention_backend = "pytorch"
+            raise RuntimeError("Failed to resolve attention_backend from runtime memory config.") from exc
 
     if attention_backend is not None:
         _apply_attn(pipe, backend=attention_backend)
@@ -124,7 +120,12 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
             engine.unload()
         raise
 
-    return _apply_runtime_options(engine, options)
+    try:
+        return _apply_runtime_options(engine, options)
+    except Exception:
+        with contextlib.suppress(Exception):
+            engine.unload()
+        raise
 
 
 __all__ = ["EngineLoadOptions", "load_engine"]

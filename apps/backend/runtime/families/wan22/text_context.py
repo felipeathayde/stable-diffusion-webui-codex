@@ -400,8 +400,11 @@ def get_text_context(
             try:
                 enc.to(offload_device)
                 moved_to_cpu = True
-            except Exception:
-                pass
+            except Exception as exc:
+                raise RuntimeError(
+                    "WAN22 GGUF: failed to offload text encoder to memory-manager offload device "
+                    f"(from_device={dev} to_device={offload_device})."
+                ) from exc
             if moved_to_cpu and dev.type == "cuda":
                 log.info(
                     "[wan22.gguf] text-encoder offloaded to %s (smart_offload)",

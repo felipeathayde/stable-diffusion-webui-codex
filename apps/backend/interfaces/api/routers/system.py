@@ -259,6 +259,7 @@ def build_router(*, app_version: str) -> APIRouter:
         probe = snap.get("probe", {}) or {}
         totals = snap.get("totals", {}) or {}
         torch_stats = snap.get("torch", {}) or {}
+        attention = snap.get("attention", {}) or {}
 
         total_vram_mb = probe.get("total_vram_mb") or 0
         try:
@@ -272,6 +273,7 @@ def build_router(*, app_version: str) -> APIRouter:
             "total_vram_mb": total_vram_mb,
             "probe": probe,
             "budgets": snap.get("budgets", {}),
+            "attention": attention,
             "torch": torch_stats,
             "models": snap.get("models", []),
             "totals": totals,

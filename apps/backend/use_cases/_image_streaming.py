@@ -60,6 +60,7 @@ def _resolve_seed_plan(
 class _WorkerOutcome:
     output: Any = None
     error: BaseException | None = None
+    success: bool = False
     sampling_start: float | None = None
     sampling_end: float | None = None
 
@@ -123,6 +124,7 @@ def _run_inference_worker(
                 ):
                     outcome.sampling_start = time.perf_counter()
                     outcome.output = fn()
+                    outcome.success = True
         except BaseException as exc:  # noqa: BLE001
             outcome.error = exc
         finally:
@@ -136,11 +138,15 @@ def _run_inference_worker(
 def _iter_sampling_progress(
     *,
     done: "threading.Event",
+    outcome: _WorkerOutcome | None = None,
     poll_interval_s: float = 0.12,
 ) -> Iterator[tuple[int, int, int, int, float | None]]:
     import time
 
     from apps.backend.core.state import state as backend_state
+
+    def _has_block_progress(*, block_index: int, block_total: int) -> bool:
+        return block_total > 0 and 0 < block_index < block_total
 
     t0 = time.perf_counter()
     last_snapshot = (-1, -1, -1, -1)
@@ -164,27 +170,44 @@ def _iter_sampling_progress(
         if block_total > 0:
             block_index = min(block_index, block_total)
 
-        current_snapshot = (step, total, block_index, block_total)
+        done_now = done.is_set()
+        at_full_block_boundary = block_total > 0 and block_index >= block_total and step < total
+        worker_succeeded = bool(done_now and outcome is not None and outcome.success and outcome.error is None)
+
+        emit_step = step
+        emit_block_index = block_index
+        emit_block_total = block_total
+        promote_terminal_equivalent = worker_succeeded and at_full_block_boundary
+        if promote_terminal_equivalent:
+            # Terminal-equivalent done-path snapshot: the worker has completed with
+            # a full block boundary latched before the next step tick propagated.
+            emit_step = min(total, step + 1)
+            emit_block_index = 0
+            emit_block_total = 0
+
+        suppress_boundary_snapshot = at_full_block_boundary and not promote_terminal_equivalent
+        current_snapshot = (emit_step, total, emit_block_index, emit_block_total)
         should_emit = (
             total > 0
-            and (step > 0 or block_index > 0 or done.is_set())
+            and not suppress_boundary_snapshot
+            and (emit_step > 0 or emit_block_index > 0 or done_now)
             and current_snapshot != last_snapshot
         )
         if should_emit:
             elapsed = time.perf_counter() - t0
-            completed_units = float(step)
-            if block_total > 0 and step < total:
-                completed_units += float(block_index) / float(block_total)
+            completed_units = float(emit_step)
+            if _has_block_progress(block_index=emit_block_index, block_total=emit_block_total):
+                completed_units += float(emit_block_index) / float(emit_block_total)
             completed_units = min(float(total), completed_units)
             eta = (
                 (elapsed * (float(total) - completed_units) / completed_units)
                 if completed_units > 0.0
                 else None
             )
-            yield step, total, block_index, block_total, eta
+            yield emit_step, total, emit_block_index, emit_block_total, eta
             last_snapshot = current_snapshot
 
-        if done.is_set():
+        if done_now:
             break
 
         time.sleep(float(poll_interval_s))

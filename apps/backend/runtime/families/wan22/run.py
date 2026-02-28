@@ -2701,7 +2701,15 @@ def stream_img2vid_chunked(
                         int(len(chunk_starts)),
                         exc,
                     )
-                    close_vae_decode_session(decode_session, logger=log)
+                    try:
+                        close_vae_decode_session(decode_session, logger=log)
+                    except Exception as cleanup_exc:
+                        decode_session = None
+                        raise RuntimeError(
+                            "WAN22 GGUF chunked img2vid: shared VAE decode session failed and cleanup also failed; "
+                            f"aborting per-chunk fallback (chunk={int(chunk_index) + 1}/{int(len(chunk_starts))} "
+                            f"decode_error={exc!r})."
+                        ) from cleanup_exc
                     decode_session = None
                     frames_chunk = decode_latents_to_frames(
                         latents=chunk_latents,

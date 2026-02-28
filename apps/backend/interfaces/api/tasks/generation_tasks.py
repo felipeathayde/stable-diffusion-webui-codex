@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `encode_images` (function): Encode PIL images to base64 PNG payloads, optionally injecting PNG text metadata.
 - `build_engine_options` (function): Build `engine_options` dict from request extras + options snapshot (TE/VAE overrides, Z-Image variant, core streaming).
 - `resolve_request_smart_flags` (function): Parse/validate per-request smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) as strict booleans.
-- `force_runtime_memory_cleanup` (function): Best-effort runtime cleanup used on worker error paths (orchestrator cache + memory manager + GGUF cache + CUDA cache).
+- `force_runtime_memory_cleanup` (function): Best-effort runtime cleanup used on worker error paths (orchestrator cache + memory manager + CUDA cache).
 - `_format_parameters_infotext` (function): Serializes generation `info` dicts into A1111-compatible infotext for PNG `parameters`.
 - `_build_png_metadata` (function): Builds PNG text chunks (`parameters` + provenance) for saved/API-encoded images.
 - `run_image_task` (function): Run a generic image task worker (txt2img/img2img) using a `prepare(payload)` callback and orchestrator event stream.
@@ -190,31 +190,6 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
             cleanup_failures.append(f"soft_empty_cache:{exc}")
             logger.warning(
                 "Runtime soft_empty_cache failed during cleanup (%s): %s",
-                reason,
-                exc,
-                exc_info=False,
-            )
-
-    gguf_clear_cache: Callable[[], None] | None = None
-    try:
-        from apps.backend.runtime.ops.operations_gguf import clear_cache as gguf_clear_cache
-    except Exception as exc:
-        cleanup_failures.append(f"gguf_cache_import:{exc}")
-        logger.warning(
-            "GGUF cache cleanup helper unavailable during runtime cleanup (%s): %s",
-            reason,
-            exc,
-            exc_info=False,
-        )
-        gguf_clear_cache = None
-
-    if callable(gguf_clear_cache):
-        try:
-            gguf_clear_cache()
-        except Exception as exc:
-            cleanup_failures.append(f"gguf_cache:{exc}")
-            logger.warning(
-                "Failed to clear GGUF cache during runtime cleanup (%s): %s",
                 reason,
                 exc,
                 exc_info=False,

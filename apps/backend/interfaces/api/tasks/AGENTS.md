@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/tasks Overview
 <!-- tags: backend, api, tasks, orchestration -->
 Date: 2026-01-30
-Last Review: 2026-02-21
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -24,7 +24,8 @@ Status: Active
 - 2026-02-18: `generation_tasks.py` now serializes PNG `parameters` as A1111-compatible infotext (prompt + optional negative prompt + KV line) instead of JSON blobs, while still preserving provenance text chunks separately.
 - 2026-02-18: `generation_tasks.py` inference-gate wait cancellation now honors any requested cancel mode (`immediate` or `after_current`) before work starts; once running, only `immediate` interrupts in-flight generation.
 - 2026-02-18: `upscale_tasks.py` and `supir_tasks.py` now follow the same gate-wait rule: any cancel mode aborts before start while `immediate` remains the only in-flight interrupt mode.
-- 2026-02-21: `generation_tasks.py` now exposes `force_runtime_memory_cleanup(...)` and invokes it on image worker exceptions to force best-effort cleanup of orchestrator cache, runtime memory manager state, GGUF dequant cache, and CUDA cache.
+- 2026-02-21: `generation_tasks.py` now exposes `force_runtime_memory_cleanup(...)` and invokes it on image worker exceptions to force best-effort cleanup of orchestrator cache, runtime memory manager state, and CUDA cache.
+- 2026-02-28: `generation_tasks.py::force_runtime_memory_cleanup(...)` removed the optional `operations_gguf.clear_cache` import/call path to avoid stale helper warnings after GGUF cache-hook removal.
 - 2026-02-22: `generation_tasks.py::force_runtime_memory_cleanup(...)` now logs cleanup failures without traceback payload (`exc_info=False`), preventing repeated stacktrace floods when CUDA is already in OOM/error state after engine failure.
 - 2026-02-21: `generation_tasks.py::build_engine_options(...)` now parses `codex_core_streaming` via shared strict bool parsing before emitting engine options (no truthiness coercion from malformed option snapshots).
 - 2026-02-21: `generation_tasks.py` now parses `samples_save` via shared strict bool parsing before output persistence, removing permissive `bool("false")==True` behavior.

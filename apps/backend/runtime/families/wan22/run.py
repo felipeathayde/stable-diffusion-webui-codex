@@ -13,8 +13,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
 - `_WAN_CHUNK_HYBRID_RAM_BUDGET_MB` (constant): Default RAM budget threshold (MB) used by `chunk_buffer_mode='hybrid'` when resolving low/decode tensor storage (`ram` vs `ram+hd`).
 - `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager (explicit unload honors manager-provided target device).
-- `_try_set_cache_policy` (function): Validate removed GGUF dequant-cache settings (only disabled policy accepted).
-- `_try_clear_cache` (function): Best-effort cache-clear call after dequant-cache removal (no-op in runtime ops).
 - `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
 - `_stage_transition_barrier` (function): Enforce a deterministic memory barrier between heavyweight stage transitions (release/sync/cache-gc/log) without altering mount policy.
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
@@ -215,44 +213,6 @@ class _MemoryManagedModule:
         return self.model
 
 
-def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
-    pol_raw = "none" if policy is None else str(policy)
-    pol = pol_raw.strip().lower()
-    lim = int(limit_mb or 0)
-
-    if pol not in {"", "none", "off"}:
-        raise RuntimeError(
-            "WAN22 GGUF: dequant cache support was removed. "
-            f"'gguf_cache_policy' must be 'none' or 'off' (got {policy!r})."
-        )
-
-    if lim != 0:
-        raise RuntimeError(
-            "WAN22 GGUF: dequant cache support was removed. "
-            f"'gguf_cache_limit_mb' must be omitted or 0 (got {lim})."
-        )
-
-    try:
-        from apps.backend.runtime.ops.operations_gguf import set_cache_policy
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError(
-            "GGUF dequant cache validation hook is missing in this build (operations_gguf.set_cache_policy)."
-        ) from exc
-
-    set_cache_policy("none", 0)
-
-
-def _try_clear_cache() -> None:
-    try:
-        from apps.backend.runtime.ops.operations_gguf import clear_cache
-    except Exception:
-        return
-    try:
-        clear_cache()
-    except Exception:
-        return
-
-
 def _should_clear_stage_cache(*, offload_level: int) -> bool:
     """Return whether WAN stage transitions should force cache clearing.
 
@@ -307,7 +267,6 @@ def _teardown_stage(
         if has_upstream_error or should_clear_stage_cache:
             gc.collect()
         if should_clear_stage_cache:
-            _try_clear_cache()
             cuda_empty_cache(logger, label=f"after-{stage}")
     return None, None
 
@@ -322,7 +281,6 @@ def _stage_transition_barrier(
     log_cuda_mem(log, label=f"{label}:pre-barrier")
     if _should_clear_stage_cache(offload_level=offload_level):
         gc.collect()
-        _try_clear_cache()
         cuda_empty_cache(log, label=f"{label}-barrier")
     log_cuda_mem(log, label=f"{label}:post-barrier")
 
@@ -1072,8 +1030,6 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         getattr(cfg, "attn_chunk_size", None),
         getattr(cfg, "attention_mode", None),
     )
-    _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
-
     if on_progress:
         try:
             on_progress(stage="prepare", step=0, total=1, percent=0.0)
@@ -1315,7 +1271,6 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     )
     if lvl >= 3:
         cuda_empty_cache(log, label="after-decode")
-    _try_clear_cache()
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames
@@ -1335,8 +1290,6 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         getattr(cfg, "attn_chunk_size", None),
         getattr(cfg, "attention_mode", None),
     )
-    _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
-
     dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
@@ -1524,7 +1477,6 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         logger=log,
         expected_frames=t_out,
     )
-    _try_clear_cache()
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames}
@@ -1546,8 +1498,6 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         getattr(cfg, "attn_chunk_size", None),
         getattr(cfg, "attention_mode", None),
     )
-    _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
-
     if on_progress:
         try:
             on_progress(stage="prepare", step=0, total=1, percent=0.0)
@@ -1799,7 +1749,6 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         logger=log,
         expected_frames=t_out,
     )
-    _try_clear_cache()
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames
@@ -1821,8 +1770,6 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         getattr(cfg, "attn_chunk_size", None),
         getattr(cfg, "attention_mode", None),
     )
-    _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
-
     dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
@@ -2051,7 +1998,6 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         logger=log,
         expected_frames=t_out,
     )
-    _try_clear_cache()
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames}
@@ -2138,8 +2084,6 @@ def stream_img2vid_chunked(
         getattr(cfg, "attn_chunk_size", None),
         getattr(cfg, "attention_mode", None),
     )
-    _try_set_cache_policy(getattr(cfg, "gguf_cache_policy", None), getattr(cfg, "gguf_cache_limit_mb", None))
-
     dev_name = resolve_device_name(getattr(cfg, "device", None))
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
@@ -2795,7 +2739,6 @@ def stream_img2vid_chunked(
                 "WAN22 GGUF chunked img2vid: stitched output produced fewer frames than requested "
                 f"(got={len(frames)} expected={int(total_out)})."
             )
-        _try_clear_cache()
         if not frames:
             raise RuntimeError("WAN22 GGUF chunked img2vid: produced no frames.")
         yield {"type": "result", "frames": frames}

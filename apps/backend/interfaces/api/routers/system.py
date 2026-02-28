@@ -344,17 +344,6 @@ def build_router(*, app_version: str) -> APIRouter:
                 report["internal_failures"].append(f"runtime_soft_empty_cache:{exc}")
 
         try:
-            from apps.backend.runtime.ops.operations_gguf import clear_cache as clear_gguf_cache  # type: ignore
-        except Exception as exc:
-            report["warnings"].append(f"gguf_cache_import_failed:{exc}")
-        else:
-            try:
-                clear_gguf_cache()
-                report["internal"]["gguf_cache_cleared"] = True
-            except Exception as exc:
-                report["internal_failures"].append(f"gguf_cache_clear:{exc}")
-
-        try:
             gc.collect()
             report["internal"]["gc_collect_ran"] = True
         except Exception as exc:  # pragma: no cover - defensive

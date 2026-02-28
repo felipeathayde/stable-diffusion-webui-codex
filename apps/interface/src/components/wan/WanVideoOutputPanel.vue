@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN video output options panel.
 Configures export format/pixel format/CRF/loop options, compact output toggles (`pingpong`, `returnFrames`), and RIFE interpolation target FPS (`0=off`) for WAN video tasks.
-Also exposes optional SeedVR2 video upscaling controls (`video_upscaling`) with compact defaults and an advanced block.
+Also exposes optional SeedVR2 video upscaling controls (`video_upscaling`) inside a dedicated collapsible card with header toggle parity to Temporal Loom.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoOutputPanel` (component): Video output settings panel used by WANTab.
@@ -115,67 +115,72 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
     </div>
 
-    <div class="gc-row">
-      <div class="gc-col gc-col--presets wan-video-output-toggle-row">
+    <div class="gen-card refiner-card refiner-card--dense">
+      <WanSubHeader
+        title="Upscaling"
+        :clickable="true"
+        :disabled="disabled"
+        :aria-pressed="video.upscalingEnabled"
+        :aria-expanded="video.upscalingEnabled"
+        @header-click="updateVideo({ upscalingEnabled: !video.upscalingEnabled })"
+      >
         <button
-          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.upscalingEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          :class="[
+            'btn',
+            'qs-toggle-btn',
+            'qs-toggle-btn--sm',
+            video.upscalingEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off',
+          ]"
           type="button"
           :disabled="disabled"
           :aria-pressed="video.upscalingEnabled"
-          @click="updateVideo({ upscalingEnabled: !video.upscalingEnabled })"
+          @click.stop="updateVideo({ upscalingEnabled: !video.upscalingEnabled })"
         >
-          SeedVR2 Upscaling
+          {{ video.upscalingEnabled ? 'Enabled' : 'Disabled' }}
         </button>
-      </div>
-      <div class="gc-col gc-col--wide">
-        <label class="label-muted">Upscaling Model</label>
-        <select
-          class="select-md"
-          :disabled="disabled || !video.upscalingEnabled"
-          :value="video.upscalingModel"
-          @change="updateVideo({ upscalingModel: ($event.target as HTMLSelectElement).value })"
-        >
-          <option value="seedvr2_ema_3b_fp16.safetensors">SeedVR2 EMA 3B FP16</option>
-          <option value="seedvr2_ema_7b_fp16.safetensors">SeedVR2 EMA 7B FP16</option>
-          <option value="seedvr2_ema_7b_sharp_fp16.safetensors">SeedVR2 EMA 7B Sharp FP16</option>
-        </select>
-      </div>
-      <SliderField
-        class="gc-col gc-col--compact"
-        label="Upscale Resolution"
-        :modelValue="video.upscalingResolution"
-        :min="16"
-        :max="4096"
-        :step="16"
-        :disabled="disabled || !video.upscalingEnabled"
-        inputClass="cdx-input-w-md"
-        @update:modelValue="onUpscalingResolutionChange"
-      />
-      <SliderField
-        class="gc-col gc-col--compact"
-        label="Max Resolution"
-        :modelValue="video.upscalingMaxResolution"
-        :min="0"
-        :max="8192"
-        :step="16"
-        :disabled="disabled || !video.upscalingEnabled"
-        inputClass="cdx-input-w-md"
-        @update:modelValue="onUpscalingMaxResolutionChange"
-      />
-    </div>
-
-    <div class="gc-row">
-      <div class="gc-col gc-col--wide">
-        <span class="caption">{{ upscalingCaption }}</span>
-      </div>
-    </div>
-
-    <details v-if="video.upscalingEnabled" class="accordion mt-2">
-      <summary>Upscaling advanced</summary>
-      <div class="accordion-body">
-        <div class="gc-row">
+      </WanSubHeader>
+      <div v-if="video.upscalingEnabled" class="param-blocks wan-temporal-controls">
+        <div class="param-grid wan-temporal-row" data-cols="3">
+          <div class="field">
+            <label class="label-muted">Upscaling Model</label>
+            <select
+              class="select-md"
+              :disabled="disabled"
+              :value="video.upscalingModel"
+              @change="updateVideo({ upscalingModel: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="seedvr2_ema_3b_fp16.safetensors">SeedVR2 EMA 3B FP16</option>
+              <option value="seedvr2_ema_7b_fp16.safetensors">SeedVR2 EMA 7B FP16</option>
+              <option value="seedvr2_ema_7b_sharp_fp16.safetensors">SeedVR2 EMA 7B Sharp FP16</option>
+            </select>
+          </div>
           <SliderField
-            class="gc-col gc-col--compact"
+            class="field"
+            label="Upscale Resolution"
+            :modelValue="video.upscalingResolution"
+            :min="16"
+            :max="4096"
+            :step="16"
+            :disabled="disabled"
+            inputClass="cdx-input-w-md"
+            @update:modelValue="onUpscalingResolutionChange"
+          />
+          <SliderField
+            class="field"
+            label="Max Resolution"
+            :modelValue="video.upscalingMaxResolution"
+            :min="0"
+            :max="8192"
+            :step="16"
+            :disabled="disabled"
+            inputClass="cdx-input-w-md"
+            @update:modelValue="onUpscalingMaxResolutionChange"
+          />
+        </div>
+
+        <div class="param-grid wan-temporal-row" data-cols="4">
+          <SliderField
+            class="field"
             label="Batch Size"
             :modelValue="video.upscalingBatchSize"
             :min="1"
@@ -186,7 +191,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:modelValue="onUpscalingBatchSizeChange"
           />
           <SliderField
-            class="gc-col gc-col--compact"
+            class="field"
             label="Temporal Overlap"
             :modelValue="video.upscalingTemporalOverlap"
             :min="0"
@@ -197,7 +202,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:modelValue="onUpscalingTemporalOverlapChange"
           />
           <SliderField
-            class="gc-col gc-col--compact"
+            class="field"
             label="Prepend Frames"
             :modelValue="video.upscalingPrependFrames"
             :min="0"
@@ -207,7 +212,7 @@ Symbols (top-level; keep in sync; no ghosts):
             inputClass="cdx-input-w-md"
             @update:modelValue="onUpscalingPrependFramesChange"
           />
-          <div class="gc-col gc-col--presets wan-video-output-toggle-row">
+          <div class="field">
             <button
               :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.upscalingUniformBatchSize ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
               type="button"
@@ -220,8 +225,8 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
         </div>
 
-        <div class="gc-row">
-          <div class="gc-col">
+        <div class="param-grid wan-temporal-row" data-cols="3">
+          <div class="field">
             <label class="label-muted">Color Correction</label>
             <select
               class="select-md"
@@ -238,7 +243,7 @@ Symbols (top-level; keep in sync; no ghosts):
             </select>
           </div>
           <SliderField
-            class="gc-col gc-col--compact"
+            class="field"
             label="Input Noise"
             :modelValue="video.upscalingInputNoiseScale"
             :min="0"
@@ -249,7 +254,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:modelValue="onUpscalingInputNoiseScaleChange"
           />
           <SliderField
-            class="gc-col gc-col--compact"
+            class="field"
             label="Latent Noise"
             :modelValue="video.upscalingLatentNoiseScale"
             :min="0"
@@ -261,13 +266,16 @@ Symbols (top-level; keep in sync; no ghosts):
           />
         </div>
       </div>
-    </details>
+      <div v-else class="caption">Upscaling is off.</div>
+      <div v-if="video.upscalingEnabled" class="caption">{{ upscalingCaption }}</div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import SliderField from '../ui/SliderField.vue'
+import WanSubHeader from './WanSubHeader.vue'
 import type { WanVideoParams } from '../../stores/model_tabs'
 
 const props = withDefaults(defineProps<{

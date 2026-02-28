@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-02-20
+Last Review: 2026-02-28
 Status: Active
 
 ## Scope
@@ -50,7 +50,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2025-12-05: Text encoder overrides are resolved centrally by the loader using `TextEncoderOverrideConfig` + `resolve_text_encoder_override_paths` (now in `runtime.models.text_encoder_overrides`), mapping `(family, <family>/<path> label from paths.json, ModelSignature.text_encoders)` to per-component weights. Overrides fail fast when families mismatch, labels are unknown, or expected `<alias>.(safetensors|gguf|bin|pt)` files are missing under the configured root.
 - 2025-12-05: Flux GGUF core-only checkpoints (signalled via `ModelSignature.extras["gguf_core_only"]`) now compose with an external VAE resolved from `apps/paths.json["flux1_vae"]`; `_load_flux_vae_state_dict()` scans configured roots for a suitable VAE weights file and fails fast with an explicit error when nothing usable is found, instead of silently running Flux without a VAE.
 - 2025-12-06: `TextEncoderOverrideConfig` gained an `explicit_paths` map (`alias -> abs path`) for file-level overrides (e.g., Flux); `resolve_text_encoder_override_paths` supports two modes: explicit path mapping (skipping root lookup) and root-based lookup. In both cases, aliases are validated against `CodexEstimatedConfig.text_encoder_map`, and missing files or unsupported extensions raise `TextEncoderOverrideError` with clear messages.
-- 2025-12-30: `apps/backend/runtime/models/__init__.py` switched back to lazy exports (no eager `import safety` / wildcard imports) so `create_api_app` and tests can import the API with a lightweight torch stub.
+- 2025-12-30: `apps/backend/runtime/models/__init__.py` switched back to lazy exports (no eager `import safety` / wildcard imports) so `create_api_app` and lightweight torch-stub validation paths can import the API.
 - 2025-12-30: Text encoder overrides now accept `.gguf` weights; GGUF-packed state dicts are detected so T5 text encoders can load via the `"gguf"` quant path.
 - 2026-01-01: `ModelRegistry` checkpoint discovery now lists only file-based weights under `*_ckpt` roots (`.ckpt/.safetensors/.safetensor/.gguf/...`); it no longer treats vendored Hugging Face metadata folders as selectable checkpoints.
 - 2026-01-02: `runtime.models.api` gained `find_checkpoint_by_sha(...)` so API layers can resolve checkpoints from short-hash/sha256 identifiers (backed by `models/.hashes.json`).
@@ -63,7 +63,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-08: Moved text-encoder override definitions into `text_encoder_overrides.py`; loader now imports the shared config + resolver from that module.
 - 2026-01-14: Flux expected-family loads now use vendored HF metadata to build the signature (selecting `FLUX.1-dev` vs `FLUX.1-schnell` by guidance key presence), avoiding registry detection failures on prefixed Flux checkpoints.
 - 2026-01-18: `CheckpointRecord` now includes `core_only`, `core_only_reason` (e.g. `gguf_suffix`, `gguf_magic`), and optional `family_hint`; `/api/models` surfaces these so UIs stop guessing core-only status by suffix alone.
-- 2026-01-18: `loader.py` now lazily imports `diffusers`/`transformers` (keeps `create_api_app` import-light for health/models endpoints and torch-stub tests).
+- 2026-01-18: `loader.py` now lazily imports `diffusers`/`transformers` (keeps `create_api_app` import-light for health/models endpoints and torch-stub validation paths).
 - 2026-01-25: SDXL loads are strict on missing/unexpected keys (fail loud); CLIP normalization now drops `position_ids`, canonicalizes `logit_scale`, and keeps only `transformer.text_projection.weight`.
 - 2026-01-25: Loader dtype selection no longer overrides memory-manager role defaults using a whole-file SafeTensors “primary dtype” guess; the hint is now debug-only (prevents TE bf16 vs UNet fp16 drift under AUTO).
 - 2026-01-25: SDXL/Flow16 VAE key normalization now lives in `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`; `_maybe_convert_sdxl_vae_state_dict` delegates to the keymap (single source of truth) and drops `model_ema.decay` / `model_ema.num_updates` metadata keys.

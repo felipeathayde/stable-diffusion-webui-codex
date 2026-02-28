@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, wan22, video -->
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
-Last Review: 2026-02-27
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -36,3 +36,4 @@ Status: Active
 - 2026-02-27: `WanVideoOutputPanel.vue` interpolation now represents output target FPS (not a multiplier), and `Ping-pong`/`Return frames` render stacked vertically.
 - 2026-02-27: `WanVideoOutputPanel.vue` output-toggle column now uses `gc-col--presets` so the toggle stack is content-width and the three sliders consume the remaining row space.
 - 2026-02-27: `WanVideoOutputPanel.vue` now includes optional SeedVR2 upscaling UI (`SeedVR2 Upscaling` toggle, model selector, target/max resolution controls, and an expandable advanced block for batch/overlap/prepend/color/noise settings).
+- 2026-02-28: `WanVideoOutputPanel.vue` moved all SeedVR2 controls into a dedicated `Upscaling` card styled with the same collapsible header/toggle interaction as `Temporal Loom` (`Enabled/Disabled` button in header, full knob set inside the card when enabled).

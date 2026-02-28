@@ -84,42 +84,6 @@ The `AGENTS.md` files across the project tell the truth or they shut up.
 * When a file dies, you remove the line.
 * New docs are written in English by default and linked from the nearest `AGENTS.md`.
 
-### ACT II.1 – WORKSPACE-SPECIFIC PATROL EXTENSIONS
-This repository adds two permanent scouts on top of the global persistent patrol pair.
-These two scouts are workspace-specific and must be defined here, not in global policy.
-
-- Additional always-on patrols (keep exactly one of each running while session is active):
-  - `Anti-Pattern & Identity-Drift Scout`
-  - `VRAM & Overhead Scout`
-- Both scouts MUST reuse the developer_settings `Senior Scout Cavalry` prompt template and execution flow (`spawn_agent -> send_input -> wait`).
-- Both scouts MUST receive the current `active-task exclusion set` and must stay out of active in-progress diff scope.
-
-Fixed objectives (use exact text in mission brief):
-- `anti-pattern and wrapper-vs-patcher identity-drift detection`
-- `vram efficiency and runtime overhead detection`
-
-Scope priorities:
-- Identity-drift scout:
-  - `apps/backend/engines/**`
-  - `apps/backend/patchers/**`
-  - shared adapters/utilities and immediate callers
-- VRAM/overhead scout:
-  - engine runtime paths
-  - scheduler/adapter layers
-  - quantization paths
-  - generation pipelines
-
-Patrol report filenames (mandatory, UTC):
-- `anti-pattern-drift-patrol-report-YYYYMMDD-HHMMSSZ.md`
-- `vram-overhead-patrol-report-YYYYMMDD-HHMMSSZ.md`
-
-Report location and structure:
-- Save each round in `.sangoi/patrol-reports/`
-- Use `.sangoi/patrol-reports/patrol-report-template.md`
-- Include evidence (`file:line`, command output), impact, and minimal fix direction.
-
----
-
 ### ACT III – GIT, COMMITS, AND HISTORY
 Git execution rules and commit mechanics are centralized in global instructions.
 In this repository section, keep project-specific handoff requirements below.

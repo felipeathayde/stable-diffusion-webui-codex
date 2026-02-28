@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22
-Last Review: 2026-02-27
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -64,7 +64,7 @@ Rules:
 
 ## Validate
 - `cd apps/interface && npm run build`
-- `cd apps/interface && npm test`
+- `cd apps/interface && npm run typecheck`
 
 ## Reference-only examples (not shipped)
 - `apps/interface/src/styles/EXAMPLE-dashboard-surface-base.css`

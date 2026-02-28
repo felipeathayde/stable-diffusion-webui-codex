@@ -1,7 +1,7 @@
 <!-- tags: frontend, interface, overview -->
 # apps/interface Overview
 Date: 2025-10-28
-Last Review: 2026-01-27
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -25,7 +25,7 @@ Status: Active
 - 2025-11-03: SDXL view now exposes "Save Profile" backed by store persistence to mirror the Test harness.
 - 2025-11-14: API requests are built via `src/api/payloads.ts` (Zod schemas) — payload builders trim prompts and always attach the per-tab engine/model metadata (even for img2img).
 - 2025-12-03: Txt2Img prompt schema now rejects empty prompts at the frontend (`PromptSchema`), surfacing a validation error instead of silently sending `prompt=""` to the backend.
-- 2025-12-03: Vitest added for frontend unit tests (`npm test`) to cover prompt serialization and future UI logic.
+- 2026-02-28: Frontend follows root testing policy: manual validation by default; automated/unit tests are not maintained unless explicitly requested by the repo owner.
 - 2026-01-01: Updated `apps/interface/README.md` to reflect the repo-local `.venv` (and `run-webui.sh` as the recommended dev entrypoint).
 - 2026-01-01: Added a branded `public/favicon.ico` and referenced it from `index.html` so the browser tab icon matches the project branding.
 - 2026-01-03: Added standardized file header blocks to WebUI entrypoints/config (`vite.config.ts`, `src/{App,main,router}.ts/.vue`, `src/api/types.ts`) (doc-only change; part of rollout).
@@ -34,4 +34,4 @@ Status: Active
 - 2026-01-27: `package-lock.json` updated to match npm 11 (used by the repo-local `.nodeenv` installer) to avoid lockfile churn on fresh installs.
 - 2026-02-06: Added `vue-tsc` typechecking (`npm run typecheck`) and gated `npm run dev` on typecheck to prevent “build passes, types broken” drift.
 - 2026-02-08: SDXL swap-model UI contract now uses explicit pointer semantics (`swapAtStep` in frontend state, serialized as `switch_at_step` in API payloads), replacing refiner step-count wording/behavior.
-- 2026-02-21: Added UI consistency scanner (`tools/ui-consistency-report.mjs`) and wired `npm run verify` to run strict style-contract gating (`report:ui-consistency:strict`) before typecheck/test/build.
+- 2026-02-21: Added UI consistency scanner (`tools/ui-consistency-report.mjs`) and wired `npm run verify` to run strict style-contract gating (`report:ui-consistency:strict`) before typecheck/build.

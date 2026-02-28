@@ -1,6 +1,6 @@
 # apps/interface/tools Overview
 Date: 2025-10-28
-Last Review: 2026-02-21
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -12,5 +12,5 @@ Status: Active
 
 ## Notes
 - Keep these scripts in sync with documentation in `.sangoi/frontend/` so developers know how to invoke them.
-- 2026-02-21: Added `ui-consistency-report.mjs`; `npm run verify` now runs strict style-contract gating (`report:ui-consistency:strict`) before typecheck/test/build.
+- 2026-02-21: Added `ui-consistency-report.mjs`; `npm run verify` now runs strict style-contract gating (`report:ui-consistency:strict`) before typecheck/build.
 - 2026-02-21: Dynamic style bindings are now scanned; strict mode fails on disallowed dynamic `:style` usage while docs/toolchain drift remains report-only.

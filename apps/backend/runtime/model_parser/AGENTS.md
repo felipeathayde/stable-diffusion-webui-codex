@@ -1,7 +1,7 @@
 # AGENT — Model Parser
 <!-- tags: runtime, model-parser -->
 Date: 2025-10-29
-Last Review: 2026-02-11
+Last Review: 2026-02-28
 Status: Draft
 
 ## Mandate
@@ -22,7 +22,7 @@ Status: Draft
 ## TODO
 - Extend planners to remaining diffusion/video families (e.g., Stable Cascade, Wan camera/HuMo).
 - Add explicit plans for GGUF core-only variants (e.g., Flux transformers without embedded text encoders/VAEs) so loaders can compose them with external components.
-- Provide synthetic/unit test coverage for parser plans.
+- For parser-plan changes, run `python3 -m compileall apps/backend/runtime/model_parser` and record manual parser-path validation steps in the task notes.
 
 ## Notes
 - 2025-11-04: (Historical) SDXL UNet converter introduced normalization for sequential label-embedding keys (`label_emb.0.0.*`) before load.

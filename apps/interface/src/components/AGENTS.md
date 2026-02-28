@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-02-25
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -10,7 +10,7 @@ Status: Active
 ## Notes
 - Components should be presentational and rely on Pinia stores or props for state.
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
-- Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.
+- Prompt parsing/serialization lives in `prompt/PromptToken.ts`; ensure new prompt widgets pass through that module, then run `cd apps/interface && npm run typecheck` and manual prompt round-trip validation in the UI.
 - Generation + hires + refiner controls live in `GenerationSettingsCard.vue`, `HiresSettingsCard.vue`, and `RefinerSettingsCard.vue`, following shared `gen-card` organization with component-specific row/grid arrangements.
 - Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
 - `QuickSettingsBar.vue` renders per-tab selectors in the main header row; it includes a nested, collapsible Advanced area (Smart toggles + Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `uiBlocks.semanticEngine` when available (otherwise `sd15`).

@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-02-27
+Last Review: 2026-02-28
 Status: Active
 
 ## Purpose
@@ -51,7 +51,7 @@ Status: Active
 - 2026-02-05: `model_tabs.ts` now supports `anima` as a tab type and derives required auto-created tabs from backend `/api/engines/capabilities` (`anima` is auto-created only when exposed there).
 - 2026-02-05: `model_tabs.normalizeTabType()` is fail-loud for unknown/empty types (no silent fallback to `sd15`); aliases are normalized through a canonical map.
 - 2026-02-05: `model_tabs.load()` now fails loud when `/api/ui/tabs` cannot provide a valid `tabs` array (local fallback no longer masks backend tab-type contract errors).
-- 2026-02-06: `quicksettings.ts` Anima mapping is explicit in text encoder roots (`anima_tenc`) and SHA alias prefixes (`anima/...`) so UI labels resolve for both text encoders and VAEs; coverage added in `quicksettings.test.ts`.
+- 2026-02-06: `quicksettings.ts` Anima mapping is explicit in text encoder roots (`anima_tenc`) and SHA alias prefixes (`anima/...`) so UI labels resolve for both text encoders and VAEs.
 - 2026-02-06: `quicksettings.ts` now builds selectable text-encoder labels from inventory files constrained by `*_tenc` roots (no selectable folder roots like `anima/models/anima-tenc`) and sanitizes stale root-label overrides from localStorage.
 - 2026-02-06: `model_tabs.defaultParams()` now casts typed image defaults to `Record<string, unknown>` only at the persistence boundary (keeps `ImageBaseParams` strict while tab params storage remains JSON/dynamic). `xyz.ts` stop control reset avoids TS control-flow narrowing while allowing `stop(mode)` to mutate stop mode mid-run.
 - 2026-02-06: Added `bootstrap.ts` to own hard-fatal startup sequencing (`engine_capabilities`, tabs, quicksettings) and retry state; `engine_capabilities.ts` now enforces strict `dependency_checks` parsing (no permissive fallback).

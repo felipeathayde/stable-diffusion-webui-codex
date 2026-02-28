@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Vite configuration for the Codex WebUI frontend.
-Configures dev server host/ports + API proxy/HMR, Vitest settings, and a small plugin that watches root env/Tailwind/PostCSS files to trigger a restart on change.
+Configures dev server host/ports + API proxy/HMR and a small plugin that watches root env/Tailwind/PostCSS files to trigger a restart on change.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `watchRootConfigs` (function): Vite plugin that watches root config files and restarts the dev server on change.
-- `default` (function): Vite config factory that loads env from repo root and returns server/test settings.
+- `default` (function): Vite config factory that loads env from repo root and returns dev/build settings.
 */
 
 // tags: vite-config, frontend-build
@@ -19,7 +19,6 @@ import { defineConfig, loadEnv } from 'vite'
 import path from 'node:path'
 import vue from '@vitejs/plugin-vue'
 import tailwind from '@tailwindcss/vite'
-import type { UserConfig as VitestUserConfig } from 'vitest'
 
 // Restart vite dev server if root .env or Tailwind/PostCSS configs change
 const watchRootConfigs = () => ({
@@ -63,11 +62,6 @@ export default defineConfig(({ mode }) => {
     .filter(Boolean)
     .forEach((h) => allowedHosts.add(h))
 
-  const vitestTestConfig: VitestUserConfig['test'] = {
-    environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
-  }
-
   return {
     envDir: repoRoot,
     plugins: [vue(), tailwind(), watchRootConfigs()],
@@ -92,7 +86,6 @@ export default defineConfig(({ mode }) => {
         port: WEB_PORT,
         protocol: HMR_PROTOCOL as 'ws' | 'wss'
       }
-    },
-    test: vitestTestConfig,
+    }
   }
 })

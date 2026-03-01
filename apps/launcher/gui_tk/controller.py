@@ -81,6 +81,10 @@ class LauncherController:
         self.store.meta.window_geometry = str(geometry)
         self.store.save_meta()
 
+    def persist_show_advanced_controls(self, enabled: bool) -> None:
+        self.store.meta.show_advanced_controls = bool(enabled)
+        self.store.save_meta()
+
     def save_settings(self) -> None:
         self.store.save()
 

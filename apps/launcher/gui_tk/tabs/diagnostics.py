@@ -100,7 +100,9 @@ class DiagnosticsTab:
             ("CODEX_LOG_SAMPLER", "Sampler Verbose Logs"),
             ("CODEX_LOG_CFG_DELTA", "CFG Delta Logs (requires Sampler Verbose Logs)"),
             ("CODEX_LOG_SIGMAS", "Sigma Ladder Logs"),
-            ("CODEX_TRACE_DEBUG", "Trace Debug (very verbose)"),
+            ("CODEX_TRACE_INFERENCE_DEBUG", "Trace Debug: Inference"),
+            ("CODEX_TRACE_LOAD_PATCH_DEBUG", "Trace Debug: Load/Patch"),
+            ("CODEX_TRACE_CALL_DEBUG", "Trace Debug: Call Trace"),
             ("CODEX_PIPELINE_DEBUG", "Pipeline Debug"),
             ("CODEX_DUMP_LATENTS", "Dump Latents"),
             ("CODEX_TIMELINE", "Timeline Tracer (TVA-style execution timeline)"),
@@ -113,7 +115,9 @@ class DiagnosticsTab:
             ("CODEX_PROFILE_WITH_STACK", "Profiler: include stacks (very heavy)"),
         ]
         advanced_debug_keys = {
-            "CODEX_TRACE_DEBUG",
+            "CODEX_TRACE_INFERENCE_DEBUG",
+            "CODEX_TRACE_LOAD_PATCH_DEBUG",
+            "CODEX_TRACE_CALL_DEBUG",
             "CODEX_PIPELINE_DEBUG",
             "CODEX_DUMP_LATENTS",
             "CODEX_TIMELINE",
@@ -147,7 +151,7 @@ class DiagnosticsTab:
             ChoiceSetting("CODEX_CFG_BATCH_MODE", default="fused", choices=CFG_BATCH_MODE_CHOICES).get(self._controller.store.env)
         )
         self._var_trace_max.set(
-            str(self._controller.store.env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", TRACE_DEBUG_DEFAULT) or TRACE_DEBUG_DEFAULT)
+            str(self._controller.store.env.get("CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC", TRACE_DEBUG_DEFAULT) or TRACE_DEBUG_DEFAULT)
         )
         self._var_dump_path.set(str(self._controller.store.env.get("CODEX_DUMP_LATENTS_PATH", "") or ""))
         self._var_profile_top_n.set(str(self._controller.store.env.get("CODEX_PROFILE_TOP_N", "25") or "25"))
@@ -173,10 +177,10 @@ class DiagnosticsTab:
         r = self._add_entry(
             dbg_col,
             r,
-            label="Trace max / func (0=unlimited):",
+            label="Call trace max / func (0=unlimited):",
             var=self._var_trace_max,
             width=10,
-            on_change=lambda: self._set_text("CODEX_TRACE_DEBUG_MAX_PER_FUNC", self._var_trace_max.get()),
+            on_change=lambda: self._set_text("CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC", self._var_trace_max.get()),
             advanced=True,
         )
         r = self._add_entry(
@@ -266,7 +270,7 @@ class DiagnosticsTab:
 
         self._var_cfg_delta_n.set(str(env.get("CODEX_LOG_CFG_DELTA_N", "2") or "2"))
         self._var_cfg_batch_mode.set(ChoiceSetting("CODEX_CFG_BATCH_MODE", default="fused", choices=CFG_BATCH_MODE_CHOICES).get(env))
-        self._var_trace_max.set(str(env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", TRACE_DEBUG_DEFAULT) or TRACE_DEBUG_DEFAULT))
+        self._var_trace_max.set(str(env.get("CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC", TRACE_DEBUG_DEFAULT) or TRACE_DEBUG_DEFAULT))
         self._var_dump_path.set(str(env.get("CODEX_DUMP_LATENTS_PATH", "") or ""))
         self._var_profile_top_n.set(str(env.get("CODEX_PROFILE_TOP_N", "25") or "25"))
         self._var_profile_max_steps.set(str(env.get("CODEX_PROFILE_MAX_STEPS", "0") or "0"))
@@ -423,7 +427,7 @@ class DiagnosticsTab:
         env = self._controller.store.env
         try:
             IntSetting("CODEX_LOG_CFG_DELTA_N", default=2, minimum=1).get(env)
-            IntSetting("CODEX_TRACE_DEBUG_MAX_PER_FUNC", default=int(TRACE_DEBUG_DEFAULT), minimum=0).get(env)
+            IntSetting("CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC", default=int(TRACE_DEBUG_DEFAULT), minimum=0).get(env)
             IntSetting("CODEX_PROFILE_TOP_N", default=25, minimum=1, maximum=500).get(env)
             IntSetting("CODEX_PROFILE_MAX_STEPS", default=0, minimum=0, maximum=10_000).get(env)
         except SettingValidationError as exc:

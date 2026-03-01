@@ -275,7 +275,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--trace-debug",
         action="store_true",
-        help="Enable global function-call trace (logger.debug for every Python call).",
+        help="Enable global call-trace debug (logger.debug for every Python call).",
+    )
+    parser.add_argument(
+        "--trace-call-debug",
+        dest="trace_debug",
+        action="store_true",
+        help="Alias for --trace-debug (global function-call trace).",
     )
     parser.add_argument(
         "--trace-debug-max-per-func",
@@ -283,6 +289,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=TRACE_DEBUG_DEFAULT,
         metavar="N",
         help="Maximum call logs per function when trace debug is enabled (<=0 disables limit).",
+    )
+    parser.add_argument(
+        "--trace-call-debug-max-per-func",
+        dest="trace_debug_max_per_func",
+        type=int,
+        default=TRACE_DEBUG_DEFAULT,
+        metavar="N",
+        help="Alias for --trace-debug-max-per-func.",
     )
     parser.add_argument(
         "--trace-contract",
@@ -1004,11 +1018,10 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     # Global call tracing (function-level). This toggles a runtime hook in
     # the API entrypoint; we keep the flag for visibility in the parsed args.
-    if _truthy(env.get("CODEX_TRACE_DEBUG")):
+    if _truthy(env.get("CODEX_TRACE_CALL_DEBUG")):
         ns.trace_debug = True
-
     # Honour max-calls-per-func trace limit from env (used by BIOS/TUI)
-    raw_trace_max = env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC")
+    raw_trace_max = env.get("CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC")
     if raw_trace_max is not None:
         try:
             ns.trace_debug_max_per_func = max(0, int(raw_trace_max))

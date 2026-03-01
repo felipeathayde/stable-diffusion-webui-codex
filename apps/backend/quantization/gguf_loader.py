@@ -26,9 +26,14 @@ from typing import Dict, Any
 import numpy as np
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.memory import memory_management
 
 logger = logging.getLogger("backend.quantization.gguf_loader")
+
+
+def _trace_load_patch_debug_enabled() -> bool:
+    return env_flag("CODEX_TRACE_LOAD_PATCH_DEBUG", default=False)
 
 def _resolve_target_device(device: torch.device | str | None) -> torch.device:
     if device is None:
@@ -268,11 +273,17 @@ def load_gguf_state_dict(
     
     state_dict = {}
     
+    trace_load_patch_debug = _trace_load_patch_debug_enabled() and logger.isEnabledFor(logging.DEBUG)
     for tensor in reader.tensors:
         name = tensor.name
         
-        logger.debug("Tensor: %s, shape=%s, type=%s", 
-                    name, tensor.shape, tensor.tensor_type)
+        if trace_load_patch_debug:
+            logger.debug(
+                "Tensor: %s, shape=%s, type=%s",
+                name,
+                tensor.shape,
+                tensor.tensor_type,
+            )
 
         ggml_type = tensor.tensor_type
         # ReaderTensor.shape stores GGUF dims order; the actual tensor is reshaped as reversed(dims).

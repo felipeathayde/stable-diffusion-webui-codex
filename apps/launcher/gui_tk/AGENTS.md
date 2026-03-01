@@ -22,7 +22,7 @@ Last Review: 2026-02-25
 - `tabs/logs.py` – Log viewer (filter/search/export).
 
 ## Notes
-- UI state (tab index, window geometry, external terminal) is auto-persisted via `LauncherProfileStore.save_meta()`; env changes require explicit “Save Settings”.
+- UI state (tab index, window geometry, external terminal, advanced-controls visibility) is auto-persisted via `LauncherProfileStore.save_meta()`; env changes require explicit “Save Settings”.
 - Logs are structured (`CodexLogRecord`) and rendered incrementally to avoid UI freezes.
 - 2026-01-30: Removed the dev-only Z-Image Diffusers bypass toggle (`CODEX_ZIMAGE_DIFFUSERS_BYPASS`) from `tabs/diagnostics.py`.
 - 2026-01-31: `tabs/diagnostics.py` now exposes global profiling env flags (`CODEX_PROFILE*`) for backend torch-profiler runs.
@@ -50,3 +50,5 @@ Last Review: 2026-02-25
 - 2026-02-23: `ScrollableFrame` now binds wheel events to descendant widgets (not just canvas enter/leave), fixing mouse-wheel scroll over content controls when scrollbars are present.
 - 2026-02-24: Runtime allocator UI now binds only `PYTORCH_CUDA_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF`.
 - 2026-02-25: Runtime Engine advanced controls now include the manual API env overlay enable toggle; new `Manual Env Vars` tab stores plain-text env overlay content for API start/restart only.
+- 2026-03-01: Diagnostics trace controls are split into explicit categories (`CODEX_TRACE_INFERENCE_DEBUG`, `CODEX_TRACE_LOAD_PATCH_DEBUG`, `CODEX_TRACE_CALL_DEBUG`) with dedicated call-trace cap key (`CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC`).
+- 2026-03-01: Footer `Show advanced controls` toggle now persists immediately in launcher meta (`show_advanced_controls`) and restores on next launcher start.

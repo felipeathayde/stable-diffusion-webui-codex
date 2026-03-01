@@ -114,6 +114,7 @@ Status: Active
 - 2026-02-28: Removed `run.py::_try_set_cache_policy(...)` and all callsites in WAN GGUF run/stream entrypoints; cache-policy validation hook imports from `operations_gguf.set_cache_policy` are no longer part of the runtime path.
 - 2026-02-28: Removed `run.py::_try_clear_cache(...)` and all remaining decode/barrier callsites that imported `operations_gguf.clear_cache`; WAN stage/barrier cleanup now uses GC + CUDA empty-cache only.
 - 2026-03-01: WAN22 VAE encode/decode removed CPU fallback branches (`smart_fallback` no longer migrates VAE work to CPU on OOM/non-finite); fallback flow is now CUDA dtype retry only (fail-loud when exhausted). Non-chunked run/stream decode entrypoints now materialize explicit CPU backups of denoise latents before VAE decode to reduce decode-boundary GPU residency.
+- 2026-03-01: WAN22 low->decode transition now enforces an unconditional barrier (`gc.collect` + `cuda_empty_cache`) before VAE decode in txt2vid/img2vid batch+stream and chunked decode-session entry, independent of `offload_level`, to avoid stale CUDA-reserved memory pressure at decode boundary.
 - 2026-02-28: `stage_lora.py::_build_to_load_map(...)` now uses `keymap_wan22_transformer.py::remap_wan22_lora_logical_key(...)` as mapping authority (no direct/remap fallback path), enabling canonical `lora_unet_*` adapter layouts (including `lora_unet_blocks_*`) and keeping unsupported layouts fail-loud via zero-match/coverage guards.
 - 2026-02-22: `text_context.py::get_text_context(...)` now enforces strict `gguf_te_device` contract at runtime (`auto|cpu|cuda|cuda:<index>`; `gpu -> cuda` normalization) and rejects invalid values fail-loud instead of implicit CPU fallback.
 - 2026-02-22: `sdpa.py` now stores SDPA policy/mode/chunk in context-local state (`ContextVar`) instead of process-global mutable dict, preventing cross-request policy bleed under concurrent WAN22 runs.
@@ -134,6 +135,7 @@ Status: Active
 - 2026-02-26: `model.py` now supports `CODEX_WAN22_FP32_COMPUTE=auto|on|off` (bootstrap-env aware, cached parse). `auto` keeps Diffusers-style full-tensor fp32 compute for `torch.float16` and disables it for `torch.bfloat16`; `on` forces previous fp32-parity behavior; `off` keeps transformer/norm/head hot paths in native input dtype. This exists to cut WAN22 peak VRAM on 12GB-class GPUs during bf16 runs without changing launcher/restart determinism.
 - 2026-02-27: WAN22 `model.py` self-attn RoPE now prefers the CUDA in-place op `torch.ops.wan_fused_v1.rope_blhd_` when available (falls back to the pure PyTorch RoPE path when not).
 - 2026-02-27: WAN22 `model.py` FFN now auto-chunks over sequence length to bound the fc1 activation footprint (reduces peak reserved VRAM on 12GB GPUs; perf/memory tradeoff). Residual adds use in-place ops in bf16-native mode.
+- 2026-03-01: WAN22 inference trace gates now use `CODEX_TRACE_INFERENCE_DEBUG` (no legacy env fallback): block-level/debug memory traces in `model.py` and shared VAE decode traces in `runtime/common/vae_codex3d.py` are controlled by this explicit inference-trace env.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

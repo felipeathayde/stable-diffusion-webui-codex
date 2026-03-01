@@ -88,6 +88,10 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_PROFILE_WITH_STACK": os.getenv("CODEX_PROFILE_WITH_STACK", "0"),
         "CODEX_PROFILE_TOP_N": os.getenv("CODEX_PROFILE_TOP_N", "25"),
         "CODEX_PROFILE_MAX_STEPS": os.getenv("CODEX_PROFILE_MAX_STEPS", "0"),
+        "CODEX_TRACE_INFERENCE_DEBUG": os.getenv("CODEX_TRACE_INFERENCE_DEBUG", "0"),
+        "CODEX_TRACE_LOAD_PATCH_DEBUG": os.getenv("CODEX_TRACE_LOAD_PATCH_DEBUG", "0"),
+        "CODEX_TRACE_CALL_DEBUG": os.getenv("CODEX_TRACE_CALL_DEBUG", "0"),
+        "CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC": os.getenv("CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC", "10"),
         "CODEX_MAIN_DEVICE": "auto",
         "CODEX_MOUNT_DEVICE": "auto",
         "CODEX_OFFLOAD_DEVICE": "cpu",
@@ -161,6 +165,7 @@ class LauncherMeta:
     tab_index: int = 0
     active_model: str = DEFAULT_MODEL_NAME
     window_geometry: str = ""
+    show_advanced_controls: bool = False
     manual_api_env_enabled: bool = False
     manual_api_env_text: str = DEFAULT_MANUAL_API_ENV_TEXT
 
@@ -544,6 +549,7 @@ def _load_meta(root: Path) -> LauncherMeta:
         tab_index=int(data.get("tab_index", 0)),
         active_model=str(data.get("active_model", DEFAULT_MODEL_NAME)),
         window_geometry=str(data.get("window_geometry", "") or ""),
+        show_advanced_controls=bool(data.get("show_advanced_controls", False)),
         manual_api_env_enabled=bool(data.get("manual_api_env_enabled", False)),
         manual_api_env_text=str(data.get("manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     )
@@ -556,6 +562,7 @@ def _write_meta(root: Path, meta: LauncherMeta) -> None:
         "sdpa_policy": meta.sdpa_policy,
         "tab_index": meta.tab_index,
         "active_model": meta.active_model,
+        "show_advanced_controls": bool(getattr(meta, "show_advanced_controls", False)),
         "manual_api_env_enabled": bool(getattr(meta, "manual_api_env_enabled", False)),
         "manual_api_env_text": str(getattr(meta, "manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     }

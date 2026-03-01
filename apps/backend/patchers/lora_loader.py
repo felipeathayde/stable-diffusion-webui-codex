@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Mapping, MutableMapping, Sequence, Tuple
 import torch
 from tqdm.auto import tqdm
 
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config.lora_merge_mode import LoraMergeMode, read_lora_merge_mode
 from apps.backend.infra.config.lora_refresh_signature import (
     LoraRefreshSignatureMode,
@@ -42,6 +43,10 @@ from .lora_merge import merge_lora_to_weight
 from .lora_types import LoraPatchEntry
 
 logger = logging.getLogger("backend.patchers.lora")
+
+
+def _trace_load_patch_debug_enabled() -> bool:
+    return env_flag("CODEX_TRACE_LOAD_PATCH_DEBUG", default=False)
 
 
 def get_parameter_devices(model) -> Dict[str, torch.device]:
@@ -90,11 +95,13 @@ class CodexLoraLoader:
             if offload_device is None
             else torch.device(offload_device)
         )
+        trace_load_patch_debug = _trace_load_patch_debug_enabled() and logger.isEnabledFor(logging.DEBUG)
         if signature == self.loaded_signature and not force_refresh:
-            logger.debug("LoRA loader refresh skipped (no changes).")
+            if trace_load_patch_debug:
+                logger.debug("LoRA loader refresh skipped (no changes).")
             return
 
-        grouped = self._group_patches(lora_patches)
+        grouped = self._group_patches(lora_patches, trace_load_patch_debug=trace_load_patch_debug)
         memory_management.manager.signal_empty_cache = True
         parameter_devices = get_parameter_devices(self.model)
 
@@ -199,7 +206,8 @@ class CodexLoraLoader:
 
                 if progress is not None:
                     progress.update(len(entries))
-                logger.debug("Applied %d LoRA patches to %s", len(entries), param_key)
+                if trace_load_patch_debug:
+                    logger.debug("Applied %d LoRA patches to %s", len(entries), param_key)
 
             self.loaded_signature = signature
         finally:
@@ -230,26 +238,31 @@ class CodexLoraLoader:
         parent_layer.codex_online_loras[child_key] = list(entries)
         if parent_layer not in self.online_parents:
             self.online_parents.append(parent_layer)
-        logger.debug("Registered %d online LoRA patches for %s", len(entries), param_key)
+        trace_load_patch_debug = _trace_load_patch_debug_enabled() and logger.isEnabledFor(logging.DEBUG)
+        if trace_load_patch_debug:
+            logger.debug("Registered %d online LoRA patches for %s", len(entries), param_key)
 
     def _group_patches(
         self,
         lora_patches: Mapping[Tuple[str, float, float, bool], Dict[str, List[LoraPatchEntry]]],
+        *,
+        trace_load_patch_debug: bool,
     ) -> Dict[Tuple[str, bool], List[LoraPatchEntry]]:
         grouped: Dict[Tuple[str, bool], List[LoraPatchEntry]] = {}
         for (filename, strength_patch, strength_model, online_mode), param_map in lora_patches.items():
             for param_key, patches in param_map.items():
                 target = grouped.setdefault((param_key, online_mode), [])
                 target.extend(patches)
-                logger.debug(
-                    "Queued %d patches for %s (file=%s strength_patch=%.3f strength_model=%.3f online=%s)",
-                    len(patches),
-                    param_key,
-                    filename,
-                    strength_patch,
-                    strength_model,
-                    online_mode,
-                )
+                if trace_load_patch_debug:
+                    logger.debug(
+                        "Queued %d patches for %s (file=%s strength_patch=%.3f strength_model=%.3f online=%s)",
+                        len(patches),
+                        param_key,
+                        filename,
+                        strength_patch,
+                        strength_model,
+                        online_mode,
+                    )
         return grouped
 
     def _signature(

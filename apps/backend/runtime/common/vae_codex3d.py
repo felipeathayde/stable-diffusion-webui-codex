@@ -24,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -34,10 +35,34 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from torch import nn
 
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.common.vae_ldm import DiagonalGaussianDistribution
 from apps.backend.runtime.state_dict.keymap_wan22_vae import remap_wan22_vae_3d_state_dict
 
 _CACHE_T = 2
+
+
+def _vae_trace_verbose_enabled() -> bool:
+    return env_flag("CODEX_TRACE_INFERENCE_DEBUG", default=False)
+
+
+def _cuda_mem_snapshot_str(device: torch.device) -> str:
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return "cuda_mem=n/a"
+    try:
+        alloc_mb = float(torch.cuda.memory_allocated(device)) / (1024**2)
+        reserved_mb = float(torch.cuda.memory_reserved(device)) / (1024**2)
+        max_alloc_mb = float(torch.cuda.max_memory_allocated(device)) / (1024**2)
+        max_reserved_mb = float(torch.cuda.max_memory_reserved(device)) / (1024**2)
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+        free_mb = float(free_bytes) / (1024**2)
+        total_mb = float(total_bytes) / (1024**2)
+        return (
+            f"alloc={alloc_mb:.0f}MB reserved={reserved_mb:.0f}MB free={free_mb:.0f}MB total={total_mb:.0f}MB "
+            f"max_alloc={max_alloc_mb:.0f}MB max_reserved={max_reserved_mb:.0f}MB"
+        )
+    except Exception:
+        return "cuda_mem=unavailable"
 
 
 def remap_codex3d_vae_state_dict(
@@ -449,6 +474,11 @@ class Codex3DDecoder(nn.Module):
         _ = first_chunk
         if feat_cache is not None and feat_idx is None:
             raise RuntimeError("AutoencoderCodex3D decoder cache requires feat_idx.")
+        trace_logger = logging.getLogger("backend.runtime.wan22.vae_codex3d")
+        trace_enabled = _vae_trace_verbose_enabled() and trace_logger.isEnabledFor(logging.DEBUG)
+        middle_count = int(len(self.middle))
+        upsample_count = int(len(self.upsamples))
+        block_total = middle_count + upsample_count
 
         if feat_cache is not None:
             idx = feat_idx[0]
@@ -461,21 +491,83 @@ class Codex3DDecoder(nn.Module):
             feat_idx[0] += 1
         else:
             x = self.conv1(x)
+        if trace_enabled:
+            trace_logger.debug(
+                "[wan22.vae.trace] decoder.conv1: x_shape=%s x_dtype=%s x_device=%s %s",
+                tuple(x.shape),
+                str(x.dtype),
+                str(x.device),
+                _cuda_mem_snapshot_str(x.device),
+            )
 
-        for layer in self.middle:
+        for layer_index, layer in enumerate(self.middle):
+            block_number = int(layer_index) + 1
+            if trace_enabled:
+                trace_logger.debug(
+                    "[wan22.vae.trace] decoder.block[%d/%d] pre: section=middle layer=%s x_shape=%s x_dtype=%s x_device=%s %s",
+                    block_number,
+                    block_total,
+                    layer.__class__.__name__,
+                    tuple(x.shape),
+                    str(x.dtype),
+                    str(x.device),
+                    _cuda_mem_snapshot_str(x.device),
+                )
             if isinstance(layer, Codex3DResidualBlock):
                 x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
             else:
                 x = layer(x)
+            if trace_enabled:
+                trace_logger.debug(
+                    "[wan22.vae.trace] decoder.block[%d/%d] post: section=middle layer=%s x_shape=%s x_dtype=%s x_device=%s %s",
+                    block_number,
+                    block_total,
+                    layer.__class__.__name__,
+                    tuple(x.shape),
+                    str(x.dtype),
+                    str(x.device),
+                    _cuda_mem_snapshot_str(x.device),
+                )
 
-        for layer in self.upsamples:
+        for layer_index, layer in enumerate(self.upsamples):
+            block_number = middle_count + int(layer_index) + 1
+            if trace_enabled:
+                trace_logger.debug(
+                    "[wan22.vae.trace] decoder.block[%d/%d] pre: section=upsample layer=%s x_shape=%s x_dtype=%s x_device=%s %s",
+                    block_number,
+                    block_total,
+                    layer.__class__.__name__,
+                    tuple(x.shape),
+                    str(x.dtype),
+                    str(x.device),
+                    _cuda_mem_snapshot_str(x.device),
+                )
             if isinstance(layer, (Codex3DResidualBlock, Codex3DResample)):
                 x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
             else:
                 x = layer(x)
+            if trace_enabled:
+                trace_logger.debug(
+                    "[wan22.vae.trace] decoder.block[%d/%d] post: section=upsample layer=%s x_shape=%s x_dtype=%s x_device=%s %s",
+                    block_number,
+                    block_total,
+                    layer.__class__.__name__,
+                    tuple(x.shape),
+                    str(x.dtype),
+                    str(x.device),
+                    _cuda_mem_snapshot_str(x.device),
+                )
 
         x = self.head[0](x)
         x = self.head[1](x)
+        if trace_enabled:
+            trace_logger.debug(
+                "[wan22.vae.trace] decoder.head: x_shape=%s x_dtype=%s x_device=%s %s",
+                tuple(x.shape),
+                str(x.dtype),
+                str(x.device),
+                _cuda_mem_snapshot_str(x.device),
+            )
         conv_out = self.head[2]
         if feat_cache is not None:
             idx = feat_idx[0]
@@ -486,8 +578,25 @@ class Codex3DDecoder(nn.Module):
             x = conv_out(x, cached if torch.is_tensor(cached) else None)
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
+            if trace_enabled:
+                trace_logger.debug(
+                    "[wan22.vae.trace] decoder.out: x_shape=%s x_dtype=%s x_device=%s %s",
+                    tuple(x.shape),
+                    str(x.dtype),
+                    str(x.device),
+                    _cuda_mem_snapshot_str(x.device),
+                )
             return x
-        return conv_out(x)
+        out = conv_out(x)
+        if trace_enabled:
+            trace_logger.debug(
+                "[wan22.vae.trace] decoder.out: x_shape=%s x_dtype=%s x_device=%s %s",
+                tuple(out.shape),
+                str(out.dtype),
+                str(out.device),
+                _cuda_mem_snapshot_str(out.device),
+            )
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,6 +775,8 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                 "AutoencoderCodex3D decode expects 4D or 5D latents ([B,C,H,W] or [B,C,T,H,W]), "
                 f"got shape={tuple(z.shape)}."
             )
+        trace_logger = logging.getLogger("backend.runtime.wan22.vae_codex3d")
+        trace_enabled = _vae_trace_verbose_enabled() and trace_logger.isEnabledFor(logging.DEBUG)
         _, _, num_frame, _, _ = z.shape
         conv2_cache: torch.Tensor | None = None
         conv2_padding = getattr(self.conv2, "_padding", (0, 0, 0, 0, 0, 0))
@@ -675,6 +786,16 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                 "AutoencoderCodex3D decode encountered invalid conv2 temporal cache size "
                 f"(cache_t={conv2_cache_t})."
             )
+        if trace_enabled:
+            trace_logger.debug(
+                "[wan22.vae.trace] decode.start: z_shape=%s z_dtype=%s z_device=%s frames=%d conv2_cache_t=%d %s",
+                tuple(z.shape),
+                str(z.dtype),
+                str(z.device),
+                int(num_frame),
+                conv2_cache_t,
+                _cuda_mem_snapshot_str(z.device),
+            )
         self.clear_cache()
         out_chunks: list[torch.Tensor] = []
         chunk_count = 0
@@ -682,6 +803,17 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
             for index in range(int(num_frame)):
                 self._conv_idx = [0]
                 z_chunk = z[:, :, index : index + 1, :, :]
+                if trace_enabled:
+                    trace_logger.debug(
+                        "[wan22.vae.trace] decode.frame[%d/%d] pre: z_chunk_shape=%s z_chunk_dtype=%s z_chunk_device=%s conv2_cache_present=%s %s",
+                        int(index) + 1,
+                        int(num_frame),
+                        tuple(z_chunk.shape),
+                        str(z_chunk.dtype),
+                        str(z_chunk.device),
+                        str(conv2_cache is not None),
+                        _cuda_mem_snapshot_str(z_chunk.device),
+                    )
                 if conv2_cache_t > 0:
                     x_chunk = self.conv2(z_chunk, conv2_cache)
                     conv2_cache_next = z_chunk[:, :, -conv2_cache_t:, :, :].clone()
@@ -709,11 +841,23 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                     chunk_callback(torch.clamp(out_chunk, min=-1.0, max=1.0), int(index))
                 else:
                     out_chunks.append(out_chunk)
+                if trace_enabled:
+                    trace_logger.debug(
+                        "[wan22.vae.trace] decode.frame[%d/%d] post: out_chunk_shape=%s out_chunk_dtype=%s out_chunk_device=%s %s",
+                        int(index) + 1,
+                        int(num_frame),
+                        tuple(out_chunk.shape),
+                        str(out_chunk.dtype),
+                        str(out_chunk.device),
+                        _cuda_mem_snapshot_str(out_chunk.device),
+                    )
                 del x_chunk
                 del z_chunk
                 del out_chunk
         finally:
             self.clear_cache()
+            if trace_enabled:
+                trace_logger.debug("[wan22.vae.trace] decode.finalize: cache cleared")
         if chunk_count < 1:
             raise RuntimeError("AutoencoderCodex3D decode produced no chunks.")
         if chunk_callback is not None:

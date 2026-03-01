@@ -291,10 +291,12 @@ def _stage_transition_barrier(
     logger: Any,
     label: str,
     offload_level: int,
+    force_clear: bool = False,
 ) -> None:
     log = get_logger(logger)
     log_cuda_mem(log, label=f"{label}:pre-barrier")
-    if _should_clear_stage_cache(offload_level=offload_level):
+    should_clear = bool(force_clear) or _should_clear_stage_cache(offload_level=offload_level)
+    if should_clear:
         gc.collect()
         cuda_empty_cache(log, label=f"{label}-barrier")
     log_cuda_mem(log, label=f"{label}:post-barrier")
@@ -1329,6 +1331,12 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             logger=log,
         )
 
+    _stage_transition_barrier(
+        logger=log,
+        label="txt2vid:low->decode",
+        offload_level=lvl,
+        force_clear=True,
+    )
     latents_lo_decode = _backup_decode_latents(latents=latents_lo, logger=log, source="run_txt2vid")
     del latents_lo
     frames = decode_latents_to_frames(
@@ -1540,6 +1548,12 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             logger=log,
         )
 
+    _stage_transition_barrier(
+        logger=log,
+        label="stream_txt2vid:low->decode",
+        offload_level=lvl,
+        force_clear=True,
+    )
     latents_lo_decode_backup = _backup_decode_latents(
         latents=latents_lo_decode,
         logger=log,
@@ -1819,6 +1833,12 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             logger=log,
         )
 
+    _stage_transition_barrier(
+        logger=log,
+        label="img2vid:low->decode",
+        offload_level=lvl,
+        force_clear=True,
+    )
     latents_lo_decode_backup = _backup_decode_latents(
         latents=latents_lo_decode,
         logger=log,
@@ -2075,6 +2095,12 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             logger=log,
         )
 
+    _stage_transition_barrier(
+        logger=log,
+        label="stream_img2vid:low->decode",
+        offload_level=lvl,
+        force_clear=True,
+    )
     latents_lo_decode_backup = _backup_decode_latents(
         latents=latents_lo_decode,
         logger=log,
@@ -2702,6 +2728,12 @@ def stream_img2vid_chunked(
                 nxt = nxt.resize(src.size)
             return Image.blend(src, nxt, max(0.0, min(1.0, float(alpha))))
 
+        _stage_transition_barrier(
+            logger=log,
+            label="chunked_img2vid:low->decode",
+            offload_level=lvl,
+            force_clear=True,
+        )
         decode_session = None
         try:
             try:

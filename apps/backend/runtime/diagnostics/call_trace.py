@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `enable` (function): Enables global call tracing (optionally configuring caps) and installs the profiler hooks.
 - `disable` (function): Disables call tracing and restores prior profiler hooks.
 - `_env_trace_limit` (function): Reads the max-per-func cap from environment variables.
-- `_env_trace_module_prefixes` (function): Reads module-scope prefixes from environment (`CODEX_TRACE_DEBUG_MODULE_PREFIXES`).
+- `_env_trace_module_prefixes` (function): Reads module-scope prefixes from environment (`CODEX_TRACE_CALL_DEBUG_MODULE_PREFIXES`).
 - `enable_from_env` (function): Enables tracing when env flags request it (launcher/API entrypoint integration).
 """
 
@@ -57,7 +57,7 @@ def _set_module_prefixes(prefixes: tuple[str, ...] | None) -> None:
 
 
 def _env_trace_module_prefixes() -> tuple[str, ...] | None:
-    raw = os.getenv("CODEX_TRACE_DEBUG_MODULE_PREFIXES")
+    raw = os.getenv("CODEX_TRACE_CALL_DEBUG_MODULE_PREFIXES")
     if raw is None:
         return _DEFAULT_MODULE_PREFIXES
     tokens = [part.strip() for part in str(raw).split(",") if part.strip()]
@@ -210,7 +210,7 @@ def disable() -> None:  # pragma: no cover - runtime hook
 
 
 def _env_trace_limit() -> Optional[int]:
-    raw = os.getenv("CODEX_TRACE_DEBUG_MAX_PER_FUNC")
+    raw = os.getenv("CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC")
     if raw is None:
         return None
     try:
@@ -220,8 +220,8 @@ def _env_trace_limit() -> Optional[int]:
 
 
 def enable_from_env() -> None:
-    """Enable when CODEX_TRACE_DEBUG=1 (or truthy)."""
-    if env_flag("CODEX_TRACE_DEBUG", default=False):
+    """Enable when CODEX_TRACE_CALL_DEBUG=1 (or truthy)."""
+    if env_flag("CODEX_TRACE_CALL_DEBUG", default=False):
         enable(max_calls_per_func=_env_trace_limit())
 
 

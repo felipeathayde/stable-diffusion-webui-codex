@@ -22,6 +22,7 @@ Last Review: 2026-02-25
 - Service command definitions should remain minimal and composition-friendly—prefer adding options via profile/env rather than bespoke subprocess code.
 - The Tk GUI uses `logo.png` for `iconphoto` and (on Windows) `logo.ico` for `iconbitmap` so the taskbar icon is branded.
 - Launcher meta (`.sangoi/launcher/meta.json`) stores `window_geometry` so the Tk GUI can restore size/position across runs.
+- Launcher meta (`.sangoi/launcher/meta.json`) stores `window_geometry` and `show_advanced_controls` so the Tk GUI restores both window layout and advanced-controls visibility across runs.
 - 2025-11-02: Windows “Services in new terminal” now wraps commands with `cmd.exe /K` and leaves stdin attached so the console stays open after exit for manual inspection.
 - 2025-11-02: Launcher profiles persist diffusion/TE/VAE device + dtype choices via the Codex options snapshot, and `services.py` now forwards them as CLI flags (`--core-device`, `--te-device`, `--vae-device`, etc.) when spawning the API instead of relying on env vars.
 - 2025-11-03: Launcher forwards conditioning diagnostics via `--debug-conditioning` when `CODEX_DEBUG_COND` is enabled in profiles/TUI.
@@ -56,3 +57,4 @@ Last Review: 2026-02-25
 - 2026-02-23: `profiles.py` now guards env map reads/writes with an internal `RLock` to keep launcher env snapshots deterministic under concurrent GUI/background access.
 - 2026-02-24: Launcher allocator contract is `PYTORCH_CUDA_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (`run-webui.sh/.bat`, `profiles.py`, `services.py`, Tk runtime tab).
 - 2026-02-25: Launcher profile meta now persists API-only manual env overlay settings (`manual_api_env_enabled`, `manual_api_env_text`), with strict `KEY=VALUE` parsing and fail-loud startup errors when invalid.
+- 2026-03-01: Launcher core defaults now include split trace env knobs (`CODEX_TRACE_INFERENCE_DEBUG`, `CODEX_TRACE_LOAD_PATCH_DEBUG`, `CODEX_TRACE_CALL_DEBUG`, `CODEX_TRACE_CALL_DEBUG_MAX_PER_FUNC`) and the Tk diagnostics tab maps directly to these explicit keys.

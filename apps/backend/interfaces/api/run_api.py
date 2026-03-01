@@ -19,7 +19,7 @@ Allocator bootstrap contract is `PYTORCH_CUDA_ALLOC_CONF` only.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
-- `_parse_trace_max` (function): Parses `--trace-debug-max-per-func` into a non-negative int (or `None`).
+- `_parse_trace_max` (function): Parses `--trace-debug-max-per-func` / `--trace-call-debug-max-per-func` into a non-negative int (or `None`).
 - `ensure_initialized` (function): Performs early runtime bootstrap (repo root/sys.path, optional tracing/logging hooks) before serving.
 - `_SuppressUvicornAccessNoiseFilter` (class): Logging filter to reduce uvicorn access-log spam for noisy endpoints.
 - `_install_uvicorn_access_noise_filter` (function): Installs `_SuppressUvicornAccessNoiseFilter` when configured.
@@ -80,6 +80,8 @@ def _cli_arg_value(argv: Sequence[str], flag: str) -> Optional[str]:
 def _parse_trace_max(argv: Sequence[str]) -> Optional[int]:
     value = _cli_arg_value(argv, "--trace-debug-max-per-func")
     if value is None:
+        value = _cli_arg_value(argv, "--trace-call-debug-max-per-func")
+    if value is None:
         return None
     try:
         numeric = int(value)
@@ -87,10 +89,15 @@ def _parse_trace_max(argv: Sequence[str]) -> Optional[int]:
         return None
     return max(0, numeric)
 
-# Early tracing hook: if --trace-debug is present (or env truthy), configure
+# Early tracing hook: if call-trace debug is requested (CLI/env), configure
 # logging at DEBUG and enable global call tracing before importing FastAPI/uvicorn.
 try:
-    if ("--trace-debug" in sys.argv) or (os.getenv("CODEX_TRACE_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}):
+    call_trace_requested = (
+        ("--trace-debug" in sys.argv)
+        or ("--trace-call-debug" in sys.argv)
+        or (os.getenv("CODEX_TRACE_CALL_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"})
+    )
+    if call_trace_requested:
         from apps.backend.runtime import logging as runtime_logging  # type: ignore
         runtime_logging.setup_logging(level="DEBUG")
         from apps.backend.runtime.diagnostics import call_trace as _call_trace  # type: ignore
@@ -98,7 +105,7 @@ try:
         _call_trace.enable(max_calls_per_func=max_per_func)
 except Exception:
     # Never block startup because of tracing/logging issues, but don't fail silently.
-    _LOG.exception("startup: failed to enable trace-debug")
+    _LOG.exception("startup: failed to enable call-trace debug")
 
 try:
     from colorama import Fore, Style  # type: ignore
@@ -728,7 +735,7 @@ def _enable_trace_debug(ns: Any) -> None:
 
             _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
     except Exception:
-        _LOG.exception("startup: failed to enable trace debug")
+        _LOG.exception("startup: failed to enable call-trace debug")
 
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:

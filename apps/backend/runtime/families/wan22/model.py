@@ -63,7 +63,7 @@ logger = logging.getLogger("backend.runtime.wan22.model")
 
 
 def _wan_trace_verbose_enabled() -> bool:
-    return env_flag("CODEX_TRACE_DEBUG", default=False)
+    return env_flag("CODEX_TRACE_INFERENCE_DEBUG", default=False)
 
 
 @lru_cache(maxsize=1)

@@ -70,7 +70,9 @@ class CodexLauncherApp(tk.Tk):
 
         self._unsaved_changes = False
         self._status_text = tk.StringVar(value="Ready")
-        self._show_advanced_controls = tk.BooleanVar(value=False)
+        self._show_advanced_controls = tk.BooleanVar(
+            value=bool(getattr(self._controller.store.meta, "show_advanced_controls", False))
+        )
 
         apply_style(self, self._palette)
         self.columnconfigure(0, weight=1)
@@ -212,6 +214,17 @@ class CodexLauncherApp(tk.Tk):
 
     def _on_show_advanced_controls_changed(self) -> None:
         self._apply_advanced_controls_visibility()
+        enabled = bool(self._show_advanced_controls.get())
+        if bool(getattr(self._controller.store.meta, "show_advanced_controls", False)) == enabled:
+            return
+        try:
+            self._controller.persist_show_advanced_controls(enabled)
+        except Exception as exc:
+            self._controller.log_buffer.log(
+                "launcher",
+                f"failed to persist advanced-controls state: {exc}",
+                stream="event",
+            )
 
     def _mark_changed(self) -> None:
         self._unsaved_changes = True
@@ -310,6 +323,7 @@ class CodexLauncherApp(tk.Tk):
         self._manual_env_vars_tab.reload()
         self._diagnostics_tab.reload()
         self._logs_tab.reload()
+        self._show_advanced_controls.set(bool(getattr(self._controller.store.meta, "show_advanced_controls", False)))
         self._apply_advanced_controls_visibility()
         self._unsaved_changes = False
         self._set_status("Reverted")
@@ -358,6 +372,7 @@ class CodexLauncherApp(tk.Tk):
 
     def _persist_ui_state(self) -> None:
         self._persist_window_geometry()
+        self._persist_advanced_controls()
 
         tabs = list(self._notebook.tabs())
         current = self._notebook.select()
@@ -384,6 +399,19 @@ class CodexLauncherApp(tk.Tk):
             self._controller.persist_window_geometry(geometry)
         except Exception as exc:
             self._controller.log_buffer.log("launcher", f"failed to persist window geometry: {exc}", stream="event")
+
+    def _persist_advanced_controls(self) -> None:
+        enabled = bool(self._show_advanced_controls.get())
+        if bool(getattr(self._controller.store.meta, "show_advanced_controls", False)) == enabled:
+            return
+        try:
+            self._controller.persist_show_advanced_controls(enabled)
+        except Exception as exc:
+            self._controller.log_buffer.log(
+                "launcher",
+                f"failed to persist advanced-controls state: {exc}",
+                stream="event",
+            )
 
     def _on_tab_changed(self, _event: tk.Event) -> None:
         if self._tab_change_guard:

@@ -33,6 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import gc
 from dataclasses import replace
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -766,7 +767,14 @@ def generate_img2img(
                         finalize_tiling(tiling_applied, old_tiled)
 
                     last_samples = samples
-                    decoded = decode_latent_batch(processing.sd_model, samples)
+                    gc.collect()
+                    memory_management.manager.soft_empty_cache(force=True)
+                    decoded = decode_latent_batch(
+                        processing.sd_model,
+                        samples,
+                        target_device=memory_management.manager.cpu_device,
+                        stage="img2img.mask_region_split.decode(pre)",
+                    )
                     patch_images = latents_to_pil(decoded)
                     composited = apply_inpaint_full_res_composite(patch_images, plan=masked_bundle.full_res)
                     if len(composited) != 1:
@@ -848,7 +856,14 @@ def generate_img2img(
         finalize_tiling(tiling_applied, old_tiled)
 
     if full_res_plan is not None:
-        decoded = decode_latent_batch(processing.sd_model, samples)
+        gc.collect()
+        memory_management.manager.soft_empty_cache(force=True)
+        decoded = decode_latent_batch(
+            processing.sd_model,
+            samples,
+            target_device=memory_management.manager.cpu_device,
+            stage="img2img.full_res.decode(pre)",
+        )
         images = latents_to_pil(decoded)
         composited = apply_inpaint_full_res_composite(images, plan=full_res_plan)
         return GenerationResult(

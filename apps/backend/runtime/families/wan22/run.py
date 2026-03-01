@@ -112,9 +112,10 @@ _WAN_CONTINUITY_PROFILE_SVI2_PRO = "svi2_pro"
 _WAN_CHUNK_HYBRID_RAM_BUDGET_MB = 2048.0
 
 
-def _resolve_wan_fused_summary_fields_for_run() -> tuple[str, str, str]:
+def _resolve_wan_fused_summary_context_for_run() -> tuple[tuple[str, str, str], bool]:
     fused_mode = resolve_effective_wan_fused_mode(None)
-    return resolve_effective_wan_fused_attn_core(fused_mode)
+    should_emit_when_idle = str(getattr(fused_mode, "value", fused_mode)).strip().lower() != "off"
+    return resolve_effective_wan_fused_attn_core(fused_mode), should_emit_when_idle
 
 
 class _WanFusedSummaryLogger:
@@ -154,14 +155,18 @@ def _with_wan_fused_runtime_metrics(func):
         if cfg is None and args:
             cfg = args[0]
         log = get_logger(kwargs.get("logger", None))
-        summary_fields = _resolve_wan_fused_summary_fields_for_run()
+        summary_fields, emit_summary_when_idle = _resolve_wan_fused_summary_context_for_run()
         summary_log = _WanFusedSummaryLogger(log, summary_fields=summary_fields)
         run_label = _resolve_wan_fused_run_label(func.__name__, cfg)
         wan_fused_runtime_metrics_reset(run_label=run_label)
         try:
             result = func(*args, **kwargs)
         except Exception:
-            wan_fused_runtime_metrics_log_summary(logger_obj=summary_log, reset=True)
+            wan_fused_runtime_metrics_log_summary(
+                logger_obj=summary_log,
+                reset=True,
+                emit_when_idle=emit_summary_when_idle,
+            )
             raise
 
         if inspect.isgenerator(result):
@@ -169,11 +174,19 @@ def _with_wan_fused_runtime_metrics(func):
                 try:
                     yield from result
                 finally:
-                    wan_fused_runtime_metrics_log_summary(logger_obj=summary_log, reset=True)
+                    wan_fused_runtime_metrics_log_summary(
+                        logger_obj=summary_log,
+                        reset=True,
+                        emit_when_idle=emit_summary_when_idle,
+                    )
 
             return _generator()
 
-        wan_fused_runtime_metrics_log_summary(logger_obj=summary_log, reset=True)
+        wan_fused_runtime_metrics_log_summary(
+            logger_obj=summary_log,
+            reset=True,
+            emit_when_idle=emit_summary_when_idle,
+        )
         return result
 
     return _wrapped
@@ -217,6 +230,7 @@ def _should_clear_stage_cache(*, offload_level: int) -> bool:
     """Return whether WAN stage transitions should force cache clearing.
 
     Policy:
+    - Stage teardown always unloads mounted stage models; `offload_level` only gates GC/cache barriers.
     - `offload_level >= 3`: always clear (aggressive profile).
     - `offload_level == 2`: clear only when runtime signals cache pressure.
     - `offload_level <= 1`: do not clear at stage boundaries.

@@ -160,6 +160,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _IMG2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.IMG2VID_ALL)
     _WAN_STAGE_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
+    _WAN_RUNTIME_ALLOWED_DEVICES = {"cpu", "cuda"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
     _GUIDANCE_OPTION_KEYS = {
         "apg_enabled",
@@ -176,6 +177,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         r"<\s*sampler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
         re.IGNORECASE,
     )
+    _WAN_PROMPT_LORA_TAG_RE = re.compile(r"<\s*lora\s*:", re.IGNORECASE)
     from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
     _ANIMA_ALLOWED_SAMPLERS = tuple(ENGINE_SURFACES[SemanticEngine.ANIMA].samplers or ())
@@ -346,7 +348,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         prompt: str,
         negative_prompt: str | None,
     ) -> tuple[str, str | None, list[dict[str, object]]]:
-        del stage_key
+        if _WAN_PROMPT_LORA_TAG_RE.search(prompt):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{stage_key}.prompt' must not contain '<lora:...>' tags; "
+                    f"use '{stage_key}.loras[]' with sha/weight entries."
+                ),
+            )
+        if negative_prompt is not None and _WAN_PROMPT_LORA_TAG_RE.search(negative_prompt):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{stage_key}.negative_prompt' must not contain '<lora:...>' tags; "
+                    f"use '{stage_key}.loras[]' with sha/weight entries."
+                ),
+            )
         return prompt, negative_prompt, []
 
     def _normalize_wan_stage_loras(
@@ -379,6 +396,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=f"'{stage_key}.loras' must be an array when provided",
             )
+        from apps.backend.inventory.scanners.loras import iter_lora_files
+
+        known_lora_paths = {
+            os.path.normcase(os.path.realpath(os.path.expanduser(path)))
+            for path in iter_lora_files()
+        }
+        if not known_lora_paths:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{stage_key}.loras' was provided, but no LoRA assets are available in inventory.",
+            )
 
         normalized_loras: list[dict[str, object]] = []
         for index, raw_lora in enumerate(raw_loras):
@@ -394,6 +422,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(
                     status_code=409,
                     detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}",
+                )
+            canonical_lora_path = os.path.normcase(
+                os.path.realpath(os.path.expanduser(str(lora_path)))
+            )
+            if canonical_lora_path not in known_lora_paths:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"'{lora_context}.sha' resolved to a non-LoRA asset path: {lora_path}. "
+                        "Select a SHA from inventory.loras."
+                    ),
                 )
             raw_weight = raw_lora.get("weight")
             if raw_weight is None:
@@ -2341,20 +2380,41 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         return req, engine_key, model_override
 
-    def _parse_explicit_device(payload: Dict[str, Any]) -> str:
+    def _parse_explicit_device(
+        payload: Dict[str, Any],
+        *,
+        allowed_devices: Optional[set[str]] = None,
+        route_label: str = "generation",
+    ) -> str:
         """Parse/validate the per-request device selection (fail loud).
 
         Note: do not apply `switch_primary_device()` here; apply it only when the task actually starts running
         (single-flight-safe).
         """
         try:
-            return parse_device_from_payload(payload)
+            device = parse_device_from_payload(payload)
         except ValueError as exc:
             _router_log.warning("generation device selection validation failed: %s", exc)
             raise HTTPException(
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid 'device' selection"),
             ) from None
+        if allowed_devices is not None and device not in allowed_devices:
+            allowed = "|".join(sorted(allowed_devices))
+            _router_log.warning(
+                "%s device selection rejected: resolved_device=%s allowed=%s",
+                route_label,
+                device,
+                allowed,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{route_label} supports only {allowed} "
+                    "(or auto resolving to one of those backends)."
+                ),
+            )
+        return device
 
     _ORCH = InferenceOrchestrator()
 
@@ -3812,6 +3872,27 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
                 success = False
             finally:
+                if success:
+                    result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
+                    if not isinstance(result_obj, dict):
+                        invariant_err = RuntimeError("task completed without result payload")
+                        entry.error = "engine error: task completed without result payload"
+                        success = False
+                        emit_contract_trace(
+                            task_id=task_id,
+                            mode=mode,
+                            stage="error",
+                            action="error",
+                            component="task",
+                            device=device,
+                            storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                            compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                            strict=True,
+                            fallback_enabled=fallback_enabled,
+                            fallback_used=_fallback_used_now(),
+                            prompt_hash_value=prompt_hash_value,
+                            meta=error_meta(invariant_err),
+                        )
                 entry.mark_finished(success=success)
                 entry.schedule_cleanup(task_id)
                 emit_contract_trace(
@@ -3889,7 +3970,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
 
-        device = _parse_explicit_device(payload)
+        device = _parse_explicit_device(
+            payload,
+            allowed_devices=_WAN_RUNTIME_ALLOWED_DEVICES,
+            route_label="WAN video",
+        )
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-{uuid4().hex})"
@@ -3903,7 +3988,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
 
-        device = _parse_explicit_device(payload)
+        device = _parse_explicit_device(
+            payload,
+            allowed_devices=_WAN_RUNTIME_ALLOWED_DEVICES,
+            route_label="WAN video",
+        )
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-img2img-{uuid4().hex})"

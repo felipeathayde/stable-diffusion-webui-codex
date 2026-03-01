@@ -83,9 +83,12 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
                     "last_event_id": entry.last_event_id(),
                 }
             entry.schedule_cleanup(task_id)
-            out = entry.result or {"status": "completed", "result": {}}
+            out = entry.result
             if not isinstance(out, dict):
-                raise RuntimeError("Task result payload must be a dict.")
+                raise RuntimeError("Task completed without result payload.")
+            result_obj = out.get("result")
+            if not isinstance(result_obj, dict):
+                raise RuntimeError("Task result payload must include a dict 'result' field.")
             out.setdefault("last_event_id", entry.last_event_id())
             return out
         snap = entry.snapshot_running()
@@ -153,11 +156,13 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
                             }
                             yield _sse(event_id=int(primary_id), json_payload=json.dumps(err_payload))
                         else:
-                            result_payload: dict[str, Any] = {"type": TaskEventType.RESULT.value, "images": [], "info": {}}
-                            if isinstance(entry.result, dict):
-                                result_obj = entry.result.get("result")
-                                if isinstance(result_obj, dict):
-                                    result_payload.update(result_obj)
+                            if not isinstance(entry.result, dict):
+                                raise RuntimeError("Task completed without result payload.")
+                            result_obj = entry.result.get("result")
+                            if not isinstance(result_obj, dict):
+                                raise RuntimeError("Task result payload must include a dict 'result' field.")
+                            result_payload: dict[str, Any] = {"type": TaskEventType.RESULT.value}
+                            result_payload.update(result_obj)
                             yield _sse(event_id=int(primary_id), json_payload=json.dumps(result_payload))
                         last_id = int(primary_id)
 

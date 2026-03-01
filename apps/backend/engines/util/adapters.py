@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 import logging
 
@@ -32,6 +33,47 @@ from apps.backend.runtime.processing.models import (
 from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
 _log = logging.getLogger(__name__)
+
+
+def _parse_batch_count(extras: Mapping[str, Any] | None) -> int:
+    if not isinstance(extras, Mapping):
+        return 1
+    raw = extras.get("batch_count")
+    if raw is None:
+        return 1
+    if isinstance(raw, bool):
+        raise ValueError("Invalid 'extras.batch_count': expected integer >= 1, got boolean.")
+    if isinstance(raw, int):
+        parsed = raw
+    elif isinstance(raw, float):
+        if not raw.is_integer():
+            raise ValueError(f"Invalid 'extras.batch_count': expected integer >= 1, got {raw!r}.")
+        parsed = int(raw)
+    elif isinstance(raw, str):
+        token = raw.strip()
+        if not token:
+            raise ValueError("Invalid 'extras.batch_count': expected integer >= 1, got empty string.")
+        try:
+            parsed = int(token, 10)
+        except ValueError as exc:
+            raise ValueError(f"Invalid 'extras.batch_count': expected integer >= 1, got {raw!r}.") from exc
+    else:
+        raise ValueError(f"Invalid 'extras.batch_count': expected integer >= 1, got {type(raw).__name__}.")
+    if parsed < 1:
+        raise ValueError(f"Invalid 'extras.batch_count': expected integer >= 1, got {parsed}.")
+    return parsed
+
+
+def _parse_optional_finite_float(value: Any, *, field: str) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid '{field}': expected finite number, got {value!r}.") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"Invalid '{field}': expected finite number, got {value!r}.")
+    return parsed
 
 
 def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, default_distilled: float, default_denoise: float) -> CodexHiresConfig:
@@ -152,17 +194,15 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         bool(req.hires),
     )
     metadata = dict(req.metadata or {})
+    extras = req.extras if isinstance(req.extras, Mapping) else {}
+    iterations = _parse_batch_count(extras)
     if getattr(req, "clip_skip", None) is not None:
         metadata["clip_skip"] = int(req.clip_skip)
     smart_offload = bool(getattr(req, "smart_offload", False))
     smart_fallback = bool(getattr(req, "smart_fallback", False))
     smart_cache = bool(getattr(req, "smart_cache", False))
-    distilled_cfg = 3.5
-    try:
-        meta_distilled = metadata.get("distilled_cfg_scale")
-        if meta_distilled is not None:
-            distilled_cfg = float(meta_distilled)
-    except Exception:
+    distilled_cfg = _parse_optional_finite_float(metadata.get("distilled_cfg_scale"), field="metadata.distilled_cfg_scale")
+    if distilled_cfg is None:
         distilled_cfg = 3.5
 
     hires_cfg = _build_hires_config(
@@ -175,7 +215,7 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         prompt=req.prompt,
         negative_prompt=req.negative_prompt,
         batch_size=req.batch_size or 1,
-        iterations=1,
+        iterations=iterations,
         guidance_scale=req.guidance_scale or 7.0,
         distilled_guidance_scale=distilled_cfg,
         width=req.width,
@@ -189,11 +229,11 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         smart_fallback=smart_fallback,
         smart_cache=smart_cache,
     )
-    refiner_cfg = _build_refiner_config(req.extras.get("refiner") if isinstance(req.extras, Mapping) else None, default_cfg=processing.guidance_scale)
+    refiner_cfg = _build_refiner_config(extras.get("refiner"), default_cfg=processing.guidance_scale)
     processing.refiner = refiner_cfg if refiner_cfg.enabled else None
     if hires_cfg.enabled:
         processing.enable_hires(cfg=hires_cfg)
-    for key, value in (req.extras or {}).items():
+    for key, value in extras.items():
         if key == "er_sde" and isinstance(value, Mapping):
             processing.update_override(key, dict(value))
         else:
@@ -230,34 +270,26 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
             pass
 
     metadata = dict(req.metadata or {})
+    extras = req.extras if isinstance(req.extras, Mapping) else {}
+    iterations = _parse_batch_count(extras)
     if getattr(req, "clip_skip", None) is not None:
         metadata["clip_skip"] = int(req.clip_skip)
     smart_offload = bool(getattr(req, "smart_offload", False))
     smart_fallback = bool(getattr(req, "smart_fallback", False))
     smart_cache = bool(getattr(req, "smart_cache", False))
 
-    distilled_cfg = 3.5
-    try:
-        meta_distilled = metadata.get("distilled_cfg_scale")
-        if meta_distilled is not None:
-            distilled_cfg = float(meta_distilled)
-    except Exception:
+    distilled_cfg = _parse_optional_finite_float(metadata.get("distilled_cfg_scale"), field="metadata.distilled_cfg_scale")
+    if distilled_cfg is None:
         distilled_cfg = 3.5
 
-    image_cfg_scale = None
-    try:
-        meta_img_cfg = metadata.get("image_cfg_scale")
-        if meta_img_cfg is not None:
-            image_cfg_scale = float(meta_img_cfg)
-    except Exception:
-        image_cfg_scale = None
+    image_cfg_scale = _parse_optional_finite_float(metadata.get("image_cfg_scale"), field="metadata.image_cfg_scale")
 
     mask_round = bool(getattr(req, "mask_round", True))
     processing = CodexProcessingImg2Img(
         prompt=req.prompt,
         negative_prompt=req.negative_prompt,
         batch_size=req.batch_size or 1,
-        iterations=1,
+        iterations=iterations,
         guidance_scale=req.guidance_scale or 7.0,
         distilled_guidance_scale=distilled_cfg,
         width=width,
@@ -295,7 +327,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         )
         if hires_cfg.enabled:
             processing.enable_hires(hires_cfg)
-    for key, value in (req.extras or {}).items():
+    for key, value in extras.items():
         if key == "er_sde" and isinstance(value, Mapping):
             processing.update_override(key, dict(value))
         else:

@@ -36,7 +36,7 @@ class LoraRefreshSignatureMode(Enum):
     CONTENT_SHA256 = "content_sha256"
 
 
-DEFAULT_LORA_REFRESH_SIGNATURE_MODE = LoraRefreshSignatureMode.STRUCTURAL
+DEFAULT_LORA_REFRESH_SIGNATURE_MODE = LoraRefreshSignatureMode.CONTENT_SHA256
 
 
 def parse_lora_refresh_signature_mode(raw: str) -> LoraRefreshSignatureMode:

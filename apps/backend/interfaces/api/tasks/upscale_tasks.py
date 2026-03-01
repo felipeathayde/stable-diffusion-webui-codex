@@ -200,6 +200,11 @@ def run_upscale_task(
             entry.error = public_task_error_message(err)
             success = False
         finally:
+            if success:
+                result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
+                if not isinstance(result_obj, dict):
+                    entry.error = "engine error: task completed without result payload"
+                    success = False
             entry.mark_finished(success=success)
             entry.schedule_cleanup(task_id)
             if acquired:
@@ -322,6 +327,11 @@ def run_upscaler_download_task(
             entry.error = public_task_error_message(err)
             success = False
         finally:
+            if success:
+                result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
+                if not isinstance(result_obj, dict):
+                    entry.error = "engine error: task completed without result payload"
+                    success = False
             entry.mark_finished(success=success)
             entry.schedule_cleanup(task_id)
 

@@ -29,11 +29,11 @@ import os
 import re
 import shutil
 import subprocess
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from uuid import uuid4
 
 from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.infra.config.repo_root import get_repo_root, repo_scratch_path
@@ -157,7 +157,7 @@ def export_video(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now().strftime("%H%M%S")
-    run_id = f"{int(time.time())}"
+    run_id = uuid4().hex
     out_name = f"{prefix}_{ts}_{run_id}.{ext}"
     out_path = out_dir / out_name
 

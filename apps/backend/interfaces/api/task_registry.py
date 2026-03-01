@@ -192,10 +192,28 @@ class TaskEntry:
         self.cancel_mode: TaskCancelMode = TaskCancelMode.IMMEDIATE
         self.last_preview_id_sent: int = 0
 
-    def schedule_cleanup(self, task_id: str, delay: float = 300.0) -> None:
+    def _schedule_cleanup_nowait(self, task_id: str, delay: float) -> None:
         if self.cleanup_handle:
             self.cleanup_handle.cancel()
         self.cleanup_handle = self.loop.call_later(delay, lambda: unregister_task(task_id))
+
+    def schedule_cleanup(self, task_id: str, delay: float = 300.0) -> None:
+        """Schedule task-registry cleanup (thread-safe)."""
+
+        delay_value = float(delay)
+        if delay_value < 0:
+            delay_value = 0.0
+
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        if running is self.loop:
+            self._schedule_cleanup_nowait(task_id, delay_value)
+            return
+
+        self.loop.call_soon_threadsafe(self._schedule_cleanup_nowait, str(task_id), delay_value)
 
     # ------------------------------------------------------------------ events
     def push_event(self, event: Dict[str, Any]) -> None:

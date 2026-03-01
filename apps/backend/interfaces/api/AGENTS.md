@@ -35,7 +35,7 @@ Status: Active
 - 2026-01-18: `/api/models` checkpoint serialization now includes `core_only`, `core_only_reason`, and optional `family_hint` so the UI can stop guessing core-only status from filename suffixes alone.
 - 2026-01-18: `/api/engines/capabilities` now also includes `engine_id_to_semantic_engine` so UI callers can keep engine-id and semantic-engine key spaces explicit.
 - 2026-01-20: Removed unreferenced API helper modules (`media_helpers.py`, `script_models.py`) (no call sites).
-- 2026-01-21: WAN stage LoRA inputs are sha-only (`lora_sha`); raw-path stage `lora_path` is rejected during payload normalization/validation.
+- 2026-01-21: WAN stage LoRA inputs are stage arrays (`loras[]` with `{sha, weight}` entries); legacy single-field stage keys (`lora_sha`/`lora_weight`) and raw-path stage `lora_path` are rejected during payload normalization/validation.
 - 2026-01-24: Settings schema/values are now strict: schema is served from the generated registry (JSON fallback), and persisted values are pruned against the registry on startup (unknown keys dropped; invalid values clamped).
 - 2026-01-25: `run_api.py` migrated the deprecated `@app.on_event("startup")` hook to FastAPI lifespan handlers (removes DeprecationWarning).
 - 2026-01-31: Added `interfaces/api/tasks/` to keep routers thin by centralizing shared generation task worker boilerplate (status/progress/result/end + engine options build for image modes).

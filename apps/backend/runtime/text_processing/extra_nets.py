@@ -14,7 +14,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_TAG_RE` (constant): Primary regex matching supported `<...:...>` tags.
 - `_normalize_lora_alias` (function): Canonicalize LoRA token aliases for case/slash-insensitive lookup.
 - `_build_lora_alias_index` (function): Build alias -> matching-paths index for LoRA resolution (stem/filename/path variants).
-- `_resolve_lora_path` (function): Resolve one LoRA tag name with warning-on-miss/ambiguity semantics.
+- `_resolve_lora_path` (function): Resolve one LoRA tag name and return explicit missing/ambiguity failure reasons.
+- `ExtraNetsParseError` (class): Structured fail-loud parse error for invalid LoRA/control tags.
 - `_dedupe_lora_selections` (function): De-duplicate LoRA selections by path with last-weight-wins semantics.
 - `ParsedExtras` (dataclass): Parsed extras bundle (cleaned prompt, selected LoRAs, parsed controls dict).
 - `parse_prompt_for_extras` (function): Parse a single prompt, resolving LoRAs via the registry and stripping known tags.
@@ -31,8 +32,8 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
 import re
+from typing import List, Tuple
 
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.inventory.scanners.loras import iter_lora_files
@@ -91,36 +92,38 @@ def _resolve_lora_path(
     *,
     alias_index: dict[str, list[str]],
     token_name: str,
-    warned_tokens: set[tuple[str, str]],
-) -> str | None:
+) -> tuple[str | None, str | None]:
     normalized = _normalize_lora_alias(token_name)
     if not normalized:
-        return None
+        return None, "LoRA tag name is empty."
 
     matches = alias_index.get(normalized, [])
     if len(matches) == 1:
-        return matches[0]
+        return matches[0], None
 
     if not matches:
-        warn_key = ("missing", normalized)
-        if warn_key not in warned_tokens:
-            warned_tokens.add(warn_key)
-            _LOGGER.warning("LoRA tag ignored: '%s' not found in discovered LoRA inventory.", token_name)
-        return None
+        return None, f"LoRA '{token_name}' not found in discovered LoRA inventory."
 
-    warn_key = ("ambiguous", normalized)
-    if warn_key not in warned_tokens:
-        warned_tokens.add(warn_key)
-        preview = ", ".join(os.path.basename(path) for path in matches[:3])
-        if len(matches) > 3:
-            preview = f"{preview}, ..."
-        _LOGGER.warning(
-            "LoRA tag ignored: '%s' matches multiple LoRAs (%d): %s",
-            token_name,
-            len(matches),
-            preview,
-        )
-    return None
+    preview = ", ".join(os.path.basename(path) for path in matches[:3])
+    if len(matches) > 3:
+        preview = f"{preview}, ..."
+    return (
+        None,
+        (
+            f"LoRA '{token_name}' is ambiguous ({len(matches)} matches: {preview}). "
+            "Use a unique alias, relative path, or absolute path."
+        ),
+    )
+
+
+class ExtraNetsParseError(ValueError):
+    """Fail-loud parse error for invalid extra-network tags."""
+
+    def __init__(self, errors: list[str]) -> None:
+        normalized = tuple(str(item).strip() for item in errors if str(item).strip())
+        self.errors = normalized
+        details = "; ".join(normalized) if normalized else "unknown parse error"
+        super().__init__(f"Invalid extra network tag(s): {details}")
 
 
 def _dedupe_lora_selections(selections: list[LoraSelection]) -> list[LoraSelection]:
@@ -144,20 +147,32 @@ def parse_prompt_for_extras(
 ) -> ParsedExtras:
     alias_index = _alias_index if _alias_index is not None else _build_lora_alias_index()
     warned_tokens: set[tuple[str, str]] = set()
+    parse_errors: list[str] = []
+    parse_error_keys: set[tuple[str, str]] = set()
     loras: List[LoraSelection] = []
     controls: dict = {}
 
+    def _record_parse_error(kind: str, key: str, message: str) -> None:
+        normalized_key = (kind, _normalize_lora_alias(key))
+        if normalized_key in parse_error_keys:
+            return
+        parse_error_keys.add(normalized_key)
+        parse_errors.append(message)
+
     def _repl(m: re.Match) -> str:
-        kind = m.group('kind').lower()
-        name = (m.group('name') or '').strip()
-        raw_weight = m.group('weight')
-        weight_s = (raw_weight or '').strip()
-        if kind == 'lora' and name:
-            path = _resolve_lora_path(
+        kind = m.group("kind").lower()
+        name = (m.group("name") or "").strip()
+        raw_weight = m.group("weight")
+        weight_s = (raw_weight or "").strip()
+
+        if kind == "lora" and name:
+            path, resolve_error = _resolve_lora_path(
                 alias_index=alias_index,
                 token_name=name,
-                warned_tokens=warned_tokens,
             )
+            if resolve_error is not None:
+                _record_parse_error("lora_resolve", name, resolve_error)
+                return m.group(0)
             if path:
                 w = 1.0
                 if raw_weight is not None:
@@ -170,23 +185,18 @@ def parse_prompt_for_extras(
                         if not math.isfinite(parsed_weight):
                             raise ValueError("LoRA weight must be finite")
                         w = max(0.0, parsed_weight)
-                    except Exception:
-                        invalid_key = (
-                            "invalid_weight",
-                            _normalize_lora_alias(f"{name}:{weight_s}"),
+                    except Exception as exc:
+                        _record_parse_error(
+                            "lora_weight",
+                            f"{name}:{weight_s}",
+                            f"LoRA '{name}' has invalid weight '{weight_s}': {exc}",
                         )
-                        if invalid_key not in warned_tokens:
-                            warned_tokens.add(invalid_key)
-                            _LOGGER.warning(
-                                "LoRA tag ignored: '%s' has invalid weight '%s'.",
-                                name,
-                                weight_s,
-                            )
-                        return ''
+                        return m.group(0)
                 loras.append(LoraSelection(path=path, weight=w, online=False))
             # remove the tag
-            return ''
-        if kind == 'ti' and name:
+            return ""
+
+        if kind == "ti" and name:
             # textual inversion by name — expand into weighted token; embeddings are loaded by name in the engine
             if raw_weight is None:
                 return f"({name}:1.0)"
@@ -207,40 +217,48 @@ def parse_prompt_for_extras(
                         weight_s,
                     )
                 return m.group(0)
+
         # control tags: <clip_skip:N>, <sampler:NAME>, <scheduler:NAME>,
         # <width:N>/<height:N>, <cfg:x>, <steps:n>, <seed:n>, <denoise:x>
         try:
-            if kind == 'clip_skip':
+            if kind == "clip_skip":
                 n = int(float(weight_s or name))
-                controls['clip_skip'] = max(0, n)
-            elif kind == 'sampler':
-                controls['sampler'] = name.lower()
-            elif kind == 'scheduler':
-                controls['scheduler'] = name
-            elif kind in ('merge', 'tm'):
+                controls["clip_skip"] = max(0, n)
+            elif kind == "sampler":
+                controls["sampler"] = name.lower()
+            elif kind == "scheduler":
+                controls["scheduler"] = name
+            elif kind in ("merge", "tm"):
                 # Token merging is intentionally not supported in Codex (never default).
                 # Strip the tag to avoid sending it into the text encoders.
                 pass
-            elif kind in ('width','w'):
-                controls['width'] = max(8, int(float(weight_s or name)))
-            elif kind in ('height','h'):
-                controls['height'] = max(8, int(float(weight_s or name)))
-            elif kind == 'cfg':
-                controls['cfg'] = float(weight_s or name)
-            elif kind == 'steps':
-                controls['steps'] = max(1, int(float(weight_s or name)))
-            elif kind == 'seed':
-                controls['seed'] = int(float(weight_s or name))
-            elif kind == 'denoise':
-                controls['denoise'] = float(weight_s or name)
-            elif kind == 'tiling':
-                s = (name or '').strip().lower()
-                controls['tiling'] = s in ('1','true','yes','on','enable','enabled')
-        except Exception:
-            pass
-        return ''
+            elif kind in ("width", "w"):
+                controls["width"] = max(8, int(float(weight_s or name)))
+            elif kind in ("height", "h"):
+                controls["height"] = max(8, int(float(weight_s or name)))
+            elif kind == "cfg":
+                controls["cfg"] = float(weight_s or name)
+            elif kind == "steps":
+                controls["steps"] = max(1, int(float(weight_s or name)))
+            elif kind == "seed":
+                controls["seed"] = int(float(weight_s or name))
+            elif kind == "denoise":
+                controls["denoise"] = float(weight_s or name)
+            elif kind == "tiling":
+                s = (name or "").strip().lower()
+                controls["tiling"] = s in ("1", "true", "yes", "on", "enable", "enabled")
+        except Exception as exc:
+            _record_parse_error(
+                "control",
+                m.group(0),
+                f"Invalid control tag {m.group(0)!r}: {exc}",
+            )
+            return m.group(0)
+        return ""
 
     cleaned = _TAG_RE.sub(_repl, prompt)
+    if parse_errors:
+        raise ExtraNetsParseError(parse_errors)
     # Collapse duplicated spaces
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
     return ParsedExtras(prompt=cleaned, loras=loras, controls=controls)
@@ -264,4 +282,10 @@ def parse_prompts_with_extras(prompts: List[str]) -> Tuple[List[str], List[LoraS
     return cleaned, _dedupe_lora_selections(acc), controls
 
 
-__all__ = ["parse_prompts", "parse_prompt_for_extras", "parse_prompts_with_extras", "ParsedExtras"]
+__all__ = [
+    "parse_prompts",
+    "parse_prompt_for_extras",
+    "parse_prompts_with_extras",
+    "ParsedExtras",
+    "ExtraNetsParseError",
+]

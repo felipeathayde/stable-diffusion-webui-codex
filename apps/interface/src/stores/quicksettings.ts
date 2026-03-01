@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ModelInfo } from '../api/types'
-import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInventory, fetchPaths, getCachedOptionsRevision } from '../api/client'
+import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInventory, fetchPaths, fetchMemory, getCachedOptionsRevision } from '../api/client'
 
 const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_overrides'
 const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
@@ -227,6 +227,34 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
   }
 
+  function normalizeRuntimeDevice(raw: unknown): string | null {
+    const normalized = String(raw || '').trim().toLowerCase()
+    if (!normalized) return null
+    if (normalized === 'gpu') return 'cuda'
+    if (normalized === 'dml') return 'directml'
+    if (normalized.startsWith('cuda')) return 'cuda'
+    if (deviceChoices.value.some((entry) => entry.value === normalized)) return normalized
+    return null
+  }
+
+  function normalizeCoreDeviceSetting(raw: unknown): string {
+    const normalized = String(raw || '').trim().toLowerCase()
+    if (normalized === 'auto') return 'auto'
+    return normalizeRuntimeDevice(normalized) || 'auto'
+  }
+
+  async function syncCurrentDeviceFromBackendAuthority(): Promise<void> {
+    try {
+      const memory = await fetchMemory()
+      const normalized = normalizeRuntimeDevice((memory as any).primary_device ?? (memory as any).device_backend)
+      if (!normalized) return
+      currentDevice.value = normalized
+      saveDeviceToStorage(normalized)
+    } catch (err) {
+      console.warn('[quicksettings] failed to sync device from backend authority', err)
+    }
+  }
+
   function loadVaeFromStorage(): void {
     try {
       const raw = localStorage.getItem(VAE_STORAGE_KEY)
@@ -338,9 +366,13 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     applySettingsRevision((res as any).revision ?? (opts as any)?.codex_options_revision)
     syncSettingsRevisionFromCache()
     if (typeof (opts as any).codex_core_device === 'string') {
-      coreDevice.value = (opts as any).codex_core_device
-      currentDevice.value = coreDevice.value === 'auto' ? currentDevice.value : coreDevice.value
-      if (coreDevice.value !== 'auto') saveDeviceToStorage(coreDevice.value)
+      coreDevice.value = normalizeCoreDeviceSetting((opts as any).codex_core_device)
+      if (coreDevice.value === 'auto') {
+        await syncCurrentDeviceFromBackendAuthority()
+      } else {
+        currentDevice.value = coreDevice.value
+        saveDeviceToStorage(coreDevice.value)
+      }
     }
     if (typeof (opts as any).codex_te_device === 'string') {
       teDevice.value = (opts as any).codex_te_device
@@ -653,17 +685,26 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   }
 
   async function setDevice(value: string): Promise<void> {
-    currentDevice.value = value
-    saveDeviceToStorage(value)
+    const normalized = normalizeRuntimeDevice(value)
+    if (!normalized) {
+      throw new Error(`Unsupported device override '${String(value)}'.`)
+    }
+    await setCoreDevice(normalized)
   }
 
   async function setCoreDevice(value: string): Promise<void> {
-    coreDevice.value = value
-    if (value !== 'auto') {
-      currentDevice.value = value
-      saveDeviceToStorage(value)
+    const normalizedValue = normalizeCoreDeviceSetting(value)
+    coreDevice.value = normalizedValue
+    await applyOptionUpdate({ codex_core_device: normalizedValue })
+    const coreDeviceRestartRequired = lastRestartRequiredMessages.value.some((message) =>
+      String(message || '').startsWith('codex_core_device:'),
+    )
+    if (normalizedValue === 'auto' || coreDeviceRestartRequired) {
+      await syncCurrentDeviceFromBackendAuthority()
+      return
     }
-    await applyOptionUpdate({ codex_core_device: value })
+    currentDevice.value = normalizedValue
+    saveDeviceToStorage(normalizedValue)
   }
 
   async function setTeDevice(value: string): Promise<void> {

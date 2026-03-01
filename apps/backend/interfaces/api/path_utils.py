@@ -108,7 +108,7 @@ def _normalize_wan_stage_payload(raw: object) -> object:
     """Normalize WAN stage override payloads.
 
     - `model_dir`: repo-relative path → absolute path under CODEX_ROOT.
-    - `lora_path`: rejected (use `lora_sha`).
+    - `lora_path`: rejected (use `loras[]` stage entries with `sha`/`weight`).
     """
     if not isinstance(raw, dict):
         return raw
@@ -116,5 +116,5 @@ def _normalize_wan_stage_payload(raw: object) -> object:
     if isinstance(out.get("model_dir"), str):
         out["model_dir"] = _path_from_api(out.get("model_dir"))
     if isinstance(out.get("lora_path"), str) and str(out.get("lora_path")).strip():
-        raise ValueError("WAN stage 'lora_path' is unsupported; use 'lora_sha' instead.")
+        raise ValueError("WAN stage 'lora_path' is unsupported; use 'loras[]' entries instead.")
     return out

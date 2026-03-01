@@ -24,10 +24,8 @@
       "fields": [
         { "key": "wan.high.model_sha", "label": "High Model (sha256)", "type": "text", "help": "64-hex sha256 resolving to a .gguf file (from inventory)", "bind": { "txt2vid": "hiModelSha", "img2vid": "hiModelSha" } },
         { "key": "wan.low.model_sha", "label": "Low Model (sha256)", "type": "text", "help": "64-hex sha256 resolving to a .gguf file (from inventory)", "bind": { "txt2vid": "loModelSha", "img2vid": "loModelSha" } },
-        { "key": "wan.high.lora_sha", "label": "High LoRA (sha256)", "type": "text", "help": "Optional 64-hex sha256 resolving to a .safetensors LoRA file", "bind": { "txt2vid": "hiLoraSha", "img2vid": "hiLoraSha" } },
-        { "key": "wan.high.lora_weight", "label": "High LoRA Weight", "type": "number", "min": 0, "max": 2, "step": 0.05, "default": 1.0, "bind": { "txt2vid": "hiLoraWeight", "img2vid": "hiLoraWeight" } },
-        { "key": "wan.low.lora_sha", "label": "Low LoRA (sha256)", "type": "text", "help": "Optional 64-hex sha256 resolving to a .safetensors LoRA file", "bind": { "txt2vid": "loLoraSha", "img2vid": "loLoraSha" } },
-        { "key": "wan.low.lora_weight", "label": "Low LoRA Weight", "type": "number", "min": 0, "max": 2, "step": 0.05, "default": 1.0, "bind": { "txt2vid": "loLoraWeight", "img2vid": "loLoraWeight" } }
+        { "key": "wan.high.loras", "label": "High LoRAs (JSON array)", "type": "textarea", "default": "[]", "help": "Optional JSON array of {sha, weight} entries; backend rejects legacy lora_sha/lora_weight." },
+        { "key": "wan.low.loras", "label": "Low LoRAs (JSON array)", "type": "textarea", "default": "[]", "help": "Optional JSON array of {sha, weight} entries; backend rejects legacy lora_sha/lora_weight." }
       ]
     },
     {

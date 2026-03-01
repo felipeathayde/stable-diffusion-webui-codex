@@ -87,6 +87,16 @@ class WanStageOptions:
         elif not isinstance(raw_loras, list):
             raise ValueError("WAN stage 'loras' must be an array when provided.")
         else:
+            from apps.backend.inventory.scanners.loras import iter_lora_files
+
+            known_lora_paths = {
+                os.path.normcase(os.path.realpath(os.path.expanduser(path)))
+                for path in iter_lora_files()
+            }
+            if not known_lora_paths:
+                raise ValueError(
+                    "WAN stage 'loras' was provided, but no LoRA assets are available in inventory."
+                )
             for index, raw_lora in enumerate(raw_loras):
                 if not isinstance(raw_lora, dict):
                     raise ValueError(f"WAN stage 'loras[{index}]' must be an object.")
@@ -108,6 +118,12 @@ class WanStageOptions:
                 lora_path = os.path.expanduser(str(resolved))
                 if not lora_path.lower().endswith(".safetensors"):
                     raise ValueError(f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
+                canonical_lora_path = os.path.normcase(os.path.realpath(lora_path))
+                if canonical_lora_path not in known_lora_paths:
+                    raise ValueError(
+                        f"WAN stage LoRA sha resolved to non-LoRA asset path: {lora_path}. "
+                        "Select a SHA from inventory.loras."
+                    )
                 if not os.path.isfile(lora_path):
                     raise ValueError(f"WAN stage LoRA file not found: {lora_path}")
                 raw_weight = raw_lora.get("weight")

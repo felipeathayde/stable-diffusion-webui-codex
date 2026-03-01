@@ -1805,8 +1805,6 @@ function buildCurrentSnapshot(): Record<string, unknown> {
     attentionMode: video.value.attentionMode,
     img2vid: {
       mode: img2vidMode,
-      chunkFrames: video.value.img2vidChunkFrames,
-      overlapFrames: video.value.img2vidOverlapFrames,
       anchorAlpha: video.value.img2vidAnchorAlpha,
       resetAnchorToBase: video.value.img2vidResetAnchorToBase,
       chunkSeedMode: video.value.img2vidChunkSeedMode,
@@ -1927,17 +1925,12 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const i2v = isRecord(snap.img2vid) ? snap.img2vid : {}
   const i2vModeRaw = typeof i2v.mode === 'string' ? i2v.mode : ''
   const hasSnapshotWindowFrames = typeof i2v.windowFrames === 'number' && Number.isFinite(i2v.windowFrames) && Number(i2v.windowFrames) > 0
-  const hasSnapshotChunkFrames = typeof i2v.chunkFrames === 'number' && Number.isFinite(i2v.chunkFrames) && Number(i2v.chunkFrames) > 0
   if (String(i2vModeRaw || '').trim().toLowerCase() === 'chunk') {
     toast("History snapshot uses removed img2vid_mode='chunk'. Update the snapshot to 'sliding'/'svi2'/'svi2_pro' or 'solo'.")
     return
   }
   if (typeof i2v.enabled === 'boolean' && Boolean(i2v.enabled)) {
     toast("History snapshot uses removed legacy img2vid chunk toggle (img2vid.enabled=true).")
-    return
-  }
-  if (hasSnapshotChunkFrames) {
-    toast("History snapshot carries removed chunk-frame fields. Use sliding/SVI window controls instead.")
     return
   }
   const nextImg2VidMode = i2vModeRaw

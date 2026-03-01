@@ -30,7 +30,7 @@ Status: Active
 - 2025-12-29: `App.vue` derives `--sticky-offset` from the `.main-header` height (via `ResizeObserver`) so `RunCard` can stay sticky below the header.
 - 2026-01-01: Image model tabs now include `clipSkip` in their per-tab params and send `clip_skip`/`img2img_clip_skip` to the backend (no prompt-tag injection needed).
 - 2026-01-03: Added standardized file header blocks to `App.vue`, `main.ts`, and `router.ts` (doc-only change; part of rollout).
-- 2026-01-21: WAN video tabs now use sha-only stage LoRA inputs (`loraSha` → payload `lora_sha`), aligning with backend validation.
+- 2026-02-28: WAN video tabs now use explicit stage LoRA arrays (`wan_high/wan_low.loras[]`, each entry `{sha, weight?}`), aligning with backend fail-loud stage validation.
 - 2026-01-23: WAN video width/height now snap to multiples of 16 (rounded up; Diffusers parity) to avoid backend validation errors and patch-grid drift.
 - 2026-02-16: WAN LightX2V I2V 14B now keeps stage `flowShift` in tab state and auto-manages `flowShift=5.0` from QuickSettings mode/toggle wiring for distill parity.
 - 2026-02-06: Added `src/env.d.ts` and enabled Vue SFC typechecking via `vue-tsc` (ensures `.vue` imports are typechecked; prevents silent TS drift).

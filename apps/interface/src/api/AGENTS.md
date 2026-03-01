@@ -13,7 +13,7 @@ Status: Active
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.hires.refiner`; `HiresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
 - 2026-02-08: swap-model payload semantics now use `switch_at_step` (not `steps`) in both global and hires nested refiner payloads; frontend form state uses `swapAtStep`.
-- `payloads_video.ts` provides typed (Zod) payload builders for WAN video endpoints (sha-first): stages use `model_sha` + optional `lora_sha` (sha256), TE/VAE use sha selection, and builders guard against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for `vid2vid_model_dir` and stage `model_dir`; stage LoRA remains sha-only via `lora_sha`.
+- `payloads_video.ts` provides typed (Zod) payload builders for WAN video endpoints (sha-first): stages use `model_sha` + optional `loras[]` entries (`{sha, weight?}`), TE/VAE use sha selection, and builders guard against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for `vid2vid_model_dir` and stage `model_dir`.
 - 2026-01-23: `payloads_video.ts` snaps WAN video `width/height` up to a multiple of 16 (rounded up; Diffusers parity) so requests never trip backend `%16` validation.
 - 2026-01-23: `client.ts` now extracts FastAPI `{"detail": ...}` error bodies into readable `Error.message` strings (no more opaque “400 Bad Request”).
 - 2026-01-24: Removed the static `/settings_schema.json` fallback; the frontend now requires `/api/settings/schema` to be available.
@@ -24,7 +24,7 @@ Status: Active
   - `dependency_checks` (backend-owned readiness rows per semantic engine; strict `ready === all(check.ok)` contract)
 - 2026-01-06: `/api/samplers` DTO is now `{name,supported,default_scheduler,allowed_schedulers}` and WAN payload builders fail fast on non-canonical (uppercase) sampler/scheduler inputs.
 - 2025-12-16: WAN video client helpers include task-event/result handling with optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
-- 2026-01-27: WAN payload builders now optionally emit `video_return_frames` (default off) to control whether txt2vid/img2vid results include frames (and whether vid2vid returns preview frames); video export remains controlled via `video_save_output`.
+- 2026-01-27: WAN payload builders now optionally emit `video_return_frames` (default off) to control whether txt2vid/img2vid results include frames; vid2vid preview-frame behavior is historical while backend vid2vid remains disabled. Video export remains controlled via `video_save_output`.
 - 2026-02-15: Image/video payload contracts now always include `settings_revision`; per-request `smart_offload`/`smart_fallback`/`smart_cache` fields were removed (runtime flags remain `/api/options`-owned).
 - 2026-02-15: `client.ts` now caches `/api/options` revision and preserves structured HTTP error payloads (`status/detail/body`) so composables can handle stale-revision `409` conflicts.
 - 2026-02-16: `payloads_video.ts` no longer emits WAN scheduler overrides (`txt2vid_scheduler`/`img2vid_scheduler`/`vid2vid_scheduler` nor stage `scheduler`), aligning frontend payloads with WAN22 backend policy (scheduler is runtime-managed).

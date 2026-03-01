@@ -202,24 +202,30 @@ def _record_attempt(
     )
 
 
-def wan_fused_runtime_metrics_log_summary(*, logger_obj: logging.Logger | None = None, reset: bool = False) -> None:
+def wan_fused_runtime_metrics_log_summary(
+    *,
+    logger_obj: logging.Logger | None = None,
+    reset: bool = False,
+    emit_when_idle: bool = True,
+) -> None:
     metrics = _runtime_metrics_var.get()
     if metrics is None:
         if reset:
             _runtime_stage_var.set("unset")
         return
-    log = logger_obj if logger_obj is not None else logger
-    log.info(
-        "wan_fused_v1.summary run=%s attempts=%d hits=%d fallback_by_reason=%s attempts_by_stage=%s hits_by_stage=%s "
-        "fallback_by_stage_reason=%s",
-        str(metrics.run_label),
-        int(metrics.attempts),
-        int(metrics.hits),
-        _format_counter_map(metrics.fallback_by_reason),
-        _format_counter_map(metrics.attempts_by_stage),
-        _format_counter_map(metrics.hits_by_stage),
-        _format_counter_map(metrics.fallback_by_stage_reason),
-    )
+    if bool(emit_when_idle) or int(metrics.attempts) > 0:
+        log = logger_obj if logger_obj is not None else logger
+        log.info(
+            "wan_fused_v1.summary run=%s attempts=%d hits=%d fallback_by_reason=%s attempts_by_stage=%s hits_by_stage=%s "
+            "fallback_by_stage_reason=%s",
+            str(metrics.run_label),
+            int(metrics.attempts),
+            int(metrics.hits),
+            _format_counter_map(metrics.fallback_by_reason),
+            _format_counter_map(metrics.attempts_by_stage),
+            _format_counter_map(metrics.hits_by_stage),
+            _format_counter_map(metrics.fallback_by_stage_reason),
+        )
     if reset:
         _runtime_metrics_var.set(None)
         _runtime_stage_var.set("unset")
@@ -820,16 +826,17 @@ def try_fused_self_attention(
         )
         return invalid_attn_core
 
-    _validate_common_inputs(x=x, dropout_p=dropout_p)
-    bsz, seq_len, channels = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]))
-
-    _validate_rope_tensor(tensor=rope_cos_qk, expected_len=seq_len, label="rope_cos_qk")
-    _validate_rope_tensor(tensor=rope_sin_qk, expected_len=seq_len, label="rope_sin_qk")
-
-    head_dim = int(rope_cos_qk.shape[-1])
-    _resolve_head_count(channels=channels, head_dim=head_dim, field_name="self")
-    _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
     try:
+        _validate_common_inputs(x=x, dropout_p=dropout_p)
+        bsz, seq_len, channels = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]))
+
+        _validate_rope_tensor(tensor=rope_cos_qk, expected_len=seq_len, label="rope_cos_qk")
+        _validate_rope_tensor(tensor=rope_sin_qk, expected_len=seq_len, label="rope_sin_qk")
+
+        head_dim = int(rope_cos_qk.shape[-1])
+        _resolve_head_count(channels=channels, head_dim=head_dim, field_name="self")
+        _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
+
         w_q, b_q = _resolve_linear_weight_bias(
             q_proj,
             expected_out=channels,
@@ -1013,43 +1020,44 @@ def try_fused_cross_attention(
         )
         return invalid_attn_core
 
-    _validate_common_inputs(x=x, dropout_p=dropout_p)
-    if context.ndim != 3:
-        _fail(
-            code=E_WAN_FUSED_INVALID_SHAPE,
-            message=f"WAN fused cross expects context [B,S,Cctx]; got shape={tuple(context.shape)}.",
-        )
-    if int(context.shape[0]) != int(x.shape[0]):
-        _fail(
-            code=E_WAN_FUSED_INVALID_SHAPE,
-            message=(
-                "WAN fused cross batch mismatch between x and context: "
-                f"x.B={int(x.shape[0])} context.B={int(context.shape[0])}."
-            ),
-        )
-
-    bsz, q_len, channels = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]))
-    kv_len = int(context.shape[1])
-    ctx_dim = int(context.shape[2])
-
-    _validate_rope_tensor(tensor=rope_cos_q, expected_len=q_len, label="rope_cos_q")
-    _validate_rope_tensor(tensor=rope_sin_q, expected_len=q_len, label="rope_sin_q")
-    _validate_rope_tensor(tensor=rope_cos_k, expected_len=kv_len, label="rope_cos_k")
-    _validate_rope_tensor(tensor=rope_sin_k, expected_len=kv_len, label="rope_sin_k")
-
-    head_dim = int(rope_cos_q.shape[-1])
-    _resolve_head_count(channels=channels, head_dim=head_dim, field_name="cross")
-    if int(rope_cos_k.shape[-1]) != head_dim or int(rope_sin_k.shape[-1]) != head_dim:
-        _fail(
-            code=E_WAN_FUSED_INVALID_SHAPE,
-            message=(
-                "WAN fused cross requires matching RoPE head_dim between query/key tensors. "
-                f"got q={head_dim} k_cos={int(rope_cos_k.shape[-1])} k_sin={int(rope_sin_k.shape[-1])}."
-            ),
-        )
-
-    _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
     try:
+        _validate_common_inputs(x=x, dropout_p=dropout_p)
+        if context.ndim != 3:
+            _fail(
+                code=E_WAN_FUSED_INVALID_SHAPE,
+                message=f"WAN fused cross expects context [B,S,Cctx]; got shape={tuple(context.shape)}.",
+            )
+        if int(context.shape[0]) != int(x.shape[0]):
+            _fail(
+                code=E_WAN_FUSED_INVALID_SHAPE,
+                message=(
+                    "WAN fused cross batch mismatch between x and context: "
+                    f"x.B={int(x.shape[0])} context.B={int(context.shape[0])}."
+                ),
+            )
+
+        bsz, q_len, channels = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]))
+        kv_len = int(context.shape[1])
+        ctx_dim = int(context.shape[2])
+
+        _validate_rope_tensor(tensor=rope_cos_q, expected_len=q_len, label="rope_cos_q")
+        _validate_rope_tensor(tensor=rope_sin_q, expected_len=q_len, label="rope_sin_q")
+        _validate_rope_tensor(tensor=rope_cos_k, expected_len=kv_len, label="rope_cos_k")
+        _validate_rope_tensor(tensor=rope_sin_k, expected_len=kv_len, label="rope_sin_k")
+
+        head_dim = int(rope_cos_q.shape[-1])
+        _resolve_head_count(channels=channels, head_dim=head_dim, field_name="cross")
+        if int(rope_cos_k.shape[-1]) != head_dim or int(rope_sin_k.shape[-1]) != head_dim:
+            _fail(
+                code=E_WAN_FUSED_INVALID_SHAPE,
+                message=(
+                    "WAN fused cross requires matching RoPE head_dim between query/key tensors. "
+                    f"got q={head_dim} k_cos={int(rope_cos_k.shape[-1])} k_sin={int(rope_sin_k.shape[-1])}."
+                ),
+            )
+
+        _validate_arch_dtype_head_dim(device=x.device, dtype=x.dtype, head_dim=head_dim)
+
         w_q, b_q = _resolve_linear_weight_bias(
             q_proj,
             expected_out=channels,

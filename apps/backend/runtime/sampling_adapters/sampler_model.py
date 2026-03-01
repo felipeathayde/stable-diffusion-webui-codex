@@ -73,6 +73,14 @@ class SamplerModel(torch.nn.Module):
         context = c_crossattn
         dtype = self.computation_dtype
 
+        # Validate context invariants before dtype/device coercion so invalid
+        # payloads fail with a clear contract error (not AttributeError).
+        if not isinstance(context, torch.Tensor) or context.ndim != 3:
+            raise ValueError(
+                f"UNet context must be a 3D tensor (B,S,C); got {type(context).__name__} "
+                f"shape={getattr(context, 'shape', None)}"
+            )
+
         xc = xc.to(dtype)
         t = self.predictor.timestep(t).float()
         context = context.to(dtype)
@@ -121,10 +129,8 @@ class SamplerModel(torch.nn.Module):
                     pass
             setattr(self, "_codex_apply_model_debug_count", debug_count + 1)
 
-        # Invariants: context and optional y must be consistent with diffusion model config
-        if not isinstance(context, torch.Tensor) or context.ndim != 3:
-            raise ValueError(f"UNet context must be a 3D tensor (B,S,C); got {type(context).__name__} shape={getattr(context,'shape',None)}")
-
+        # Invariants: optional y must be consistent with diffusion model config.
+        # Context rank/type was validated before coercion above.
         # Derive expected context dims from codex_config when available
         expected_ctx_dim = None
         cfg = getattr(self.diffusion_model, "codex_config", None)

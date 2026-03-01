@@ -223,11 +223,8 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
     Returns (gguf_exec, gguf_dequant_cache, lora_apply_mode, lora_online_math, chunk_buffer_mode) as normalized values.
     """
 
-    # Migration: older launchers persisted reserved/removed options.
-    if str(env.get("CODEX_GGUF_EXEC", "") or "").strip().lower() == "cuda_pack":
-        env["CODEX_GGUF_EXEC"] = "dequant_forward"
-    if str(env.get("CODEX_LORA_ONLINE_MATH", "") or "").strip().lower() == "activation":
-        env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
+    # Do not silently coerce reserved values (e.g. cuda_pack/activation).
+    # Validation must remain fail-loud and aligned with backend flag contracts.
 
     env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
     env.pop("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", None)

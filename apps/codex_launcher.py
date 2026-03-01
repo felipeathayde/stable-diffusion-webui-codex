@@ -10,7 +10,7 @@ Purpose: GUI launcher entrypoint for Codex (Tk).
 This file is the stable entrypoint used by `run-webui.bat`. The implementation lives under `apps.launcher.gui_tk`.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_validate_launcher_args` (function): Fails loud when unknown launcher CLI arguments are provided.
+- `_validate_launcher_args` (function): Validates launcher CLI arguments and warns on unsupported extras.
 - `main` (function): Starts the Tk GUI launcher.
 """
 
@@ -30,7 +30,7 @@ def _validate_launcher_args(argv: list[str]) -> None:
     _known, unknown = parser.parse_known_args(argv)
     if unknown:
         unknown_args = " ".join(unknown)
-        raise RuntimeError(f"Unknown launcher argument(s): {unknown_args}")
+        print(f"[launcher] Warning: ignoring unsupported launcher argument(s): {unknown_args}", file=sys.stderr)
 
 
 def main() -> None:

@@ -53,7 +53,7 @@ import {
   type WanImg2VidMode,
 } from '../utils/wan_img2vid_temporal'
 
-const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
+const DEVICE_VALUES = ['cuda', 'cpu'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
 
 const PromptSchema = z

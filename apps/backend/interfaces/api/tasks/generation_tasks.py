@@ -715,6 +715,27 @@ def run_image_task(
             )
             success = False
         finally:
+            if success:
+                result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
+                if not isinstance(result_obj, dict):
+                    invariant_err = RuntimeError("task completed without result payload")
+                    entry.error = "engine error: task completed without result payload"
+                    success = False
+                    emit_contract_trace(
+                        task_id=task_id,
+                        mode=mode,
+                        stage="error",
+                        action="error",
+                        component="task",
+                        device=device,
+                        storage_dtype=(str(storage_dtype) if storage_dtype is not None else None),
+                        compute_dtype=(str(compute_dtype) if compute_dtype is not None else None),
+                        strict=True,
+                        fallback_enabled=fallback_enabled,
+                        fallback_used=_fallback_used_now(),
+                        prompt_hash_value=prompt_hash_value,
+                        meta=error_meta(invariant_err),
+                    )
             entry.mark_finished(success=success)
             entry.schedule_cleanup(task_id)
             emit_contract_trace(

@@ -24,7 +24,7 @@ from apps.backend.infra.config.paths import get_paths_for
 
 from .base import dedupe_keep_order, iter_files
 
-LORA_EXTS: tuple[str, ...] = (".safetensors", ".ckpt", ".pt", ".bin")
+LORA_EXTS: tuple[str, ...] = (".safetensors",)
 
 
 def list_lora_roots(models_root: str | None = None) -> list[str]:

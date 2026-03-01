@@ -193,7 +193,7 @@ function onVaeDeviceChange(e: Event): void {
   void store.setVaeDevice((e.target as HTMLSelectElement).value)
 }
 function onGlobalDeviceChange(e: Event): void {
-  void store.setDevice((e.target as HTMLSelectElement).value)
+  void store.setCoreDevice((e.target as HTMLSelectElement).value)
 }
 
 function resetAll(): void {

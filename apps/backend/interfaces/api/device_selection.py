@@ -114,10 +114,13 @@ def parse_device_from_payload(payload: Mapping[str, Any]) -> str:
         or ""
     )
     dev = str(raw).strip().lower()
+    allowed = "|".join(sorted(_ALLOWED_DEVICES))
     if not dev:
-        return main
+        raise ValueError(
+            "Missing 'device' selection (accepted keys: codex_device|device|codex_diffusion_device; "
+            f"allowed values: {allowed})"
+        )
     if dev not in _ALLOWED_DEVICES:
-        allowed = "|".join(sorted(_ALLOWED_DEVICES))
         raise ValueError(f"Invalid device (allowed: {allowed})")
     if dev != main:
         raise ValueError(

@@ -142,6 +142,61 @@ def build_router(
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
     _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "chroma", "zimage", "wan", "anima"}
+    _IMAGE_PARAM_TOP_LEVEL_KEYS = {
+        "prompt",
+        "negativePrompt",
+        "width",
+        "height",
+        "sampler",
+        "scheduler",
+        "steps",
+        "cfgScale",
+        "seed",
+        "clipSkip",
+        "batchSize",
+        "batchCount",
+        "img2imgResizeMode",
+        "img2imgUpscaler",
+        "guidanceAdvanced",
+        "hires",
+        "highres",  # legacy alias persisted by older clients
+        "refiner",
+        "checkpoint",
+        "textEncoders",
+        "useInitImage",
+        "initImageData",
+        "initImageName",
+        "denoiseStrength",
+        "useMask",
+        "maskImageData",
+        "maskImageName",
+        "maskEnforcement",
+        "inpaintFullResPadding",
+        "inpaintingFill",
+        "maskInvert",
+        "maskBlur",
+        "maskRound",
+        "maskRegionSplit",
+        "zimageTurbo",
+    }
+    _WAN_PARAM_TOP_LEVEL_KEYS = {
+        "high",
+        "low",
+        "video",
+        "assets",
+        "lightx2v",
+        "lowFollowsHigh",
+    }
+    _NESTED_OBJECT_PARAM_KEYS = {
+        "guidanceAdvanced",
+        "hires",
+        "highres",
+        "refiner",
+        "high",
+        "low",
+        "video",
+        "assets",
+    }
 
     def _normalize_tab_type(value: object) -> str:
         raw = str(value or "").strip().lower()
@@ -174,6 +229,46 @@ def build_router(
                 f"('true','false','1','0','yes','no','on','off')."
             ),
         )
+
+    def _assert_plain_object(value: object, *, field: str) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"{field} must be an object")
+        for key in value.keys():
+            if not isinstance(key, str):
+                raise HTTPException(status_code=400, detail=f"{field} contains a non-string key")
+        return value
+
+    def _assert_known_param_keys(params_patch: Dict[str, Any], *, tab_type: str, field: str) -> None:
+        if tab_type == "wan":
+            allowed = _WAN_PARAM_TOP_LEVEL_KEYS
+        else:
+            allowed = _IMAGE_PARAM_TOP_LEVEL_KEYS
+        unknown = sorted(k for k in params_patch.keys() if k not in allowed)
+        if unknown:
+            joined = ", ".join(unknown)
+            raise HTTPException(status_code=400, detail=f"{field} contains unsupported fields: {joined}")
+
+    def _validate_tab_params_patch(*, tab_type: str, raw_params: object, field: str = "params") -> Dict[str, Any]:
+        params_patch = _assert_plain_object(raw_params, field=field)
+        _assert_known_param_keys(params_patch, tab_type=tab_type, field=field)
+        for key in _NESTED_OBJECT_PARAM_KEYS:
+            if key in params_patch and params_patch[key] is not None and not isinstance(params_patch[key], dict):
+                raise HTTPException(status_code=400, detail=f"{field}.{key} must be an object")
+        if "textEncoders" in params_patch and params_patch["textEncoders"] is not None and not isinstance(
+            params_patch["textEncoders"], list
+        ):
+            raise HTTPException(status_code=400, detail=f"{field}.textEncoders must be an array")
+        return params_patch
+
+    def _deep_merge_params(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+        merged: Dict[str, Any] = dict(base)
+        for key, value in patch.items():
+            current = merged.get(key)
+            if isinstance(current, dict) and isinstance(value, dict):
+                merged[key] = _deep_merge_params(current, value)
+            else:
+                merged[key] = value
+        return merged
 
     def _tabs_path() -> str:
         return str(codex_root / "apps" / "interface" / "tabs.json")
@@ -341,7 +436,10 @@ def build_router(
             raise HTTPException(status_code=400, detail=f"invalid tab type: {raw_type}")
         ttype = _normalize_tab_type(raw_type)
         title = str(payload.get("title") or ("FLUX.1" if ttype == "flux1" else ttype.upper()))
-        params = payload.get("params") or {}
+        if "params" in payload:
+            params = _validate_tab_params_patch(tab_type=ttype, raw_params=payload.get("params"), field="params")
+        else:
+            params = {}
         new_id = str(payload.get("id") or "").strip() or f"tab-{int(time.time()*1000)}"
         if any(str(t.get("id")) == new_id for t in tabs):
             raise HTTPException(status_code=409, detail="tab id already exists")
@@ -372,9 +470,21 @@ def build_router(
                     t["title"] = str(payload["title"])
                 if "enabled" in payload:
                     t["enabled"] = _parse_bool_payload(payload["enabled"], field="enabled")
-                if "params" in payload and isinstance(payload["params"], dict):
-                    # shallow merge for now
-                    t["params"] = payload["params"]
+                if "params" in payload:
+                    try:
+                        tab_type = _normalize_tab_type(t.get("type"))
+                    except ValueError as exc:
+                        raise HTTPException(status_code=500, detail=f"tabs.json contains {exc}") from exc
+                    params_patch = _validate_tab_params_patch(tab_type=tab_type, raw_params=payload.get("params"), field="params")
+                    current_params = t.get("params")
+                    if current_params is None:
+                        current_params = {}
+                    if not isinstance(current_params, dict):
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"tabs.json invalid: tab '{tab_id}' params must be an object",
+                        )
+                    t["params"] = _deep_merge_params(current_params, params_patch)
                 t["meta"] = t.get("meta") or {}
                 t["meta"]["updatedAt"] = now
                 updated = True

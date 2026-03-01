@@ -47,11 +47,24 @@ VARIANT_LABELS = {
 
 def convert_specs_to_patch_dict(specs) -> Dict[PatchTarget, tuple]:
     patch_dict: Dict[PatchTarget, tuple] = {}
+
+    def _register_patch(parameter: PatchTarget, kind_label: str, weights: tuple[object, ...]) -> None:
+        existing = patch_dict.get(parameter)
+        if existing is not None:
+            existing_kind, _ = existing
+            raise RuntimeError(
+                "LoRA patch collision: multiple variants target the same parameter "
+                f"{parameter!r} (existing={existing_kind!r}, incoming={kind_label!r}). "
+                "This is ambiguous and would otherwise silently overwrite adapter identity."
+            )
+        patch_dict[parameter] = (kind_label, weights)
+
     for spec in specs:
         payload = spec.payload
         if spec.kind == PatchKind.LORA:
             assert isinstance(payload, LoraWeights)
-            patch_dict[spec.parameter] = (
+            _register_patch(
+                spec.parameter,
                 "lora",
                 (
                     payload.up,
@@ -63,7 +76,8 @@ def convert_specs_to_patch_dict(specs) -> Dict[PatchTarget, tuple]:
             )
         elif spec.kind == PatchKind.LOHA:
             assert isinstance(payload, LohaWeights)
-            patch_dict[spec.parameter] = (
+            _register_patch(
+                spec.parameter,
                 "loha",
                 (
                     payload.w1_a,
@@ -78,7 +92,8 @@ def convert_specs_to_patch_dict(specs) -> Dict[PatchTarget, tuple]:
             )
         elif spec.kind == PatchKind.LOKR:
             assert isinstance(payload, LokrWeights)
-            patch_dict[spec.parameter] = (
+            _register_patch(
+                spec.parameter,
                 "lokr",
                 (
                     payload.w1,
@@ -94,7 +109,8 @@ def convert_specs_to_patch_dict(specs) -> Dict[PatchTarget, tuple]:
             )
         elif spec.kind == PatchKind.GLORA:
             assert isinstance(payload, GloraWeights)
-            patch_dict[spec.parameter] = (
+            _register_patch(
+                spec.parameter,
                 "glora",
                 (
                     payload.a1,
@@ -107,10 +123,10 @@ def convert_specs_to_patch_dict(specs) -> Dict[PatchTarget, tuple]:
             )
         elif spec.kind == PatchKind.DIFF:
             assert isinstance(payload, DiffWeights)
-            patch_dict[spec.parameter] = ("diff", (payload.weight,))
+            _register_patch(spec.parameter, "diff", (payload.weight,))
         elif spec.kind == PatchKind.SET:
             assert isinstance(payload, SetWeights)
-            patch_dict[spec.parameter] = ("set", (payload.weight,))
+            _register_patch(spec.parameter, "set", (payload.weight,))
         else:
             raise NotImplementedError(f"Unsupported LoRA patch kind: {spec.kind}")
     return patch_dict

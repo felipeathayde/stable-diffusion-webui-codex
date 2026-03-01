@@ -255,8 +255,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "LoRA refresh signature mode: "
-            "'structural' hashes bundle structure only (default), "
-            "'content_sha256' also hashes patch tensor contents to force refresh when values change."
+            "'structural' hashes bundle structure only, "
+            "'content_sha256' hashes patch tensor contents to force refresh when values change (default)."
         ),
     )
 

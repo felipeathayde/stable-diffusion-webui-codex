@@ -24,13 +24,14 @@ Status: Active
 ## Notes
 - Routers should not mutate global state in `run_api.py`; prefer explicit dependency injection via `build_router(...)`.
 - 2026-02-28: `generation.py` removed public `img2vid_mode='chunk'`; API now accepts only `solo|sliding|svi2|svi2_pro` and returns fail-loud HTTP 400 when `chunk` is provided.
+- 2026-02-28: `generation.py` keeps `/api/vid2vid` route scaffolded but intentionally disabled (HTTP 501 + `NotImplementedError`) until the capability-driven router/runtime contract is finalized.
 - 2026-01-13: `tools.py` supports GGUF conversion cancellation (`POST /api/tools/convert-gguf/:job_id/cancel`) and an `overwrite` flag (default false; fails with 409 if the output path exists).
 - 2026-01-14: `tools.py` accepts a `comfy_layout` flag for GGUF conversion to control Flux/ZImage Comfy/Codex remapping (default true).
 - 2026-01-13: `models.py` adds `/api/models/checkpoint-metadata` so the UI can fetch the full metadata modal payload without constructing it client-side.
 - 2026-01-18: `models.py` now includes backend `asset_contracts` in `/api/engines/capabilities` so the UI can gate required VAE/text encoder selection from a single contract source.
 - 2026-01-18: `generation.py` enforces image asset requirements via `apps/backend/core/contracts/asset_requirements.py` and keeps engine registration lazy (avoids torch-heavy startup for non-generation endpoints).
 - 2026-01-18: `generation.py` `vid2vid.method="wan_animate"` enforces repo-scoped paths under `CODEX_ROOT` (requires `vid2vid_model_dir`; stage `model_dir` must exist under the repo root).
-- 2026-01-21: WAN stage LoRA selection is sha-only via `lora_sha` (sha → `.safetensors`); stage `lora_path` is rejected.
+- 2026-01-21 (historical, superseded on 2026-02-28): WAN stage LoRA selection was sha-only via `lora_sha`.
 - 2026-01-21: Video tasks honor Smart flags via persisted options (`codex_smart_offload`/`codex_smart_fallback`/`codex_smart_cache`), propagating effective values into requests and applying `smart_runtime_overrides(...)` inside the video worker thread.
 - 2026-01-23: `generation.py` enforces WAN video `height/width % 16 == 0` (txt2vid/img2vid/vid2vid; Diffusers parity) to avoid silent patch-grid cropping in the WAN22 runtime.
 - 2026-01-23: WAN `%16` validation errors include an explicit `WIDTHxHEIGHT` + suggested rounded-up dimensions (for direct API callers; the UI snaps dims before POST).
@@ -38,7 +39,7 @@ Status: Active
 - 2026-01-24: `options.py` applies `codex_attention_backend` immediately via `memory_management.set_attention_backend(...)` (unloads/reinitializes runtime memory config; no backend restart required).
 - 2026-01-24: `generation.py` applies live preview interval/method via thread-local `LivePreviewTaskConfig.runtime_overrides()` (no process-global `os.environ` mutation; avoids cross-request drift).
 - 2026-01-25: `generation.py` now accepts `clip_skip` in `[0..12]` for txt2img (0 = “use default”), and validates `img2img_clip_skip` in `[0..12]` when provided.
-- 2026-01-27: Video endpoints accept optional `video_return_frames` and pass it through request extras; WAN txt2vid/img2vid/vid2vid results can include `video {rel_path,mime}` for the UI player and omit frames by default.
+- 2026-01-27: Video endpoints accept optional `video_return_frames` and pass it through request extras; WAN txt2vid/img2vid results can include `video {rel_path,mime}` for the UI player and omit frames by default (vid2vid-specific behavior remains historical while `/api/vid2vid` is disabled).
 - 2026-01-28: `generation.py` accepts `extras.zimage_variant="turbo"|"base"` (and `img2img_extras.zimage_variant`) and forwards it into `engine_options["zimage_variant"]` so the orchestrator can reload Z-Image when the variant changes.
 - 2026-01-29: `generation.py` `img2img_*` now accepts explicit mask/inpaint controls when `img2img_mask` is provided (`img2img_mask_enforcement`, `img2img_inpaint_full_res_padding`, `img2img_inpainting_fill`, `img2img_inpainting_mask_invert`, `img2img_mask_blur[_x/_y]`, `img2img_mask_round`).
 - 2026-02-25: `generation.py` img2img mask-path defaults now align with ADetailer-like baseline (`img2img_inpainting_fill` default `1`, `img2img_inpaint_full_res_padding` default `32`) when mask payload omits explicit values.
@@ -86,7 +87,7 @@ Status: Active
 - 2026-02-21: `generation.py` video core parser removed legacy sampler aliases (`txt2vid_sampling`/`img2vid_sampling`); canonical request keys are `*_sampler` only, and old aliases now fail strict unknown-key validation.
 - 2026-02-20: `generation.py` WAN video parsing now validates `gguf_sdpa_policy` strictly (`auto|mem_efficient|flash|math`) and normalizes accepted values to lowercase before request dispatch.
 - 2026-02-21: `generation.py` WAN stage parsing now requires non-empty `wan_high.prompt` and `wan_low.prompt` (txt2vid/img2vid + strict stage normalizer); `negative_prompt` remains optional and preserves `None` vs explicit empty-string semantics for downstream stage-level fallback logic.
-- 2026-02-28: `generation.py` WAN video stage parsers (`txt2vid`/`img2vid` + strict vid2vid stage normalizer) consume stage LoRAs from explicit `wan_high/wan_low.loras[]`; duplicate entries are deduplicated by SHA (last entry wins). Prompt-token LoRA parsing is frontend-owned in `useVideoGeneration`.
+- 2026-02-28: `generation.py` WAN video stage parsers (`txt2vid`/`img2vid` + strict vid2vid stage normalizer) consume stage LoRAs from explicit `wan_high/wan_low.loras[]`; duplicate entries are deduplicated by SHA (last entry wins). Prompt-token LoRA parsing is frontend-owned in `useVideoGeneration`, and router stage fields now reject raw `<lora:...>` tokens fail-loud (HTTP 400) to keep API callers on the explicit `loras[]` contract.
 - 2026-02-21: `generation.py` video worker exception path now invokes shared `tasks/generation_tasks.py::force_runtime_memory_cleanup(...)` to enforce best-effort RAM/VRAM purge when task execution fails.
 - 2026-02-28: `system.py` `/api/obliterate-vram` removed the optional `operations_gguf.clear_cache` import/call path; cleanup now runs memory-manager/GC/CUDA actions only (legacy `gguf_cache_cleared` response field remains compatibility-only and stays `false`).
 - 2026-02-20: `paths.py` now treats persistence failures fail-loud: `/api/paths` GET/POST map JSON read/write failures to HTTP 500 (no success-on-failure), and payload/config list entries are validated as string arrays (invalid types reject with 400/500).

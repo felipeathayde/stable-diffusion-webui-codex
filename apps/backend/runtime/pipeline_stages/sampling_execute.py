@@ -30,6 +30,7 @@ from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.core.state import state as backend_state
 from apps.backend.patchers.lora_apply import apply_loras_to_engine
+from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.runtime.live_preview import (
     LivePreviewMethod,
     decode_preview_image,
@@ -136,6 +137,18 @@ def execute_sampling(
     run_before_sampling_hooks(processing, prompt_context, plan.seeds, plan.subseeds)
 
     merged = collect_lora_selections(prompt_loras)
+    if merged:
+        engine_id = str(getattr(model, "engine_id", "") or "").strip()
+        if engine_id:
+            try:
+                semantic_engine = semantic_engine_for_engine_id(engine_id)
+            except KeyError:
+                semantic_engine = None
+            if semantic_engine is not None and not ENGINE_SURFACES[semantic_engine].supports_lora:
+                raise RuntimeError(
+                    f"LoRA selections are unsupported for engine '{engine_id}'. "
+                    "Remove LoRA prompt tags and lora_sha entries for this request."
+                )
     if hasattr(model, "codex_objects_after_applying_lora") and model.codex_objects_after_applying_lora is not None:
         stats = apply_loras_to_engine(model, merged)
         if merged:

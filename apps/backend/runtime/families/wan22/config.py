@@ -89,7 +89,9 @@ class RunConfig:
     aggressive_offload: bool = False  # legacy switch; maps to offload_level=2 (balanced) when offload_level is unset
     te_device: Optional[str] = None  # 'cuda' | 'cpu' (None = follow cfg.device)
     # New: coarse-grained offload profile (takes precedence over aggressive_offload if provided)
-    # 0 = off (keep resident), 1 = light (offload TE/VAE only), 2 = balanced (stage cache clear only when pressured), 3 = aggressive (always clear between stages)
+    # 0 = baseline (no stage-boundary cache clear; stage teardown still unloads stage models),
+    # 1 = light (offload TE/VAE only), 2 = balanced (stage cache clear only when pressured),
+    # 3 = aggressive (always clear between stages)
     offload_level: Optional[int] = None
     chunk_buffer_mode: str = "hybrid"  # img2vid chunk buffering strategy: 'hybrid' | 'ram' | 'ram+hd'
 
@@ -574,6 +576,16 @@ def build_wan22_gguf_run_config(
         elif not isinstance(raw_loras, list):
             raise RuntimeError(f"WAN22 GGUF: {stage}.loras must be an array when provided.")
         else:
+            from apps.backend.inventory.scanners.loras import iter_lora_files
+
+            known_lora_paths = {
+                os.path.normcase(os.path.realpath(os.path.expanduser(str(path))))
+                for path in iter_lora_files()
+            }
+            if not known_lora_paths:
+                raise RuntimeError(
+                    f"WAN22 GGUF: {stage}.loras was provided, but no LoRA assets are available in inventory."
+                )
             for index, raw_lora in enumerate(raw_loras):
                 if not isinstance(raw_lora, dict):
                     raise RuntimeError(f"WAN22 GGUF: {stage}.loras[{index}] must be an object.")
@@ -598,6 +610,12 @@ def build_wan22_gguf_run_config(
                 if not lora_path.lower().endswith(".safetensors"):
                     raise RuntimeError(
                         f"WAN22 GGUF: {stage}.loras[{index}].sha must resolve to a .safetensors file: {lora_sha}"
+                    )
+                canonical_lora_path = os.path.normcase(os.path.realpath(os.path.expanduser(lora_path)))
+                if canonical_lora_path not in known_lora_paths:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: {stage}.loras[{index}].sha resolved to a non-LoRA asset path: {lora_path}. "
+                        "Select a SHA from inventory.loras."
                     )
                 if not os.path.isfile(lora_path):
                     raise RuntimeError(f"WAN22 GGUF: {stage} LoRA file not found: {lora_path}")

@@ -482,8 +482,6 @@ export function useVideoGeneration(tabId: string) {
       attentionMode: v.attentionMode,
       img2vid: {
         mode: img2vidMode,
-        chunkFrames: v.img2vidChunkFrames,
-        overlapFrames: v.img2vidOverlapFrames,
         anchorAlpha: v.img2vidAnchorAlpha,
         resetAnchorToBase: v.img2vidResetAnchorToBase,
         chunkSeedMode: v.img2vidChunkSeedMode,

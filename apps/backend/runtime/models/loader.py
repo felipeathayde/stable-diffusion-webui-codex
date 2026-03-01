@@ -1956,12 +1956,21 @@ def codex_loader(
 
 # ------------------------------ Native diffusers repo loader (no state dict)
 class _SimpleEstimated:
-    def __init__(self, *, huggingface_repo: str, core_config: dict):
+    def __init__(self, *, huggingface_repo: str, core_config: dict, pipeline_class: str = ""):
         self.huggingface_repo = huggingface_repo
         self.core_config = core_config
+        self.pipeline_class = pipeline_class
 
     def inpaint_model(self) -> bool:  # API parity with CodexEstimatedConfig
-        return False
+        channels_in = None
+        try:
+            channels_in = int(self.core_config.get("in_channels"))
+        except Exception:
+            channels_in = None
+        if channels_in is not None and channels_in > 4:
+            return True
+        inpaint_hint = f"{self.pipeline_class} {self.huggingface_repo}".strip().lower()
+        return "inpaint" in inpaint_hint
 
 
 def _detect_engine_from_config(config: dict) -> str:
@@ -2022,7 +2031,11 @@ def load_engine_from_diffusers(repo_dir: str) -> DiffusionModelBundle:
     except Exception:
         core_config = {}
 
-    est = _SimpleEstimated(huggingface_repo=os.path.basename(repo_dir), core_config=core_config)
+    est = _SimpleEstimated(
+        huggingface_repo=os.path.basename(repo_dir),
+        core_config=core_config,
+        pipeline_class=str(config.get("_class_name") or ""),
+    )
 
     return _build_diffusion_bundle(
         model_ref=repo_dir,

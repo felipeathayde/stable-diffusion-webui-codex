@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_sanitize_allocator_env_contract` (function): Removes unsupported allocator env keys before subprocess spawn (contract keys only: `PYTORCH_CUDA_ALLOC_CONF` + `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF`).
 - `_parse_pytorch_cuda_alloc_conf` (function): Parses `PYTORCH_CUDA_ALLOC_CONF` entries into strict `key:value` pairs.
 - `_ensure_cuda_malloc_async_allocator_env` (function): Enforces allocator backend `cudaMallocAsync` when `CODEX_CUDA_MALLOC=1`.
-- `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, GGUF/LoRA/runtime toggles; offload defaults to CPU when unset).
+- `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, LoRA/runtime toggles; offload defaults to CPU when unset).
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
 - `_windows_no_activate` (function): Windows startupinfo helper to open consoles without stealing focus.
@@ -539,10 +539,6 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
                     f"(got {raw_sdpa_policy!r}).",
                 )
             args.append(f"--attention-sdpa-policy={raw_sdpa_policy}")
-
-    raw_exec = str(env.get("CODEX_GGUF_EXEC", "") or "").strip().lower()
-    if raw_exec:
-        args.append(f"--gguf-exec={raw_exec}")
 
     raw_lora_mode = str(env.get("CODEX_LORA_APPLY_MODE", "") or "").strip().lower()
     if raw_lora_mode:

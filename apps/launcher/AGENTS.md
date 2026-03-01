@@ -28,13 +28,13 @@ Last Review: 2026-02-25
 - 2025-11-03: Launcher forwards conditioning diagnostics via `--debug-conditioning` when `CODEX_DEBUG_COND` is enabled in profiles/TUI.
 - 2025-12-29: Launcher now resolves the repo root via `CODEX_ROOT` (shared helper) instead of `Path(__file__).parents[...]`, so Windows/WSL launch methods stay consistent.
 - 2025-12-29: Launcher UI service now always receives `API_PORT` (prevents Vite proxy/API_PORT derivation from a fallback WEB_PORT), and the API service performs a strict preflight port check across IPv4/IPv6 localhost (helps diagnose WSL/Windows double-run and “localhost” split-brain).
-- 2026-01-23: Launcher now persists GGUF/LoRA runtime knobs (`CODEX_GGUF_EXEC`, `CODEX_LORA_APPLY_MODE`, `CODEX_LORA_ONLINE_MATH`) and forwards them to the backend as CLI flags when starting the API (`--gguf-exec`, `--lora-apply-mode`, `--lora-online-math`). API is started via `apps/backend/interfaces/api/run_api.py` so backend args are supported.
+- 2026-03-01: Launcher no longer persists/forwards GGUF exec mode knobs (`CODEX_GGUF_EXEC`, `--gguf-exec`); GGUF runtime policy is fixed to forward dequantization and launcher only forwards LoRA runtime flags (`--lora-apply-mode`, `--lora-online-math`).
 - 2026-01-24: Launcher profiles include explicit device defaults (`CODEX_CORE_DEVICE`, `CODEX_TE_DEVICE`, `CODEX_VAE_DEVICE`) and `services.py` forwards them to the backend as CLI flags (`--core-device`, `--te-device`, `--vae-device`) to avoid bootstrap-time fallback/prompt failures in non-interactive spawns (and profile consistency keeps these keys, no accidental pruning).
 - 2026-01-02: Added standardized file header docstrings to launcher modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining launcher modules (`__init__.py`, `checks.py`, `log_buffer.py`, `paths.py`) (doc-only change; part of rollout).
 - 2026-01-06: Launcher Python preflight now matches `.python-version` (3.12.10) instead of allowing stale 3.10/3.11.
 - 2026-01-21: Launcher profiles now default `PYTORCH_CUDA_ALLOC_CONF` (global PyTorch CUDA allocator tuning) to `max_split_size_mb:256,garbage_collection_threshold:0.8` when unset.
-- 2026-01-29: Launcher no longer exposes reserved `cuda_pack` GGUF exec mode; CodexPack packed GGUFs are auto-detected via `codex.pack.*` / `*.codexpack.gguf`. Legacy launcher configs are migrated to `dequant_forward`.
+- 2026-03-01: Legacy launcher profiles containing `CODEX_GGUF_EXEC` are sanitized during runtime-env normalization (stale key removed, no compatibility shim).
 - 2026-01-31: Launcher profiles now persist global profiling env flags (`CODEX_PROFILE*`) and the GUI diagnostics tab exposes them for backend torch-profiler runs.
 - 2026-02-15: Launcher API arg forwarding now includes trace toggles (`CODEX_TRACE_CONTRACT` -> `--trace-contract`, `CODEX_TRACE_PROFILER` -> `--trace-profiler`) for backend bootstrap alignment.
 - 2026-02-18: Launcher task/runtime profile defaults now persist `CODEX_TASK_CANCEL_DEFAULT_MODE` (`immediate|after_current`) as a backend bootstrap knob for task cancel policy.

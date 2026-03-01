@@ -66,8 +66,6 @@ Linux installer flags:
 2) Start API + UI:
 ```bash
 ./run-webui.sh
-# Advanced (forwarded to backend):
-./run-webui.sh --gguf-exec=dequant_forward
 ```
 
 3) Safe update (fail-closed):

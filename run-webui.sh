@@ -23,7 +23,7 @@ Starts:
   - Frontend UI (Vite) from ${UI_DIR}
 
 Backend args:
-  - Any extra args are forwarded to the backend entrypoint (e.g. '--gguf-exec=dequant_forward', '--lora-apply-mode online').
+  - Any extra args are forwarded to the backend entrypoint (e.g. '--lora-apply-mode online').
 
 Launcher args:
   - '--pytorch-cuda-alloc-conf <value>': sets 'PYTORCH_CUDA_ALLOC_CONF' for the backend process (requires restart).

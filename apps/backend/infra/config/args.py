@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_truthy` (function): Parses a string env/arg into a boolean (truthy/falsey).
 - `_has_value` (function): Checks whether a parsed CLI option has a meaningful value (vs unset/default).
 - `_apply_source_overrides` (function): Applies overrides from a source mapping onto the argparse namespace.
-- `_validate_runtime_flags` (function): Validates behavior-changing runtime flag combinations (GGUF exec modes, online LoRA math).
+- `_validate_runtime_flags` (function): Validates behavior-changing runtime flag combinations (online LoRA math, runtime cache/allocator constraints).
 - `_parse_pytorch_cuda_alloc_conf` (function): Parses `PYTORCH_CUDA_ALLOC_CONF` entries into validated `key:value` pairs.
 - `_allocator_backend_from_cuda_env` (function): Extracts and validates allocator backend from `PYTORCH_CUDA_ALLOC_CONF`.
 - `_validate_required_devices` (function): Ensures resolved device values obey the main-device invariant.
@@ -50,7 +50,6 @@ import sys
 from typing import Mapping, MutableMapping, Sequence
 
 from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
-from .gguf_exec_mode import DEFAULT_GGUF_EXEC_MODE, GgufExecMode
 from .lora_online_math import DEFAULT_LORA_ONLINE_MATH, LoraOnlineMath
 from .lora_merge_mode import (
     DEFAULT_LORA_MERGE_MODE,
@@ -176,17 +175,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-gpu-warning", action="store_true")
 
     parser.add_argument("--disable-online-tokenizer", action="store_true")
-
-    parser.add_argument(
-        "--gguf-exec",
-        choices=[m.value for m in GgufExecMode],
-        default=None,
-        help=(
-            "GGUF execution mode: "
-            "'dequant_forward' (default) keeps GGUF tensors byte-packed and dequantizes on demand during forward; "
-            "'cuda_pack' is reserved for Codex packed GGUF execution via fused CUDA kernels (NVIDIA-only)."
-        ),
-    )
 
     parser.add_argument(
         "--gguf-dequant-cache",
@@ -552,7 +540,6 @@ def _allocator_backend_from_cuda_env(env: Mapping[str, str]) -> str | None:
 
 
 def _validate_runtime_flags(ns: argparse.Namespace, env: Mapping[str, str]) -> None:
-    gguf_exec = str(getattr(ns, "gguf_exec", DEFAULT_GGUF_EXEC_MODE.value))
     gguf_dequant_cache = str(getattr(ns, "gguf_dequant_cache", "off") or "off").strip().lower()
     gguf_dequant_cache_limit_mb = getattr(ns, "gguf_dequant_cache_limit_mb", None)
     gguf_dequant_cache_ratio = getattr(ns, "gguf_dequant_cache_ratio", None)
@@ -562,17 +549,8 @@ def _validate_runtime_flags(ns: argparse.Namespace, env: Mapping[str, str]) -> N
     if lora_online_math == LoraOnlineMath.ACTIVATION.value:
         if lora_apply_mode != LoraApplyMode.ONLINE.value:
             raise RuntimeError("--lora-online-math=activation requires '--lora-apply-mode online'.")
-        if gguf_exec != GgufExecMode.CUDA_PACK.value:
-            raise RuntimeError("--lora-online-math=activation is reserved for '--gguf-exec=cuda_pack'.")
-
-    if gguf_exec == GgufExecMode.CUDA_PACK.value:
-        if lora_apply_mode != LoraApplyMode.ONLINE.value:
-            raise RuntimeError("--gguf-exec=cuda_pack requires '--lora-apply-mode online'.")
-        if lora_online_math != LoraOnlineMath.ACTIVATION.value:
-            raise RuntimeError("--gguf-exec=cuda_pack requires '--lora-online-math activation'.")
         raise RuntimeError(
-            "--gguf-exec=cuda_pack is reserved and not implemented yet in this build. "
-            "Use 'dequant_forward' for now.",
+            "--lora-online-math=activation is reserved and not implemented yet in this build.",
         )
 
     if gguf_dequant_cache != "off":
@@ -1248,8 +1226,6 @@ def initialize(
     _apply_env_overrides(namespace, env_map)
     if getattr(namespace, "lora_apply_mode", None) is None:
         namespace.lora_apply_mode = DEFAULT_LORA_APPLY_MODE.value
-    if getattr(namespace, "gguf_exec", None) is None:
-        namespace.gguf_exec = DEFAULT_GGUF_EXEC_MODE.value
     if getattr(namespace, "gguf_dequant_cache", None) is None:
         namespace.gguf_dequant_cache = "off"
     if getattr(namespace, "lora_online_math", None) is None:

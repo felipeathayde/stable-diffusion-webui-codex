@@ -25,7 +25,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ATTENTION_BACKEND_CHOICES` (constant): Allowed values for `CODEX_ATTENTION_BACKEND`.
 - `ATTENTION_SDPA_POLICY_CHOICES` (constant): Allowed values for `CODEX_ATTENTION_SDPA_POLICY`.
 - `LAUNCHER_ATTENTION_MODE_CHOICES` (constant): Allowed launcher UI attention mode values.
-- `GGUF_EXEC_CHOICES` (constant): Allowed values for `CODEX_GGUF_EXEC`.
 - `GGUF_DEQUANT_CACHE_CHOICES` (constant): Allowed values for `CODEX_GGUF_DEQUANT_CACHE`.
 - `WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES` (constant): Allowed values for `CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE`.
 - `LORA_APPLY_CHOICES` (constant): Allowed values for `CODEX_LORA_APPLY_MODE`.
@@ -63,7 +62,6 @@ LAUNCHER_ATTENTION_MODE_CHOICES: tuple[str, ...] = (
     "split",
     "quad",
 )
-GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward",)
 GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off",)
 WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES: tuple[str, ...] = ("hybrid", "ram", "ram+hd")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")
@@ -217,19 +215,18 @@ def normalize_attention_env(env: MutableMapping[str, str]) -> tuple[str, str]:
     return backend, sdpa_policy
 
 
-def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, str, str, str]:
+def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, str, str]:
     """Normalize GGUF/LoRA/WAN img2vid chunk-buffer env keys enforcing cross-setting invariants.
 
-    Returns (gguf_exec, gguf_dequant_cache, lora_apply_mode, lora_online_math, chunk_buffer_mode) as normalized values.
+    Returns (gguf_dequant_cache, lora_apply_mode, lora_online_math, chunk_buffer_mode) as normalized values.
     """
 
-    # Do not silently coerce reserved values (e.g. cuda_pack/activation).
+    # Do not silently coerce reserved values (e.g. activation math mode).
     # Validation must remain fail-loud and aligned with backend flag contracts.
 
     env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
     env.pop("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", None)
-
-    gguf = ChoiceSetting("CODEX_GGUF_EXEC", default="dequant_forward", choices=GGUF_EXEC_CHOICES).get(env)
+    env.pop("CODEX_GGUF_EXEC", None)
     gguf_dequant_cache = ChoiceSetting(
         "CODEX_GGUF_DEQUANT_CACHE",
         default="off",
@@ -243,20 +240,16 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
         choices=WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES,
     ).get(env)
 
-    if gguf != "dequant_forward":
-        gguf_dequant_cache = "off"
-
     # math only valid on online mode
     if lora_apply != "online":
         lora_math = "weight_merge"
 
-    env["CODEX_GGUF_EXEC"] = gguf
     env["CODEX_GGUF_DEQUANT_CACHE"] = gguf_dequant_cache
     env["CODEX_LORA_APPLY_MODE"] = lora_apply
     env["CODEX_LORA_ONLINE_MATH"] = lora_math
     env["CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE"] = chunk_buffer_mode
 
-    return gguf, gguf_dequant_cache, lora_apply, lora_math, chunk_buffer_mode
+    return gguf_dequant_cache, lora_apply, lora_math, chunk_buffer_mode
 
 
 def normalize_task_runtime_env(env: MutableMapping[str, str]) -> tuple[bool, bool, int, int, str]:

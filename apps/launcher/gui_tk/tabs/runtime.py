@@ -13,7 +13,7 @@ Allocator defaults are managed through `PYTORCH_CUDA_ALLOC_CONF` and `CODEX_ENAB
 Engine advanced settings also expose the API-only manual env overlay enable toggle (content edited in `Manual Env Vars` tab).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + GGUF/LoRA + `PYTORCH_CUDA_ALLOC_CONF`/cuda-malloc toggles).
+- `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + LoRA + `PYTORCH_CUDA_ALLOC_CONF`/cuda-malloc toggles).
 """
 
 from __future__ import annotations
@@ -88,7 +88,6 @@ class RuntimeTab:
         self._var_attention_mode = tk.StringVar()
 
         self._var_lora_apply_mode = tk.StringVar()
-        self._var_gguf_exec = tk.StringVar()
         self._var_gguf_dequant_cache = tk.StringVar()
         self._var_wan_chunk_buffer_mode = tk.StringVar()
         self._var_lora_online_math = tk.StringVar()
@@ -219,21 +218,6 @@ class RuntimeTab:
                             help_text=(
                                 "merge: rewrites weights once at apply-time (default).\n"
                                 "online: applies LoRA patches on-the-fly during forward."
-                            ),
-                        ),
-                        FormFieldDescriptor(
-                            field_id="gguf_exec_mode",
-                            kind=FieldKind.CHOICE,
-                            label="GGUF exec mode (requires API restart):",
-                            variable=self._var_gguf_exec,
-                            choices=["dequant_forward"],
-                            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
-                            width=18,
-                            help_mode=HelpMode.DIALOG,
-                            help_title="GGUF exec mode",
-                            help_text=(
-                                "dequant_forward: GGUF weights dequantize on-demand during forward (current runtime contract).\n"
-                                "CodexPack packed GGUFs are auto-detected via `*.codexpack.gguf` (no exec-mode toggle)."
                             ),
                         ),
                         FormFieldDescriptor(
@@ -479,7 +463,6 @@ class RuntimeTab:
         self._var_attention_mode.set(_ATTENTION_MODE_TO_LABEL.get(attention_mode, "SDPA - Auto"))
 
         self._var_lora_apply_mode.set(_get("CODEX_LORA_APPLY_MODE", "merge"))
-        self._var_gguf_exec.set(_get("CODEX_GGUF_EXEC", "dequant_forward"))
         self._var_gguf_dequant_cache.set(_get("CODEX_GGUF_DEQUANT_CACHE", "off"))
         self._var_wan_chunk_buffer_mode.set(_get("CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE", "hybrid"))
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
@@ -765,7 +748,7 @@ class RuntimeTab:
 
     def _sync_runtime_deps(self, *, mark_changed: bool) -> None:
         env = self._controller.store.env
-        env["CODEX_GGUF_EXEC"] = str(self._var_gguf_exec.get() or "").strip().lower() or "dequant_forward"
+        env.pop("CODEX_GGUF_EXEC", None)
         env["CODEX_GGUF_DEQUANT_CACHE"] = str(self._var_gguf_dequant_cache.get() or "").strip().lower() or "off"
         env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
         env.pop("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", None)
@@ -775,27 +758,26 @@ class RuntimeTab:
             str(self._var_wan_chunk_buffer_mode.get() or "").strip().lower() or "hybrid"
         )
         try:
-            gguf, gguf_cache, lora_apply, lora_math, chunk_buffer_mode = normalize_gguf_lora_env(env)
+            gguf_cache, lora_apply, lora_math, chunk_buffer_mode = normalize_gguf_lora_env(env)
         except SettingValidationError as exc:
-            env["CODEX_GGUF_EXEC"] = "dequant_forward"
+            env.pop("CODEX_GGUF_EXEC", None)
             env["CODEX_GGUF_DEQUANT_CACHE"] = "off"
             env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
             env.pop("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", None)
             env["CODEX_LORA_APPLY_MODE"] = "merge"
             env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
             env["CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE"] = "hybrid"
-            gguf, gguf_cache, lora_apply, lora_math, chunk_buffer_mode = normalize_gguf_lora_env(env)
+            gguf_cache, lora_apply, lora_math, chunk_buffer_mode = normalize_gguf_lora_env(env)
             messagebox.showerror("Invalid runtime setting", str(exc))
             mark_changed = True
 
-        self._var_gguf_exec.set(gguf)
         self._var_gguf_dequant_cache.set(gguf_cache)
         self._var_lora_apply_mode.set(lora_apply)
         self._var_lora_online_math.set(lora_math)
         self._var_wan_chunk_buffer_mode.set(chunk_buffer_mode)
 
         if self._gguf_dequant_cache_combo is not None:
-            self._gguf_dequant_cache_combo.configure(state="readonly" if gguf == "dequant_forward" else "disabled")
+            self._gguf_dequant_cache_combo.configure(state="readonly")
 
         if self._lora_math_combo is not None:
             self._lora_math_combo.configure(state="readonly" if lora_apply == "online" else "disabled")

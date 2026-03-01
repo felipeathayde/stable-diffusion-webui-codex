@@ -37,7 +37,7 @@ Status: Active
   - Base: `apps/backend/huggingface/Tongyi-MAI/Z-Image/tokenizer`
   The engine sets a per-run tokenizer hint based on `extras.zimage_variant`; override with `CODEX_ZIMAGE_TOKENIZER_PATH` when needed.
 - 2025-12-29: ZImage tokenizer fallback paths are now anchored to `CODEX_ROOT` (required) so tokenizers resolve correctly when the process CWD is not the repo root.
-- 2026-03-01: ZImage GGUF text encoder loads GGUF via `apps/backend/runtime/checkpoint/io.py:load_gguf_state_dict` so global runtime flags (for example `--gguf-exec=dequant_forward`) apply consistently.
+- 2026-03-01: ZImage GGUF text encoder loads GGUF via `apps/backend/runtime/checkpoint/io.py:load_gguf_state_dict` under the global forward-dequant runtime contract (`dequantize=False` when policy is omitted).
 - 2026-01-04: Added `runtime/families/zimage/inference.py` and updated detector/loader to use it (prevents drift in hidden/context/latent/layer inference; supports prefixed SafeTensors exports).
 - 2026-01-02: Added standardized file header docstrings to Z-Image runtime facade/debug modules (doc-only change; part of rollout).
 - 2026-01-23: Centralized llama.cpp-style GGUF tensor-name remapping for Qwen3 in `apps/backend/runtime/state_dict/keymap_llama_gguf.py`; `qwen3.py:remap_gguf_keys` delegates and fails loud on unknown keys.

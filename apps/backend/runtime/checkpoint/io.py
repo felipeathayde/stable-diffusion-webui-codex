@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `load_torch_file` (function): Loads a torch checkpoint with safe-load options and explicit device targeting (prefers safe loaders, falls back to pickle loader when allowed).
 - `read_gguf_metadata` (function): Reads GGUF key/value metadata from a `.gguf` file header (scoped here to keep quantization imports out of engines).
 - `_load_gguf_state_dict` (function): Loads a GGUF state dict from a `.gguf` file path (used by runtime helpers without importing heavy ops).
-- `load_gguf_state_dict` (function): Public GGUF state-dict loader that honors runtime flags for normal GGUFs, auto-detects CodexPack artifacts, and supports target-device tensor exposure.
+- `load_gguf_state_dict` (function): Public GGUF state-dict loader with explicit dequant policy (`dequantize=False` default when omitted) and target-device tensor exposure.
 - `_load_pickled_checkpoint` (function): Loads a pickled checkpoint using the restricted/guarded unpickler (`checkpoint_pickle`).
 """
 
@@ -92,32 +92,16 @@ def load_gguf_state_dict(
 ):
     """Load a GGUF state dict, with optional explicit dequantization policy.
 
-    - When `dequantize` is None, resolves GGUF exec mode with `CODEX_GGUF_EXEC`
-      env precedence over `--gguf-exec`. The default/only supported load policy in this path is
-      `dequant_forward` (`dequantize=False`).
+    - When `dequantize` is None, this loader defaults to forward dequantization
+      (`dequantize=False`) for runtime GGUF paths.
     - Callers with an explicit policy (e.g. "VAE GGUFs always dequantize") should pass
       `dequantize=True` to make the intent unambiguous and avoid drift.
     """
 
     from apps.backend.quantization.gguf_loader import load_gguf_state_dict as _load
-    from apps.backend.infra.config.args import args as runtime_args
-    from apps.backend.infra.config.gguf_exec_mode import GgufExecMode, resolve_gguf_exec_mode
 
     if dequantize is None:
-        try:
-            exec_mode = resolve_gguf_exec_mode(runtime_args)
-        except ValueError as exc:
-            raise RuntimeError(
-                "GGUF checkpoint loader received invalid gguf exec mode "
-                f"(CODEX_GGUF_EXEC/--gguf-exec): {exc}"
-            ) from exc
-        if exec_mode == GgufExecMode.DEQUANT_FORWARD:
-            dequantize = False
-        else:
-            raise RuntimeError(
-                "GGUF checkpoint loader does not support '--gguf-exec=cuda_pack' in this build. "
-                "Use '--gguf-exec=dequant_forward'."
-            )
+        dequantize = False
     return _load(path, dequantize=bool(dequantize), computation_dtype=computation_dtype, device=device)
 
 

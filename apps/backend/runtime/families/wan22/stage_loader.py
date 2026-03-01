@@ -7,12 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model mounting.
-Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize` resolved from GGUF exec mode; `computation_dtype=dtype`) so placement policy remains centralized. Also triggers WAN fused-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
+Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize=False`, `computation_dtype=dtype`) so placement policy remains centralized. Also triggers WAN fused-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
 Optionally applies an ordered per-stage LoRA sequence (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `pick_stage_gguf` (function): Validates and returns the stage GGUF file path (strict: must be an explicit `.gguf` file).
-- `_resolve_stage_mount_dequantize` (function): Resolves stage-mount GGUF dequant policy from runtime/env `gguf_exec` (`dequant_forward` -> false; `cuda_pack` unsupported fail-loud).
 - `_resolve_stage_mount_device` (function): Resolves the mount device from memory manager policy.
 - `mount_stage_model_from_gguf` (function): Mounts a stage GGUF into a runtime transformer (mount-device GGUF load + key remapping + mount-device ops wrapper); final lifecycle ownership remains delegated to memory manager.
 """
@@ -24,8 +23,6 @@ from typing import Any, Optional, Sequence
 
 import torch
 
-from apps.backend.infra.config.args import args as runtime_args
-from apps.backend.infra.config.gguf_exec_mode import GgufExecMode, resolve_gguf_exec_mode
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
@@ -51,22 +48,6 @@ def pick_stage_gguf(dir_path: Optional[str], *, stage: str) -> Optional[str]:
     return None
 
 
-def _resolve_stage_mount_dequantize() -> bool:
-    try:
-        mode = resolve_gguf_exec_mode(runtime_args)
-    except ValueError as exc:
-        raise RuntimeError(
-            "WAN22 GGUF stage mount received invalid gguf exec mode: "
-            f"{exc}"
-        ) from exc
-    if mode == GgufExecMode.DEQUANT_FORWARD:
-        return False
-    raise RuntimeError(
-        "WAN22 GGUF stage mount does not support gguf exec mode "
-        f"{mode.value!r}. Use dequant_forward."
-    )
-
-
 def _resolve_stage_mount_device() -> torch.device:
     manager = getattr(memory_management, "manager", None)
     if manager is None or not hasattr(manager, "mount_device"):
@@ -89,7 +70,7 @@ def mount_stage_model_from_gguf(
     logger: Any,
 ):
     log = get_logger(logger)
-    dequantize = _resolve_stage_mount_dequantize()
+    dequantize = False
     mount_device = _resolve_stage_mount_device()
     log_cuda_mem(log, label=f"{stage}:before-mount-load")
     state = load_gguf_state_dict(

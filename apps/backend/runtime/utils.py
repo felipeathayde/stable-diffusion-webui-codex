@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `read_arbitrary_config` (function): Reads a best-effort config from a directory (supports JSON/YAML-like inputs where present).
 - `load_torch_file` (function): Loads a torch checkpoint with safe-load options (prefers safe loaders, falls back to pickle loader when allowed).
 - `_load_gguf_state_dict` (function): Loads a GGUF state dict from a `.gguf` file path (used by runtime helpers without importing heavy ops).
-- `load_gguf_state_dict` (function): Public GGUF state-dict loader that honors runtime flags (e.g. `--gguf-exec=dequant_forward`).
+- `load_gguf_state_dict` (function): Public GGUF state-dict loader with explicit dequant policy control.
 - `LazySafetensorsDict` (class): Lazy mapping over a SafeTensors file; keeps a single handle and loads tensors on demand.
 - `_load_pickled_checkpoint` (function): Loads a pickled checkpoint using the restricted/guarded unpickler (`checkpoint_pickle`).
 - `set_attr` (function): Sets a nested attribute on an object by dotted path (type-aware).

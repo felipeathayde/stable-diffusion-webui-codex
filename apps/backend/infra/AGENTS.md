@@ -19,8 +19,8 @@ Status: Active
 - 2026-01-01: Added `--debug-preview-factors` to log best-fit latent→RGB preview factors for tuning `Approx cheap` live previews.
 - 2025-12-06: `config/paths.py` agora garante, em best-effort, que roots relativos de modelos definidos em `apps/paths.json` (`sd15_*`, `sdxl_*`, `flux_*`, `wan22_*`) existam sob o repo root, criando diretórios ausentes apenas para entradas relativas; paths absolutos continuam dependendo de provisionamento manual.
 - 2025-12-29: Repo root resolution now prefers `CODEX_ROOT` (launchers) over process CWD so configs like `apps/paths.json` and `apps/settings_values.json` stay stable across launch methods.
-- 2026-03-01: GGUF exec contract now accepts `--gguf-exec=dequant_forward` (default) and keeps `cuda_pack` reserved/fail-loud until implemented.
-- 2026-01-23: Migrated GGUF execution flags to `--gguf-exec` (single canonical switch) and added `--lora-online-math` for explicit online LoRA semantics (reserved for future packed GGUF kernels).
+- 2026-03-01: Removed GGUF exec bootstrap knobs (`--gguf-exec`, `CODEX_GGUF_EXEC`); runtime GGUF loading is fixed to forward dequantization (`dequantize=False` by default in checkpoint loaders/stage mounts).
+- 2026-03-01: `--lora-online-math=activation` remains reserved/not implemented and now fails loud directly (no GGUF exec mode coupling).
 - 2026-01-24: `config/args.py` now supports `--attention-backend` and seeds attention backend from the saved WebUI option `codex_attention_backend` when no CLI override is provided.
 - 2026-01-24: Added `config/bootstrap_env.py` so backend bootstrap can publish resolved CLI/env values to env readers without mutating `os.environ`.
 - 2026-01-24: Removed silent CPU fallbacks for missing device defaults; `config/args.py` now prompts in foreground TTY sessions and fails loud in non-interactive startups (requires `--core-device/--te-device/--vae-device` or persisted defaults).

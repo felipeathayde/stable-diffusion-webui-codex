@@ -37,7 +37,14 @@ from typing import Any, Optional, Tuple
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.attention.wan_fused_v1 import wan_fused_runtime_metrics_set_stage
+from apps.backend.runtime.sampling.block_progress import (
+    BLOCK_PROGRESS_CALLBACK_KEY,
+    RichBlockProgressController,
+    resolve_block_progress_callback,
+    validate_block_progress_payload,
+)
 
 from .config import WAN_FLOW_MULTIPLIER, resolve_i2v_order
 from .diagnostics import (
@@ -579,12 +586,42 @@ def sample_stage_latents_generator(
     flow_multiplier: float = WAN_FLOW_MULTIPLIER,
     stage_name: str = "stage",
     emit_logs: bool = True,
+    transformer_options: dict[str, Any] | None = None,
 ):
     log = get_logger(logger)
     wan_fused_runtime_metrics_set_stage(stage_name)
     scheduler_state_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
     t_lat, h_lat, w_lat = latent_dimensions(geom)
     steps = max(int(steps), 1)
+
+    if transformer_options is None:
+        model_transformer_options: dict[str, Any] | None = None
+    elif isinstance(transformer_options, dict):
+        model_transformer_options = transformer_options
+    else:
+        raise RuntimeError(
+            "WAN22 GGUF: transformer_options must be a dict when provided "
+            f"(got {type(transformer_options).__name__})."
+        )
+    block_progress_callback = resolve_block_progress_callback(model_transformer_options)
+    local_block_progress_controller = RichBlockProgressController(enabled=env_flag("CODEX_PROGRESS_BAR", default=False))
+    if block_progress_callback is None and local_block_progress_controller.is_active:
+        if model_transformer_options is None:
+            model_transformer_options = {}
+
+        def _on_block_progress(block_index: int, total_blocks: int) -> None:
+            normalized_index, normalized_total = validate_block_progress_payload(
+                block_index=block_index,
+                total_blocks=total_blocks,
+            )
+            local_block_progress_controller.update(
+                block_index=normalized_index,
+                total_blocks=normalized_total,
+            )
+
+        model_transformer_options[BLOCK_PROGRESS_CALLBACK_KEY] = _on_block_progress
+        block_progress_callback = _on_block_progress
+    emit_logs = bool(emit_logs and block_progress_callback is None)
 
     cfg = getattr(model, "config", None)
     if cfg is None:
@@ -747,61 +784,16 @@ def sample_stage_latents_generator(
     state_lat_scaled_model_buffer: torch.Tensor | None = None
     eps_scheduler_buffer: torch.Tensor | None = None
 
-    for local_idx, idx in enumerate(range(start, end)):
-        timestep = timesteps[idx]
-        sigma_value = float(sigmas[idx])
-        di_timestep = float(sigma_value) * float(flow_multiplier)
-        step_number = int(local_idx + 1)
+    try:
+        for local_idx, idx in enumerate(range(start, end)):
+            timestep = timesteps[idx]
+            sigma_value = float(sigmas[idx])
+            di_timestep = float(sigma_value) * float(flow_multiplier)
+            step_number = int(local_idx + 1)
 
-        _assert_finite_tensor(
-            state,
-            tensor_name="state_in",
-            stage_name=stage_name,
-            local_step=step_number,
-            total_steps=total,
-            global_idx=idx,
-            timestep=timestep,
-        )
-
-        if log_sigmas_enabled() and idx in parity_idxs:
-            log.info(
-                "[wan22.gguf] %s t-in[%d/%d]: idx=%d sigma=%.6g flow_multiplier=%.1f di_timestep=%.6g sched_timestep=%s",
-                stage_name,
-                step_number,
-                total,
-                idx,
-                float(sigma_value),
-                float(flow_multiplier),
-                float(di_timestep),
-                str(timestep),
-            )
-
-        with torch.inference_mode():
-            if not has_conditioning:
-                if int(state.shape[1]) != cout:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected latent_channels={cout}."
-                    )
-                state_lat = state
-            else:
-                if int(state.shape[1]) != cin:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected in_channels={cin}."
-                    )
-
-                # Inpainting-style I2V: state is [latents + conditioning], while the model predicts only the latent channels.
-                if order == "lat_first":
-                    state_lat = state[:, :cout, ...]
-                else:
-                    state_lat = state[:, -cout:, ...]
-
-            state_lat_scaled = state_lat
-            scaler = getattr(scheduler, "scale_model_input", None)
-            if callable(scaler):
-                state_lat_scaled = scaler(state_lat, timestep)
             _assert_finite_tensor(
-                state_lat_scaled,
-                tensor_name="state_lat_scaled",
+                state,
+                tensor_name="state_in",
                 stage_name=stage_name,
                 local_step=step_number,
                 total_steps=total,
@@ -809,217 +801,280 @@ def sample_stage_latents_generator(
                 timestep=timestep,
             )
 
-            if state_lat_scaled.dtype == dtype:
-                state_lat_scaled_model = state_lat_scaled
-            else:
-                if (
-                    state_lat_scaled_model_buffer is None
-                    or tuple(state_lat_scaled_model_buffer.shape) != tuple(state_lat_scaled.shape)
-                    or state_lat_scaled_model_buffer.dtype != dtype
-                    or state_lat_scaled_model_buffer.device != state_lat_scaled.device
-                ):
-                    state_lat_scaled_model_buffer = torch.empty(
-                        tuple(state_lat_scaled.shape),
-                        device=state_lat_scaled.device,
-                        dtype=dtype,
-                    )
-                state_lat_scaled_model_buffer.copy_(state_lat_scaled)
-                state_lat_scaled_model = state_lat_scaled_model_buffer
-            if not has_conditioning:
-                model_state = state_lat_scaled_model
-            else:
-                if state_cond_model_static is None:
-                    raise RuntimeError("WAN22 GGUF: conditioning tensor is missing for I2V latent state.")
-                latent_channels = int(state_lat_scaled_model.shape[1])
-                expected_shape = (
-                    int(state_lat_scaled_model.shape[0]),
-                    int(state_lat_scaled_model.shape[1]) + int(cond_channels),
-                    int(state_lat_scaled_model.shape[2]),
-                    int(state_lat_scaled_model.shape[3]),
-                    int(state_lat_scaled_model.shape[4]),
-                )
-                if (
-                    model_state_buffer is None
-                    or tuple(model_state_buffer.shape) != expected_shape
-                    or model_state_buffer.dtype != dtype
-                    or model_state_buffer.device != state_lat_scaled_model.device
-                ):
-                    model_state_buffer = torch.empty(expected_shape, device=state_lat_scaled_model.device, dtype=dtype)
-                    if order == "lat_first":
-                        model_state_buffer[:, latent_channels:, ...].copy_(state_cond_model_static)
-                    else:
-                        model_state_buffer[:, :cond_channels, ...].copy_(state_cond_model_static)
-                if order == "lat_first":
-                    model_state_buffer[:, :latent_channels, ...].copy_(state_lat_scaled_model)
-                else:
-                    model_state_buffer[:, cond_channels:, ...].copy_(state_lat_scaled_model)
-                model_state = model_state_buffer
-
-            if effective_cfg_scale is None:
-                model_batch = int(model_state.shape[0])
-                if (
-                    non_cfg_timestep_buffer is None
-                    or int(non_cfg_timestep_buffer.shape[0]) != model_batch
-                    or non_cfg_timestep_buffer.device != device
-                ):
-                    non_cfg_timestep_buffer = torch.empty((model_batch,), device=device, dtype=torch.float32)
-                non_cfg_timestep_buffer.fill_(float(di_timestep))
-                eps_model = model(model_state, non_cfg_timestep_buffer, prompt_embeds)
-                _assert_finite_tensor(
-                    eps_model,
-                    tensor_name="model_output",
-                    stage_name=stage_name,
-                    local_step=step_number,
-                    total_steps=total,
-                    global_idx=idx,
-                    timestep=timestep,
-                )
-            else:
-                model_batch = int(model_state.shape[0])
-                if (
-                    cfg_timestep_buffer is None
-                    or int(cfg_timestep_buffer.shape[0]) != model_batch
-                    or cfg_timestep_buffer.device != device
-                ):
-                    cfg_timestep_buffer = torch.empty((model_batch,), device=device, dtype=torch.float32)
-                cfg_timestep_buffer.fill_(float(di_timestep))
-
-                v_cond = model(model_state, cfg_timestep_buffer, prompt_embeds)
-                _assert_finite_tensor(
-                    v_cond,
-                    tensor_name="model_output_cfg_cond",
-                    stage_name=stage_name,
-                    local_step=step_number,
-                    total_steps=total,
-                    global_idx=idx,
-                    timestep=timestep,
-                )
-                v_uncond = model(model_state, cfg_timestep_buffer, negative_embeds)
-                _assert_finite_tensor(
-                    v_uncond,
-                    tensor_name="model_output_cfg_uncond",
-                    stage_name=stage_name,
-                    local_step=step_number,
-                    total_steps=total,
-                    global_idx=idx,
-                    timestep=timestep,
-                )
-                eps_model = cfg_merge(v_uncond, v_cond, effective_cfg_scale)
-                _assert_finite_tensor(
-                    eps_model,
-                    tensor_name="cfg_merge_output",
-                    stage_name=stage_name,
-                    local_step=step_number,
-                    total_steps=total,
-                    global_idx=idx,
-                    timestep=timestep,
-                )
-
-            if eps_model.ndim != 5 or eps_model.shape[0] != state.shape[0] or eps_model.shape[2:] != state.shape[2:]:
-                raise RuntimeError(
-                    f"WAN22 GGUF: model output shape {tuple(eps_model.shape)} does not match latent state {tuple(state.shape)} "
-                    f"(patch_size={geom.patch_kernel} grid={geom.grid})"
-                )
-
-            if int(eps_model.shape[1]) != cout:
-                raise RuntimeError(
-                    f"WAN22 GGUF: model output channels C={int(eps_model.shape[1])} does not match expected latent_channels={cout}."
-                )
-            if eps_model.dtype == scheduler_state_dtype:
-                eps = eps_model
-            else:
-                if (
-                    eps_scheduler_buffer is None
-                    or tuple(eps_scheduler_buffer.shape) != tuple(eps_model.shape)
-                    or eps_scheduler_buffer.dtype != scheduler_state_dtype
-                    or eps_scheduler_buffer.device != eps_model.device
-                ):
-                    eps_scheduler_buffer = torch.empty(
-                        tuple(eps_model.shape),
-                        device=eps_model.device,
-                        dtype=scheduler_state_dtype,
-                    )
-                eps_scheduler_buffer.copy_(eps_model)
-                eps = eps_scheduler_buffer
-
-            if not has_conditioning:
-                out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
-                state = out.prev_sample
-                _assert_finite_tensor(
-                    state,
-                    tensor_name="scheduler_prev_sample",
-                    stage_name=stage_name,
-                    local_step=step_number,
-                    total_steps=total,
-                    global_idx=idx,
-                    timestep=timestep,
-                )
-            else:
-                if state_lat.shape != eps.shape:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent slice {tuple(state_lat.shape)} "
-                        f"(patch_size={geom.patch_kernel} grid={geom.grid})"
-                    )
-
-                out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
-                lat_next = out.prev_sample
-                _assert_finite_tensor(
-                    lat_next,
-                    tensor_name="scheduler_prev_sample",
-                    stage_name=stage_name,
-                    local_step=step_number,
-                    total_steps=total,
-                    global_idx=idx,
-                    timestep=timestep,
-                )
-                if order == "lat_first":
-                    state[:, :cout, ...] = lat_next
-                else:
-                    state[:, -cout:, ...] = lat_next
-                _assert_finite_tensor(
-                    state,
-                    tensor_name="state_out",
-                    stage_name=stage_name,
-                    local_step=step_number,
-                    total_steps=total,
-                    global_idx=idx,
-                    timestep=timestep,
-                )
-
-            if log_numerics_enabled() and idx in parity_idxs:
+            if log_sigmas_enabled() and idx in parity_idxs:
                 log.info(
-                    "[wan22.gguf] %s numerics[%d/%d]: %s | %s",
+                    "[wan22.gguf] %s t-in[%d/%d]: idx=%d sigma=%.6g flow_multiplier=%.1f di_timestep=%.6g sched_timestep=%s",
                     stage_name,
                     step_number,
                     total,
-                    summarize_numerics(eps, name="eps_step"),
-                    summarize_numerics(state, name="state_step"),
+                    idx,
+                    float(sigma_value),
+                    float(flow_multiplier),
+                    float(di_timestep),
+                    str(timestep),
                 )
 
-        pct = float(local_idx + 1) / float(max(1, total))
-        if log_mem_interval is not None:
-            n = int(log_mem_interval or 0)
-            if n > 0 and ((local_idx + 1) % n) == 0:
-                log_cuda_mem(logger, label=f"{stage_name}-step-{local_idx + 1}")
+            with torch.inference_mode():
+                if not has_conditioning:
+                    if int(state.shape[1]) != cout:
+                        raise RuntimeError(
+                            f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected latent_channels={cout}."
+                        )
+                    state_lat = state
+                else:
+                    if int(state.shape[1]) != cin:
+                        raise RuntimeError(
+                            f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected in_channels={cin}."
+                        )
 
-        now = time.perf_counter()
-        step_dt = now - last
-        elapsed = now - t0
-        remain = max(0, total - (local_idx + 1))
-        eta = (elapsed / max(1, local_idx + 1)) * remain
-        last = now
+                    # Inpainting-style I2V: state is [latents + conditioning], while the model predicts only the latent channels.
+                    if order == "lat_first":
+                        state_lat = state[:, :cout, ...]
+                    else:
+                        state_lat = state[:, -cout:, ...]
 
-        if emit_logs and ((local_idx + 1) % 5 == 0 or local_idx + 1 == total):
-            log.info("[wan22.gguf] %s step %d/%d (%.1f%%)", stage_name.upper(), local_idx + 1, total, pct * 100.0)
+                state_lat_scaled = state_lat
+                scaler = getattr(scheduler, "scale_model_input", None)
+                if callable(scaler):
+                    state_lat_scaled = scaler(state_lat, timestep)
+                _assert_finite_tensor(
+                    state_lat_scaled,
+                    tensor_name="state_lat_scaled",
+                    stage_name=stage_name,
+                    local_step=step_number,
+                    total_steps=total,
+                    global_idx=idx,
+                    timestep=timestep,
+                )
 
-        yield {
-            "type": "progress",
-            "stage": stage_name,
-            "step": local_idx + 1,
-            "total": total,
-            "percent": pct,
-            "eta_seconds": eta,
-            "step_seconds": step_dt,
-        }
+                if state_lat_scaled.dtype == dtype:
+                    state_lat_scaled_model = state_lat_scaled
+                else:
+                    if (
+                        state_lat_scaled_model_buffer is None
+                        or tuple(state_lat_scaled_model_buffer.shape) != tuple(state_lat_scaled.shape)
+                        or state_lat_scaled_model_buffer.dtype != dtype
+                        or state_lat_scaled_model_buffer.device != state_lat_scaled.device
+                    ):
+                        state_lat_scaled_model_buffer = torch.empty(
+                            tuple(state_lat_scaled.shape),
+                            device=state_lat_scaled.device,
+                            dtype=dtype,
+                        )
+                    state_lat_scaled_model_buffer.copy_(state_lat_scaled)
+                    state_lat_scaled_model = state_lat_scaled_model_buffer
+                if not has_conditioning:
+                    model_state = state_lat_scaled_model
+                else:
+                    if state_cond_model_static is None:
+                        raise RuntimeError("WAN22 GGUF: conditioning tensor is missing for I2V latent state.")
+                    latent_channels = int(state_lat_scaled_model.shape[1])
+                    expected_shape = (
+                        int(state_lat_scaled_model.shape[0]),
+                        int(state_lat_scaled_model.shape[1]) + int(cond_channels),
+                        int(state_lat_scaled_model.shape[2]),
+                        int(state_lat_scaled_model.shape[3]),
+                        int(state_lat_scaled_model.shape[4]),
+                    )
+                    if (
+                        model_state_buffer is None
+                        or tuple(model_state_buffer.shape) != expected_shape
+                        or model_state_buffer.dtype != dtype
+                        or model_state_buffer.device != state_lat_scaled_model.device
+                    ):
+                        model_state_buffer = torch.empty(expected_shape, device=state_lat_scaled_model.device, dtype=dtype)
+                        if order == "lat_first":
+                            model_state_buffer[:, latent_channels:, ...].copy_(state_cond_model_static)
+                        else:
+                            model_state_buffer[:, :cond_channels, ...].copy_(state_cond_model_static)
+                    if order == "lat_first":
+                        model_state_buffer[:, :latent_channels, ...].copy_(state_lat_scaled_model)
+                    else:
+                        model_state_buffer[:, cond_channels:, ...].copy_(state_lat_scaled_model)
+                    model_state = model_state_buffer
 
-    return state
+                if effective_cfg_scale is None:
+                    model_batch = int(model_state.shape[0])
+                    if (
+                        non_cfg_timestep_buffer is None
+                        or int(non_cfg_timestep_buffer.shape[0]) != model_batch
+                        or non_cfg_timestep_buffer.device != device
+                    ):
+                        non_cfg_timestep_buffer = torch.empty((model_batch,), device=device, dtype=torch.float32)
+                    non_cfg_timestep_buffer.fill_(float(di_timestep))
+                    eps_model = model(
+                        model_state,
+                        non_cfg_timestep_buffer,
+                        prompt_embeds,
+                        transformer_options=model_transformer_options,
+                    )
+                    _assert_finite_tensor(
+                        eps_model,
+                        tensor_name="model_output",
+                        stage_name=stage_name,
+                        local_step=step_number,
+                        total_steps=total,
+                        global_idx=idx,
+                        timestep=timestep,
+                    )
+                else:
+                    model_batch = int(model_state.shape[0])
+                    if (
+                        cfg_timestep_buffer is None
+                        or int(cfg_timestep_buffer.shape[0]) != model_batch
+                        or cfg_timestep_buffer.device != device
+                    ):
+                        cfg_timestep_buffer = torch.empty((model_batch,), device=device, dtype=torch.float32)
+                    cfg_timestep_buffer.fill_(float(di_timestep))
+
+                    v_cond = model(
+                        model_state,
+                        cfg_timestep_buffer,
+                        prompt_embeds,
+                        transformer_options=model_transformer_options,
+                    )
+                    _assert_finite_tensor(
+                        v_cond,
+                        tensor_name="model_output_cfg_cond",
+                        stage_name=stage_name,
+                        local_step=step_number,
+                        total_steps=total,
+                        global_idx=idx,
+                        timestep=timestep,
+                    )
+                    v_uncond = model(
+                        model_state,
+                        cfg_timestep_buffer,
+                        negative_embeds,
+                        transformer_options=model_transformer_options,
+                    )
+                    _assert_finite_tensor(
+                        v_uncond,
+                        tensor_name="model_output_cfg_uncond",
+                        stage_name=stage_name,
+                        local_step=step_number,
+                        total_steps=total,
+                        global_idx=idx,
+                        timestep=timestep,
+                    )
+                    eps_model = cfg_merge(v_uncond, v_cond, effective_cfg_scale)
+                    _assert_finite_tensor(
+                        eps_model,
+                        tensor_name="cfg_merge_output",
+                        stage_name=stage_name,
+                        local_step=step_number,
+                        total_steps=total,
+                        global_idx=idx,
+                        timestep=timestep,
+                    )
+
+                if eps_model.ndim != 5 or eps_model.shape[0] != state.shape[0] or eps_model.shape[2:] != state.shape[2:]:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: model output shape {tuple(eps_model.shape)} does not match latent state {tuple(state.shape)} "
+                        f"(patch_size={geom.patch_kernel} grid={geom.grid})"
+                    )
+
+                if int(eps_model.shape[1]) != cout:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: model output channels C={int(eps_model.shape[1])} does not match expected latent_channels={cout}."
+                    )
+                if eps_model.dtype == scheduler_state_dtype:
+                    eps = eps_model
+                else:
+                    if (
+                        eps_scheduler_buffer is None
+                        or tuple(eps_scheduler_buffer.shape) != tuple(eps_model.shape)
+                        or eps_scheduler_buffer.dtype != scheduler_state_dtype
+                        or eps_scheduler_buffer.device != eps_model.device
+                    ):
+                        eps_scheduler_buffer = torch.empty(
+                            tuple(eps_model.shape),
+                            device=eps_model.device,
+                            dtype=scheduler_state_dtype,
+                        )
+                    eps_scheduler_buffer.copy_(eps_model)
+                    eps = eps_scheduler_buffer
+
+                if not has_conditioning:
+                    out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
+                    state = out.prev_sample
+                    _assert_finite_tensor(
+                        state,
+                        tensor_name="scheduler_prev_sample",
+                        stage_name=stage_name,
+                        local_step=step_number,
+                        total_steps=total,
+                        global_idx=idx,
+                        timestep=timestep,
+                    )
+                else:
+                    if state_lat.shape != eps.shape:
+                        raise RuntimeError(
+                            f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent slice {tuple(state_lat.shape)} "
+                            f"(patch_size={geom.patch_kernel} grid={geom.grid})"
+                        )
+
+                    out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
+                    lat_next = out.prev_sample
+                    _assert_finite_tensor(
+                        lat_next,
+                        tensor_name="scheduler_prev_sample",
+                        stage_name=stage_name,
+                        local_step=step_number,
+                        total_steps=total,
+                        global_idx=idx,
+                        timestep=timestep,
+                    )
+                    if order == "lat_first":
+                        state[:, :cout, ...] = lat_next
+                    else:
+                        state[:, -cout:, ...] = lat_next
+                    _assert_finite_tensor(
+                        state,
+                        tensor_name="state_out",
+                        stage_name=stage_name,
+                        local_step=step_number,
+                        total_steps=total,
+                        global_idx=idx,
+                        timestep=timestep,
+                    )
+
+                if log_numerics_enabled() and idx in parity_idxs:
+                    log.info(
+                        "[wan22.gguf] %s numerics[%d/%d]: %s | %s",
+                        stage_name,
+                        step_number,
+                        total,
+                        summarize_numerics(eps, name="eps_step"),
+                        summarize_numerics(state, name="state_step"),
+                    )
+
+            pct = float(local_idx + 1) / float(max(1, total))
+            if log_mem_interval is not None:
+                n = int(log_mem_interval or 0)
+                if n > 0 and ((local_idx + 1) % n) == 0:
+                    log_cuda_mem(logger, label=f"{stage_name}-step-{local_idx + 1}")
+
+            now = time.perf_counter()
+            step_dt = now - last
+            elapsed = now - t0
+            remain = max(0, total - (local_idx + 1))
+            eta = (elapsed / max(1, local_idx + 1)) * remain
+            last = now
+
+            if emit_logs and ((local_idx + 1) % 5 == 0 or local_idx + 1 == total):
+                log.info("[wan22.gguf] %s step %d/%d (%.1f%%)", stage_name.upper(), local_idx + 1, total, pct * 100.0)
+
+            yield {
+                "type": "progress",
+                "stage": stage_name,
+                "step": local_idx + 1,
+                "total": total,
+                "percent": pct,
+                "eta_seconds": eta,
+                "step_seconds": step_dt,
+            }
+
+        return state
+    finally:
+        local_block_progress_controller.close()

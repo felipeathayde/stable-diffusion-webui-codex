@@ -28,6 +28,7 @@ from .config import FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalCo
 from .geometry import timestep_embedding
 from .embed import EmbedND, MLPEmbedder
 from .components import DoubleStreamBlock, LastLayer, SingleStreamBlock
+from apps.backend.runtime.sampling.block_progress import resolve_block_progress_callback
 
 logger = logging.getLogger("backend.runtime.flux")
 
@@ -251,11 +252,23 @@ class FluxTransformer2DModel(nn.Module):
         txt = self.txt_in(context)
         rotary = self._build_rotary(img_ids, txt_ids)
 
+        block_progress_callback = resolve_block_progress_callback(transformer_options)
+        total_blocks = int(len(self.double_blocks) + len(self.single_blocks))
+        if block_progress_callback is not None and total_blocks <= 0:
+            raise RuntimeError("Flux transformer block progress callback requires total_blocks >= 1.")
+        global_block_index = 0
+
         for block in self.double_blocks:
+            global_block_index += 1
+            if block_progress_callback is not None:
+                block_progress_callback(global_block_index, total_blocks)
             img, txt = block(img=img, txt=txt, vec=vec, rotary_freqs=rotary)
 
         tokens = torch.cat((txt, img), dim=1)
         for block in self.single_blocks:
+            global_block_index += 1
+            if block_progress_callback is not None:
+                block_progress_callback(global_block_index, total_blocks)
             tokens = block(tokens, vec=vec, rotary_freqs=rotary)
 
         tokens = tokens[:, txt.shape[1]:]

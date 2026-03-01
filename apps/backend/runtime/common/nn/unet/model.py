@@ -24,6 +24,10 @@ from torch import nn
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 
+from apps.backend.runtime.sampling.block_progress import (
+    BLOCK_PROGRESS_INDEX_KEY,
+    BLOCK_PROGRESS_TOTAL_KEY,
+)
 from .config import UNetConfig
 from .layers import (
     Downsample,
@@ -334,11 +338,29 @@ class UNet2DConditionModel(nn.Module, ConfigMixin):
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
                 self._feature_size += ch
 
+        self._total_spatial_transformer_blocks = self._count_total_spatial_transformer_blocks()
+
         self.out = nn.Sequential(
             nn.GroupNorm(32, ch),
             nn.SiLU(),
             nn.Conv2d(model_channels, out_channels, 3, padding=1),
         )
+
+    def _count_total_spatial_transformer_blocks(self) -> int:
+        total = 0
+
+        def _count_in_sequence(sequence: TimestepEmbedSequential) -> None:
+            nonlocal total
+            for layer in sequence:
+                if isinstance(layer, SpatialTransformer):
+                    total += int(len(layer.transformer_blocks))
+
+        for module in self.input_blocks:
+            _count_in_sequence(module)
+        _count_in_sequence(self.middle_block)
+        for module in self.output_blocks:
+            _count_in_sequence(module)
+        return int(total)
 
     def forward(
         self,
@@ -350,9 +372,17 @@ class UNet2DConditionModel(nn.Module, ConfigMixin):
         transformer_options=None,
         **kwargs,
     ):
-        transformer_options = transformer_options or {}
+        if transformer_options is None:
+            transformer_options = {}
+        elif not isinstance(transformer_options, dict):
+            raise RuntimeError(
+                "UNet forward transformer_options must be a dict when provided "
+                f"(got {type(transformer_options).__name__})."
+            )
         transformer_options["original_shape"] = list(x.shape)
         transformer_options["transformer_index"] = 0
+        transformer_options[BLOCK_PROGRESS_TOTAL_KEY] = int(self._total_spatial_transformer_blocks)
+        transformer_options[BLOCK_PROGRESS_INDEX_KEY] = 0
         transformer_patches = transformer_options.get("patches", {})
         block_modifiers = transformer_options.get("block_modifiers", [])
         # Explicit invariant: ADM/class conditioning must match `num_classes`.

@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-02-25
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -73,6 +73,7 @@ Status: Active
 - 2026-02-20: `driver.py` now emits dense sampler diagnostics through `emit_backend_event(...)` (`sampling.sigma_schedule`, `sampling.plan.prepare`, `sampling.plan.run`, `sampling.cfg_delta`, `sampling.step`, `guidance.policy`) so logs inherit centralized multiline formatting/colorization instead of ad-hoc single-line format strings.
 - 2026-02-22: Removed run-scoped GGUF dequant-forward cache hooks (`lvl1`/`lvl2`) from `inner_loop.sampling_prepare(...)`/`sampling_cleanup(...)`; sampling lifecycle now no longer enables/disables per-run GGUF forward caches.
 - 2026-02-25: `driver.py` now applies optional denoiser-adjacent hooks per step (`pre_denoiser_hook` before denoise, `post_denoiser_hook` after denoise), enabling Forge-style masked blending semantics in img2img while preserving existing post-step and post-sample hook contracts.
+- 2026-03-01: `block_progress.py` now defines shared block-progress keys/validator plus an optional Rich console controller (`RichBlockProgressController`) with block-focused display (`x/total self_attn [xblocks/s]`), and `driver.py` now wires this shared controller to model block callbacks (`codex_sampling_block_progress_callback`) instead of tqdm step bars while preserving backend-state block updates and strict callback payload validation.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

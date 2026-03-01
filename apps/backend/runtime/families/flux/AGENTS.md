@@ -1,6 +1,6 @@
 # apps/backend/runtime/families/flux Overview
 Date: 2025-12-06
-Last Review: 2026-02-03
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -12,6 +12,7 @@ Status: Active
 - `model.py` exposes the Codex-native `FluxTransformer2DModel` with device/dtype guards and debugging logs; the thin `flux.py` module only re-exports symbols for convenience imports.
 - `streaming/` contains block/segment-based streaming helpers for the Flux core (`StreamingConfig`, `CoreController`, `trace_execution_plan`, `StreamedFluxCore`); controller semantics are shared with WAN22 via `apps/backend/runtime/streaming/controller.py` to avoid drift.
 - `FluxTransformer2DModel.forward` now accepts extra keyword-only arguments (`control`, `transformer_options`, plus ignored `**kwargs`) so it can be driven safely via `SamplerModel.apply_model` without relying on them; do not use these for new behaviour without coordinating with `apps/backend/runtime/sampling_adapters/sampler_model.py`.
+- 2026-03-01: `FluxTransformer2DModel.forward` and `streaming/wrapper.py::StreamedFluxCore.forward` now resolve optional block-progress callbacks from `transformer_options` and emit per-block updates across combined double+single loops using a global monotonic 1-based index (`total_blocks=len(double_blocks)+len(single_blocks)`).
 - Keep this in sync with `apps/backend/engines/flux/` to avoid drift between runtime and engine expectations; document new invariants in engine AGENTS when behaviour changes.
 - 2026-01-02: Added standardized file header docstrings to Flux runtime surface modules (`__init__.py`, `config.py`, `embed.py`, `geometry.py`, `flux.py`, and `streaming/{__init__,config,specs}.py`) (doc-only change; part of rollout).
 - 2026-02-23: Flux streaming controller wrapper (`streaming/controller.py`) now resolves default `storage_device`/`compute_device` from memory-manager offload/mount policy instead of local CPU/CUDA literals.

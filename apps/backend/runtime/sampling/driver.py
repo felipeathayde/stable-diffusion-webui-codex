@@ -35,7 +35,11 @@ from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 
 from .inner_loop import sampling_function_inner, sampling_prepare, sampling_cleanup
-from .block_progress import BLOCK_PROGRESS_CALLBACK_KEY
+from .block_progress import (
+    BLOCK_PROGRESS_CALLBACK_KEY,
+    RichBlockProgressController,
+    validate_block_progress_payload,
+)
 from .condition import compile_conditions
 from .context import SamplingContext, build_sampling_context
 from .registry import get_sampler_spec
@@ -559,7 +563,7 @@ class CodexSampler:
                     samples_noop = post_sample_hook(samples_noop)
                 return samples_noop
 
-            progress_bar = None
+            block_progress_controller: RichBlockProgressController | None = None
             retry = False
             prepared = False
             state_started = False
@@ -754,51 +758,23 @@ class CodexSampler:
                         "denoiser.model_options['transformer_options'] must be a dict for block progress wiring "
                         f"(got {type(transformer_options).__name__})."
                     )
-                current_completed_steps = 0
-                last_logged_step = -1
-                last_logged_block = 0
+                block_progress_controller = RichBlockProgressController(enabled=active_context.enable_progress)
 
                 def _on_block_progress(block_index: int, total_blocks: int) -> None:
-                    nonlocal current_completed_steps, last_logged_step, last_logged_block
-
-                    normalized_total = max(0, int(total_blocks))
-                    normalized_index = max(0, int(block_index))
-                    if normalized_total > 0:
-                        normalized_index = min(normalized_index, normalized_total)
+                    normalized_index, normalized_total = validate_block_progress_payload(
+                        block_index=block_index,
+                        total_blocks=total_blocks,
+                    )
 
                     backend_state.update_sampling_block(
                         block_index=normalized_index,
                         total_blocks=normalized_total,
                     )
-
-                    if normalized_total <= 0 or normalized_index <= 0:
-                        return
-                    if current_completed_steps != last_logged_step:
-                        last_logged_step = current_completed_steps
-                        last_logged_block = 0
-
-                    stride = max(1, normalized_total // 6)
-                    if (
-                        normalized_index != 1
-                        and normalized_index != normalized_total
-                        and (normalized_index - last_logged_block) < stride
-                    ):
-                        return
-                    last_logged_block = normalized_index
-
-                    progress_units = min(
-                        float(run_total_steps),
-                        float(current_completed_steps) + (float(normalized_index) / float(normalized_total)),
-                    )
-                    progress_pct = (progress_units / float(max(1, run_total_steps))) * 100.0
-                    self._emit_event(
-                        "sampling.blocks",
-                        step_completed=int(current_completed_steps),
-                        step_total=int(run_total_steps),
-                        block=normalized_index,
-                        block_total=normalized_total,
-                        percent=round(progress_pct, 3),
-                    )
+                    if block_progress_controller is not None:
+                        block_progress_controller.update(
+                            block_index=normalized_index,
+                            total_blocks=normalized_total,
+                        )
 
                 transformer_options[BLOCK_PROGRESS_CALLBACK_KEY] = _on_block_progress
                 backend_state.reset_sampling_blocks()
@@ -808,11 +784,6 @@ class CodexSampler:
 
                 preview_interval = active_context.preview_interval
                 t0 = _time.perf_counter()
-                use_progress = active_context.enable_progress
-                if use_progress:
-                    from tqdm.auto import tqdm
-
-                    progress_bar = tqdm(total=run_total_steps, desc="sampling", leave=False)
 
                 sampler_kind = active_context.sampler_kind
                 profile_meta = {
@@ -869,7 +840,6 @@ class CodexSampler:
                         if backend_state.should_stop:
                             raise _SamplingCancelled("cancelled")
                         step_index = i - start_idx
-                        current_completed_steps = step_index
                         backend_state.reset_sampling_blocks()
                         if guidance_policy is not None:
                             denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = step_index
@@ -1288,16 +1258,9 @@ class CodexSampler:
                                 )
                                 t0 = _time.perf_counter()
 
-                            if progress_bar is not None:
-                                progress_bar.update(1)
-
                             backend_state.tick(sampling_step=current_step)
                             backend_state.reset_sampling_blocks()
                         profiler.step()
-
-                if progress_bar is not None:
-                    progress_bar.close()
-                    progress_bar = None
 
                 sampling_cleanup(denoiser)
                 prepared = False
@@ -1315,8 +1278,9 @@ class CodexSampler:
                 self._logger.info("Sampling cancelled by request; aborting current run.")
                 raise RuntimeError("cancelled")
             finally:
-                if progress_bar is not None:
-                    progress_bar.close()
+                if block_progress_controller is not None:
+                    block_progress_controller.close()
+                    block_progress_controller = None
                 if prepared:
                     sampling_cleanup(denoiser)
                 if state_started:

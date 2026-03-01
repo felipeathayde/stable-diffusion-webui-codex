@@ -32,6 +32,11 @@ from einops import rearrange
 from torch import nn
 
 from apps.backend.runtime.attention import attention_function
+from apps.backend.runtime.sampling.block_progress import (
+    BLOCK_PROGRESS_INDEX_KEY,
+    BLOCK_PROGRESS_TOTAL_KEY,
+    resolve_block_progress_callback,
+)
 from .utils import (
     avg_pool_nd,
     checkpoint,
@@ -319,6 +324,39 @@ class SpatialTransformer(nn.Module):
         transformer_options = transformer_options or {}
         if not isinstance(context, list):
             context = [context] * len(self.transformer_blocks)
+
+        block_progress_callback = resolve_block_progress_callback(transformer_options)
+        total_blocks_raw = transformer_options.get(BLOCK_PROGRESS_TOTAL_KEY, 0)
+        if isinstance(total_blocks_raw, bool) or not isinstance(total_blocks_raw, int):
+            raise RuntimeError(
+                "SpatialTransformer transformer_options block-progress total must be an integer "
+                f"(got {type(total_blocks_raw).__name__})."
+            )
+        total_blocks = int(total_blocks_raw)
+        if total_blocks < 0:
+            raise RuntimeError(
+                "SpatialTransformer transformer_options block-progress total must be >= 0 "
+                f"(got {total_blocks})."
+            )
+
+        global_index_raw = transformer_options.get(BLOCK_PROGRESS_INDEX_KEY, 0)
+        if isinstance(global_index_raw, bool) or not isinstance(global_index_raw, int):
+            raise RuntimeError(
+                "SpatialTransformer transformer_options block-progress index must be an integer "
+                f"(got {type(global_index_raw).__name__})."
+            )
+        global_block_index = int(global_index_raw)
+        if global_block_index < 0:
+            raise RuntimeError(
+                "SpatialTransformer transformer_options block-progress index must be >= 0 "
+                f"(got {global_block_index})."
+            )
+
+        if block_progress_callback is not None and total_blocks <= 0:
+            raise RuntimeError(
+                "SpatialTransformer block progress callback requires a positive global total."
+            )
+
         b, c, h, w = x.shape
         residual = x
         x = self.norm(x)
@@ -329,6 +367,15 @@ class SpatialTransformer(nn.Module):
             x = self.proj_in(x)
         for index, block in enumerate(self.transformer_blocks):
             transformer_options["block_index"] = index
+            global_block_index += 1
+            if total_blocks > 0 and global_block_index > total_blocks:
+                raise RuntimeError(
+                    "SpatialTransformer block progress index exceeded configured total "
+                    f"(index={global_block_index}, total={total_blocks})."
+                )
+            transformer_options[BLOCK_PROGRESS_INDEX_KEY] = global_block_index
+            if block_progress_callback is not None:
+                block_progress_callback(global_block_index, total_blocks)
             x = block(x, context=context[index], transformer_options=transformer_options)
         if self.use_linear:
             x = self.proj_out(x)

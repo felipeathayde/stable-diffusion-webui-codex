@@ -1,6 +1,6 @@
 # UNet (Codex) — Agent Notes
 Date: 2025-11-10
-Last Review: 2026-01-18
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 ## Notes
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `config.py`, and `utils.py` (doc-only change; part of rollout).
 - 2026-01-18: `__init__.py` is a package marker (no re-exports); import UNet APIs from the defining modules.
+- 2026-03-01: `model.py` now seeds forward-scoped global transformer-block progress counters in `transformer_options`, and `layers.py::SpatialTransformer.forward` emits block callbacks per inner transformer block using monotonic global 1-based indexing for the full UNet forward (strict validation for progress payload scaffolding keys).

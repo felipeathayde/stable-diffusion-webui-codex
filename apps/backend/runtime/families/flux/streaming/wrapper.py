@@ -24,6 +24,7 @@ import torch
 from einops import rearrange, repeat
 from torch import nn
 
+from apps.backend.runtime.sampling.block_progress import resolve_block_progress_callback
 from .specs import BlockType, ExecutionPlan
 from .controller import CoreController
 
@@ -148,6 +149,15 @@ class StreamedFluxCore(nn.Module):
 
         txt = self._base.txt_in(context)
         rotary = self._build_rotary(img_ids, txt_ids)
+        transformer_options = kwargs.get("transformer_options", None)
+        block_progress_callback = resolve_block_progress_callback(transformer_options)
+        total_blocks = int(
+            sum(len(segment.blocks) for segment in self._double_segments)
+            + sum(len(segment.blocks) for segment in self._single_segments)
+        )
+        if block_progress_callback is not None and total_blocks <= 0:
+            raise RuntimeError("Flux streamed core block progress callback requires total_blocks >= 1.")
+        global_block_index = 0
 
         # === Double-stream blocks (streamed) ===
         for seg_idx, segment in enumerate(self._double_segments):
@@ -162,6 +172,9 @@ class StreamedFluxCore(nn.Module):
 
             # Execute all blocks in segment
             for block_info in segment.blocks:
+                global_block_index += 1
+                if block_progress_callback is not None:
+                    block_progress_callback(global_block_index, total_blocks)
                 img, txt = block_info.module(img=img, txt=txt, vec=vec, rotary_freqs=rotary)
 
             # Maybe evict segment
@@ -181,6 +194,9 @@ class StreamedFluxCore(nn.Module):
 
             # Execute all blocks in segment
             for block_info in segment.blocks:
+                global_block_index += 1
+                if block_progress_callback is not None:
+                    block_progress_callback(global_block_index, total_blocks)
                 tokens = block_info.module(tokens, vec=vec, rotary_freqs=rotary)
 
             # Maybe evict segment

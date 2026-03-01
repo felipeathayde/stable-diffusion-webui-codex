@@ -13,6 +13,8 @@ Includes strict finite checks and explicit dtype/device retry logic (no silent f
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22VAEContractError` (exception): Deterministic WAN VAE path/config contract failure (non-retryable by dtype fallback loops).
 - `WanVAEDecodeSession` (dataclass): Reusable loaded WAN VAE decode session (device/dtype/lane) for multi-chunk decode passes.
+- `_is_cuda_device_name` (function): Canonical CUDA device-type check that accepts indexed forms (`cuda:0`, etc.) for retry/cleanup paths.
+- `_format_exception_message` (function): Stable exception-text formatter used by retry/fallback logs and terminal fail-loud error messages.
 - `_detect_wan_vae_lane` (function): Resolves canonical WAN VAE lane (`2d_native`/`3d_native`) from core convolution weights.
 - `_normalize_vae_state_dict_keys` (function): Normalizes wrapper prefixes in VAE checkpoints before style-specific load paths.
 - `load_vae` (function): Loads the WAN VAE component (from directory bundles or single-file weights with sibling/override config dir).
@@ -82,6 +84,25 @@ def _require_offload_device(*, context: str) -> torch.device:
             f"got {type(offload_device).__name__}."
         )
     return offload_device
+
+
+def _is_cuda_device_name(device_name: str) -> bool:
+    try:
+        return torch.device(str(device_name)).type == "cuda"
+    except Exception:
+        return str(device_name).strip().lower().startswith("cuda")
+
+
+def _format_exception_message(exc: BaseException | None) -> str:
+    if exc is None:
+        return "<none>"
+    text = " ".join(str(exc).split()).strip()
+    if text:
+        return text
+    parts = [" ".join(str(item).split()).strip() for item in getattr(exc, "args", ()) if str(item).strip()]
+    if parts:
+        return "; ".join(parts)
+    return repr(exc)
 
 
 def _detect_wan_vae_lane(state_dict: Mapping[str, Any]) -> str:
@@ -523,7 +544,7 @@ def open_vae_decode_session(
                 logger,
                 component="VAE decode session",
                 detail=f"retrying session load with dtype={torch_dtype} device={target_device}",
-                reason=str(last_exc) if last_exc is not None else "previous attempt failed",
+                reason=_format_exception_message(last_exc),
             )
         try:
             vae = load_vae(
@@ -592,6 +613,9 @@ def vae_encode_video_condition(
     preferred = as_torch_dtype(dtype)
     dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
     last_exc: Exception | None = None
+    last_lane: str | None = None
+    last_image_shape: tuple[int, ...] | None = None
+    last_encode_input_shape: tuple[int, ...] | None = None
 
     for attempt_idx, torch_dtype in enumerate(dtypes):
         vae = None
@@ -601,7 +625,7 @@ def vae_encode_video_condition(
                     logger,
                     component="VAE encode",
                     detail=f"retrying with dtype={torch_dtype} device={target}",
-                    reason=str(last_exc) if last_exc is not None else "previous attempt failed",
+                    reason=_format_exception_message(last_exc),
                 )
             vae = load_vae(
                 vae_dir,
@@ -611,6 +635,7 @@ def vae_encode_video_condition(
             )
             vae = vae.to(device=target, dtype=torch_dtype)
             lane = _resolve_loaded_vae_lane(vae)
+            last_lane = lane
             style = str(getattr(vae, "_codex_vae_style", "unknown")).strip().lower() or "unknown"
             log.info("[wan22.gguf] VAE lane=%s style=%s", lane, style)
 
@@ -626,6 +651,7 @@ def vae_encode_video_condition(
                     "WAN22 GGUF: expected preprocessed init image to be 4D [B,C,H,W], "
                     f"got {tuple(image.shape)}"
                 )
+            last_image_shape = tuple(int(dim) for dim in image.shape)
 
             # Diffusers-style I2V conditioning video: first frame is the init image; remaining frames are 0 (i.e., 0.5 gray).
             image = image.unsqueeze(2)  # [B,C,1,H,W]
@@ -639,6 +665,7 @@ def vae_encode_video_condition(
                         encode_input = torch.cat((first_frame_batch, zero_frame_batch), dim=0)
                     else:
                         encode_input = first_frame_batch
+                    last_encode_input_shape = tuple(int(dim) for dim in encode_input.shape)
                     try:
                         encoded_out = vae.encode(encode_input, regulation=regulation)
                     except TypeError:
@@ -688,6 +715,7 @@ def vae_encode_video_condition(
                         (image.shape[0], image.shape[1], int(num_frames), int(height), int(width))
                     )
                     video_condition[:, :, :1, :, :] = image
+                    last_encode_input_shape = tuple(int(dim) for dim in video_condition.shape)
                     try:
                         encoded_out = vae.encode(video_condition, regulation=regulation)
                     except TypeError:
@@ -726,7 +754,7 @@ def vae_encode_video_condition(
             return encoded
         except torch.OutOfMemoryError as exc:
             last_exc = exc
-            if target == "cuda":
+            if _is_cuda_device_name(target):
                 warn_fallback(
                     logger,
                     component="VAE encode",
@@ -751,7 +779,16 @@ def vae_encode_video_condition(
                 del vae
                 cuda_empty_cache(logger, label="after-vae-encode")
 
-    raise RuntimeError("WAN22 GGUF: VAE encode failed for all dtype fallbacks.") from last_exc
+    attempted_dtypes = ", ".join(str(dt) for dt in dtypes)
+    raise RuntimeError(
+        "WAN22 GGUF: VAE encode failed for all dtype fallbacks "
+        f"(device={target} attempted_dtypes=[{attempted_dtypes}] "
+        f"lane={last_lane or 'unknown'} init_image_shape={last_image_shape} "
+        f"encode_input_shape={last_encode_input_shape} "
+        f"num_frames={int(num_frames)} size={int(height)}x{int(width)} "
+        f"last_error={type(last_exc).__name__ if last_exc is not None else '<none>'}: "
+        f"{_format_exception_message(last_exc)})."
+    ) from last_exc
 
 
 def vae_decode_video(
@@ -1029,7 +1066,8 @@ def vae_decode_video(
         except Exception as exc:
             raise RuntimeError(
                 "WAN22 GGUF: VAE decode failed with an active decode session "
-                f"(device={decode_session.decode_device} dtype={decode_session.decode_dtype} lane={decode_session.lane})."
+                f"(device={decode_session.decode_device} dtype={decode_session.decode_dtype} lane={decode_session.lane}; "
+                f"cause={type(exc).__name__}: {_format_exception_message(exc)})."
             ) from exc
     else:
         for attempt_idx, torch_dtype in enumerate(dtypes):
@@ -1038,14 +1076,14 @@ def vae_decode_video(
                     logger,
                     component="VAE decode",
                     detail=f"retrying with dtype={torch_dtype} device={target}",
-                    reason=str(last_exc) if last_exc is not None else "previous attempt failed",
+                    reason=_format_exception_message(last_exc),
                 )
             try:
                 decoded_frames, decode_meta = _decode_attempt(attempt_device=target, torch_dtype=torch_dtype)
                 break
             except torch.OutOfMemoryError as exc:
                 last_exc = exc
-                if target == "cuda":
+                if _is_cuda_device_name(target):
                     warn_fallback(
                         logger,
                         component="VAE decode",
@@ -1066,7 +1104,14 @@ def vae_decode_video(
                 continue
 
     if not decoded_frames:
-        raise RuntimeError("WAN22 GGUF: VAE decode failed (no frame output).") from last_exc
+        attempted_dtypes = ", ".join(str(dt) for dt in dtypes)
+        raise RuntimeError(
+            "WAN22 GGUF: VAE decode failed for all dtype fallbacks "
+            f"(device={target} attempted_dtypes=[{attempted_dtypes}] "
+            f"latent_shape={tuple(video_latents.shape)} "
+            f"last_error={type(last_exc).__name__ if last_exc is not None else '<none>'}: "
+            f"{_format_exception_message(last_exc)})."
+        ) from last_exc
     t_out = int(len(decoded_frames))
     if expected_frames is not None and int(expected_frames) != t_out:
         raise RuntimeError(

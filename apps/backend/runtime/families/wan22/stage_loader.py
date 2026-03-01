@@ -12,7 +12,7 @@ Optionally applies an ordered per-stage LoRA sequence (merge/online) for LightX2
 
 Symbols (top-level; keep in sync; no ghosts):
 - `pick_stage_gguf` (function): Validates and returns the stage GGUF file path (strict: must be an explicit `.gguf` file).
-- `_resolve_stage_mount_dequantize` (function): Resolves stage-mount GGUF dequant policy from runtime/env `gguf_exec` (`dequant_upfront` -> true; `dequant_forward` -> false; `cuda_pack` unsupported fail-loud).
+- `_resolve_stage_mount_dequantize` (function): Resolves stage-mount GGUF dequant policy from runtime/env `gguf_exec` (`dequant_forward` -> false; `cuda_pack` unsupported fail-loud).
 - `_resolve_stage_mount_device` (function): Resolves the mount device from memory manager policy.
 - `mount_stage_model_from_gguf` (function): Mounts a stage GGUF into a runtime transformer (mount-device GGUF load + key remapping + mount-device ops wrapper); final lifecycle ownership remains delegated to memory manager.
 """
@@ -59,13 +59,11 @@ def _resolve_stage_mount_dequantize() -> bool:
             "WAN22 GGUF stage mount received invalid gguf exec mode: "
             f"{exc}"
         ) from exc
-    if mode == GgufExecMode.DEQUANT_UPFRONT:
-        return True
     if mode == GgufExecMode.DEQUANT_FORWARD:
         return False
     raise RuntimeError(
         "WAN22 GGUF stage mount does not support gguf exec mode "
-        f"{mode.value!r}. Use dequant_forward or dequant_upfront."
+        f"{mode.value!r}. Use dequant_forward."
     )
 
 

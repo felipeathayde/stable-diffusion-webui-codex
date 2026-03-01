@@ -134,7 +134,7 @@ def load_gguf_state_dict(
         if dequantize:
             raise RuntimeError(
                 "CodexPack GGUF does not support load-time dequantization. "
-                "Load the base GGUF file instead of `*.codexpack.gguf` when using `--gguf-exec=dequant_upfront`."
+                "Load the base GGUF file when explicit dequantized loading is required."
             )
         if computation_dtype != torch.float16:
             raise RuntimeError(

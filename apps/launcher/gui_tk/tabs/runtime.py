@@ -226,14 +226,13 @@ class RuntimeTab:
                             kind=FieldKind.CHOICE,
                             label="GGUF exec mode (requires API restart):",
                             variable=self._var_gguf_exec,
-                            choices=["dequant_forward", "dequant_upfront"],
+                            choices=["dequant_forward"],
                             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
                             width=18,
                             help_mode=HelpMode.DIALOG,
                             help_title="GGUF exec mode",
                             help_text=(
-                                "dequant_forward: current default (GGUF weights dequantize on-demand during forward).\n"
-                                "dequant_upfront: dequantize GGUF weights at load time (uses more RAM/VRAM).\n"
+                                "dequant_forward: GGUF weights dequantize on-demand during forward (current runtime contract).\n"
                                 "CodexPack packed GGUFs are auto-detected via `*.codexpack.gguf` (no exec-mode toggle)."
                             ),
                         ),

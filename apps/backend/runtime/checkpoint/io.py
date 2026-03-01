@@ -93,8 +93,8 @@ def load_gguf_state_dict(
     """Load a GGUF state dict, with optional explicit dequantization policy.
 
     - When `dequantize` is None, resolves GGUF exec mode with `CODEX_GGUF_EXEC`
-      env precedence over `--gguf-exec`, and applies `dequant_upfront` for normal GGUFs.
-      CodexPack `*.codexpack.gguf` files are auto-detected by metadata and never use load-time dequantization.
+      env precedence over `--gguf-exec`. The default/only supported load policy in this path is
+      `dequant_forward` (`dequantize=False`).
     - Callers with an explicit policy (e.g. "VAE GGUFs always dequantize") should pass
       `dequantize=True` to make the intent unambiguous and avoid drift.
     """
@@ -111,18 +111,13 @@ def load_gguf_state_dict(
                 "GGUF checkpoint loader received invalid gguf exec mode "
                 f"(CODEX_GGUF_EXEC/--gguf-exec): {exc}"
             ) from exc
-        if exec_mode != GgufExecMode.DEQUANT_UPFRONT:
+        if exec_mode == GgufExecMode.DEQUANT_FORWARD:
             dequantize = False
         else:
-            # CodexPack files are auto-detected by metadata and never support "dequant upfront".
-            # If we blindly pass `dequantize=True` based on the global exec flag, we'd block CodexPack
-            # even though the packed path is the intended execution.
-            try:
-                meta = read_gguf_metadata(path)
-                is_codexpack = str(meta.get("codex.pack.schema") or "").strip() == "codexpack.gguf"
-            except Exception:
-                is_codexpack = False
-            dequantize = not is_codexpack
+            raise RuntimeError(
+                "GGUF checkpoint loader does not support '--gguf-exec=cuda_pack' in this build. "
+                "Use '--gguf-exec=dequant_forward'."
+            )
     return _load(path, dequantize=bool(dequantize), computation_dtype=computation_dtype, device=device)
 
 

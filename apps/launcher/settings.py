@@ -63,7 +63,7 @@ LAUNCHER_ATTENTION_MODE_CHOICES: tuple[str, ...] = (
     "split",
     "quad",
 )
-GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
+GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward",)
 GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off",)
 WAN22_IMG2VID_CHUNK_BUFFER_MODE_CHOICES: tuple[str, ...] = ("hybrid", "ram", "ram+hd")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")

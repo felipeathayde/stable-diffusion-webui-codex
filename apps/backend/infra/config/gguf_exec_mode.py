@@ -10,7 +10,7 @@ Purpose: Global GGUF execution mode selection for runtime codepaths.
 Centralizes the meaning and parsing of the `--gguf-exec` flag used by checkpoint loaders and (future) packed-kernel execution.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `GgufExecMode` (enum): Supported GGUF execution modes (`dequant_forward`, `dequant_upfront`, `cuda_pack`).
+- `GgufExecMode` (enum): Supported GGUF execution modes (`dequant_forward`, `cuda_pack`).
 - `DEFAULT_GGUF_EXEC_MODE` (constant): Default exec mode when unset.
 - `parse_gguf_exec_mode` (function): Parses a string into `GgufExecMode` (strict; raises on invalid).
 - `resolve_gguf_exec_mode` (function): Resolves GGUF exec mode with `CODEX_GGUF_EXEC` env precedence over runtime args.
@@ -27,7 +27,6 @@ class GgufExecMode(Enum):
     """How GGUF weights are handled at runtime."""
 
     DEQUANT_FORWARD = "dequant_forward"
-    DEQUANT_UPFRONT = "dequant_upfront"
     CUDA_PACK = "cuda_pack"
 
 

@@ -184,7 +184,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "GGUF execution mode: "
             "'dequant_forward' (default) keeps GGUF tensors byte-packed and dequantizes on demand during forward; "
-            "'dequant_upfront' dequantizes GGUF tensors to float at load time (uses more RAM/VRAM, can improve speed); "
             "'cuda_pack' is reserved for Codex packed GGUF execution via fused CUDA kernels (NVIDIA-only)."
         ),
     )
@@ -573,7 +572,7 @@ def _validate_runtime_flags(ns: argparse.Namespace, env: Mapping[str, str]) -> N
             raise RuntimeError("--gguf-exec=cuda_pack requires '--lora-online-math activation'.")
         raise RuntimeError(
             "--gguf-exec=cuda_pack is reserved and not implemented yet in this build. "
-            "Use 'dequant_forward' or 'dequant_upfront' for now.",
+            "Use 'dequant_forward' for now.",
         )
 
     if gguf_dequant_cache != "off":

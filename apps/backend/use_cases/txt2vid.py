@@ -38,6 +38,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     build_video_result,
     configure_sampler,
     export_video,
+    prepare_base_snapshot_video_options,
     read_video_interpolation_options,
     read_video_upscaling_options,
     resolve_video_output_fps,
@@ -236,6 +237,24 @@ def run_txt2vid(
             raise RuntimeError("WAN22 GGUF: produced no frames")
 
         upscaling_options = read_video_upscaling_options(plan.extras)
+        vfi_options = read_video_interpolation_options(plan.extras)
+        base_video_options = prepare_base_snapshot_video_options(
+            getattr(request, "video_options", None),
+            task="txt2vid",
+            upscaling_options=upscaling_options,
+            interpolation_options=vfi_options,
+        )
+        base_video_meta: Any = None
+        if base_video_options is not None:
+            base_video_meta = export_video(engine, frames, plan, base_video_options, task="txt2vid")
+            if isinstance(base_video_meta, Mapping):
+                base_rel_path = str(base_video_meta.get("rel_path") or "").strip()
+                if base_rel_path:
+                    logger.info(
+                        "txt2vid: base snapshot exported before post-process: %s",
+                        base_rel_path,
+                    )
+
         if upscaling_options is not None and upscaling_options.enabled:
             yield ProgressEvent(stage="upscale", percent=1.0, message="Upscaling frames (SeedVR2)")
         frames, upscaling_opts = apply_video_upscaling(
@@ -250,7 +269,6 @@ def run_txt2vid(
                 plan.width = int(first_size[0])
                 plan.height = int(first_size[1])
 
-        vfi_options = read_video_interpolation_options(plan.extras)
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
         frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
@@ -271,6 +289,8 @@ def run_txt2vid(
             extra_meta["video_upscaling"] = upscaling_opts
         if vfi_opts is not None:
             extra_meta["video_interpolation"] = vfi_opts
+        if base_video_meta is not None:
+            extra_meta["video_base_snapshot"] = base_video_meta
         if cfg.low is not None:
             extra_meta["sampler_low"] = {
                 "sampler_in": cfg.low.sampler,
@@ -342,6 +362,24 @@ def run_txt2vid(
     )
 
     upscaling_options = read_video_upscaling_options(plan.extras)
+    vfi_options = read_video_interpolation_options(plan.extras)
+    base_video_options = prepare_base_snapshot_video_options(
+        getattr(request, "video_options", None),
+        task="txt2vid",
+        upscaling_options=upscaling_options,
+        interpolation_options=vfi_options,
+    )
+    base_video_meta: Any = None
+    if base_video_options is not None:
+        base_video_meta = export_video(engine, frames, plan, base_video_options, task="txt2vid")
+        if isinstance(base_video_meta, Mapping):
+            base_rel_path = str(base_video_meta.get("rel_path") or "").strip()
+            if base_rel_path:
+                logger.info(
+                    "txt2vid: base snapshot exported before post-process: %s",
+                    base_rel_path,
+                )
+
     if upscaling_options is not None and upscaling_options.enabled:
         yield ProgressEvent(stage="upscale", percent=1.0, message="Upscaling frames (SeedVR2)")
     frames, upscaling_opts = apply_video_upscaling(
@@ -356,7 +394,6 @@ def run_txt2vid(
             plan.width = int(first_size[0])
             plan.height = int(first_size[1])
 
-    vfi_options = read_video_interpolation_options(plan.extras)
     if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
         yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
     frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
@@ -369,6 +406,8 @@ def run_txt2vid(
         extra_meta["video_upscaling"] = upscaling_opts
     if vfi_opts is not None:
         extra_meta["video_interpolation"] = vfi_opts
+    if base_video_meta is not None:
+        extra_meta["video_base_snapshot"] = base_video_meta
 
     elapsed = time.perf_counter() - start
     result = build_video_result(

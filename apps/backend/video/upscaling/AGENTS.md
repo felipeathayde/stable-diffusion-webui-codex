@@ -13,6 +13,7 @@ Status: Active
 ## Notes
 - Do not import code from `.refs/**` inside `apps/**`.
 - Runner executes SeedVR2 in-process via the checked-out runtime module (`inference_cli.py`) and must fail loud on missing runtime symbols, missing Python dependencies, model download failures, runtime execution failures, and frame count/size mismatches.
+- 2026-03-01: SeedVR2 runner metadata/logging now surfaces `attention_mode` + `sdpa_flash_runtime` when available; this explicitly disambiguates PyTorch SDPA flash-kernel runtime from SeedVR2's own Flash-Attention package availability check output.
 - Runtime directories:
   - Repo: `CODEX_SEEDVR2_REPO_DIR` (default `CODEX_ROOT/.uv/xdg-data/seedvr2/repo`)
     - Default-path bootstrap only: clone from `CODEX_SEEDVR2_REPO_URL` (default `https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git`) when missing, then always enforce `CODEX_SEEDVR2_REPO_REF` (default `4490bd1f482e026674543386bb2a4d176da245b9`) on each run (checkout; fetch+checkout fallback when ref is not local).

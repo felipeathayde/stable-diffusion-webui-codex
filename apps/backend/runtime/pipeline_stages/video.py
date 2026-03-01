@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `apply_video_upscaling` (function): Applies the shared SeedVR2 upscaling stage and returns `(frames_out, upscaling_metadata)`.
 - `resolve_video_output_fps` (function): Computes output fps from request/base fps and interpolation metadata.
 - `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
+- `prepare_base_snapshot_video_options` (function): Builds a fail-loud snapshot export options payload for base-video persistence before post-processing.
 - `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
 - `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
 - `__all__` (constant): Explicit export list for the module.
@@ -353,6 +354,37 @@ def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_opti
     return video_meta
 
 
+def prepare_base_snapshot_video_options(
+    video_options: Any,
+    *,
+    task: str,
+    upscaling_options: VideoUpscalingOptions | None,
+    interpolation_options: VideoInterpolationOptions | None,
+) -> dict[str, Any] | None:
+    save_output = parse_bool_value(
+        video_options.get("save_output") if isinstance(video_options, Mapping) else None,
+        field="video_options.save_output",
+        default=False,
+    )
+    if not save_output:
+        return None
+
+    upscaling_enabled = bool(upscaling_options is not None and upscaling_options.enabled)
+    interpolation_enabled = bool(
+        interpolation_options is not None
+        and interpolation_options.enabled
+        and int(interpolation_options.times or 0) > 1
+    )
+    if not (upscaling_enabled or interpolation_enabled):
+        return None
+
+    normalized_options: dict[str, Any] = dict(video_options) if isinstance(video_options, Mapping) else {}
+    base_prefix = str(normalized_options.get("filename_prefix") or task or "video").strip() or "video"
+    normalized_options["filename_prefix"] = f"{base_prefix}_base"
+    normalized_options["save_output"] = True
+    return normalized_options
+
+
 def assemble_video_metadata(
     engine: Any,
     plan: VideoPlan,
@@ -431,6 +463,7 @@ __all__ = [
     "apply_video_upscaling",
     "resolve_video_output_fps",
     "export_video",
+    "prepare_base_snapshot_video_options",
     "assemble_video_metadata",
     "build_video_result",
 ]

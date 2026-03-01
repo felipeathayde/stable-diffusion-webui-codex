@@ -571,7 +571,7 @@ def _run_seedvr2_in_process(
     repo_dir: Path,
     model_dir: Path,
     cuda_device_index: int | None,
-) -> list[Any]:
+) -> tuple[list[Any], dict[str, Any]]:
     module = _load_seedvr2_inference_module(repo_dir)
 
     required_symbols = (
@@ -593,6 +593,17 @@ def _run_seedvr2_in_process(
         model_dir=model_dir,
         cuda_device_index=cuda_device_index,
     )
+    attention_mode = str(getattr(runtime_args, "attention_mode", "sdpa") or "sdpa").strip().lower()
+    sdpa_flash_runtime: bool | None = None
+    if attention_mode == "sdpa":
+        torch_mod = getattr(module, "torch", None)
+        backends = getattr(torch_mod, "backends", None) if torch_mod is not None else None
+        cuda_backend = getattr(backends, "cuda", None) if backends is not None else None
+        if cuda_backend is not None and hasattr(cuda_backend, "flash_sdp_enabled"):
+            try:
+                sdpa_flash_runtime = bool(cuda_backend.flash_sdp_enabled())
+            except Exception:
+                sdpa_flash_runtime = None
 
     try:
         module.debug = module.Debug(enabled=False)
@@ -629,11 +640,15 @@ def _run_seedvr2_in_process(
     except Exception as exc:
         raise RuntimeError(f"SeedVR2 in-process runtime execution failed: {exc}") from exc
 
-    return _collect_in_process_output_frames(
+    out_frames = _collect_in_process_output_frames(
         module=module,
         result_tensor=output_tensor,
         expected_count=len(frames_list),
     )
+    runtime_meta: dict[str, Any] = {"attention_mode": attention_mode}
+    if sdpa_flash_runtime is not None:
+        runtime_meta["sdpa_flash_runtime"] = bool(sdpa_flash_runtime)
+    return out_frames, runtime_meta
 
 
 def run_seedvr2_upscaling(
@@ -652,7 +667,7 @@ def run_seedvr2_upscaling(
     model_dir = _resolve_seedvr2_model_dir()
     cuda_device_index = _normalize_cuda_device_index(component_device)
 
-    out_frames = _run_seedvr2_in_process(
+    out_frames, runtime_meta = _run_seedvr2_in_process(
         frames_list=frames_list,
         options=options,
         repo_dir=repo_dir,
@@ -679,6 +694,8 @@ def run_seedvr2_upscaling(
         meta["repo_ref"] = repo_resolution.pinned_ref
     if cuda_device_index is not None:
         meta["cuda_device"] = int(cuda_device_index)
+    if runtime_meta:
+        meta["attention"] = dict(runtime_meta)
 
     if logger_ is not None:
         logger_.info(
@@ -689,6 +706,13 @@ def run_seedvr2_upscaling(
             int(output_size[0]),
             int(output_size[1]),
         )
+        if str(runtime_meta.get("attention_mode") or "").strip().lower() == "sdpa":
+            sdpa_flash_runtime = runtime_meta.get("sdpa_flash_runtime")
+            logger_.info(
+                "seedvr2 attention runtime: mode=sdpa sdpa_flash_runtime=%s "
+                "(SeedVR2 'Flash Attention' optimization check reports flash-attn package availability, not PyTorch SDPA flash kernels).",
+                sdpa_flash_runtime if sdpa_flash_runtime is not None else "unknown",
+            )
 
     return out_frames, meta
 

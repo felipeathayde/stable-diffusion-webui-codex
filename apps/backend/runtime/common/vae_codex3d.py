@@ -74,6 +74,38 @@ def remap_codex3d_vae_state_dict(
 class Codex3DCausalConv(nn.Conv3d):
     """Causal Conv3d with left-only temporal padding."""
 
+    _dispatch_workaround_enabled_cache: bool | None = None
+
+    @classmethod
+    def _dispatch_workaround_enabled(cls) -> bool:
+        cached = cls._dispatch_workaround_enabled_cache
+        if cached is not None:
+            return bool(cached)
+
+        enabled = False
+        try:
+            version_str = str(torch.__version__).split("+", 1)[0]
+            version_parts = version_str.split(".")
+            major = int(version_parts[0]) if len(version_parts) > 0 else 0
+            minor = int(version_parts[1]) if len(version_parts) > 1 else 0
+            if major > 2 or (major == 2 and minor >= 9):
+                cudnn_backend = getattr(torch.backends, "cudnn", None)
+                cudnn_version = (
+                    cudnn_backend.version()
+                    if cudnn_backend is not None and hasattr(cudnn_backend, "version")
+                    else None
+                )
+                enabled = (
+                    hasattr(torch, "cudnn_convolution")
+                    and cudnn_version is not None
+                    and int(cudnn_version) >= 91002
+                )
+        except Exception:
+            enabled = False
+
+        cls._dispatch_workaround_enabled_cache = bool(enabled)
+        return bool(enabled)
+
     def __init__(
         self,
         in_channels: int,
@@ -98,6 +130,45 @@ class Codex3DCausalConv(nn.Conv3d):
             0,
         )
         self.padding = (0, 0, 0)
+
+    def _conv_forward(
+        self,
+        input: torch.Tensor,
+        weight: torch.Tensor,
+        bias: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if (
+            self._dispatch_workaround_enabled()
+            and input.device.type == "cuda"
+            and weight.device.type == "cuda"
+            and weight.dtype in (torch.float16, torch.bfloat16)
+        ):
+            cudnn_backend = getattr(torch.backends, "cudnn", None)
+            cudnn_available = (
+                cudnn_backend is not None
+                and hasattr(cudnn_backend, "is_available")
+                and bool(cudnn_backend.is_available())
+                and bool(getattr(cudnn_backend, "enabled", True))
+            )
+            if cudnn_available:
+                try:
+                    out = torch.cudnn_convolution(
+                        input,
+                        weight,
+                        self.padding,
+                        self.stride,
+                        self.dilation,
+                        self.groups,
+                        benchmark=bool(getattr(cudnn_backend, "benchmark", False)),
+                        deterministic=bool(getattr(cudnn_backend, "deterministic", False)),
+                        allow_tf32=bool(getattr(cudnn_backend, "allow_tf32", True)),
+                    )
+                    if bias is not None:
+                        out = out + bias.reshape((1, -1) + (1,) * (out.ndim - 2))
+                    return out
+                except RuntimeError:
+                    pass
+        return super()._conv_forward(input, weight, bias)
 
     def forward(self, x: torch.Tensor, cache_x: torch.Tensor | None = None) -> torch.Tensor:
         if x.ndim != 5:

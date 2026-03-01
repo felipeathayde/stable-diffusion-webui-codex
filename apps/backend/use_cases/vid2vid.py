@@ -47,6 +47,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     apply_video_upscaling,
     assemble_video_metadata,
     build_video_plan,
+    prepare_base_snapshot_video_options,
     read_video_interpolation_options,
     read_video_upscaling_options,
     resolve_video_output_fps,
@@ -735,7 +736,42 @@ def run_vid2vid(
             )
             audio_source = video_path if has_audio else None
 
+        video_options = _as_video_options(getattr(request, "video_options", None))
         upscaling_options = read_video_upscaling_options(extras)
+        vfi_options = read_video_interpolation_options(extras)
+        base_snapshot_options = prepare_base_snapshot_video_options(
+            video_options,
+            task="vid2vid",
+            upscaling_options=upscaling_options,
+            interpolation_options=vfi_options,
+        )
+        base_video_meta: Any = None
+        if base_snapshot_options is not None:
+            base_video_meta = export_video(
+                frames_out,
+                fps=fps_val,
+                options=base_snapshot_options,
+                task="vid2vid",
+                audio_source_path=audio_source if has_audio else None,
+                extra_metadata={"snapshot_stage": "base_before_postprocess", "method": method},
+            )
+            if not parse_bool_value(
+                getattr(base_video_meta, "saved", None),
+                field="base_video_meta.saved",
+                default=False,
+            ):
+                reason = str(getattr(base_video_meta, "reason", "") or "").strip()
+                raise RuntimeError(
+                    "vid2vid: base snapshot export failed with save_output=true"
+                    + (f" ({reason})" if reason else "")
+                )
+            base_rel_path = str(getattr(base_video_meta, "rel_path", "") or "").strip()
+            if base_rel_path:
+                logger.info(
+                    "vid2vid: base snapshot exported before post-process: %s",
+                    base_rel_path,
+                )
+
         if upscaling_options is not None and upscaling_options.enabled:
             yield ProgressEvent(stage="upscale", percent=0.9, message="Upscaling frames (SeedVR2)")
         frames_out, upscaling_opts = apply_video_upscaling(
@@ -750,7 +786,6 @@ def run_vid2vid(
                 plan.width = int(first_size[0])
                 plan.height = int(first_size[1])
 
-        vfi_options = read_video_interpolation_options(extras)
         if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=0.95, message="Interpolating frames (VFI)")
         frames_out, vfi_opts = apply_video_interpolation(frames_out, options=vfi_options, logger_=logger)
@@ -799,8 +834,16 @@ def run_vid2vid(
             info["video_upscaling"] = upscaling_opts
         if vfi_opts is not None:
             info["video_interpolation"] = vfi_opts
+        if base_video_meta is not None:
+            info["video_base_snapshot"] = {
+                "saved": bool(getattr(base_video_meta, "saved", False)),
+                "rel_path": getattr(base_video_meta, "rel_path", None),
+                "mime": getattr(base_video_meta, "mime", None),
+                "reason": getattr(base_video_meta, "reason", None),
+                "fps": getattr(base_video_meta, "fps", None),
+                "frames": getattr(base_video_meta, "frame_count", None),
+            }
 
-        video_options = _as_video_options(getattr(request, "video_options", None))
         video_meta = export_video(
             frames_out,
             fps=fps_out,

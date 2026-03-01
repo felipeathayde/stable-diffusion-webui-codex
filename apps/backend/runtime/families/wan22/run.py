@@ -12,6 +12,8 @@ Orchestrates text context, per-stage sampling, ordered stage-LoRA application (`
 Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
 - `_WAN_CHUNK_HYBRID_RAM_BUDGET_MB` (constant): Default RAM budget threshold (MB) used by `chunk_buffer_mode='hybrid'` when resolving low/decode tensor storage (`ram` vs `ram+hd`).
+- `_wan_trace_inference_enabled` (function): Returns whether WAN orchestration trace checkpoints are enabled (`CODEX_TRACE_INFERENCE_DEBUG`).
+- `_wan_trace` (function): Emits gated `[wan22.trace]` DEBUG checkpoints for run-level orchestration boundaries.
 - `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager (explicit unload honors manager-provided target device).
 - `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
 - `_stage_transition_barrier` (function): Enforce a deterministic memory barrier between heavyweight stage transitions (release/sync/cache-gc/log) without altering mount policy.
@@ -55,6 +57,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import gc
 import inspect
+import logging
 import os
 import re
 import sys
@@ -64,6 +67,7 @@ from typing import Any, Optional
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.attention.wan_fused_v1 import (
     resolve_effective_wan_fused_mode,
     resolve_effective_wan_fused_attn_core,
@@ -111,6 +115,16 @@ _WAN_CONTINUITY_PROFILE_OVERLAP = "overlap"
 _WAN_CONTINUITY_PROFILE_SVI2 = "svi2"
 _WAN_CONTINUITY_PROFILE_SVI2_PRO = "svi2_pro"
 _WAN_CHUNK_HYBRID_RAM_BUDGET_MB = 2048.0
+
+
+def _wan_trace_inference_enabled() -> bool:
+    return env_flag("CODEX_TRACE_INFERENCE_DEBUG", default=False)
+
+
+def _wan_trace(log: Any, message: str, *args: Any) -> None:
+    logger_obj = get_logger(log)
+    if _wan_trace_inference_enabled() and logger_obj.isEnabledFor(logging.DEBUG):
+        logger_obj.debug("[wan22.trace] " + message, *args)
 
 
 def _resolve_wan_fused_summary_context_for_run() -> tuple[tuple[str, str, str], bool]:
@@ -1055,6 +1069,14 @@ def _resolve_stage_text_embeddings(
     logger: Any,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     high_prompt, high_negative, low_prompt, low_negative = _resolve_stage_prompt_pairs(cfg)
+    _wan_trace(
+        logger,
+        "te.resolve.start: model_key=%s te_device=%s runtime_device=%s runtime_dtype=%s",
+        model_key,
+        te_device,
+        dev_name,
+        str(dt),
+    )
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=model_dir,
         prompt=[high_prompt, low_prompt],
@@ -1070,18 +1092,45 @@ def _resolve_stage_text_embeddings(
         offload_after=smart_offload_enabled(),
         te_device=te_device,
     )
+    _wan_trace(
+        logger,
+        "te.resolve.outputs: prompt_shape=%s prompt_dtype=%s prompt_device=%s "
+        "negative_shape=%s negative_dtype=%s negative_device=%s",
+        tuple(prompt_embeds.shape),
+        str(prompt_embeds.dtype),
+        str(prompt_embeds.device),
+        tuple(negative_embeds.shape),
+        str(negative_embeds.dtype),
+        str(negative_embeds.device),
+    )
     if int(prompt_embeds.shape[0]) != 2 or int(negative_embeds.shape[0]) != 2:
         raise RuntimeError(
             "WAN22 GGUF: stage text context batch mismatch "
             f"(prompt={tuple(prompt_embeds.shape)} negative={tuple(negative_embeds.shape)} expected_batch=2)."
         )
 
+    _wan_trace(
+        logger,
+        "te.resolve.to-runtime-device: target_device=%s target_dtype=%s",
+        str(dev),
+        str(dt),
+    )
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
     high_prompt_embeds = prompt_embeds[0:1]
     high_negative_embeds = negative_embeds[0:1]
     low_prompt_embeds = prompt_embeds[1:2]
     low_negative_embeds = negative_embeds[1:2]
+    _wan_trace(
+        logger,
+        "te.resolve.split: high_prompt=%s high_negative=%s low_prompt=%s low_negative=%s dtype=%s device=%s",
+        tuple(high_prompt_embeds.shape),
+        tuple(high_negative_embeds.shape),
+        tuple(low_prompt_embeds.shape),
+        tuple(low_negative_embeds.shape),
+        str(high_prompt_embeds.dtype),
+        str(high_prompt_embeds.device),
+    )
     return high_prompt_embeds, high_negative_embeds, low_prompt_embeds, low_negative_embeds
 
 
@@ -1123,6 +1172,12 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
+        _wan_trace(
+            log,
+            "txt2vid.high.mount-dispatch: stage=high gguf=%s dtype=%s",
+            hi_path,
+            str(dt),
+        )
         hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",
@@ -1161,8 +1216,22 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             te_device=(cfg.te_device or te_dev_eff),
             logger=log,
         )
+        _wan_trace(
+            log,
+            "txt2vid.te.split-pre-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+            str(high_prompt_embeds.device),
+            str(low_prompt_embeds.device),
+            str(low_negative_embeds.device),
+        )
         low_prompt_embeds = low_prompt_embeds.to(device="cpu")
         low_negative_embeds = low_negative_embeds.to(device="cpu")
+        _wan_trace(
+            log,
+            "txt2vid.te.split-post-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+            str(high_prompt_embeds.device),
+            str(low_prompt_embeds.device),
+            str(low_negative_embeds.device),
+        )
         log_cuda_mem(log, label="txt2vid:after-text-embed-split")
 
         geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
@@ -1384,6 +1453,12 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
+        _wan_trace(
+            log,
+            "stream_txt2vid.high.mount-dispatch: stage=high gguf=%s dtype=%s",
+            hi_path,
+            str(dt),
+        )
         hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",
@@ -1404,8 +1479,22 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             te_device=(cfg.te_device or te_dev_eff),
             logger=log,
         )
+        _wan_trace(
+            log,
+            "stream_txt2vid.te.split-pre-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+            str(high_prompt_embeds.device),
+            str(low_prompt_embeds.device),
+            str(low_negative_embeds.device),
+        )
         low_prompt_embeds = low_prompt_embeds.to(device="cpu")
         low_negative_embeds = low_negative_embeds.to(device="cpu")
+        _wan_trace(
+            log,
+            "stream_txt2vid.te.split-post-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+            str(high_prompt_embeds.device),
+            str(low_prompt_embeds.device),
+            str(low_negative_embeds.device),
+        )
         log_cuda_mem(log, label="stream_txt2vid:after-text-embed-split")
 
         t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
@@ -1659,13 +1748,33 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         te_device=(cfg.te_device or te_dev_eff),
         logger=log,
     )
+    _wan_trace(
+        log,
+        "img2vid.te.split-pre-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+        str(high_prompt_embeds.device),
+        str(low_prompt_embeds.device),
+        str(low_negative_embeds.device),
+    )
     low_prompt_embeds = low_prompt_embeds.to(device="cpu")
     low_negative_embeds = low_negative_embeds.to(device="cpu")
+    _wan_trace(
+        log,
+        "img2vid.te.split-post-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+        str(high_prompt_embeds.device),
+        str(low_prompt_embeds.device),
+        str(low_negative_embeds.device),
+    )
     log_cuda_mem(log, label="img2vid:after-text-embed-split")
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
+        _wan_trace(
+            log,
+            "img2vid.high.mount-dispatch: stage=high gguf=%s dtype=%s",
+            hi_path,
+            str(dt),
+        )
         hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",
@@ -1928,13 +2037,33 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         te_device=(cfg.te_device or te_dev_eff),
         logger=log,
     )
+    _wan_trace(
+        log,
+        "stream_img2vid.te.split-pre-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+        str(high_prompt_embeds.device),
+        str(low_prompt_embeds.device),
+        str(low_negative_embeds.device),
+    )
     low_prompt_embeds = low_prompt_embeds.to(device="cpu")
     low_negative_embeds = low_negative_embeds.to(device="cpu")
+    _wan_trace(
+        log,
+        "stream_img2vid.te.split-post-spill: high_prompt_device=%s low_prompt_device=%s low_negative_device=%s",
+        str(high_prompt_embeds.device),
+        str(low_prompt_embeds.device),
+        str(low_negative_embeds.device),
+    )
     log_cuda_mem(log, label="stream_img2vid:after-text-embed-split")
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
     try:
+        _wan_trace(
+            log,
+            "stream_img2vid.high.mount-dispatch: stage=high gguf=%s dtype=%s",
+            hi_path,
+            str(dt),
+        )
         hi_model = mount_stage_model_from_gguf(
             hi_path,
             stage="high",

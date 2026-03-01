@@ -138,6 +138,7 @@ Status: Active
 - 2026-02-27: WAN22 `model.py` self-attn RoPE now prefers the CUDA in-place op `torch.ops.wan_fused_v1.rope_blhd_` when available (falls back to the pure PyTorch RoPE path when not).
 - 2026-02-27: WAN22 `model.py` FFN now auto-chunks over sequence length to bound the fc1 activation footprint (reduces peak reserved VRAM on 12GB GPUs; perf/memory tradeoff). Residual adds use in-place ops in bf16-native mode.
 - 2026-03-01: WAN22 inference trace gates now use `CODEX_TRACE_INFERENCE_DEBUG` (no legacy env fallback): block-level/debug memory traces in `model.py` and shared VAE decode traces in `runtime/common/vae_codex3d.py` are controlled by this explicit inference-trace env.
+- 2026-03-01: `run.py` now emits explicit orchestration trace checkpoints under `CODEX_TRACE_INFERENCE_DEBUG` (`[wan22.trace]`) around TE resolve/split/spill and high-stage mount dispatch for txt2vid/img2vid batch+stream entrypoints, so pre-mount gaps between TE output and stage-loader logs are directly visible.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

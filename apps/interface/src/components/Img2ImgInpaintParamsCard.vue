@@ -10,9 +10,11 @@ Purpose: Presentational parameter card for image init/mask workflows.
 Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + only-masked padding + region splitting + mask toggles/sliders),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
+Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
+- `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `InitialImageCard` zoom overlay.
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
 - `onInpaintingFillChange` (function): Emits raw masked-content numeric updates for parent-side normalization.
 - `onMaskEditorApply` (function): Emits edited mask data URL produced by the inpaint mask editor overlay.
@@ -35,6 +37,7 @@ Symbols (top-level; keep in sync; no ghosts):
       :dropzone="true"
       :thumbnail="true"
       :zoomable="true"
+      :zoom-frame-guide="zoomFrameGuide"
       @set="(file) => emit('set:initImage', file)"
       @clear="() => emit('clear:initImage')"
       @rejected="(payload) => emit('reject:initImage', payload)"
@@ -171,6 +174,7 @@ import InitialImageCard from './InitialImageCard.vue'
 import InpaintMaskEditorOverlay from './ui/InpaintMaskEditorOverlay.vue'
 import SliderField from './ui/SliderField.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
+import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
 type MaskEnforcement = 'post_blend' | 'per_step_clamp'
 
@@ -194,6 +198,7 @@ withDefaults(defineProps<{
   maskRound: boolean
   maskBlur: number
   maskRegionSplit?: boolean
+  zoomFrameGuide?: WanImg2VidFrameGuideConfig | null
 }>(), {
   disabled: false,
   embedded: false,
@@ -206,6 +211,7 @@ withDefaults(defineProps<{
   maskImageName: '',
   maskEnforcement: 'per_step_clamp',
   maskRegionSplit: false,
+  zoomFrameGuide: null,
 })
 
 const emit = defineEmits<{

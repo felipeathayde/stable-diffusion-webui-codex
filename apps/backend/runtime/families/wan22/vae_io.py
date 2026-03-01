@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
 Loads WAN VAE weights via explicit native lanes (`2d_native` or `3d_native`), applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
+I2V init-image preprocessing is deterministic and no-stretch (`cover + center-crop + resize`) across tensor/PIL/ndarray paths before VAE encode.
 Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks). Model key remap ownership is delegated to `runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -22,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_vae_dtype_candidates` (function): Ordered dtype candidates for VAE encode/decode attempts (requested dtype first).
 - `open_vae_decode_session` (function): Loads WAN VAE once with fallback dtype candidates for repeated decode calls.
 - `close_vae_decode_session` (function): Offloads and tears down a decode session loaded by `open_vae_decode_session`.
-- `vae_encode_video_condition` (function): Encodes the Diffusers-style I2V conditioning video into latents (deterministic mode).
+- `vae_encode_video_condition` (function): Encodes the Diffusers-style I2V conditioning video into latents (deterministic mode, no-stretch init-image preprocessing).
 - `vae_decode_video` (function): Decodes video latents to frames; can validate the expected output frame count.
 - `decode_latents_to_frames` (function): Validates strict WAN latent-channel decode input (no implicit slicing) and returns frames (optional frame-count validation).
 """
@@ -374,15 +375,64 @@ def _retrieve_latents(encoder_output: Any, *, sample_mode: str) -> torch.Tensor:
     )
 
 
-def _maybe_resize_hw(x: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
+def _center_crop_resize_hw(x: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
     if x.ndim != 4:
+        raise RuntimeError(
+            "WAN22 GGUF: center-crop+resize expects 4D tensor [B,C,H,W], "
+            f"got shape={tuple(getattr(x, 'shape', ()))!r}."
+        )
+    target_h = int(height)
+    target_w = int(width)
+    if target_h <= 0 or target_w <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: center-crop+resize target size must be positive "
+            f"(height={target_h} width={target_w})."
+        )
+    _, _, src_h, src_w = x.shape
+    src_h = int(src_h)
+    src_w = int(src_w)
+    if src_h <= 0 or src_w <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: center-crop+resize source size must be positive "
+            f"(height={src_h} width={src_w})."
+        )
+    if src_h == target_h and src_w == target_w:
         return x
-    _, _, h, w = x.shape
-    if int(h) == int(height) and int(w) == int(width):
-        return x
+
+    # Cover + center-crop (no-stretch): crop source to target aspect first, then resize.
+    lhs = src_w * target_h
+    rhs = src_h * target_w
+    crop_h = src_h
+    crop_w = src_w
+    if lhs > rhs:
+        crop_w = max(1, min(src_w, (src_h * target_w + target_h // 2) // target_h))
+    elif lhs < rhs:
+        crop_h = max(1, min(src_h, (src_w * target_h + target_w // 2) // target_w))
+
+    top = max(0, (src_h - crop_h) // 2)
+    left = max(0, (src_w - crop_w) // 2)
+    bottom = top + crop_h
+    right = left + crop_w
+    if bottom > src_h or right > src_w:
+        raise RuntimeError(
+            "WAN22 GGUF: center-crop window exceeds source bounds "
+            f"(source={src_h}x{src_w} crop=(top={top}, left={left}, h={crop_h}, w={crop_w}))."
+        )
+
+    cropped = x[:, :, top:bottom, left:right]
+    got_h = int(cropped.shape[-2])
+    got_w = int(cropped.shape[-1])
+    if got_h != crop_h or got_w != crop_w:
+        raise RuntimeError(
+            "WAN22 GGUF: center-crop produced unexpected shape "
+            f"(expected={crop_h}x{crop_w} got={got_h}x{got_w})."
+        )
+    if crop_h == target_h and crop_w == target_w:
+        return cropped
+
     import torch.nn.functional as F
 
-    return F.interpolate(x, size=(int(height), int(width)), mode="bilinear", align_corners=False)
+    return F.interpolate(cropped, size=(target_h, target_w), mode="bilinear", align_corners=False)
 
 
 def _prepare_init_image_tensor(
@@ -395,6 +445,13 @@ def _prepare_init_image_tensor(
 ) -> torch.Tensor:
     dev_name = resolve_device_name(device)
     target_device = torch.device(dev_name)
+    target_h = int(height)
+    target_w = int(width)
+    if target_h <= 0 or target_w <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: init_image target dimensions must be positive "
+            f"(height={target_h} width={target_w})."
+        )
 
     if hasattr(init_image, "to"):
         t = init_image
@@ -408,15 +465,21 @@ def _prepare_init_image_tensor(
                 f"got {getattr(t, 'shape', None)}"
             )
         t = t.to(device=target_device, dtype=torch_dtype)
-        t = _maybe_resize_hw(t, height=height, width=width)
+        t = _center_crop_resize_hw(t, height=target_h, width=target_w)
         return t
 
-    from PIL import Image
+    from PIL import Image, ImageOps
     import numpy as np
 
     if isinstance(init_image, Image.Image):
+        resample = getattr(Image, "Resampling", Image).BICUBIC
         img = init_image.convert("RGB")
-        img = img.resize((int(width), int(height)), resample=Image.BICUBIC)
+        img = ImageOps.fit(
+            img,
+            (target_w, target_h),
+            method=resample,
+            centering=(0.5, 0.5),
+        )
         arr = np.array(img).astype("float32") / 255.0
         t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
         t = t.to(device=target_device, dtype=torch_dtype)
@@ -432,7 +495,7 @@ def _prepare_init_image_tensor(
         raise RuntimeError("WAN22 GGUF: unsupported init_image array shape")
 
     t = t.to(device=target_device, dtype=torch_dtype)
-    t = _maybe_resize_hw(t, height=height, width=width)
+    t = _center_crop_resize_hw(t, height=target_h, width=target_w)
     return t * 2.0 - 1.0
 
 

@@ -20,27 +20,65 @@
     padding: 1.5rem;
     box-sizing: border-box;
   }
+  .image-zoom-canvas {
+    position: relative;
+    display: inline-block;
+    transform-origin: center center;
+  }
   .image-zoom-main img {
+    display: block;
     max-width: none;
     max-height: none;
-    transform-origin: center center;
     cursor: grab;
   }
   .image-zoom-main img:active {
     cursor: grabbing;
   }
+  .image-zoom-frame-guide {
+    position: absolute;
+    border: 0.125rem dashed rgba(0, 245, 245, 0.95);
+    box-shadow: 0 0 0 999rem rgba(0, 0, 0, 0.25);
+    border-radius: 0.25rem;
+    pointer-events: none;
+  }
   .image-zoom-toolbar {
-    width: 4.5rem;
+    width: 15rem;
     padding: 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
     align-items: stretch;
-    justify-content: center;
+    justify-content: flex-start;
+    overflow-y: auto;
   }
   .image-zoom-toolbar .toolbar-group {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+  .image-zoom-toolbar__frame-guide {
+    padding-top: 0.5rem;
+    border-top: 0.0625rem solid rgba(255, 255, 255, 0.2);
+  }
+  .image-zoom-frame-meta {
+    display: grid;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    line-height: 1.2;
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .image-zoom-frame-meta__row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .image-zoom-frame-meta__row span {
+    opacity: 0.75;
+  }
+  .image-zoom-frame-meta__row strong {
+    text-align: right;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   }
 }

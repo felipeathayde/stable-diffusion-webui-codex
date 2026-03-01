@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-02-28
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 - 2026-02-18: Added `img2img_resize.ts` as the canonical img2img resize-mode contract (`just_resize`, `crop_and_resize`, `resize_and_fill`, `just_resize_latent_upscale`, `upscaler`) with a shared normalizer for store/view/composable wiring.
 - 2026-02-22: Added `wan_img2vid_temporal.ts` as the canonical WAN img2vid temporal helper module (`solo|chunk|sliding|svi2|svi2_pro` mode normalization + window stride/commit normalizers with `stride % 4 == 0` and `commit - stride >= 4` guards) reused by store/view/payload layers.
 - 2026-02-28: `wan_img2vid_temporal.ts` removed `chunk` from `WanImg2VidMode`; normalization is now fail-loud for `img2vid_mode='chunk'` and any unsupported value (`solo|sliding|svi2|svi2_pro` only).
+- 2026-03-01: Added `wan_img2vid_frame_projection.ts` as the canonical WAN no-stretch frame-projection helper (`cover + center-crop`) for init-image zoom overlays, including deterministic crop rect + scaled-dimension metadata.

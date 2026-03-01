@@ -11,6 +11,7 @@ Owns per-stage prompt + init media inputs, stage params, assets selection, guide
 renders progress/results via task events (frames and/or exported video), with Run status shown through the shared
 `RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` metadata in progress mode).
 Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled in WAN flows).
+Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/policy`) into the shared init-image card so the zoom overlay can visualize generation-frame projection.
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
@@ -54,6 +55,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for img2vid init-image input.
 - `clearInit` (function): Clears init image fields.
+- `wanInitImageZoomFrameGuide` (computed): Derived WAN init-image zoom frame-guide config from current video dimensions.
 - `normalizeVideoBeforeSubmit` (function): Normalizes width/height/frames before Generate dispatch.
 - `onGenerateClick` (function): Starts a generation run for the current input mode (builds payload, submits, and wires streaming) (async).
 - `clampNumber` (function): Clamps a numeric value to `[min, max]`.
@@ -78,8 +80,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `isRecord` (function): Type guard for `Record<string, unknown>`.
 - `formatDiffValue` (function): Formats values for the “params diff” UI.
 - `diffObjects` (function): Recursively diffs two objects into `{path, before, after}` entries (used for history diff).
-- `snapDim` (function): Snaps a dimension to WAN constraints (default 16-grid; 64-grid for img2vid Image aspect lock).
-- `snapDimForAspect` (function): Snaps dimensions using the active aspect-mode grid policy.
+- `snapDim` (function): Snaps a dimension to WAN constraints (safe 16-grid).
+- `snapDimForAspect` (function): Snaps dimensions using the shared WAN-safe grid policy.
 - `ratioForMode` (function): Returns the target aspect ratio for a given `AspectMode` preset.
 - `onAspectModeChange` (function): Applies aspect-mode changes and updates width/height accordingly.
 - `applyWidth` (function): Applies width updates (snapping + aspect-mode handling).
@@ -158,6 +160,7 @@ Symbols (top-level; keep in sync; no ghosts):
               :initImageName="video.initImageName"
               :imageWidth="video.width"
               :imageHeight="video.height"
+              :zoomFrameGuide="wanInitImageZoomFrameGuide"
               :useMask="false"
               maskImageData=""
               maskImageName=""
@@ -189,7 +192,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 :modelValue="video.width"
                 :min="64"
                 :max="2048"
-                :step="64"
+                :step="dimensionInputStep"
                 :inputStep="dimensionInputStep"
                 :nudgeStep="dimensionInputStep"
                 :disabled="isRunning"
@@ -235,7 +238,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 :modelValue="video.height"
                 :min="64"
                 :max="2048"
-                :step="64"
+                :step="dimensionInputStep"
                 :inputStep="dimensionInputStep"
                 :nudgeStep="dimensionInputStep"
                 :disabled="isRunning"
@@ -743,6 +746,7 @@ import {
   WAN_WINDOW_COMMIT_OVERLAP_MIN,
   WAN_WINDOW_STRIDE_ALIGNMENT,
 } from '../utils/wan_img2vid_temporal'
+import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
@@ -823,6 +827,11 @@ function defaultVideo(): WanVideoParams {
 const video = computed<WanVideoParams>(() => wanParams.value?.video || defaultVideo())
 const high = computed<WanStageParams>(() => wanParams.value?.high || defaultStage())
 const low = computed<WanStageParams>(() => wanParams.value?.low || defaultStage())
+const wanInitImageZoomFrameGuide = computed<WanImg2VidFrameGuideConfig>(() => ({
+  targetWidth: Number(video.value.width) || 64,
+  targetHeight: Number(video.value.height) || 64,
+  policy: 'cover_center_crop',
+}))
 
 function defaultAssets(): WanAssetsParams { return { metadata: '', textEncoder: '', vae: '' } }
 
@@ -833,7 +842,6 @@ const WAN_FRAMES_MAX = 401
 const WAN_DIM_MIN = 64
 const WAN_DIM_MAX = 2048
 const WAN_DIM_STEP_DEFAULT = 16
-const WAN_DIM_STEP_IMAGE_LOCK = 64
 
 function normalizeFrameCount(rawValue: number): number {
   const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : WAN_FRAMES_MIN
@@ -2138,12 +2146,7 @@ const aspectRatio = ref<number | null>(null)
 const initImageAspectRatio = ref<number | null>(null)
 let initImageAspectTicket = 0
 
-const enforceImageAspect64 = computed(() => mode.value === 'img2vid' && aspectMode.value === 'image')
-const dimensionInputStep = computed(() => (enforceImageAspect64.value ? WAN_DIM_STEP_IMAGE_LOCK : WAN_DIM_STEP_DEFAULT))
-
-function currentAspectSnapStep(): number {
-  return enforceImageAspect64.value ? WAN_DIM_STEP_IMAGE_LOCK : WAN_DIM_STEP_DEFAULT
-}
+const dimensionInputStep = computed(() => WAN_DIM_STEP_DEFAULT)
 
 function snapDim(value: number, step: number = WAN_DIM_STEP_DEFAULT): number {
   const safeStep = Math.max(1, Math.trunc(step))
@@ -2152,7 +2155,7 @@ function snapDim(value: number, step: number = WAN_DIM_STEP_DEFAULT): number {
 }
 
 function snapDimForAspect(value: number): number {
-  return snapDim(value, currentAspectSnapStep())
+  return snapDim(value, WAN_DIM_STEP_DEFAULT)
 }
 
 function ratioForMode(mode: AspectMode): number | null {

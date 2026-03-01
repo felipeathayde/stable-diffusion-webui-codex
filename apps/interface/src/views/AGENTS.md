@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-28
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -40,7 +40,7 @@ Status: Active
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.
 - 2026-02-17: `WANTab.vue` Video Aspect selector now includes `Image` mode; when selected, width/height lock to the current init-image aspect ratio (auto-falls back to `Free` if no init image is available).
 - 2026-02-17: `WANTab.vue` now exposes WAN attention mode (`global|sliding`) and img2vid chunk controls with explicit tooltips for `anchor_alpha` and `chunk_seed_mode`; frame values normalize to nearest `4n+1` on blur and immediately before Generate (including direct click on Generate).
-- 2026-02-17: In `img2vid` with aspect mode `Image`, `WANTab.vue` now snaps width/height on a `64` grid (input nudge/step, blur handlers, and pre-dispatch normalization for Generate/Queue) to avoid invalid image-locked sizes.
+- 2026-03-01: `WANTab.vue` now uses one shared safe WAN dimension grid (`16`) across Free/Lock/Image/preset aspect modes (no image-lock-specific `64` override), including width/height slider step+nudge and pre-submit normalization.
 - 2026-01-23: `WANTab.vue` snaps WAN video width/height to multiples of 16 (rounded up; Diffusers parity) so invalid sizes never reach the backend.
 - 2026-01-25: `ImageModelTab.vue` CLIP Skip now allows `0` as “use default” (sends `clip_skip=0` so clip-skip state does not leak across jobs).
 - 2026-01-27: `WANTab.vue` supports video-first WAN results (exported video shown even when frames are omitted); when `Return frames` is disabled and a video exists, the frames viewer empty state shows “Frames not returned” with a hint.
@@ -71,6 +71,7 @@ Status: Active
 - 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.
 - 2026-02-20: `ImageModelTab.vue` and `WANTab.vue` History strips now render square 1:1 thumbnail cards (image fit/contain, no inline metadata text); clicking a card opens a details modal with organized run metadata (mode/time/status/task), prompt/negative prompt, params snapshot, and explicit Load/Apply/Copy actions.
 - 2026-02-21: `WANTab.vue` `img2vid` init-image input now reuses `components/Img2ImgInpaintParamsCard.vue` (with `useMask=false`) instead of mounting `InitialImageCard.vue` directly, keeping shared init-image dropzone/thumb/zoom behavior and preserving the guided selector anchor `#wan-guided-init-image`.
+- 2026-03-01: `WANTab.vue` now passes a WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/policy`) into the shared init-image card, so `ImageZoomOverlay.vue` can render a toggleable generation-frame projection guide with source/scaled/frame metadata.
 - 2026-02-25: `WANTab.vue` now passes `maskEnforcement=\"per_step_clamp\"` to the shared img2img-init card, aligning embedded defaults with Forge-engine masked semantics.
 - 2026-02-21: `WANTab.vue` `img2vid` chunk controls now render inside a dense nested subcard (`Chunking`) in a single-row 5-control layout (`Attention Mode`, `Chunk Frames`, `Overlap`, `Anchor Alpha`, `Chunk Seed Mode`); numeric fields use shared `SliderField` controls and labels use `?` hover tooltips (`HoverTooltip`).
 - 2026-02-21: `ImageModelTab.vue` now wires `Img2ImgInpaintParamsCard.vue` to the new mask editor apply/reset-notice events (`apply:maskImageData`, `notice:maskEditorReset`) and preserves existing fail-loud dimension validation on edited masks.

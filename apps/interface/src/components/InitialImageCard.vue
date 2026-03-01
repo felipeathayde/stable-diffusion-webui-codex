@@ -8,9 +8,11 @@ Required Notice: see NOTICE
 
 Purpose: Initial image file picker for img2img-style workflows.
 Provides a file input, preview, and remove action and emits the selected `File` back to the parent.
+Supports optional pass-through WAN frame-guide config for zoom-overlay no-stretch projection metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InitialImageCard` (component): Initial image picker panel.
+- `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `ImageZoomOverlay`.
 - `onFile` (function): Handles file-input selection and emits `set`.
 - `onDropFiles` (function): Handles dropzone selection and emits `set`.
 - `onPreviewClick` (function): Opens the zoom overlay for the current preview image.
@@ -68,7 +70,12 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
       <slot name="footer" />
     </div>
-    <ImageZoomOverlay v-model="zoomOpen" :src="src" alt="Initial image preview" />
+    <ImageZoomOverlay
+      v-model="zoomOpen"
+      :src="src"
+      alt="Initial image preview"
+      :wanFrameGuide="zoomFrameGuide"
+    />
   </div>
 </template>
 
@@ -76,6 +83,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { computed, ref } from 'vue'
 import Dropzone from './ui/Dropzone.vue'
 import ImageZoomOverlay from './ui/ImageZoomOverlay.vue'
+import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
 const props = withDefaults(defineProps<{
   label?: string
@@ -87,6 +95,7 @@ const props = withDefaults(defineProps<{
   dropzone?: boolean
   thumbnail?: boolean
   zoomable?: boolean
+  zoomFrameGuide?: WanImg2VidFrameGuideConfig | null
 }>(), {
   label: 'Initial Image',
   accept: 'image/*',
@@ -97,6 +106,7 @@ const props = withDefaults(defineProps<{
   dropzone: false,
   thumbnail: false,
   zoomable: false,
+  zoomFrameGuide: null,
 })
 
 const emit = defineEmits<{

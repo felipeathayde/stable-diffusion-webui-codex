@@ -139,6 +139,7 @@ Status: Active
 - 2026-02-27: WAN22 `model.py` FFN now auto-chunks over sequence length to bound the fc1 activation footprint (reduces peak reserved VRAM on 12GB GPUs; perf/memory tradeoff). Residual adds use in-place ops in bf16-native mode.
 - 2026-03-01: WAN22 inference trace gates now use `CODEX_TRACE_INFERENCE_DEBUG` (no legacy env fallback): block-level/debug memory traces in `model.py` and shared VAE decode traces in `runtime/common/vae_codex3d.py` are controlled by this explicit inference-trace env.
 - 2026-03-01: `run.py` now emits explicit orchestration trace checkpoints under `CODEX_TRACE_INFERENCE_DEBUG` (`[wan22.trace]`) around TE resolve/split/spill and high-stage mount dispatch for txt2vid/img2vid batch+stream entrypoints, so pre-mount gaps between TE output and stage-loader logs are directly visible.
+- 2026-03-01: `run.py` now enforces an unconditional TE→high transition barrier in img2vid batch+stream (`img2vid:te->high`, `stream_img2vid:te->high`) using `gc.collect + cuda_empty_cache` before high-stage mount, preventing allocator-pool carryover from VAE-condition/TE setup from starving high-stage GGUF load on 12GB-class GPUs.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

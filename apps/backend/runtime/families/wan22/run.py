@@ -1765,6 +1765,12 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         str(low_negative_embeds.device),
     )
     log_cuda_mem(log, label="img2vid:after-text-embed-split")
+    _stage_transition_barrier(
+        logger=log,
+        label="img2vid:te->high",
+        offload_level=lvl,
+        force_clear=True,
+    )
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None
@@ -2054,6 +2060,12 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         str(low_negative_embeds.device),
     )
     log_cuda_mem(log, label="stream_img2vid:after-text-embed-split")
+    _stage_transition_barrier(
+        logger=log,
+        label="stream_img2vid:te->high",
+        offload_level=lvl,
+        force_clear=True,
+    )
 
     hi_model: torch.nn.Module | None = None
     hi_mm: _MemoryManagedModule | None = None

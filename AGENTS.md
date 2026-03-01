@@ -95,19 +95,13 @@ These two scouts are workspace-specific and must be defined here, not in global 
 - Both scouts MUST receive the current `active-task exclusion set` and must stay out of active in-progress diff scope.
 
 Fixed objectives (use exact text in mission brief):
-- `anti-pattern and wrapper-vs-patcher identity-drift detection`
+- `anti-pattern and wrapper-vs-patcher identity-drift and ownership-drift detection`
 - `vram efficiency and runtime overhead detection`
 
-Scope priorities:
-- Identity-drift scout:
-  - `apps/backend/engines/**`
-  - `apps/backend/patchers/**`
-  - shared adapters/utilities and immediate callers
-- VRAM/overhead scout:
-  - engine runtime paths
-  - scheduler/adapter layers
-  - quantization paths
-  - generation pipelines
+Scope policy:
+- Do not hardcode folder targets in mission briefs.
+- Each patrol round must choose targets autonomously based on current repository signals and objective relevance.
+- Keep target selection outside the active-task exclusion set and rotate areas between rounds for broader coverage.
 
 Patrol report filenames (mandatory, UTC):
 - `anti-pattern-drift-patrol-report-YYYYMMDD-HHMMSSZ.md`

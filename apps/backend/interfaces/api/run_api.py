@@ -20,6 +20,8 @@ Allocator bootstrap contract is `PYTORCH_CUDA_ALLOC_CONF` only.
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
 - `_parse_trace_max` (function): Parses `--trace-debug-max-per-func` / `--trace-call-debug-max-per-func` into a non-negative int (or `None`).
+- `_env_truthy` (function): Parses launcher/env boolean tokens (`1/true/yes/on`) from string values.
+- `_trace_debug_logging_requested` (function): Resolves whether any trace-debug category requests DEBUG logging bootstrap.
 - `ensure_initialized` (function): Performs early runtime bootstrap (repo root/sys.path, optional tracing/logging hooks) before serving.
 - `_SuppressUvicornAccessNoiseFilter` (class): Logging filter to reduce uvicorn access-log spam for noisy endpoints.
 - `_install_uvicorn_access_noise_filter` (function): Installs `_SuppressUvicornAccessNoiseFilter` when configured.
@@ -89,23 +91,46 @@ def _parse_trace_max(argv: Sequence[str]) -> Optional[int]:
         return None
     return max(0, numeric)
 
-# Early tracing hook: if call-trace debug is requested (CLI/env), configure
-# logging at DEBUG and enable global call tracing before importing FastAPI/uvicorn.
-try:
+
+def _env_truthy(raw: object) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _trace_debug_logging_requested(argv: Sequence[str], env: Mapping[str, str]) -> bool:
     call_trace_requested = (
-        ("--trace-debug" in sys.argv)
-        or ("--trace-call-debug" in sys.argv)
-        or (os.getenv("CODEX_TRACE_CALL_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"})
+        ("--trace-debug" in argv)
+        or ("--trace-call-debug" in argv)
+        or _env_truthy(env.get("CODEX_TRACE_CALL_DEBUG"))
     )
     if call_trace_requested:
+        return True
+    return _env_truthy(env.get("CODEX_TRACE_INFERENCE_DEBUG")) or _env_truthy(env.get("CODEX_TRACE_LOAD_PATCH_DEBUG"))
+
+# Early trace hook: if any trace-debug source is requested (call/inference/load),
+# force DEBUG logging visibility before importing FastAPI/uvicorn. Global
+# function-call tracing remains call-trace-only.
+try:
+    startup_argv = tuple(sys.argv[1:])
+    startup_env = os.environ
+    call_trace_requested = (
+        ("--trace-debug" in startup_argv)
+        or ("--trace-call-debug" in startup_argv)
+        or _env_truthy(startup_env.get("CODEX_TRACE_CALL_DEBUG"))
+    )
+    trace_debug_requested = _trace_debug_logging_requested(startup_argv, startup_env)
+    if trace_debug_requested:
+        startup_env["CODEX_LOG_DEBUG"] = "1"
         from apps.backend.runtime import logging as runtime_logging  # type: ignore
+
         runtime_logging.setup_logging(level="DEBUG")
+    if call_trace_requested:
         from apps.backend.runtime.diagnostics import call_trace as _call_trace  # type: ignore
-        max_per_func = _parse_trace_max(sys.argv[1:])
+
+        max_per_func = _parse_trace_max(startup_argv)
         _call_trace.enable(max_calls_per_func=max_per_func)
 except Exception:
     # Never block startup because of tracing/logging issues, but don't fail silently.
-    _LOG.exception("startup: failed to enable call-trace debug")
+    _LOG.exception("startup: failed to bootstrap trace-debug logging/call-trace")
 
 try:
     from colorama import Fore, Style  # type: ignore
@@ -652,6 +677,8 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         settings=settings,
         strict=True,
     )
+    ns.trace_inference_debug = _env_truthy(env.get("CODEX_TRACE_INFERENCE_DEBUG"))
+    ns.trace_load_patch_debug = _env_truthy(env.get("CODEX_TRACE_LOAD_PATCH_DEBUG"))
     allocator_backend = _allocator_backend(raw_alloc_conf)
     _LOG.info(
         "startup: PYTORCH_CUDA_ALLOC_CONF=%s (backend=%s, cuda_malloc_flag=%s)",
@@ -679,6 +706,12 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         if getattr(ns, "trace_profiler", False):
             _set_bootstrap_env("CODEX_TRACE_PROFILER", "1")
             _set_bootstrap_env("CODEX_PROFILE", "1")
+        if _env_truthy(env.get("CODEX_TRACE_INFERENCE_DEBUG")):
+            _set_bootstrap_env("CODEX_TRACE_INFERENCE_DEBUG", "1")
+        if _env_truthy(env.get("CODEX_TRACE_LOAD_PATCH_DEBUG")):
+            _set_bootstrap_env("CODEX_TRACE_LOAD_PATCH_DEBUG", "1")
+        if getattr(ns, "trace_debug", False) or _env_truthy(env.get("CODEX_TRACE_INFERENCE_DEBUG")) or _env_truthy(env.get("CODEX_TRACE_LOAD_PATCH_DEBUG")):
+            _set_bootstrap_env("CODEX_LOG_DEBUG", "1")
         mode = getattr(ns, "lora_apply_mode", None)
         if mode is not None:
             # Only publish non-default values. Publishing defaults would pin global state
@@ -727,15 +760,25 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
 
 def _enable_trace_debug(ns: Any) -> None:
     try:
-        if getattr(ns, "trace_debug", False):
+        call_trace_requested = bool(getattr(ns, "trace_debug", False))
+        trace_inference_debug = bool(getattr(ns, "trace_inference_debug", False))
+        trace_load_patch_debug = bool(getattr(ns, "trace_load_patch_debug", False))
+        trace_debug_requested = bool(
+            call_trace_requested
+            or trace_inference_debug
+            or trace_load_patch_debug
+        )
+        if trace_debug_requested:
             from apps.backend.runtime import logging as runtime_logging  # type: ignore
 
+            os.environ["CODEX_LOG_DEBUG"] = "1"
             runtime_logging.setup_logging(level="DEBUG")
+        if call_trace_requested:
             from apps.backend.runtime.diagnostics import call_trace as _call_trace  # type: ignore
 
             _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
     except Exception:
-        _LOG.exception("startup: failed to enable call-trace debug")
+        _LOG.exception("startup: failed to bootstrap trace-debug logging/call-trace")
 
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:

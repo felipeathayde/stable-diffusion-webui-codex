@@ -667,23 +667,40 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                 f"got shape={tuple(z.shape)}."
             )
         _, _, num_frame, _, _ = z.shape
-        x = self.conv2(z)
+        conv2_cache: torch.Tensor | None = None
+        conv2_padding = getattr(self.conv2, "_padding", (0, 0, 0, 0, 0, 0))
+        conv2_cache_t = int(conv2_padding[4]) if len(conv2_padding) >= 5 else 0
+        if conv2_cache_t < 0:
+            raise RuntimeError(
+                "AutoencoderCodex3D decode encountered invalid conv2 temporal cache size "
+                f"(cache_t={conv2_cache_t})."
+            )
         self.clear_cache()
         out_chunks: list[torch.Tensor] = []
         chunk_count = 0
         try:
             for index in range(int(num_frame)):
                 self._conv_idx = [0]
+                z_chunk = z[:, :, index : index + 1, :, :]
+                if conv2_cache_t > 0:
+                    x_chunk = self.conv2(z_chunk, conv2_cache)
+                    conv2_cache_next = z_chunk[:, :, -conv2_cache_t:, :, :].clone()
+                    if conv2_cache_next.shape[2] < conv2_cache_t and torch.is_tensor(conv2_cache):
+                        missing = conv2_cache_t - int(conv2_cache_next.shape[2])
+                        conv2_cache_next = torch.cat([conv2_cache[:, :, -missing:, :, :], conv2_cache_next], dim=2)
+                    conv2_cache = conv2_cache_next
+                else:
+                    x_chunk = self.conv2(z_chunk)
                 if index == 0:
                     out_chunk = self.decoder(
-                        x[:, :, index : index + 1, :, :],
+                        x_chunk,
                         feat_cache=self._feat_map,
                         feat_idx=self._conv_idx,
                         first_chunk=True,
                     )
                 else:
                     out_chunk = self.decoder(
-                        x[:, :, index : index + 1, :, :],
+                        x_chunk,
                         feat_cache=self._feat_map,
                         feat_idx=self._conv_idx,
                     )
@@ -692,6 +709,9 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                     chunk_callback(torch.clamp(out_chunk, min=-1.0, max=1.0), int(index))
                 else:
                     out_chunks.append(out_chunk)
+                del x_chunk
+                del z_chunk
+                del out_chunk
         finally:
             self.clear_cache()
         if chunk_count < 1:

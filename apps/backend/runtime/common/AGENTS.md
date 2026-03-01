@@ -1,6 +1,6 @@
 # apps/backend/runtime/common Overview
 Date: 2025-10-28
-Last Review: 2026-02-22
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -23,6 +23,7 @@ Status: Active
 - 2026-02-17: `vae_codex3d.py` now mirrors upstream WAN temporal cache semantics in native code (causal conv cache, chunked encode/decode loop, cached 3D upsample handling, nearest-exact upsample), closing WAN2.2 14B I2V decode parity drift without switching to Diffusers model classes.
 - 2026-02-21: `vae_codex3d.py` now reduces encode peak overlap by preallocating the full encoded tensor and writing per-chunk slices directly (no chunk-list + terminal `torch.cat` in encode); cache paths also avoid redundant device-cast copies when merging temporal tails.
 - 2026-02-22: `vae_codex3d.py::AutoencoderCodex3D.decode(...)` now supports optional chunk callbacks and always clears temporal caches in `finally`, enabling caller-side streamed frame export without materializing full decoded timelines on accelerator.
+- 2026-03-01: `vae_codex3d.py::AutoencoderCodex3D.decode(...)` now runs `conv2` per temporal decode chunk with causal-cache carry-over (instead of materializing `conv2(z)` for full timeline upfront), reducing decode-boundary peak VRAM while preserving chunk-by-chunk decode semantics.
 - 2026-02-21: `vae_ldm.py` `DiagonalGaussianDistribution.sample()` now allocates noise directly on the target device/dtype (`torch.randn(..., device=..., dtype=...)`) to avoid hidden alloc+cast churn.
 - 2026-01-06: `vae.load_flow16_vae(...)` now accepts `.gguf` weights (dequantized upfront) in addition to diffusers directories and `.safetensors` files.
 - 2026-02-15: `vae.load_flow16_vae(...)` now routes GGUF and torch-file state-dict loading through the requested `device` to keep checkpoint placement consistent with runtime target-device selection.

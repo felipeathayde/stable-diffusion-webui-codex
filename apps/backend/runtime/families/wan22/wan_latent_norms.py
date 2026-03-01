@@ -75,6 +75,12 @@ class LatentNorm:
     def process_out(self, x: torch.Tensor) -> torch.Tensor:
         return x
 
+    def process_in_(self, x: torch.Tensor) -> torch.Tensor:
+        return self.process_in(x)
+
+    def process_out_(self, x: torch.Tensor) -> torch.Tensor:
+        return self.process_out(x)
+
 
 class Wan21Norm(LatentNorm):
     """Per-channel mean/std normalization for 16-channel WAN latent (Wan21)."""
@@ -98,6 +104,18 @@ class Wan21Norm(LatentNorm):
     def process_out(self, x: torch.Tensor) -> torch.Tensor:
         m, s = self._as(x)
         return x * s + m
+
+    def process_in_(self, x: torch.Tensor) -> torch.Tensor:
+        m, s = self._as(x)
+        x.sub_(m)
+        x.div_(s)
+        return x
+
+    def process_out_(self, x: torch.Tensor) -> torch.Tensor:
+        m, s = self._as(x)
+        x.mul_(s)
+        x.add_(m)
+        return x
 
 
 class IdentityNorm(LatentNorm):
@@ -141,6 +159,18 @@ class Wan22Norm(LatentNorm):
     def process_out(self, x: torch.Tensor) -> torch.Tensor:
         m, s = self._as(x)
         return x * s + m
+
+    def process_in_(self, x: torch.Tensor) -> torch.Tensor:
+        m, s = self._as(x)
+        x.sub_(m)
+        x.div_(s)
+        return x
+
+    def process_out_(self, x: torch.Tensor) -> torch.Tensor:
+        m, s = self._as(x)
+        x.mul_(s)
+        x.add_(m)
+        return x
 
 
 def resolve_norm(kind: str | None, channels: int) -> LatentNorm:

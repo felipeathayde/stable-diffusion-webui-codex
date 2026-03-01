@@ -35,7 +35,6 @@ from typing import Any, Optional
 import torch
 
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
 from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
@@ -432,12 +431,14 @@ def _vae_dtype_candidates(*, device: str, preferred: torch.dtype) -> list[torch.
     dev = resolve_device_name(device)
     if dev.startswith("cuda") and torch.cuda.is_available():
         out: list[torch.dtype] = [preferred]
-        if preferred == torch.float16 and _cuda_bf16_supported():
-            out.append(getattr(torch, "bfloat16", torch.float16))
-        if preferred != torch.float32:
-            out.append(torch.float32)
         if preferred != torch.float16:
             out.append(torch.float16)
+        if _cuda_bf16_supported():
+            bf16 = getattr(torch, "bfloat16", torch.float16)
+            if preferred != bf16:
+                out.append(bf16)
+        if preferred != torch.float32:
+            out.append(torch.float32)
         # Deduplicate while preserving order.
         seen: set[torch.dtype] = set()
         uniq: list[torch.dtype] = []
@@ -705,7 +706,7 @@ def vae_encode_video_condition(
             _assert_supported_wan_vae_latent_channels(latent_channels, context="VAE encode")
             norm = resolve_norm(None, channels=latent_channels)
             log.info("[wan22.gguf] VAE latent norm=%s channels=%d", norm.name, norm.channels)
-            encoded = norm.process_in(encoded)
+            encoded = norm.process_in_(encoded)
 
             if not torch.isfinite(encoded).all():
                 n_bad = int((~torch.isfinite(encoded)).sum().item())
@@ -725,18 +726,16 @@ def vae_encode_video_condition(
             return encoded
         except torch.OutOfMemoryError as exc:
             last_exc = exc
-            if target != "cuda" or not smart_fallback_enabled():
-                raise
-            warn_fallback(
-                logger,
-                component="VAE encode",
-                detail=f"OOM on CUDA at dtype={torch_dtype}; retrying on CPU fp32",
-                reason="cuda_oom",
-            )
-            cuda_empty_cache(logger, label="vae-encode-oom")
-            target = "cpu"
-            # CPU retry (single attempt).
-            dtypes = [torch.float32]
+            if target == "cuda":
+                warn_fallback(
+                    logger,
+                    component="VAE encode",
+                    detail=f"OOM on CUDA at dtype={torch_dtype}; retrying remaining CUDA dtypes",
+                    reason="cuda_oom",
+                )
+                cuda_empty_cache(logger, label="vae-encode-oom")
+                continue
+            raise
         except WAN22VAEContractError:
             raise
         except Exception as exc:
@@ -794,7 +793,7 @@ def vae_decode_video(
     decode_meta: dict[str, Any] | None = None
 
     class _DecodeNonFiniteError(RuntimeError):
-        """Internal decode sentinel used to preserve dtype/CPU fallback flow."""
+        """Internal decode sentinel used to preserve dtype retry flow."""
 
     def _decode_attempt(
         *,
@@ -913,8 +912,8 @@ def vae_decode_video(
             vae = vae.to(device=attempt_device, dtype=torch_dtype)
             lane = _resolve_loaded_vae_lane(vae)
             local_vae_loaded = True
-        lat_in = video_latents.to(device=attempt_device, dtype=torch_dtype)
-        lat = norm.process_out(lat_in)
+        lat = video_latents.to(device=attempt_device, dtype=torch_dtype)
+        lat = norm.process_out_(lat)
         if not torch.isfinite(lat).all():
             n_bad = int((~torch.isfinite(lat)).sum().item())
             raise RuntimeError(
@@ -1033,7 +1032,6 @@ def vae_decode_video(
                 f"(device={decode_session.decode_device} dtype={decode_session.decode_dtype} lane={decode_session.lane})."
             ) from exc
     else:
-        saw_nonfinite = False
         for attempt_idx, torch_dtype in enumerate(dtypes):
             if attempt_idx > 0:
                 warn_fallback(
@@ -1047,11 +1045,11 @@ def vae_decode_video(
                 break
             except torch.OutOfMemoryError as exc:
                 last_exc = exc
-                if target == "cuda" and smart_fallback_enabled():
+                if target == "cuda":
                     warn_fallback(
                         logger,
                         component="VAE decode",
-                        detail=f"OOM on CUDA at dtype={torch_dtype}; will retry other dtypes and then CPU fp32",
+                        detail=f"OOM on CUDA at dtype={torch_dtype}; retrying remaining CUDA dtypes",
                         reason="cuda_oom",
                     )
                     cuda_empty_cache(logger, label="vae-decode-oom")
@@ -1059,7 +1057,6 @@ def vae_decode_video(
                 raise
             except _DecodeNonFiniteError as exc:
                 last_exc = exc
-                saw_nonfinite = True
                 continue
             except WAN22VAEContractError:
                 raise
@@ -1067,15 +1064,6 @@ def vae_decode_video(
                 last_exc = exc
                 # Continue to next dtype.
                 continue
-        if decoded_frames is None and saw_nonfinite and target == "cuda" and smart_fallback_enabled():
-            warn_fallback(
-                logger,
-                component="VAE decode",
-                detail="all CUDA dtype attempts produced non-finite outputs; retrying on CPU fp32",
-                reason="nonfinite_cuda",
-            )
-            cuda_empty_cache(logger, label="vae-decode-nonfinite")
-            decoded_frames, decode_meta = _decode_attempt(attempt_device="cpu", torch_dtype=torch.float32)
 
     if not decoded_frames:
         raise RuntimeError("WAN22 GGUF: VAE decode failed (no frame output).") from last_exc

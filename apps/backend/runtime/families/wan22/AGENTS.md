@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-28
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -113,6 +113,7 @@ Status: Active
 - 2026-02-22: `_teardown_stage(...)` now suppresses traceback emission (`exc_info=False`) for cleanup-only unload failures during upstream exception unwind, reducing duplicated stack floods while preserving the original sampling OOM trace.
 - 2026-02-28: Removed `run.py::_try_set_cache_policy(...)` and all callsites in WAN GGUF run/stream entrypoints; cache-policy validation hook imports from `operations_gguf.set_cache_policy` are no longer part of the runtime path.
 - 2026-02-28: Removed `run.py::_try_clear_cache(...)` and all remaining decode/barrier callsites that imported `operations_gguf.clear_cache`; WAN stage/barrier cleanup now uses GC + CUDA empty-cache only.
+- 2026-03-01: WAN22 VAE encode/decode removed CPU fallback branches (`smart_fallback` no longer migrates VAE work to CPU on OOM/non-finite); fallback flow is now CUDA dtype retry only (fail-loud when exhausted). Non-chunked run/stream decode entrypoints now materialize explicit CPU backups of denoise latents before VAE decode to reduce decode-boundary GPU residency.
 - 2026-02-28: `stage_lora.py::_build_to_load_map(...)` now uses `keymap_wan22_transformer.py::remap_wan22_lora_logical_key(...)` as mapping authority (no direct/remap fallback path), enabling canonical `lora_unet_*` adapter layouts (including `lora_unet_blocks_*`) and keeping unsupported layouts fail-loud via zero-match/coverage guards.
 - 2026-02-22: `text_context.py::get_text_context(...)` now enforces strict `gguf_te_device` contract at runtime (`auto|cpu|cuda|cuda:<index>`; `gpu -> cuda` normalization) and rejects invalid values fail-loud instead of implicit CPU fallback.
 - 2026-02-22: `sdpa.py` now stores SDPA policy/mode/chunk in context-local state (`ContextVar`) instead of process-global mutable dict, preventing cross-request policy bleed under concurrent WAN22 runs.

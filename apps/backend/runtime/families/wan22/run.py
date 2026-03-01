@@ -27,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_stage_pair_variant` (function): Resolve a single variant for high/low stages with API variant authority and fail loud mismatches.
 - `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
 - `_extract_i2v_decode_latents` (function): Extract pure latent channels from I2V model state before VAE decode (order-aware `lat_first`/`lat_last`).
+- `_backup_decode_latents` (function): Materialize a strict CPU-contiguous backup tensor for decode latents (`[B,C,T,H,W]`) before VAE decode callsites.
 - `_resolve_chunk_seed` (function): Resolve deterministic/random seed semantics for chunked img2vid generation.
 - `_normalize_chunk_continuity_profile` (function): Validate chunk continuity profile selection (`overlap`/`svi2`/`svi2_pro`) with fail-loud mode errors.
 - `_blend_anchor_latent` (function): Blend previous chunk anchor latent window with base conditioning latent for chunk continuity without pixel-space decode.
@@ -736,6 +737,58 @@ def _extract_i2v_decode_latents(
     return lat
 
 
+def _backup_decode_latents(*, latents: torch.Tensor, logger: Any, source: str) -> torch.Tensor:
+    log = get_logger(logger)
+    if not torch.is_tensor(latents):
+        raise RuntimeError(
+            "WAN22 GGUF: decode backup expects a tensor input "
+            f"(source={source} type={type(latents).__name__})."
+        )
+    if latents.ndim != 5:
+        raise RuntimeError(
+            "WAN22 GGUF: decode backup expects 5D latents [B,C,T,H,W] "
+            f"(source={source} shape={tuple(int(v) for v in latents.shape)})."
+        )
+    src_shape = tuple(int(v) for v in latents.shape)
+    src_dtype = str(latents.dtype)
+    src_device = str(latents.device)
+    try:
+        backup = latents.detach().to(device="cpu").contiguous()
+    except Exception as exc:
+        raise RuntimeError(
+            "WAN22 GGUF: failed to materialize decode backup latents on CPU "
+            f"(source={source} shape={src_shape} dtype={src_dtype} device={src_device})."
+        ) from exc
+    if backup.ndim != 5:
+        raise RuntimeError(
+            "WAN22 GGUF: decode backup produced invalid rank "
+            f"(source={source} shape={tuple(int(v) for v in backup.shape)})."
+        )
+    if tuple(int(v) for v in backup.shape) != src_shape:
+        raise RuntimeError(
+            "WAN22 GGUF: decode backup shape mismatch "
+            f"(source={source} src_shape={src_shape} backup_shape={tuple(int(v) for v in backup.shape)})."
+        )
+    if str(backup.device) != "cpu":
+        raise RuntimeError(
+            "WAN22 GGUF: decode backup expected CPU tensor "
+            f"(source={source} got_device={str(backup.device)})."
+        )
+    if not backup.is_contiguous():
+        raise RuntimeError(
+            "WAN22 GGUF: decode backup expected contiguous CPU tensor "
+            f"(source={source} shape={tuple(int(v) for v in backup.shape)})."
+        )
+    log.info(
+        "[wan22.gguf] decode backup latents: source=%s shape=%s dtype=%s device=%s",
+        source,
+        tuple(int(v) for v in backup.shape),
+        str(backup.dtype),
+        str(backup.device),
+    )
+    return backup
+
+
 def _resolve_chunk_seed(base_seed: Any, *, chunk_index: int, mode: str) -> int | None:
     if isinstance(base_seed, bool):
         raise RuntimeError(f"WAN22 GGUF: invalid bool seed for chunk mode: {base_seed!r}.")
@@ -1276,13 +1329,16 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             logger=log,
         )
 
+    latents_lo_decode = _backup_decode_latents(latents=latents_lo, logger=log, source="run_txt2vid")
+    del latents_lo
     frames = decode_latents_to_frames(
-        latents=latents_lo,
+        latents=latents_lo_decode,
         model_dir=os.path.dirname(lo_path),
         cfg=cfg,
         logger=log,
         expected_frames=t_out,
     )
+    del latents_lo_decode
     if lvl >= 3:
         cuda_empty_cache(log, label="after-decode")
     if not frames:
@@ -1484,13 +1540,20 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             logger=log,
         )
 
-    frames = decode_latents_to_frames(
+    latents_lo_decode_backup = _backup_decode_latents(
         latents=latents_lo_decode,
+        logger=log,
+        source="stream_txt2vid",
+    )
+    del latents_lo_decode
+    frames = decode_latents_to_frames(
+        latents=latents_lo_decode_backup,
         model_dir=os.path.dirname(lo_path),
         cfg=cfg,
         logger=log,
         expected_frames=t_out,
     )
+    del latents_lo_decode_backup
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames}
@@ -1756,13 +1819,20 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             logger=log,
         )
 
-    frames = decode_latents_to_frames(
+    latents_lo_decode_backup = _backup_decode_latents(
         latents=latents_lo_decode,
+        logger=log,
+        source="run_img2vid",
+    )
+    del latents_lo_decode
+    frames = decode_latents_to_frames(
+        latents=latents_lo_decode_backup,
         model_dir=os.path.dirname(lo_path),
         cfg=cfg,
         logger=log,
         expected_frames=t_out,
     )
+    del latents_lo_decode_backup
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames
@@ -2005,13 +2075,20 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             logger=log,
         )
 
-    frames = decode_latents_to_frames(
+    latents_lo_decode_backup = _backup_decode_latents(
         latents=latents_lo_decode,
+        logger=log,
+        source="stream_img2vid",
+    )
+    del latents_lo_decode
+    frames = decode_latents_to_frames(
+        latents=latents_lo_decode_backup,
         model_dir=os.path.dirname(lo_path),
         cfg=cfg,
         logger=log,
         expected_frames=t_out,
     )
+    del latents_lo_decode_backup
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames}

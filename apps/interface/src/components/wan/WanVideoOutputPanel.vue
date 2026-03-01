@@ -80,7 +80,7 @@ Symbols (top-level; keep in sync; no ghosts):
       />
       <SliderField
         class="gc-col gc-col--compact"
-        label="Interpolation FPS (RIFE)"
+        label="Interpolation (RIFE)"
         :modelValue="video.interpolationFps"
         :min="0"
         :max="240"

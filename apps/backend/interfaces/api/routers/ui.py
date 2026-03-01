@@ -238,27 +238,42 @@ def build_router(
                 raise HTTPException(status_code=400, detail=f"{field} contains a non-string key")
         return value
 
-    def _assert_known_param_keys(params_patch: Dict[str, Any], *, tab_type: str, field: str) -> None:
+    def _allowed_param_keys(tab_type: str) -> set[str]:
         if tab_type == "wan":
-            allowed = _WAN_PARAM_TOP_LEVEL_KEYS
-        else:
-            allowed = _IMAGE_PARAM_TOP_LEVEL_KEYS
-        unknown = sorted(k for k in params_patch.keys() if k not in allowed)
-        if unknown:
-            joined = ", ".join(unknown)
-            raise HTTPException(status_code=400, detail=f"{field} contains unsupported fields: {joined}")
+            return _WAN_PARAM_TOP_LEVEL_KEYS
+        return _IMAGE_PARAM_TOP_LEVEL_KEYS
 
-    def _validate_tab_params_patch(*, tab_type: str, raw_params: object, field: str = "params") -> Dict[str, Any]:
+    def _sanitize_tab_params_patch(*, tab_type: str, raw_params: object, field: str = "params") -> Dict[str, Any]:
         params_patch = _assert_plain_object(raw_params, field=field)
-        _assert_known_param_keys(params_patch, tab_type=tab_type, field=field)
+        allowed = _allowed_param_keys(tab_type)
+        sanitized: Dict[str, Any] = {key: value for key, value in params_patch.items() if key in allowed}
         for key in _NESTED_OBJECT_PARAM_KEYS:
-            if key in params_patch and params_patch[key] is not None and not isinstance(params_patch[key], dict):
+            if key in sanitized and sanitized[key] is not None and not isinstance(sanitized[key], dict):
                 raise HTTPException(status_code=400, detail=f"{field}.{key} must be an object")
-        if "textEncoders" in params_patch and params_patch["textEncoders"] is not None and not isinstance(
-            params_patch["textEncoders"], list
+        if "textEncoders" in sanitized and sanitized["textEncoders"] is not None and not isinstance(
+            sanitized["textEncoders"], list
         ):
             raise HTTPException(status_code=400, detail=f"{field}.textEncoders must be an array")
-        return params_patch
+        if tab_type != "wan" and "highres" in sanitized:
+            if "hires" not in sanitized and isinstance(sanitized["highres"], dict):
+                sanitized["hires"] = sanitized["highres"]
+            del sanitized["highres"]
+        return sanitized
+
+    def _sanitize_stored_tab_params(*, tab_type: str, raw_params: object, tab_id: str) -> Dict[str, Any]:
+        if raw_params is None:
+            return {}
+        try:
+            return _sanitize_tab_params_patch(
+                tab_type=tab_type,
+                raw_params=raw_params,
+                field="params",
+            )
+        except HTTPException as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"tabs.json invalid: tab '{tab_id}' {exc.detail}",
+            ) from exc
 
     def _deep_merge_params(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
         merged: Dict[str, Any] = dict(base)
@@ -342,14 +357,20 @@ def build_router(
             if new_type != old_type:
                 t["type"] = new_type
                 changed = True
+            tab_id = str(t.get("id") or f"#{index + 1}")
+            params = t.get("params")
+            sanitized_params = _sanitize_stored_tab_params(tab_type=new_type, raw_params=params, tab_id=tab_id)
+            if sanitized_params != params:
+                t["params"] = sanitized_params
+                changed = True
             if new_type == "flux1":
                 title = str(t.get("title") or "")
                 if title.strip().lower() == "flux":
                     t["title"] = "FLUX.1"
                     changed = True
-                params = t.get("params")
-                if isinstance(params, dict):
-                    raw_labels = params.get("textEncoders")
+                params_for_flux = t.get("params")
+                if isinstance(params_for_flux, dict):
+                    raw_labels = params_for_flux.get("textEncoders")
                     if isinstance(raw_labels, list):
                         migrated: list[str] = []
                         for raw in raw_labels:
@@ -359,7 +380,7 @@ def build_router(
                                 changed = True
                             if s:
                                 migrated.append(s)
-                        params["textEncoders"] = migrated
+                        params_for_flux["textEncoders"] = migrated
 
         if changed:
             _save_tabs(data)
@@ -437,7 +458,7 @@ def build_router(
         ttype = _normalize_tab_type(raw_type)
         title = str(payload.get("title") or ("FLUX.1" if ttype == "flux1" else ttype.upper()))
         if "params" in payload:
-            params = _validate_tab_params_patch(tab_type=ttype, raw_params=payload.get("params"), field="params")
+            params = _sanitize_tab_params_patch(tab_type=ttype, raw_params=payload.get("params"), field="params")
         else:
             params = {}
         new_id = str(payload.get("id") or "").strip() or f"tab-{int(time.time()*1000)}"
@@ -475,16 +496,13 @@ def build_router(
                         tab_type = _normalize_tab_type(t.get("type"))
                     except ValueError as exc:
                         raise HTTPException(status_code=500, detail=f"tabs.json contains {exc}") from exc
-                    params_patch = _validate_tab_params_patch(tab_type=tab_type, raw_params=payload.get("params"), field="params")
-                    current_params = t.get("params")
-                    if current_params is None:
-                        current_params = {}
-                    if not isinstance(current_params, dict):
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"tabs.json invalid: tab '{tab_id}' params must be an object",
-                        )
-                    t["params"] = _deep_merge_params(current_params, params_patch)
+                    params_patch = _sanitize_tab_params_patch(tab_type=tab_type, raw_params=payload.get("params"), field="params")
+                    sanitized_current_params = _sanitize_stored_tab_params(
+                        tab_type=tab_type,
+                        raw_params=t.get("params"),
+                        tab_id=tab_id,
+                    )
+                    t["params"] = _deep_merge_params(sanitized_current_params, params_patch)
                 t["meta"] = t.get("meta") or {}
                 t["meta"]["updatedAt"] = now
                 updated = True

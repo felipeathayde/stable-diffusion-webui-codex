@@ -760,12 +760,15 @@ class CodexSampler:
                         f"(got {type(transformer_options).__name__})."
                     )
                 block_progress_controller = RichBlockProgressController(enabled=active_context.enable_progress)
+                console_block_progress_active = bool(getattr(block_progress_controller, "is_active", False))
                 if self._log_enabled:
                     self._emit_event(
                         "sampling.block_progress.console",
-                        enabled=bool(getattr(block_progress_controller, "is_active", False)),
+                        enabled=console_block_progress_active,
                         env_flag="CODEX_PROGRESS_BAR",
                     )
+                if console_block_progress_active:
+                    log_cfg_delta = False
 
                 def _on_block_progress(block_index: int, total_blocks: int) -> None:
                     normalized_index, normalized_total = validate_block_progress_payload(
@@ -1249,7 +1252,9 @@ class CodexSampler:
                                 except Exception:
                                     pass
 
-                            if self._log_enabled and (i == 0 or (i + 1) == steps or (i + 1) % max(1, steps // 5) == 0):
+                            if self._log_enabled and not console_block_progress_active and (
+                                i == 0 or (i + 1) == steps or (i + 1) % max(1, steps // 5) == 0
+                            ):
                                 eps_norm = float(eps.norm().item()) if hasattr(eps, "norm") else float("nan")
                                 den_norm = float(denoised.norm().item()) if hasattr(denoised, "norm") else float("nan")
                                 self._emit_event(

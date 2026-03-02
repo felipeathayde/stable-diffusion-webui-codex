@@ -1089,6 +1089,7 @@ def run_img2img(
     encode_weight = 10.0
     sampling_weight = 80.0
     decode_weight = 10.0
+    sampling_block_total_hint = 0
     for (
         phase,
         phase_step,
@@ -1128,6 +1129,13 @@ def run_img2img(
             continue
 
         if phase == "sampling":
+            if sampling_block_total > 0:
+                sampling_block_total_hint = int(sampling_block_total)
+            effective_sampling_block_total = (
+                int(sampling_block_total)
+                if sampling_block_total > 0
+                else int(sampling_block_total_hint)
+            )
             has_block_progress = 0 < sampling_block_index < sampling_block_total
             completed_units = float(sampling_step)
             if has_block_progress:
@@ -1140,6 +1148,16 @@ def run_img2img(
             progress_percent = sampling_ratio * 100.0
             pct = max(5.0, min(99.0, progress_percent))
             total_percent = encode_weight + (sampling_weight * sampling_ratio)
+            phase_step_blocks = int(phase_step)
+            phase_total_blocks = int(phase_total)
+            if effective_sampling_block_total > 0 and sampling_total > 0:
+                completed_sampling_steps = max(0, min(int(sampling_step), int(sampling_total)))
+                intra_step_blocks = max(0, min(int(sampling_block_index), int(effective_sampling_block_total)))
+                phase_total_blocks = int(sampling_total) * int(effective_sampling_block_total)
+                phase_step_blocks = min(
+                    int(phase_total_blocks),
+                    (int(completed_sampling_steps) * int(effective_sampling_block_total)) + int(intra_step_blocks),
+                )
             if has_block_progress:
                 message = (
                     f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
@@ -1159,8 +1177,8 @@ def run_img2img(
                     "block_total": int(sampling_block_total),
                     "total_phase": "sampling",
                     "total_percent": float(total_percent),
-                    "phase_step": int(phase_step),
-                    "phase_total_steps": int(phase_total),
+                    "phase_step": int(phase_step_blocks),
+                    "phase_total_steps": int(phase_total_blocks),
                     "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
                 },
             )

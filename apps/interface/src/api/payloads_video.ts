@@ -10,6 +10,7 @@ Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2v
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
 handling unset sentinels and producing backend-ready payloads for `/api/*` requests (including `settings_revision`).
 WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler contract on backend).
+Img2vid payload builders emit no-stretch guide controls (`img2vid_resize_mode` + crop offsets) with fail-loud validation.
 
 	Symbols (top-level; keep in sync; no ghosts):
 	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
@@ -25,7 +26,7 @@ WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler
 - `WanVideoUpscalingInput` (interface): Optional SeedVR2 upscaling input mapped to backend `video_upscaling`.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
-- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|sliding|svi2|svi2_pro`).
+- `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|sliding|svi2|svi2_pro`) and no-stretch guide controls (`resizeMode` + crop offsets).
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
@@ -52,6 +53,7 @@ import {
   WAN_WINDOW_STRIDE_ALIGNMENT,
   type WanImg2VidMode,
 } from '../utils/wan_img2vid_temporal'
+import { normalizeWanImg2VidResizeMode } from '../utils/wan_img2vid_frame_projection'
 
 const DEVICE_VALUES = ['cuda', 'cpu'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
@@ -65,6 +67,7 @@ const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
 const WanAttentionModeEnum = z.enum(['global', 'sliding'])
 const Img2VidModeEnum = z.enum(['solo', 'sliding', 'svi2', 'svi2_pro'])
 const Img2VidChunkSeedModeEnum = z.enum(['fixed', 'increment', 'random'])
+const Img2VidResizeModeEnum = z.enum(['auto', 'fit_width', 'fit_height'])
 
 const WAN_DIM_STEP = 16
 const WAN_FRAMES_MIN = 9
@@ -220,6 +223,9 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   img2vid_window_frames: WanFrameCountSchema.optional(),
   img2vid_window_stride: Img2VidWindowStrideSchema.optional(),
   img2vid_window_commit_frames: Img2VidWindowCommitSchema.optional(),
+  img2vid_resize_mode: Img2VidResizeModeEnum.optional(),
+  img2vid_crop_offset_x: z.number().min(0).max(1).optional(),
+  img2vid_crop_offset_y: z.number().min(0).max(1).optional(),
 })
   .strict()
   .superRefine((payload, ctx) => {
@@ -426,6 +432,9 @@ export interface WanVideoCommonInput {
 export interface WanImg2VidInput extends WanVideoCommonInput {
   initImageData: string
   img2vidMode: 'solo' | 'sliding' | 'svi2' | 'svi2_pro'
+  resizeMode?: 'auto' | 'fit_width' | 'fit_height'
+  cropOffsetX?: number
+  cropOffsetY?: number
   anchorAlpha?: number
   resetAnchorToBase?: boolean
   chunkSeedMode?: 'fixed' | 'increment' | 'random'
@@ -500,6 +509,33 @@ function normalizeAttentionMode(value: 'global' | 'sliding' | string): 'global' 
 
 function normalizeImg2VidMode(value: unknown): WanImg2VidMode {
   return normalizeWanImg2VidMode(value)
+}
+
+function normalizeImg2VidResizeMode(value: unknown): 'auto' | 'fit_width' | 'fit_height' {
+  return normalizeWanImg2VidResizeMode(value, 'auto')
+}
+
+function normalizeGuideOffset(
+  value: unknown,
+  options: {
+    fieldName: string
+    fallback?: number
+  },
+): number {
+  const fieldName = options.fieldName
+  const fallback = options.fallback ?? 0.5
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value === 'boolean') {
+    throw new Error(`WAN img2vid ${fieldName} must be a finite number in [0,1]`)
+  }
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`WAN img2vid ${fieldName} must be a finite number in [0,1]`)
+  }
+  if (numeric < 0 || numeric > 1) {
+    throw new Error(`WAN img2vid ${fieldName} must be in [0,1]`)
+  }
+  return numeric
 }
 
 function stageToPayload(stage: WanStageInput): Record<string, unknown> {
@@ -727,6 +763,15 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
     img2vid_seed: input.high.seed,
     img2vid_init_image: input.initImageData,
     img2vid_mode: normalizeImg2VidMode(input.img2vidMode),
+    img2vid_resize_mode: normalizeImg2VidResizeMode(input.resizeMode),
+    img2vid_crop_offset_x: normalizeGuideOffset(input.cropOffsetX, {
+      fieldName: 'cropOffsetX',
+      fallback: 0.5,
+    }),
+    img2vid_crop_offset_y: normalizeGuideOffset(input.cropOffsetY, {
+      fieldName: 'cropOffsetY',
+      fallback: 0.5,
+    }),
   }
 
   const sampler = String(input.high.sampler || '').trim()

@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
 Loads WAN VAE weights via explicit native lanes (`2d_native` or `3d_native`), applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
-I2V init-image preprocessing is deterministic and no-stretch (`cover + center-crop + resize`) across tensor/PIL/ndarray paths before VAE encode.
+I2V init-image preprocessing is deterministic and no-stretch (`cover + crop + resize`) across tensor/PIL/ndarray paths before VAE encode,
+with explicit resize mode (`auto|fit_width|fit_height`) and normalized crop offsets (`x/y` in `[0,1]`) aligned to the frontend guide projection contract.
 Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks). Model key remap ownership is delegated to `runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -31,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import os
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -375,48 +377,156 @@ def _retrieve_latents(encoder_output: Any, *, sample_mode: str) -> torch.Tensor:
     )
 
 
-def _center_crop_resize_hw(x: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
+def _normalize_img2vid_resize_mode(raw_value: Any) -> str:
+    if raw_value is None or raw_value == "":
+        return "auto"
+    if not isinstance(raw_value, str):
+        raise RuntimeError(
+            "WAN22 GGUF: img2vid resize mode must be a string when provided "
+            f"(got {type(raw_value).__name__})."
+        )
+    mode = str(raw_value).strip().lower()
+    if mode in {"auto", "fit_width", "fit_height"}:
+        return mode
+    raise RuntimeError(
+        "WAN22 GGUF: unsupported img2vid resize mode "
+        f"{raw_value!r} (expected 'auto'|'fit_width'|'fit_height')."
+    )
+
+
+def _normalize_img2vid_crop_offset(raw_value: Any, *, field_name: str) -> float:
+    if raw_value is None or raw_value == "":
+        return 0.5
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        raise RuntimeError(
+            f"WAN22 GGUF: {field_name} must be a finite number in [0,1] "
+            f"(got {type(raw_value).__name__})."
+        )
+    value = float(raw_value)
+    if not math.isfinite(value):
+        raise RuntimeError(f"WAN22 GGUF: {field_name} must be finite in [0,1] (got {raw_value!r}).")
+    if value < 0.0 or value > 1.0:
+        raise RuntimeError(f"WAN22 GGUF: {field_name} must be in [0,1] (got {value!r}).")
+    return float(value)
+
+
+def _resolve_no_stretch_crop_window(
+    *,
+    source_width: int,
+    source_height: int,
+    frame_width: int,
+    frame_height: int,
+    requested_resize_mode: str,
+) -> tuple[str, int, int]:
+    lhs = int(source_width) * int(frame_height)
+    rhs = int(source_height) * int(frame_width)
+    auto_resolved = "fit_height" if lhs >= rhs else "fit_width"
+    resolved_resize_mode = auto_resolved if requested_resize_mode == "auto" else requested_resize_mode
+
+    if resolved_resize_mode == "fit_width":
+        if lhs > rhs:
+            raise RuntimeError(
+                "WAN22 GGUF: invalid img2vid crop geometry for fit_width "
+                "(requires frame aspect >= source aspect)."
+            )
+        crop_height = max(
+            1,
+            min(
+                int(source_height),
+                int((int(source_width) * int(frame_height) + int(frame_width) // 2) // int(frame_width)),
+            ),
+        )
+        return resolved_resize_mode, int(source_width), int(crop_height)
+
+    if resolved_resize_mode == "fit_height":
+        if rhs > lhs:
+            raise RuntimeError(
+                "WAN22 GGUF: invalid img2vid crop geometry for fit_height "
+                "(requires frame aspect <= source aspect)."
+            )
+        crop_width = max(
+            1,
+            min(
+                int(source_width),
+                int((int(source_height) * int(frame_width) + int(frame_height) // 2) // int(frame_height)),
+            ),
+        )
+        return resolved_resize_mode, int(crop_width), int(source_height)
+
+    raise RuntimeError(
+        "WAN22 GGUF: unsupported resolved img2vid resize mode "
+        f"{resolved_resize_mode!r} (expected 'fit_width' or 'fit_height')."
+    )
+
+
+def _crop_resize_hw_no_stretch(
+    x: torch.Tensor,
+    *,
+    height: int,
+    width: int,
+    resize_mode: str,
+    crop_offset_x: float,
+    crop_offset_y: float,
+) -> torch.Tensor:
     if x.ndim != 4:
         raise RuntimeError(
-            "WAN22 GGUF: center-crop+resize expects 4D tensor [B,C,H,W], "
+            "WAN22 GGUF: no-stretch crop+resize expects 4D tensor [B,C,H,W], "
             f"got shape={tuple(getattr(x, 'shape', ()))!r}."
         )
     target_h = int(height)
     target_w = int(width)
     if target_h <= 0 or target_w <= 0:
         raise RuntimeError(
-            "WAN22 GGUF: center-crop+resize target size must be positive "
+            "WAN22 GGUF: no-stretch crop+resize target size must be positive "
             f"(height={target_h} width={target_w})."
         )
+    requested_resize_mode = _normalize_img2vid_resize_mode(resize_mode)
+    normalized_crop_offset_x = _normalize_img2vid_crop_offset(crop_offset_x, field_name="img2vid_crop_offset_x")
+    normalized_crop_offset_y = _normalize_img2vid_crop_offset(crop_offset_y, field_name="img2vid_crop_offset_y")
+
     _, _, src_h, src_w = x.shape
     src_h = int(src_h)
     src_w = int(src_w)
     if src_h <= 0 or src_w <= 0:
         raise RuntimeError(
-            "WAN22 GGUF: center-crop+resize source size must be positive "
+            "WAN22 GGUF: no-stretch crop+resize source size must be positive "
             f"(height={src_h} width={src_w})."
         )
     if src_h == target_h and src_w == target_w:
         return x
 
-    # Cover + center-crop (no-stretch): crop source to target aspect first, then resize.
-    lhs = src_w * target_h
-    rhs = src_h * target_w
-    crop_h = src_h
-    crop_w = src_w
-    if lhs > rhs:
-        crop_w = max(1, min(src_w, (src_h * target_w + target_h // 2) // target_h))
-    elif lhs < rhs:
-        crop_h = max(1, min(src_h, (src_w * target_h + target_w // 2) // target_w))
+    resolved_resize_mode, crop_w, crop_h = _resolve_no_stretch_crop_window(
+        source_width=src_w,
+        source_height=src_h,
+        frame_width=target_w,
+        frame_height=target_h,
+        requested_resize_mode=requested_resize_mode,
+    )
+    if crop_w > src_w or crop_h > src_h:
+        raise RuntimeError(
+            "WAN22 GGUF: no-stretch crop window exceeds source bounds "
+            f"(source={src_w}x{src_h} crop={crop_w}x{crop_h} requested_mode={requested_resize_mode} resolved_mode={resolved_resize_mode})."
+        )
 
-    top = max(0, (src_h - crop_h) // 2)
-    left = max(0, (src_w - crop_w) // 2)
+    slack_x = max(0, int(src_w) - int(crop_w))
+    slack_y = max(0, int(src_h) - int(crop_h))
+    left = (
+        min(slack_x, max(0, int(slack_x * float(normalized_crop_offset_x) + 0.5)))
+        if slack_x > 0
+        else 0
+    )
+    top = (
+        min(slack_y, max(0, int(slack_y * float(normalized_crop_offset_y) + 0.5)))
+        if slack_y > 0
+        else 0
+    )
     bottom = top + crop_h
     right = left + crop_w
     if bottom > src_h or right > src_w:
         raise RuntimeError(
-            "WAN22 GGUF: center-crop window exceeds source bounds "
-            f"(source={src_h}x{src_w} crop=(top={top}, left={left}, h={crop_h}, w={crop_w}))."
+            "WAN22 GGUF: no-stretch crop window exceeds source bounds "
+            f"(source={src_h}x{src_w} crop=(top={top}, left={left}, h={crop_h}, w={crop_w}) "
+            f"requested_mode={requested_resize_mode} resolved_mode={resolved_resize_mode})."
         )
 
     cropped = x[:, :, top:bottom, left:right]
@@ -424,7 +534,7 @@ def _center_crop_resize_hw(x: torch.Tensor, *, height: int, width: int) -> torch
     got_w = int(cropped.shape[-1])
     if got_h != crop_h or got_w != crop_w:
         raise RuntimeError(
-            "WAN22 GGUF: center-crop produced unexpected shape "
+            "WAN22 GGUF: no-stretch crop produced unexpected shape "
             f"(expected={crop_h}x{crop_w} got={got_h}x{got_w})."
         )
     if crop_h == target_h and crop_w == target_w:
@@ -442,6 +552,9 @@ def _prepare_init_image_tensor(
     torch_dtype: torch.dtype,
     height: int,
     width: int,
+    resize_mode: str,
+    crop_offset_x: float,
+    crop_offset_y: float,
 ) -> torch.Tensor:
     dev_name = resolve_device_name(device)
     target_device = torch.device(dev_name)
@@ -465,24 +578,32 @@ def _prepare_init_image_tensor(
                 f"got {getattr(t, 'shape', None)}"
             )
         t = t.to(device=target_device, dtype=torch_dtype)
-        t = _center_crop_resize_hw(t, height=target_h, width=target_w)
+        t = _crop_resize_hw_no_stretch(
+            t,
+            height=target_h,
+            width=target_w,
+            resize_mode=resize_mode,
+            crop_offset_x=crop_offset_x,
+            crop_offset_y=crop_offset_y,
+        )
         return t
 
-    from PIL import Image, ImageOps
+    from PIL import Image
     import numpy as np
 
     if isinstance(init_image, Image.Image):
-        resample = getattr(Image, "Resampling", Image).BICUBIC
         img = init_image.convert("RGB")
-        img = ImageOps.fit(
-            img,
-            (target_w, target_h),
-            method=resample,
-            centering=(0.5, 0.5),
-        )
         arr = np.array(img).astype("float32") / 255.0
         t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
         t = t.to(device=target_device, dtype=torch_dtype)
+        t = _crop_resize_hw_no_stretch(
+            t,
+            height=target_h,
+            width=target_w,
+            resize_mode=resize_mode,
+            crop_offset_x=crop_offset_x,
+            crop_offset_y=crop_offset_y,
+        )
         return t * 2.0 - 1.0
 
     arr = np.asarray(init_image).astype("float32")
@@ -495,7 +616,14 @@ def _prepare_init_image_tensor(
         raise RuntimeError("WAN22 GGUF: unsupported init_image array shape")
 
     t = t.to(device=target_device, dtype=torch_dtype)
-    t = _center_crop_resize_hw(t, height=target_h, width=target_w)
+    t = _crop_resize_hw_no_stretch(
+        t,
+        height=target_h,
+        width=target_w,
+        resize_mode=resize_mode,
+        crop_offset_x=crop_offset_x,
+        crop_offset_y=crop_offset_y,
+    )
     return t * 2.0 - 1.0
 
 
@@ -661,6 +789,9 @@ def vae_encode_video_condition(
     width: int,
     device: str,
     dtype: str,
+    img2vid_resize_mode: str = "auto",
+    img2vid_crop_offset_x: float = 0.5,
+    img2vid_crop_offset_y: float = 0.5,
     vae_dir: str | None = None,
     vae_config_dir: str | None = None,
     logger: Any = None,
@@ -708,6 +839,9 @@ def vae_encode_video_condition(
                 torch_dtype=torch_dtype,
                 height=height,
                 width=width,
+                resize_mode=img2vid_resize_mode,
+                crop_offset_x=img2vid_crop_offset_x,
+                crop_offset_y=img2vid_crop_offset_y,
             )
             if image.ndim != 4:
                 raise RuntimeError(

@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-02-28
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -28,12 +28,13 @@ Status: Active
 - 2026-02-15: Image/video payload contracts now always include `settings_revision`; per-request `smart_offload`/`smart_fallback`/`smart_cache` fields were removed (runtime flags remain `/api/options`-owned).
 - 2026-02-15: `client.ts` now caches `/api/options` revision and preserves structured HTTP error payloads (`status/detail/body`) so composables can handle stale-revision `409` conflicts.
 - 2026-02-16: `payloads_video.ts` no longer emits WAN scheduler overrides (`txt2vid_scheduler`/`img2vid_scheduler`/`vid2vid_scheduler` nor stage `scheduler`), aligning frontend payloads with WAN22 backend policy (scheduler is runtime-managed).
-- 2026-02-17: `payloads_video.ts` now normalizes WAN frame counts to the `4n+1` domain within `[9,401]`, emits `gguf_attention_mode` (`global|sliding`), and supports img2vid chunk controls (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`).
+- 2026-02-17: `payloads_video.ts` now normalizes WAN frame counts to the `4n+1` domain within `[9,401]`, emits `gguf_attention_mode` (`global|sliding`), and supports windowed img2vid temporal controls (`img2vid_window_*`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`).
 - 2026-02-21: `payloads_video.ts` stage payload schema now accepts stage-scoped prompt fields (`wan_high.prompt/negative_prompt`, `wan_low.prompt/negative_prompt`); top-level mode prompt fields are derived from the High stage prompt at build time (fail-loud when High prompt is empty).
-- 2026-02-21: `payloads_video.ts` img2vid temporal contract now requires `img2vid_mode` (`solo|chunk|sliding`), with mode-scoped validation for chunk fields (`img2vid_chunk_*`) versus sliding-window fields (`img2vid_window_frames/stride/commit_frames`).
+- 2026-02-21: `payloads_video.ts` img2vid temporal contract now requires `img2vid_mode` (`solo|sliding|svi2|svi2_pro`), with mode-scoped validation for window controls (`img2vid_window_frames/stride/commit_frames`) and fail-loud rejection of mode/field mismatches.
 - 2026-02-22: `payloads_video.ts` now supports `img2vid_mode='svi2'|'svi2_pro'` with the same windowed contract as sliding; temporal normalization is centralized in `utils/wan_img2vid_temporal.ts` (`stride % 4 == 0`, `commit >= stride + 4`).
-- 2026-02-22: `payloads_video.ts` now includes optional `img2vid_reset_anchor_to_base` for img2vid temporal modes, allows it in `chunk|sliding`, and enforces fail-loud `false` for `svi2|svi2_pro`; builders map `WanImg2VidInput.resetAnchorToBase` directly to payload field.
-- 2026-02-28: `payloads_video.ts` removed `img2vid_mode='chunk'`; accepted modes are `solo|sliding|svi2|svi2_pro`, chunk-specific payload branches were dropped, and explicit `chunk` values now fail loud.
+- 2026-02-22: `payloads_video.ts` now includes optional `img2vid_reset_anchor_to_base` for windowed img2vid modes and enforces fail-loud `false` for `svi2|svi2_pro`; builders map `WanImg2VidInput.resetAnchorToBase` directly to payload field.
+- 2026-02-28: `payloads_video.ts` accepted img2vid modes are `solo|sliding|svi2|svi2_pro`; unsupported mode values now fail loud during payload normalization.
+- 2026-03-01: `payloads_video.ts` now emits no-stretch img2vid guide fields (`img2vid_resize_mode`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) with strict validation (`resize_mode` enum + offsets in `[0,1]`).
 - 2026-02-27: `payloads_video.ts` WAN output contract now hard-sets `video_save_output=true` and `video_save_metadata=true`, removed obsolete output fields (`video_filename_prefix`, `video_trim_to_audio`), and maps interpolation through one `targetFps` input (`0` disables; values above base FPS emit `video_interpolation.times >= 2` via `ceil(targetFps/baseFps)` with fixed model `rife47.pth`).
 - 2026-02-27: `payloads_video.ts` now includes optional strict `video_upscaling` payload mapping (SeedVR2 fields) via `WanVideoUpscalingInput`; builders emit `video_upscaling` only when enabled, and schema enforces typed ranges/enums plus `batch_size` `4n+1`.
 - 2026-02-22: `client.ts` adds `fetchObliterateVram(payload?)` for `POST /api/obliterate-vram` with default `external_kill_mode='disabled'`; `types.ts` defines request/response DTOs (including external kill mode + skip/failure rows) so quick settings can report safe-default cleanup status fail-loud.

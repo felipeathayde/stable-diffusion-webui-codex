@@ -17,6 +17,7 @@ pass-through in common WAN payload input. Also snapshots and forwards optional S
 Img2vid temporal payload fields are gated by `img2vidMode` (`solo|sliding|svi2|svi2_pro`), and WAN prompt `<lora:...>` tags are parsed client-side into
 stage-level LoRA arrays (`wan_high/wan_low.loras[]` with `sha+weight`) before payload dispatch. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
 before surfacing UI error text.
+Img2vid no-stretch guide fields (`resizeMode`, `cropOffsetX`, `cropOffsetY`) are forwarded into payload builders with strict offset validation (`[0,1]`, fail-loud on invalid state).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -60,6 +61,7 @@ import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageP
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 import { isWanWindowedImg2VidMode, normalizeWanImg2VidMode } from '../utils/wan_img2vid_temporal'
+import { normalizeWanImg2VidResizeMode } from '../utils/wan_img2vid_frame_projection'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
 type VideoMode = 'txt2vid' | 'img2vid'
@@ -294,6 +296,9 @@ function defaultVideo(): WanVideoParams {
     img2vidWindowFrames: 13,
     img2vidWindowStride: 8,
     img2vidWindowCommitFrames: 12,
+    img2vidResizeMode: 'auto',
+    img2vidCropOffsetX: 0.5,
+    img2vidCropOffsetY: 0.5,
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
     crf: 15,
@@ -321,6 +326,21 @@ function defaultAssets(): WanAssetsParams {
 
 function normalizeImg2VidMode(rawValue: unknown): WanVideoParams['img2vidMode'] {
   return normalizeWanImg2VidMode(rawValue)
+}
+
+function normalizeGuideOffset(rawValue: unknown): number {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return 0.5
+  if (typeof rawValue === 'boolean') {
+    throw new Error(`useVideoGeneration: img2vid crop offset must be a finite number in [0,1] (got ${String(rawValue)}).`)
+  }
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`useVideoGeneration: img2vid crop offset must be finite in [0,1] (got ${String(rawValue)}).`)
+  }
+  if (numeric < 0 || numeric > 1) {
+    throw new Error(`useVideoGeneration: img2vid crop offset must be in [0,1] (got ${String(rawValue)}).`)
+  }
+  return numeric
 }
 
 export function useVideoGeneration(tabId: string) {
@@ -488,6 +508,9 @@ export function useVideoGeneration(tabId: string) {
         windowFrames: v.img2vidWindowFrames,
         windowStride: v.img2vidWindowStride,
         windowCommitFrames: v.img2vidWindowCommitFrames,
+        resizeMode: v.img2vidResizeMode,
+        cropOffsetX: v.img2vidCropOffsetX,
+        cropOffsetY: v.img2vidCropOffsetY,
       },
       lightx2v: lightx2v.value,
       assets: {
@@ -725,6 +748,11 @@ export function useVideoGeneration(tabId: string) {
     if (v.useInitImage) {
       const img2vidMode = normalizeImg2VidMode(v.img2vidMode)
       const img2vidTemporalInput: Partial<WanImg2VidInput> = {}
+      const img2vidGuideInput: Partial<WanImg2VidInput> = {
+        resizeMode: normalizeWanImg2VidResizeMode(v.img2vidResizeMode, 'auto'),
+        cropOffsetX: normalizeGuideOffset(v.img2vidCropOffsetX),
+        cropOffsetY: normalizeGuideOffset(v.img2vidCropOffsetY),
+      }
       if (isWanWindowedImg2VidMode(img2vidMode)) {
         img2vidTemporalInput.windowFrames = v.img2vidWindowFrames
         img2vidTemporalInput.windowStride = v.img2vidWindowStride
@@ -737,6 +765,7 @@ export function useVideoGeneration(tabId: string) {
         ...common,
         initImageData: v.initImageData,
         img2vidMode,
+        ...img2vidGuideInput,
         ...img2vidTemporalInput,
       })
       return { mode: 'img2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }

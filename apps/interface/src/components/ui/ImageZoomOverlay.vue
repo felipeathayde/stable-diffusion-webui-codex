@@ -6,25 +6,25 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Full-screen image zoom overlay with pan/zoom controls and optional WAN frame projection guide.
-Provides a reusable overlay used by result previews and init-image previews, with shared close semantics for Escape and outside-click,
-true fit-to-viewport behavior for large images (without forcing a 25% minimum zoom on fit), and an opt-in no-stretch
-`cover + center-crop` WAN frame guide (toggle + projection metadata) for init-image inspection.
+Purpose: Full-screen image zoom overlay with pan/zoom controls and optional WAN frame-guide editing.
+Provides a reusable overlay used by result previews and init-image previews, with close semantics for Escape/outside-click,
+fit-to-viewport zoom behavior, and opt-in WAN guide editing (toggle, resize mode, target size, and drag crop offsets)
+for no-stretch img2vid framing.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `ImageZoomOverlay` (component): Full-screen image overlay with pan/zoom controls and optional WAN frame guide.
-- `clearPanListeners` (function): Removes temporary pan mouse listeners from `window`.
-- `close` (function): Closes the overlay and clears pan listeners.
-- `computeFitZoom` (function): Computes the fit-to-viewport zoom with safe padding.
+- `ImageZoomOverlay` (component): Full-screen image overlay with pan/zoom controls and optional WAN frame-guide editing.
+- `close` (function): Closes the overlay and clears temporary listeners.
+- `computeFitZoom` (function): Computes fit-to-viewport zoom with safe padding.
 - `applyFitView` (function): Resets pan and applies fit zoom.
-- `adjustZoom` (function): Applies bounded zoom delta updates.
-- `toggleFrameGuide` (function): Toggles the WAN frame guide visibility in the toolbar.
-- `onOverlayWheel` (function): Handles wheel-based zoom updates.
+- `toggleFrameGuide` (function): Toggles WAN frame-guide visibility in the toolbar.
+- `emitFrameGuideUpdate` (function): Normalizes and emits WAN frame-guide edits to parent components.
+- `onGuideDragStart` (function): Starts drag tracking for WAN crop-guide movement.
+- `onOverlayWheel` (function): Handles wheel zoom only on the main image region.
 - `onWindowKeydown` (function): Handles keyboard shortcuts (`Escape` closes).
 -->
 
 <template>
-  <div v-if="isOpen" class="image-zoom-overlay" @wheel.prevent="onOverlayWheel">
+  <div v-if="isOpen" class="image-zoom-overlay" @wheel="onOverlayWheel">
     <div ref="mainEl" class="image-zoom-main" @click="onMainClick">
       <div class="image-zoom-canvas" :style="zoomStyle" @click.stop>
         <img
@@ -36,13 +36,14 @@ Symbols (top-level; keep in sync; no ghosts):
         />
         <div
           v-if="frameGuideVisible"
-          class="image-zoom-frame-guide"
+          :class="['image-zoom-frame-guide', frameGuideDraggable ? 'image-zoom-frame-guide--draggable' : '']"
           :style="frameGuideRectStyle"
           aria-hidden="true"
+          @mousedown.stop.prevent="onGuideDragStart"
         />
       </div>
     </div>
-    <div class="image-zoom-toolbar" @click.stop>
+    <div :class="['image-zoom-toolbar', frameGuideConfigured ? 'image-zoom-toolbar--with-guide' : '']" @click.stop>
       <div class="toolbar-group">
         <button class="btn btn-sm btn-outline" type="button" @click="resetView">Fit</button>
         <button class="btn btn-sm btn-outline" type="button" @click="setZoom(1)">1:1</button>
@@ -59,11 +60,65 @@ Symbols (top-level; keep in sync; no ghosts):
         >
           {{ frameGuideVisible ? 'Guide: On' : 'Guide: Off' }}
         </button>
+
+        <div class="image-zoom-guide-edit-row">
+          <label class="label-muted" for="wan-guide-resize-mode">Resize</label>
+          <select
+            id="wan-guide-resize-mode"
+            class="select-md"
+            :value="frameGuideConfig?.resizeMode || 'auto'"
+            @change="onResizeModeChange"
+          >
+            <option
+              v-for="option in resizeModeOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </div>
+
+        <div class="image-zoom-guide-size-grid">
+          <label class="label-muted" for="wan-guide-width">W</label>
+          <div class="image-zoom-guide-size-input">
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeGuideWidth(-1)">-</button>
+            <input
+              id="wan-guide-width"
+              class="ui-input cdx-input-w-xs"
+              type="number"
+              :min="WAN_DIM_MIN"
+              :max="WAN_DIM_MAX"
+              :step="WAN_DIM_STEP"
+              :value="frameGuideConfig?.targetWidth || WAN_DIM_MIN"
+              @change="onGuideWidthChange"
+            />
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeGuideWidth(1)">+</button>
+          </div>
+
+          <label class="label-muted" for="wan-guide-height">H</label>
+          <div class="image-zoom-guide-size-input">
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeGuideHeight(-1)">-</button>
+            <input
+              id="wan-guide-height"
+              class="ui-input cdx-input-w-xs"
+              type="number"
+              :min="WAN_DIM_MIN"
+              :max="WAN_DIM_MAX"
+              :step="WAN_DIM_STEP"
+              :value="frameGuideConfig?.targetHeight || WAN_DIM_MIN"
+              @change="onGuideHeightChange"
+            />
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeGuideHeight(1)">+</button>
+          </div>
+        </div>
+
         <div class="image-zoom-frame-meta">
           <div class="image-zoom-frame-meta__row"><span>Src</span><strong>{{ frameGuideSourceLabel }}</strong></div>
           <div class="image-zoom-frame-meta__row"><span>Scaled</span><strong>{{ frameGuideScaledLabel }}</strong></div>
           <div class="image-zoom-frame-meta__row"><span>Frame</span><strong>{{ frameGuideTargetLabel }}</strong></div>
-          <div class="image-zoom-frame-meta__row"><span>Policy</span><strong>{{ frameGuidePolicyLabel }}</strong></div>
+          <div class="image-zoom-frame-meta__row"><span>Resize</span><strong>{{ frameGuideResizeLabel }}</strong></div>
+          <div class="image-zoom-frame-meta__row"><span>Crop XY</span><strong>{{ frameGuideCropLabel }}</strong></div>
         </div>
       </div>
     </div>
@@ -73,10 +128,11 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
 import {
-  WAN_IMG2VID_FRAME_PROJECTION_POLICY_LABEL,
+  WAN_IMG2VID_RESIZE_MODE_LABELS,
   type WanImg2VidFrameGuideConfig,
-  type WanImg2VidFrameProjectionPolicy,
+  type WanImg2VidResizeMode,
   computeWanImg2VidFrameProjection,
+  normalizeWanImg2VidResizeMode,
 } from '../../utils/wan_img2vid_frame_projection'
 
 const props = withDefaults(defineProps<{
@@ -91,6 +147,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
+  (e: 'update:wanFrameGuide', value: WanImg2VidFrameGuideConfig): void
 }>()
 
 const isOpen = computed(() => Boolean(props.modelValue) && Boolean(props.src))
@@ -100,6 +157,9 @@ const alt = computed(() => props.alt || 'Zoomed image')
 const ZOOM_MIN = 0.25
 const ZOOM_MAX = 8
 const FIT_PADDING_PX = 24
+const WAN_DIM_MIN = 64
+const WAN_DIM_MAX = 2048
+const WAN_DIM_STEP = 16
 
 const zoom = ref(1)
 const offsetX = ref(0)
@@ -109,7 +169,16 @@ const imageEl = ref<HTMLImageElement | null>(null)
 const sourceWidth = ref(0)
 const sourceHeight = ref(0)
 const showFrameGuide = ref(false)
+
 let panState: { startX: number; startY: number; originX: number; originY: number } | null = null
+let guideDragState: {
+  startX: number
+  startY: number
+  originOffsetX: number
+  originOffsetY: number
+  slackX: number
+  slackY: number
+} | null = null
 
 function requirePositiveInt(rawValue: number, label: string): number {
   const numeric = Number(rawValue)
@@ -123,33 +192,54 @@ function requirePositiveInt(rawValue: number, label: string): number {
   return value
 }
 
-function resolveProjectionPolicy(rawPolicy: string | undefined): {
-  policy: WanImg2VidFrameProjectionPolicy
-  label: string
-} {
-  const raw = String(rawPolicy || '').trim()
-  if (!raw || raw === 'cover_center_crop') {
-    return {
-      policy: 'cover_center_crop',
-      label: WAN_IMG2VID_FRAME_PROJECTION_POLICY_LABEL,
-    }
-  }
-  throw new Error(
-    `ImageZoomOverlay: unsupported wanFrameGuide.policy '${raw}' (expected 'cover_center_crop').`,
-  )
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0.5
+  return Math.max(0, Math.min(1, value))
 }
 
-const frameGuideConfig = computed(() => {
-  if (!props.wanFrameGuide) return null
-  const resolvedPolicy = resolveProjectionPolicy(props.wanFrameGuide.policy)
-  return {
-    targetWidth: requirePositiveInt(props.wanFrameGuide.targetWidth, 'wanFrameGuide.targetWidth'),
-    targetHeight: requirePositiveInt(props.wanFrameGuide.targetHeight, 'wanFrameGuide.targetHeight'),
-    policy: resolvedPolicy.policy,
-    policyLabel: resolvedPolicy.label,
+function normalizeGuideOffset(rawValue: unknown, label: string): number {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return 0.5
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 1) {
+    throw new Error(`ImageZoomOverlay: ${label} must be a finite number in [0,1] (got ${String(rawValue)}).`)
   }
-})
+  return clamp01(numeric)
+}
 
+function snapGuideDim(rawValue: unknown): number {
+  const numeric = Number(rawValue)
+  const clamped = Number.isFinite(numeric)
+    ? Math.max(WAN_DIM_MIN, Math.min(WAN_DIM_MAX, numeric))
+    : WAN_DIM_MIN
+  return Math.min(WAN_DIM_MAX, Math.max(WAN_DIM_MIN, Math.ceil(clamped / WAN_DIM_STEP) * WAN_DIM_STEP))
+}
+
+function normalizeFrameGuideConfig(rawGuide: WanImg2VidFrameGuideConfig): WanImg2VidFrameGuideConfig {
+  return {
+    targetWidth: snapGuideDim(requirePositiveInt(rawGuide.targetWidth, 'wanFrameGuide.targetWidth')),
+    targetHeight: snapGuideDim(requirePositiveInt(rawGuide.targetHeight, 'wanFrameGuide.targetHeight')),
+    resizeMode: normalizeWanImg2VidResizeMode(rawGuide.resizeMode, 'auto'),
+    cropOffsetX: normalizeGuideOffset(rawGuide.cropOffsetX, 'wanFrameGuide.cropOffsetX'),
+    cropOffsetY: normalizeGuideOffset(rawGuide.cropOffsetY, 'wanFrameGuide.cropOffsetY'),
+  }
+}
+
+const frameGuideState = ref<WanImg2VidFrameGuideConfig | null>(null)
+
+watch(
+  () => props.wanFrameGuide,
+  (guide) => {
+    if (!guide) {
+      frameGuideState.value = null
+      showFrameGuide.value = false
+      return
+    }
+    frameGuideState.value = normalizeFrameGuideConfig(guide)
+  },
+  { immediate: true, deep: true },
+)
+
+const frameGuideConfig = computed(() => frameGuideState.value)
 const frameGuideConfigured = computed(() => frameGuideConfig.value !== null)
 
 const frameProjection = computed(() => {
@@ -161,17 +251,36 @@ const frameProjection = computed(() => {
     sourceHeight: sourceHeight.value,
     frameWidth: guide.targetWidth,
     frameHeight: guide.targetHeight,
-    policy: guide.policy,
+    resizeMode: guide.resizeMode,
+    cropOffsetX: guide.cropOffsetX,
+    cropOffsetY: guide.cropOffsetY,
   })
 })
 
 const frameGuideVisible = computed(() => Boolean(showFrameGuide.value && frameProjection.value))
+const frameGuideDraggable = computed(() => {
+  const projection = frameProjection.value
+  if (!projection) return false
+  return projection.slackX > 0 || projection.slackY > 0
+})
+
+const resizeModeOptions = computed(() => {
+  return (Object.keys(WAN_IMG2VID_RESIZE_MODE_LABELS) as WanImg2VidResizeMode[]).map((mode) => ({
+    value: mode,
+    label: WAN_IMG2VID_RESIZE_MODE_LABELS[mode],
+  }))
+})
 
 function formatDims(width: number, height: number): string {
   const w = Number.isFinite(width) ? Math.round(width) : 0
   const h = Number.isFinite(height) ? Math.round(height) : 0
   if (w <= 0 || h <= 0) return '—'
   return `${w}×${h}`
+}
+
+function formatOffset(value: number): string {
+  if (!Number.isFinite(value)) return '0.500'
+  return value.toFixed(3)
 }
 
 const frameGuideSourceLabel = computed(() => {
@@ -192,10 +301,19 @@ const frameGuideTargetLabel = computed(() => {
   return formatDims(guide.targetWidth, guide.targetHeight)
 })
 
-const frameGuidePolicyLabel = computed(() => {
-  const guide = frameGuideConfig.value
-  if (!guide) return WAN_IMG2VID_FRAME_PROJECTION_POLICY_LABEL
-  return guide.policyLabel
+const frameGuideResizeLabel = computed(() => {
+  const projection = frameProjection.value
+  if (!projection) return WAN_IMG2VID_RESIZE_MODE_LABELS.auto
+  const requested = WAN_IMG2VID_RESIZE_MODE_LABELS[projection.resizeMode]
+  const resolved = WAN_IMG2VID_RESIZE_MODE_LABELS[projection.resolvedResizeMode]
+  if (projection.resizeMode === 'auto') return `${requested} -> ${resolved}`
+  return requested
+})
+
+const frameGuideCropLabel = computed(() => {
+  const projection = frameProjection.value
+  if (!projection) return '—'
+  return `${formatOffset(projection.cropOffsetX)}, ${formatOffset(projection.cropOffsetY)}`
 })
 
 const frameGuideRectStyle = computed<CSSProperties>(() => {
@@ -214,10 +332,28 @@ function clearPanListeners(): void {
   window.removeEventListener('mouseup', onPanEnd)
 }
 
+function clearGuideDragListeners(): void {
+  window.removeEventListener('mousemove', onGuideDragMove)
+  window.removeEventListener('mouseup', onGuideDragEnd)
+}
+
 function close(): void {
   emit('update:modelValue', false)
   panState = null
+  guideDragState = null
   clearPanListeners()
+  clearGuideDragListeners()
+}
+
+function emitFrameGuideUpdate(patch: Partial<WanImg2VidFrameGuideConfig>): void {
+  const current = frameGuideConfig.value
+  if (!current) return
+  const next: WanImg2VidFrameGuideConfig = normalizeFrameGuideConfig({
+    ...current,
+    ...patch,
+  })
+  frameGuideState.value = next
+  emit('update:wanFrameGuide', next)
 }
 
 watch(isOpen, (open) => {
@@ -231,7 +367,9 @@ watch(isOpen, (open) => {
   }
   window.removeEventListener('keydown', onWindowKeydown)
   panState = null
+  guideDragState = null
   clearPanListeners()
+  clearGuideDragListeners()
 }, { immediate: true })
 
 watch(src, () => {
@@ -241,7 +379,11 @@ watch(src, () => {
 })
 
 watch(frameProjection, (projection) => {
-  if (!projection) showFrameGuide.value = false
+  if (!projection) {
+    showFrameGuide.value = false
+    guideDragState = null
+    clearGuideDragListeners()
+  }
 })
 
 function clampZoom(value: number): number {
@@ -305,6 +447,33 @@ function toggleFrameGuide(): void {
   showFrameGuide.value = !showFrameGuide.value
 }
 
+function onResizeModeChange(event: Event): void {
+  const target = event.target as HTMLSelectElement
+  emitFrameGuideUpdate({ resizeMode: normalizeWanImg2VidResizeMode(target.value, 'auto') })
+}
+
+function nudgeGuideWidth(direction: -1 | 1): void {
+  const current = frameGuideConfig.value
+  if (!current) return
+  emitFrameGuideUpdate({ targetWidth: current.targetWidth + direction * WAN_DIM_STEP })
+}
+
+function nudgeGuideHeight(direction: -1 | 1): void {
+  const current = frameGuideConfig.value
+  if (!current) return
+  emitFrameGuideUpdate({ targetHeight: current.targetHeight + direction * WAN_DIM_STEP })
+}
+
+function onGuideWidthChange(event: Event): void {
+  const target = event.target as HTMLInputElement
+  emitFrameGuideUpdate({ targetWidth: Number(target.value) })
+}
+
+function onGuideHeightChange(event: Event): void {
+  const target = event.target as HTMLInputElement
+  emitFrameGuideUpdate({ targetHeight: Number(target.value) })
+}
+
 function onPanStart(event: MouseEvent): void {
   panState = {
     startX: event.clientX,
@@ -329,8 +498,53 @@ function onPanEnd(): void {
   clearPanListeners()
 }
 
+function onGuideDragStart(event: MouseEvent): void {
+  const projection = frameProjection.value
+  const guide = frameGuideConfig.value
+  if (!projection || !guide || !frameGuideVisible.value) return
+  if (projection.slackX <= 0 && projection.slackY <= 0) return
+  guideDragState = {
+    startX: event.clientX,
+    startY: event.clientY,
+    originOffsetX: clamp01(Number(guide.cropOffsetX)),
+    originOffsetY: clamp01(Number(guide.cropOffsetY)),
+    slackX: projection.slackX,
+    slackY: projection.slackY,
+  }
+  window.addEventListener('mousemove', onGuideDragMove)
+  window.addEventListener('mouseup', onGuideDragEnd)
+}
+
+function onGuideDragMove(event: MouseEvent): void {
+  const drag = guideDragState
+  if (!drag) return
+  const effectiveZoom = Math.max(0.001, Number(zoom.value) || 1)
+  const deltaSourceX = (event.clientX - drag.startX) / effectiveZoom
+  const deltaSourceY = (event.clientY - drag.startY) / effectiveZoom
+  const nextOffsetX = drag.slackX > 0
+    ? clamp01(drag.originOffsetX + (deltaSourceX / drag.slackX))
+    : drag.originOffsetX
+  const nextOffsetY = drag.slackY > 0
+    ? clamp01(drag.originOffsetY + (deltaSourceY / drag.slackY))
+    : drag.originOffsetY
+  emitFrameGuideUpdate({
+    cropOffsetX: nextOffsetX,
+    cropOffsetY: nextOffsetY,
+  })
+}
+
+function onGuideDragEnd(): void {
+  guideDragState = null
+  clearGuideDragListeners()
+}
+
 function onOverlayWheel(event: WheelEvent): void {
   if (!isOpen.value) return
+  const target = event.target as HTMLElement | null
+  if (!target) return
+  if (target.closest('.image-zoom-toolbar')) return
+  if (!target.closest('.image-zoom-main') && !target.closest('.image-zoom-canvas')) return
+  event.preventDefault()
   const delta = event.deltaY < 0 ? 0.25 : -0.25
   adjustZoom(delta)
 }
@@ -357,6 +571,8 @@ function onWindowKeydown(event: KeyboardEvent): void {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown)
   panState = null
+  guideDragState = null
   clearPanListeners()
+  clearGuideDragListeners()
 })
 </script>

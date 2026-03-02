@@ -15,6 +15,7 @@ Supports optional pass-through WAN zoom frame-guide config for init-image overla
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `InitialImageCard` zoom overlay.
+- `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent WAN state.
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
 - `onInpaintingFillChange` (function): Emits raw masked-content numeric updates for parent-side normalization.
 - `onMaskEditorApply` (function): Emits edited mask data URL produced by the inpaint mask editor overlay.
@@ -41,6 +42,7 @@ Symbols (top-level; keep in sync; no ghosts):
       @set="(file) => emit('set:initImage', file)"
       @clear="() => emit('clear:initImage')"
       @rejected="(payload) => emit('reject:initImage', payload)"
+      @update:zoom-frame-guide="onZoomFrameGuideUpdate"
     >
       <template #footer>
         <p v-if="initImageName" class="caption img2img-caption">{{ initImageName }}</p>
@@ -228,6 +230,7 @@ const emit = defineEmits<{
   (e: 'toggle:maskRound'): void
   (e: 'toggle:maskRegionSplit'): void
   (e: 'update:maskBlur', value: number): void
+  (e: 'update:zoomFrameGuide', value: WanImg2VidFrameGuideConfig): void
 }>()
 
 const maskEditorOpen = ref(false)
@@ -246,6 +249,10 @@ function onMaskEditorApply(maskDataUrl: string): void {
 
 function onMaskEditorExternalReset(message: string): void {
   emit('notice:maskEditorReset', message)
+}
+
+function onZoomFrameGuideUpdate(value: WanImg2VidFrameGuideConfig): void {
+  emit('update:zoomFrameGuide', value)
 }
 </script>
 

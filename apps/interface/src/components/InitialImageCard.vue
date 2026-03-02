@@ -13,6 +13,7 @@ Supports optional pass-through WAN frame-guide config for zoom-overlay no-stretc
 Symbols (top-level; keep in sync; no ghosts):
 - `InitialImageCard` (component): Initial image picker panel.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `ImageZoomOverlay`.
+- `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent state.
 - `onFile` (function): Handles file-input selection and emits `set`.
 - `onDropFiles` (function): Handles dropzone selection and emits `set`.
 - `onPreviewClick` (function): Opens the zoom overlay for the current preview image.
@@ -75,6 +76,7 @@ Symbols (top-level; keep in sync; no ghosts):
       :src="src"
       alt="Initial image preview"
       :wanFrameGuide="zoomFrameGuide"
+      @update:wan-frame-guide="onZoomFrameGuideUpdate"
     />
   </div>
 </template>
@@ -113,6 +115,7 @@ const emit = defineEmits<{
   (e: 'set', file: File): void
   (e: 'clear'): void
   (e: 'rejected', payload: { reason: string; files: File[] }): void
+  (e: 'update:zoomFrameGuide', value: WanImg2VidFrameGuideConfig): void
 }>()
 const zoomOpen = ref(false)
 const canZoom = computed(() => Boolean(props.zoomable && props.src))
@@ -136,6 +139,10 @@ function onDropRejected(payload: { reason: string; files: File[] }): void {
 function onPreviewClick(): void {
   if (!canZoom.value) return
   zoomOpen.value = true
+}
+
+function onZoomFrameGuideUpdate(value: WanImg2VidFrameGuideConfig): void {
+  emit('update:zoomFrameGuide', value)
 }
 </script>
 

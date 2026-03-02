@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-02-28
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -26,7 +26,7 @@ Status: Active
 - 2026-01-24: `xyz.ts` no longer tries to set `codex_engine` via `/api/options`; XYZ runs include `engine`/`model` per job payload.
 - 2025-12-14: `model_tabs.ts` treats tab `type` as a UI tab kind (`sd15|sdxl|flux1|chroma|zimage|wan`) and normalizes legacy WAN types (`wan22_*` → `wan`); removed the legacy video Pinia store (`stores/video.ts`) now that WAN video runs exclusively via model tabs + typed payload builders.
 - 2025-12-27: Image tabs now persist their checkpoint + text encoders in tab params (`checkpoint`, `textEncoders`) and `model_tabs.normalizeTab()` fills missing params with defaults at load time (so backend-saved tabs with partial `params` don’t render blank/undefined fields).
-- 2025-12-16: `model_tabs.ts` WAN `video` params now include `vid2vid` controls (strength/method/chunk/flow toggles) plus optional `initVideoPath` for path-based inputs; uploaded video files are kept in-memory by `useVideoGeneration` (not persisted).
+- 2025-12-16: `model_tabs.ts` WAN `video` params are UI source-of-truth for current WAN txt2vid/img2vid flows and are kept persistence-safe (no path-based vid2vid surface in active tab params).
 - 2026-01-21: `model_tabs.ts` WAN stage params store LoRA selections as `loras[]` (`{sha, weight}`), and payload builders emit stage `loras[]`; legacy stage `lora_sha`/`lora_weight` and stage `lora_path` are rejected by backend WAN routes.
 - 2026-02-16: `model_tabs.ts` WAN stage params now include optional `flowShift` so QuickSettings/composables can carry explicit WAN distill shift overrides end-to-end.
 - 2025-12-17: Added `workflows.ts` store to keep `/workflows` list reactive (refresh after snapshot save/delete) and to centralize workflow persistence calls; WAN tabs also default `lowFollowsHigh=false` in `model_tabs.ts` for the Low Noise “Use High settings” toggle.
@@ -65,16 +65,17 @@ Status: Active
 - 2026-02-06: `model_tabs.ts` and `xyz.ts` now use centralized taxonomy/default helpers (`utils/engine_taxonomy.ts`) and prefer backend sampler/scheduler defaults (with shared fallback policy).
 - 2026-02-06: `model_tabs.ts` now exports typed tab-param contracts (`TabParamsByType`, `TabByType`, `WanAssetsParams`) as the Phase 5 baseline for removing `any` usage across WAN/Image consumers.
 - 2026-02-06: `model_tabs.reorder(...)` now rejects duplicate ids explicitly, and `model_tabs.updateParams(...)` rollback snapshots only touched keys (avoids full deep-clone cost for large tab params like init-image payloads).
-- 2026-02-17: `model_tabs.ts` WAN video params now include `attentionMode` + img2vid chunk controls, and normalization clamps/snap-normalizes WAN frame/chunk counts to the `4n+1` domain within `[9,401]` during hydration/persistence.
+- 2026-02-17: `model_tabs.ts` WAN video params now include `attentionMode` + windowed img2vid temporal controls (`img2vid_window_*`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`), and normalization clamps/snap-normalizes WAN frame/window counts to the `4n+1` domain within `[9,401]` during hydration/persistence.
 - 2026-02-18: `model_tabs.ts` image-tab params now include `img2imgResizeMode` (default `just_resize`) and `img2imgUpscaler` (default `latent:bicubic-aa`) with normalization via `utils/img2img_resize.ts` for img2img UI layout/state parity.
 - 2026-02-18: `model_tabs.ts` image-tab params now include `guidanceAdvanced` (APG/rescale/trunc/renorm controls), with strict numeric/boolean normalization and defaults used by CFG Advanced UI + request extras wiring.
 - 2026-02-20: `quicksettings.ts` now defaults VAE selection to canonical `built-in` when nothing is persisted and exposes `requireVaeSelection()` for fail-loud request preflight on empty VAE selections.
 - 2026-02-20: `xyz.ts` run preflight now blocks sweeps when VAE selection is empty (shared fail-loud guard via `quicksettings.requireVaeSelection()`).
 - 2026-02-21: `model_tabs.ts` WAN `video` params were reduced to `txt2vid/img2vid` surface only (removed `useInitVideo` + `vid2vid*` fields) and normalization now returns a schema-sanitized object to drop legacy persisted vid2vid keys.
-- 2026-02-21: `model_tabs.ts` WAN img2vid temporal controls now use `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`) as source-of-truth; chunk and window params (`img2vid_chunk*`, `img2vid_window*`) are persisted together with strict normalization/migration from legacy `img2vidChunkingEnabled`.
+- 2026-02-21: `model_tabs.ts` WAN img2vid temporal controls now use `img2vidMode` (`solo|sliding|svi2|svi2_pro`) as source-of-truth; window params (`img2vid_window*`) are persisted with strict normalization, and unsupported legacy temporal state is rejected fail-loud.
 - 2026-02-22: `model_tabs.ts` WAN img2vid temporal mode now includes `svi2` and `svi2_pro`, with shared window normalization via `utils/wan_img2vid_temporal.ts`; default window params were tightened to `stride=8` and `commit=12` so persisted values satisfy the continuity guards (`stride % 4 == 0`, `commit - stride >= 4`).
-- 2026-02-22: `model_tabs.ts` WAN `video` params now persist `img2vidResetAnchorToBase`; normalization applies mode defaults (`chunk=true`, `sliding/solo=false`) and forces `false` for `svi2|svi2_pro`.
-- 2026-02-28: `model_tabs.ts` removed `img2vidMode='chunk'` support and now fail-loud rejects persisted legacy chunk state (`img2vidMode='chunk'`, `img2vidChunkingEnabled=true`, or chunk-frame-only snapshots); canonical modes are `solo|sliding|svi2|svi2_pro`.
+- 2026-02-22: `model_tabs.ts` WAN `video` params now persist `img2vidResetAnchorToBase`; normalization applies mode defaults (`sliding/solo=false`) and forces `false` for `svi2|svi2_pro`.
+- 2026-02-28: `model_tabs.ts` canonical img2vid modes are `solo|sliding|svi2|svi2_pro`; persisted unsupported temporal state is rejected fail-loud during normalization.
+- 2026-03-01: `model_tabs.ts` WAN `video` params now persist no-stretch guide settings (`img2vidResizeMode`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with strict normalization (`resizeMode` enum + crop offsets in `[0,1]`).
 - 2026-02-27: `model_tabs.ts` WAN `video` params removed obsolete output flags (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and migrated interpolation state to one `interpolationFps` field (`0` off, active values normalized as output-FPS targets mapped to backend interpolation times).
 - 2026-02-27: `model_tabs.ts` WAN `video.fps` default is now `15` (was `24`) to align initial WAN runs with the updated UI baseline.
 - 2026-02-27: `model_tabs.ts` WAN `video` params now include SeedVR2 upscaling controls (`upscaling*` fields) with strict normalization (`batch_size` as `4n+1`, noise scales clamped to `[0,1]`, color-correction enum validation).

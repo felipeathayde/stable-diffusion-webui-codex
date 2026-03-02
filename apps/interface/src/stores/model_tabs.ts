@@ -10,7 +10,8 @@ Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the 
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
 default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
-`img2imgUpscaler`) decoupled from backend hires dispatch.
+`img2imgUpscaler`) decoupled from backend hires dispatch. WAN video normalization persists no-stretch img2vid guide controls
+(`img2vidResizeMode`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -22,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt, ordered `loras[]`, and optional explicit `flowShift`, used by video tabs and payload builders.
 - `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|sliding|svi2|svi2_pro`).
 - `WanChunkSeedMode` (type): WAN sliding/SVI per-window seed strategy (`fixed|increment|random`).
-- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + chunking/output controls + interpolation target FPS + SeedVR2 upscaling controls).
+- `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + img2vid temporal controls + no-stretch guide controls (`img2vidResizeMode` + crop offsets) + output/interpolation + SeedVR2 upscaling controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
@@ -77,6 +78,7 @@ import {
   normalizeWanWindowStride,
   type WanImg2VidMode as WanImg2VidModeInternal,
 } from '../utils/wan_img2vid_temporal'
+import { normalizeWanImg2VidResizeMode, type WanImg2VidResizeMode } from '../utils/wan_img2vid_frame_projection'
 
 export type BaseTabType = ApiTab['type']
 export type ImageTabType = Exclude<BaseTabType, 'wan'>
@@ -152,6 +154,9 @@ export interface WanVideoParams {
   img2vidWindowFrames: number
   img2vidWindowStride: number
   img2vidWindowCommitFrames: number
+  img2vidResizeMode: WanImg2VidResizeMode
+  img2vidCropOffsetX: number
+  img2vidCropOffsetY: number
   // Export options
   format: string
   pixFmt: string
@@ -356,6 +361,9 @@ function defaultParams<T extends BaseTabType>(
       img2vidWindowFrames: 13,
       img2vidWindowStride: 8,
       img2vidWindowCommitFrames: 12,
+      img2vidResizeMode: 'auto',
+      img2vidCropOffsetX: 0.5,
+      img2vidCropOffsetY: 0.5,
       format: 'video/h264-mp4',
       pixFmt: 'yuv420p',
       crf: 15,
@@ -701,6 +709,12 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     merged.img2vidWindowStride,
     defaults.img2vidWindowCommitFrames,
   )
+  merged.img2vidResizeMode = normalizeWanImg2VidResizeMode(
+    merged.img2vidResizeMode,
+    defaults.img2vidResizeMode,
+  )
+  merged.img2vidCropOffsetX = normalizeUnitInterval(merged.img2vidCropOffsetX, defaults.img2vidCropOffsetX)
+  merged.img2vidCropOffsetY = normalizeUnitInterval(merged.img2vidCropOffsetY, defaults.img2vidCropOffsetY)
 
   merged.interpolationFps = normalizeInterpolationTargetFps(
     merged.interpolationFps,
@@ -752,6 +766,9 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     img2vidWindowFrames: merged.img2vidWindowFrames,
     img2vidWindowStride: merged.img2vidWindowStride,
     img2vidWindowCommitFrames: merged.img2vidWindowCommitFrames,
+    img2vidResizeMode: merged.img2vidResizeMode,
+    img2vidCropOffsetX: merged.img2vidCropOffsetX,
+    img2vidCropOffsetY: merged.img2vidCropOffsetY,
     format: merged.format,
     pixFmt: merged.pixFmt,
     crf: merged.crf,

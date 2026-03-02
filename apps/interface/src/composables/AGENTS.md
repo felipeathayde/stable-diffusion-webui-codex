@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-28
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -43,7 +43,7 @@ Status: Active
 - 2026-02-06: `useVideoGeneration(tabId)` now imports shared `WanAssetsParams` from `model_tabs.ts` (no local duplicate interface), keeping WAN asset typing aligned across store/view/composable layers.
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates `output.returnFrames` into common WAN payload input for all modes, fixing dropped `video_return_frames` requests from the composable path.
 - 2026-02-16: `useVideoGeneration(tabId)` now propagates WAN stage `flowShift` (`high/low.flowShift` → `wan_high/wan_low.flow_shift`) so distill runs can enforce non-default scheduler shifts explicitly.
-- 2026-02-17: `useVideoGeneration(tabId)` now propagates WAN attention mode (`global|sliding`) and img2vid chunk controls (chunk/overlap/anchor/seed mode) into payload builders and run-history snapshots.
+- 2026-02-17: `useVideoGeneration(tabId)` now propagates WAN attention mode (`global|sliding`) and windowed img2vid temporal controls (`window_*`, `anchor_alpha`, `chunk_seed_mode`) into payload builders and run-history snapshots.
 - 2026-02-20: `useGeneration(tabId)` now fails loud on empty VAE selection before payload submission by using `quicksettings.requireVaeSelection()` (prevents blank VAE submits on SDXL/related tabs).
 - 2026-02-20: `useGeneration(tabId)` and `useVideoGeneration(tabId)` history entries now include optional `thumbnail` previews (`GeneratedImage`) updated during progress/result flow, enabling square thumbnail-only History cards with detail modal drill-down in views.
 - 2026-02-21: `useGeneration(tabId)` now fails loud when a non-sentinel VAE label cannot be resolved to `vae_sha` (`Selected VAE is invalid or stale`), preventing stale hidden selections from degrading into implicit built-in behavior.
@@ -52,10 +52,11 @@ Status: Active
 - 2026-02-27: `useGeneration.ts::buildImg2ImgPayload(...)` now fails loud when INPAINT is enabled but no mask is applied, preventing empty-mask submits from drifting into “unmasked img2img” behavior.
 - 2026-02-21: `useVideoGeneration(tabId)` now treats WAN prompts as stage-owned (`high.prompt/negativePrompt`, `low.prompt/negativePrompt`), blocks generation if either stage prompt is empty, snapshots both stage prompts in history, and keeps top-level API prompt compatibility by deriving mode prompt from the High stage in payload builders.
 - 2026-02-21: `useVideoGeneration(tabId)` now dispatches only `txt2vid|img2vid`; frontend `vid2vid` run preparation/dispatch and init-video file state were removed to match current backend contract exposure.
-- 2026-02-21: `useVideoGeneration(tabId)` img2vid temporal dispatch now uses explicit `img2vidMode` (`solo|chunk|sliding|svi2|svi2_pro`) and forwards mode-scoped controls (`chunk*` vs `window*`) to WAN payload builders; run-history snapshots persist `img2vid.mode` + window controls.
+- 2026-02-21: `useVideoGeneration(tabId)` img2vid temporal dispatch now uses explicit `img2vidMode` (`solo|sliding|svi2|svi2_pro`) and forwards mode-scoped window controls (`img2vid_window_*`) to WAN payload builders; run-history snapshots persist `img2vid.mode` + window controls.
 - 2026-02-22: `useVideoGeneration(tabId)` now treats `img2vidMode='svi2'|'svi2_pro'` as windowed modes alongside sliding and forwards shared window controls (`img2vid_window_*`) with normalized defaults (`stride=8`, `commit=12`) to keep continuity contracts aligned across UI/store/payload.
-- 2026-02-22: `useVideoGeneration(tabId)` now forwards `img2vidResetAnchorToBase` through img2vid temporal payload input (`chunk` + windowed modes) and includes `img2vid.resetAnchorToBase` in params snapshots/history metadata.
-- 2026-02-28: `useVideoGeneration(tabId)` removed `chunk` dispatch; img2vid temporal generation now routes only `solo|sliding|svi2|svi2_pro`, and legacy `chunk` snapshots/inputs are rejected fail-loud.
+- 2026-02-22: `useVideoGeneration(tabId)` now forwards `img2vidResetAnchorToBase` through windowed img2vid temporal payload input and includes `img2vid.resetAnchorToBase` in params snapshots/history metadata.
+- 2026-02-28: `useVideoGeneration(tabId)` img2vid temporal generation routes only `solo|sliding|svi2|svi2_pro`, and unsupported legacy temporal snapshots/inputs are rejected fail-loud.
+- 2026-03-01: `useVideoGeneration(tabId)` now forwards no-stretch guide fields (`img2vidResizeMode`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) into img2vid payload input and validates crop offsets strictly in `[0,1]` (fail-loud on invalid state).
 - 2026-02-21: `useVideoGeneration(tabId)` resume-state parsing is now strict for mode (`txt2vid|img2vid` only): unsupported legacy values (e.g. `vid2vid`) are rejected fail-loud, the stale resume marker is cleared, and UI surfaces a clear resume notice instead of silently downgrading mode.
 - 2026-02-21: `useVideoGeneration(tabId)` now logs structured start-failure diagnostics to browser console (`status`, backend `detail`, parsed `body`, message, mode/tab) before surfacing UI error text, improving visibility for hidden request-contract failures.
 - 2026-02-27: `useVideoGeneration(tabId)` removed obsolete WAN output fields (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) from snapshots/common payload input and now carries interpolation as one `interpolation.targetFps` field (`0` disables, active values are interpreted as output FPS targets).

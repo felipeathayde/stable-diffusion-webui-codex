@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-28
+Last Review: 2026-03-01
 Status: Active
 
 ## Purpose
@@ -23,7 +23,7 @@ Status: Active
 
 ## Notes
 - Routers should not mutate global state in `run_api.py`; prefer explicit dependency injection via `build_router(...)`.
-- 2026-02-28: `generation.py` removed public `img2vid_mode='chunk'`; API now accepts only `solo|sliding|svi2|svi2_pro` and returns fail-loud HTTP 400 when `chunk` is provided.
+- 2026-02-28: `generation.py` img2vid API contract now accepts only `solo|sliding|svi2|svi2_pro`; unsupported mode values return fail-loud HTTP 400.
 - 2026-02-28: `generation.py` keeps `/api/vid2vid` route scaffolded but intentionally disabled (HTTP 501 + `NotImplementedError`) until the capability-driven router/runtime contract is finalized.
 - 2026-01-13: `tools.py` supports GGUF conversion cancellation (`POST /api/tools/convert-gguf/:job_id/cancel`) and an `overwrite` flag (default false; fails with 409 if the output path exists).
 - 2026-01-14: `tools.py` accepts a `comfy_layout` flag for GGUF conversion to control Flux/ZImage Comfy/Codex remapping (default true).
@@ -31,7 +31,7 @@ Status: Active
 - 2026-01-18: `models.py` now includes backend `asset_contracts` in `/api/engines/capabilities` so the UI can gate required VAE/text encoder selection from a single contract source.
 - 2026-01-18: `generation.py` enforces image asset requirements via `apps/backend/core/contracts/asset_requirements.py` and keeps engine registration lazy (avoids torch-heavy startup for non-generation endpoints).
 - 2026-01-18: `generation.py` `vid2vid.method="wan_animate"` enforces repo-scoped paths under `CODEX_ROOT` (requires `vid2vid_model_dir`; stage `model_dir` must exist under the repo root).
-- 2026-01-21 (historical, superseded on 2026-02-28): WAN stage LoRA selection was sha-only via `lora_sha`.
+- 2026-01-21: WAN stage LoRA selection is sha-only and uses explicit stage arrays (`wan_high/wan_low.loras[]`).
 - 2026-01-21: Video tasks honor Smart flags via persisted options (`codex_smart_offload`/`codex_smart_fallback`/`codex_smart_cache`), propagating effective values into requests and applying `smart_runtime_overrides(...)` inside the video worker thread.
 - 2026-01-23: `generation.py` enforces WAN video `height/width % 16 == 0` (txt2vid/img2vid/vid2vid; Diffusers parity) to avoid silent patch-grid cropping in the WAN22 runtime.
 - 2026-01-23: WAN `%16` validation errors include an explicit `WIDTHxHEIGHT` + suggested rounded-up dimensions (for direct API callers; the UI snaps dims before POST).
@@ -79,10 +79,10 @@ Status: Active
 - 2026-02-16: `models.py` prompt-token endpoint now recognizes `wan22_14b_animate`; `ui.py` tab-type normalization accepts `wan22_14b_animate` and normalizes all WAN aliases to `wan`.
 - 2026-02-17: `generation.py` WAN variant resolution now preserves 14B identity across repo/path hints (expanded token set + 14B-first heuristics) and avoids silent 14B→5B collapse during engine-key resolution.
 - 2026-02-17: `generation.py` keeps animate metadata hints remapped to the task-capable `wan22_14b` lane for txt2vid/img2vid while preserving the requested variant metadata (`wan_engine_variant`).
-- 2026-02-17: `generation.py` WAN video core validation now enforces frame domain `4n+1` in `[9,401]`, accepts strict `gguf_attention_mode` (`global|sliding`), and validates/forwards img2vid chunk controls (`img2vid_chunk_frames`, `img2vid_overlap_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`) fail-loud.
-- 2026-02-20: `generation.py` img2vid chunk validation now also enforces `img2vid_chunk_frames < img2vid_num_frames` at API parse time (HTTP 400), avoiding silent non-chunk fallback paths later in use-case execution.
-- 2026-02-21: `generation.py` now validates/forwards optional `img2vid_chunk_buffer_mode` (`hybrid|ram|ram+hd`) for `img2vid_mode in {'chunk','sliding'}` and fails loud when provided in `solo` mode.
-- 2026-02-21: `generation.py` img2vid temporal parser now requires explicit `img2vid_mode` (`solo|chunk|sliding`) as source-of-truth; chunk mode keeps `img2vid_chunk_*`, sliding mode validates/forwards `img2vid_window_frames/stride/commit_frames`, and solo mode rejects temporal controls fail-loud.
+- 2026-02-17: `generation.py` WAN video core validation now enforces frame domain `4n+1` in `[9,401]`, accepts strict `gguf_attention_mode` (`global|sliding`), and validates/forwards windowed img2vid controls fail-loud (`img2vid_window_frames`, `img2vid_window_stride`, `img2vid_window_commit_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`, optional `img2vid_chunk_buffer_mode`).
+- 2026-02-20: `generation.py` img2vid temporal parser enforces strict mode-scoped field validation and keeps windowed continuity checks fail-loud at API parse time (HTTP 400).
+- 2026-02-21: `generation.py` now validates/forwards optional `img2vid_chunk_buffer_mode` (`hybrid|ram|ram+hd`) for windowed img2vid modes (`sliding|svi2|svi2_pro`) and fails loud when provided in `solo` mode.
+- 2026-02-21: `generation.py` img2vid temporal parser now requires explicit `img2vid_mode` (`solo|sliding|svi2|svi2_pro`) as source-of-truth; windowed modes validate/forward `img2vid_window_frames/stride/commit_frames`, and `solo` rejects temporal controls fail-loud.
 - 2026-02-22: `generation.py` extends WAN img2vid temporal contract to `img2vid_mode='svi2'|'svi2_pro'`; both reuse windowed validation/forwarding with fail-loud continuity checks (`img2vid_window_stride` aligned to temporal scale `4`, `img2vid_window_commit_frames` keeps at least 4 overlap frames beyond stride), and accept `img2vid_anchor_alpha`/`img2vid_chunk_seed_mode`/`img2vid_chunk_buffer_mode` for windowed modes.
 - 2026-02-21: `generation.py` video core parser removed legacy sampler aliases (`txt2vid_sampling`/`img2vid_sampling`); canonical request keys are `*_sampler` only, and old aliases now fail strict unknown-key validation.
 - 2026-02-20: `generation.py` WAN video parsing now validates `gguf_sdpa_policy` strictly (`auto|mem_efficient|flash|math`) and normalizes accepted values to lowercase before request dispatch.
@@ -114,6 +114,7 @@ Status: Active
 - 2026-02-22: `generation.py` now validates `gguf_te_device` fail-loud in WAN video prepare paths (`txt2vid` + `img2vid`), accepting only `auto|cpu|cuda|cuda:<index>` (with `gpu` normalized to `cuda`).
 - 2026-02-22: `generation.py` gate-release failure handling now logs warning-level diagnostics instead of swallowing exceptions silently in video worker teardown.
 - 2026-02-27: `generation.py` now accepts optional WAN `video_upscaling` object (`enabled` required bool + strict typed SeedVR2 options), rejects unknown keys, and forwards normalized values into request extras as `extras.video_upscaling`.
+- 2026-03-01: `generation.py` now validates/forwards WAN img2vid guide fields (`img2vid_resize_mode`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) into request extras with strict enum/range checks so runtime init-image preprocessing matches the UI framing guide.
 - 2026-02-23: `options.py` now enforces main-device invariant on runtime updates: any device update to `codex_core_device`/`codex_te_device`/`codex_vae_device` is normalized to one shared value, and mixed values are rejected with HTTP 400.
 - 2026-02-23: `tools.py` GGUF conversion API now accepts `precision_mode` (`FULL_BF16|FULL_FP16|FULL_FP32|FP16_PLUS_FP32|BF16_PLUS_FP32`) and rejects ambiguous payloads that combine `precision_mode` with legacy `float_group_overrides`.
 - 2026-02-27: `generation.py` now rejects unknown top-level `/api/img2img` payload keys (allowlist) to prevent silent contract drift (txt2img already enforced this).

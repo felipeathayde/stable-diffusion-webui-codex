@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Embedded XYZ sweep card.
 Provides XYZ controls/results as an embeddable card (for Generation Parameters), reusing the shared XYZ store
 with per-axis toggles and sampler/scheduler autofill actions.
+Run/stop ownership stays in the shared RUN card (this card does not render local stop buttons).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `XyzSweepCard` (component): Embedded XYZ controls + results card.
@@ -24,7 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <div class="gen-card xyz-card">
     <WanSubHeader
-      title="Script"
+      title="XYZ workflow"
       :clickable="true"
       :disabled="controlsLocked"
       :aria-pressed="store.enabled"
@@ -142,12 +143,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <div class="toolbar">
         <span class="caption">Run XYZ from the main Generate button while XYZ is enabled.</span>
-        <button class="btn btn-sm btn-outline" type="button" :disabled="store.status !== 'running'" @click="() => store.stop('after_current')">
-          Stop after current
-        </button>
-        <button class="btn btn-sm btn-destructive" type="button" :disabled="store.status !== 'running'" @click="() => store.stop('immediate')">
-          Stop now
-        </button>
         <span v-if="store.progress.total" class="caption">
           {{ store.progress.completed }} / {{ store.progress.total }} done · {{ store.progress.current }}
         </span>

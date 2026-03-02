@@ -80,6 +80,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-01-13: `styles/components/asset-metadata-modal.css` adds in-view controls + subtitle styling for the metadata modal (Beautify + expand/collapse all).
 - 2025-12-27: Added shared “Run header” layout helpers (`run-controls`, `run-control`, `run-sticky`) in `styles/components/views-shared.css` (Run is the single sticky header in generation views).
 - 2025-12-27: Added `run-batch-menu*` styles in `styles/components/views-shared.css` so Run batch count/size controls can live in a dropdown panel.
+- 2026-03-02: `styles/components/views-shared.css` now includes a dedicated `run-badge-xyz` style (experimental-pill look) used by image-tab RUN headers when XYZ workflow is enabled.
 - 2025-12-27: Added shared helpers for input-inline actions and chip rows (`cdx-input-with-actions`, `cdx-chips-row`) and a `cdx-res-presets` block for aligning size presets with Width/Height (2×2 grid).
 - 2025-12-27: Prompt toolbar Styles field now has a min width to prevent the inline actions from overlapping the input text.
 - 2025-12-26: Standardized `.panel-header` height to `4.25rem` (min height) and removed title-wrapper `<span>` patterns from panel headers.

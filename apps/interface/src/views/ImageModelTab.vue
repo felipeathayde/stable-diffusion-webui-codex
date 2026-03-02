@@ -375,6 +375,15 @@ Symbols (top-level; keep in sync; no ghosts):
           :emptyText="resultsEmptyText"
           :style="previewStyle"
         >
+          <template #empty>
+            <div class="wan-results-empty">
+              <div class="wan-empty-title">
+                <template v-if="isRunning">{{ resultsEmptyText }}</template>
+                <template v-else>No images yet</template>
+              </div>
+              <div v-if="!isRunning" class="caption">Generate to see results here.</div>
+            </div>
+          </template>
           <template #image-actions="{ image, index }">
             <button
               v-if="supportsImg2Img"

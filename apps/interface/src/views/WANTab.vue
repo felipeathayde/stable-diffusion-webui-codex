@@ -615,7 +615,7 @@ Symbols (top-level; keep in sync; no ghosts):
               <div v-if="videoUrl" class="caption">
                 Enable “Return frames” in Video Output to include frames in the result payload.
               </div>
-              <div v-else-if="!isRunning" class="caption">Need help? Press Generate to see what is missing.</div>
+              <div v-else-if="!isRunning" class="caption">Generate to see results here.</div>
             </div>
           </template>
         </ResultViewer>

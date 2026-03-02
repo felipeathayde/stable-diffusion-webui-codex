@@ -68,6 +68,8 @@
   .quicksettings .qs-group-zimage-turbo { flex: 0 0 auto; }
   .quicksettings .qs-group-models { flex: 0 0 auto; }
   .quicksettings .qs-group-mode-toggle { flex: 0 0 auto; }
+  .quicksettings .qs-group-mode-toggle--end { margin-left: auto; }
+  .quicksettings .qs-group-wan-refresh--end { margin-left: auto; }
   .quicksettings .qs-group-mode-toggle .qs-row { gap: 0.35rem; }
   .quicksettings .qs-group-mode-toggle .qs-toggle-btn {
     min-width: 5.2rem;

@@ -90,7 +90,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2025-12-28: QuickSettings bar now stacks `quicksettings-row` blocks and uses an animated (rAF) collapsible Advanced row; WAN adds `wan-subheader` section headers in `styles/views/wan.css`.
 - 2025-12-29: Sticky header offset (`--sticky-offset`) is derived from the `.main-header` height and used by `RunCard` (`.panel-header.results-sticky`).
 - 2026-01-01: History cards now render as a single-row horizontal strip (with horizontal scroll); per-item action buttons appear on hover as a compact overlay (with horizontal scroll when needed) and stay visible for the selected item via `styles/components/views-shared.css` (image tabs + WAN).
-- 2026-01-14: Tools view now right-aligns GGUF action buttons (Overwrite/Comfy Layout + Convert) via `styles/views/tools.css`.
+- 2026-03-02: Tools view keeps GGUF action rows right-aligned for `Overwrite` and `Convert/Cancel` controls via `styles/views/tools.css`.
 - 2026-01-29: Added `styles/components/cdx-dropzone.css` and `styles/views/pnginfo.css` for the revamped PNG Info view/dropzone.
 - 2026-02-18: `styles/views/pnginfo.css` now defines a PNG-specific header-actions layout (`pnginfo-header-*`) to avoid shared `results-actions` row-wrap collisions, and adds loaded-preview clear-button positioning (`pnginfo-clear-button`).
 - 2026-02-03: Renamed the hires settings card stylesheet to `styles/components/hires-settings-card.css` and updated the card root class to `.hires-card`.
@@ -105,13 +105,14 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-17: `quicksettings.css` flex sizing was adjusted for wide monitors (reduced right-side dead space in the top row).
 - 2026-02-21: `quicksettings.css` removed the obsolete `.qs-group-attention` layout hook after attention backend control moved from QuickSettings to Launcher Runtime.
 - 2026-02-22: `quicksettings.css` adds `.qs-group-perf-obliterate` to the perf-group flex layout so the new `Obliterate VRAM` quicksettings action aligns with other Smart toggles.
+- 2026-03-02: `quicksettings.css` now supports right-anchored family controls (`qs-group-mode-toggle--end`, `qs-group-wan-refresh--end`) so ZImage mode toggles sit before Refresh on the right edge and WAN Refresh aligns to the right edge.
 - 2026-02-17: `result-viewer.css` removed zoom legend styles; zoom UI now relies on icon-only controls in the shared overlay.
 - 2026-03-01: `result-viewer.css` now styles WAN zoom frame-guide editing UX in `ImageZoomOverlay.vue` (conditional wider toolbar for guide mode, draggable frame-guide rectangle state, guide resize-mode/size controls, and compact source/scaled/frame/crop metadata rows).
 - 2026-03-02: `styles.css` now positions `InitialImageCard` dropzone remove action inside the dotted zone (`.init-dropzone-remove` absolute top-right), and `img2img-inpaint-params-card.css` adds `.img2img-caption--init-name` for centered init-image filename captions.
 - 2026-03-02: `styles/views/wan.css` now includes compact toggle helpers for temporal reset-anchor (`.wan-temporal-anchor-toggle*`) and reflow helpers for upscaling card rows (`.wan-upscaling-*`), keeping toggle buttons content-width and reducing uneven row stretching.
 - 2026-02-20: `styles/views/wan.css` adds opt-in clickable `wan-subheader` states (`--clickable` hover/focus) for full-row header toggles; `xyz-sweep-card.css` adds `.xyz-card-body` for collapsed-body layout grouping.
 - 2026-02-20: `styles.css` sets `.btn-destructive` height to `2rem` for size parity with adjacent `.btn-outline` controls in compact toolbars.
-- 2026-02-20: `generation-settings-card.css` now defines `cfg-advanced-row--secondary` and `gc-col--cfg-advanced-apg-eta` to keep the lower CFG-advanced row left-anchored (`APG Eta` first) while grouping `Guidance Rescale`, `CFG Trunc Ratio`, and `Renorm CFG` on the same row.
+- 2026-03-02: `generation-settings-card.css` now keeps CFG advanced sub-rows stacked with `cfg-advanced-row--secondary` only (legacy `gc-col--cfg-advanced-apg-eta` removed), matching the three-row Advanced layout used by both basic parameter cards.
 - 2026-02-21: `generation-settings-card.css` now styles an active state for dimension action buttons (`.btn-swap--active`) used by the new aspect-ratio lock toggle in the basic parameter cards.
 - 2026-02-20: `styles/components/views-shared.css` now styles History as square 1:1 thumbnail cards (`.cdx-history-item` + `.cdx-history-thumb`, object-fit contain) and adds `cdx-history-modal*` layout rules for organized run-details dialogs.
 - 2026-02-21: Added `styles/components/inpaint-mask-editor.css` and imported it in `styles.css` for the new full-screen inpaint mask editor overlay (stage/content/cursor/toolbar semantics).

@@ -29,12 +29,12 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to view modules (doc-only change; part of rollout).
 - 2026-01-06: `ImageModelTab.vue` now filters schedulers by the selected sampler’s `allowed_schedulers` and auto-resets invalid scheduler selections to the sampler’s `default_scheduler`.
 - 2026-01-13: `ToolsTab.vue` GGUF converter supports cancellation and an Overwrite toggle (default off; fails if the output file exists).
-- 2026-01-14: `ToolsTab.vue` GGUF converter supports Comfy/Codex key mapping for diffusion denoisers (Diffusers→Comfy keys via `comfy_layout`).
-- 2026-01-14: `ToolsTab.vue` now right-aligns the GGUF converter action rows (toggles + Convert/Cancel).
+- 2026-03-02: `ToolsTab.vue` GGUF converter now runs with fixed Codex/Comfy export layout (`comfy_layout=true`) and no user-facing Comfy Layout toggle.
+- 2026-01-14: `ToolsTab.vue` right-aligns GGUF converter action rows (Overwrite + Convert/Cancel).
 - 2026-01-16: `ToolsTab.vue` now uses vendored model metadata only and exposes a Mixed toggle with an FP16/FP32 choice (advanced overrides are hidden).
 - 2026-02-23: `ToolsTab.vue` mixed precision control now uses a dedicated `precision_mode` select (`Full BF16`, `Full FP16`, `Full FP32`, `FP16+FP32`, `BF16+FP32`) and sends `precision_mode` to `/api/tools/convert-gguf`.
 - 2026-01-16: `ToolsTab.vue` GGUF converter presets include WAN22 denoisers (selectable via vendored model metadata).
-- 2026-01-29: `ToolsTab.vue` supports CodexPack v1 outputs: the GGUF converter can emit `*.codexpack.gguf` directly (`codexpack_v1=true`; base GGUF is temp-only and deleted on success), and a separate CodexPack packer can pack an existing base GGUF to `*.codexpack.gguf` (Z-Image Base only; Q4_K; Comfy Layout metadata required).
+- 2026-03-02: `ToolsTab.vue` removed the standalone `CodexPack v1 Packer` card from the Tools UI; Tools now exposes only the GGUF converter workflow.
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.
 - 2026-01-21: WAN stage LoRA selection became sha-based (`loraSha` in params → payload `lora_sha`) for the old stage-level control path.
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.
@@ -73,6 +73,7 @@ Status: Active
 - 2026-02-21: `WANTab.vue` `img2vid` init-image input now reuses `components/Img2ImgInpaintParamsCard.vue` (with `useMask=false`) instead of mounting `InitialImageCard.vue` directly, keeping shared init-image dropzone/thumb/zoom behavior and preserving the guided selector anchor `#wan-guided-init-image`.
 - 2026-03-01: `WANTab.vue` now passes WAN no-stretch zoom frame-guide state (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card and applies `update:zoomFrameGuide` edits back into `video.width/height` + guide fields, enabling interactive guide drag/resize while keeping WAN-safe dimension snapping.
 - 2026-03-02: `WANTab.vue` img2vid init-image card no longer renders the extra `Input / Mode is set in QuickSettings` row above the shared init-image card; the reused card title is now `Img2Vid Parameters` for parity with img2img panel semantics.
+- 2026-03-02: `WANTab.vue` and `ImageModelTab.vue` now render matching two-line results empty states (bold title + caption); WAN caption text is `Generate to see results here.` and image tabs keep `No images yet` + `Generate to see results here.` copy.
 - 2026-02-25: `WANTab.vue` now passes `maskEnforcement=\"per_step_clamp\"` to the shared img2img-init card, aligning embedded defaults with Forge-engine masked semantics.
 - 2026-02-21: `WANTab.vue` windowed `img2vid` temporal controls render inside `Temporal Loom` with compact grouped controls (`Attention Mode`, `Window Frames`, `Window Stride`, `Window Commit`, `Anchor Alpha`, `Chunk Seed Mode`), and numeric fields use shared `SliderField` + `?` hover tooltips (`HoverTooltip`).
 - 2026-02-21: `ImageModelTab.vue` now wires `Img2ImgInpaintParamsCard.vue` to the new mask editor apply/reset-notice events (`apply:maskImageData`, `notice:maskEditorReset`) and preserves existing fail-loud dimension validation on edited masks.

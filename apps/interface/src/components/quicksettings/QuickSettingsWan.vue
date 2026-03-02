@@ -28,13 +28,6 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
   </div>
 
-  <div class="quicksettings-group qs-group-wan-refresh">
-    <label class="label-muted">Lists</label>
-    <div class="qs-row">
-      <button class="btn qs-btn-secondary qs-refresh-btn" type="button" title="Refresh lists" @click="$emit('refresh')">Refresh</button>
-    </div>
-  </div>
-
   <div class="quicksettings-group qs-group-wan-lightx2v">
     <div class="qs-row">
       <button
@@ -138,6 +131,13 @@ Symbols (top-level; keep in sync; no ghosts):
         </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseVae')">+</button>
       </div>
+    </div>
+  </div>
+
+  <div class="quicksettings-group qs-group-wan-refresh qs-group-wan-refresh--end">
+    <label class="label-muted">Lists</label>
+    <div class="qs-row">
+      <button class="btn qs-btn-secondary qs-refresh-btn" type="button" title="Refresh lists" @click="$emit('refresh')">Refresh</button>
     </div>
   </div>
 </template>

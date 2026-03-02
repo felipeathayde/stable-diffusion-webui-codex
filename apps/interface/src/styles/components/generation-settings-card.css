@@ -53,9 +53,6 @@
     border-top: 0;
     justify-content: flex-start;
   }
-  .gen-card .gc-col--cfg-advanced-apg-eta {
-    flex: 0 1 16rem;
-  }
   .gen-card .cdx-slider-field__right .qs-toggle-btn {
     flex-shrink: 0;
   }

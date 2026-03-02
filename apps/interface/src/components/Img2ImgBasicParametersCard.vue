@@ -245,98 +245,10 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </div>
 
-      <div v-if="showGuidanceAdvancedRow" class="gc-row cfg-advanced-row">
-        <SliderField
-          v-if="hasGuidanceSupport('apg_start_step')"
-          class="gc-col"
-          label="APG Start"
-          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgStartStep"
-          tooltipTitle="APG Start"
-          :modelValue="guidanceAdvanced.apgStartStep"
-          :min="0"
-          :max="maxSteps"
-          :step="1"
-          :inputStep="1"
-          :nudgeStep="1"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled"
-          @update:modelValue="(v) => patchGuidanceAdvanced({ apgStartStep: clampInt(v, 0, maxSteps) })"
-        />
-
-        <SliderField
-          v-if="hasGuidanceSupport('apg_momentum')"
-          class="gc-col"
-          label="APG Momentum"
-          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgMomentum"
-          tooltipTitle="APG Momentum"
-          :modelValue="guidanceAdvanced.apgMomentum"
-          :min="0"
-          :max="0.99"
-          :step="0.01"
-          :inputStep="0.01"
-          :nudgeStep="0.01"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled"
-          @update:modelValue="(v) => patchGuidanceAdvanced({ apgMomentum: clampFloat(v, 0, 0.99) })"
-        />
-
-        <SliderField
-          v-if="hasGuidanceSupport('apg_rescale')"
-          class="gc-col"
-          label="APG Rescale"
-          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgRescale"
-          tooltipTitle="APG Rescale"
-          :modelValue="guidanceAdvanced.apgRescale"
-          :min="0"
-          :max="1"
-          :step="0.01"
-          :inputStep="0.01"
-          :nudgeStep="0.01"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled"
-          @update:modelValue="(v) => patchGuidanceAdvanced({ apgRescale: clampFloat(v, 0, 1) })"
-        />
-
-        <SliderField
-          v-if="hasGuidanceSupport('apg_norm_threshold')"
-          class="gc-col"
-          label="APG Norm"
-          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgNormThreshold"
-          tooltipTitle="APG Norm"
-          :modelValue="guidanceAdvanced.apgNormThreshold"
-          :min="0"
-          :max="40"
-          :step="0.1"
-          :inputStep="0.1"
-          :nudgeStep="0.1"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled"
-          @update:modelValue="(v) => patchGuidanceAdvanced({ apgNormThreshold: clampFloat(v, 0, 40) })"
-        />
-
-      </div>
-
       <div
-        v-if="showGuidanceAdvancedRow && (hasGuidanceSupport('apg_eta') || hasGuidanceSupport('guidance_rescale') || hasGuidanceSupport('cfg_trunc_ratio') || hasGuidanceSupport('renorm_cfg'))"
-        class="gc-row cfg-advanced-row cfg-advanced-row--secondary"
+        v-if="showGuidanceAdvancedRow && (hasGuidanceSupport('guidance_rescale') || hasGuidanceSupport('cfg_trunc_ratio') || hasGuidanceSupport('renorm_cfg'))"
+        class="gc-row cfg-advanced-row"
       >
-        <SliderField
-          v-if="hasGuidanceSupport('apg_eta')"
-          class="gc-col gc-col--cfg-advanced-apg-eta"
-          label="APG Eta"
-          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgEta"
-          tooltipTitle="APG Eta"
-          :modelValue="guidanceAdvanced.apgEta"
-          :min="-1"
-          :max="1"
-          :step="0.01"
-          :inputStep="0.01"
-          :nudgeStep="0.01"
-          inputClass="cdx-input-w-md"
-          :disabled="disabled"
-          @update:modelValue="(v) => patchGuidanceAdvanced({ apgEta: clampFloat(v, -1, 1) })"
-        />
-
         <SliderField
           v-if="hasGuidanceSupport('guidance_rescale')"
           class="gc-col"
@@ -386,6 +298,101 @@ Symbols (top-level; keep in sync; no ghosts):
           inputClass="cdx-input-w-md"
           :disabled="disabled"
           @update:modelValue="(v) => patchGuidanceAdvanced({ renormCfg: clampFloat(v, 0, 4) })"
+        />
+      </div>
+
+      <div
+        v-if="showGuidanceAdvancedRow && (hasGuidanceSupport('apg_start_step') || hasGuidanceSupport('apg_eta') || hasGuidanceSupport('apg_rescale'))"
+        class="gc-row cfg-advanced-row cfg-advanced-row--secondary"
+      >
+        <SliderField
+          v-if="hasGuidanceSupport('apg_start_step')"
+          class="gc-col"
+          label="APG Start"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgStartStep"
+          tooltipTitle="APG Start"
+          :modelValue="guidanceAdvanced.apgStartStep"
+          :min="0"
+          :max="maxSteps"
+          :step="1"
+          :inputStep="1"
+          :nudgeStep="1"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgStartStep: clampInt(v, 0, maxSteps) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_eta')"
+          class="gc-col"
+          label="APG Eta"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgEta"
+          tooltipTitle="APG Eta"
+          :modelValue="guidanceAdvanced.apgEta"
+          :min="-1"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgEta: clampFloat(v, -1, 1) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_rescale')"
+          class="gc-col"
+          label="APG Rescale"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgRescale"
+          tooltipTitle="APG Rescale"
+          :modelValue="guidanceAdvanced.apgRescale"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgRescale: clampFloat(v, 0, 1) })"
+        />
+      </div>
+
+      <div
+        v-if="showGuidanceAdvancedRow && (hasGuidanceSupport('apg_momentum') || hasGuidanceSupport('apg_norm_threshold'))"
+        class="gc-row cfg-advanced-row cfg-advanced-row--secondary"
+      >
+        <SliderField
+          v-if="hasGuidanceSupport('apg_momentum')"
+          class="gc-col"
+          label="APG Momentum"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgMomentum"
+          tooltipTitle="APG Momentum"
+          :modelValue="guidanceAdvanced.apgMomentum"
+          :min="0"
+          :max="0.99"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgMomentum: clampFloat(v, 0, 0.99) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_norm_threshold')"
+          class="gc-col"
+          label="APG Norm"
+          :tooltip="ADVANCED_GUIDANCE_TOOLTIPS.apgNormThreshold"
+          tooltipTitle="APG Norm"
+          :modelValue="guidanceAdvanced.apgNormThreshold"
+          :min="0"
+          :max="40"
+          :step="0.1"
+          :inputStep="0.1"
+          :nudgeStep="0.1"
+          inputClass="cdx-input-w-md"
+          :disabled="disabled"
+          @update:modelValue="(v) => patchGuidanceAdvanced({ apgNormThreshold: clampFloat(v, 0, 40) })"
         />
       </div>
     </div>

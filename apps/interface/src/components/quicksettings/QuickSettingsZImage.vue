@@ -7,8 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Z-Image quicksettings selectors (model + variant + assets).
-Renders Z-Image model, Turbo/Base toggle, VAE, and Qwen3 text encoder selectors for Z-Image model tabs, and exposes an
-optional `modeToggles` slot immediately after Turbo for parent-owned mode actions (IMG2IMG/INPAINT).
+Renders Z-Image model, Turbo/Base toggle, VAE, and Qwen3 text encoder selectors for Z-Image model tabs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsZImage` (component): Z-Image quicksettings row used by the main quicksettings bar.
@@ -56,8 +55,6 @@ Symbols (top-level; keep in sync; no ghosts):
       </button>
     </div>
   </div>
-
-  <slot name="modeToggles" />
 
   <div class="quicksettings-group qs-group-vae">
     <label class="label-muted">VAE</label>

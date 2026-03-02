@@ -195,33 +195,30 @@ Symbols (top-level; keep in sync; no ghosts):
           @addVaePath="onAddVaePath"
           @addTencPath="onAddTencPath"
           @showMetadata="onShowMetadata"
-        >
-          <template #modeToggles>
-            <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
-              <label class="label-muted">Mode</label>
-              <div class="qs-row">
-                <button
-                  :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                  type="button"
-                  :aria-pressed="useInitImage"
-                  @click="onUseInitImageChange(!useInitImage)"
-                >
-                  IMG2IMG
-                </button>
-                <button
-                  :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                  type="button"
-                  :aria-pressed="useMask"
-                  :disabled="inpaintToggleDisabled"
-                  :title="inpaintToggleTitle"
-                  @click="onUseMaskChange(!useMask)"
-                >
-                  INPAINT
-                </button>
-              </div>
-            </div>
-          </template>
-        </QuickSettingsZImage>
+        />
+        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle qs-group-mode-toggle--end">
+          <label class="label-muted">Mode</label>
+          <div class="qs-row">
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useInitImage"
+              @click="onUseInitImageChange(!useInitImage)"
+            >
+              IMG2IMG
+            </button>
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useMask"
+              :disabled="inpaintToggleDisabled"
+              :title="inpaintToggleTitle"
+              @click="onUseMaskChange(!useMask)"
+            >
+              INPAINT
+            </button>
+          </div>
+        </div>
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
           <div class="qs-row">

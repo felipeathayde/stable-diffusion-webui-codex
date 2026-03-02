@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Root WebUI layout and router shell.
-Renders the global header + navigation tabs + router outlet (home + enabled model tabs + gallery/workflows + utilities) and computes
+Renders the global header + navigation tabs + router outlet (home + enabled non-chroma model tabs + gallery/workflows + utilities) and computes
 `--sticky-offset` from the header height so sticky result headers stay aligned.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setStickyOffset` (function): Computes and sets CSS `--sticky-offset` based on the header height.
 - `requestStickyOffsetRecalc` (function): Schedules a sticky-offset recalculation via `requestAnimationFrame`.
 - `retryBootstrap` (function): Retries hard-fatal app bootstrap initialization.
-- `enabledTabs` (const): Computed list of enabled model tabs used to render the nav.
+- `enabledTabs` (const): Computed list of enabled non-chroma model tabs used to render the nav.
 -->
 
 <template>
@@ -66,7 +66,6 @@ Symbols (top-level; keep in sync; no ghosts):
         <RouterLink class="tab-link" to="/upscale">upscale</RouterLink>
         <RouterLink class="tab-link" to="/pnginfo">png info</RouterLink>
         <RouterLink class="tab-link" to="/extensions">extensions</RouterLink>
-        <RouterLink class="tab-link" to="/settings">settings</RouterLink>
       </nav>
       <main class="main-content">
         <RouterView />
@@ -105,7 +104,7 @@ function requestStickyOffsetRecalc(): void {
 
 const tabs = useModelTabsStore()
 const bootstrap = useBootstrapStore()
-const enabledTabs = computed(() => tabs.orderedTabs.filter(t => t.enabled))
+const enabledTabs = computed(() => tabs.orderedTabs.filter((tab) => tab.enabled && tab.type !== 'chroma'))
 
 async function retryBootstrap(): Promise<void> {
   try {

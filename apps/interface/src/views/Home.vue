@@ -307,7 +307,7 @@ onMounted(async () => {
   }
 })
 
-const tabs = computed(() => store.orderedTabs)
+const tabs = computed(() => store.orderedTabs.filter((tab) => tab.type !== 'chroma'))
 const showAnimaOption = computed(() => Boolean(engineCaps.get('anima')))
 const dependencyChecks = computed(() => engineCaps.dependencyChecks)
 const dependencyLoading = computed(() => !engineCaps.loaded && !dependencyError.value)

@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Backend state snapshot for progress reporting.
-Provides a small thread-safe state object (`BackendState`) used by runtimes/services to report progress without relying on legacy globals.
+Purpose: Backend state snapshot for runtime progress reporting.
+Provides a small thread-safe state object (`BackendState`) used by runtimes/services to report sampling progress and VAE phase block progress (encode/decode) without relying on legacy globals.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BackendState` (dataclass): Backend progress state (job/task counters + current image/latent pointers).
@@ -36,6 +36,9 @@ class BackendState:
     sampling_step: int = 0
     sampling_block_total: int = 0
     sampling_block_index: int = 0
+    vae_phase: str = ""
+    vae_block_total: int = 0
+    vae_block_index: int = 0
     time_start: float = 0.0
     textinfo: str = ""
     current_image: Optional[Any] = None
@@ -59,6 +62,9 @@ class BackendState:
             self.sampling_step = 0
             self.sampling_block_total = 0
             self.sampling_block_index = 0
+            self.vae_phase = ""
+            self.vae_block_total = 0
+            self.vae_block_index = 0
             self.time_start = time.time()
             self.textinfo = ""
             self.current_image = None
@@ -82,6 +88,9 @@ class BackendState:
             self.id_live_preview = 0
             self.sampling_block_total = 0
             self.sampling_block_index = 0
+            self.vae_phase = ""
+            self.vae_block_total = 0
+            self.vae_block_index = 0
             self.skipped = False
             self.interrupted = False
             self.stopping_generation = False
@@ -104,6 +113,9 @@ class BackendState:
             self.sampling_steps = 0
             self.sampling_block_total = 0
             self.sampling_block_index = 0
+            self.vae_phase = ""
+            self.vae_block_total = 0
+            self.vae_block_index = 0
             self.current_image = None
             self.current_latent = None
             self.current_image_sampling_step = 0
@@ -116,6 +128,9 @@ class BackendState:
             self.sampling_step = 0
             self.sampling_block_total = 0
             self.sampling_block_index = 0
+            self.vae_phase = ""
+            self.vae_block_total = 0
+            self.vae_block_index = 0
             self.current_image_sampling_step = 0
 
     def set_current_image(self, image: Optional[Any] = None, *, sampling_step: Optional[int] = None) -> None:
@@ -162,6 +177,40 @@ class BackendState:
                     normalized_index = min(normalized_index, self.sampling_block_total)
                 self.sampling_block_index = max(self.sampling_block_index, normalized_index)
 
+    def update_vae_progress(
+        self,
+        *,
+        phase: str,
+        block_index: Optional[int] = None,
+        total_blocks: Optional[int] = None,
+    ) -> None:
+        normalized_phase = str(phase or "").strip().lower()
+        if normalized_phase not in {"encode", "decode"}:
+            raise ValueError("phase must be 'encode' or 'decode'")
+        with self._lock:
+            if self.vae_phase != normalized_phase:
+                self.vae_phase = normalized_phase
+                self.vae_block_index = 0
+                self.vae_block_total = 0
+            if total_blocks is not None:
+                normalized_total = max(0, int(total_blocks))
+                self.vae_block_total = normalized_total
+                if normalized_total == 0:
+                    self.vae_block_index = 0
+                elif self.vae_block_index > normalized_total:
+                    self.vae_block_index = normalized_total
+            if block_index is not None:
+                normalized_index = max(0, int(block_index))
+                if self.vae_block_total > 0:
+                    normalized_index = min(normalized_index, self.vae_block_total)
+                self.vae_block_index = normalized_index
+
+    def reset_vae_progress(self) -> None:
+        with self._lock:
+            self.vae_phase = ""
+            self.vae_block_index = 0
+            self.vae_block_total = 0
+
     def tick(self, *, job_no: Optional[int] = None, sampling_step: Optional[int] = None) -> None:
         with self._lock:
             if job_no is not None:
@@ -176,6 +225,14 @@ class BackendState:
                 int(self.sampling_steps),
                 int(self.sampling_block_index),
                 int(self.sampling_block_total),
+            )
+
+    def vae_progress_snapshot(self) -> tuple[str, int, int]:
+        with self._lock:
+            return (
+                str(self.vae_phase or ""),
+                int(self.vae_block_index),
+                int(self.vae_block_total),
             )
 
     def set_textinfo(self, message: str) -> None:

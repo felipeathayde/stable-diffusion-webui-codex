@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-02-27
+Last Review: 2026-03-02
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 
 ## Notes
 - 2026-02-28: `img2vid.py` removed runtime `chunk` mode routing; accepted temporal modes are now `solo|sliding|svi2|svi2_pro`, and `img2vid_mode='chunk'` fails loud.
+- 2026-03-02: `txt2img_pipeline/runner.py` and `img2img.py` hires second-pass now consume family-dispatched hires prep outputs and support non-SD image families (`flux1`, `flux1_chroma`, `zimage`, `anima`) plus Kontext-specific continuation (`image_latents` injection with `init_latent=None`); `_build_hires_plan(...)` in both paths now fail loud when engine capability surface declares `supports_hires=false`.
 - Introduza novos use cases sempre que uma combinação de tarefa + modo precisar de orquestração própria; mantenha a lógica focalizada em preparar entradas, chamar engines e relatar progresso, delegando detalhes de modelo para `engines/` ou `runtime/`.
 - Quando adicionar um novo use case, espelhe o padrão existente e registre com o orquestrador e os contratos de API.
 - 2026-01-22: `txt2img.py` now includes a canonical event wrapper (`run_txt2img`) used by engines to keep mode orchestration in the use-case layer (Option A).
@@ -58,3 +59,6 @@ Status: Active
 - 2026-02-22: `img2vid.py` now parses and forwards `img2vid_reset_anchor_to_base` explicitly for chunk/sliding modes (mode defaults: chunk=`true`, sliding=`false`), keeps SVI modes fail-loud on `reset_anchor_to_base=true`, and logs reset state in temporal mode summaries.
 - 2026-02-23: WAN22 use-cases (`txt2vid.py`, `img2vid.py`) no longer inject hardcoded `"auto"` device defaults when building GGUF run configs; they now pass `None` and keep device authority centralized in WAN runtime `resolve_device_name(...)` via memory-manager mount policy.
 - 2026-02-23: `vid2vid.py` flow guidance no longer hardcodes `device=\"cuda\"` fallback; `RaftFlowEstimator` now uses explicit flow device only when provided and otherwise falls back to its memory-manager-backed default device.
+- 2026-03-02: HiRes guards now validate semantic capability surfaces in both txt2img/img2img plan builders (`supports_hires` required, otherwise `NotImplementedError` with engine id). HiRes pass call sites now consume typed hires-prep contracts, and Kontext continuation injects `image_latents` into dict conditioning with `init_latent=None`/`start_at_step=0` (no SD concat path).
+- 2026-03-02: `img2img.py` now preflights `_build_hires_plan(...)` before base sampling in both classic and Kontext paths (fail-fast on unsupported hires/capability config), and Kontext/image-latents sampling callsites now explicitly disable txt2img conditioning fallback to prevent accidental `c_concat` injection when `image_conditioning=None` is intentional.
+- 2026-03-02: `_image_streaming._iter_sampling_progress(...)` now streams phase-aware snapshots (sampling + VAE `encode`/`decode` blocks), and `run_txt2img`/`run_img2img` now emit progress metadata for a second “total” bar (`data.total_phase`, `data.total_percent`, `data.phase_step`, `data.phase_total_steps`) while preserving existing sampling-step semantics.

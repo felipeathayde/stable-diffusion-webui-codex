@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared task orchestration helpers for generation endpoints.
-Centralizes image encoding, engine-options building, and the common task worker loop (status/progress/result/end/error) so routers stay thin.
+Centralizes image encoding, engine-options building, and the common task worker loop (status/progress/result/end/error) so routers stay thin, preserving rich `ProgressEvent` metadata (`message`/`data`) in streamed progress payloads.
 Uses the shared inference gate when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished` (stream termination + cleanup).
 Inference-gate wait cancellation is mode-agnostic (both `immediate` and `after_current` cancel before start); once running, only immediate mode interrupts in-flight orchestration.
 When `CODEX_TRACE_CONTRACT=1`, emits prompt-redacted contract-trace JSONL events (`prompt_hash` only) for prepare/run/progress/result/error/end stages.
@@ -585,6 +585,10 @@ def run_image_task(
                             "total_steps": ev.total_steps,
                             "eta_seconds": ev.eta_seconds,
                         }
+                        if ev.message is not None:
+                            evt["message"] = str(ev.message)
+                        if ev.data:
+                            evt["data"] = dict(ev.data)
                         live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
                         push(evt)
                         emit_contract_trace(

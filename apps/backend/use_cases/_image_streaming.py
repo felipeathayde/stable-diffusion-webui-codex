@@ -12,7 +12,7 @@ Provides seed normalization, worker-thread execution (with smart runtime overrid
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_seed_plan` (function): Normalize request seed + batch_total into (seed, all_seeds, subseeds, subseed_strength).
 - `_run_inference_worker` (function): Run a callable in a daemon thread while propagating smart runtime overrides and capturing output/error/timings.
-- `_iter_sampling_progress` (function): Poll `backend_state` and yield `ProgressEvent` updates until a worker signals completion.
+- `_iter_sampling_progress` (function): Poll `backend_state` and yield phase-aware progress snapshots (sampling + VAE encode/decode blocks) until a worker signals completion.
 - `_decode_generation_output` (function): Normalize `GenerationResult`/tensor output into a list of PIL images and decode timing (pre-decode cache flush + CPU-target decode transfer).
 - `_build_common_info` (function): Build the shared `info` dict for image tasks (engine/task/dims/seed/sampler/scheduler/prompts/extra/timings).
 """
@@ -140,7 +140,7 @@ def _iter_sampling_progress(
     done: "threading.Event",
     outcome: _WorkerOutcome | None = None,
     poll_interval_s: float = 0.12,
-) -> Iterator[tuple[int, int, int, int, float | None]]:
+) -> Iterator[tuple[str, int, int, int, int, float | None, int, int, int, int]]:
     import time
 
     from apps.backend.core.state import state as backend_state
@@ -148,8 +148,13 @@ def _iter_sampling_progress(
     def _has_block_progress(*, block_index: int, block_total: int) -> bool:
         return block_total > 0 and 0 < block_index < block_total
 
+    def _has_vae_progress(*, phase: str, block_index: int, block_total: int) -> bool:
+        return phase in {"encode", "decode"} and block_total > 0 and block_index > 0
+
     t0 = time.perf_counter()
     last_snapshot = (-1, -1, -1, -1)
+    last_vae_snapshot = ("", -1, -1)
+    vae_phase_started_at: dict[str, float] = {}
     while True:
         try:
             snapshot = getattr(backend_state, "sampling_snapshot", None)
@@ -163,12 +168,33 @@ def _iter_sampling_progress(
         except Exception:  # noqa: BLE001
             step, total, block_index, block_total = 0, 0, 0, 0
 
+        try:
+            vae_snapshot = getattr(backend_state, "vae_progress_snapshot", None)
+            if callable(vae_snapshot):
+                vae_phase, vae_block_index, vae_block_total = vae_snapshot()
+            else:
+                vae_phase = str(getattr(backend_state, "vae_phase", "") or "")
+                vae_block_index = int(getattr(backend_state, "vae_block_index", 0) or 0)
+                vae_block_total = int(getattr(backend_state, "vae_block_total", 0) or 0)
+        except Exception:  # noqa: BLE001
+            vae_phase, vae_block_index, vae_block_total = "", 0, 0
+
+        vae_phase = str(vae_phase or "").strip().lower()
+        if vae_phase not in {"encode", "decode"}:
+            vae_phase = ""
+            vae_block_index = 0
+            vae_block_total = 0
+
         total = max(0, int(total))
         step = max(0, min(int(step), total if total > 0 else int(step)))
         block_total = max(0, int(block_total))
         block_index = max(0, int(block_index))
         if block_total > 0:
             block_index = min(block_index, block_total)
+        vae_block_total = max(0, int(vae_block_total))
+        vae_block_index = max(0, int(vae_block_index))
+        if vae_block_total > 0:
+            vae_block_index = min(vae_block_index, vae_block_total)
 
         done_now = done.is_set()
         at_full_block_boundary = block_total > 0 and block_index >= block_total and step < total
@@ -177,19 +203,18 @@ def _iter_sampling_progress(
         emit_step = step
         emit_block_index = block_index
         emit_block_total = block_total
-        promote_terminal_equivalent = worker_succeeded and at_full_block_boundary
-        if promote_terminal_equivalent:
-            # Terminal-equivalent done-path snapshot: the worker has completed with
-            # a full block boundary latched before the next step tick propagated.
+        promote_completed_step = at_full_block_boundary
+        if promote_completed_step:
+            # Full block-boundary snapshots represent a completed step before the
+            # backend tick lands. Promote them to the corresponding completed-step
+            # snapshot instead of suppressing progress.
             emit_step = min(total, step + 1)
             emit_block_index = 0
             emit_block_total = 0
 
-        suppress_boundary_snapshot = at_full_block_boundary and not promote_terminal_equivalent
         current_snapshot = (emit_step, total, emit_block_index, emit_block_total)
         should_emit = (
             total > 0
-            and not suppress_boundary_snapshot
             and (emit_step > 0 or emit_block_index > 0 or done_now)
             and current_snapshot != last_snapshot
         )
@@ -204,8 +229,49 @@ def _iter_sampling_progress(
                 if completed_units > 0.0
                 else None
             )
-            yield emit_step, total, emit_block_index, emit_block_total, eta
+            yield (
+                "sampling",
+                emit_step,
+                total,
+                emit_block_index,
+                emit_block_total,
+                eta,
+                emit_step,
+                total,
+                emit_block_index,
+                emit_block_total,
+            )
             last_snapshot = current_snapshot
+
+        current_vae_snapshot = (vae_phase, vae_block_index, vae_block_total)
+        should_emit_vae = (
+            _has_vae_progress(phase=vae_phase, block_index=vae_block_index, block_total=vae_block_total)
+            and current_vae_snapshot != last_vae_snapshot
+        )
+        if should_emit_vae:
+            now = time.perf_counter()
+            if vae_phase not in vae_phase_started_at:
+                vae_phase_started_at[vae_phase] = now
+            elapsed_phase = max(0.0, now - vae_phase_started_at[vae_phase])
+            completed_blocks = float(min(vae_block_total, vae_block_index))
+            vae_eta = (
+                (elapsed_phase * (float(vae_block_total) - completed_blocks) / completed_blocks)
+                if completed_blocks > 0.0
+                else None
+            )
+            yield (
+                vae_phase,
+                vae_block_index,
+                vae_block_total,
+                vae_block_index,
+                vae_block_total,
+                vae_eta,
+                emit_step,
+                total,
+                emit_block_index,
+                emit_block_total,
+            )
+            last_vae_snapshot = current_vae_snapshot
 
         if done_now:
             break

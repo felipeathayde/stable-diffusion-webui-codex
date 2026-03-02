@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Sampling driver (native-only) for diffusion runtimes.
 Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
 while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`), including native ER-SDE stage updates
-with strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring (APG/rescale/trunc/renorm).
+with strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring (APG/rescale/trunc/renorm),
+and emits explicit runtime telemetry for console block-progress activation state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
@@ -759,6 +760,12 @@ class CodexSampler:
                         f"(got {type(transformer_options).__name__})."
                     )
                 block_progress_controller = RichBlockProgressController(enabled=active_context.enable_progress)
+                if self._log_enabled:
+                    self._emit_event(
+                        "sampling.block_progress.console",
+                        enabled=bool(getattr(block_progress_controller, "is_active", False)),
+                        env_flag="CODEX_PROGRESS_BAR",
+                    )
 
                 def _on_block_progress(block_index: int, total_blocks: int) -> None:
                     normalized_index, normalized_total = validate_block_progress_payload(

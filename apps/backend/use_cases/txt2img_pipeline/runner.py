@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional refiner).
 Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata, with fail-loud conditioning guards that avoid embedding raw prompt text in raised errors.
 Conditioning smart-cache entries are keyed by model/load identity plus wrapped prompt metadata and stored detached on CPU to avoid stale hits and cross-request GPU pinning.
-The hires stage delegates init preparation and `denoise` semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
+The hires stage delegates family-dispatched init preparation and continuation semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 First-pass base decode before hires is now upscaler-aware (`latent:*` skips decode; pixel upscalers decode).
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PrepareState` (dataclass): Prepared per-run state (resolved engine + plans + prompt context) used across stages.
 - `SamplingOutput` (dataclass): Sampling result container (latents/images + metadata) passed between pipeline stages.
 - `Txt2ImgPipelineRunner` (class): Main orchestrator; owns the stage pipeline (conditioning/sampling/hires/refiner) and calls the runtime helpers
-  (hires stage uses the global hires-fix stage to route latent vs spandrel upscalers; integrates smart cache + pipeline tracing).
+  (hires stage uses the global hires-fix stage for family-dispatched upscaling and continuation mode routing; integrates smart cache + pipeline tracing).
 - `GenerationResult` (dataclass): Standardized output container for the runner (`samples` + optional `decoded`).
 """
 # // tags: txt2img, pipeline, sdxl, hires, refiner
@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
+import math
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, is_dataclass, replace
 import time
@@ -47,6 +48,7 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
     record_smart_cache_miss,
 )
+from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.runtime.memory.smart_offload_invariants import (
     enforce_smart_offload_pre_conditioning_residency,
     enforce_smart_offload_text_encoders_off,
@@ -872,13 +874,16 @@ class Txt2ImgPipelineRunner:
                 base_decoded_shape,
             )
 
-            latents, image_conditioning = prepare_hires_latents_and_conditioning(
+            hires_inputs = prepare_hires_latents_and_conditioning(
                 processing,
                 base_samples=base_result.samples,
                 base_decoded=base_result.decoded,
                 hires_plan=hires_plan_cfg,
                 tile=getattr(hires_cfg, "tile", None),
             )
+            latents = hires_inputs.latents
+            image_conditioning = hires_inputs.image_conditioning
+            continuation_mode = hires_inputs.continuation_mode
 
             hires_settings = state.sampling_plan.noise_settings
             rng_hr = ImageRNG(
@@ -896,7 +901,10 @@ class Txt2ImgPipelineRunner:
                 dtype=latents.dtype,
             )
             start_index = 0
-            denoise_strength = float(denoise)
+            denoise_strength: float | None = float(denoise)
+            init_latent: torch.Tensor | None = latents
+            sampling_image_conditioning = image_conditioning
+            allow_txt2img_conditioning_fallback = True
             image_conditioning_shape = (
                 tuple(int(dim) for dim in image_conditioning.shape)
                 if isinstance(image_conditioning, torch.Tensor)
@@ -923,6 +931,24 @@ class Txt2ImgPipelineRunner:
             if cond_hr is not None:
                 state.payload = ConditioningPayload(conditioning=cond_hr, unconditional=uncond_hr)
                 self._log_conditioning(cond_hr, uncond_hr)
+            if continuation_mode == "image_latents":
+                if not isinstance(state.payload.conditioning, dict):
+                    raise TypeError(
+                        "Hires Kontext continuation requires dict conditioning to inject image_latents; "
+                        f"got {type(state.payload.conditioning).__name__}."
+                    )
+                state.payload.conditioning["image_latents"] = latents
+                if isinstance(state.payload.unconditional, dict):
+                    state.payload.unconditional["image_latents"] = latents
+                init_latent = None
+                sampling_image_conditioning = None
+                denoise_strength = None
+                allow_txt2img_conditioning_fallback = False
+                if not (math.isclose(float(denoise), 0.0) or math.isclose(float(denoise), 1.0)):
+                    self._logger.warning(
+                        "[hires] kontext continuation ignores denoise schedule semantics (configured denoise=%.4f).",
+                        float(denoise),
+                    )
 
             samples = execute_sampling(
                 processing,
@@ -933,10 +959,11 @@ class Txt2ImgPipelineRunner:
                 hires_prompt_context.controls,
                 rng=rng_hr,
                 noise=noise,
-                image_conditioning=image_conditioning,
-                init_latent=latents,
+                image_conditioning=sampling_image_conditioning,
+                init_latent=init_latent,
                 start_at_step=start_index,
                 denoise_strength=denoise_strength,
+                allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
             )
 
             if processing.hires_refiner is not None:
@@ -1027,6 +1054,19 @@ class Txt2ImgPipelineRunner:
     def _build_hires_plan(self, processing: CodexProcessingTxt2Img) -> HiResPlan | None:
         if not getattr(processing, "enable_hr", False):
             return None
+
+        model = getattr(processing, "sd_model", None)
+        engine_id = str(getattr(model, "engine_id", "") or "").strip()
+        if engine_id == "":
+            raise RuntimeError("Hires is enabled but processing.sd_model.engine_id is unavailable.")
+        try:
+            semantic_engine = semantic_engine_for_engine_id(engine_id)
+        except KeyError as exc:
+            raise NotImplementedError(
+                f"Hires is not supported for engine '{engine_id}' because no semantic capability surface is registered."
+            ) from exc
+        if not ENGINE_SURFACES[semantic_engine].supports_hires:
+            raise NotImplementedError(f"Hires is not supported for engine '{engine_id}'.")
 
         hi_cfg = processing.hires
         raw_upscaler = getattr(hi_cfg, "upscaler", None)

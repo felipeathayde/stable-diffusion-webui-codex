@@ -49,6 +49,7 @@ Status: Active
 - 2026-02-19: `vae.py` output staging now treats `DeviceRole.INTERMEDIATE=auto` as CPU-target by default, preventing large decode buffers from staying on GPU unless intermediate backend is explicitly overridden.
 - 2026-02-20: `vae.py` native-LDM type checks now import `AutoencoderKL_LDM` from `runtime/common/vae_ldm.py` (canonical shared lane) instead of the WAN family path.
 - 2026-02-23: `lora_loader.py::CodexLoraLoader.refresh(...)` now resolves default LoRA backup/offload placement from `memory_management.manager.offload_device()` when `offload_device` is omitted (no implicit CPU literal default).
+- 2026-03-02: `vae.py` now reports encode/decode block progress into `BackendState` during both tiled and non-tiled paths (including OOM fallback retries), so use-case progress polling can surface VAE phase progress in task streams.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

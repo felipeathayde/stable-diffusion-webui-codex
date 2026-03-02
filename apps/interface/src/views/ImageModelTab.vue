@@ -9,14 +9,14 @@ Required Notice: see NOTICE
 Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-family engines.
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
-When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (hires-like layout only; no img2img hires payload).
+When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with current img2img payload semantics).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
 Also shares the global `min_tile` preference (tiled lower bound) with `/upscale`.
 Swap-model cards (global + second-pass) share the same capability-gated advanced guidance/APG state surface.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
-Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), so errors are visible even when Prompt is off-screen.
+Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), including dual progress bars (total pipeline + sampling steps), so errors are visible even when Prompt is off-screen.
 When XYZ workflow is enabled, RUN header shows an `XYZ` badge beside `Generate` via the run-card center-adjacent slot while keeping the primary CTA label stable as `Generate`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -305,10 +305,15 @@ Symbols (top-level; keep in sync; no ghosts):
         <RunProgressStatus
           v-if="isRunning"
           :stage="progress.stage"
+          :message="progress.message || ''"
           :percent="progressPercent"
           :step="progress.step"
           :total-steps="progress.totalSteps"
           :eta-seconds="progress.etaSeconds"
+          :total-percent="progress.totalPercent"
+          :total-phase="progress.totalPhase"
+          :total-phase-step="progress.totalPhaseStep"
+          :total-phase-total-steps="progress.totalPhaseTotalSteps"
         />
         <RunProgressStatus
           v-else-if="xyzRunning"

@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
-`er sde` in the sampler allowlist. WAN semantic capabilities are bound to explicit WAN22 variant families via primary-family mapping.
+`er sde` in the sampler allowlist. Non-SD image semantics (Flux/Chroma/ZImage/Anima) now expose hires support in the shared second-pass pipeline.
+WAN semantic capabilities are bound to explicit WAN22 variant families via primary-family mapping.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
@@ -142,7 +143,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_hires=False,
+        supports_hires=True,
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
@@ -157,7 +158,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_hires=False,
+        supports_hires=True,
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
@@ -173,7 +174,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_hires=False,
+        supports_hires=True,
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
@@ -189,7 +190,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_hires=False,
+        supports_hires=True,
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,

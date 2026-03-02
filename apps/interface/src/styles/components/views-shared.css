@@ -270,6 +270,32 @@
     border-radius: 999px;
     overflow: hidden;
   }
+  .run-progress-status__bars {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .run-progress-status__bar-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .run-progress-status__bar-caption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: hsl(var(--muted-foreground));
+    font-variant-numeric: tabular-nums;
+  }
+  .run-progress-status__bar-meta {
+    font-size: 0.72rem;
+    color: hsl(var(--muted-foreground));
+    font-variant-numeric: tabular-nums;
+  }
   .run-progress-status__bar::-webkit-progress-bar {
     background: hsla(0, 0%, 100%, 0.12);
     border-radius: 999px;
@@ -281,6 +307,18 @@
   .run-progress-status__bar::-moz-progress-bar {
     background: hsl(var(--accent));
     border-radius: 999px;
+  }
+  .run-progress-status__bar--total::-webkit-progress-value {
+    background: hsl(196 95% 66%);
+  }
+  .run-progress-status__bar--total::-moz-progress-bar {
+    background: hsl(196 95% 66%);
+  }
+  .run-progress-status__bar--steps::-webkit-progress-value {
+    background: hsl(var(--accent));
+  }
+  .run-progress-status__bar--steps::-moz-progress-bar {
+    background: hsl(var(--accent));
   }
   .run-progress-status__meta {
     display: flex;

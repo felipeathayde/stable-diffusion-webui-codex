@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampling context construction utilities for diffusion samplers.
-Builds per-run sampling state (sampler kind, noise settings, scheduler config) into a `SamplingContext`.
+Builds per-run sampling state (sampler kind, noise settings, scheduler config) into a `SamplingContext`, including console block-progress enablement (`CODEX_PROGRESS_BAR`, default on).
 Sigma schedule construction lives in `sigma_schedules.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -44,7 +44,7 @@ class SamplingContext:
     steps: int
     noise_settings: NoiseSettings
     preview_interval: int = 0
-    enable_progress: bool = False
+    enable_progress: bool = True
     prediction_type: str | None = None
     sigma_min: float | None = None
     sigma_max: float | None = None
@@ -146,7 +146,7 @@ def build_sampling_context(
         steps=steps,
         noise_settings=noise_settings,
         preview_interval=preview_interval_steps(default=0),
-        enable_progress=env_flag("CODEX_PROGRESS_BAR", default=False),
+        enable_progress=env_flag("CODEX_PROGRESS_BAR", default=True),
         prediction_type=prediction_type,
         sigma_min=sigma_min,
         sigma_max=sigma_max,

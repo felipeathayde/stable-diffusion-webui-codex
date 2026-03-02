@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-02-28
+Last Review: 2026-03-02
 Status: Draft
 
 ## Purpose
@@ -29,6 +29,7 @@ Status: Draft
 - 2026-02-20: Removed semantic-engine map entry for `wan22_14b_native`; WAN22 14B semantic ownership is now single-key (`wan22_14b`).
 - 2026-02-20: WAN22 animate semantic/loader key was renamed to `wan22_14b_animate` (old `wan22_animate_14b` removed).
 - 2026-02-21: `capabilities.engine_supports_cfg(engine_id)` now resolves family from explicit `engine_id -> ModelFamily` mapping (including WAN22 variants) instead of semantic-primary-family fallback, removing hidden `wan22 -> WAN22_5B` drift at capability checks.
+- 2026-03-02: `capabilities.py` semantic surfaces now declare `supports_hires=true` for non-SD image families implemented in the shared hires second-pass (`flux1`, `flux1_chroma`, `zimage`, `anima`).
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

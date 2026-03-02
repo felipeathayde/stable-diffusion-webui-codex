@@ -11,12 +11,13 @@ Owns per-tab generation state (progress/live preview/gallery/history), builds re
 starts `/api/txt2img` and `/api/img2img` (txt2img can include hires settings; img2img stays hires-free),
 includes `settings_revision` in payloads, handles
 stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
+Consumes rich progress payload metadata (`progress.message` + `progress.data`) and derives total-phase progress fields for dual run-card bars.
 Exposes task cancellation for active runs (`/api/tasks/:id/cancel`).
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageRunHistoryItem` (interface): Persisted per-tab run history entry (task id, status, summary, params snapshot, error message).
-- `GenerationState` (interface): Per-tab reactive runtime state (status/progress/preview/gallery/history selection).
+- `GenerationState` (interface): Per-tab reactive runtime state (status/progress with sampling + total-phase metadata/preview/gallery/history selection).
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
 - `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
@@ -63,6 +64,13 @@ export interface GenerationState {
     etaSeconds: number | null
     step: number | null
     totalSteps: number | null
+    message: string | null
+    data: Record<string, unknown> | null
+    totalPercent: number | null
+    totalPhase: string | null
+    totalPhaseStep: number | null
+    totalPhaseTotalSteps: number | null
+    totalPhaseEtaSeconds: number | null
   }
   previewImage: GeneratedImage | null
   previewStep: number | null
@@ -139,7 +147,20 @@ function updateResumeEventId(key: string, eventId: number): void {
 function defaultState(): GenerationState {
   return {
     status: 'idle',
-    progress: { stage: 'none', percent: null, etaSeconds: null, step: null, totalSteps: null },
+    progress: {
+      stage: 'none',
+      percent: null,
+      etaSeconds: null,
+      step: null,
+      totalSteps: null,
+      message: null,
+      data: null,
+      totalPercent: null,
+      totalPhase: null,
+      totalPhaseStep: null,
+      totalPhaseTotalSteps: null,
+      totalPhaseEtaSeconds: null,
+    },
     previewImage: null,
     previewStep: null,
     gallery: [],
@@ -172,6 +193,54 @@ function normalizeBooleanParam(rawValue: unknown, fallback: boolean): boolean {
     if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false
   }
   return fallback
+}
+
+function toNullableNumber(rawValue: unknown): number | null {
+  if (rawValue === null || rawValue === undefined) return null
+  const value = typeof rawValue === 'number' ? rawValue : Number(rawValue)
+  if (!Number.isFinite(value)) return null
+  return value
+}
+
+function toNullableInteger(rawValue: unknown): number | null {
+  const value = toNullableNumber(rawValue)
+  if (value === null) return null
+  return Math.trunc(value)
+}
+
+function toNullableRecord(rawValue: unknown): Record<string, unknown> | null {
+  if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return null
+  return rawValue as Record<string, unknown>
+}
+
+function buildProgressStateFromPayload(
+  payload: {
+    stage?: string | null
+    percent?: number | null
+    eta_seconds?: number | null
+    step?: number | null
+    total_steps?: number | null
+    message?: string | null
+    data?: Record<string, unknown> | null
+  },
+  options: { fallbackStage: string },
+): GenerationState['progress'] {
+  const fallbackStage = String(options.fallbackStage || 'running')
+  const data = toNullableRecord(payload.data)
+  return {
+    stage: String(payload.stage ?? fallbackStage),
+    percent: toNullableNumber(payload.percent),
+    etaSeconds: toNullableNumber(payload.eta_seconds),
+    step: toNullableInteger(payload.step),
+    totalSteps: toNullableInteger(payload.total_steps),
+    message: payload.message === null || payload.message === undefined ? null : String(payload.message),
+    data,
+    totalPercent: toNullableNumber(data?.total_percent),
+    totalPhase: data?.total_phase === undefined || data?.total_phase === null ? null : String(data.total_phase),
+    totalPhaseStep: toNullableInteger(data?.phase_step),
+    totalPhaseTotalSteps: toNullableInteger(data?.phase_total_steps),
+    totalPhaseEtaSeconds: toNullableNumber(data?.phase_eta_seconds),
+  }
 }
 
 export interface BuildImg2ImgPayloadArgs {
@@ -394,7 +463,20 @@ export function useGeneration(tabId: string) {
   }
   
   function resetProgress(): void {
-    state.value.progress = { stage: 'none', percent: null, etaSeconds: null, step: null, totalSteps: null }
+    state.value.progress = {
+      stage: 'none',
+      percent: null,
+      etaSeconds: null,
+      step: null,
+      totalSteps: null,
+      message: null,
+      data: null,
+      totalPercent: null,
+      totalPhase: null,
+      totalPhaseStep: null,
+      totalPhaseTotalSteps: null,
+      totalPhaseEtaSeconds: null,
+    }
   }
   
   async function generate(): Promise<void> {
@@ -704,13 +786,7 @@ export function useGeneration(tabId: string) {
         state.value.progress.stage = event.stage
         break
       case 'progress':
-        state.value.progress = {
-          stage: event.stage,
-          percent: event.percent ?? null,
-          etaSeconds: event.eta_seconds ?? null,
-          step: event.step ?? null,
-          totalSteps: event.total_steps ?? null,
-        }
+        state.value.progress = buildProgressStateFromPayload(event, { fallbackStage: state.value.progress.stage })
         if (event.preview_image) {
           state.value.previewImage = event.preview_image
           state.value.previewStep = event.preview_step ?? null
@@ -796,13 +872,7 @@ export function useGeneration(tabId: string) {
       if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
       const p = res.progress
       if (p && typeof p === 'object') {
-        state.value.progress = {
-          stage: String(p.stage ?? state.value.progress.stage),
-          percent: p.percent ?? null,
-          etaSeconds: p.eta_seconds ?? null,
-          step: p.step ?? null,
-          totalSteps: p.total_steps ?? null,
-        }
+        state.value.progress = buildProgressStateFromPayload(p, { fallbackStage: state.value.progress.stage })
       }
       if (res.preview_image) state.value.previewImage = res.preview_image
       if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
@@ -835,13 +905,7 @@ export function useGeneration(tabId: string) {
       if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
       const p = res.progress
       if (p && typeof p === 'object') {
-        state.value.progress = {
-          stage: String(p.stage ?? state.value.progress.stage),
-          percent: p.percent ?? null,
-          etaSeconds: p.eta_seconds ?? null,
-          step: p.step ?? null,
-          totalSteps: p.total_steps ?? null,
-        }
+        state.value.progress = buildProgressStateFromPayload(p, { fallbackStage: state.value.progress.stage })
       }
       if (res.preview_image) state.value.previewImage = res.preview_image
       if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null

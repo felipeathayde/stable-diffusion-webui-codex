@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
 - `_unwrap_decode_output` (function): Normalizes diffusers decode outputs to a plain tensor (`DecoderOutput.sample` or passthrough).
 - `_unwrap_encode_output` (function): Normalizes diffusers encode outputs to a latent tensor (handles `latent_dist`, `.sample()`, `.mean`, etc.).
+- `_report_vae_progress` (function): Reports VAE encode/decode block progress into backend state for phase-aware streaming.
 - `_NormalizingFirstStage` (class): Wrapper around a first-stage VAE that applies strict scalar/per-channel latent normalization (including optional shift semantics) and proxies encode/decode APIs.
 - `_TileWindow` (dataclass): Immutable tile descriptor for core and context bounds in tiled VAE passes.
 - `_iter_tile_windows` (function): Yields ordered tiled windows with context padding and fail-loud geometry validation.
@@ -121,6 +122,19 @@ def _unwrap_encode_output(output):
                 continue
     # Fallback: surface an explicit error instead of returning an unsupported type.
     raise RuntimeError(f"VAE encode returned unsupported output type: {type(output)!r}")
+
+
+def _report_vae_progress(*, phase: str, block_index: int, total_blocks: int) -> None:
+    try:
+        from apps.backend.core.state import state as backend_state
+
+        backend_state.update_vae_progress(
+            phase=phase,
+            block_index=int(block_index),
+            total_blocks=int(total_blocks),
+        )
+    except Exception:
+        logger.debug("VAE progress update failed for phase=%s", phase, exc_info=True)
 
 
 class _NormalizingFirstStage:
@@ -604,7 +618,7 @@ class VAE:
             )
         return out_start, out_end, crop_start, crop_end
 
-    def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16):
+    def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16, progress_callback=None):
         if samples.ndim != 4:
             raise RuntimeError(f"decode_tiled_ expects NCHW latents; got shape={tuple(samples.shape)}.")
         pad = max(0, int(overlap))
@@ -632,6 +646,8 @@ class VAE:
             raise RuntimeError("decode_tiled_ produced no tile windows; check tile geometry.")
         decode_scale = int(self.downscale_ratio)
 
+        total_tiles = max(1, int(samples.shape[0]) * len(windows))
+        processed_tiles = 0
         for batch_index in range(samples.shape[0]):
             for window in windows:
                 latent_tile = samples[
@@ -665,9 +681,15 @@ class VAE:
                     crop_y0:crop_y1,
                     crop_x0:crop_x1,
                 ]
+                processed_tiles += 1
+                if callable(progress_callback):
+                    try:
+                        progress_callback(int(processed_tiles), int(total_tiles))
+                    except Exception:
+                        logger.debug("decode_tiled_ progress callback failed", exc_info=True)
         return torch.clamp((output + 1.0) / 2.0, min=0.0, max=1.0)
 
-    def encode_tiled_(self, pixel_samples, tile_x=512, tile_y=512, overlap=64):
+    def encode_tiled_(self, pixel_samples, tile_x=512, tile_y=512, overlap=64, progress_callback=None):
         if pixel_samples.ndim != 4:
             raise RuntimeError(f"encode_tiled_ expects NCHW pixels; got shape={tuple(pixel_samples.shape)}.")
         pad = max(0, int(overlap))
@@ -696,6 +718,8 @@ class VAE:
         downscale_ratio = int(self.downscale_ratio)
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
 
+        total_tiles = max(1, int(pixel_samples.shape[0]) * len(windows))
+        processed_tiles = 0
         for batch_index in range(pixel_samples.shape[0]):
             for window in windows:
                 pixels_tile = pixel_samples[
@@ -733,6 +757,12 @@ class VAE:
                     crop_y0:crop_y1,
                     crop_x0:crop_x1,
                 ]
+                processed_tiles += 1
+                if callable(progress_callback):
+                    try:
+                        progress_callback(int(processed_tiles), int(total_tiles))
+                    except Exception:
+                        logger.debug("encode_tiled_ progress callback failed", exc_info=True)
         return output
 
     def _decode_cpu_fallback(self, samples_in: torch.Tensor) -> torch.Tensor:
@@ -834,6 +864,8 @@ class VAE:
 
     def decode_inner(self, samples_in):
         _tensor_stats("decode_inner.latents", samples_in)
+        progress_phase = "decode"
+        decode_total_blocks = 1
         while True:
             desired_storage, desired_compute = self._resolve_dtypes()
             forward_dtype = self._active_forward_dtype(
@@ -852,13 +884,39 @@ class VAE:
 
             try:
                 if use_tiled:
+                    decode_total_blocks = max(1, int(samples_in.shape[0]))
+                    _report_vae_progress(
+                        phase=progress_phase,
+                        block_index=0,
+                        total_blocks=decode_total_blocks,
+                    )
                     memory_management.manager.load_model(self.patcher)
-                    pixel_samples = self.decode_tiled_(samples_in)
+
+                    def _decode_progress(idx: int, total: int) -> None:
+                        nonlocal decode_total_blocks
+                        decode_total_blocks = max(1, int(total))
+                        _report_vae_progress(
+                            phase=progress_phase,
+                            block_index=int(idx),
+                            total_blocks=decode_total_blocks,
+                        )
+
+                    pixel_samples = self.decode_tiled_(
+                        samples_in,
+                        progress_callback=_decode_progress,
+                    )
                 else:
                     memory_used = self.memory_used_decode(samples_in.shape, forward_dtype)
                     memory_management.manager.load_models([self.patcher], memory_required=memory_used)
                     free_memory = memory_management.manager.get_free_memory(self.device)
                     batch_number = max(1, int(free_memory / memory_used))
+                    total_batches = max(1, int(math.ceil(float(samples_in.shape[0]) / float(batch_number))))
+                    decode_total_blocks = total_batches
+                    _report_vae_progress(
+                        phase=progress_phase,
+                        block_index=0,
+                        total_blocks=decode_total_blocks,
+                    )
 
                     pixel_samples = torch.empty(
                         (
@@ -870,11 +928,16 @@ class VAE:
                         device=self.output_device,
                         dtype=forward_dtype,
                     )
-                    for x in range(0, samples_in.shape[0], batch_number):
+                    for batch_idx, x in enumerate(range(0, samples_in.shape[0], batch_number), start=1):
                         samples = samples_in[x:x + batch_number]
                         decoded = self._decode_forward(samples, forward_dtype=forward_dtype)
                         pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
                         _tensor_stats("decode_inner.batch_decoded", decoded)
+                        _report_vae_progress(
+                            phase=progress_phase,
+                            block_index=batch_idx,
+                            total_blocks=decode_total_blocks,
+                        )
             except memory_management.manager.oom_exception:
                 if smart_fallback_enabled():
                     logger.warning(
@@ -882,7 +945,10 @@ class VAE:
                         self.device,
                         bool(memory_management.manager.vae_always_tiled),
                     )
+                    _report_vae_progress(phase=progress_phase, block_index=0, total_blocks=1)
                     pixel_samples = self._decode_cpu_fallback(samples_in)
+                    decode_total_blocks = 1
+                    _report_vae_progress(phase=progress_phase, block_index=1, total_blocks=1)
                 else:
                     if use_tiled:
                         raise RuntimeError(
@@ -916,7 +982,21 @@ class VAE:
                         component_hint="vae",
                         event_reason="regular_decode_oom",
                     )
-                    pixel_samples = self.decode_tiled_(samples_in)
+                    decode_total_blocks = max(1, int(samples_in.shape[0]))
+
+                    def _decode_retry_progress(idx: int, total: int) -> None:
+                        nonlocal decode_total_blocks
+                        decode_total_blocks = max(1, int(total))
+                        _report_vae_progress(
+                            phase=progress_phase,
+                            block_index=int(idx),
+                            total_blocks=decode_total_blocks,
+                        )
+
+                    pixel_samples = self.decode_tiled_(
+                        samples_in,
+                        progress_callback=_decode_retry_progress,
+                    )
 
             # Return BCHW format in [-1, 1] range directly
             # This is what sampling pipelines expect - no conversion needed in engines
@@ -945,6 +1025,11 @@ class VAE:
                 memory_management.manager.soft_empty_cache(force=True)
                 continue
 
+            _report_vae_progress(
+                phase=progress_phase,
+                block_index=decode_total_blocks,
+                total_blocks=decode_total_blocks,
+            )
             return result
 
     def decode(self, samples_in):
@@ -976,6 +1061,8 @@ class VAE:
     def encode_inner(self, pixel_samples):
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
         pixel_samples = pixel_samples.movedim(-1, 1)
+        progress_phase = "encode"
+        encode_total_blocks = 1
 
         while True:
             desired_storage, desired_compute = self._resolve_dtypes()
@@ -995,13 +1082,39 @@ class VAE:
 
             try:
                 if use_tiled:
+                    encode_total_blocks = max(1, int(pixel_samples.shape[0]))
+                    _report_vae_progress(
+                        phase=progress_phase,
+                        block_index=0,
+                        total_blocks=encode_total_blocks,
+                    )
                     memory_management.manager.load_model(self.patcher)
-                    samples = self.encode_tiled_(pixel_samples)
+
+                    def _encode_progress(idx: int, total: int) -> None:
+                        nonlocal encode_total_blocks
+                        encode_total_blocks = max(1, int(total))
+                        _report_vae_progress(
+                            phase=progress_phase,
+                            block_index=int(idx),
+                            total_blocks=encode_total_blocks,
+                        )
+
+                    samples = self.encode_tiled_(
+                        pixel_samples,
+                        progress_callback=_encode_progress,
+                    )
                 else:
                     memory_used = self.memory_used_encode(pixel_samples.shape, forward_dtype)
                     memory_management.manager.load_models([self.patcher], memory_required=memory_used)
                     free_memory = memory_management.manager.get_free_memory(self.device)
                     batch_number = max(1, int(free_memory / memory_used))
+                    total_batches = max(1, int(math.ceil(float(pixel_samples.shape[0]) / float(batch_number))))
+                    encode_total_blocks = total_batches
+                    _report_vae_progress(
+                        phase=progress_phase,
+                        block_index=0,
+                        total_blocks=encode_total_blocks,
+                    )
                     samples = torch.empty(
                         (
                             pixel_samples.shape[0],
@@ -1012,7 +1125,7 @@ class VAE:
                         device=self.output_device,
                         dtype=forward_dtype,
                     )
-                    for x in range(0, pixel_samples.shape[0], batch_number):
+                    for batch_idx, x in enumerate(range(0, pixel_samples.shape[0], batch_number), start=1):
                         pixels_in = 2.0 * pixel_samples[x:x + batch_number] - 1.0
                         encoded = self._encode_forward(
                             pixels_in,
@@ -1020,6 +1133,11 @@ class VAE:
                             regulation=regulation,
                         )
                         samples[x:x + batch_number] = encoded
+                        _report_vae_progress(
+                            phase=progress_phase,
+                            block_index=batch_idx,
+                            total_blocks=encode_total_blocks,
+                        )
             except memory_management.manager.oom_exception:
                 if smart_fallback_enabled():
                     logger.warning(
@@ -1027,7 +1145,10 @@ class VAE:
                         self.device,
                         bool(memory_management.manager.vae_always_tiled),
                     )
+                    _report_vae_progress(phase=progress_phase, block_index=0, total_blocks=1)
                     samples = self._encode_cpu_fallback(pixel_samples, regulation)
+                    encode_total_blocks = 1
+                    _report_vae_progress(phase=progress_phase, block_index=1, total_blocks=1)
                 else:
                     if use_tiled:
                         raise RuntimeError(
@@ -1065,7 +1186,21 @@ class VAE:
                         component_hint="vae",
                         event_reason="regular_encode_oom",
                     )
-                    samples = self.encode_tiled_(pixel_samples)
+                    encode_total_blocks = max(1, int(pixel_samples.shape[0]))
+
+                    def _encode_retry_progress(idx: int, total: int) -> None:
+                        nonlocal encode_total_blocks
+                        encode_total_blocks = max(1, int(total))
+                        _report_vae_progress(
+                            phase=progress_phase,
+                            block_index=int(idx),
+                            total_blocks=encode_total_blocks,
+                        )
+
+                    samples = self.encode_tiled_(
+                        pixel_samples,
+                        progress_callback=_encode_retry_progress,
+                    )
 
             if torch.isnan(samples).any():
                 logger.warning(
@@ -1088,6 +1223,11 @@ class VAE:
                 memory_management.manager.soft_empty_cache(force=True)
                 continue
 
+            _report_vae_progress(
+                phase=progress_phase,
+                block_index=encode_total_blocks,
+                total_blocks=encode_total_blocks,
+            )
             return samples
 
     def encode(self, pixel_samples):

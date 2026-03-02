@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: In-process task registry for API jobs.
-Tracks task status, bounded SSE replay buffers, and cancellation requests for API endpoints.
+Tracks task status, bounded SSE replay buffers, cancellation requests, and running progress snapshots (including progress message/data metadata) for API endpoints.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `tasks` (constant): In-memory task registry mapping task_id -> TaskEntry.
@@ -250,12 +250,18 @@ class TaskEntry:
             self._status_stage = TaskStatusStage(str(event["stage"]))
         elif event_type is TaskEventType.PROGRESS:
             stage = str(event.get("stage", "") or "").strip()
+            raw_message = event.get("message", None)
+            progress_message = str(raw_message) if raw_message is not None else None
+            progress_data = event.get("data", None)
+            progress_data_snapshot = dict(progress_data) if isinstance(progress_data, dict) else None
             self._progress = {
                 "stage": stage,
                 "percent": event.get("percent", None),
                 "step": event.get("step", None),
                 "total_steps": event.get("total_steps", None),
                 "eta_seconds": event.get("eta_seconds", None),
+                "message": progress_message,
+                "data": progress_data_snapshot,
             }
             preview_image = event.get("preview_image")
             if (

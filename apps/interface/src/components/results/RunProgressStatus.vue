@@ -17,7 +17,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `formatElapsedSeconds` (function): Formats elapsed seconds into `mm:ss` or `hh:mm:ss`.
 - `displayElapsedSeconds` (const): Resolved elapsed seconds value (external prop or internal run timer).
 - `elapsedLabel` (const): Formatted elapsed time string rendered on the progress meta row.
-- `normalizedPercent` (const): Safe normalized percent value for display/progress bar.
+- `normalizedPercent` (const): Safe normalized sampling-step percent value for the lower progress bar.
+- `normalizedTotalPercent` (const): Safe normalized total-pipeline percent value for the upper progress bar.
+- `displayPercent` (const): Header percent display (prefers total percent when available).
+- `totalPhaseLabel` (const): Normalized total-phase label (`encode`/`sampling`/`decode`) shown on the total bar.
 -->
 
 <template>
@@ -89,17 +92,42 @@ Symbols (top-level; keep in sync; no ghosts):
         <p v-else-if="isProgressVariant" class="run-progress-status__message"><strong>Stage:</strong> {{ stageLabel }}</p>
       </div>
 
-      <div v-if="isProgressVariant && normalizedPercent !== null" class="run-progress-status__percent">
-        {{ normalizedPercent.toFixed(1) }}%
+      <div v-if="isProgressVariant && displayPercent !== null" class="run-progress-status__percent">
+        {{ displayPercent.toFixed(1) }}%
       </div>
     </div>
 
-    <progress
-      v-if="isProgressVariant && showProgressBar && normalizedPercent !== null"
-      class="run-progress-status__bar"
-      :value="normalizedPercent"
-      max="100"
-    ></progress>
+    <div v-if="isProgressVariant && showProgressBar" class="run-progress-status__bars">
+      <div v-if="normalizedTotalPercent !== null" class="run-progress-status__bar-group run-progress-status__bar-group--total">
+        <div class="run-progress-status__bar-caption">
+          <span>Total<span v-if="totalPhaseLabel"> · {{ totalPhaseLabel }}</span></span>
+          <span>{{ normalizedTotalPercent.toFixed(1) }}%</span>
+        </div>
+        <progress
+          class="run-progress-status__bar run-progress-status__bar--total"
+          :value="normalizedTotalPercent"
+          max="100"
+        ></progress>
+        <div
+          v-if="totalPhaseStep !== null && totalPhaseTotalSteps !== null"
+          class="run-progress-status__bar-meta"
+        >
+          {{ totalPhaseStep }} / {{ totalPhaseTotalSteps }}
+        </div>
+      </div>
+
+      <div v-if="normalizedPercent !== null" class="run-progress-status__bar-group run-progress-status__bar-group--steps">
+        <div class="run-progress-status__bar-caption">
+          <span>Steps</span>
+          <span>{{ normalizedPercent.toFixed(1) }}%</span>
+        </div>
+        <progress
+          class="run-progress-status__bar run-progress-status__bar--steps"
+          :value="normalizedPercent"
+          max="100"
+        ></progress>
+      </div>
+    </div>
 
     <div v-if="isProgressVariant" class="run-progress-status__meta">
       <div class="run-progress-status__meta-left">
@@ -129,6 +157,10 @@ const props = withDefaults(defineProps<{
   step?: number | null
   totalSteps?: number | null
   etaSeconds?: number | null
+  totalPercent?: number | null
+  totalPhase?: string | null
+  totalPhaseStep?: number | null
+  totalPhaseTotalSteps?: number | null
   elapsedSeconds?: number | null
   queueLabel?: string
   showProgressBar?: boolean
@@ -141,6 +173,10 @@ const props = withDefaults(defineProps<{
   step: null,
   totalSteps: null,
   etaSeconds: null,
+  totalPercent: null,
+  totalPhase: null,
+  totalPhaseStep: null,
+  totalPhaseTotalSteps: null,
   elapsedSeconds: null,
   queueLabel: '',
   showProgressBar: true,
@@ -181,9 +217,35 @@ const normalizedPercent = computed(() => {
   if (!Number.isFinite(props.percent)) return null
   return Math.max(0, Math.min(100, props.percent))
 })
+const normalizedTotalPercent = computed(() => {
+  if (props.totalPercent === null || props.totalPercent === undefined) return null
+  if (!Number.isFinite(props.totalPercent)) return null
+  return Math.max(0, Math.min(100, props.totalPercent))
+})
+const displayPercent = computed(() => {
+  if (normalizedTotalPercent.value !== null) return normalizedTotalPercent.value
+  return normalizedPercent.value
+})
 const step = computed(() => props.step)
 const totalSteps = computed(() => props.totalSteps)
 const etaSeconds = computed(() => props.etaSeconds)
+const totalPhaseStep = computed(() => {
+  if (props.totalPhaseStep === null || props.totalPhaseStep === undefined) return null
+  if (!Number.isFinite(props.totalPhaseStep)) return null
+  return Math.max(0, Math.trunc(props.totalPhaseStep))
+})
+const totalPhaseTotalSteps = computed(() => {
+  if (props.totalPhaseTotalSteps === null || props.totalPhaseTotalSteps === undefined) return null
+  if (!Number.isFinite(props.totalPhaseTotalSteps)) return null
+  return Math.max(0, Math.trunc(props.totalPhaseTotalSteps))
+})
+const totalPhaseLabel = computed(() => {
+  const normalized = String(props.totalPhase || '').trim().toLowerCase()
+  if (normalized === 'encode') return 'encode'
+  if (normalized === 'decode') return 'decode'
+  if (normalized === 'sampling') return 'sampling'
+  return normalized || null
+})
 const externalElapsedSeconds = computed(() => {
   if (props.elapsedSeconds === null || props.elapsedSeconds === undefined) return null
   if (!Number.isFinite(props.elapsedSeconds)) return null

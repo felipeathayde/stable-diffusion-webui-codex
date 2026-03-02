@@ -17,3 +17,4 @@ Status: Active
 - 2026-02-22: `RunProgressStatus.vue` expanded from a progress-only block into a unified status surface; callers now route run errors/notices here instead of Prompt/caption-local panels.
 - 2026-02-22: `RunProgressStatus.vue` progress meta row now includes a right-side elapsed timer (`Elapsed mm:ss`/`hh:mm:ss`) opposite Step/ETA metadata.
 - 2026-02-22: `RunCard.vue` now owns the run-cancel UX in the center CTA (destructive two-click confirm with a 4s reset window), replacing per-view header cancel buttons.
+- 2026-03-02: `RunProgressStatus.vue` now renders dual progress bars for generation runs (upper `total` bar with phase label + lower `steps` bar), while preserving existing status variants and elapsed/ETA metadata layout.

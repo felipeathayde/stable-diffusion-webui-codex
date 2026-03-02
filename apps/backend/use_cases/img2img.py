@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
-Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass.
+Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass with family-specific continuation semantics.
 Masked img2img (“inpaint”) uses Forge/A1111 “Only masked” semantics and supports optional ADetailer-style multi-region passes for disconnected masks.
-The hires pass init is prepared via the global hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
+The hires pass init is prepared via the global family-dispatched hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 The wrapper executes sampling + decode + post-cleanup inside the same worker-thread envelope so model residency/offload policies remain single-owner per job.
@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_smart_cache_call_hit` (function): Compute whether a conditioning call was a pure cache hit from bucket deltas.
 - `_build_hires_plan` (function): Builds a `HiResPlan` from the processing config (or returns `None` when disabled).
 - `_build_hr_prompt_context` (function): Builds the prompt context used for the hires second pass (supports prompt overrides).
-- `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples (init prepared via global hires-fix stage).
+- `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples (init prepared via global hires-fix stage; supports `init_latent` and Kontext `image_latents` continuation modes).
 - `_compute_conditioning_payload` (function): Ensure (cond/uncond) conditioning exists for a prompt context.
 - `_generate_kontext_img2img` (function): Flux Kontext img2img implementation (init image as `image_latents`, no denoise schedule).
 - `_derive_seeds` (function): Normalizes seed/subseed inputs from processing config.
@@ -34,6 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import gc
+import math
 from dataclasses import replace
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -52,6 +53,7 @@ from apps.backend.runtime.memory.smart_offload_invariants import (
     enforce_smart_offload_pre_conditioning_residency,
     enforce_smart_offload_text_encoders_off,
 )
+from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -360,6 +362,8 @@ def _generate_kontext_img2img(
     if isinstance(payload.unconditional, dict):
         payload.unconditional["image_latents"] = image_latents
 
+    hires_plan = _build_hires_plan(processing)
+
     tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
     try:
         samples = execute_sampling(
@@ -372,16 +376,41 @@ def _generate_kontext_img2img(
             rng=rng,
             init_latent=None,
             start_at_step=0,
+            allow_txt2img_conditioning_fallback=False,
         )
     finally:
         finalize_tiling(tiling_applied, old_tiled)
 
-    return samples
+    if hires_plan is None:
+        return samples
+
+    logger.info(
+        "[kontext] running hires pass upscaler=%s target=%dx%d steps=%d denoise=%.4f",
+        hires_plan.upscaler_id,
+        int(hires_plan.target_width),
+        int(hires_plan.target_height),
+        int(hires_plan.steps),
+        float(hires_plan.denoise),
+    )
+    return _run_hires_pass(processing, hires_plan, plan, samples, prompt_context)
 
 
 def _build_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | None:
     if not getattr(processing, "enable_hr", False):
         return None
+
+    model = getattr(processing, "sd_model", None)
+    engine_id = str(getattr(model, "engine_id", "") or "").strip()
+    if engine_id == "":
+        raise RuntimeError("Hires is enabled but processing.sd_model.engine_id is unavailable.")
+    try:
+        semantic_engine = semantic_engine_for_engine_id(engine_id)
+    except KeyError as exc:
+        raise NotImplementedError(
+            f"Hires is not supported for engine '{engine_id}' because no semantic capability surface is registered."
+        ) from exc
+    if not ENGINE_SURFACES[semantic_engine].supports_hires:
+        raise NotImplementedError(f"Hires is not supported for engine '{engine_id}'.")
 
     hi_cfg = processing.hires
     raw_upscaler = getattr(hi_cfg, "upscaler", None)
@@ -522,13 +551,16 @@ def _run_hires_pass(
         processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
         processing.prepare_prompt_data()
 
-        latents, image_conditioning = prepare_hires_latents_and_conditioning(
+        hires_inputs = prepare_hires_latents_and_conditioning(
             processing,
             base_samples=base_samples,
             base_decoded=None,
             hires_plan=hires_plan,
             tile=getattr(hi_cfg, "tile", None),
         )
+        latents = hires_inputs.latents
+        image_conditioning = hires_inputs.image_conditioning
+        continuation_mode = hires_inputs.continuation_mode
 
         hires_settings = plan.noise_settings
         rng = ImageRNG(
@@ -543,7 +575,10 @@ def _run_hires_pass(
         noise = rng.next().to(latents)
 
         start_index = 0
-        denoise_strength = float(denoise)
+        denoise_strength: float | None = float(denoise)
+        init_latent: torch.Tensor | None = latents
+        sampling_image_conditioning = image_conditioning
+        allow_txt2img_conditioning_fallback = True
 
         hr_plan = replace(
             plan,
@@ -559,6 +594,31 @@ def _run_hires_pass(
             conditioning=None,
             unconditional_conditioning=None,
         )
+        if continuation_mode == "image_latents":
+            if not isinstance(hires_payload.conditioning, dict):
+                raise TypeError(
+                    "Hires Kontext continuation requires dict conditioning to inject image_latents; "
+                    f"got {type(hires_payload.conditioning).__name__}."
+                )
+            hires_payload.conditioning["image_latents"] = latents
+            if isinstance(hires_payload.unconditional, dict):
+                hires_payload.unconditional["image_latents"] = latents
+            init_latent = None
+            sampling_image_conditioning = None
+            denoise_strength = None
+            allow_txt2img_conditioning_fallback = False
+            if not (math.isclose(float(denoise), 0.0) or math.isclose(float(denoise), 1.0)):
+                logger.warning(
+                    "[kontext] hires continuation ignores denoise schedule semantics (configured denoise=%.4f).",
+                    float(denoise),
+                )
+        logger.info(
+            "[hires] img2img continuation_mode=%s init_latent=%s image_conditioning=%s start_at_step=%d",
+            continuation_mode,
+            "set" if init_latent is not None else "none",
+            "set" if isinstance(sampling_image_conditioning, torch.Tensor) else "none",
+            int(start_index),
+        )
 
         return execute_sampling(
             processing,
@@ -569,10 +629,11 @@ def _run_hires_pass(
             hi_prompt_context.controls,
             rng=rng,
             noise=noise,
-            image_conditioning=image_conditioning,
-            init_latent=latents,
+            image_conditioning=sampling_image_conditioning,
+            init_latent=init_latent,
             start_at_step=start_index,
             denoise_strength=denoise_strength,
+            allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
         )
     finally:
         processing.prompts = original["prompts"]
@@ -654,6 +715,7 @@ def generate_img2img(
     processing.prepare_prompt_data()
 
     run_process_scripts(processing)
+    hires_plan = _build_hires_plan(processing)
 
     payload = _compute_conditioning_payload(
         processing,
@@ -872,7 +934,6 @@ def generate_img2img(
             metadata=_conditioning_cache_hit_metadata(processing),
         )
 
-    hires_plan = _build_hires_plan(processing)
     if hires_plan is None:
         return GenerationResult(samples=samples, decoded=None, metadata=_conditioning_cache_hit_metadata(processing))
 
@@ -1025,31 +1086,113 @@ def run_img2img(
         runtime_overrides=smart_flags,
     )
 
-    for step, total, block_index, block_total, eta in _iter_sampling_progress(done=done, outcome=outcome):
-        has_block_progress = 0 < block_index < block_total
-        completed_units = float(step)
-        if has_block_progress:
-            completed_units += float(block_index) / float(block_total)
-        progress_percent = (min(float(total), completed_units) / float(total)) * 100.0
-        pct = max(5.0, min(99.0, progress_percent))
-
-        if has_block_progress:
-            message = (
-                f"Sampling step {min(step + 1, total)}/{total} "
-                f"(block {block_index}/{block_total})"
+    encode_weight = 10.0
+    sampling_weight = 80.0
+    decode_weight = 10.0
+    for (
+        phase,
+        phase_step,
+        phase_total,
+        phase_block_index,
+        phase_block_total,
+        phase_eta,
+        sampling_step,
+        sampling_total,
+        sampling_block_index,
+        sampling_block_total,
+    ) in _iter_sampling_progress(done=done, outcome=outcome):
+        if phase == "encode":
+            encode_ratio = (
+                min(float(phase_step), float(phase_total)) / float(phase_total)
+                if phase_total > 0
+                else 0.0
             )
-        else:
-            message = f"Sampling step {step}/{total}"
+            total_percent = encode_weight * encode_ratio
+            yield ProgressEvent(
+                stage="encoding",
+                percent=None,
+                step=None,
+                total_steps=None,
+                eta_seconds=phase_eta,
+                message=f"VAE encode block {phase_step}/{phase_total}",
+                data={
+                    "block_index": int(phase_block_index),
+                    "block_total": int(phase_block_total),
+                    "total_phase": "encode",
+                    "total_percent": float(total_percent),
+                    "phase_step": int(phase_step),
+                    "phase_total_steps": int(phase_total),
+                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
+                },
+            )
+            continue
 
-        yield ProgressEvent(
-            stage="sampling",
-            percent=pct,
-            step=step,
-            total_steps=total,
-            eta_seconds=eta,
-            message=message,
-            data={"block_index": int(block_index), "block_total": int(block_total)},
-        )
+        if phase == "sampling":
+            has_block_progress = 0 < sampling_block_index < sampling_block_total
+            completed_units = float(sampling_step)
+            if has_block_progress:
+                completed_units += float(sampling_block_index) / float(sampling_block_total)
+            sampling_ratio = (
+                min(float(sampling_total), completed_units) / float(sampling_total)
+                if sampling_total > 0
+                else 0.0
+            )
+            progress_percent = sampling_ratio * 100.0
+            pct = max(5.0, min(99.0, progress_percent))
+            total_percent = encode_weight + (sampling_weight * sampling_ratio)
+            if has_block_progress:
+                message = (
+                    f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
+                    f"(block {sampling_block_index}/{sampling_block_total})"
+                )
+            else:
+                message = f"Sampling step {sampling_step}/{sampling_total}"
+            yield ProgressEvent(
+                stage="sampling",
+                percent=pct,
+                step=sampling_step,
+                total_steps=sampling_total,
+                eta_seconds=phase_eta,
+                message=message,
+                data={
+                    "block_index": int(sampling_block_index),
+                    "block_total": int(sampling_block_total),
+                    "total_phase": "sampling",
+                    "total_percent": float(total_percent),
+                    "phase_step": int(phase_step),
+                    "phase_total_steps": int(phase_total),
+                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
+                },
+            )
+            continue
+
+        if phase == "decode":
+            decode_ratio = (
+                min(float(phase_step), float(phase_total)) / float(phase_total)
+                if phase_total > 0
+                else 0.0
+            )
+            total_percent = min(100.0, encode_weight + sampling_weight + (decode_weight * decode_ratio))
+            sampling_terminal_step = int(sampling_total) if sampling_total > 0 else None
+            yield ProgressEvent(
+                stage="decoding",
+                percent=100.0 if sampling_terminal_step is not None else None,
+                step=sampling_terminal_step,
+                total_steps=sampling_terminal_step,
+                eta_seconds=phase_eta,
+                message=f"VAE decode block {phase_step}/{phase_total}",
+                data={
+                    "block_index": int(phase_block_index),
+                    "block_total": int(phase_block_total),
+                    "total_phase": "decode",
+                    "total_percent": float(total_percent),
+                    "phase_step": int(phase_step),
+                    "phase_total_steps": int(phase_total),
+                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
+                    "sampling_step": int(sampling_step),
+                    "sampling_total_steps": int(sampling_total),
+                },
+            )
 
     if outcome.error is not None:
         raise outcome.error

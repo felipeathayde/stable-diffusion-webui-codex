@@ -8,11 +8,11 @@ Required Notice: see NOTICE
 
 Purpose: Sampling execution helper for pipeline orchestrators.
 Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics (including ER-SDE option
-propagation into the sampler and diagnostic metadata dumps).
+propagation into the sampler and diagnostic metadata dumps), with explicit control over txt2img image-conditioning fallback injection.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_maybe_dump_latents` (function): Dump latents to disk when enabled via env flags (debug diagnostics + effective ER-SDE metadata).
-- `execute_sampling` (function): Execute sampling given processing + plan + conditioning payload and return the sampled latents.
+- `execute_sampling` (function): Execute sampling given processing + plan + conditioning payload and return the sampled latents (supports explicit opt-out of default txt2img image-conditioning fallback).
 """
 
 from __future__ import annotations
@@ -118,6 +118,7 @@ def execute_sampling(
     rng: ImageRNG,
     noise: torch.Tensor | None = None,
     image_conditioning: torch.Tensor | None = None,
+    allow_txt2img_conditioning_fallback: bool = True,
     init_latent: torch.Tensor | None = None,
     start_at_step: int | None = None,
     denoise_strength: float | None = None,
@@ -201,7 +202,7 @@ def execute_sampling(
         if debug_factors:
             maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total or 0))
 
-    if image_conditioning is None:
+    if image_conditioning is None and allow_txt2img_conditioning_fallback:
         image_conditioning = txt2img_conditioning(
             processing.sd_model,
             noise,

@@ -28,8 +28,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `RemoteUpscalerWeight` (type): Remote HF weight entry (either raw listing or curated + metadata).
 - `RemoteUpscalersResponse` (interface): `/api/upscalers/remote` response shape (manifest + raw weights fallback).
 - `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
-- `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/events` (supports replay via `id:` / `after` and emits `gap` on truncation).
-- `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
+- `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/events` (supports replay via `id:` / `after`, emits `gap` on truncation, and carries optional progress metadata via `message`/`data`).
+- `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`, including last progress snapshot metadata (`message`/`data`) when available.
 - `MemoryResponse` (interface): `/api/memory` response shape.
 - `ObliterateVramProcessInfo` (interface): One external GPU process row returned by `/api/obliterate-vram`.
 - `ObliterateVramFailure` (interface): One failed external process termination row from `/api/obliterate-vram`.
@@ -240,6 +240,8 @@ export type TaskEvent =
       step?: number | null
       total_steps?: number | null
       eta_seconds?: number | null
+      message?: string | null
+      data?: Record<string, unknown> | null
       preview_image?: GeneratedImage
       preview_step?: number | null
     }
@@ -258,6 +260,8 @@ export interface TaskResult {
     step?: number | null
     total_steps?: number | null
     eta_seconds?: number | null
+    message?: string | null
+    data?: Record<string, unknown> | null
   } | null
   preview_image?: GeneratedImage
   preview_step?: number | null

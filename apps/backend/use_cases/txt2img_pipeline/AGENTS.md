@@ -1,7 +1,7 @@
 # apps/backend/use_cases/txt2img_pipeline Overview
 <!-- tags: backend, use-case, txt2img, pipeline, refiner -->
 Date: 2025-10-31
-Last Review: 2026-02-20
+Last Review: 2026-03-02
 Status: Active
 
 ## Purpose
@@ -26,3 +26,5 @@ Status: Active
 - 2026-02-20: `_run_hires_pass(...)` now logs explicit transition checkpoints for the 1st->2nd pass handoff (`[hires] transition base_to_hires` and `[hires] upscale_ready`) with upscaler, target size, sampler/scheduler, latent/image-conditioning shapes, and computed `start_at_step`.
 - 2026-02-20: `_log_conditioning(...)` now emits cond/uncond diagnostics via `emit_backend_event(...)` (`conditioning.cond` / `conditioning.uncond`) with normalized shape tokens (`BxSxC`) so high-field conditioning logs use the same structured multiline formatting as other backend telemetry (no hardcoded family label in event name).
 - 2026-02-23: `runner.py::Txt2ImgPipelineRunner.run(...)` no longer enforces hard CUDA-only guards (`torch.cuda.is_available()` / `model_device.type == "cuda"`); device authority remains canonicalized at API/memory-manager boundaries.
+- 2026-03-02: `_run_hires_pass(...)` now consumes typed hires-prep outputs (`latents`, optional `image_conditioning`, `continuation_mode`) and supports Flux Kontext hires continuation by injecting `image_latents` into dict conditioning, running sampling with `init_latent=None` and `start_at_step=0` (denoise schedule ignored for this mode with explicit warning log).
+- 2026-03-02: `_run_hires_pass(...)` now disables `execute_sampling` txt2img conditioning fallback specifically for `continuation_mode='image_latents'`, preventing implicit `c_concat` injection when `image_conditioning` is intentionally unset in Kontext-style continuation.

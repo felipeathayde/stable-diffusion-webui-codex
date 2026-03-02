@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_logger` (constant): Module logger for the txt2img use case.
 - `_RUNNER` (constant): Singleton `Txt2ImgPipelineRunner` instance.
 - `generate_txt2img` (function): Runs the txt2img pipeline runner and returns a `GenerationResult` (samples + optional decoded output).
-- `run_txt2img` (function): Canonical txt2img mode wrapper (progress polling + decode + result events).
+- `run_txt2img` (function): Canonical txt2img mode wrapper (phase-aware progress polling, decode, and result events).
 """
 
 from __future__ import annotations
@@ -206,31 +206,89 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
         runtime_overrides=smart_flags,
     )
 
-    for step, total, block_index, block_total, eta in _iter_sampling_progress(done=done, outcome=outcome):
-        has_block_progress = 0 < block_index < block_total
-        completed_units = float(step)
-        if has_block_progress:
-            completed_units += float(block_index) / float(block_total)
-        progress_percent = (min(float(total), completed_units) / float(total)) * 100.0
-        pct = max(5.0, min(99.0, progress_percent))
+    sampling_weight = 90.0
+    decode_weight = 10.0
+    for (
+        phase,
+        phase_step,
+        phase_total,
+        phase_block_index,
+        phase_block_total,
+        phase_eta,
+        sampling_step,
+        sampling_total,
+        sampling_block_index,
+        sampling_block_total,
+    ) in _iter_sampling_progress(done=done, outcome=outcome):
+        if phase == "encode":
+            continue
 
-        if has_block_progress:
-            message = (
-                f"Sampling step {min(step + 1, total)}/{total} "
-                f"(block {block_index}/{block_total})"
+        if phase == "sampling":
+            has_block_progress = 0 < sampling_block_index < sampling_block_total
+            completed_units = float(sampling_step)
+            if has_block_progress:
+                completed_units += float(sampling_block_index) / float(sampling_block_total)
+            sampling_ratio = (
+                min(float(sampling_total), completed_units) / float(sampling_total)
+                if sampling_total > 0
+                else 0.0
             )
-        else:
-            message = f"Sampling step {step}/{total}"
+            progress_percent = sampling_ratio * 100.0
+            pct = max(5.0, min(99.0, progress_percent))
+            total_percent = max(0.0, min(99.0, sampling_weight * sampling_ratio))
+            if has_block_progress:
+                message = (
+                    f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
+                    f"(block {sampling_block_index}/{sampling_block_total})"
+                )
+            else:
+                message = f"Sampling step {sampling_step}/{sampling_total}"
+            yield ProgressEvent(
+                stage="sampling",
+                percent=pct,
+                step=sampling_step,
+                total_steps=sampling_total,
+                eta_seconds=phase_eta,
+                message=message,
+                data={
+                    "block_index": int(sampling_block_index),
+                    "block_total": int(sampling_block_total),
+                    "total_phase": "sampling",
+                    "total_percent": float(total_percent),
+                    "phase_step": int(phase_step),
+                    "phase_total_steps": int(phase_total),
+                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
+                },
+            )
+            continue
 
-        yield ProgressEvent(
-            stage="sampling",
-            percent=pct,
-            step=step,
-            total_steps=total,
-            eta_seconds=eta,
-            message=message,
-            data={"block_index": int(block_index), "block_total": int(block_total)},
-        )
+        if phase == "decode":
+            decode_ratio = (
+                min(float(phase_step), float(phase_total)) / float(phase_total)
+                if phase_total > 0
+                else 0.0
+            )
+            total_percent = min(100.0, sampling_weight + (decode_weight * decode_ratio))
+            sampling_terminal_step = int(sampling_total) if sampling_total > 0 else None
+            yield ProgressEvent(
+                stage="decoding",
+                percent=100.0 if sampling_terminal_step is not None else None,
+                step=sampling_terminal_step,
+                total_steps=sampling_terminal_step,
+                eta_seconds=phase_eta,
+                message=f"VAE decode block {phase_step}/{phase_total}",
+                data={
+                    "block_index": int(phase_block_index),
+                    "block_total": int(phase_block_total),
+                    "total_phase": "decode",
+                    "total_percent": float(total_percent),
+                    "phase_step": int(phase_step),
+                    "phase_total_steps": int(phase_total),
+                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
+                    "sampling_step": int(sampling_step),
+                    "sampling_total_steps": int(sampling_total),
+                },
+            )
 
     if outcome.error is not None:
         raise outcome.error

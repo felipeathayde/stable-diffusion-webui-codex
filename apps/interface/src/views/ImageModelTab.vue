@@ -11,8 +11,8 @@ Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (hires-like layout only; no img2img hires payload).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
-Hires settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
-Also shares the global `min_tile` preference (tiled OOM fallback lower bound) with `/upscale`.
+Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
+Also shares the global `min_tile` preference (tiled lower bound) with `/upscale`.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
 Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), so errors are visible even when Prompt is off-screen.
@@ -35,7 +35,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setHiresRefiner` (function): Applies partial updates to the hires-refiner config object.
 - `setRefiner` (function): Applies partial updates to the refiner config object.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
-- `setFallbackOnOom` (function): Updates the global “fallback on OOM” preference used by upscaler tiling (hires-fix + `/upscale`).
 - `setMinTile` (function): Updates the global `min_tile` preference used as the tiled OOM fallback lower bound (hires-fix + `/upscale`).
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
@@ -222,7 +221,6 @@ Symbols (top-level; keep in sync; no ghosts):
             :upscaler="params.hires.upscaler"
             :tile="params.hires.tile"
             :minTile="minTile"
-            :fallbackOnOom="fallbackOnOom"
             :upscalers="upscalers"
             :upscalersLoading="upscalersLoading"
             :upscalersError="upscalersError"
@@ -249,7 +247,6 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:upscaler="(v) => setHires({ upscaler: v })"
             @update:tile="(v) => setHires({ tile: v })"
             @update:minTile="setMinTile"
-            @update:fallbackOnOom="setFallbackOnOom"
             @update:refinerEnabled="(v) => setHiresRefiner({ enabled: v })"
             @update:refinerSwapAtStep="(v) => setHiresRefiner({ swapAtStep: Math.max(1, Math.trunc(v)) })"
             @update:refinerCfg="(v) => setHiresRefiner({ cfg: v })"
@@ -520,7 +517,7 @@ const bootstrap = useBootstrapStore()
 const workflows = useWorkflowsStore()
 const upscalersStore = useUpscalersStore()
 const xyzStore = useXyzStore()
-const { upscalers, loading: upscalersLoading, error: upscalersError, fallbackOnOom, minTile } = storeToRefs(upscalersStore)
+const { upscalers, loading: upscalersLoading, error: upscalersError, minTile } = storeToRefs(upscalersStore)
 
 // Use unified generation composable
 const {
@@ -1250,10 +1247,6 @@ function setRefiner(patch: Partial<ImageBaseParams['refiner']>): void {
 function clampFloat(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.min(max, Math.max(min, value))
-}
-
-function setFallbackOnOom(value: boolean): void {
-  fallbackOnOom.value = Boolean(value)
 }
 
 function setMinTile(value: number): void {

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Hires (second pass) settings panel.
 Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, scale/width/height,
-upscaler/cfg/denoise, model selector, prompt overrides), plus tile controls and optional second-pass swap-model settings.
+upscaler/cfg/denoise, tile controls, model selector, prompt overrides), plus optional second-pass swap-model settings.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels. Uses the shared `WanSubHeader`
 title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `HiresSettingsCard` (component): Hires settings block for supported image tabs.
 - `toggle` (function): Toggles the hires enabled state.
 - `swapResize` (function): Swaps hires width/height overrides.
+- `onMinTileChange` (function): Normalizes/clamps min-tile updates before emitting.
 -->
 
 <template>
@@ -188,6 +189,56 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
 
       <div class="gc-row">
+        <div class="gc-col gc-col--presets field">
+          <label class="label-muted">Tile</label>
+          <div class="cdx-res-presets" aria-label="Tile presets">
+            <button
+              v-for="preset in tilePresets"
+              :key="preset"
+              class="btn btn-sm btn-outline"
+              type="button"
+              :disabled="disabled || !enabled || !isSpandrelSelected"
+              @click="onTileSize(preset)"
+            >
+              {{ preset }}
+            </button>
+          </div>
+        </div>
+
+        <SliderField
+          class="gc-col"
+          label="Overlap"
+          :modelValue="tileConfig.overlap"
+          :min="0"
+          :max="Math.max(0, tileConfig.tile - 1)"
+          :step="4"
+          :inputStep="4"
+          :nudgeStep="4"
+          inputClass="cdx-input-w-sm"
+          :disabled="disabled || !enabled || !isSpandrelSelected"
+          @update:modelValue="onTileOverlap"
+        />
+
+        <SliderField
+          class="gc-col"
+          label="Min tile"
+          :modelValue="minTile"
+          :min="1"
+          :max="Math.max(1, tileConfig.tile)"
+          :step="8"
+          :inputStep="8"
+          :nudgeStep="8"
+          inputClass="cdx-input-w-sm"
+          :disabled="disabled || !enabled || !isSpandrelSelected"
+          @update:modelValue="onMinTileChange"
+        />
+      </div>
+
+      <p class="hr-hint" v-if="upscaler && !isSpandrelSelected">
+        Tile settings apply to Spandrel (pixel SR) upscalers only.
+      </p>
+
+      <div class="gc-row">
         <div class="gc-col field hr-field--full">
           <label class="label-muted">Checkpoint Swap</label>
           <select class="select-md" :value="checkpointValue" :disabled="disabled || !enabled" @change="onCheckpointChange">
@@ -224,24 +275,6 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
 
-      <div class="gc-row">
-        <div class="gc-col field hr-field--full">
-          <label class="label-muted">Tile</label>
-          <UpscalerTileControls
-            :tileSize="tileConfig.tile"
-            :overlap="tileConfig.overlap"
-            :minTile="minTile"
-            :fallbackOnOom="fallbackOnOom"
-            :disabled="disabled || !enabled || !isSpandrelSelected"
-            presetVariant="resolution"
-            @update:tileSize="onTileSize"
-            @update:overlap="onTileOverlap"
-            @update:minTile="(v) => emit('update:minTile', v)"
-            @update:fallbackOnOom="(v) => emit('update:fallbackOnOom', v)"
-          />
-          <p class="hr-hint" v-if="upscaler && !isSpandrelSelected">Tile settings apply to Spandrel (pixel SR) upscalers only.</p>
-        </div>
-      </div>
     </div>
     <div v-if="enabled && showRefiner" class="hr-refiner">
       <RefinerSettingsCard
@@ -268,7 +301,6 @@ import NumberStepperInput from './ui/NumberStepperInput.vue'
 import SamplerSelector from './SamplerSelector.vue'
 import SchedulerSelector from './SchedulerSelector.vue'
 import SliderField from './ui/SliderField.vue'
-import UpscalerTileControls from './ui/UpscalerTileControls.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
 
 type TileConfigState = { tile: number; overlap: number }
@@ -295,7 +327,6 @@ const props = defineProps<{
   upscaler: string
   tile?: TileConfigState
   minTile?: number
-  fallbackOnOom?: boolean
   upscalers?: UpscalerDefinition[]
   upscalersLoading?: boolean
   upscalersError?: string
@@ -325,7 +356,6 @@ const emit = defineEmits<{
   (e: 'update:upscaler', value: string): void
   (e: 'update:tile', value: TileConfigState): void
   (e: 'update:minTile', value: number): void
-  (e: 'update:fallbackOnOom', value: boolean): void
   (e: 'update:refinerEnabled', value: boolean): void
   (e: 'update:refinerSwapAtStep', value: number): void
   (e: 'update:refinerCfg', value: number): void
@@ -334,9 +364,9 @@ const emit = defineEmits<{
 }>()
 
 const disabled = computed(() => Boolean(props.disabled))
-const fallbackOnOom = computed(() => props.fallbackOnOom ?? true)
 const upscalersLoading = computed(() => Boolean(props.upscalersLoading))
 const upscalersError = computed(() => String(props.upscalersError ?? '').trim())
+const tilePresets = [128, 256, 512, 768] as const
 
 const samplers = computed(() => Array.isArray(props.samplers) ? props.samplers : [])
 const schedulers = computed(() => Array.isArray(props.schedulers) ? props.schedulers : [])
@@ -469,6 +499,12 @@ function onTileOverlap(value: number): void {
   const v = Math.max(0, Math.trunc(Number(value)))
   if (!Number.isFinite(v)) return
   emit('update:tile', { tile: tileConfig.value.tile, overlap: Math.min(tileConfig.value.tile - 1, v) })
+}
+
+function onMinTileChange(value: number): void {
+  const v = Math.trunc(Number(value))
+  if (!Number.isFinite(v)) return
+  emit('update:minTile', Math.max(1, Math.min(tileConfig.value.tile, v)))
 }
 </script>
 

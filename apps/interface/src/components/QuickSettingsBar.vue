@@ -53,7 +53,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `useMask` (computed): Reflects active image-tab inpaint toggle state (`tab.params.useMask`).
 - `supportsInpaint` (computed): Flags whether inpaint toggle is supported for the active image family.
 - `isActiveImageTabRunning` (computed): Tracks whether the active image tab currently has an in-flight generation task.
-- `inpaintToggleDisabled` (computed): Disables INPAINT when unsupported or when IMG2IMG is off.
+- `inpaintToggleDisabled` (computed): Disables INPAINT when unsupported, when IMG2IMG is off, or when no init image is loaded.
 - `inpaintToggleTitle` (computed): Tooltip reason for INPAINT enabled/disabled state.
 - `onUseMaskChange` (function): Toggles inpaint mode (`useMask`) from quick settings with explicit IMG2IMG/Flux guards.
 - `zimageTurbo` (computed): Returns the current Z-Image Turbo toggle state for the active tab.
@@ -1045,6 +1045,11 @@ const useMask = computed(() => {
   if (!tab) return false
   return Boolean(tab.params.useMask)
 })
+const hasInitImage = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return false
+  return String(tab.params.initImageData || '').trim().length > 0
+})
 const supportsInpaint = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return false
@@ -1055,11 +1060,17 @@ const isActiveImageTabRunning = computed(() => {
   if (!tab) return false
   return isGenerationRunningForTab(tab.id)
 })
-const inpaintToggleDisabled = computed(() => isActiveImageTabRunning.value || !useInitImage.value || !supportsInpaint.value)
+const inpaintToggleDisabled = computed(() => (
+  isActiveImageTabRunning.value
+  || !useInitImage.value
+  || !hasInitImage.value
+  || !supportsInpaint.value
+))
 const inpaintToggleTitle = computed(() => {
   if (isActiveImageTabRunning.value) return 'Cannot change INPAINT while generation is running.'
   if (!supportsInpaint.value) return 'INPAINT is not supported for Flux.1 img2img (Kontext) yet.'
   if (!useInitImage.value) return 'Enable IMG2IMG first.'
+  if (!hasInitImage.value) return 'Select an init image first.'
   return 'Toggle INPAINT'
 })
 
@@ -1411,6 +1422,7 @@ async function onUseMaskChange(value: boolean): Promise<void> {
     if (isActiveImageTabRunning.value) return
     if (tab.type === 'flux1') return
     if (!useInitImage.value) return
+    if (!hasInitImage.value) return
     const patch: Partial<ImageBaseParams> = { useMask: Boolean(value) }
     if (!value) {
       patch.maskImageData = ''

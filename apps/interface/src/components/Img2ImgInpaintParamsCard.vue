@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + only-masked padding + region splitting + mask toggles/sliders),
+Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + only-masked padding + mask blur + region splitting),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
@@ -45,31 +45,28 @@ Symbols (top-level; keep in sync; no ghosts):
       @rejected="(payload) => emit('reject:initImage', payload)"
       @update:zoom-frame-guide="onZoomFrameGuideUpdate"
     >
+      <template #dropzone-actions>
+        <div v-if="useMask" class="img2img-mask-editor-actions">
+          <button
+            class="btn btn-sm btn-secondary"
+            type="button"
+            :disabled="disabled || !initImageData"
+            @click.stop.prevent="maskEditorOpen = true"
+          >
+            Edit mask
+          </button>
+          <button
+            class="btn btn-sm btn-outline"
+            type="button"
+            :disabled="disabled || !maskImageData"
+            @click.stop.prevent="emit('clear:maskImage')"
+          >
+            Clear mask
+          </button>
+        </div>
+      </template>
       <template #footer>
         <p v-if="initImageName" class="caption img2img-caption img2img-caption--init-name">{{ initImageName }}</p>
-        <div v-if="useMask" class="img2img-mask-inline-tools">
-          <div class="img2img-mask-editor-actions">
-            <button
-              class="btn btn-sm btn-secondary"
-              type="button"
-              :disabled="disabled || !initImageData"
-              @click="maskEditorOpen = true"
-            >
-              Edit mask
-            </button>
-            <button
-              class="btn btn-sm btn-outline"
-              type="button"
-              :disabled="disabled || !maskImageData"
-              @click="emit('clear:maskImage')"
-            >
-              Clear mask
-            </button>
-          </div>
-          <p class="caption img2img-caption">
-            {{ maskImageData ? (maskImageName || 'Mask ready') : 'No mask applied. Open the editor to draw or upload.' }}
-          </p>
-        </div>
       </template>
     </InitialImageCard>
 
@@ -84,8 +81,8 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="field">
           <label class="label-muted">Enforcement</label>
           <select class="select-md" :disabled="disabled" :value="maskEnforcement" @change="onMaskEnforcementChange">
-            <option value="per_step_clamp">Forge engine (per-step blend)</option>
-            <option value="post_blend">Legacy post-sample blend</option>
+            <option value="per_step_clamp">Per-step blend</option>
+            <option value="post_blend">Post-sample blend</option>
           </select>
         </div>
 
@@ -100,63 +97,43 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
 
-      <p class="caption img2img-caption">Inpaint area: Only masked (full-res)</p>
+      <div class="gc-row img2img-mask-slider-row">
+        <SliderField
+          class="gc-col gc-col--wide"
+          label="Only masked padding"
+          :modelValue="inpaintFullResPadding"
+          :min="0"
+          :max="256"
+          :step="1"
+          :inputStep="1"
+          inputClass="cdx-input-w-xs"
+          :disabled="disabled"
+          @update:modelValue="(value) => emit('update:inpaintFullResPadding', value)"
+        />
 
-      <SliderField
-        label="Only masked padding"
-        :modelValue="inpaintFullResPadding"
-        :min="0"
-        :max="256"
-        :step="1"
-        :inputStep="1"
-        inputClass="cdx-input-w-xs"
-        :disabled="disabled"
-        @update:modelValue="(value) => emit('update:inpaintFullResPadding', value)"
-      />
+        <SliderField
+          class="gc-col gc-col--wide"
+          label="Mask blur"
+          :modelValue="maskBlur"
+          :min="0"
+          :max="64"
+          :step="1"
+          :inputStep="1"
+          inputClass="cdx-input-w-xs"
+          :disabled="disabled"
+          @update:modelValue="(value) => emit('update:maskBlur', value)"
+        />
+      </div>
 
       <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
         :aria-pressed="maskRegionSplit"
-        :disabled="disabled || maskInvert"
+        :disabled="disabled"
         @click="emit('toggle:maskRegionSplit')"
       >
         Split mask regions (ADetailer-style)
       </button>
-
-      <div class="img2img-toggle-row">
-        <button
-          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskInvert ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-          type="button"
-          :aria-pressed="maskInvert"
-          :disabled="disabled"
-          @click="emit('toggle:maskInvert')"
-        >
-          Invert mask
-        </button>
-
-        <button
-          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRound ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-          type="button"
-          :aria-pressed="maskRound"
-          :disabled="disabled"
-          @click="emit('toggle:maskRound')"
-        >
-          Round mask
-        </button>
-      </div>
-
-      <SliderField
-        label="Mask blur"
-        :modelValue="maskBlur"
-        :min="0"
-        :max="64"
-        :step="1"
-        :inputStep="1"
-        inputClass="cdx-input-w-xs"
-        :disabled="disabled"
-        @update:modelValue="(value) => emit('update:maskBlur', value)"
-      />
     </div>
 
     <InpaintMaskEditorOverlay
@@ -197,8 +174,6 @@ withDefaults(defineProps<{
   maskEnforcement: MaskEnforcement
   inpaintingFill: number
   inpaintFullResPadding: number
-  maskInvert: boolean
-  maskRound: boolean
   maskBlur: number
   maskRegionSplit?: boolean
   zoomFrameGuide?: WanImg2VidFrameGuideConfig | null
@@ -227,8 +202,6 @@ const emit = defineEmits<{
   (e: 'update:maskEnforcement', value: string): void
   (e: 'update:inpaintingFill', value: number): void
   (e: 'update:inpaintFullResPadding', value: number): void
-  (e: 'toggle:maskInvert'): void
-  (e: 'toggle:maskRound'): void
   (e: 'toggle:maskRegionSplit'): void
   (e: 'update:maskBlur', value: number): void
   (e: 'update:zoomFrameGuide', value: WanImg2VidFrameGuideConfig): void

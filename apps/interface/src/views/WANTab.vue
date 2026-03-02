@@ -167,8 +167,6 @@ Symbols (top-level; keep in sync; no ghosts):
               maskEnforcement="per_step_clamp"
               :inpaintingFill="1"
               :inpaintFullResPadding="0"
-              :maskInvert="false"
-              :maskRound="false"
               :maskBlur="0"
               @set:initImage="onInitImageFile"
               @clear:initImage="clearInit"

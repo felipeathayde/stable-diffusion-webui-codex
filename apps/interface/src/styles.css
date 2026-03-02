@@ -425,11 +425,17 @@
     align-items: center;
     text-align: center;
   }
-  .init-dropzone-remove {
+  .init-dropzone-actions {
     position: absolute;
     top: 0;
     right: 0;
     z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .init-dropzone-remove {
+    position: static;
   }
   .init-preview { border-radius: 8px; overflow: hidden; border: 1px solid hsla(0,0%,100%,0.08); display: flex; align-items: center; justify-content: center; }
   .init-preview img { display: block; width: 100%; }

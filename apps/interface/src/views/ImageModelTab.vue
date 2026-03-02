@@ -90,8 +90,6 @@ Symbols (top-level; keep in sync; no ghosts):
             :maskEnforcement="params.maskEnforcement"
             :inpaintingFill="params.inpaintingFill"
             :inpaintFullResPadding="params.inpaintFullResPadding"
-            :maskInvert="params.maskInvert"
-            :maskRound="params.maskRound"
             :maskBlur="params.maskBlur"
             :maskRegionSplit="params.maskRegionSplit"
             @set:initImage="onInitFileSet"
@@ -103,8 +101,6 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
             @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
             @update:inpaintFullResPadding="(v) => setParams({ inpaintFullResPadding: normalizeNonNegativeInt(v) })"
-            @toggle:maskInvert="toggleMaskInvert"
-            @toggle:maskRound="setParams({ maskRound: !params.maskRound })"
             @update:maskBlur="(v) => setParams({ maskBlur: normalizeNonNegativeInt(v) })"
             @toggle:maskRegionSplit="setParams({ maskRegionSplit: !params.maskRegionSplit })"
           />
@@ -1210,14 +1206,6 @@ function setParams(patch: Partial<ImageBaseParams>): void {
   })
 }
 
-function toggleMaskInvert(): void {
-  const next = !params.value.maskInvert
-  setParams({
-    maskInvert: next,
-    maskRegionSplit: next ? false : params.value.maskRegionSplit,
-  })
-}
-
 function setGuidanceAdvanced(patch: Partial<GuidanceAdvancedParams>): void {
   const next = normalizeGuidanceAdvancedPatch(
     patch,
@@ -1281,7 +1269,7 @@ async function onInitFileSet(file: File): Promise<void> {
     initImageData: dataUrl,
     initImageName: file.name,
     useInitImage: true,
-    useMask: false,
+    useMask: Boolean(params.value.useMask),
     maskImageData: '',
     maskImageName: '',
   }

@@ -20,24 +20,20 @@
     min-width: 0;
   }
 
-  .img2img-params-card .img2img-mask-inline-tools {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 0.6rem;
-  }
-
   .img2img-params-card .img2img-mask-editor-actions {
     display: flex;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 0.6rem;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 0.45rem;
   }
 
-  .img2img-params-card .img2img-toggle-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
+  .img2img-params-card .img2img-mask-slider-row {
+    align-items: flex-start;
+  }
+
+  .img2img-params-card .img2img-mask-slider-row > .gc-col {
+    flex: 1 1 18rem;
+    min-width: 0;
   }
 
   .img2img-params-card .img2img-caption {
@@ -50,5 +46,6 @@
 
   @media (max-width: 56rem) {
     .img2img-params-card .img2img-mask-grid > .field { flex-basis: 100%; }
+    .img2img-params-card .img2img-mask-slider-row > .gc-col { flex-basis: 100%; }
   }
 }

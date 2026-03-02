@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Initial image file picker for img2img-style workflows.
 Provides a file input, preview, and remove action and emits the selected `File` back to the parent.
-In dropzone mode, the remove action is rendered inside the dotted zone (top-right) to keep picker controls close to the preview.
+In dropzone mode, top-right actions render inside the dotted zone (including `Remove`) to keep picker controls close to the preview.
 Supports optional pass-through WAN frame-guide config for zoom-overlay no-stretch projection metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -34,15 +34,17 @@ Symbols (top-level; keep in sync; no ghosts):
           @rejected="onDropRejected"
         >
           <div class="init-dropzone-slot">
-            <button
-              v-if="hasImage"
-              class="btn btn-sm btn-ghost init-dropzone-remove"
-              type="button"
-              :disabled="disabled || !hasImage"
-              @click.stop.prevent="$emit('clear')"
-            >
-              Remove
-            </button>
+            <div v-if="hasImage" class="init-dropzone-actions">
+              <slot name="dropzone-actions" />
+              <button
+                class="btn btn-sm btn-ghost init-dropzone-remove"
+                type="button"
+                :disabled="disabled || !hasImage"
+                @click.stop.prevent="$emit('clear')"
+              >
+                Remove
+              </button>
+            </div>
             <div
               v-if="src"
               :class="[

@@ -31,7 +31,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <ResultsCard
     :title="props.title"
-    headerClass="three-cols results-sticky run-sticky"
+    headerClass="three-cols run-sticky"
     headerCenterClass="run-header-center"
     headerRightClass="run-controls"
     :showGenerate="true"

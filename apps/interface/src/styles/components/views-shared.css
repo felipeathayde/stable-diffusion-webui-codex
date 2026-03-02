@@ -358,20 +358,8 @@
     align-self: start;
   }
 
-  /* Keep the first right-column panel (Run) sticky even when Results grows taller than the left column. */
-  .panel-stack--sticky > .panel:first-child {
-    position: sticky;
-    top: calc(var(--sticky-offset, 0.375rem) + var(--space-sm));
-    z-index: 6;
-  }
-
   @media (max-width: 68.75rem) {
     .panel-stack--sticky {
-      position: static;
-      top: auto;
-    }
-
-    .panel-stack--sticky > .panel:first-child {
       position: static;
       top: auto;
     }

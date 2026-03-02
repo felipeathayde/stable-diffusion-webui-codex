@@ -435,11 +435,28 @@ const { notice: qsNotice, toast: qsToast } = useResultsCard({ noticeDurationMs: 
 const isLoadingQuicksettings = ref(false)
 const isQuicksettingsReady = ref(false)
 const isObliteratingVram = ref(false)
+const QUICKSETTINGS_ADVANCED_OPEN_STORAGE_KEY = 'codex.quicksettings.advanced_open'
 const advancedOpen = ref(true)
 const advancedRowEl = ref<HTMLElement | null>(null)
 const advancedRowInnerEl = ref<HTMLElement | null>(null)
 const advancedAnimating = ref(false)
 let advancedRafId: number | null = null
+
+try {
+  const stored = localStorage.getItem(QUICKSETTINGS_ADVANCED_OPEN_STORAGE_KEY)
+  if (stored === '0') advancedOpen.value = false
+  if (stored === '1') advancedOpen.value = true
+} catch {
+  // ignore localStorage failures
+}
+
+watch(advancedOpen, (isOpen) => {
+  try {
+    localStorage.setItem(QUICKSETTINGS_ADVANCED_OPEN_STORAGE_KEY, isOpen ? '1' : '0')
+  } catch {
+    // ignore localStorage failures
+  }
+})
 
 function cancelAdvancedAnimation(): void {
   if (advancedRafId !== null) cancelAnimationFrame(advancedRafId)
@@ -452,13 +469,20 @@ function easeOutCubic(t: number): number {
 }
 
 function syncAdvancedHeight(): void {
-  if (!advancedOpen.value) return
-  if (advancedAnimating.value) return
   const el = advancedRowEl.value
   const inner = advancedRowInnerEl.value
   if (!el || !inner) return
+  if (advancedAnimating.value) return
+  if (!advancedOpen.value) {
+    el.style.height = '0px'
+    el.style.opacity = '0'
+    return
+  }
   const nextHeight = inner.getBoundingClientRect().height
-  if (nextHeight > 0) el.style.height = `${nextHeight}px`
+  if (nextHeight > 0) {
+    el.style.height = `${nextHeight}px`
+    el.style.opacity = ''
+  }
 }
 
 function toggleAdvancedRow(): void {

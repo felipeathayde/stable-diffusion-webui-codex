@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Viewer for generated images/videos with zoom overlay.
 Displays generated outputs and provides an overlay viewer for zoom/pan actions, wheel/keyboard zoom controls, and per-item controls
 (including per-frame downloads when available). Result media previews are rendered with `object-fit: contain` and a visual height cap
-(`max-height: 30dvh`) to avoid stretch/zoom in cards while preserving click-to-zoom full-screen behavior for images.
+(`max-height: 30dvh`) plus proportional viewport-width cap (`max-width: min(100%, 42dvw)`) to avoid oversized cards while preserving
+click-to-zoom full-screen behavior for images.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ResultViewer` (component): Viewer component for generated outputs and overlay interactions.

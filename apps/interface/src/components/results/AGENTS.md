@@ -9,7 +9,7 @@ Status: Active
 
 ## Notes
 - `ResultsCard.vue` provides the standard 3-column Results header (title / center / right); sticky behavior is enabled by including `results-sticky` in `headerClass`. It also exposes `bodyStyle/bodyClass` passthrough for views that need dynamic preview sizing.
-- `RunCard.vue` provides the “Run” header (sticky Generate, optional batch dropdown for count/size, optional header-right actions slot) that sits above Results in generation views; batch changes apply immediately (OK closes the dropdown). While a run is active, the center CTA switches to a destructive two-click cancel confirm (`Cancel` -> `Are you sure?`, 4s timeout).
+- `RunCard.vue` provides the “Run” header (Generate CTA, optional batch dropdown for count/size, optional header-right actions slot) that sits above Results in generation views; batch changes apply immediately (OK closes the dropdown). While a run is active, the center CTA switches to a destructive two-click cancel confirm (`Cancel` -> `Are you sure?`, 4s timeout).
 - `RunSummaryChips.vue` renders a compact “run summary” string as chips for the Run body (mirrors the prior `caption` summary line, but more scannable).
 - `RunProgressStatus.vue` is the canonical run-status panel used in Run cards across image, WAN, and upscale views, including severity variants (`progress|error|warning|info|success`), color semantics, animated SVG icons, and a right-aligned elapsed timer on progress rows.
 - 2026-01-02: Added standardized file header docstring to `RunCard.vue` (doc-only change; part of rollout).

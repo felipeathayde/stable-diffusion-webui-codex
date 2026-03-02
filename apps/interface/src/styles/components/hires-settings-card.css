@@ -42,7 +42,7 @@
   }
 
   .hires-card .hr-tile-presets {
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
 
   .hires-card .hr-tile-slider {

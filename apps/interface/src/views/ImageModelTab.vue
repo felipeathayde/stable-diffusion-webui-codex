@@ -13,6 +13,7 @@ When `useInitImage=true`, generation parameters render through `Img2ImgBasicPara
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
 Also shares the global `min_tile` preference (tiled lower bound) with `/upscale`.
+Swap-model cards (global + second-pass) share the same capability-gated advanced guidance/APG state surface.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
 Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), so errors are visible even when Prompt is off-screen.
@@ -229,9 +230,10 @@ Symbols (top-level; keep in sync; no ghosts):
             :refinerEnabled="showHiresRefiner ? params.hires.refiner?.enabled : undefined"
             :refinerSwapAtStep="showHiresRefiner ? params.hires.refiner?.swapAtStep : undefined"
             :refinerCfg="showHiresRefiner ? params.hires.refiner?.cfg : undefined"
-            :refinerSeed="showHiresRefiner ? params.hires.refiner?.seed : undefined"
             :refinerModel="showHiresRefiner ? params.hires.refiner?.model : undefined"
             :refinerModelChoices="showHiresRefiner ? swapModelChoices : undefined"
+            :guidanceAdvanced="params.guidanceAdvanced"
+            :guidanceSupport="guidanceAdvancedSupport"
             @update:enabled="(v) => setHires({ enabled: v })"
             @update:denoise="(v) => setHires({ denoise: clampFloat(v, 0, 1) })"
             @update:scale="(v) => setHires({ scale: clampFloat(v, 1, 4) })"
@@ -250,8 +252,8 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:refinerEnabled="(v) => setHiresRefiner({ enabled: v })"
             @update:refinerSwapAtStep="(v) => setHiresRefiner({ swapAtStep: Math.max(1, Math.trunc(v)) })"
             @update:refinerCfg="(v) => setHiresRefiner({ cfg: v })"
-            @update:refinerSeed="(v) => setHiresRefiner({ seed: Math.trunc(v) })"
             @update:refinerModel="(v) => setHiresRefiner({ model: v })"
+            @update:guidanceAdvanced="setGuidanceAdvanced"
           />
 
           <RefinerSettingsCard
@@ -259,14 +261,15 @@ Symbols (top-level; keep in sync; no ghosts):
             :enabled="params.refiner.enabled"
             :swapAtStep="params.refiner.swapAtStep"
             :cfg="params.refiner.cfg"
-            :seed="params.refiner.seed"
             :model="params.refiner.model"
             :modelChoices="swapModelChoices"
+            :guidanceAdvanced="params.guidanceAdvanced"
+            :guidanceSupport="guidanceAdvancedSupport"
             @update:enabled="(v) => setRefiner({ enabled: v })"
             @update:swapAtStep="(v) => setRefiner({ swapAtStep: Math.max(1, Math.trunc(v)) })"
             @update:cfg="(v) => setRefiner({ cfg: v })"
-            @update:seed="(v) => setRefiner({ seed: Math.trunc(v) })"
             @update:model="(v) => setRefiner({ model: v })"
+            @update:guidanceAdvanced="setGuidanceAdvanced"
           />
 
           <XyzSweepCard

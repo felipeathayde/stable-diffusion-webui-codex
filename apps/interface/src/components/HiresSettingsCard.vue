@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Hires (second pass) settings panel.
 Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, scale/width/height,
-upscaler/cfg/denoise, tile controls with desktop row-alignment hooks, model selector, prompt overrides), plus optional second-pass swap-model settings.
+upscaler/cfg/denoise, tile controls with desktop row-alignment hooks and right-anchored presets, model selector, prompt overrides), plus optional second-pass swap-model settings.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels. Uses the shared `WanSubHeader`
 title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
@@ -189,22 +189,6 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
 
       <div class="gc-row hr-tile-row">
-        <div class="gc-col hr-tile-col">
-          <label class="label-muted">Tile</label>
-          <div class="cdx-res-presets hr-tile-presets" aria-label="Tile presets">
-            <button
-              v-for="preset in tilePresets"
-              :key="preset"
-              class="btn btn-sm btn-outline"
-              type="button"
-              :disabled="disabled || !enabled || !isSpandrelSelected"
-              @click="onTileSize(preset)"
-            >
-              {{ preset }}
-            </button>
-          </div>
-        </div>
-
         <SliderField
           class="gc-col hr-tile-slider"
           label="Overlap"
@@ -232,6 +216,22 @@ Symbols (top-level; keep in sync; no ghosts):
           :disabled="disabled || !enabled || !isSpandrelSelected"
           @update:modelValue="onMinTileChange"
         />
+
+        <div class="gc-col hr-tile-col">
+          <label class="label-muted">Tile</label>
+          <div class="cdx-res-presets hr-tile-presets" aria-label="Tile presets">
+            <button
+              v-for="preset in tilePresets"
+              :key="preset"
+              class="btn btn-sm btn-outline"
+              type="button"
+              :disabled="disabled || !enabled || !isSpandrelSelected"
+              @click="onTileSize(preset)"
+            >
+              {{ preset }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <p class="hr-hint" v-if="upscaler && !isSpandrelSelected">
@@ -281,11 +281,13 @@ Symbols (top-level; keep in sync; no ghosts):
         label="Second-Pass Swap Model"
         :dense="true"
         :model-choices="refinerModelChoices"
+        :guidance-advanced="guidanceAdvanced"
+        :guidance-support="guidanceSupport"
         v-model:enabled="refinerEnabled"
         v-model:swapAtStep="refinerSwapAtStep"
         v-model:cfg="refinerCfg"
-        v-model:seed="refinerSeed"
         v-model:model="refinerModel"
+        @update:guidanceAdvanced="(patch) => emit('update:guidanceAdvanced', patch)"
       />
       <p class="hr-hint">Swap uses step-pointer semantics in the second pass (switch model at the selected step).</p>
     </div>
@@ -295,7 +297,8 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 // tags: hires, settings, grid
 import { computed } from 'vue'
-import type { SamplerInfo, SchedulerInfo, UpscalerDefinition, UpscalerKind } from '../api/types'
+import type { GuidanceAdvancedCapabilities, SamplerInfo, SchedulerInfo, UpscalerDefinition, UpscalerKind } from '../api/types'
+import type { GuidanceAdvancedParams } from '../stores/model_tabs'
 import RefinerSettingsCard from './RefinerSettingsCard.vue'
 import NumberStepperInput from './ui/NumberStepperInput.vue'
 import SamplerSelector from './SamplerSelector.vue'
@@ -335,9 +338,10 @@ const props = defineProps<{
   refinerEnabled?: boolean
   refinerSwapAtStep?: number
   refinerCfg?: number
-  refinerSeed?: number
   refinerModel?: string
   refinerModelChoices?: string[]
+  guidanceAdvanced?: GuidanceAdvancedParams
+  guidanceSupport?: GuidanceAdvancedCapabilities | null
 }>()
 
 const emit = defineEmits<{
@@ -359,8 +363,8 @@ const emit = defineEmits<{
   (e: 'update:refinerEnabled', value: boolean): void
   (e: 'update:refinerSwapAtStep', value: number): void
   (e: 'update:refinerCfg', value: number): void
-  (e: 'update:refinerSeed', value: number): void
   (e: 'update:refinerModel', value: string): void
+  (e: 'update:guidanceAdvanced', patch: Partial<GuidanceAdvancedParams>): void
 }>()
 
 const disabled = computed(() => Boolean(props.disabled))
@@ -454,15 +458,13 @@ const refinerCfg = computed({
   get: () => Number.isFinite(props.refinerCfg) ? Number(props.refinerCfg) : 7,
   set: (value: number) => emit('update:refinerCfg', value),
 })
-const refinerSeed = computed({
-  get: () => Number.isFinite(props.refinerSeed) ? Number(props.refinerSeed) : -1,
-  set: (value: number) => emit('update:refinerSeed', value),
-})
 const refinerModel = computed({
   get: () => props.refinerModel ?? '',
   set: (value: string) => emit('update:refinerModel', value),
 })
 const refinerModelChoices = computed(() => Array.isArray(props.refinerModelChoices) ? props.refinerModelChoices : [])
+const guidanceAdvanced = computed(() => props.guidanceAdvanced)
+const guidanceSupport = computed(() => props.guidanceSupport ?? null)
 
 function toggle(): void {
   emit('update:enabled', !props.enabled)

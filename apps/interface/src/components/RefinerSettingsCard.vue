@@ -7,12 +7,16 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Swap-model configuration card (first pass or hires second pass).
-Renders a compact enable switch and optional fields (checkpoint swap step + CFG/seed), emitting updates to parent views.
+Renders a compact enable switch, checkpoint selector, and slider-based swap controls (`Swap At Step` + `CFG`) in a single row,
+with optional advanced APG controls gated by capabilities and emitted as guidance-advanced patches.
 Uses the shared `WanSubHeader` title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RefinerSettingsCard` (component): Swap-model settings panel component.
 - `toggle` (function): Toggles `enabled` via `update:enabled`.
+- `hasGuidanceSupport` (function): Returns whether the active capability map enables a specific APG control.
+- `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
+- `toggleGuidanceAdvanced` (function): Toggles advanced APG panel visibility and APG enable flag when supported.
 -->
 
 <template>
@@ -42,18 +46,146 @@ Symbols (top-level; keep in sync; no ghosts):
           <option v-for="choice in normalizedModelChoices" :key="choice" :value="choice">{{ choice }}</option>
         </select>
       </div>
-      <div class="field">
-        <label class="label-muted">Swap At Step</label>
-        <input class="ui-input ui-input-sm" type="number" min="1" :value="normalizedSwapAtStep" @change="onSwapAtStepChange" />
+
+      <div class="rf-row">
+        <SliderField
+          class="rf-col"
+          label="Swap At Step"
+          :modelValue="normalizedSwapAtStep"
+          :min="1"
+          :max="swapAtStepMax"
+          :step="1"
+          :inputStep="1"
+          :nudgeStep="1"
+          inputClass="cdx-input-w-md"
+          @update:modelValue="onSwapAtStepUpdate"
+        >
+          <template #right>
+            <NumberStepperInput
+              :modelValue="normalizedSwapAtStep"
+              :min="1"
+              :max="swapAtStepMax"
+              :step="1"
+              :nudgeStep="1"
+              inputClass="cdx-input-w-md"
+              @update:modelValue="onSwapAtStepUpdate"
+            />
+          </template>
+        </SliderField>
+
+        <SliderField
+          class="rf-col"
+          label="CFG"
+          :modelValue="normalizedCfg"
+          :min="cfgMin"
+          :max="cfgMax"
+          :step="cfgStepValue"
+          :inputStep="cfgStepValue"
+          :nudgeStep="cfgStepValue"
+          inputClass="cdx-input-w-md"
+          @update:modelValue="onCfgUpdate"
+        >
+          <template #right>
+            <NumberStepperInput
+              :modelValue="normalizedCfg"
+              :min="cfgMin"
+              :max="cfgMax"
+              :step="cfgStepValue"
+              :nudgeStep="cfgStepValue"
+              inputClass="cdx-input-w-md"
+              @update:modelValue="onCfgUpdate"
+            />
+            <button
+              v-if="showGuidanceAdvancedToggle"
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', guidanceAdvanced.enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              title="Show advanced APG controls"
+              @click="toggleGuidanceAdvanced"
+            >
+              Advanced
+            </button>
+          </template>
+        </SliderField>
       </div>
-      <div class="field">
-        <label class="label-muted">CFG</label>
-        <input class="ui-input ui-input-sm" type="number" step="0.1" :value="cfg" @change="onCfgChange" />
+
+      <div
+        v-if="showGuidanceAdvancedRow && (hasGuidanceSupport('apg_start_step') || hasGuidanceSupport('apg_eta') || hasGuidanceSupport('apg_rescale'))"
+        class="rf-row rf-row--advanced"
+      >
+        <SliderField
+          v-if="hasGuidanceSupport('apg_start_step')"
+          class="rf-col"
+          label="APG Start"
+          :modelValue="guidanceAdvanced.apgStartStep"
+          :min="0"
+          :max="swapAtStepMax"
+          :step="1"
+          :inputStep="1"
+          :nudgeStep="1"
+          inputClass="cdx-input-w-md"
+          @update:modelValue="(value) => patchGuidanceAdvanced({ apgStartStep: clampInt(value, 0, swapAtStepMax) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_eta')"
+          class="rf-col"
+          label="APG Eta"
+          :modelValue="guidanceAdvanced.apgEta"
+          :min="-1"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          @update:modelValue="(value) => patchGuidanceAdvanced({ apgEta: clampFloat(value, -1, 1) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_rescale')"
+          class="rf-col"
+          label="APG Rescale"
+          :modelValue="guidanceAdvanced.apgRescale"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          @update:modelValue="(value) => patchGuidanceAdvanced({ apgRescale: clampFloat(value, 0, 1) })"
+        />
       </div>
-      <div class="field">
-        <label class="label-muted">Seed</label>
-        <input class="ui-input ui-input-sm" type="number" :value="seed" @change="onSeedChange" />
-        <p class="rf-hint">Use -1 for random</p>
+
+      <div
+        v-if="showGuidanceAdvancedRow && (hasGuidanceSupport('apg_momentum') || hasGuidanceSupport('apg_norm_threshold'))"
+        class="rf-row rf-row--advanced-secondary"
+      >
+        <SliderField
+          v-if="hasGuidanceSupport('apg_momentum')"
+          class="rf-col"
+          label="APG Momentum"
+          :modelValue="guidanceAdvanced.apgMomentum"
+          :min="0"
+          :max="0.99"
+          :step="0.01"
+          :inputStep="0.01"
+          :nudgeStep="0.01"
+          inputClass="cdx-input-w-md"
+          @update:modelValue="(value) => patchGuidanceAdvanced({ apgMomentum: clampFloat(value, 0, 0.99) })"
+        />
+
+        <SliderField
+          v-if="hasGuidanceSupport('apg_norm_threshold')"
+          class="rf-col"
+          label="APG Norm"
+          :modelValue="guidanceAdvanced.apgNormThreshold"
+          :min="0"
+          :max="40"
+          :step="0.1"
+          :inputStep="0.1"
+          :nudgeStep="0.1"
+          inputClass="cdx-input-w-md"
+          @update:modelValue="(value) => patchGuidanceAdvanced({ apgNormThreshold: clampFloat(value, 0, 40) })"
+        />
       </div>
     </div>
   </div>
@@ -62,27 +194,57 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 // tags: refiner, settings, grid
 import { computed } from 'vue'
+import type { GuidanceAdvancedCapabilities } from '../api/types'
+import type { GuidanceAdvancedParams } from '../stores/model_tabs'
+
+import NumberStepperInput from './ui/NumberStepperInput.vue'
+import SliderField from './ui/SliderField.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
+
+const DEFAULT_GUIDANCE_ADVANCED: GuidanceAdvancedParams = {
+  enabled: false,
+  apgEnabled: false,
+  apgStartStep: 0,
+  apgEta: 0,
+  apgMomentum: 0,
+  apgNormThreshold: 15,
+  apgRescale: 0,
+  guidanceRescale: 0,
+  cfgTruncEnabled: false,
+  cfgTruncRatio: 0.8,
+  renormCfg: 0,
+}
 
 const props = withDefaults(defineProps<{
   enabled: boolean
   swapAtStep: number
   cfg: number
-  seed: number
   model?: string
   modelChoices?: string[]
+  guidanceAdvanced?: GuidanceAdvancedParams
+  guidanceSupport?: GuidanceAdvancedCapabilities | null
   label?: string
   dense?: boolean
+  maxSteps?: number
+  minCfg?: number
+  maxCfg?: number
+  cfgStep?: number
 }>(), {
   label: 'Swap Model',
   dense: false,
+  guidanceAdvanced: () => ({ ...DEFAULT_GUIDANCE_ADVANCED }),
+  guidanceSupport: null,
+  maxSteps: 150,
+  minCfg: 0,
+  maxCfg: 30,
+  cfgStep: 0.5,
 })
 
 const emit = defineEmits<{
   (e: 'update:enabled', value: boolean): void
   (e: 'update:swapAtStep', value: number): void
   (e: 'update:cfg', value: number): void
-  (e: 'update:seed', value: number): void
+  (e: 'update:guidanceAdvanced', patch: Partial<GuidanceAdvancedParams>): void
   (e: 'update:model', value: string): void
 }>()
 
@@ -114,19 +276,85 @@ const normalizedSwapAtStep = computed(() => {
   return Math.trunc(v)
 })
 
-function onSwapAtStepChange(event: Event): void {
-  const v = Number((event.target as HTMLInputElement).value)
-  emit('update:swapAtStep', Number.isNaN(v) || v < 1 ? 1 : Math.trunc(v))
+const swapAtStepMax = computed(() => {
+  const value = Number(props.maxSteps)
+  if (!Number.isFinite(value) || value < 1) return 150
+  return Math.trunc(value)
+})
+
+const cfgMin = computed(() => {
+  const value = Number(props.minCfg)
+  if (!Number.isFinite(value)) return 0
+  return value
+})
+
+const cfgMax = computed(() => {
+  const value = Number(props.maxCfg)
+  if (!Number.isFinite(value) || value <= cfgMin.value) return 30
+  return value
+})
+
+const cfgStepValue = computed(() => {
+  const value = Number(props.cfgStep)
+  if (!Number.isFinite(value) || value <= 0) return 0.5
+  return value
+})
+
+const normalizedCfg = computed(() => {
+  const value = Number(props.cfg)
+  if (!Number.isFinite(value)) return cfgMin.value
+  return clampFloat(value, cfgMin.value, cfgMax.value)
+})
+
+const guidanceAdvanced = computed(() => props.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED)
+const guidanceSupport = computed(() => props.guidanceSupport ?? null)
+
+const showGuidanceAdvancedToggle = computed(() => {
+  const support = guidanceSupport.value
+  if (!support) return false
+  return (
+    Boolean(support.apg_enabled)
+    || Boolean(support.apg_start_step)
+    || Boolean(support.apg_eta)
+    || Boolean(support.apg_momentum)
+    || Boolean(support.apg_norm_threshold)
+    || Boolean(support.apg_rescale)
+  )
+})
+
+const showGuidanceAdvancedRow = computed(() => showGuidanceAdvancedToggle.value && guidanceAdvanced.value.enabled)
+
+function clampFloat(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.min(max, Math.max(min, value))
 }
 
-function onCfgChange(event: Event): void {
-  const v = Number((event.target as HTMLInputElement).value)
-  emit('update:cfg', Number.isNaN(v) ? props.cfg : v)
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.min(max, Math.max(min, Math.trunc(value)))
 }
 
-function onSeedChange(event: Event): void {
-  const v = Number((event.target as HTMLInputElement).value)
-  emit('update:seed', Number.isNaN(v) ? props.seed : v)
+function onSwapAtStepUpdate(value: number): void {
+  emit('update:swapAtStep', clampInt(value, 1, swapAtStepMax.value))
+}
+
+function onCfgUpdate(value: number): void {
+  emit('update:cfg', clampFloat(value, cfgMin.value, cfgMax.value))
+}
+
+function hasGuidanceSupport(control: keyof GuidanceAdvancedCapabilities): boolean {
+  return Boolean(guidanceSupport.value?.[control])
+}
+
+function patchGuidanceAdvanced(patch: Partial<GuidanceAdvancedParams>): void {
+  emit('update:guidanceAdvanced', patch)
+}
+
+function toggleGuidanceAdvanced(): void {
+  const nextEnabled = !guidanceAdvanced.value.enabled
+  const patch: Partial<GuidanceAdvancedParams> = { enabled: nextEnabled }
+  if (hasGuidanceSupport('apg_enabled')) patch.apgEnabled = nextEnabled
+  patchGuidanceAdvanced(patch)
 }
 
 function onModelChange(event: Event): void {

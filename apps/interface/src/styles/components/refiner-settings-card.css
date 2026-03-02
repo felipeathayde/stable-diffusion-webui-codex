@@ -1,7 +1,7 @@
 @layer components {
   .refiner-card .rf-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.8rem;
   }
 
@@ -9,10 +9,19 @@
     grid-column: 1 / -1;
   }
 
-  .refiner-card .rf-hint {
-    margin: 0;
-    font-size: 0.72rem;
-    opacity: 0.72;
+  .refiner-card .rf-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.8rem;
+    align-items: start;
+  }
+
+  .refiner-card .rf-row--advanced {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .refiner-card .rf-row--advanced-secondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .refiner-card.refiner-card--dense {
@@ -25,8 +34,14 @@
     gap: 0.65rem;
   }
 
+  .refiner-card.refiner-card--dense .rf-row {
+    gap: 0.65rem;
+  }
+
   @media (max-width: 56rem) {
-    .refiner-card .rf-grid {
+    .refiner-card .rf-row,
+    .refiner-card .rf-row--advanced,
+    .refiner-card .rf-row--advanced-secondary {
       grid-template-columns: minmax(0, 1fr);
     }
   }

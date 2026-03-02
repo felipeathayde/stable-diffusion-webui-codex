@@ -330,7 +330,50 @@
   .app-footer .link:hover { text-decoration: underline; }
   
   .modal-list-section { margin-top: 0.5rem; }
-  .lora-modal-actions { display: inline-flex; align-items: center; gap: 0.25rem; }
+  .modal-panel.lora-modal-panel { width: min(94vw, 56rem); height: min(78dvh, 48rem); max-height: 78dvh; }
+  .lora-modal-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    align-items: end;
+    gap: 0.5rem;
+  }
+  .lora-modal-field { min-width: 0; }
+  .lora-modal-field--weight { width: 7rem; }
+  .lora-modal-weight-input { width: 100%; min-width: 0; }
+  .lora-modal-refresh-btn { align-self: end; }
+  .lora-modal-count { white-space: nowrap; align-self: end; }
+  .lora-modal-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 0.75rem;
+  }
+  .lora-modal-item__name {
+    text-align: left;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .lora-modal-item__actions { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .lora-modal-action {
+    min-width: 6.75rem;
+    justify-content: center;
+  }
+  @media (max-width: 52rem) {
+    .lora-modal-toolbar {
+      grid-template-columns: minmax(0, 1fr) auto;
+      row-gap: 0.4rem;
+    }
+    .lora-modal-field--weight { width: 6.5rem; }
+    .lora-modal-count { justify-self: end; }
+  }
 
   .init-picker { display: flex; flex-direction: column; gap: var(--space-sm); background: hsla(0,0%,100%,0.04); border: 1px solid hsla(0,0%,100%,0.08); border-radius: 10px; padding: var(--space-sm); }
   .init-dropzone-slot { display: flex; flex-direction: column; gap: var(--space-sm); min-height: 7rem; justify-content: center; align-items: center; text-align: center; }

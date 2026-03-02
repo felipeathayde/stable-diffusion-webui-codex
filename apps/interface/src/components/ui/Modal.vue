@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Generic modal shell component.
 Teleports to `body`, provides a backdrop click-to-close behavior, and exposes header/body/footer slots for reusable modal dialogs.
+Supports optional footer rendering and per-modal panel class overrides.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Modal` (component): Reusable modal shell used across the UI.
@@ -17,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <Teleport to="body">
     <div v-if="modelValue" class="modal-backdrop" @click.self="close">
-      <div class="modal-panel" role="dialog" aria-modal="true">
+      <div class="modal-panel" :class="panelClass" role="dialog" aria-modal="true">
         <header class="modal-header">
           <h3 class="h3">{{ title }}</h3>
           <button class="btn-icon" type="button" @click="close" aria-label="Close">✕</button>
@@ -25,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="modal-body">
           <slot />
         </div>
-        <footer class="modal-footer">
+        <footer v-if="showFooter" class="modal-footer">
           <slot name="footer">
             <button class="btn btn-md btn-outline" type="button" @click="close">Close</button>
           </slot>
@@ -37,7 +38,18 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{ title: string; modelValue: boolean }>()
+withDefaults(
+  defineProps<{
+    title: string
+    modelValue: boolean
+    panelClass?: string
+    showFooter?: boolean
+  }>(),
+  {
+    panelClass: '',
+    showFooter: true,
+  },
+)
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
 
 function close(): void {

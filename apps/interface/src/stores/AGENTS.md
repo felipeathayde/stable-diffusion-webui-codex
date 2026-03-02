@@ -76,6 +76,7 @@ Status: Active
 - 2026-02-22: `model_tabs.ts` WAN `video` params now persist `img2vidResetAnchorToBase`; normalization applies mode defaults (`sliding/solo=false`) and forces `false` for `svi2|svi2_pro`.
 - 2026-02-28: `model_tabs.ts` canonical img2vid modes are `solo|sliding|svi2|svi2_pro`; persisted unsupported temporal state is rejected fail-loud during normalization.
 - 2026-03-01: `model_tabs.ts` WAN `video` params now persist no-stretch guide settings (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with strict normalization (`imageScale > 0` + crop offsets in `[0,1]`).
+- 2026-03-02: `quicksettings.ts` now exposes `hydrateLoraShaMap(inventory)` so LoRA inventory refresh surfaces (for example `LoraModal.vue`) can refresh LoRA filename/path → SHA mapping immediately without requiring a separate quicksettings refresh path.
 - 2026-02-27: `model_tabs.ts` WAN `video` params removed obsolete output flags (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and migrated interpolation state to one `interpolationFps` field (`0` off, active values normalized as output-FPS targets mapped to backend interpolation times).
 - 2026-02-27: `model_tabs.ts` WAN `video.fps` default is now `15` (was `24`) to align initial WAN runs with the updated UI baseline.
 - 2026-02-27: `model_tabs.ts` WAN `video` params now include SeedVR2 upscaling controls (`upscaling*` fields) with strict normalization (`batch_size` as `4n+1`, noise scales clamped to `[0,1]`, color-correction enum validation).

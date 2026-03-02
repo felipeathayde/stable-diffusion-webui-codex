@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: LoRA picker + token insertion modal.
 Fetches LoRAs via the backend API, filters by search query, and emits `<lora:filename:weight>` tokens targeting positive/negative prompt inputs.
+Refreshes quicksettings LoRA SHA mappings from the same inventory payload used by the modal list.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LoraModal` (component): Modal for browsing LoRAs and emitting insertion tokens.
@@ -15,45 +16,59 @@ Symbols (top-level; keep in sync; no ghosts):
 - `loadItems` (function): Loads LoRA inventory (cached or forced refresh) into the modal list.
 - `resolveTokenName` (function): Resolves token filename from inventory row data.
 - `normalizeInsertWeight` (function): Normalizes user-entered LoRA weight to a finite numeric value.
-- `refreshList` (function): Forces a backend inventory refresh and reloads the modal list.
+- `refreshList` (function): Forces a backend inventory refresh, updates quicksettings LoRA SHA map, and reloads the modal list.
 - `insert` (function): Emits a formatted LoRA token from a selected inventory row into a prompt target.
 -->
 
 <template>
-  <Modal v-model="open" title="LoRA Selector">
-    <div class="form-grid">
-      <div>
+  <Modal v-model="open" title="LoRA Selector" panel-class="lora-modal-panel" :show-footer="false">
+    <div class="lora-modal-toolbar">
+      <div class="lora-modal-field lora-modal-field--search">
         <label class="label-muted">Search</label>
         <input class="ui-input" v-model="q" placeholder="type to filter..." />
       </div>
-      <div>
+      <div class="lora-modal-field lora-modal-field--weight">
         <label class="label-muted">Weight</label>
-        <input class="ui-input" type="number" step="0.1" min="0" v-model.number="weight" />
+        <input class="ui-input lora-modal-weight-input" type="number" step="0.05" min="0" v-model.number="weight" />
       </div>
-    </div>
-    <div class="toolbar">
-      <button class="btn btn-sm btn-secondary" type="button" :disabled="loading" @click="refreshList">
+      <button class="btn btn-sm btn-secondary lora-modal-refresh-btn" type="button" :disabled="loading" @click="refreshList">
         {{ loading ? 'Refreshing…' : 'Refresh' }}
       </button>
-      <span class="caption">{{ filtered.length }} / {{ items.length }} LoRAs</span>
+      <span class="caption lora-modal-count">{{ filtered.length }} / {{ items.length }} LoRAs</span>
     </div>
-    <p v-if="loadError" class="caption">Error: {{ loadError }}</p>
+    <p v-if="loadError" class="panel-error">Error: {{ loadError }}</p>
     <div class="panel-section modal-list-section">
       <ul class="list" role="listbox">
-        <li v-for="item in filtered" :key="item.path || item.name" class="list-item clickable">
-          <div class="flex items-center justify-between">
-            <span>{{ item.name }}</span>
-            <span class="lora-modal-actions">
-              <button class="btn btn-sm btn-secondary" type="button" title="Insert into Prompt" @click.stop="insert(item, 'positive')">+</button>
-              <button class="btn btn-sm btn-outline" type="button" title="Insert into Negative Prompt" @click.stop="insert(item, 'negative')">-</button>
-            </span>
-          </div>
+        <li v-for="item in filtered" :key="item.path || item.name" class="list-item lora-modal-item">
+          <button
+            class="lora-modal-item__name"
+            type="button"
+            :title="`Insert ${item.name} in Prompt`"
+            @click.stop="insert(item, 'positive')"
+          >
+            {{ item.name }}
+          </button>
+          <span class="lora-modal-item__actions">
+            <button
+              class="btn btn-sm btn-secondary lora-modal-action lora-modal-action--positive"
+              type="button"
+              title="Insert into Prompt"
+              @click.stop="insert(item, 'positive')"
+            >
+              Prompt +
+            </button>
+            <button
+              class="btn btn-sm btn-outline lora-modal-action lora-modal-action--negative"
+              type="button"
+              title="Insert into Negative Prompt"
+              @click.stop="insert(item, 'negative')"
+            >
+              Negative -
+            </button>
+          </span>
         </li>
       </ul>
     </div>
-    <template #footer>
-      <button class="btn btn-md btn-outline" type="button" @click="open=false">Close</button>
-    </template>
   </Modal>
 </template>
 
@@ -61,10 +76,12 @@ Symbols (top-level; keep in sync; no ghosts):
 import { computed, ref, watch } from 'vue'
 import Modal from '../ui/Modal.vue'
 import { fetchModelInventory, refreshModelInventory } from '../../api/client'
+import { useQuicksettingsStore } from '../../stores/quicksettings'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e:'insert', payload: { token: string; target: 'positive' | 'negative' }): void }>()
 const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('update:modelValue', v) })
+const quicksettings = useQuicksettingsStore()
 
 interface LoraItem {
   name: string
@@ -72,7 +89,7 @@ interface LoraItem {
 }
 const items = ref<LoraItem[]>([])
 const q = ref('')
-const weight = ref(0.8)
+const weight = ref(1.0)
 const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
@@ -97,7 +114,8 @@ async function loadItems(refresh: boolean): Promise<void> {
   loadError.value = ''
   try {
     const inv = refresh ? await refreshModelInventory() : await fetchModelInventory()
-    items.value = (inv.loras || []) as LoraItem[]
+    quicksettings.hydrateLoraShaMap(inv)
+    items.value = ((inv.loras || []) as LoraItem[]).slice().sort((left, right) => left.name.localeCompare(right.name))
     loaded.value = true
   } catch (error) {
     items.value = []

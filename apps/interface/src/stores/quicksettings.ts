@@ -12,16 +12,17 @@ resolve to backend SHA-based assets (no raw-path inputs). Also owns global compo
 and caches the current `/api/options` revision for generation payload contracts (`settings_revision`).
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
 sanitized so `tenc_sha` resolution remains deterministic across families (including Anima). VAE state defaults to canonical `built-in`
-when no persisted value exists, and request preflight can enforce fail-loud non-empty selection via `requireVaeSelection`.
+when no persisted value exists, request preflight can enforce fail-loud non-empty selection via `requireVaeSelection`, and LoRA SHA mappings
+can be hydrated directly from a refreshed inventory payload (`hydrateLoraShaMap`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
-  setters that call API updates, and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
+  setters that call API updates, inventory hydrators (`hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
 */
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ModelInfo } from '../api/types'
+import type { InventoryResponse, ModelInfo } from '../api/types'
 import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInventory, fetchPaths, fetchMemory, getCachedOptionsRevision } from '../api/client'
 
 const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_overrides'
@@ -101,6 +102,29 @@ function normalizeVaeSelection(value: string | null | undefined): string {
   }
   if (lower === 'none') return NONE_VAE_SELECTION
   return raw
+}
+
+function buildLoraShaMapFromInventory(inventory: Pick<InventoryResponse, 'loras'> | null | undefined): Map<string, string> {
+  const loraMap = new Map<string, string>()
+  if (!inventory || !Array.isArray(inventory.loras)) return loraMap
+
+  for (const lora of inventory.loras) {
+    const sha = typeof lora.sha256 === 'string' ? lora.sha256.trim().toLowerCase() : ''
+    if (!sha || !/^[0-9a-f]{64}$/.test(sha)) continue
+    const name = typeof lora.name === 'string' ? lora.name.trim() : ''
+    const rawPath = typeof lora.path === 'string' ? lora.path.trim() : ''
+    const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+    const basename = normPath ? normPath.split('/').pop() : name
+    const keys = new Set<string>()
+    if (name) keys.add(name)
+    if (rawPath) keys.add(rawPath)
+    if (normPath) keys.add(normPath)
+    if (basename) keys.add(String(basename))
+    for (const key of keys) {
+      loraMap.set(key, sha)
+    }
+  }
+  return loraMap
 }
 
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
@@ -521,25 +545,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
     wanGgufShaMap.value = wanMap
 
-    const loraMap = new Map<string, string>()
-    for (const lora of inv.loras || []) {
-      const sha = typeof lora.sha256 === 'string' ? lora.sha256.trim().toLowerCase() : ''
-      if (!sha || !/^[0-9a-f]{64}$/.test(sha)) continue
-      const name = typeof lora.name === 'string' ? lora.name.trim() : ''
-      const rawPath = typeof lora.path === 'string' ? lora.path.trim() : ''
-      const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
-      const basename = normPath ? normPath.split('/').pop() : name
-      const keys = new Set<string>()
-      if (name) keys.add(name)
-      if (rawPath) keys.add(rawPath)
-      if (normPath) keys.add(normPath)
-      if (basename) keys.add(String(basename))
-      for (const key of keys) {
-        loraMap.set(key, sha)
-      }
-    }
-    loraShaMap.value = loraMap
+    loraShaMap.value = buildLoraShaMapFromInventory(inv)
     sanitizeTextEncoderOverrides()
+  }
+
+  function hydrateLoraShaMap(inventory: Pick<InventoryResponse, 'loras'> | null | undefined): void {
+    loraShaMap.value = buildLoraShaMapFromInventory(inventory)
   }
 
   function resolveTextEncoderSha(label: string | null | undefined): string | undefined {
@@ -824,6 +835,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     resolveLoraSha,
     resolveWanGgufSha,
     isModelCoreOnly,
+    hydrateLoraShaMap,
     vaeShaMap,
     loraShaMap,
     wanGgufShaMap,

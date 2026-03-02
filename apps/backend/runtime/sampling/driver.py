@@ -767,8 +767,6 @@ class CodexSampler:
                         enabled=console_block_progress_active,
                         env_flag="CODEX_PROGRESS_BAR",
                     )
-                if console_block_progress_active:
-                    log_cfg_delta = False
 
                 def _on_block_progress(block_index: int, total_blocks: int) -> None:
                     normalized_index, normalized_total = validate_block_progress_payload(
@@ -1252,7 +1250,7 @@ class CodexSampler:
                                 except Exception:
                                     pass
 
-                            if self._log_enabled and not console_block_progress_active and (
+                            if self._log_enabled and (
                                 i == 0 or (i + 1) == steps or (i + 1) % max(1, steps // 5) == 0
                             ):
                                 eps_norm = float(eps.norm().item()) if hasattr(eps, "norm") else float("nan")

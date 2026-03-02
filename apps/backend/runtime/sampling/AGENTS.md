@@ -75,7 +75,6 @@ Status: Active
 - 2026-02-25: `driver.py` now applies optional denoiser-adjacent hooks per step (`pre_denoiser_hook` before denoise, `post_denoiser_hook` after denoise), enabling Forge-style masked blending semantics in img2img while preserving existing post-step and post-sample hook contracts.
 - 2026-03-01: `block_progress.py` now defines shared block-progress keys/validator plus an optional Rich console controller (`RichBlockProgressController`) with block-focused display (`x/total self_attn [xblocks/s]`), and `driver.py` now wires this shared controller to model block callbacks (`codex_sampling_block_progress_callback`) instead of tqdm step bars while preserving backend-state block updates and strict callback payload validation.
 - 2026-03-02: `SamplingContext.enable_progress` now defaults to enabled (`CODEX_PROGRESS_BAR` default `true`), and `driver.py` now emits explicit `sampling.block_progress.console` telemetry (`enabled`, `env_flag`) when wiring the Rich block-progress controller.
-- 2026-03-02: `driver.py` now suppresses high-frequency sampler diagnostic events (`sampling.cfg_delta`, periodic `sampling.step`) while Rich block progress is active, keeping console tabulation stable without disabling block callbacks or SSE progress payloads.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

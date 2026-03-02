@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import sys
+import datetime
 from typing import Optional
 
 try:  # Optional; fall back to plain logs when missing
@@ -96,7 +97,10 @@ class TqdmAwareHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - UI integration
         if tqdm is not None and getattr(tqdm, "_instances", None):
             try:
-                tqdm.write(self.format(record))
+                message = record.getMessage()
+                timestamp = datetime.datetime.fromtimestamp(record.created).strftime("%m/%d/%y %H:%M:%S")
+                rendered = f"[{timestamp}] {record.levelname:<8s} {message}"
+                tqdm.write(rendered)
                 return
             except Exception:
                 # Fall back to the wrapped handler on unexpected errors

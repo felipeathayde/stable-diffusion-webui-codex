@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Full-screen image zoom overlay with pan/zoom controls and optional WAN frame-guide editing.
 Provides a reusable overlay used by result previews and init-image previews, with close semantics for Escape/outside-click,
-fit-to-viewport zoom behavior, and opt-in WAN guide editing (toggle, resize mode, target size, and drag crop offsets)
+fit-to-viewport zoom behavior, and opt-in WAN guide editing (toggle, image scale, target size, and drag crop offsets)
 for no-stretch img2vid framing.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `applyFitView` (function): Resets pan and applies fit zoom.
 - `toggleFrameGuide` (function): Toggles WAN frame-guide visibility in the toolbar.
 - `emitFrameGuideUpdate` (function): Normalizes and emits WAN frame-guide edits to parent components.
+- `updateImageScaleByPixels` (function): Converts width/height edits into AR-locked image-scale updates.
 - `onGuideDragStart` (function): Starts drag tracking for WAN crop-guide movement.
 - `onOverlayWheel` (function): Handles wheel zoom only on the main image region.
 - `onWindowKeydown` (function): Handles keyboard shortcuts (`Escape` closes).
@@ -61,26 +62,40 @@ Symbols (top-level; keep in sync; no ghosts):
           {{ frameGuideVisible ? 'Guide: On' : 'Guide: Off' }}
         </button>
 
-        <div class="image-zoom-guide-edit-row">
-          <label class="label-muted" for="wan-guide-resize-mode">Resize</label>
-          <select
-            id="wan-guide-resize-mode"
-            class="select-md"
-            :value="frameGuideConfig?.resizeMode || 'auto'"
-            @change="onResizeModeChange"
-          >
-            <option
-              v-for="option in resizeModeOptions"
-              :key="option.value"
-              :value="option.value"
-            >
-              {{ option.label }}
-            </option>
-          </select>
-        </div>
-
         <div class="image-zoom-guide-size-grid">
-          <label class="label-muted" for="wan-guide-width">W</label>
+          <label class="label-muted" for="wan-guide-image-width">Image W</label>
+          <div class="image-zoom-guide-size-input">
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeImageWidth(-1)">-</button>
+            <input
+              id="wan-guide-image-width"
+              class="ui-input cdx-input-w-xs"
+              type="number"
+              :min="frameGuideMinImageWidth"
+              :max="WAN_IMAGE_DIM_MAX"
+              :step="WAN_DIM_STEP"
+              :value="frameGuideImageWidth"
+              @change="onImageWidthChange"
+            />
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeImageWidth(1)">+</button>
+          </div>
+
+          <label class="label-muted" for="wan-guide-image-height">Image H</label>
+          <div class="image-zoom-guide-size-input">
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeImageHeight(-1)">-</button>
+            <input
+              id="wan-guide-image-height"
+              class="ui-input cdx-input-w-xs"
+              type="number"
+              :min="frameGuideMinImageHeight"
+              :max="WAN_IMAGE_DIM_MAX"
+              :step="WAN_DIM_STEP"
+              :value="frameGuideImageHeight"
+              @change="onImageHeightChange"
+            />
+            <button class="btn btn-sm btn-outline" type="button" @click="nudgeImageHeight(1)">+</button>
+          </div>
+
+          <label class="label-muted" for="wan-guide-width">Frame W</label>
           <div class="image-zoom-guide-size-input">
             <button class="btn btn-sm btn-outline" type="button" @click="nudgeGuideWidth(-1)">-</button>
             <input
@@ -96,7 +111,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <button class="btn btn-sm btn-outline" type="button" @click="nudgeGuideWidth(1)">+</button>
           </div>
 
-          <label class="label-muted" for="wan-guide-height">H</label>
+          <label class="label-muted" for="wan-guide-height">Frame H</label>
           <div class="image-zoom-guide-size-input">
             <button class="btn btn-sm btn-outline" type="button" @click="nudgeGuideHeight(-1)">-</button>
             <input
@@ -117,7 +132,8 @@ Symbols (top-level; keep in sync; no ghosts):
           <div class="image-zoom-frame-meta__row"><span>Src</span><strong>{{ frameGuideSourceLabel }}</strong></div>
           <div class="image-zoom-frame-meta__row"><span>Scaled</span><strong>{{ frameGuideScaledLabel }}</strong></div>
           <div class="image-zoom-frame-meta__row"><span>Frame</span><strong>{{ frameGuideTargetLabel }}</strong></div>
-          <div class="image-zoom-frame-meta__row"><span>Resize</span><strong>{{ frameGuideResizeLabel }}</strong></div>
+          <div class="image-zoom-frame-meta__row"><span>Scale</span><strong>{{ frameGuideScaleLabel }}</strong></div>
+          <div class="image-zoom-frame-meta__row"><span>Min Scale</span><strong>{{ frameGuideMinScaleLabel }}</strong></div>
           <div class="image-zoom-frame-meta__row"><span>Crop XY</span><strong>{{ frameGuideCropLabel }}</strong></div>
         </div>
       </div>
@@ -128,11 +144,10 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
 import {
-  WAN_IMG2VID_RESIZE_MODE_LABELS,
+  computeWanImg2VidMinImageScale,
   type WanImg2VidFrameGuideConfig,
-  type WanImg2VidResizeMode,
   computeWanImg2VidFrameProjection,
-  normalizeWanImg2VidResizeMode,
+  normalizeWanImg2VidImageScale,
 } from '../../utils/wan_img2vid_frame_projection'
 
 const props = withDefaults(defineProps<{
@@ -160,6 +175,7 @@ const FIT_PADDING_PX = 24
 const WAN_DIM_MIN = 64
 const WAN_DIM_MAX = 2048
 const WAN_DIM_STEP = 16
+const WAN_IMAGE_DIM_MAX = 32768
 
 const zoom = ref(1)
 const offsetX = ref(0)
@@ -215,16 +231,48 @@ function snapGuideDim(rawValue: unknown): number {
 }
 
 function normalizeFrameGuideConfig(rawGuide: WanImg2VidFrameGuideConfig): WanImg2VidFrameGuideConfig {
+  const targetWidth = snapGuideDim(requirePositiveInt(rawGuide.targetWidth, 'wanFrameGuide.targetWidth'))
+  const targetHeight = snapGuideDim(requirePositiveInt(rawGuide.targetHeight, 'wanFrameGuide.targetHeight'))
+  const minImageScale = (
+    sourceWidth.value > 0
+      && sourceHeight.value > 0
+      && targetWidth > 0
+      && targetHeight > 0
+  )
+    ? computeWanImg2VidMinImageScale(sourceWidth.value, sourceHeight.value, targetWidth, targetHeight)
+    : 1
+  const imageScale = Math.max(
+    minImageScale,
+    normalizeWanImg2VidImageScale(rawGuide.imageScale, minImageScale),
+  )
   return {
-    targetWidth: snapGuideDim(requirePositiveInt(rawGuide.targetWidth, 'wanFrameGuide.targetWidth')),
-    targetHeight: snapGuideDim(requirePositiveInt(rawGuide.targetHeight, 'wanFrameGuide.targetHeight')),
-    resizeMode: normalizeWanImg2VidResizeMode(rawGuide.resizeMode, 'auto'),
+    targetWidth,
+    targetHeight,
+    imageScale,
     cropOffsetX: normalizeGuideOffset(rawGuide.cropOffsetX, 'wanFrameGuide.cropOffsetX'),
     cropOffsetY: normalizeGuideOffset(rawGuide.cropOffsetY, 'wanFrameGuide.cropOffsetY'),
   }
 }
 
 const frameGuideState = ref<WanImg2VidFrameGuideConfig | null>(null)
+
+function isSameGuideConfig(
+  left: WanImg2VidFrameGuideConfig,
+  right: WanImg2VidFrameGuideConfig,
+): boolean {
+  const sameDims = left.targetWidth === right.targetWidth && left.targetHeight === right.targetHeight
+  if (!sameDims) return false
+  const leftScale = normalizeWanImg2VidImageScale(left.imageScale, 1)
+  const rightScale = normalizeWanImg2VidImageScale(right.imageScale, 1)
+  if (Math.abs(leftScale - rightScale) > 1e-9) return false
+  const leftOffsetX = normalizeGuideOffset(left.cropOffsetX, 'left.cropOffsetX')
+  const rightOffsetX = normalizeGuideOffset(right.cropOffsetX, 'right.cropOffsetX')
+  if (Math.abs(leftOffsetX - rightOffsetX) > 1e-9) return false
+  const leftOffsetY = normalizeGuideOffset(left.cropOffsetY, 'left.cropOffsetY')
+  const rightOffsetY = normalizeGuideOffset(right.cropOffsetY, 'right.cropOffsetY')
+  if (Math.abs(leftOffsetY - rightOffsetY) > 1e-9) return false
+  return true
+}
 
 watch(
   () => props.wanFrameGuide,
@@ -234,7 +282,11 @@ watch(
       showFrameGuide.value = false
       return
     }
-    frameGuideState.value = normalizeFrameGuideConfig(guide)
+    const normalizedGuide = normalizeFrameGuideConfig(guide)
+    frameGuideState.value = normalizedGuide
+    if (!isSameGuideConfig(guide, normalizedGuide)) {
+      emit('update:wanFrameGuide', normalizedGuide)
+    }
   },
   { immediate: true, deep: true },
 )
@@ -246,15 +298,19 @@ const frameProjection = computed(() => {
   const guide = frameGuideConfig.value
   if (!guide) return null
   if (sourceWidth.value <= 0 || sourceHeight.value <= 0) return null
-  return computeWanImg2VidFrameProjection({
-    sourceWidth: sourceWidth.value,
-    sourceHeight: sourceHeight.value,
-    frameWidth: guide.targetWidth,
-    frameHeight: guide.targetHeight,
-    resizeMode: guide.resizeMode,
-    cropOffsetX: guide.cropOffsetX,
-    cropOffsetY: guide.cropOffsetY,
-  })
+  try {
+    return computeWanImg2VidFrameProjection({
+      sourceWidth: sourceWidth.value,
+      sourceHeight: sourceHeight.value,
+      frameWidth: guide.targetWidth,
+      frameHeight: guide.targetHeight,
+      imageScale: guide.imageScale,
+      cropOffsetX: guide.cropOffsetX,
+      cropOffsetY: guide.cropOffsetY,
+    })
+  } catch {
+    return null
+  }
 })
 
 const frameGuideVisible = computed(() => Boolean(showFrameGuide.value && frameProjection.value))
@@ -262,13 +318,6 @@ const frameGuideDraggable = computed(() => {
   const projection = frameProjection.value
   if (!projection) return false
   return projection.slackX > 0 || projection.slackY > 0
-})
-
-const resizeModeOptions = computed(() => {
-  return (Object.keys(WAN_IMG2VID_RESIZE_MODE_LABELS) as WanImg2VidResizeMode[]).map((mode) => ({
-    value: mode,
-    label: WAN_IMG2VID_RESIZE_MODE_LABELS[mode],
-  }))
 })
 
 function formatDims(width: number, height: number): string {
@@ -301,13 +350,16 @@ const frameGuideTargetLabel = computed(() => {
   return formatDims(guide.targetWidth, guide.targetHeight)
 })
 
-const frameGuideResizeLabel = computed(() => {
+const frameGuideScaleLabel = computed(() => {
   const projection = frameProjection.value
-  if (!projection) return WAN_IMG2VID_RESIZE_MODE_LABELS.auto
-  const requested = WAN_IMG2VID_RESIZE_MODE_LABELS[projection.resizeMode]
-  const resolved = WAN_IMG2VID_RESIZE_MODE_LABELS[projection.resolvedResizeMode]
-  if (projection.resizeMode === 'auto') return `${requested} -> ${resolved}`
-  return requested
+  if (!projection) return '—'
+  return `${projection.imageScale.toFixed(3)}x`
+})
+
+const frameGuideMinScaleLabel = computed(() => {
+  const projection = frameProjection.value
+  if (!projection) return '—'
+  return `${projection.minImageScale.toFixed(3)}x`
 })
 
 const frameGuideCropLabel = computed(() => {
@@ -325,6 +377,48 @@ const frameGuideRectStyle = computed<CSSProperties>(() => {
     width: `${(projection.cropWidth / projection.sourceWidth) * 100}%`,
     height: `${(projection.cropHeight / projection.sourceHeight) * 100}%`,
   }
+})
+
+const frameGuideImageWidth = computed(() => {
+  const projection = frameProjection.value
+  if (projection) return projection.resizedWidth
+  const guide = frameGuideConfig.value
+  if (!guide || sourceWidth.value <= 0) return WAN_DIM_MIN
+  const scale = normalizeWanImg2VidImageScale(guide.imageScale, 1)
+  return Math.max(1, Math.trunc(sourceWidth.value * scale + 0.5))
+})
+
+const frameGuideImageHeight = computed(() => {
+  const projection = frameProjection.value
+  if (projection) return projection.resizedHeight
+  const guide = frameGuideConfig.value
+  if (!guide || sourceHeight.value <= 0) return WAN_DIM_MIN
+  const scale = normalizeWanImg2VidImageScale(guide.imageScale, 1)
+  return Math.max(1, Math.trunc(sourceHeight.value * scale + 0.5))
+})
+
+const frameGuideMinImageWidth = computed(() => {
+  const guide = frameGuideConfig.value
+  if (!guide || sourceWidth.value <= 0 || sourceHeight.value <= 0) return 1
+  const minScale = computeWanImg2VidMinImageScale(
+    sourceWidth.value,
+    sourceHeight.value,
+    guide.targetWidth,
+    guide.targetHeight,
+  )
+  return Math.max(1, Math.trunc(sourceWidth.value * minScale + 0.5))
+})
+
+const frameGuideMinImageHeight = computed(() => {
+  const guide = frameGuideConfig.value
+  if (!guide || sourceWidth.value <= 0 || sourceHeight.value <= 0) return 1
+  const minScale = computeWanImg2VidMinImageScale(
+    sourceWidth.value,
+    sourceHeight.value,
+    guide.targetWidth,
+    guide.targetHeight,
+  )
+  return Math.max(1, Math.trunc(sourceHeight.value * minScale + 0.5))
 })
 
 function clearPanListeners(): void {
@@ -385,6 +479,24 @@ watch(frameProjection, (projection) => {
     clearGuideDragListeners()
   }
 })
+
+watch(
+  [sourceWidth, sourceHeight, frameGuideConfig],
+  ([currentSourceWidth, currentSourceHeight, guide]) => {
+    if (!guide) return
+    if (currentSourceWidth <= 0 || currentSourceHeight <= 0) return
+    const minScale = computeWanImg2VidMinImageScale(
+      currentSourceWidth,
+      currentSourceHeight,
+      guide.targetWidth,
+      guide.targetHeight,
+    )
+    const normalizedScale = normalizeWanImg2VidImageScale(guide.imageScale, minScale)
+    const clampedScale = Math.max(minScale, normalizedScale)
+    if (Math.abs(clampedScale - normalizedScale) < 1e-9) return
+    emitFrameGuideUpdate({ imageScale: clampedScale })
+  },
+)
 
 function clampZoom(value: number): number {
   const minZoom = Math.min(ZOOM_MIN, computeFitZoom())
@@ -447,9 +559,41 @@ function toggleFrameGuide(): void {
   showFrameGuide.value = !showFrameGuide.value
 }
 
-function onResizeModeChange(event: Event): void {
-  const target = event.target as HTMLSelectElement
-  emitFrameGuideUpdate({ resizeMode: normalizeWanImg2VidResizeMode(target.value, 'auto') })
+function updateImageScaleByPixels(pixels: number, axis: 'width' | 'height'): void {
+  const guide = frameGuideConfig.value
+  if (!guide) return
+  if (sourceWidth.value <= 0 || sourceHeight.value <= 0) return
+  const sourceAxis = axis === 'width' ? sourceWidth.value : sourceHeight.value
+  if (!Number.isFinite(sourceAxis) || sourceAxis <= 0) return
+  const requestedPixels = Math.max(1, Math.min(WAN_IMAGE_DIM_MAX, Math.trunc(Number(pixels))))
+  const requestedScale = requestedPixels / sourceAxis
+  const minScale = computeWanImg2VidMinImageScale(
+    sourceWidth.value,
+    sourceHeight.value,
+    guide.targetWidth,
+    guide.targetHeight,
+  )
+  emitFrameGuideUpdate({ imageScale: Math.max(minScale, normalizeWanImg2VidImageScale(requestedScale, minScale)) })
+}
+
+function nudgeImageWidth(direction: -1 | 1): void {
+  const nextWidth = frameGuideImageWidth.value + direction * WAN_DIM_STEP
+  updateImageScaleByPixels(nextWidth, 'width')
+}
+
+function nudgeImageHeight(direction: -1 | 1): void {
+  const nextHeight = frameGuideImageHeight.value + direction * WAN_DIM_STEP
+  updateImageScaleByPixels(nextHeight, 'height')
+}
+
+function onImageWidthChange(event: Event): void {
+  const target = event.target as HTMLInputElement
+  updateImageScaleByPixels(Number(target.value), 'width')
+}
+
+function onImageHeightChange(event: Event): void {
+  const target = event.target as HTMLInputElement
+  updateImageScaleByPixels(Number(target.value), 'height')
 }
 
 function nudgeGuideWidth(direction: -1 | 1): void {

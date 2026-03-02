@@ -11,7 +11,7 @@ Owns per-stage prompt + init media inputs, stage params, assets selection, guide
 renders progress/results via task events (frames and/or exported video), with Run status shown through the shared
 `RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` metadata in progress mode).
 Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled in WAN flows).
-Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/resizeMode/cropOffset`) into the shared init-image card so the zoom overlay can visualize and edit generation-frame projection.
+Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card so the zoom overlay can visualize and edit generation-frame projection.
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
@@ -56,7 +56,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for img2vid init-image input.
 - `onZoomFrameGuideUpdate` (function): Applies zoom-overlay frame-guide edits back into WAN video params.
 - `clearInit` (function): Clears init image fields.
-- `wanInitImageZoomFrameGuide` (computed): Derived WAN init-image zoom frame-guide config from current video dimensions + resize/crop state.
+- `wanInitImageZoomFrameGuide` (computed): Derived WAN init-image zoom frame-guide config from current video dimensions + image-scale/crop state.
 - `normalizeVideoBeforeSubmit` (function): Normalizes width/height/frames before Generate dispatch.
 - `onGenerateClick` (function): Starts a generation run for the current input mode (builds payload, submits, and wires streaming) (async).
 - `clampNumber` (function): Clamps a numeric value to `[min, max]`.
@@ -749,7 +749,7 @@ import {
   WAN_WINDOW_STRIDE_ALIGNMENT,
 } from '../utils/wan_img2vid_temporal'
 import {
-  normalizeWanImg2VidResizeMode,
+  normalizeWanImg2VidImageScale,
   type WanImg2VidFrameGuideConfig,
 } from '../utils/wan_img2vid_frame_projection'
 
@@ -808,7 +808,7 @@ function defaultVideo(): WanVideoParams {
     img2vidWindowFrames: 13,
     img2vidWindowStride: 8,
     img2vidWindowCommitFrames: 12,
-    img2vidResizeMode: 'auto',
+    img2vidImageScale: 1,
     img2vidCropOffsetX: 0.5,
     img2vidCropOffsetY: 0.5,
     format: 'video/h264-mp4',
@@ -838,7 +838,7 @@ const low = computed<WanStageParams>(() => wanParams.value?.low || defaultStage(
 const wanInitImageZoomFrameGuide = computed<WanImg2VidFrameGuideConfig>(() => ({
   targetWidth: Number(video.value.width) || 64,
   targetHeight: Number(video.value.height) || 64,
-  resizeMode: normalizeWanImg2VidResizeMode(video.value.img2vidResizeMode, 'auto'),
+  imageScale: normalizeWanImg2VidImageScale(video.value.img2vidImageScale, 1),
   cropOffsetX: normalizeGuideOffset(video.value.img2vidCropOffsetX, 0.5),
   cropOffsetY: normalizeGuideOffset(video.value.img2vidCropOffsetY, 0.5),
 }))
@@ -996,8 +996,8 @@ function readImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode']): Parti
     if (typeof record.img2vidResetAnchorToBase === 'boolean') {
       patch.img2vidResetAnchorToBase = Boolean(record.img2vidResetAnchorToBase)
     }
-    if (record.img2vidResizeMode !== undefined) {
-      patch.img2vidResizeMode = normalizeWanImg2VidResizeMode(record.img2vidResizeMode, 'auto')
+    if (record.img2vidImageScale !== undefined) {
+      patch.img2vidImageScale = normalizeWanImg2VidImageScale(record.img2vidImageScale, 1)
     }
     if (record.img2vidCropOffsetX !== undefined) {
       patch.img2vidCropOffsetX = normalizeGuideOffset(record.img2vidCropOffsetX, 0.5)
@@ -1032,7 +1032,7 @@ function writeImg2VidTemporalSnapshot(mode: WanVideoParams['img2vidMode'], sourc
     img2vidChunkSeedMode: source.img2vidChunkSeedMode,
     img2vidAnchorAlpha: source.img2vidAnchorAlpha,
     img2vidResetAnchorToBase: source.img2vidResetAnchorToBase,
-    img2vidResizeMode: source.img2vidResizeMode,
+    img2vidImageScale: source.img2vidImageScale,
     img2vidCropOffsetX: source.img2vidCropOffsetX,
     img2vidCropOffsetY: source.img2vidCropOffsetY,
   }
@@ -1068,8 +1068,8 @@ function normalizeVideoPatch(patch: Partial<WanVideoParams>, current: WanVideoPa
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidChunkSeedMode')) {
     nextPatch.img2vidChunkSeedMode = normalizeChunkSeedMode(nextPatch.img2vidChunkSeedMode)
   }
-  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidResizeMode')) {
-    nextPatch.img2vidResizeMode = normalizeWanImg2VidResizeMode(nextPatch.img2vidResizeMode, 'auto')
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidImageScale')) {
+    nextPatch.img2vidImageScale = normalizeWanImg2VidImageScale(nextPatch.img2vidImageScale, current.img2vidImageScale)
   }
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'img2vidCropOffsetX')) {
     nextPatch.img2vidCropOffsetX = normalizeGuideOffset(nextPatch.img2vidCropOffsetX, current.img2vidCropOffsetX)
@@ -1450,7 +1450,7 @@ function onZoomFrameGuideUpdate(guide: WanImg2VidFrameGuideConfig): void {
   setVideo({
     width: nextWidth,
     height: nextHeight,
-    img2vidResizeMode: normalizeWanImg2VidResizeMode(guide.resizeMode, 'auto'),
+    img2vidImageScale: normalizeWanImg2VidImageScale(guide.imageScale, video.value.img2vidImageScale),
     img2vidCropOffsetX: normalizeGuideOffset(guide.cropOffsetX, video.value.img2vidCropOffsetX),
     img2vidCropOffsetY: normalizeGuideOffset(guide.cropOffsetY, video.value.img2vidCropOffsetY),
   })
@@ -1869,7 +1869,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       windowFrames: video.value.img2vidWindowFrames,
       windowStride: video.value.img2vidWindowStride,
       windowCommitFrames: video.value.img2vidWindowCommitFrames,
-      resizeMode: video.value.img2vidResizeMode,
+      imageScale: video.value.img2vidImageScale,
       cropOffsetX: video.value.img2vidCropOffsetX,
       cropOffsetY: video.value.img2vidCropOffsetY,
     },
@@ -2023,7 +2023,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     img2vidWindowFrames: typeof i2v.windowFrames === 'number' && Number.isFinite(i2v.windowFrames) ? Number(i2v.windowFrames) : video.value.img2vidWindowFrames,
     img2vidWindowStride: typeof i2v.windowStride === 'number' && Number.isFinite(i2v.windowStride) ? Number(i2v.windowStride) : video.value.img2vidWindowStride,
     img2vidWindowCommitFrames: typeof i2v.windowCommitFrames === 'number' && Number.isFinite(i2v.windowCommitFrames) ? Number(i2v.windowCommitFrames) : video.value.img2vidWindowCommitFrames,
-    img2vidResizeMode: normalizeWanImg2VidResizeMode(i2v.resizeMode, video.value.img2vidResizeMode),
+    img2vidImageScale: normalizeWanImg2VidImageScale(i2v.imageScale, video.value.img2vidImageScale),
     img2vidCropOffsetX: normalizeGuideOffset(i2v.cropOffsetX, video.value.img2vidCropOffsetX),
     img2vidCropOffsetY: normalizeGuideOffset(i2v.cropOffsetY, video.value.img2vidCropOffsetY),
     format: String(output.format || video.value.format),

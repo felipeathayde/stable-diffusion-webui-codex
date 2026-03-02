@@ -60,7 +60,7 @@
     overscroll-behavior: contain;
   }
   .image-zoom-toolbar--with-guide {
-    width: 15rem;
+    width: 17rem;
   }
   .image-zoom-toolbar .toolbar-group {
     display: flex;

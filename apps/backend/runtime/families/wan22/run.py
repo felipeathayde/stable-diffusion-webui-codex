@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF run entrypoints (txt2vid/img2vid; batch + streaming).
 Orchestrates text context, per-stage sampling, ordered stage-LoRA application (`high/low.loras`), and VAE encode/decode (including file-VAE metadata config forwarding) while keeping GGUF support anchored in the shared quantization/ops layer.
-For img2vid, forwards no-stretch guide controls from `RunConfig` (`img2vid_resize_mode` + crop offsets) into VAE init-image preprocessing so runtime framing matches UI projection.
+For img2vid, forwards no-stretch guide controls from `RunConfig` (`img2vid_image_scale` + crop offsets) into VAE init-image preprocessing so runtime framing matches UI projection.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
@@ -1726,7 +1726,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         width=int(cfg.width),
         device=dev_name,
         dtype=cfg.dtype,
-        img2vid_resize_mode=str(getattr(cfg, "img2vid_resize_mode", "auto")),
+        img2vid_image_scale=float(getattr(cfg, "img2vid_image_scale", 1.0)),
         img2vid_crop_offset_x=float(getattr(cfg, "img2vid_crop_offset_x", 0.5)),
         img2vid_crop_offset_y=float(getattr(cfg, "img2vid_crop_offset_y", 0.5)),
         vae_dir=cfg.vae_dir,
@@ -2024,7 +2024,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         width=int(cfg.width),
         device=dev_name,
         dtype=cfg.dtype,
-        img2vid_resize_mode=str(getattr(cfg, "img2vid_resize_mode", "auto")),
+        img2vid_image_scale=float(getattr(cfg, "img2vid_image_scale", 1.0)),
         img2vid_crop_offset_x=float(getattr(cfg, "img2vid_crop_offset_x", 0.5)),
         img2vid_crop_offset_y=float(getattr(cfg, "img2vid_crop_offset_y", 0.5)),
         vae_dir=cfg.vae_dir,
@@ -2418,7 +2418,7 @@ def stream_img2vid_chunked(
         width=int(cfg.width),
         device=dev_name,
         dtype=cfg.dtype,
-        img2vid_resize_mode=str(getattr(cfg, "img2vid_resize_mode", "auto")),
+        img2vid_image_scale=float(getattr(cfg, "img2vid_image_scale", 1.0)),
         img2vid_crop_offset_x=float(getattr(cfg, "img2vid_crop_offset_x", 0.5)),
         img2vid_crop_offset_y=float(getattr(cfg, "img2vid_crop_offset_y", 0.5)),
         vae_dir=cfg.vae_dir,

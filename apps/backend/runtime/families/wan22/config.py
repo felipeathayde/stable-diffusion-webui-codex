@@ -10,7 +10,7 @@ Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
 geometry validation (e.g. `height/width % 16 == 0`), metadata-derived sampler/scheduler defaults, and strict WAN VAE
 config-source contract checks (bundle dir or file+config), plus strict `gguf_sdpa_policy` validation and WAN scheduler contract validation.
-Also parses no-stretch img2vid guide controls (`img2vid_resize_mode` + normalized crop offsets) into run config.
+Also parses no-stretch img2vid guide controls (`img2vid_image_scale` + normalized crop offsets) into run config.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -95,7 +95,7 @@ class RunConfig:
     # 3 = aggressive (always clear between stages)
     offload_level: Optional[int] = None
     chunk_buffer_mode: str = "hybrid"  # img2vid chunk buffering strategy: 'hybrid' | 'ram' | 'ram+hd'
-    img2vid_resize_mode: str = "auto"  # no-stretch init-image guide mode: 'auto' | 'fit_width' | 'fit_height'
+    img2vid_image_scale: float = 1.0  # no-stretch init-image guide scale (>0)
     img2vid_crop_offset_x: float = 0.5  # normalized crop offset in [0,1]
     img2vid_crop_offset_y: float = 0.5  # normalized crop offset in [0,1]
 
@@ -811,22 +811,22 @@ def build_wan22_gguf_run_config(
                 f"got {chunk_buffer_mode_raw!r}."
             )
 
-    resize_mode_raw = extras.get("img2vid_resize_mode")
-    if resize_mode_raw is None or str(resize_mode_raw).strip() == "":
-        img2vid_resize_mode = "auto"
+    image_scale_raw = extras.get("img2vid_image_scale")
+    if image_scale_raw is None or image_scale_raw == "":
+        img2vid_image_scale = 1.0
     else:
-        if not isinstance(resize_mode_raw, str):
+        if isinstance(image_scale_raw, bool):
             raise RuntimeError(
-                "WAN22 GGUF: 'img2vid_resize_mode' must be a string when provided, "
-                f"got {type(resize_mode_raw).__name__}."
+                "WAN22 GGUF: 'img2vid_image_scale' must be a finite float > 0 when provided, "
+                f"got {type(image_scale_raw).__name__}."
             )
-        img2vid_resize_mode = str(resize_mode_raw).strip().lower()
-        if img2vid_resize_mode not in {"auto", "fit_width", "fit_height"}:
+        parsed_image_scale = _coerce_float(image_scale_raw)
+        if parsed_image_scale is None or not math.isfinite(parsed_image_scale) or parsed_image_scale <= 0.0:
             raise RuntimeError(
-                "WAN22 GGUF: 'img2vid_resize_mode' must be one of "
-                "('auto','fit_width','fit_height') when provided, "
-                f"got {resize_mode_raw!r}."
+                "WAN22 GGUF: 'img2vid_image_scale' must be a finite float > 0 when provided, "
+                f"got {image_scale_raw!r}."
             )
+        img2vid_image_scale = float(parsed_image_scale)
 
     def _parse_crop_offset(field_name: str, *, default: float) -> float:
         raw_value = extras.get(field_name)
@@ -908,7 +908,7 @@ def build_wan22_gguf_run_config(
         aggressive_offload=aggressive_offload,
         offload_level=offload_level,
         chunk_buffer_mode=chunk_buffer_mode,
-        img2vid_resize_mode=img2vid_resize_mode,
+        img2vid_image_scale=img2vid_image_scale,
         img2vid_crop_offset_x=img2vid_crop_offset_x,
         img2vid_crop_offset_y=img2vid_crop_offset_y,
         te_device=(str(extras.get("gguf_te_device")).lower() if extras.get("gguf_te_device") is not None else None),

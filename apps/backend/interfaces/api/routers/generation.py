@@ -27,7 +27,7 @@ and derives WAN sampler/scheduler defaults from metadata scheduler assets while 
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
 WAN sampler fields accept any non-empty string at API parse-time (known names canonicalized when possible); scheduler fields remain strict (`simple`) for WAN22 requests.
 Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|sliding|svi2|svi2_pro`) with mode-scoped validation for chunk/window fields,
-and no-stretch guide controls (`img2vid_resize_mode`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) are parsed into WAN extras for runtime preprocessing.
+and no-stretch guide controls (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) are parsed into WAN extras for runtime preprocessing.
 Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
 missing vs explicit-empty semantics for downstream runtime fallback behavior. WAN stage LoRAs are provided via `wan_high/wan_low.loras[]`
 (frontend parses `<lora:...>` tags) and duplicate stage entries are deduplicated by SHA (last wins).
@@ -3315,18 +3315,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 detail=f"Invalid img2vid_mode: {payload.get('img2vid_mode')!r} (expected 'solo'|'sliding'|'svi2'|'svi2_pro').",
             )
         extras['img2vid_mode'] = img2vid_mode
-        resize_mode = str(payload.get('img2vid_resize_mode') or '').strip().lower()
-        if not resize_mode:
-            resize_mode = 'auto'
-        if resize_mode not in {'auto', 'fit_width', 'fit_height'}:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Invalid img2vid_resize_mode: "
-                    f"{payload.get('img2vid_resize_mode')!r} (expected 'auto'|'fit_width'|'fit_height')."
-                ),
-            )
-        extras['img2vid_resize_mode'] = resize_mode
+        if payload.get('img2vid_image_scale') in (None, ''):
+            extras['img2vid_image_scale'] = 1.0
+        else:
+            image_scale = _require_float_field(payload, 'img2vid_image_scale')
+            if not math.isfinite(image_scale) or image_scale <= 0.0:
+                raise HTTPException(status_code=400, detail="'img2vid_image_scale' must be a finite number > 0.")
+            extras['img2vid_image_scale'] = float(image_scale)
         if payload.get('img2vid_crop_offset_x') in (None, ''):
             extras['img2vid_crop_offset_x'] = 0.5
         else:

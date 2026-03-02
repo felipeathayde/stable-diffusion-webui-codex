@@ -7,30 +7,22 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN img2vid frame projection math for no-stretch preview overlays.
-Provides deterministic no-stretch crop projection metadata (resize mode + normalized offsets) so the UI and runtime
-can agree on which source-image region is used for generation.
+Provides deterministic no-stretch crop projection metadata (free image scale + normalized offsets) so the UI and
+runtime can agree on which source-image region is used for generation.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WanImg2VidResizeMode` (type): Supported no-stretch resize modes (`auto|fit_width|fit_height`).
-- `WAN_IMG2VID_RESIZE_MODE_LABELS` (constant): Human-readable labels per resize mode.
-- `WanImg2VidFrameGuideConfig` (interface): Zoom-overlay frame-guide config (target dims + resize/crop settings).
-- `WanImg2VidFrameProjectionInput` (interface): Projection input contract (source dims + frame dims + resize/crop settings).
+- `WanImg2VidFrameGuideConfig` (interface): Zoom-overlay frame-guide config (target dims + image-scale/crop settings).
+- `WanImg2VidFrameProjectionInput` (interface): Projection input contract (source dims + frame dims + image-scale/crop settings).
 - `WanImg2VidFrameProjection` (interface): Projection output contract (crop rect + scaled dims + slack/offset metadata).
-- `normalizeWanImg2VidResizeMode` (function): Validates and normalizes WAN resize-mode ids.
+- `normalizeWanImg2VidImageScale` (function): Validates and normalizes WAN img2vid image-scale values.
+- `computeWanImg2VidMinImageScale` (function): Computes the minimum no-stretch image scale required for a target frame.
 - `computeWanImg2VidFrameProjection` (function): Computes no-stretch projection metadata for the WAN init-image guide.
 */
-
-export type WanImg2VidResizeMode = 'auto' | 'fit_width' | 'fit_height'
-export const WAN_IMG2VID_RESIZE_MODE_LABELS: Record<WanImg2VidResizeMode, string> = {
-  auto: 'Auto (no stretch)',
-  fit_width: 'Fit Width (no stretch)',
-  fit_height: 'Fit Height (no stretch)',
-}
 
 export interface WanImg2VidFrameGuideConfig {
   targetWidth: number
   targetHeight: number
-  resizeMode?: WanImg2VidResizeMode | string
+  imageScale?: number
   cropOffsetX?: number
   cropOffsetY?: number
 }
@@ -40,19 +32,18 @@ export interface WanImg2VidFrameProjectionInput {
   sourceHeight: number
   frameWidth: number
   frameHeight: number
-  resizeMode?: WanImg2VidResizeMode | string
+  imageScale?: number
   cropOffsetX?: number
   cropOffsetY?: number
 }
 
 export interface WanImg2VidFrameProjection {
-  resizeMode: WanImg2VidResizeMode
-  resolvedResizeMode: Exclude<WanImg2VidResizeMode, 'auto'>
   sourceWidth: number
   sourceHeight: number
   frameWidth: number
   frameHeight: number
-  scale: number
+  minImageScale: number
+  imageScale: number
   resizedWidth: number
   resizedHeight: number
   cropOffsetX: number
@@ -97,73 +88,38 @@ function normalizeOffset(name: string, value: unknown): number {
   return clamped
 }
 
-export function normalizeWanImg2VidResizeMode(
+export function normalizeWanImg2VidImageScale(
   rawValue: unknown,
-  fallback: WanImg2VidResizeMode = 'auto',
-): WanImg2VidResizeMode {
-  const normalized = String(rawValue || '').trim().toLowerCase()
-  if (!normalized) return fallback
-  if (normalized === 'auto' || normalized === 'fit_width' || normalized === 'fit_height') {
-    return normalized
+  fallback = 1,
+): number {
+  const fallbackNumeric = Number(fallback)
+  if (!Number.isFinite(fallbackNumeric) || fallbackNumeric <= 0) {
+    throw new Error(`WAN frame projection requires imageScale fallback > 0 (got ${String(fallback)}).`)
   }
-  throw new Error(
-    `Unsupported WAN resize mode '${String(rawValue)}' (expected 'auto', 'fit_width', or 'fit_height').`,
-  )
+  if (rawValue === undefined || rawValue === null || rawValue === '') return fallbackNumeric
+  if (typeof rawValue === 'boolean') {
+    throw new Error(`WAN frame projection requires imageScale to be numeric > 0 (got ${String(rawValue)}).`)
+  }
+  const value = Number(rawValue)
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`WAN frame projection requires imageScale > 0 (got ${String(rawValue)}).`)
+  }
+  return value
 }
 
-function resolveCropByMode(
+export function computeWanImg2VidMinImageScale(
   sourceWidth: number,
   sourceHeight: number,
   frameWidth: number,
   frameHeight: number,
-  requestedResizeMode: WanImg2VidResizeMode,
-): {
-  resolvedResizeMode: Exclude<WanImg2VidResizeMode, 'auto'>
-  cropWidth: number
-  cropHeight: number
-} {
-  const lhs = sourceWidth * frameHeight
-  const rhs = sourceHeight * frameWidth
-  const autoResolved: Exclude<WanImg2VidResizeMode, 'auto'> = lhs >= rhs ? 'fit_height' : 'fit_width'
-  const resolvedResizeMode = requestedResizeMode === 'auto' ? autoResolved : requestedResizeMode
-
-  if (resolvedResizeMode === 'fit_width') {
-    if (lhs > rhs) {
-      throw new Error(
-        'WAN frame projection invalid combination: fit_width requires frame aspect >= source aspect.',
-      )
-    }
-    const cropHeight = Math.max(
-      1,
-      Math.min(
-        sourceHeight,
-        Math.trunc((sourceWidth * frameHeight + Math.trunc(frameWidth / 2)) / frameWidth),
-      ),
-    )
-    return {
-      resolvedResizeMode,
-      cropWidth: sourceWidth,
-      cropHeight,
-    }
+): number {
+  const widthScale = frameWidth / sourceWidth
+  const heightScale = frameHeight / sourceHeight
+  const minScale = Math.max(widthScale, heightScale)
+  if (!Number.isFinite(minScale) || minScale <= 0) {
+    throw new Error('WAN frame projection produced invalid minImageScale.')
   }
-
-  if (rhs > lhs) {
-    throw new Error(
-      'WAN frame projection invalid combination: fit_height requires frame aspect <= source aspect.',
-    )
-  }
-  const cropWidth = Math.max(
-    1,
-    Math.min(
-      sourceWidth,
-      Math.trunc((sourceHeight * frameWidth + Math.trunc(frameHeight / 2)) / frameHeight),
-    ),
-  )
-  return {
-    resolvedResizeMode,
-    cropWidth,
-    cropHeight: sourceHeight,
-  }
+  return minScale
 }
 
 export function computeWanImg2VidFrameProjection(
@@ -173,18 +129,20 @@ export function computeWanImg2VidFrameProjection(
   const sourceHeight = requirePositiveFinite('sourceHeight', input.sourceHeight)
   const frameWidth = requirePositiveFinite('frameWidth', input.frameWidth)
   const frameHeight = requirePositiveFinite('frameHeight', input.frameHeight)
-  const resizeMode = normalizeWanImg2VidResizeMode(input.resizeMode)
+  const minImageScale = computeWanImg2VidMinImageScale(sourceWidth, sourceHeight, frameWidth, frameHeight)
+  const imageScale = normalizeWanImg2VidImageScale(input.imageScale, minImageScale)
   const cropOffsetX = normalizeOffset('cropOffsetX', input.cropOffsetX)
   const cropOffsetY = normalizeOffset('cropOffsetY', input.cropOffsetY)
 
-  const { resolvedResizeMode, cropWidth, cropHeight } = resolveCropByMode(
-    sourceWidth,
-    sourceHeight,
-    frameWidth,
-    frameHeight,
-    resizeMode,
-  )
-  if (cropWidth > sourceWidth || cropHeight > sourceHeight) {
+  if (imageScale + 1e-9 < minImageScale) {
+    throw new Error(
+      `WAN frame projection requires imageScale >= ${minImageScale.toFixed(6)} (got ${imageScale.toFixed(6)}).`,
+    )
+  }
+
+  const cropWidth = Math.max(1, Math.min(sourceWidth, Math.trunc(frameWidth / imageScale + 0.5)))
+  const cropHeight = Math.max(1, Math.min(sourceHeight, Math.trunc(frameHeight / imageScale + 0.5)))
+  if (cropWidth <= 0 || cropHeight <= 0 || cropWidth > sourceWidth || cropHeight > sourceHeight) {
     throw new Error(
       `WAN frame projection crop exceeds source bounds (source=${sourceWidth}x${sourceHeight} crop=${cropWidth}x${cropHeight}).`,
     )
@@ -195,24 +153,16 @@ export function computeWanImg2VidFrameProjection(
   const cropX = slackX > 0 ? Math.min(slackX, Math.max(0, Math.trunc(slackX * cropOffsetX + 0.5))) : 0
   const cropY = slackY > 0 ? Math.min(slackY, Math.max(0, Math.trunc(slackY * cropOffsetY + 0.5))) : 0
 
-  const scale = resolvedResizeMode === 'fit_width'
-    ? frameWidth / sourceWidth
-    : frameHeight / sourceHeight
-  if (!Number.isFinite(scale) || scale <= 0) {
-    throw new Error('WAN frame projection produced invalid scale.')
-  }
-
-  const resizedWidth = Math.max(1, Math.round(sourceWidth * scale))
-  const resizedHeight = Math.max(1, Math.round(sourceHeight * scale))
+  const resizedWidth = Math.max(frameWidth, Math.max(1, Math.trunc(sourceWidth * imageScale + 0.5)))
+  const resizedHeight = Math.max(frameHeight, Math.max(1, Math.trunc(sourceHeight * imageScale + 0.5)))
 
   return {
-    resizeMode,
-    resolvedResizeMode,
     sourceWidth,
     sourceHeight,
     frameWidth,
     frameHeight,
-    scale,
+    minImageScale,
+    imageScale,
     resizedWidth,
     resizedHeight,
     cropOffsetX,

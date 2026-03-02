@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
 Loads WAN VAE weights via explicit native lanes (`2d_native` or `3d_native`), applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
-I2V init-image preprocessing is deterministic and no-stretch (`cover + crop + resize`) across tensor/PIL/ndarray paths before VAE encode,
-with explicit resize mode (`auto|fit_width|fit_height`) and normalized crop offsets (`x/y` in `[0,1]`) aligned to the frontend guide projection contract.
+I2V init-image preprocessing is deterministic and no-stretch (`scale + crop + resize`) across tensor/PIL/ndarray paths before VAE encode,
+with explicit image scale (`img2vid_image_scale > 0`) and normalized crop offsets (`x/y` in `[0,1]`) aligned to the frontend guide projection contract.
 Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks). Model key remap ownership is delegated to `runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -377,21 +377,18 @@ def _retrieve_latents(encoder_output: Any, *, sample_mode: str) -> torch.Tensor:
     )
 
 
-def _normalize_img2vid_resize_mode(raw_value: Any) -> str:
+def _normalize_img2vid_image_scale(raw_value: Any) -> float:
     if raw_value is None or raw_value == "":
-        return "auto"
-    if not isinstance(raw_value, str):
+        return 1.0
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
         raise RuntimeError(
-            "WAN22 GGUF: img2vid resize mode must be a string when provided "
+            "WAN22 GGUF: img2vid image scale must be a finite number > 0 when provided "
             f"(got {type(raw_value).__name__})."
         )
-    mode = str(raw_value).strip().lower()
-    if mode in {"auto", "fit_width", "fit_height"}:
-        return mode
-    raise RuntimeError(
-        "WAN22 GGUF: unsupported img2vid resize mode "
-        f"{raw_value!r} (expected 'auto'|'fit_width'|'fit_height')."
-    )
+    value = float(raw_value)
+    if not math.isfinite(value) or value <= 0.0:
+        raise RuntimeError(f"WAN22 GGUF: img2vid image scale must be finite and > 0 (got {raw_value!r}).")
+    return value
 
 
 def _normalize_img2vid_crop_offset(raw_value: Any, *, field_name: str) -> float:
@@ -416,47 +413,33 @@ def _resolve_no_stretch_crop_window(
     source_height: int,
     frame_width: int,
     frame_height: int,
-    requested_resize_mode: str,
-) -> tuple[str, int, int]:
-    lhs = int(source_width) * int(frame_height)
-    rhs = int(source_height) * int(frame_width)
-    auto_resolved = "fit_height" if lhs >= rhs else "fit_width"
-    resolved_resize_mode = auto_resolved if requested_resize_mode == "auto" else requested_resize_mode
-
-    if resolved_resize_mode == "fit_width":
-        if lhs > rhs:
-            raise RuntimeError(
-                "WAN22 GGUF: invalid img2vid crop geometry for fit_width "
-                "(requires frame aspect >= source aspect)."
-            )
-        crop_height = max(
-            1,
-            min(
-                int(source_height),
-                int((int(source_width) * int(frame_height) + int(frame_width) // 2) // int(frame_width)),
-            ),
+    image_scale: float,
+) -> tuple[int, int]:
+    src_w = int(source_width)
+    src_h = int(source_height)
+    dst_w = int(frame_width)
+    dst_h = int(frame_height)
+    if src_w <= 0 or src_h <= 0 or dst_w <= 0 or dst_h <= 0:
+        raise RuntimeError(
+            "WAN22 GGUF: invalid no-stretch geometry "
+            f"(source={src_w}x{src_h} frame={dst_w}x{dst_h})."
         )
-        return resolved_resize_mode, int(source_width), int(crop_height)
 
-    if resolved_resize_mode == "fit_height":
-        if rhs > lhs:
-            raise RuntimeError(
-                "WAN22 GGUF: invalid img2vid crop geometry for fit_height "
-                "(requires frame aspect <= source aspect)."
-            )
-        crop_width = max(
-            1,
-            min(
-                int(source_width),
-                int((int(source_height) * int(frame_width) + int(frame_height) // 2) // int(frame_height)),
-            ),
+    min_scale = max(float(dst_w) / float(src_w), float(dst_h) / float(src_h))
+    if float(image_scale) + 1e-9 < float(min_scale):
+        raise RuntimeError(
+            "WAN22 GGUF: img2vid image scale is too small for requested frame "
+            f"(image_scale={float(image_scale):.6f} min_required={float(min_scale):.6f})."
         )
-        return resolved_resize_mode, int(crop_width), int(source_height)
 
-    raise RuntimeError(
-        "WAN22 GGUF: unsupported resolved img2vid resize mode "
-        f"{resolved_resize_mode!r} (expected 'fit_width' or 'fit_height')."
-    )
+    crop_width = max(1, min(src_w, int(float(dst_w) / float(image_scale) + 0.5)))
+    crop_height = max(1, min(src_h, int(float(dst_h) / float(image_scale) + 0.5)))
+    if crop_width <= 0 or crop_height <= 0 or crop_width > src_w or crop_height > src_h:
+        raise RuntimeError(
+            "WAN22 GGUF: no-stretch crop window exceeds source bounds "
+            f"(source={src_w}x{src_h} crop={crop_width}x{crop_height} image_scale={float(image_scale):.6f})."
+        )
+    return int(crop_width), int(crop_height)
 
 
 def _crop_resize_hw_no_stretch(
@@ -464,7 +447,7 @@ def _crop_resize_hw_no_stretch(
     *,
     height: int,
     width: int,
-    resize_mode: str,
+    image_scale: float,
     crop_offset_x: float,
     crop_offset_y: float,
 ) -> torch.Tensor:
@@ -480,7 +463,7 @@ def _crop_resize_hw_no_stretch(
             "WAN22 GGUF: no-stretch crop+resize target size must be positive "
             f"(height={target_h} width={target_w})."
         )
-    requested_resize_mode = _normalize_img2vid_resize_mode(resize_mode)
+    normalized_image_scale = _normalize_img2vid_image_scale(image_scale)
     normalized_crop_offset_x = _normalize_img2vid_crop_offset(crop_offset_x, field_name="img2vid_crop_offset_x")
     normalized_crop_offset_y = _normalize_img2vid_crop_offset(crop_offset_y, field_name="img2vid_crop_offset_y")
 
@@ -495,17 +478,17 @@ def _crop_resize_hw_no_stretch(
     if src_h == target_h and src_w == target_w:
         return x
 
-    resolved_resize_mode, crop_w, crop_h = _resolve_no_stretch_crop_window(
+    crop_w, crop_h = _resolve_no_stretch_crop_window(
         source_width=src_w,
         source_height=src_h,
         frame_width=target_w,
         frame_height=target_h,
-        requested_resize_mode=requested_resize_mode,
+        image_scale=normalized_image_scale,
     )
     if crop_w > src_w or crop_h > src_h:
         raise RuntimeError(
             "WAN22 GGUF: no-stretch crop window exceeds source bounds "
-            f"(source={src_w}x{src_h} crop={crop_w}x{crop_h} requested_mode={requested_resize_mode} resolved_mode={resolved_resize_mode})."
+            f"(source={src_w}x{src_h} crop={crop_w}x{crop_h} image_scale={float(normalized_image_scale):.6f})."
         )
 
     slack_x = max(0, int(src_w) - int(crop_w))
@@ -526,7 +509,7 @@ def _crop_resize_hw_no_stretch(
         raise RuntimeError(
             "WAN22 GGUF: no-stretch crop window exceeds source bounds "
             f"(source={src_h}x{src_w} crop=(top={top}, left={left}, h={crop_h}, w={crop_w}) "
-            f"requested_mode={requested_resize_mode} resolved_mode={resolved_resize_mode})."
+            f"image_scale={float(normalized_image_scale):.6f})."
         )
 
     cropped = x[:, :, top:bottom, left:right]
@@ -552,7 +535,7 @@ def _prepare_init_image_tensor(
     torch_dtype: torch.dtype,
     height: int,
     width: int,
-    resize_mode: str,
+    image_scale: float,
     crop_offset_x: float,
     crop_offset_y: float,
 ) -> torch.Tensor:
@@ -582,7 +565,7 @@ def _prepare_init_image_tensor(
             t,
             height=target_h,
             width=target_w,
-            resize_mode=resize_mode,
+            image_scale=image_scale,
             crop_offset_x=crop_offset_x,
             crop_offset_y=crop_offset_y,
         )
@@ -600,7 +583,7 @@ def _prepare_init_image_tensor(
             t,
             height=target_h,
             width=target_w,
-            resize_mode=resize_mode,
+            image_scale=image_scale,
             crop_offset_x=crop_offset_x,
             crop_offset_y=crop_offset_y,
         )
@@ -620,7 +603,7 @@ def _prepare_init_image_tensor(
         t,
         height=target_h,
         width=target_w,
-        resize_mode=resize_mode,
+        image_scale=image_scale,
         crop_offset_x=crop_offset_x,
         crop_offset_y=crop_offset_y,
     )
@@ -789,7 +772,7 @@ def vae_encode_video_condition(
     width: int,
     device: str,
     dtype: str,
-    img2vid_resize_mode: str = "auto",
+    img2vid_image_scale: float = 1.0,
     img2vid_crop_offset_x: float = 0.5,
     img2vid_crop_offset_y: float = 0.5,
     vae_dir: str | None = None,
@@ -839,7 +822,7 @@ def vae_encode_video_condition(
                 torch_dtype=torch_dtype,
                 height=height,
                 width=width,
-                resize_mode=img2vid_resize_mode,
+                image_scale=img2vid_image_scale,
                 crop_offset_x=img2vid_crop_offset_x,
                 crop_offset_y=img2vid_crop_offset_y,
             )

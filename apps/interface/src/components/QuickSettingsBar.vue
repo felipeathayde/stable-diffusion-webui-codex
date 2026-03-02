@@ -1205,7 +1205,8 @@ const wanHighDirChoices = computed(() => {
   const seen = new Set<string>()
   const out: string[] = []
   for (const g of inventoryWan.value) {
-    if (g.stage !== 'high') continue
+    const stage = String(g.stage || 'unknown').trim().toLowerCase()
+    if (stage !== 'high' && stage !== 'unknown') continue
     const path = String(g.path || '').trim()
     if (!path) continue
     if (!seen.has(path)) { seen.add(path); out.push(path) }
@@ -1217,7 +1218,8 @@ const wanLowDirChoices = computed(() => {
   const seen = new Set<string>()
   const out: string[] = []
   for (const g of inventoryWan.value) {
-    if (g.stage !== 'low') continue
+    const stage = String(g.stage || 'unknown').trim().toLowerCase()
+    if (stage !== 'low' && stage !== 'unknown') continue
     const path = String(g.path || '').trim()
     if (!path) continue
     if (!seen.has(path)) { seen.add(path); out.push(path) }

@@ -10,7 +10,7 @@ Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2v
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
 handling unset sentinels and producing backend-ready payloads for `/api/*` requests (including `settings_revision`).
 WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler contract on backend).
-Img2vid payload builders emit no-stretch guide controls (`img2vid_image_scale` + crop offsets) with fail-loud validation.
+Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image_scale` + crop offsets) with fail-loud validation.
 
 	Symbols (top-level; keep in sync; no ghosts):
 	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
@@ -510,7 +510,8 @@ function normalizeImg2VidMode(value: unknown): WanImg2VidMode {
   return normalizeWanImg2VidMode(value)
 }
 
-function normalizeImg2VidImageScale(value: unknown): number {
+function normalizeImg2VidImageScale(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined
   return normalizeWanImg2VidImageScale(value, 1)
 }
 
@@ -762,7 +763,6 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
     img2vid_seed: input.high.seed,
     img2vid_init_image: input.initImageData,
     img2vid_mode: normalizeImg2VidMode(input.img2vidMode),
-    img2vid_image_scale: normalizeImg2VidImageScale(input.imageScale),
     img2vid_crop_offset_x: normalizeGuideOffset(input.cropOffsetX, {
       fieldName: 'cropOffsetX',
       fallback: 0.5,
@@ -771,6 +771,11 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
       fieldName: 'cropOffsetY',
       fallback: 0.5,
     }),
+  }
+
+  const normalizedImageScale = normalizeImg2VidImageScale(input.imageScale)
+  if (normalizedImageScale !== undefined) {
+    payload.img2vid_image_scale = normalizedImageScale
   }
 
   const sampler = String(input.high.sampler || '').trim()

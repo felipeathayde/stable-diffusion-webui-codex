@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
 Loads WAN VAE weights via explicit native lanes (`2d_native` or `3d_native`), applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
 I2V init-image preprocessing is deterministic and no-stretch (`scale + crop + resize`) across tensor/PIL/ndarray paths before VAE encode,
-with explicit image scale (`img2vid_image_scale > 0`) and normalized crop offsets (`x/y` in `[0,1]`) aligned to the frontend guide projection contract.
+with optional image scale (`img2vid_image_scale > 0` when provided; omitted = auto-fit minimum) and normalized crop offsets (`x/y` in `[0,1]`)
+aligned to the frontend guide projection contract.
 Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks). Model key remap ownership is delegated to `runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -377,9 +378,9 @@ def _retrieve_latents(encoder_output: Any, *, sample_mode: str) -> torch.Tensor:
     )
 
 
-def _normalize_img2vid_image_scale(raw_value: Any) -> float:
+def _normalize_img2vid_image_scale(raw_value: Any) -> float | None:
     if raw_value is None or raw_value == "":
-        return 1.0
+        return None
     if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
         raise RuntimeError(
             "WAN22 GGUF: img2vid image scale must be a finite number > 0 when provided "
@@ -413,8 +414,8 @@ def _resolve_no_stretch_crop_window(
     source_height: int,
     frame_width: int,
     frame_height: int,
-    image_scale: float,
-) -> tuple[int, int]:
+    image_scale: float | None,
+) -> tuple[int, int, float]:
     src_w = int(source_width)
     src_h = int(source_height)
     dst_w = int(frame_width)
@@ -426,20 +427,21 @@ def _resolve_no_stretch_crop_window(
         )
 
     min_scale = max(float(dst_w) / float(src_w), float(dst_h) / float(src_h))
-    if float(image_scale) + 1e-9 < float(min_scale):
+    effective_scale = float(min_scale) if image_scale is None else float(image_scale)
+    if float(effective_scale) + 1e-9 < float(min_scale):
         raise RuntimeError(
             "WAN22 GGUF: img2vid image scale is too small for requested frame "
-            f"(image_scale={float(image_scale):.6f} min_required={float(min_scale):.6f})."
+            f"(image_scale={float(effective_scale):.6f} min_required={float(min_scale):.6f})."
         )
 
-    crop_width = max(1, min(src_w, int(float(dst_w) / float(image_scale) + 0.5)))
-    crop_height = max(1, min(src_h, int(float(dst_h) / float(image_scale) + 0.5)))
+    crop_width = max(1, min(src_w, int(float(dst_w) / float(effective_scale) + 0.5)))
+    crop_height = max(1, min(src_h, int(float(dst_h) / float(effective_scale) + 0.5)))
     if crop_width <= 0 or crop_height <= 0 or crop_width > src_w or crop_height > src_h:
         raise RuntimeError(
             "WAN22 GGUF: no-stretch crop window exceeds source bounds "
-            f"(source={src_w}x{src_h} crop={crop_width}x{crop_height} image_scale={float(image_scale):.6f})."
+            f"(source={src_w}x{src_h} crop={crop_width}x{crop_height} image_scale={float(effective_scale):.6f})."
         )
-    return int(crop_width), int(crop_height)
+    return int(crop_width), int(crop_height), float(effective_scale)
 
 
 def _crop_resize_hw_no_stretch(
@@ -447,7 +449,7 @@ def _crop_resize_hw_no_stretch(
     *,
     height: int,
     width: int,
-    image_scale: float,
+    image_scale: float | None,
     crop_offset_x: float,
     crop_offset_y: float,
 ) -> torch.Tensor:
@@ -478,7 +480,7 @@ def _crop_resize_hw_no_stretch(
     if src_h == target_h and src_w == target_w:
         return x
 
-    crop_w, crop_h = _resolve_no_stretch_crop_window(
+    crop_w, crop_h, effective_image_scale = _resolve_no_stretch_crop_window(
         source_width=src_w,
         source_height=src_h,
         frame_width=target_w,
@@ -488,7 +490,7 @@ def _crop_resize_hw_no_stretch(
     if crop_w > src_w or crop_h > src_h:
         raise RuntimeError(
             "WAN22 GGUF: no-stretch crop window exceeds source bounds "
-            f"(source={src_w}x{src_h} crop={crop_w}x{crop_h} image_scale={float(normalized_image_scale):.6f})."
+            f"(source={src_w}x{src_h} crop={crop_w}x{crop_h} image_scale={float(effective_image_scale):.6f})."
         )
 
     slack_x = max(0, int(src_w) - int(crop_w))
@@ -509,7 +511,7 @@ def _crop_resize_hw_no_stretch(
         raise RuntimeError(
             "WAN22 GGUF: no-stretch crop window exceeds source bounds "
             f"(source={src_h}x{src_w} crop=(top={top}, left={left}, h={crop_h}, w={crop_w}) "
-            f"image_scale={float(normalized_image_scale):.6f})."
+            f"image_scale={float(effective_image_scale):.6f})."
         )
 
     cropped = x[:, :, top:bottom, left:right]
@@ -772,7 +774,7 @@ def vae_encode_video_condition(
     width: int,
     device: str,
     dtype: str,
-    img2vid_image_scale: float = 1.0,
+    img2vid_image_scale: float | None = None,
     img2vid_crop_offset_x: float = 0.5,
     img2vid_crop_offset_y: float = 0.5,
     vae_dir: str | None = None,

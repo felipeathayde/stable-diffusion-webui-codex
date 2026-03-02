@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_load_pil_images` (function): Loads a list of image paths into PIL images (copies + closes file handles).
 - `_extract_vid2vid_options` (function): Extracts `vid2vid` dict options from request extras.
 - `_extract_flow_options` (function): Extracts `vid2vid_flow` dict options from request extras.
-- `_sanitize_img2vid_extras_for_flow_chunks` (function): Removes inner-img2vid temporal controls (mode/chunk/sliding) from vid2vid flow-chunk extras to prevent nested temporal recursion.
+- `_sanitize_img2vid_extras_for_flow_chunks` (function): Forces inner-img2vid mode to `solo` and strips window/chunk temporal controls from vid2vid flow-chunk extras to prevent nested temporal recursion.
 - `_as_video_options` (function): Validates optional request `video_options` payload shape (mapping or `None`).
 - `_as_wan_animate_mode` (function): Normalizes/validates WAN animate mode string (`animate` vs `replace`).
 - `_validate_4n_plus_1` (function): Validates an integer is of the form `4N+1` (common WAN constraints).
@@ -93,8 +93,8 @@ def _extract_flow_options(extras: Dict[str, Any]) -> dict[str, Any]:
 
 def _sanitize_img2vid_extras_for_flow_chunks(extras: Dict[str, Any]) -> dict[str, Any]:
     sanitized = dict(extras)
+    sanitized["img2vid_mode"] = "solo"
     for key in (
-        "img2vid_mode",
         "img2vid_chunk_frames",
         "img2vid_overlap_frames",
         "img2vid_anchor_alpha",
@@ -496,7 +496,6 @@ def _run_flow_chunks(
     residual_temporal_keys = sorted(
         key
         for key in (
-            "img2vid_mode",
             "img2vid_chunk_frames",
             "img2vid_overlap_frames",
             "img2vid_anchor_alpha",

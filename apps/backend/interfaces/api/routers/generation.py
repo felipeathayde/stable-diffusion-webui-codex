@@ -966,15 +966,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         requested_variant = candidate
 
-        # Guardrail: keep WAN dispatch on task-capable lanes without collapsing
-        # model identities across variants.
-        # - TXT2VID: animate lane is vid2vid-only; route through WAN22 14B.
-        # - IMG2VID: animate lane routes through WAN22 14B.
-        if task_type is TaskType.TXT2VID and candidate == "wan22_14b_animate":
-            candidate = "wan22_14b"
-        if task_type is TaskType.IMG2VID and candidate == "wan22_14b_animate":
-            candidate = "wan22_14b"
-
         try:
             _ensure_default_engines_registered()
         except Exception as exc:
@@ -3315,9 +3306,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 detail=f"Invalid img2vid_mode: {payload.get('img2vid_mode')!r} (expected 'solo'|'sliding'|'svi2'|'svi2_pro').",
             )
         extras['img2vid_mode'] = img2vid_mode
-        if payload.get('img2vid_image_scale') in (None, ''):
-            extras['img2vid_image_scale'] = 1.0
-        else:
+        if payload.get('img2vid_image_scale') not in (None, ''):
             image_scale = _require_float_field(payload, 'img2vid_image_scale')
             if not math.isfinite(image_scale) or image_scale <= 0.0:
                 raise HTTPException(status_code=400, detail="'img2vid_image_scale' must be a finite number > 0.")

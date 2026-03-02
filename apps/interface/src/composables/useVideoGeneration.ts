@@ -17,7 +17,7 @@ pass-through in common WAN payload input. Also snapshots and forwards optional S
 Img2vid temporal payload fields are gated by `img2vidMode` (`solo|sliding|svi2|svi2_pro`), and WAN prompt `<lora:...>` tags are parsed client-side into
 stage-level LoRA arrays (`wan_high/wan_low.loras[]` with `sha+weight`) before payload dispatch. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
 before surfacing UI error text.
-Img2vid no-stretch guide fields (`imageScale`, `cropOffsetX`, `cropOffsetY`) are forwarded into payload builders with strict scale/offset validation.
+Img2vid no-stretch guide fields (`imageScale`, `cropOffsetX`, `cropOffsetY`) are forwarded into payload builders with strict scale/offset validation, and default scale (`1`) is omitted so runtime auto-fit minimum can apply.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -747,9 +747,11 @@ export function useVideoGeneration(tabId: string) {
 
     if (v.useInitImage) {
       const img2vidMode = normalizeImg2VidMode(v.img2vidMode)
+      const normalizedImageScale = normalizeWanImg2VidImageScale(v.img2vidImageScale, 1)
+      const payloadImageScale = Math.abs(normalizedImageScale - 1) < 1e-9 ? undefined : normalizedImageScale
       const img2vidTemporalInput: Partial<WanImg2VidInput> = {}
       const img2vidGuideInput: Partial<WanImg2VidInput> = {
-        imageScale: normalizeWanImg2VidImageScale(v.img2vidImageScale, 1),
+        imageScale: payloadImageScale,
         cropOffsetX: normalizeGuideOffset(v.img2vidCropOffsetX),
         cropOffsetY: normalizeGuideOffset(v.img2vidCropOffsetY),
       }

@@ -21,3 +21,4 @@ Status: Draft
 - 2026-02-08: `spec._predictor()` opts Anima into `simple_schedule_mode="comfy_downsample_sigmas"` so `scheduler=simple` follows ComfyUI-style downsample of `predictor.sigmas` (parity target), while other flow families keep their existing SIMPLE behavior.
 - 2026-02-09: Anima conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-23: `AnimaEngineRuntime.device` default now resolves from memory-manager mount-device authority (no hardcoded CPU default in runtime metadata).
+- 2026-03-02: `spec.assemble_anima_runtime(...)` now defers external component materialization (Qwen TE model, WAN VAE weights, T5 tokenizer) behind lazy wrappers with strict first-use load, reducing startup latency while preserving fail-loud external path validation at engine load time.

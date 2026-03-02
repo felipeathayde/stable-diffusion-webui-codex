@@ -95,7 +95,7 @@ class RunConfig:
     # 3 = aggressive (always clear between stages)
     offload_level: Optional[int] = None
     chunk_buffer_mode: str = "hybrid"  # img2vid chunk buffering strategy: 'hybrid' | 'ram' | 'ram+hd'
-    img2vid_image_scale: float = 1.0  # no-stretch init-image guide scale (>0)
+    img2vid_image_scale: float | None = None  # no-stretch init-image guide scale (>0); None = auto-fit minimum
     img2vid_crop_offset_x: float = 0.5  # normalized crop offset in [0,1]
     img2vid_crop_offset_y: float = 0.5  # normalized crop offset in [0,1]
 
@@ -813,7 +813,7 @@ def build_wan22_gguf_run_config(
 
     image_scale_raw = extras.get("img2vid_image_scale")
     if image_scale_raw is None or image_scale_raw == "":
-        img2vid_image_scale = 1.0
+        img2vid_image_scale: float | None = None
     else:
         if isinstance(image_scale_raw, bool):
             raise RuntimeError(

@@ -396,6 +396,14 @@ class AnimaQwenTextEncoder(nn.Module):
 
     @property
     def device(self) -> torch.device:
+        preferred = getattr(self.model, "preferred_device", None)
+        if isinstance(preferred, torch.device):
+            return preferred
+        if isinstance(preferred, str):
+            try:
+                return torch.device(preferred)
+            except Exception:
+                pass
         try:
             return next(self.model.parameters()).device
         except StopIteration:
@@ -403,6 +411,9 @@ class AnimaQwenTextEncoder(nn.Module):
 
     @property
     def dtype(self) -> torch.dtype:
+        preferred = getattr(self.model, "preferred_dtype", None)
+        if isinstance(preferred, torch.dtype):
+            return preferred
         try:
             return next(self.model.parameters()).dtype
         except StopIteration:

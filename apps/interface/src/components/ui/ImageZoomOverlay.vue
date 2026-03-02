@@ -233,18 +233,22 @@ function snapGuideDim(rawValue: unknown): number {
 function normalizeFrameGuideConfig(rawGuide: WanImg2VidFrameGuideConfig): WanImg2VidFrameGuideConfig {
   const targetWidth = snapGuideDim(requirePositiveInt(rawGuide.targetWidth, 'wanFrameGuide.targetWidth'))
   const targetHeight = snapGuideDim(requirePositiveInt(rawGuide.targetHeight, 'wanFrameGuide.targetHeight'))
-  const minImageScale = (
+  const sourceDimsKnown = (
     sourceWidth.value > 0
       && sourceHeight.value > 0
       && targetWidth > 0
       && targetHeight > 0
   )
+  const minImageScale = sourceDimsKnown
     ? computeWanImg2VidMinImageScale(sourceWidth.value, sourceHeight.value, targetWidth, targetHeight)
-    : 1
-  const imageScale = Math.max(
-    minImageScale,
-    normalizeWanImg2VidImageScale(rawGuide.imageScale, minImageScale),
+    : null
+  const normalizedImageScale = normalizeWanImg2VidImageScale(
+    rawGuide.imageScale,
+    minImageScale ?? 1,
   )
+  const imageScale = minImageScale === null
+    ? normalizedImageScale
+    : Math.max(minImageScale, normalizedImageScale)
   return {
     targetWidth,
     targetHeight,

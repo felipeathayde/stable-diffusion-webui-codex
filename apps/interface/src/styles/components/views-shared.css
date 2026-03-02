@@ -144,15 +144,20 @@
 
   /* Run card header */
   .panel-header.run-sticky { z-index: 5; }
+  .run-header-center {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
   .run-controls { display: flex; align-items: center; gap: var(--space-md); }
   .run-control { display: inline-flex; align-items: center; gap: var(--space-xs); }
   .run-badge-xyz {
     display: inline-flex;
     align-items: center;
     border-radius: 999rem;
-    border: 0.0625rem solid hsla(13, 92%, 60%, 0.6);
-    background: linear-gradient(180deg, hsla(13, 96%, 56%, 0.28), hsla(7, 92%, 52%, 0.2));
-    color: hsla(15, 95%, 69%, 0.98);
+    border: 0.0625rem solid hsla(196, 90%, 60%, 0.58);
+    background: linear-gradient(180deg, hsla(196, 92%, 56%, 0.26), hsla(217, 92%, 52%, 0.18));
+    color: hsla(191, 95%, 78%, 0.98);
     padding: 0.15rem 0.5rem;
     font-size: 0.62rem;
     font-weight: 800;

@@ -17,7 +17,7 @@ Swap-model cards (global + second-pass) share the same capability-gated advanced
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
 Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), so errors are visible even when Prompt is off-screen.
-When XYZ workflow is enabled, RUN header shows an `XYZ` badge while keeping the primary CTA label stable as `Generate`.
+When XYZ workflow is enabled, RUN header shows an `XYZ` badge beside `Generate` via the run-card center-adjacent slot while keeping the primary CTA label stable as `Generate`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
@@ -297,7 +297,7 @@ Symbols (top-level; keep in sync; no ghosts):
         @update:batchCount="(v) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
         @update:batchSize="(v) => setParams({ batchSize: Math.max(1, Math.trunc(v)) })"
       >
-        <template #header-right>
+        <template #header-center-after>
           <span v-if="xyzStore.enabled" class="run-badge-xyz">XYZ</span>
         </template>
 

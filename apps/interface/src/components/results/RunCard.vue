@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Results run card wrapper (Generate button + batch controls popover).
-Renders a `ResultsCard` with a Generate CTA and an optional batch settings panel (count/size) that can be reused across image/video views.
+Renders a `ResultsCard` with a Generate CTA, an optional center-adjacent slot (for run badges), and an optional batch settings panel (count/size) that can be reused across image/video views.
 When `isRunning=true`, the center CTA switches to a destructive cancel-confirm flow (click once -> `Are you sure?`, click again within timeout -> emit `cancel`).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -32,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
   <ResultsCard
     :title="props.title"
     headerClass="three-cols results-sticky run-sticky"
+    headerCenterClass="run-header-center"
     headerRightClass="run-controls"
     :showGenerate="true"
     :generateId="props.generateId"
@@ -43,6 +44,10 @@ Symbols (top-level; keep in sync; no ghosts):
     :isRunning="props.isRunning"
     @generate="onPrimaryAction"
   >
+    <template #header-center-after>
+      <slot name="header-center-after" />
+    </template>
+
     <template #header-right>
       <template v-if="props.showBatchControls">
         <div class="run-control run-batch-menu" :class="{ 'is-open': isBatchMenuOpen }">

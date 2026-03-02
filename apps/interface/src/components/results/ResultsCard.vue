@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared Results panel wrapper with a standard header layout.
-Provides a consistent Results card header (left/center/right slots with an optional Generate button) and a body slot used by generation views.
+Provides a consistent Results card header (left/center/right slots with an optional Generate button and optional center-adjacent slot content) and a body slot used by generation views.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ResultsCard` (component): Results panel wrapper with header slots and optional Generate button.
@@ -34,6 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
             {{ props.isRunning ? props.runningLabel : props.generateLabel }}
           </button>
         </slot>
+        <slot name="header-center-after" />
       </div>
 
       <div class="header-right" :class="props.headerRightClass">

@@ -12,6 +12,7 @@ renders progress/results via task events (frames and/or exported video), with Ru
 `RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` metadata in progress mode).
 Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled in WAN flows).
 Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card so the zoom overlay can visualize and edit generation-frame projection.
+In img2vid mode, the shared init-image card is presented directly as `Img2Vid Parameters` without an extra wrapper header row.
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
@@ -147,15 +148,11 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
 
         <div v-if="mode === 'img2vid'" class="gen-card">
-          <div class="row-split">
-            <span class="label-muted">Input</span>
-            <span class="caption">Mode is set in QuickSettings.</span>
-          </div>
-          <div id="wan-guided-init-image" class="mt-2">
+          <div id="wan-guided-init-image">
             <Img2ImgInpaintParamsCard
               embedded
               :disabled="isRunning"
-              sectionTitle="Image Parameters"
+              sectionTitle="Img2Vid Parameters"
               sectionSubtitle="Initial image"
               initImageLabel="Image"
               :initImageData="video.initImageData"

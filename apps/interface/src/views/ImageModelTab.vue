@@ -55,7 +55,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `syncInitImageDims` (function): Synchronizes init-image derived dimensions into width/height params (async).
 - `maskEditorImageWidth`/`maskEditorImageHeight` (const): Derived init-image dimensions used by the inpaint mask editor canvas (keeps backend mask-dimension contract).
 - `maybeApplyKontextDefaults` (function): Applies Kontext-specific default params when relevant to the current engine/tab.
-- `syncPreviewHeight` (function): Keeps the preview panel height aligned with layout changes (uses DOM measurements).
 - `onGenerate` (function): Run handler for the Run card; dispatches standard generation or XYZ sweep depending on XYZ enable state.
 - `runGenerateDisabled`/`runGenerateTitle` (const): Run CTA state/title derived from capabilities + active mode + XYZ running/enabled state.
 - `missingInpaintMask` (const): Derived guard flag used to disable generation when INPAINT is enabled without an applied mask.
@@ -65,7 +64,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <section v-if="tab" class="panels">
     <!-- Left column: Prompt + Parameters -->
-    <div class="panel-stack" ref="leftStack">
+    <div class="panel-stack">
       <PromptCard
         v-model:prompt="promptText"
         v-model:negative="negativeText"
@@ -330,12 +329,12 @@ Symbols (top-level; keep in sync; no ghosts):
         <RunSummaryChips :text="runSummary" />
       </RunCard>
 
-      <ResultsCard :showGenerate="false" headerClass="three-cols" headerRightClass="results-actions">
+      <ResultsCard :showGenerate="false" headerClass="three-cols" headerRightClass="results-header-actions">
         <template #header-right>
           <div class="gentime-display" v-if="gentimeSeconds !== null">
             <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
           </div>
-          <button class="btn btn-sm btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
+          <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
             {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
           </button>
           <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
@@ -378,7 +377,6 @@ Symbols (top-level; keep in sync; no ghosts):
           :width="params.width"
           :height="params.height"
           :emptyText="resultsEmptyText"
-          :style="previewStyle"
         >
           <template #empty>
             <div class="wan-results-empty">
@@ -478,7 +476,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchPaths, fetchSamplers, fetchSchedulers } from '../api/client'
 import type { GeneratedImage, GuidanceAdvancedCapabilities, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
@@ -550,8 +548,6 @@ const {
   resumeNotice,
 } = useGeneration(props.tabId)
 
-const leftStack = ref<HTMLElement | null>(null)
-const previewStyle = ref<Record<string, string>>({})
 const modelPaths = ref<Record<string, string[]>>({})
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
@@ -571,13 +567,10 @@ onMounted(() => {
     .catch(() => {
       // Fatal state is already set by bootstrap store.
     })
-  syncPreviewHeight()
-  window.addEventListener('resize', syncPreviewHeight)
 })
 
 onBeforeUnmount(() => {
   stopStream()
-  window.removeEventListener('resize', syncPreviewHeight)
 })
 
 const workflowBusy = ref(false)
@@ -935,10 +928,6 @@ watch(showGlobalRefiner, (show) => {
   if (show) return
   if (!params.value.refiner.enabled) return
   setRefiner({ enabled: false })
-})
-
-watch([supportsImg2Img, showHires, showGlobalRefiner, () => params.value.useInitImage], () => {
-  void nextTick(syncPreviewHeight)
 })
 
 watch(
@@ -1419,13 +1408,6 @@ function maybeApplyKontextDefaults(): void {
   // Only apply when user hasn't customized away from the Flux defaults.
   if (params.value.steps === defaults.steps) setParams({ steps: _KONTEXT_DEFAULT_STEPS })
   if (params.value.cfgScale === defaultCfg) setParams({ cfgScale: _KONTEXT_DEFAULT_DISTILLED_CFG })
-}
-
-function syncPreviewHeight(): void {
-  const el = leftStack.value
-  if (!el) return
-  const h = el.getBoundingClientRect().height
-  previewStyle.value = { minHeight: `${Math.max(300, Math.floor(h))}px` }
 }
 
 defineExpose({ generate: onGenerate })

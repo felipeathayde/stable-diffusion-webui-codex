@@ -42,6 +42,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setVideo` (function): Applies partial updates to the video params in state (triggers dependent sync where needed).
 - `setHigh` (function): Applies partial updates to the high stage (and can drive low-stage sync when enabled).
 - `setLow` (function): Applies partial updates to the low stage.
+- `hideHighNegativePrompt`/`hideLowNegativePrompt` (const): Hide stage Negative Prompt fields when stage CFG is `<= 1`.
 - `syncLowFromHighIfNeeded` (function): Keeps low stage params aligned with high stage when the “low follows high” toggle is enabled.
 - `onLowFollowsHighChange` (function): Toggles low-follow behavior and applies an immediate sync.
 - `toggleHighPrompt` (function): Toggles High Prompt section visibility.
@@ -121,7 +122,7 @@ Symbols (top-level; keep in sync; no ghosts):
               </button>
             </WanSubHeader>
             <div v-if="highPromptOpen" class="mt-2">
-              <PromptFields v-model:prompt="highPrompt" v-model:negative="highNegative" token-engine="wan" />
+              <PromptFields v-model:prompt="highPrompt" v-model:negative="highNegative" :hide-negative="hideHighNegativePrompt" token-engine="wan" />
             </div>
             <LoraModal v-model="showHighPromptLoraModal" @insert="onHighPromptLoraInsert" />
           </div>
@@ -142,7 +143,7 @@ Symbols (top-level; keep in sync; no ghosts):
               </button>
             </WanSubHeader>
             <div v-if="lowPromptOpen" class="mt-2" id="wan-guided-low-prompt">
-              <PromptFields v-model:prompt="lowPrompt" v-model:negative="lowNegative" token-engine="wan" />
+              <PromptFields v-model:prompt="lowPrompt" v-model:negative="lowNegative" :hide-negative="hideLowNegativePrompt" token-engine="wan" />
             </div>
             <LoraModal v-model="showLowPromptLoraModal" @insert="onLowPromptLoraInsert" />
           </div>
@@ -1368,6 +1369,16 @@ const lowPrompt = computed({
 const lowNegative = computed({
   get: () => low.value.negativePrompt,
   set: (value: string) => setLow({ negativePrompt: value }),
+})
+
+const hideHighNegativePrompt = computed(() => {
+  const cfg = Number(high.value.cfgScale)
+  return Number.isFinite(cfg) && cfg <= 1
+})
+
+const hideLowNegativePrompt = computed(() => {
+  const cfg = Number(low.value.cfgScale)
+  return Number.isFinite(cfg) && cfg <= 1
 })
 
 const showHighPromptLoraModal = ref(false)

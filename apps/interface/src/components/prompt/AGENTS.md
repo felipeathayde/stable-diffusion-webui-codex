@@ -17,3 +17,4 @@ Status: Active
 - 2025-12-27: Removed the redundant Checkpoints button from `PromptCard.vue` (checkpoint selection lives in QuickSettings); Styles “New/Apply” are now rendered as input-inline actions.
 - 2026-01-03: Added standardized file header blocks to prompt components (non-test files) as part of the rollout (doc-only change).
 - 2026-02-17: `PromptTokenChip.vue` now resolves the live ProseMirror node from `tr.doc.nodeAt(getPos())` before toggle/weight/remove mutations, fixing stale chip-state updates that previously required view switching.
+- 2026-03-02: `PromptCard.vue` now accepts `hideNegative` as an explicit override (in addition to capability-driven hiding), so callers can suppress Negative Prompt fields when CFG semantics require it.

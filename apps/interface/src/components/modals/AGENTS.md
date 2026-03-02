@@ -28,3 +28,4 @@ Status: Active
 - 2026-02-21: `StyleEditorModal.vue` now reuses the shared `ui/Modal.vue` shell (teleport + backdrop + footer slot) instead of rendering an ad-hoc modal container.
 - 2026-02-21: Shared modal list spacing now uses `.modal-list-section` across checkpoint/TI/LoRA pickers; inline `style="margin-top: ..."` was removed.
 - 2026-03-02: `LoraModal.vue` now uses a compact toolbar row (`Search`, `Weight`, `Refresh`, count), removes the redundant footer close button (header `✕` remains), uses clearer per-row actions (`Prompt +` / `Negative -`), and refreshes quicksettings LoRA SHA mappings from the same inventory payload used by the modal list.
+- 2026-03-02: `AssetMetadataModal.vue` now keeps tree-view controls (`Beautify`, expand all, collapse all) visible after toggling Beautify off; object payloads always stay in `JsonTreeView` mode so controls no longer disappear until reload.

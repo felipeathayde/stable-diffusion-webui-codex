@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `HiresSettingsCard` (component): Hires settings block for supported image tabs.
 - `toggle` (function): Toggles the hires enabled state.
 - `swapResize` (function): Swaps hires width/height overrides.
+- `hideNegativePromptByCfg` (const): Hides the hires negative prompt field when effective hires CFG is `<= 1`.
 - `onMinTileChange` (function): Normalizes/clamps min-tile updates before emitting.
 -->
 
@@ -250,7 +251,7 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
 
       <div class="gc-row">
-        <div class="gc-col field">
+        <div :class="['gc-col', 'field', { 'hr-field--full': hideNegativePromptByCfg }]">
           <label class="label-muted">Hires Prompt</label>
           <textarea
             class="ui-textarea h-prompt-sm"
@@ -261,7 +262,7 @@ Symbols (top-level; keep in sync; no ghosts):
           />
           <p class="hr-hint">Leave blank to reuse the base prompt.</p>
         </div>
-        <div class="gc-col field">
+        <div v-if="!hideNegativePromptByCfg" class="gc-col field">
           <label class="label-muted">Hires Negative Prompt</label>
           <textarea
             class="ui-textarea h-prompt-sm"
@@ -401,6 +402,7 @@ const showCurrentCheckpointOption = computed(() => {
 const promptValue = computed(() => String(props.prompt ?? ''))
 const negativePromptValue = computed(() => String(props.negativePrompt ?? ''))
 const supportsNegative = computed(() => Boolean(props.supportsNegative ?? true))
+const hideNegativePromptByCfg = computed(() => supportsNegative.value && cfgValue.value <= 1)
 
 const upscalers = computed(() => Array.isArray(props.upscalers) ? props.upscalers : [])
 const spandrelUpscalers = computed(() => upscalers.value.filter((u) => u.kind === 'spandrel'))

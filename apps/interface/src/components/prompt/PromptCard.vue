@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Prompt panel wrapper with toolbars and modals.
 Renders `PromptFields` and an optional toolbar for asset insertion (LoRA/TI) and styles creation/application.
+Supports forced negative-field hiding via `hideNegative` while preserving capability-based hiding.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PromptCard` (component): Prompt panel with prompt/negative fields, optional assets/styles controls, and insertion modals.
@@ -86,6 +87,7 @@ const props = withDefaults(defineProps<{
   stylesLabel?: string
   toolbarLabel?: string
   supportsNegative?: boolean
+  hideNegative?: boolean
   tokenEngine?: string
   fieldsId?: string
 }>(), {
@@ -95,6 +97,7 @@ const props = withDefaults(defineProps<{
   stylesLabel: 'Styles',
   toolbarLabel: '',
   supportsNegative: true,
+  hideNegative: false,
   tokenEngine: '',
   fieldsId: '',
 })
@@ -115,7 +118,7 @@ const innerNegative = computed({
 })
 
 const {
-  hideNegative,
+  hideNegative: hideNegativeByCapability,
   showLora,
   showTI,
   showStyle,
@@ -130,6 +133,7 @@ const {
   supportsNegative: props.supportsNegative,
 })
 
+const hideNegative = computed(() => hideNegativeByCapability.value || props.hideNegative === true)
 const tokenEngine = computed(() => String(props.tokenEngine || '').trim())
 
 const instance = getCurrentInstance()

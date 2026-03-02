@@ -58,6 +58,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onGenerate` (function): Run handler for the Run card; dispatches standard generation or XYZ sweep depending on XYZ enable state.
 - `runGenerateDisabled`/`runGenerateTitle` (const): Run CTA state/title derived from capabilities + active mode + XYZ running/enabled state.
 - `missingInpaintMask` (const): Derived guard flag used to disable generation when INPAINT is enabled without an applied mask.
+- `hideNegativePrompt` (const): Hides the base Negative Prompt field when effective base CFG is `<= 1`.
 - `xyzSamplerChoices`/`xyzSchedulerChoices` (const): Sampler/scheduler names passed to embedded XYZ autofill (scheduler list is sampler-compatible).
 -->
 
@@ -69,6 +70,7 @@ Symbols (top-level; keep in sync; no ghosts):
         v-model:prompt="promptText"
         v-model:negative="negativeText"
         :supportsNegative="supportsNegative"
+        :hide-negative="hideNegativePrompt"
         :token-engine="resolvedEngineForMode"
         :enableAssets="enableAssets"
         :enableStyles="enableStyles"
@@ -696,6 +698,10 @@ const dependencyReady = computed(() => Boolean(dependencyStatus.value?.ready))
 
 const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean(params.value.zimageTurbo ?? true) : false)
 const supportsNegative = computed(() => Boolean(familyCapabilities.value?.supports_negative_prompt))
+const hideNegativePrompt = computed(() => {
+  const cfg = Number(params.value.cfgScale)
+  return Number.isFinite(cfg) && cfg <= 1
+})
 const supportsTxt2Img = computed(() => {
   const surf = engineSurface.value
   if (!surf) return false

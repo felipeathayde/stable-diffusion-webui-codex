@@ -12,7 +12,7 @@ with an optional toggle to switch between raw and nested views for file metadata
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AssetMetadataModal` (component): Modal for displaying a JSON metadata payload.
-- `showTreePayload` (const): Computed gate selecting nested-tree view when payload is object-like and beautify mode applies.
+- `showTreePayload` (const): Computed gate selecting tree view for object-like payloads.
 -->
 
 <template>
@@ -165,8 +165,6 @@ const isTreePayload = computed(() => {
 })
 
 const showTreePayload = computed(() => {
-  if (!isTreePayload.value) return false
-  if (!supportsBeautifyToggle.value) return true
-  return beautify.value
+  return isTreePayload.value
 })
 </script>

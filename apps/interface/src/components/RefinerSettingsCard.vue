@@ -232,7 +232,6 @@ const props = withDefaults(defineProps<{
 }>(), {
   label: 'Swap Model',
   dense: false,
-  guidanceAdvanced: () => ({ ...DEFAULT_GUIDANCE_ADVANCED }),
   guidanceSupport: null,
   maxSteps: 150,
   minCfg: 0,

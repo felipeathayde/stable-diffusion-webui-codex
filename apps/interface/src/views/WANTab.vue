@@ -1387,13 +1387,31 @@ const showLowPromptLoraModal = ref(false)
 type PromptTokenInsertPayload = {
   token: string
   target?: 'positive' | 'negative'
+  action?: 'add' | 'remove'
+}
+
+function splitPromptTokens(current: string): string[] {
+  return String(current || '')
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
 }
 
 function appendPromptToken(current: string, token: string): string {
   const trimmedToken = String(token || '').trim()
   if (!trimmedToken) return String(current || '')
-  const base = String(current || '').trim()
-  return base ? `${base} ${trimmedToken}` : trimmedToken
+  const tokens = splitPromptTokens(current)
+  if (tokens.includes(trimmedToken)) return tokens.join(' ')
+  tokens.push(trimmedToken)
+  return tokens.join(' ')
+}
+
+function removePromptToken(current: string, token: string): string {
+  const trimmedToken = String(token || '').trim()
+  if (!trimmedToken) return String(current || '')
+  return splitPromptTokens(current)
+    .filter((part) => part !== trimmedToken)
+    .join(' ')
 }
 
 function normalizeLoraSha(rawValue: unknown): string | undefined {
@@ -1433,20 +1451,30 @@ function normalizeStageLoraList(rawValue: unknown): WanStageParams['loras'] {
 
 function onHighPromptLoraInsert(payload: PromptTokenInsertPayload): void {
   const target = payload.target === 'negative' ? 'negative' : 'positive'
+  const action = payload.action === 'remove' ? 'remove' : 'add'
   if (target === 'negative') {
-    setHigh({ negativePrompt: appendPromptToken(high.value.negativePrompt, payload.token) })
+    const current = high.value.negativePrompt
+    const next = action === 'remove' ? removePromptToken(current, payload.token) : appendPromptToken(current, payload.token)
+    setHigh({ negativePrompt: next })
     return
   }
-  setHigh({ prompt: appendPromptToken(high.value.prompt, payload.token) })
+  const current = high.value.prompt
+  const next = action === 'remove' ? removePromptToken(current, payload.token) : appendPromptToken(current, payload.token)
+  setHigh({ prompt: next })
 }
 
 function onLowPromptLoraInsert(payload: PromptTokenInsertPayload): void {
   const target = payload.target === 'negative' ? 'negative' : 'positive'
+  const action = payload.action === 'remove' ? 'remove' : 'add'
   if (target === 'negative') {
-    setLow({ negativePrompt: appendPromptToken(low.value.negativePrompt, payload.token) })
+    const current = low.value.negativePrompt
+    const next = action === 'remove' ? removePromptToken(current, payload.token) : appendPromptToken(current, payload.token)
+    setLow({ negativePrompt: next })
     return
   }
-  setLow({ prompt: appendPromptToken(low.value.prompt, payload.token) })
+  const current = low.value.prompt
+  const next = action === 'remove' ? removePromptToken(current, payload.token) : appendPromptToken(current, payload.token)
+  setLow({ prompt: next })
 }
 
 async function onInitImageFile(file: File): Promise<void> {

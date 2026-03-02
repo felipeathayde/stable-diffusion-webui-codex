@@ -18,7 +18,7 @@ Status: Active
 
 ## Notes
 - Avoid `style="..."` in templates; prefer shared primitives and CSS in `apps/interface/src/styles/**`.
-- `LoraModal.vue` emits `<lora:filename:weight>` payloads with `target` for prompt insertion; `PromptCard.vue` and WAN views consume prompt-target semantics consistently.
+- `LoraModal.vue` emits `<lora:filename:weight>` payloads with `target` + `action` (`add`/`remove`) so prompt surfaces can treat per-row actions as true toggles.
 - Keep modals presentational; stores and routing decisions live in views/stores.
 - 2026-01-03: Added standardized file header blocks to modal components (doc-only change; part of rollout).
 - 2026-01-13: `AssetMetadataModal.vue` adds in-view controls (Beautify + expand/collapse all) to switch between raw/nested file metadata and manage large trees.
@@ -27,5 +27,6 @@ Status: Active
 - 2026-02-28: `LoraModal.vue` continues to emit prompt-target token payloads (`<lora:filename:weight>`) while WAN stage LoRA arrays are derived in `useVideoGeneration` during request assembly.
 - 2026-02-21: `StyleEditorModal.vue` now reuses the shared `ui/Modal.vue` shell (teleport + backdrop + footer slot) instead of rendering an ad-hoc modal container.
 - 2026-02-21: Shared modal list spacing now uses `.modal-list-section` across checkpoint/TI/LoRA pickers; inline `style="margin-top: ..."` was removed.
-- 2026-03-02: `LoraModal.vue` now uses a compact toolbar row (`Search`, `Weight`, `Refresh`, count), removes the redundant footer close button (header `✕` remains), uses clearer per-row actions (`Prompt +` / `Negative -`), and refreshes quicksettings LoRA SHA mappings from the same inventory payload used by the modal list.
+- 2026-03-02: `LoraModal.vue` now uses a compact toolbar row (`Search`, `Weight`, `Refresh`, count), removes the redundant footer close button (header `✕` remains), uses explicit per-row Prompt/Negative toggle actions, and refreshes quicksettings LoRA SHA mappings from the same inventory payload used by the modal list.
 - 2026-03-02: `AssetMetadataModal.vue` now keeps tree-view controls (`Beautify`, expand all, collapse all) visible after toggling Beautify off; object payloads always stay in `JsonTreeView` mode so controls no longer disappear until reload.
+- 2026-03-02: `LoraModal.vue` list rows are now scrollable with zebra/hover states and right-aligned action toggles; each action emits `add/remove` instead of unlimited repeated insertions.

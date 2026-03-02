@@ -127,6 +127,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-21: Added `styles/components/base-tab-header.css` and moved `BaseTabHeader.vue` action-row alignment/margins out of inline template styles.
 - 2026-02-21: `styles.css` modal shell now sizes `.modal-panel` by viewport width (`min(96vw, 72rem)`) instead of `100dvh` width, preserving consistent dialog proportions.
 - 2026-02-21: `styles.css` removed duplicate baseline definitions (`.panel-stack`, `.viewer-card`, `.viewer-empty`) and normalized modal list spacing under shared `.modal-list-section`.
+- 2026-03-02: `styles.css` now gives `LoraModal` a scrollable list region (`.lora-modal-list-section`/`.lora-modal-list`) with zebra rows + hover emphasis, right-aligned action toggles, and active-toggle visual state (`.lora-modal-action.is-active`).
 - 2026-02-21: `styles/components/settings-form.css` now uses namespaced `settings-*` selectors to prevent collisions with global `.form-*` hooks used by other views.
 - 2026-02-21: Added `styles/components/bootstrap-screen.css` and `styles/components/dependency-check-panel.css`, migrating remaining scoped style blocks from `App.vue` and `DependencyCheckPanel.vue` into shared style modules.
 - 2026-02-21: Removed every `transform: translate...` usage from active UI styles (and the `EXAMPLE-dashboard-surface-base.css` reference sheet), replacing those offsets with `top/left`, `inset`, margin-based centering, and non-translate transitions.

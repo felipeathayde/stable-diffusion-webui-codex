@@ -17,7 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolveTokenName` (function): Resolves token filename from inventory row data.
 - `normalizeInsertWeight` (function): Normalizes user-entered LoRA weight to a finite numeric value.
 - `refreshList` (function): Forces a backend inventory refresh, updates quicksettings LoRA SHA map, and reloads the modal list.
-- `insert` (function): Emits a formatted LoRA token from a selected inventory row into a prompt target.
+- `toggleInsert` (function): Toggles add/remove insertion state for a LoRA token target (`positive`/`negative`).
 -->
 
 <template>
@@ -37,33 +37,28 @@ Symbols (top-level; keep in sync; no ghosts):
       <span class="caption lora-modal-count">{{ filtered.length }} / {{ items.length }} LoRAs</span>
     </div>
     <p v-if="loadError" class="panel-error">Error: {{ loadError }}</p>
-    <div class="panel-section modal-list-section">
-      <ul class="list" role="listbox">
-        <li v-for="item in filtered" :key="item.path || item.name" class="list-item lora-modal-item">
-          <button
-            class="lora-modal-item__name"
-            type="button"
-            :title="`Insert ${item.name} in Prompt`"
-            @click.stop="insert(item, 'positive')"
-          >
-            {{ item.name }}
-          </button>
+    <div class="panel-section modal-list-section lora-modal-list-section">
+      <ul class="lora-modal-list" role="listbox">
+        <li v-for="item in filtered" :key="item.path || item.name" class="lora-modal-item">
+          <span class="lora-modal-item__name" :title="item.name">{{ item.name }}</span>
           <span class="lora-modal-item__actions">
             <button
-              class="btn btn-sm btn-secondary lora-modal-action lora-modal-action--positive"
+              :class="['btn', 'btn-sm', 'btn-secondary', 'lora-modal-action', 'lora-modal-action--positive', { 'is-active': isSelected(item, 'positive') }]"
               type="button"
-              title="Insert into Prompt"
-              @click.stop="insert(item, 'positive')"
+              :aria-pressed="isSelected(item, 'positive') ? 'true' : 'false'"
+              :title="isSelected(item, 'positive') ? 'Remove from Prompt' : 'Insert into Prompt'"
+              @click.stop="toggleInsert(item, 'positive')"
             >
-              Prompt +
+              {{ isSelected(item, 'positive') ? 'Prompt ✓' : 'Prompt' }}
             </button>
             <button
-              class="btn btn-sm btn-outline lora-modal-action lora-modal-action--negative"
+              :class="['btn', 'btn-sm', 'btn-outline', 'lora-modal-action', 'lora-modal-action--negative', { 'is-active': isSelected(item, 'negative') }]"
               type="button"
-              title="Insert into Negative Prompt"
-              @click.stop="insert(item, 'negative')"
+              :aria-pressed="isSelected(item, 'negative') ? 'true' : 'false'"
+              :title="isSelected(item, 'negative') ? 'Remove from Negative Prompt' : 'Insert into Negative Prompt'"
+              @click.stop="toggleInsert(item, 'negative')"
             >
-              Negative -
+              {{ isSelected(item, 'negative') ? 'Negative ✓' : 'Negative' }}
             </button>
           </span>
         </li>
@@ -78,8 +73,14 @@ import Modal from '../ui/Modal.vue'
 import { fetchModelInventory, refreshModelInventory } from '../../api/client'
 import { useQuicksettingsStore } from '../../stores/quicksettings'
 
+type PromptTarget = 'positive' | 'negative'
+type InsertAction = 'add' | 'remove'
+
 const props = defineProps<{ modelValue: boolean }>()
-const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e:'insert', payload: { token: string; target: 'positive' | 'negative' }): void }>()
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: boolean): void
+  (e: 'insert', payload: { token: string; target: PromptTarget; action: InsertAction }): void
+}>()
 const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('update:modelValue', v) })
 const quicksettings = useQuicksettingsStore()
 
@@ -93,6 +94,8 @@ const weight = ref(1.0)
 const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
+const selectedPositive = ref<Record<string, string>>({})
+const selectedNegative = ref<Record<string, string>>({})
 
 const filtered = computed(() => {
   const query = q.value.toLowerCase().trim()
@@ -101,7 +104,11 @@ const filtered = computed(() => {
 watch(
   open,
   async (isOpen) => {
-    if (!isOpen) return
+    if (!isOpen) {
+      selectedPositive.value = {}
+      selectedNegative.value = {}
+      return
+    }
     if (loaded.value) return
     await loadItems(false)
   },
@@ -143,14 +150,59 @@ function normalizeInsertWeight(rawWeight: unknown): number {
   return numeric
 }
 
-function insert(item: LoraItem, target: 'positive' | 'negative'): void {
+function selectionKey(item: LoraItem): string {
+  const byPath = String(item.path || '').trim()
+  if (byPath) return `path:${byPath}`
+  return `name:${String(item.name || '').trim()}`
+}
+
+function isSelected(item: LoraItem, target: PromptTarget): boolean {
+  const key = selectionKey(item)
+  if (target === 'negative') return Boolean(selectedNegative.value[key] || '')
+  return Boolean(selectedPositive.value[key] || '')
+}
+
+function selectedToken(item: LoraItem, target: PromptTarget): string {
+  const key = selectionKey(item)
+  if (target === 'negative') return String(selectedNegative.value[key] || '')
+  return String(selectedPositive.value[key] || '')
+}
+
+function setSelected(item: LoraItem, target: PromptTarget, token: string): void {
+  const key = selectionKey(item)
+  if (target === 'negative') {
+    selectedNegative.value[key] = token
+    return
+  }
+  selectedPositive.value[key] = token
+}
+
+function buildToken(item: LoraItem): string {
   const tokenName = resolveTokenName(item)
   if (!tokenName) {
     loadError.value = `LoRA '${item.name || item.path}' has no valid filename; refresh and retry.`
-    return
+    return ''
   }
   const resolvedWeight = normalizeInsertWeight(weight.value)
-  const t = `<lora:${tokenName}:${resolvedWeight.toFixed(2)}>`
-  emit('insert', { token: t, target })
+  return `<lora:${tokenName}:${resolvedWeight.toFixed(2)}>`
+}
+
+function emitInsert(token: string, target: PromptTarget, action: InsertAction): void {
+  if (!token) return
+  emit('insert', { token, target, action })
+}
+
+function toggleInsert(item: LoraItem, target: PromptTarget): void {
+  const currentToken = selectedToken(item, target)
+  if (currentToken) {
+    emitInsert(currentToken, target, 'remove')
+    setSelected(item, target, '')
+    return
+  }
+
+  const nextToken = buildToken(item)
+  if (!nextToken) return
+  emitInsert(nextToken, target, 'add')
+  setSelected(item, target, nextToken)
 }
 </script>

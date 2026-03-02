@@ -331,6 +331,7 @@
   
   .modal-list-section { margin-top: 0.5rem; }
   .modal-panel.lora-modal-panel { width: min(94vw, 56rem); height: min(78dvh, 48rem); max-height: 78dvh; }
+  .lora-modal-panel .modal-body { display: flex; flex-direction: column; min-height: 0; }
   .lora-modal-toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -342,29 +343,64 @@
   .lora-modal-weight-input { width: 100%; min-width: 0; }
   .lora-modal-refresh-btn { align-self: end; }
   .lora-modal-count { white-space: nowrap; align-self: end; }
+  .lora-modal-list-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    margin-top: 0.5rem;
+  }
+  .lora-modal-list {
+    list-style: none;
+    margin: 0;
+    padding: 0 0.15rem 0 0;
+    width: 100%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
   .lora-modal-item {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     column-gap: 0.75rem;
+    min-height: 2.35rem;
+    padding: 0.35rem 0.45rem;
+    border: 0.0625rem solid hsla(0, 0%, 100%, 0.1);
+    border-radius: 0.625rem;
+    transition: border-color 0.16s ease, background-color 0.16s ease;
+  }
+  .lora-modal-item:nth-child(odd) {
+    background: hsla(0, 0%, 100%, 0.028);
+  }
+  .lora-modal-item:nth-child(even) {
+    background: hsla(0, 0%, 100%, 0.05);
+  }
+  .lora-modal-item:hover {
+    border-color: hsla(210, 95%, 76%, 0.42);
+    background: hsla(210, 28%, 22%, 0.32);
   }
   .lora-modal-item__name {
     text-align: left;
-    border: 0;
-    padding: 0;
-    background: transparent;
     color: inherit;
     font: inherit;
+    font-size: 0.95rem;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    cursor: pointer;
+    opacity: 0.95;
   }
-  .lora-modal-item__actions { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .lora-modal-item__actions { display: inline-flex; align-items: center; gap: 0.4rem; justify-self: end; }
   .lora-modal-action {
-    min-width: 6.75rem;
+    min-width: 6.35rem;
     justify-content: center;
+    white-space: nowrap;
+  }
+  .lora-modal-action.is-active {
+    border-color: hsl(var(--accent));
+    background: hsla(210, 60%, 54%, 0.24);
+    color: hsla(0, 0%, 100%, 0.96);
   }
   @media (max-width: 52rem) {
     .lora-modal-toolbar {
@@ -373,6 +409,8 @@
     }
     .lora-modal-field--weight { width: 6.5rem; }
     .lora-modal-count { justify-self: end; }
+    .lora-modal-item { grid-template-columns: minmax(0, 1fr); row-gap: 0.35rem; }
+    .lora-modal-item__actions { justify-self: start; }
   }
 
   .init-picker { display: flex; flex-direction: column; gap: var(--space-sm); background: hsla(0,0%,100%,0.04); border: 1px solid hsla(0,0%,100%,0.08); border-radius: 10px; padding: var(--space-sm); }

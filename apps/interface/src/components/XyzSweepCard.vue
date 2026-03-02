@@ -32,9 +32,6 @@ Symbols (top-level; keep in sync; no ghosts):
       :aria-expanded="store.enabled"
       @header-click="toggleEnabled"
     >
-      <template #subtitle>
-        <span class="caption">X/Y/Z plot</span>
-      </template>
       <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', store.enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"

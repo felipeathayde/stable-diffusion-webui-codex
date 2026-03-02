@@ -78,6 +78,7 @@ Status: Active
 - 2026-02-20: `WanSubHeader` now supports opt-in full-row click toggles (`header-click`), and `HiresSettingsCard.vue` / `RefinerSettingsCard.vue` / `XyzSweepCard.vue` wire header-area click parity for enable/disable collapse behavior.
 - 2026-02-20: `XyzSweepCard.vue` now collapses body content when disabled (same visible pattern as Hires/Swap cards) instead of always rendering controls/results.
 - 2026-03-02: `XyzSweepCard.vue` header title is now `XYZ workflow` (replacing `Script`) and local stop actions were removed from the card toolbar; XYZ stop/cancel ownership is centralized in the shared RUN card cancel flow.
+- 2026-03-02: `XyzSweepCard.vue` no longer renders the `X/Y/Z plot` subtitle under the header; only the `XYZ workflow` title is shown.
 - 2026-03-02: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now keep CFG advanced controls split into three rows for FullHD stability: row-1 (`Guidance Rescale`, `CFG Trunc Ratio`, `Renorm CFG`), row-2 (`APG Start`, `APG Eta`, `APG Rescale`), row-3 (`APG Momentum`, `APG Norm`).
 - 2026-03-02: `HiresSettingsCard.vue` now renders tile controls directly under the upscaler row (Tile presets + `Overlap` slider + `Min tile` slider), and no longer exposes the hires-only `Fallback on OOM` toggle button.
 - 2026-03-02: `HiresSettingsCard.vue` tile row now keeps presets/sliders in one desktop row (`hr-tile-row` + `hr-tile-*` hooks), preventing Tile presets from wrapping into a separate visual row at FullHD widths.

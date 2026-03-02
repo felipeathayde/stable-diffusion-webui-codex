@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Hires (second pass) settings panel.
 Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, scale/width/height,
-upscaler/cfg/denoise, tile controls, model selector, prompt overrides), plus optional second-pass swap-model settings.
+upscaler/cfg/denoise, tile controls with desktop row-alignment hooks, model selector, prompt overrides), plus optional second-pass swap-model settings.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels. Uses the shared `WanSubHeader`
 title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
@@ -188,10 +188,10 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </div>
 
-      <div class="gc-row">
-        <div class="gc-col gc-col--presets field">
+      <div class="gc-row hr-tile-row">
+        <div class="gc-col hr-tile-col">
           <label class="label-muted">Tile</label>
-          <div class="cdx-res-presets" aria-label="Tile presets">
+          <div class="cdx-res-presets hr-tile-presets" aria-label="Tile presets">
             <button
               v-for="preset in tilePresets"
               :key="preset"
@@ -206,7 +206,7 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <SliderField
-          class="gc-col"
+          class="gc-col hr-tile-slider"
           label="Overlap"
           :modelValue="tileConfig.overlap"
           :min="0"
@@ -220,7 +220,7 @@ Symbols (top-level; keep in sync; no ghosts):
         />
 
         <SliderField
-          class="gc-col"
+          class="gc-col hr-tile-slider"
           label="Min tile"
           :modelValue="minTile"
           :min="1"

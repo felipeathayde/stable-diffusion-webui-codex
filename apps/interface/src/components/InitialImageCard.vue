@@ -9,15 +9,17 @@ Required Notice: see NOTICE
 Purpose: Initial image file picker for img2img-style workflows.
 Provides a file input, preview, and remove action and emits the selected `File` back to the parent.
 In dropzone mode, top-right actions render inside the dotted zone (including `Remove`) to keep picker controls close to the preview.
+Exposes `dropzone-actions` and `preview-overlay` slots for caller-defined preview actions/overlays.
 Supports optional pass-through WAN frame-guide config for zoom-overlay no-stretch projection metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InitialImageCard` (component): Initial image picker panel.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `ImageZoomOverlay`.
+- `previewClickAction` (prop): Controls preview click behavior (`zoom` or external emit hook).
 - `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent state.
 - `onFile` (function): Handles file-input selection and emits `set`.
 - `onDropFiles` (function): Handles dropzone selection and emits `set`.
-- `onPreviewClick` (function): Opens the zoom overlay for the current preview image.
+- `onPreviewClick` (function): Routes preview clicks to zoom overlay or external `preview-click` emit.
 -->
 
 <template>
@@ -50,11 +52,12 @@ Symbols (top-level; keep in sync; no ghosts):
               :class="[
                 'init-preview',
                 thumbnail ? 'init-preview--thumb' : '',
-                canZoom ? 'init-preview--clickable' : '',
+                canPreviewClick ? 'init-preview--clickable' : '',
               ]"
               @click.stop="onPreviewClick"
             >
               <img :src="src" alt="Initial" />
+              <slot name="preview-overlay" />
             </div>
             <p v-else class="caption">{{ placeholder }}</p>
           </div>
@@ -70,11 +73,12 @@ Symbols (top-level; keep in sync; no ghosts):
           :class="[
             'init-preview',
             thumbnail ? 'init-preview--thumb' : '',
-            canZoom ? 'init-preview--clickable' : '',
+            canPreviewClick ? 'init-preview--clickable' : '',
           ]"
           @click.stop="onPreviewClick"
         >
           <img :src="src" alt="Initial" />
+          <slot name="preview-overlay" />
         </div>
         <p v-else class="caption">{{ placeholder }}</p>
       </template>
@@ -106,6 +110,7 @@ const props = withDefaults(defineProps<{
   dropzone?: boolean
   thumbnail?: boolean
   zoomable?: boolean
+  previewClickAction?: 'zoom' | 'emit'
   zoomFrameGuide?: WanImg2VidFrameGuideConfig | null
 }>(), {
   label: 'Initial Image',
@@ -117,6 +122,7 @@ const props = withDefaults(defineProps<{
   dropzone: false,
   thumbnail: false,
   zoomable: false,
+  previewClickAction: 'zoom',
   zoomFrameGuide: null,
 })
 
@@ -124,10 +130,12 @@ const emit = defineEmits<{
   (e: 'set', file: File): void
   (e: 'clear'): void
   (e: 'rejected', payload: { reason: string; files: File[] }): void
+  (e: 'preview-click'): void
   (e: 'update:zoomFrameGuide', value: WanImg2VidFrameGuideConfig): void
 }>()
 const zoomOpen = ref(false)
 const canZoom = computed(() => Boolean(props.zoomable && props.src))
+const canPreviewClick = computed(() => Boolean(props.src) && (props.previewClickAction === 'emit' || canZoom.value))
 
 function onFile(e: Event): void {
   const input = e.target as HTMLInputElement
@@ -146,6 +154,11 @@ function onDropRejected(payload: { reason: string; files: File[] }): void {
 }
 
 function onPreviewClick(): void {
+  if (!props.src) return
+  if (props.previewClickAction === 'emit') {
+    emit('preview-click')
+    return
+  }
   if (!canZoom.value) return
   zoomOpen.value = true
 }

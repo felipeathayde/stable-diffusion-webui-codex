@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
 - `onInpaintingFillChange` (function): Emits raw masked-content numeric updates for parent-side normalization.
 - `onMaskEditorApply` (function): Emits edited mask data URL produced by the inpaint mask editor overlay.
+- `onInitPreviewClick` (function): Opens the mask editor when inpaint mode is active and an init image is present.
 - `onMaskEditorExternalReset` (function): Forwards editor reset notices for parent-side toasts.
 -->
 
@@ -39,22 +40,16 @@ Symbols (top-level; keep in sync; no ghosts):
       :dropzone="true"
       :thumbnail="true"
       :zoomable="true"
+      :preview-click-action="useMask ? 'emit' : 'zoom'"
       :zoom-frame-guide="zoomFrameGuide"
       @set="(file) => emit('set:initImage', file)"
       @clear="() => emit('clear:initImage')"
       @rejected="(payload) => emit('reject:initImage', payload)"
+      @preview-click="onInitPreviewClick(disabled, initImageData)"
       @update:zoom-frame-guide="onZoomFrameGuideUpdate"
     >
       <template #dropzone-actions>
         <div v-if="useMask" class="img2img-mask-editor-actions">
-          <button
-            class="btn btn-sm btn-secondary"
-            type="button"
-            :disabled="disabled || !initImageData"
-            @click.stop.prevent="maskEditorOpen = true"
-          >
-            Edit mask
-          </button>
           <button
             class="btn btn-sm btn-outline"
             type="button"
@@ -64,6 +59,13 @@ Symbols (top-level; keep in sync; no ghosts):
             Clear mask
           </button>
         </div>
+      </template>
+      <template #preview-overlay>
+        <div
+          v-if="maskImageData"
+          class="img2img-mask-preview-overlay"
+          :style="{ '--img2img-mask-src': `url('${maskImageData}')` }"
+        />
       </template>
       <template #footer>
         <p v-if="initImageName" class="caption img2img-caption img2img-caption--init-name">{{ initImageName }}</p>
@@ -123,17 +125,19 @@ Symbols (top-level; keep in sync; no ghosts):
           :disabled="disabled"
           @update:modelValue="(value) => emit('update:maskBlur', value)"
         />
-      </div>
 
-      <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-        type="button"
-        :aria-pressed="maskRegionSplit"
-        :disabled="disabled"
-        @click="emit('toggle:maskRegionSplit')"
-      >
-        Split mask regions (ADetailer-style)
-      </button>
+        <div class="gc-col img2img-mask-split-col">
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :aria-pressed="maskRegionSplit"
+            :disabled="disabled"
+            @click="emit('toggle:maskRegionSplit')"
+          >
+            Split mask regions (ADetailer-style)
+          </button>
+        </div>
+      </div>
     </div>
 
     <InpaintMaskEditorOverlay
@@ -219,6 +223,11 @@ function onInpaintingFillChange(event: Event): void {
 
 function onMaskEditorApply(maskDataUrl: string): void {
   emit('apply:maskImageData', maskDataUrl)
+}
+
+function onInitPreviewClick(isDisabled: boolean, imageData: string): void {
+  if (isDisabled || !imageData) return
+  maskEditorOpen.value = true
 }
 
 function onMaskEditorExternalReset(message: string): void {

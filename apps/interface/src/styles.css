@@ -437,7 +437,7 @@
   .init-dropzone-remove {
     position: static;
   }
-  .init-preview { border-radius: 8px; overflow: hidden; border: 1px solid hsla(0,0%,100%,0.08); display: flex; align-items: center; justify-content: center; }
+  .init-preview { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid hsla(0,0%,100%,0.08); display: flex; align-items: center; justify-content: center; }
   .init-preview img { display: block; width: 100%; }
   .init-preview--thumb { width: min(100%, 34rem); max-height: 30dvh; }
   .init-preview--thumb img { width: auto; max-width: 100%; max-height: 30dvh; object-fit: contain; }

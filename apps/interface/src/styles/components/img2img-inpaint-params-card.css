@@ -44,6 +44,10 @@
     margin: 0;
   }
 
+  .img2img-params-card .img2img-caption--init-name {
+    text-align: center;
+  }
+
   @media (max-width: 56rem) {
     .img2img-params-card .img2img-mask-grid > .field { flex-basis: 100%; }
   }

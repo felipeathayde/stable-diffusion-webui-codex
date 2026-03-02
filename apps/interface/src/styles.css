@@ -376,7 +376,23 @@
   }
 
   .init-picker { display: flex; flex-direction: column; gap: var(--space-sm); background: hsla(0,0%,100%,0.04); border: 1px solid hsla(0,0%,100%,0.08); border-radius: 10px; padding: var(--space-sm); }
-  .init-dropzone-slot { display: flex; flex-direction: column; gap: var(--space-sm); min-height: 7rem; justify-content: center; align-items: center; text-align: center; }
+  .init-dropzone-slot {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-height: 7rem;
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  .init-dropzone-remove {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+  }
   .init-preview { border-radius: 8px; overflow: hidden; border: 1px solid hsla(0,0%,100%,0.08); display: flex; align-items: center; justify-content: center; }
   .init-preview img { display: block; width: 100%; }
   .init-preview--thumb { width: min(100%, 34rem); max-height: 30dvh; }

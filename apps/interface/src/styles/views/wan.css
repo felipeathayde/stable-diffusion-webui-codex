@@ -122,6 +122,22 @@
     align-items: end;
   }
 
+  .wan-temporal-anchor-toggle {
+    display: inline-grid;
+    grid-template-columns: minmax(0, max-content);
+    align-items: start;
+  }
+
+  .wan-temporal-anchor-toggle .cdx-slider-field__label-tooltip {
+    width: max-content;
+    max-width: 100%;
+  }
+
+  .wan-temporal-anchor-toggle .wan-temporal-anchor-toggle__btn {
+    width: auto;
+    justify-content: flex-start;
+  }
+
   .wan-video-output-toggle-row {
     display: inline-grid;
     grid-template-columns: minmax(0, max-content);
@@ -130,6 +146,27 @@
   }
 
   .wan-video-output-toggle-row .qs-toggle-btn {
+    width: auto;
+    justify-content: flex-start;
+  }
+
+  .wan-upscaling-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .wan-upscaling-controls .wan-upscaling-row {
+    align-items: end;
+  }
+
+  .wan-upscaling-toggle-row {
+    display: inline-grid;
+    grid-template-columns: minmax(0, max-content);
+    justify-content: start;
+  }
+
+  .wan-upscaling-toggle-row .qs-toggle-btn {
     width: auto;
     justify-content: flex-start;
   }

@@ -90,6 +90,7 @@ Status: Active
 - 2026-02-27: `WANTab.vue` WAN default video FPS is now `15` and the output panel renders interpolation in the same slider row as Loop Count/CRF.
 - 2026-02-27: `WANTab.vue` now snapshots/applies SeedVR2 upscaling controls under `paramsSnapshot.upscaling`, and the embedded `WanVideoOutputPanel.vue` exposes compact upscaling controls plus an advanced block.
 - 2026-02-27: `WANTab.vue` `Reset Anchor` controls in temporal rows now render as single compact toggle buttons (no separate Enabled/Disabled label row), with tooltip attached directly to the button trigger.
+- 2026-03-02: `WANTab.vue` temporal `Reset Anchor` toggle now uses a dedicated compact-width styling hook (`wan-temporal-anchor-toggle`) so the button width matches content (parity with compact output toggles).
 - 2026-02-21: `Settings.vue` renamed the inner content layout hook from `.layout` to `.settings-layout` to avoid collisions with the global app-shell `.layout` contract.
 - 2026-02-21: `WANTab.vue` history apply/details/title mode labeling is now strict for legacy snapshots: unsupported modes no longer silently coerce to `txt2vid`; apply fails loud with toast (`Unsupported history mode ...`) and labels render explicit `Unsupported (<mode>)`.
 - 2026-02-22: `ImageModelTab.vue`, `WANTab.vue`, and `Upscale.vue` now render run errors/notices inside `RunCard` through `RunProgressStatus` variants (error/info/progress). `panel-error` was removed from Prompt/caption regions so run status always appears in the RUN panel.

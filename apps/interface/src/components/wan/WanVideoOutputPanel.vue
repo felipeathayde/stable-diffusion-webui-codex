@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: WAN video output options panel.
 Configures export format/pixel format/CRF/loop options, compact output toggles (`pingpong`, `returnFrames`), and RIFE interpolation target FPS (`0=off`) for WAN video tasks.
-Also exposes optional SeedVR2 video upscaling controls (`video_upscaling`) inside a dedicated collapsible card with header toggle parity to Temporal Loom.
+Also exposes optional SeedVR2 video upscaling controls (`video_upscaling`) inside a dedicated collapsible card with header toggle parity to Temporal Loom,
+including the same `EXPERIMENTAL` badge treatment used in the temporal card.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoOutputPanel` (component): Video output settings panel used by WANTab.
@@ -124,6 +125,7 @@ Symbols (top-level; keep in sync; no ghosts):
         :aria-expanded="video.upscalingEnabled"
         @header-click="updateVideo({ upscalingEnabled: !video.upscalingEnabled })"
       >
+        <span class="wan-badge-experimental">EXPERIMENTAL</span>
         <button
           :class="[
             'btn',
@@ -139,8 +141,8 @@ Symbols (top-level; keep in sync; no ghosts):
           {{ video.upscalingEnabled ? 'Enabled' : 'Disabled' }}
         </button>
       </WanSubHeader>
-      <div v-if="video.upscalingEnabled" class="param-blocks wan-temporal-controls">
-        <div class="param-grid wan-temporal-row" data-cols="3">
+      <div v-if="video.upscalingEnabled" class="param-blocks wan-upscaling-controls">
+        <div class="param-grid wan-upscaling-row" data-cols="3">
           <div class="field">
             <label class="label-muted">Upscaling Model</label>
             <select
@@ -178,7 +180,7 @@ Symbols (top-level; keep in sync; no ghosts):
           />
         </div>
 
-        <div class="param-grid wan-temporal-row" data-cols="4">
+        <div class="param-grid wan-upscaling-row" data-cols="3">
           <SliderField
             class="field"
             label="Batch Size"
@@ -212,20 +214,21 @@ Symbols (top-level; keep in sync; no ghosts):
             inputClass="cdx-input-w-md"
             @update:modelValue="onUpscalingPrependFramesChange"
           />
-          <div class="field">
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.upscalingUniformBatchSize ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :disabled="disabled"
-              :aria-pressed="video.upscalingUniformBatchSize"
-              @click="updateVideo({ upscalingUniformBatchSize: !video.upscalingUniformBatchSize })"
-            >
-              Uniform Batch
-            </button>
-          </div>
         </div>
 
-        <div class="param-grid wan-temporal-row" data-cols="3">
+        <div class="wan-upscaling-toggle-row">
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.upscalingUniformBatchSize ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :disabled="disabled"
+            :aria-pressed="video.upscalingUniformBatchSize"
+            @click="updateVideo({ upscalingUniformBatchSize: !video.upscalingUniformBatchSize })"
+          >
+            Uniform Batch
+          </button>
+        </div>
+
+        <div class="param-grid wan-upscaling-row" data-cols="3">
           <div class="field">
             <label class="label-muted">Color Correction</label>
             <select

@@ -16,6 +16,7 @@ Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token c
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
 payload parsing/LoRA SHA resolution is handled in `useVideoGeneration`.
+Temporal Loom reset-anchor control is rendered as a compact content-width toggle button, and upscaling controls keep the same experimental badge treatment as Temporal Loom.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/cancel, history apply/reuse, and guided-generation UX.
@@ -427,7 +428,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       ]"
                       @update:modelValue="(value: number) => setVideo({ img2vidAnchorAlpha: value })"
                     />
-                    <div class="field">
+                    <div class="field wan-temporal-anchor-toggle">
                       <HoverTooltip
                         class="cdx-slider-field__label-tooltip"
                         title="Reset Anchor to Base"
@@ -438,7 +439,13 @@ Symbols (top-level; keep in sync; no ghosts):
                         ]"
                       >
                         <button
-                          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                          :class="[
+                            'btn',
+                            'qs-toggle-btn',
+                            'qs-toggle-btn--sm',
+                            'wan-temporal-anchor-toggle__btn',
+                            video.img2vidResetAnchorToBase ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off',
+                          ]"
                           type="button"
                           :disabled="isRunning || video.img2vidMode === 'svi2' || video.img2vidMode === 'svi2_pro'"
                           :aria-pressed="video.img2vidResetAnchorToBase"

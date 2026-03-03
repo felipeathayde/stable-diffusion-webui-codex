@@ -1042,12 +1042,15 @@ const filteredVaeChoices = computed(() => {
 watch(
   () => [activeFamily.value, store.currentVae, filteredVaeChoices.value, isQuicksettingsReady.value] as const,
   ([family, currentVae, choices, quicksettingsReady]) => {
+    if (!route.path.startsWith('/models/')) return
+    if (!activeModelTab.value) return
     if (family === 'wan') return
     if (!quicksettingsReady) return
-    const nextVae = canonicalizeVaeChoiceForActiveFamily(String(currentVae || ''), choices)
+    const familyVae = store.getVaeForFamily(family)
+    const nextVae = canonicalizeVaeChoiceForActiveFamily(String(familyVae || currentVae || ''), choices)
     if (!nextVae) return
-    if (String(currentVae || '') === nextVae) return
-    store.setVae(nextVae).catch((error) => {
+    if (String(currentVae || '') === nextVae && String(familyVae || '') === nextVae) return
+    store.setVaeForFamily(family, nextVae).catch((error) => {
       toastQuicksettingsError(error)
     })
   },
@@ -1514,7 +1517,7 @@ async function onModelChange(value: string): Promise<void> {
 
 async function onVaeChange(value: string): Promise<void> {
   try {
-    await store.setVae(value)
+    await store.setVaeForFamily(activeFamily.value, value)
   } catch (error) {
     toastQuicksettingsError(error)
   }

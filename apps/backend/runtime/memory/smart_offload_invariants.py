@@ -18,8 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
   sampling start, and optionally enforces VAE residency rules based on live-preview needs.
 - `enforce_smart_offload_pre_vae_residency` (function): Ensures denoiser/text-encoders are not resident on the accelerator
   before explicit VAE encode/decode stages outside the sampling loop.
-- `enforce_smart_offload_post_decode_residency` (function): Enforces post-decode residency policy (VAE off accelerator; denoiser
-  prewarmed on Smart Cache hit, unloaded on miss).
+- `enforce_smart_offload_post_decode_residency` (function): Enforces post-decode residency policy (VAE off accelerator;
+  denoiser unloaded from accelerator residency).
 """
 
 from __future__ import annotations
@@ -292,15 +292,12 @@ def enforce_smart_offload_post_decode_residency(
     sd_model: Any,
     *,
     stage: str,
-    keep_denoiser_warm: bool,
 ) -> None:
     """Enforce post-decode residency policy for VAE/denoiser.
 
     Policy:
     - VAE must not remain resident on accelerator after decode.
-    - Denoiser stays/warms on accelerator only when `keep_denoiser_warm` is True
-      (Smart Cache hit path with unchanged prompts).
-    - Otherwise denoiser is unloaded after decode.
+    - Denoiser is unloaded after decode if it remains resident on accelerator.
     """
 
     if not smart_offload_enabled():
@@ -331,24 +328,9 @@ def enforce_smart_offload_post_decode_residency(
     if denoiser_target_device is not None and denoiser_target_device.type == "cpu":
         return
 
-    if keep_denoiser_warm:
-        if not _is_model_loaded_on_accelerator(denoiser_target):
-            _LOGGER.debug(
-                "[smart-offload] stage=%s: Smart Cache hit; prewarming denoiser on accelerator.",
-                stage,
-            )
-            memory_management.manager.load_model(
-                denoiser_target,
-                source="runtime.memory.smart_offload_invariants.post_decode",
-                stage=stage,
-                component_hint="denoiser",
-                event_reason="smart_cache_hit_prewarm",
-            )
-        return
-
     if _is_model_loaded_on_accelerator(denoiser_target):
         _LOGGER.debug(
-            "[smart-offload] stage=%s: Smart Cache miss; unloading denoiser after decode.",
+            "[smart-offload] stage=%s: unloading denoiser after decode.",
             stage,
         )
         memory_management.manager.unload_model(
@@ -356,7 +338,7 @@ def enforce_smart_offload_post_decode_residency(
             source="runtime.memory.smart_offload_invariants.post_decode",
             stage=stage,
             component_hint="denoiser",
-            event_reason="smart_cache_miss_unload",
+            event_reason="post_decode_unload",
         )
 
 

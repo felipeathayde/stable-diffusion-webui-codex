@@ -302,7 +302,6 @@ def _decode_generation_output(
     latents: Any = None
     metadata: dict[str, Any] = {}
     metadata_error: RuntimeError | None = None
-    cache_hit = False
     decode_engine = engine
     if isinstance(output, GenerationResult):
         latents = output.samples
@@ -324,11 +323,8 @@ def _decode_generation_output(
         metadata_error = RuntimeError(
             f"{task_label} pipeline metadata['conditioning_cache_hit'] must be bool; got {type(raw_cache_hit).__name__}."
         )
-    else:
-        cache_hit = raw_cache_hit
 
     decode_start = time.perf_counter()
-    decode_succeeded = False
     try:
         if metadata_error is None:
             if decoded_images is not None:
@@ -366,12 +362,10 @@ def _decode_generation_output(
                     stage=f"{task_label}.decode(pre)",
                 )
                 images = latents_to_pil(decoded)
-            decode_succeeded = True
     finally:
         enforce_smart_offload_post_decode_residency(
             decode_engine,
             stage=f"{task_label}.decode",
-            keep_denoiser_warm=cache_hit and decode_succeeded,
         )
 
     if metadata_error is not None:

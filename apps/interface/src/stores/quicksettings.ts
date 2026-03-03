@@ -28,8 +28,11 @@ import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInve
 const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_overrides'
 const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
 const VAE_STORAGE_KEY = 'codex.quicksettings.vae'
+const VAE_BY_FAMILY_STORAGE_KEY = 'codex.quicksettings.vae_by_family'
 const DEFAULT_VAE_SELECTION = 'built-in'
 const NONE_VAE_SELECTION = 'none'
+const VAE_FAMILIES = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'anima'] as const
+type VaeFamily = (typeof VAE_FAMILIES)[number]
 
 const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
   ['sd15', 'sd15_tenc'],
@@ -104,6 +107,10 @@ function normalizeVaeSelection(value: string | null | undefined): string {
   return raw
 }
 
+function isVaeFamily(value: string): value is VaeFamily {
+  return (VAE_FAMILIES as readonly string[]).includes(value)
+}
+
 function buildLoraShaMapFromInventory(inventory: Pick<InventoryResponse, 'loras'> | null | undefined): Map<string, string> {
   const loraMap = new Map<string, string>()
   if (!inventory || !Array.isArray(inventory.loras)) return loraMap
@@ -132,6 +139,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const currentModel = ref<string>('')
   const vaeChoices = ref<string[]>([])
   const currentVae = ref<string>(DEFAULT_VAE_SELECTION)
+  const vaeByFamily = ref<Partial<Record<VaeFamily, string>>>({})
   const textEncoderChoices = ref<string[]>([])
   const currentTextEncoders = ref<string[]>([])
   const textEncoderRootLabels = ref<Set<string>>(new Set())
@@ -293,6 +301,32 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
   }
 
+  function loadVaeByFamilyFromStorage(): void {
+    try {
+      const raw = localStorage.getItem(VAE_BY_FAMILY_STORAGE_KEY)
+      if (!raw) {
+        vaeByFamily.value = {}
+        return
+      }
+      const parsed = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        vaeByFamily.value = {}
+        return
+      }
+      const next: Partial<Record<VaeFamily, string>> = {}
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const family = String(key || '').trim().toLowerCase()
+        if (!isVaeFamily(family)) continue
+        const normalized = normalizeVaeSelection(typeof value === 'string' ? value : '')
+        if (!normalized) continue
+        next[family] = normalized
+      }
+      vaeByFamily.value = next
+    } catch (err) {
+      console.warn('[quicksettings] failed to load VAE-by-family map from localStorage', err)
+    }
+  }
+
   function saveVaeToStorage(label: string): void {
     try {
       const normalized = normalizeVaeSelection(label)
@@ -304,6 +338,39 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     } catch (err) {
       console.warn('[quicksettings] failed to persist VAE selection to localStorage', err)
     }
+  }
+
+  function saveVaeByFamilyToStorage(values: Partial<Record<VaeFamily, string>>): void {
+    try {
+      const entries = Object.entries(values).filter((entry) => {
+        const family = String(entry[0] || '').trim().toLowerCase()
+        if (!isVaeFamily(family)) return false
+        return Boolean(normalizeVaeSelection(String(entry[1] || '')))
+      })
+      if (!entries.length) {
+        localStorage.removeItem(VAE_BY_FAMILY_STORAGE_KEY)
+        return
+      }
+      const payload: Partial<Record<VaeFamily, string>> = {}
+      for (const [family, value] of entries) {
+        const normalized = normalizeVaeSelection(String(value || ''))
+        if (!normalized) continue
+        payload[family as VaeFamily] = normalized
+      }
+      localStorage.setItem(VAE_BY_FAMILY_STORAGE_KEY, JSON.stringify(payload))
+    } catch (err) {
+      console.warn('[quicksettings] failed to persist VAE-by-family map to localStorage', err)
+    }
+  }
+
+  function getVaeForFamily(family: string): string {
+    const normalizedFamily = String(family || '').trim().toLowerCase()
+    if (!isVaeFamily(normalizedFamily)) {
+      return currentVae.value || DEFAULT_VAE_SELECTION
+    }
+    const fromFamily = normalizeVaeSelection(vaeByFamily.value[normalizedFamily] ?? '')
+    if (fromFamily) return fromFamily
+    return currentVae.value || DEFAULT_VAE_SELECTION
   }
 
   function syncSettingsRevisionFromCache(): void {
@@ -382,6 +449,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   async function loadOptions(): Promise<void> {
     loadDeviceFromStorage()
     loadVaeFromStorage()
+    loadVaeByFamilyFromStorage()
     loadTextEncoderOverridesFromStorage()
     sanitizeTextEncoderOverrides()
 
@@ -682,6 +750,20 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     saveVaeToStorage(normalized)
   }
 
+  async function setVaeForFamily(family: string, label: string): Promise<void> {
+    const normalized = normalizeVaeSelection(label) || DEFAULT_VAE_SELECTION
+    currentVae.value = normalized
+    saveVaeToStorage(normalized)
+
+    const normalizedFamily = String(family || '').trim().toLowerCase()
+    if (!isVaeFamily(normalizedFamily)) return
+    vaeByFamily.value = {
+      ...vaeByFamily.value,
+      [normalizedFamily]: normalized,
+    }
+    saveVaeByFamilyToStorage(vaeByFamily.value)
+  }
+
   function requireVaeSelection(label?: string | null): string {
     const normalized = normalizeVaeSelection(label ?? currentVae.value)
     if (!normalized) {
@@ -791,6 +873,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     refreshModelsList,
     setModel,
     setVae,
+    setVaeForFamily,
+    getVaeForFamily,
     setTextEncoders,
     setDevice,
     coreDevice,

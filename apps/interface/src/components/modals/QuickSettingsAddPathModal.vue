@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Reusable quicksettings add-path modal (scan + add-to-library).
 Provides add-path workflows for checkpoint/VAE/text-encoder path keys by scanning a user-supplied path (no hash on scan),
-then adding selected/all files with SHA computed only at add-time and byte-honest add-all progress (spinner fallback when byte totals are unavailable).
+then adding selected/all files with SHA computed only at add-time and row-overlay byte progress (spinner fallback when byte totals are unavailable).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsAddPathModal` (component): Modal for scanning and adding model files into a target paths.json key.
@@ -47,7 +47,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="qs-add-path-actions">
         <button class="btn btn-sm btn-secondary" type="button" :disabled="!canAddAll" @click="addAllSequential">
           <span>{{ addAllRunning ? 'Adding' : 'Add whole folder' }}</span>
-          <span v-if="addAllRunning" class="qs-add-path-ellipsis" aria-hidden="true">...</span>
+          <span v-if="addAllRunning" class="qs-add-path-ellipsis" aria-hidden="true"></span>
         </button>
       </div>
 
@@ -91,7 +91,7 @@ Symbols (top-level; keep in sync; no ghosts):
                   @click="addOne(item, index)"
                 >
                   <span>{{ rowActionLabel(item) }}</span>
-                  <span v-if="rowState(item).adding" class="qs-add-path-ellipsis" aria-hidden="true">...</span>
+                  <span v-if="rowState(item).adding" class="qs-add-path-ellipsis" aria-hidden="true"></span>
                 </button>
               </td>
             </tr>
@@ -307,23 +307,24 @@ function rowState(item: ModelPathScanItem): RowStatus {
 function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: number; sizeBytes: number | null }>; totalBytes: number | null } {
   const entries: Array<{ item: ModelPathScanItem; index: number; sizeBytes: number | null }> = []
   let totalBytes = 0
-  let hasUnknownBytes = false
+  let knownByteEntries = 0
   for (let index = 0; index < scanResults.value.length; index += 1) {
     const item = scanResults.value[index]
     const state = rowState(item)
     if (state.done && !state.error) continue
     const sizeBytes = state.sizeBytes
     if (sizeBytes === null) {
-      hasUnknownBytes = true
+      // Keep entry for add-all flow; fallback spinner is used only if all entries are unknown.
     } else if (!Number.isFinite(sizeBytes) || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
       throw new Error(`invalid size_bytes for ${item.path}: ${String(sizeBytes)}`)
     } else {
       totalBytes += sizeBytes
+      knownByteEntries += 1
     }
     entries.push({ item, index, sizeBytes })
   }
   if (entries.length === 0) return { entries, totalBytes: null }
-  if (hasUnknownBytes || totalBytes <= 0) return { entries, totalBytes: null }
+  if (knownByteEntries <= 0 || totalBytes <= 0) return { entries, totalBytes: null }
   return { entries, totalBytes }
 }
 

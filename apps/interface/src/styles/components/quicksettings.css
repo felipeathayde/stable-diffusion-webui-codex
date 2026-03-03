@@ -257,20 +257,31 @@
   }
 
   .qs-add-path-ellipsis {
+    position: relative;
     display: inline-block;
     width: 1.8ch;
+    min-width: 1.8ch;
     overflow: hidden;
     white-space: nowrap;
-    animation: qs-add-path-ellipsis 0.95s steps(4, end) infinite;
     vertical-align: baseline;
+    color: transparent;
+  }
+
+  .qs-add-path-ellipsis::before {
+    content: '...';
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: currentColor;
+    animation: qs-add-path-ellipsis 0.95s steps(4, end) infinite;
+    clip-path: inset(0 100% 0 0);
   }
 
   .qs-add-path-list-section {
     margin-top: 0.1rem;
     min-height: 0;
     flex: 1;
-    display: flex;
-    flex-direction: column;
+    display: block;
     border: 0.0625rem solid var(--color-border);
     border-radius: 0.6rem;
     overflow: auto;
@@ -278,6 +289,7 @@
 
   .qs-add-path-table {
     width: 100%;
+    min-width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
   }
@@ -392,8 +404,11 @@
   }
 
   @keyframes qs-add-path-ellipsis {
-    0% { width: 0; }
-    100% { width: 1.8ch; }
+    0% { clip-path: inset(0 100% 0 0); }
+    25% { clip-path: inset(0 66% 0 0); }
+    50% { clip-path: inset(0 33% 0 0); }
+    75% { clip-path: inset(0 0 0 0); }
+    100% { clip-path: inset(0 100% 0 0); }
   }
 
 }

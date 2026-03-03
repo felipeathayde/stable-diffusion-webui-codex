@@ -28,6 +28,12 @@
   <a href="#support">Support</a>
 </p>
 
+## Preview screenshots
+
+![Launcher services tab showing installed service controls](assets/launcher_services_tab.png)
+
+![WebUI SDXL tab showing generation controls](assets/interface-sdxl-tab.png)
+
 ## Custom PyTorch builds (FlashAttention2)
 
 > [!IMPORTANT]

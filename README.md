@@ -29,6 +29,10 @@
   <a href="#support">Support</a>
 </p>
 
+<p align="center">
+  <img src="assets/codex-cli-provenance.svg" width="960" alt="This repository was built entirely through Codex CLI, from GPT-5 foundations to GPT-5.3-Codex maturity: not a single line written by hand." />
+</p>
+
 ## Preview screenshots
 
 | Launcher (Services tab) | WebUI (SDXL tab) |

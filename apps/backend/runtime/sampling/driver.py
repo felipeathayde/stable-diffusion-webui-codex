@@ -505,6 +505,7 @@ class CodexSampler:
             half_log_snr = -torch.log(sigma_safe)
         return torch.exp(-half_log_snr)
 
+    @torch.no_grad()
     def sample(
         self,
         processing: Any,

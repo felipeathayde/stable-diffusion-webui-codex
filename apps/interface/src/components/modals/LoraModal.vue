@@ -13,10 +13,13 @@ Refreshes quicksettings LoRA SHA mappings from the same inventory payload used b
 Symbols (top-level; keep in sync; no ghosts):
 - `LoraModal` (component): Modal for browsing LoRAs and emitting insertion tokens.
 - `filtered` (const): Filtered LoRA list based on the current search query.
-- `loadItems` (function): Loads LoRA inventory (cached or forced refresh) into the modal list.
+- `loadItems` (function): Loads cached LoRA inventory into the modal list.
 - `resolveTokenName` (function): Resolves token filename from inventory row data.
 - `normalizeInsertWeight` (function): Normalizes user-entered LoRA weight to a finite numeric value.
-- `refreshList` (function): Forces a backend inventory refresh, updates quicksettings LoRA SHA map, and reloads the modal list.
+- `parseInventoryTaskResult` (function): Extracts inventory payloads from refresh task `result` SSE events.
+- `runAsyncInventoryRefreshTask` (function): Starts and awaits async inventory refresh task completion.
+- `cancelActiveRefreshTask` (function): Cancels any in-flight refresh task SSE subscription.
+- `refreshList` (function): Runs async inventory refresh and applies LoRA/quicksettings updates on terminal success.
 - `toggleInsert` (function): Toggles add/remove insertion state for a LoRA token target (`positive`/`negative`).
 -->
 
@@ -68,9 +71,10 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import Modal from '../ui/Modal.vue'
-import { fetchModelInventory, refreshModelInventory } from '../../api/client'
+import { cacheModelInventorySnapshot, fetchModelInventory, startModelInventoryRefreshTask, subscribeTask } from '../../api/client'
+import type { InventoryResponse, TaskEvent } from '../../api/types'
 import { useQuicksettingsStore } from '../../stores/quicksettings'
 
 type PromptTarget = 'positive' | 'negative'
@@ -96,6 +100,10 @@ const loaded = ref(false)
 const loadError = ref('')
 const selectedPositive = ref<Record<string, string>>({})
 const selectedNegative = ref<Record<string, string>>({})
+let activeRefreshCancel: (() => void) | null = null
+let refreshAbortRequested = false
+
+const REFRESH_CANCELLED_MESSAGE = 'LoRA inventory refresh cancelled'
 
 const filtered = computed(() => {
   const query = q.value.toLowerCase().trim()
@@ -105,25 +113,57 @@ watch(
   open,
   async (isOpen) => {
     if (!isOpen) {
+      cancelActiveRefreshTask()
       selectedPositive.value = {}
       selectedNegative.value = {}
       return
     }
     if (loaded.value) return
-    await loadItems(false)
+    await loadItems()
   },
   { immediate: true },
 )
 
-async function loadItems(refresh: boolean): Promise<void> {
+onBeforeUnmount(() => {
+  cancelActiveRefreshTask()
+})
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseInventoryTaskResult(event: TaskEvent): InventoryResponse | null {
+  if (event.type !== 'result') return null
+  const payload = event as unknown as Record<string, unknown>
+  const direct = payload.inventory
+  if (isRecordObject(direct)) return direct as unknown as InventoryResponse
+  const info = payload.info
+  if (!isRecordObject(info)) return null
+  const nested = info.inventory
+  if (!isRecordObject(nested)) return null
+  return nested as unknown as InventoryResponse
+}
+
+function sortedLoraItems(inv: Pick<InventoryResponse, 'loras'>): LoraItem[] {
+  if (!Array.isArray(inv.loras)) {
+    throw new Error('LoRA inventory payload is missing required loras[] array')
+  }
+  return (inv.loras as LoraItem[]).slice().sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function applyInventorySnapshot(inv: InventoryResponse): void {
+  quicksettings.hydrateLoraShaMap(inv)
+  items.value = sortedLoraItems(inv)
+  loaded.value = true
+}
+
+async function loadItems(): Promise<void> {
   if (loading.value) return
   loading.value = true
   loadError.value = ''
   try {
-    const inv = refresh ? await refreshModelInventory() : await fetchModelInventory()
-    quicksettings.hydrateLoraShaMap(inv)
-    items.value = ((inv.loras || []) as LoraItem[]).slice().sort((left, right) => left.name.localeCompare(right.name))
-    loaded.value = true
+    const inv = await fetchModelInventory()
+    applyInventorySnapshot(inv)
   } catch (error) {
     items.value = []
     loaded.value = true
@@ -133,8 +173,96 @@ async function loadItems(refresh: boolean): Promise<void> {
   }
 }
 
+function cancelActiveRefreshTask(): void {
+  refreshAbortRequested = true
+  const cancel = activeRefreshCancel
+  if (!cancel) return
+  activeRefreshCancel = null
+  try {
+    cancel()
+  } catch (_) {
+    // Ignore cancellation callback failures.
+  }
+}
+
+async function runAsyncInventoryRefreshTask(): Promise<InventoryResponse> {
+  const { task_id } = await startModelInventoryRefreshTask()
+  if (refreshAbortRequested || !open.value) {
+    throw new Error(REFRESH_CANCELLED_MESSAGE)
+  }
+  return await new Promise<InventoryResponse>((resolve, reject) => {
+    let settled = false
+    let unsubscribe: (() => void) | null = null
+    let resolvedInventory: InventoryResponse | null = null
+
+    const settle = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      try { unsubscribe?.() } catch (_) { /* ignore */ }
+      unsubscribe = null
+      if (activeRefreshCancel === cancel) {
+        activeRefreshCancel = null
+      }
+      fn()
+    }
+
+    const cancel = (): void => {
+      settle(() => reject(new Error(REFRESH_CANCELLED_MESSAGE)))
+    }
+    activeRefreshCancel = cancel
+
+    unsubscribe = subscribeTask(
+      task_id,
+      (event) => {
+        if (event.type === 'error') {
+          settle(() => reject(new Error(String(event.message || 'LoRA inventory refresh task failed'))))
+          return
+        }
+        if (event.type === 'result') {
+          const parsed = parseInventoryTaskResult(event)
+          if (!parsed) {
+            settle(() => reject(new Error('LoRA inventory refresh task result missing inventory payload')))
+            return
+          }
+          if (!Array.isArray(parsed.loras)) {
+            settle(() => reject(new Error('LoRA inventory refresh task result payload missing inventory.loras[]')))
+            return
+          }
+          resolvedInventory = parsed
+          return
+        }
+        if (event.type === 'end') {
+          if (!resolvedInventory) {
+            settle(() => reject(new Error('LoRA inventory refresh task completed without inventory payload')))
+            return
+          }
+          settle(() => resolve(resolvedInventory as InventoryResponse))
+        }
+      },
+      (err) => {
+        settle(() => reject(err instanceof Error ? err : new Error(String(err))))
+      },
+    )
+  })
+}
+
 async function refreshList(): Promise<void> {
-  await loadItems(true)
+  if (loading.value) return
+  refreshAbortRequested = false
+  loading.value = true
+  loadError.value = ''
+  try {
+    const refreshedInventory = await runAsyncInventoryRefreshTask()
+    cacheModelInventorySnapshot(refreshedInventory)
+    applyInventorySnapshot(refreshedInventory)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message !== REFRESH_CANCELLED_MESSAGE) {
+      loadError.value = message
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
 function resolveTokenName(item: LoraItem): string {

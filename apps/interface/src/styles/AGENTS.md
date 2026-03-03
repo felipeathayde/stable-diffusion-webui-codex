@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22
-Last Review: 2026-03-01
+Last Review: 2026-03-03
 Status: Active
 
 ## Purpose
@@ -138,4 +138,5 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-03-02: `styles/components/views-shared.css` keeps desktop sticky behavior at the stack level only (`.panel-stack--sticky` with `top: calc(--sticky-offset + space)`), without pinning the first child panel separately.
 - 2026-03-02: `styles/components/result-viewer.css` now caps result media to `max-height: 30dvh` with a proportional viewport-width cap (`max-width: min(100%, 42dvw)`, relaxed to `100%` on smaller screens) to avoid oversized previews in Results cards.
 - 2026-03-02: `styles/components/views-shared.css` now styles dual run-progress bars (`run-progress-status__bars`, `__bar-group`, `__bar-caption`, `__bar-meta`) with separate visual treatments for `total` and `steps` progress tracks.
+- 2026-03-03: `styles/components/quicksettings.css` add-path modal styles (`qs-add-path-*`) include input+scan row, animated scan spinner state, right-aligned add-all action, scrollable zebra candidate table, row status/error states, and modal sizing hooks.
 - 2026-02-27: `styles/views/wan.css` now stacks `Ping-pong`/`Return frames` vertically in `WanVideoOutputPanel.vue` (`.wan-video-output-toggle-row` single-column grid), keeping output toggles compact under the Loop/CRF/Interpolation FPS row.

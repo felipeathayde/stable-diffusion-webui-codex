@@ -7,8 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Checkpoint/VAE discovery with sha256 and layout-metadata caching.
-Scans configured model roots (via `apps/paths.json` accessors) for checkpoint and VAE weight files, computes sha256 hashes, and maintains a
-persistent cache in `models/.hashes.json` (schema v2) for fast UI inventory, backend SHA-based resolution, and CLIP layout metadata reuse.
+Scans configured model roots (via `apps/paths.json` accessors) for checkpoint and VAE weight files, including file-level checkpoint entries,
+computes sha256 hashes, and maintains a persistent cache in `models/.hashes.json` (schema v2) for fast UI inventory, backend SHA-based
+resolution, and CLIP layout metadata reuse. Paths config resolution is fail-loud (no silent fallback to defaults on invalid config payloads).
 Family hints and root selection cover SD/Flux/Anima/WAN/ZImage keyspaces.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -20,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `LayoutMetadata` (dataclass): Typed CLIP layout metadata entry (`qkv_layout`, `projection_orientation`, optional `source_style`).
 - `_load_hash_cache` (function): Loads `.hashes.json` cache from disk (v1/v2 migration aware).
 - `_save_hash_cache` (function): Writes `.hashes.json` cache to disk atomically (v2 schema) and fails loud on persistence errors.
-- `ModelRegistry` (class): Registry service; scans paths, maintains caches, and produces `CheckpointRecord`/`VAERecord` lists for UI/API (also provides public hash-cache helpers).
+- `ModelRegistry` (class): Registry service; scans paths (fail-loud paths.json resolution + directory/file checkpoint roots), maintains caches, and produces `CheckpointRecord`/`VAERecord` lists for UI/API (also provides public hash-cache helpers).
 - `get_registry` (function): Returns the singleton `ModelRegistry` instance.
 - `list_checkpoints` (function): Returns checkpoint records (optional refresh).
 - `list_vaes` (function): Returns VAE records (optional refresh).
@@ -53,8 +54,8 @@ from .types import (
 
 _LOGGER = logging.getLogger("backend.registry")
 
-_ALLOWED_CHECKPOINT_EXTS = {".ckpt", ".safetensor", ".safetensors", ".pt", ".bin", ".gguf"}
-_CHECKPOINT_BLACKLIST_SUFFIXES = {".vae.ckpt", ".vae.safetensor", ".vae.safetensors", ".vae.pt"}
+_ALLOWED_CHECKPOINT_EXTS = {".ckpt", ".safetensor", ".safetensors", ".pt", ".pth", ".bin", ".gguf"}
+_CHECKPOINT_BLACKLIST_SUFFIXES = {".vae.ckpt", ".vae.safetensor", ".vae.safetensors", ".vae.pt", ".vae.pth", ".vae.bin"}
 _VAE_EXTS = {".safetensor", ".safetensors", ".ckpt", ".pt"}
 _HASH_CACHE_SCHEMA_VERSION = 2
 _LAYOUT_QKV_VALUES = frozenset({"split", "fused"})
@@ -541,22 +542,20 @@ class ModelRegistry:
 
         Resolution order:
         1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, wan22_ckpt).
+           Entries may be directories (recursive scan) or individual files.
         2) Built-in defaults under models/: per-engine folders only (sd15, sdxl, flux, wan22, zimage).
 
         This replaces the legacy scatter of ad-hoc checkpoint folders ('stable-diffusion', 'sd', 'checkpoints').
         """
         candidates: List[Path] = []
 
-        # 1) User overrides from apps/paths.json per engine
-        try:
-            for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "anima_ckpt", "wan22_ckpt", "zimage_ckpt"):
-                for raw in get_paths_for(key):
-                    p = Path(raw)
-                    if p not in candidates:
-                        candidates.append(p)
-        except Exception:
-            # Do not break discovery if paths.json is invalid; fall back to defaults.
-            candidates = []
+        # 1) User overrides from apps/paths.json per engine.
+        # Fail loud when paths config cannot be resolved (no silent fallback).
+        for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "anima_ckpt", "wan22_ckpt", "zimage_ckpt"):
+            for raw in get_paths_for(key):
+                p = Path(raw)
+                if p not in candidates:
+                    candidates.append(p)
 
         # 2) Curated built-in defaults quando não há overrides configurados.
         # Keep these per-engine only (never scan models/ root directly).
@@ -574,6 +573,15 @@ class ModelRegistry:
                     candidates.append(p)
 
         for directory in candidates:
+            if directory.is_file():
+                suffix = directory.suffix.lower()
+                if suffix not in _ALLOWED_CHECKPOINT_EXTS:
+                    continue
+                lower = directory.name.lower()
+                if any(lower.endswith(suf) for suf in _CHECKPOINT_BLACKLIST_SUFFIXES):
+                    continue
+                yield directory
+                continue
             if not directory.is_dir():
                 continue
             for entry in directory.rglob("*"):

@@ -51,6 +51,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fetchPromptTokenCount` (function): Counts prompt tokens via backend tokenizer (`POST /models/prompt-token-count`).
 - `fetchPaths` (function): Fetches configured paths (`/paths`).
 - `updatePaths` (function): Updates configured paths (`POST /paths`).
+- `scanModelPath` (function): Scans a model path for add-path candidates without hashing (`POST /models/path-scan`).
+- `addModelPathItem` (function): Adds one file to a model library key and computes SHA at add-time (`POST /models/path-add`).
+- `addModelPathItemsAll` (function): Adds all scanned files sequentially (backend add-all helper; no pre-hash) (`POST /models/path-add-all`).
 - `fetchSettingsSchema` (function): Fetches settings schema (`/settings/schema`).
 - `fetchUiBlocks` (function): Fetches UI blocks schema (`/ui/blocks`).
 - `fetchUiPresets` (function): Fetches UI presets (`/ui/presets`).
@@ -84,6 +87,11 @@ import type {
   EmbeddingsResponse,
   PathsResponse,
   PathsUpdateResponse,
+  ModelPathScanRequest,
+  ModelPathScanResponse,
+  ModelPathAddRequest,
+  ModelPathAddResponse,
+  ModelPathAddAllResponse,
   SettingsSchemaResponse,
   UiBlocksResponse,
   UiPresetsResponse,
@@ -509,6 +517,35 @@ export function updatePaths(paths: Record<string, string[]>): Promise<PathsUpdat
   // Inventory resolution depends on roots; clear the cached snapshot so callers can re-fetch.
   invalidateJsonCache('/models/inventory')
   return requestJson<PathsUpdateResponse>('/paths', { method: 'POST', body: JSON.stringify({ paths }) })
+}
+
+function invalidateModelPathCaches(): void {
+  invalidateJsonCache('/paths')
+  invalidateJsonCache('/models')
+  invalidateJsonCache('/models/inventory')
+}
+
+export function scanModelPath(payload: ModelPathScanRequest): Promise<ModelPathScanResponse> {
+  return requestJson<ModelPathScanResponse>('/models/path-scan', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function addModelPathItem(payload: ModelPathAddRequest): Promise<ModelPathAddResponse> {
+  invalidateModelPathCaches()
+  return requestJson<ModelPathAddResponse>('/models/path-add', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function addModelPathItemsAll(payload: ModelPathAddRequest): Promise<ModelPathAddAllResponse> {
+  invalidateModelPathCaches()
+  return requestJson<ModelPathAddAllResponse>('/models/path-add-all', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export function fetchSettingsSchema(): Promise<SettingsSchemaResponse> {

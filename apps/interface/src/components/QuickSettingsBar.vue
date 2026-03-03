@@ -61,7 +61,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_trustedZImageVariantFromCheckpointMeta` (function): Extracts `codex.zimage.variant` when metadata is trusted (Codex provenance).
 - `onZImageTurboChange` (function): Applies Turbo toggle updates to the active Z-Image tab (with default migration).
 - `enginePrefixForFamily` (function): Maps a `TabFamily` to the engine prefix used in options/labels.
-- `dedupePaths` (function): Deduplicates path lists for selector options.
+- `openAddPathModal` (function): Opens the reusable add-path modal for checkpoint/VAE/text-encoder library keys.
+- `onAddPathModalAdded` (function): Refreshes quicksettings lists after add-path operations mutate library paths.
+- `onAddPathModalError` (function): Surfaces add-path scan/add failures through quicksettings toasts.
 - `openPathInputModal` (function): Opens the in-app path input modal and registers async apply behavior.
 - `confirmPathInputModal` (function): Validates/applies modal-entered path values.
 - `closePathInputModal` (function): Closes and clears the in-app path input modal state.
@@ -355,6 +357,16 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <QuickSettingsOverridesModal v-model="showOverridesModal" />
+    <QuickSettingsAddPathModal
+      v-model="showAddPathModal"
+      :title="addPathModalTitle"
+      :label="addPathModalLabel"
+      :target-key="addPathModalTargetKey"
+      :target-kind="addPathModalTargetKind"
+      :placeholder="addPathModalPlaceholder"
+      @added="onAddPathModalAdded"
+      @error="onAddPathModalError"
+    />
     <AssetMetadataModal v-model="showMetadataModal" :title="metadataModalTitle" :subtitle="metadataModalSubtitle" :payload="metadataModalPayload" />
     <Modal v-model="showPathInputModal" :title="pathInputModalTitle">
       <div class="quicksettings-path-modal">
@@ -387,7 +399,7 @@ import { useUiBlocksStore } from '../stores/ui_blocks'
 import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams, type WanStageParams } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
-import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, fetchObliterateVram, updatePaths } from '../api/client'
+import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, fetchObliterateVram } from '../api/client'
 import type { ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
@@ -400,6 +412,7 @@ import QuickSettingsFlux from './quicksettings/QuickSettingsFlux.vue'
 import QuickSettingsChroma from './quicksettings/QuickSettingsChroma.vue'
 import QuickSettingsZImage from './quicksettings/QuickSettingsZImage.vue'
 import QuickSettingsOverridesModal from './modals/QuickSettingsOverridesModal.vue'
+import QuickSettingsAddPathModal from './modals/QuickSettingsAddPathModal.vue'
 import AssetMetadataModal from './modals/AssetMetadataModal.vue'
 import Modal from './ui/Modal.vue'
 
@@ -416,15 +429,22 @@ type InventoryWanGguf = { name: string; path: string; sha256?: string; stage: st
 type InventoryTextEncoder = { name: string; path: string; sha256?: string }
 type ImageTab = TabByType<'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'anima'>
 type WanTab = TabByType<'wan'>
+type AddPathTargetKind = 'checkpoint' | 'vae' | 'text_encoder'
 const inventoryVaes = ref<InventoryVae[]>([])
 const inventoryWan = ref<InventoryWanGguf[]>([])
 const inventoryTextEncoders = ref<InventoryTextEncoder[]>([])
 const showOverridesModal = ref(false)
 const showMetadataModal = ref(false)
+const showAddPathModal = ref(false)
 const showPathInputModal = ref(false)
 const metadataModalTitle = ref('Metadata')
 const metadataModalSubtitle = ref('')
 const metadataModalPayload = ref<unknown>(null)
+const addPathModalTitle = ref('Add Model Path')
+const addPathModalLabel = ref('Path')
+const addPathModalTargetKey = ref('')
+const addPathModalTargetKind = ref<AddPathTargetKind>('checkpoint')
+const addPathModalPlaceholder = ref('')
 const pathInputModalTitle = ref('Update Path')
 const pathInputModalLabel = ref('Path')
 const pathInputModalPlaceholder = ref('')
@@ -1738,110 +1758,64 @@ function onWanGuidedGen(): void {
   window.dispatchEvent(new CustomEvent('codex-wan-guided-gen', { detail: { tabId: tab.id } }))
 }
 
-async function onAddCheckpointPath(): Promise<void> {
+function openAddPathModal(options: {
+  title: string
+  label: string
+  key: string
+  kind: AddPathTargetKind
+  placeholder?: string
+}): void {
+  addPathModalTitle.value = options.title
+  addPathModalLabel.value = options.label
+  addPathModalTargetKey.value = options.key
+  addPathModalTargetKind.value = options.kind
+  addPathModalPlaceholder.value = String(options.placeholder || '')
+  showAddPathModal.value = true
+}
+
+function onAddCheckpointPath(): void {
+  const prefix = enginePrefixForFamily(activeFamily.value)
+  openAddPathModal({
+    title: 'Add Checkpoint Directory',
+    label: 'Checkpoint path',
+    key: `${prefix}_ckpt`,
+    kind: 'checkpoint',
+  })
+}
+
+function onAddVaePath(): void {
+  const prefix = enginePrefixForFamily(activeFamily.value)
+  openAddPathModal({
+    title: 'Add VAE Directory',
+    label: 'VAE path',
+    key: `${prefix}_vae`,
+    kind: 'vae',
+  })
+}
+
+function onAddTencPath(): void {
+  const prefix = enginePrefixForFamily(activeFamily.value)
+  openAddPathModal({
+    title: 'Add Text Encoder Directory',
+    label: 'Text encoder path',
+    key: `${prefix}_tenc`,
+    kind: 'text_encoder',
+  })
+}
+
+async function onAddPathModalAdded(payload: { addedCount: number }): Promise<void> {
+  if (!payload || !Number.isFinite(payload.addedCount) || payload.addedCount <= 0) return
   try {
-    const res = await fetchPaths()
-    const raw = (res.paths || {}) as Record<string, string[]>
-    const fam = activeFamily.value
-    const prefix = enginePrefixForFamily(fam)
-    const key = `${prefix}_ckpt`
-    const current = (raw[key] || []) as string[]
-    openPathInputModal(
-      {
-        title: 'Add Checkpoint Directory',
-        label: 'Checkpoint directory (server path)',
-        placeholder: '/models/checkpoints',
-      },
-      async (trimmed) => {
-        const paths = dedupePaths([...current, trimmed])
-        const payload: Record<string, string[]> = {}
-        for (const [k, v] of Object.entries(raw)) {
-          if (k === 'checkpoints' || k === 'vae' || k === 'lora' || k === 'text_encoders') continue
-          payload[k] = Array.isArray(v) ? [...v] : []
-        }
-        payload[key] = paths
-        await updatePaths(payload)
-        await loadPaths()
-      },
-    )
+    await refreshAll()
   } catch (error) {
     toastQuicksettingsError(error)
   }
 }
 
-async function onAddVaePath(): Promise<void> {
-  try {
-    const res = await fetchPaths()
-    const raw = (res.paths || {}) as Record<string, string[]>
-    const fam = activeFamily.value
-    const prefix = enginePrefixForFamily(fam)
-    const key = `${prefix}_vae`
-    const current = (raw[key] || []) as string[]
-    openPathInputModal(
-      {
-        title: 'Add VAE Directory',
-        label: 'VAE directory (server path)',
-        placeholder: '/models/vae',
-      },
-      async (trimmed) => {
-        const paths = dedupePaths([...current, trimmed])
-        const payload: Record<string, string[]> = {}
-        for (const [k, v] of Object.entries(raw)) {
-          if (k === 'checkpoints' || k === 'vae' || k === 'lora' || k === 'text_encoders') continue
-          payload[k] = Array.isArray(v) ? [...v] : []
-        }
-        payload[key] = paths
-        await updatePaths(payload)
-        await loadPaths()
-      },
-    )
-  } catch (error) {
-    toastQuicksettingsError(error)
-  }
-}
-
-async function onAddTencPath(): Promise<void> {
-  try {
-    const res = await fetchPaths()
-    const raw = (res.paths || {}) as Record<string, string[]>
-    const fam = activeFamily.value
-    const prefix = enginePrefixForFamily(fam)
-    const key = `${prefix}_tenc`
-    const current = (raw[key] || []) as string[]
-    openPathInputModal(
-      {
-        title: 'Add Text Encoder Directory',
-        label: 'Text encoder directory (server path)',
-        placeholder: '/models/text_encoders',
-      },
-      async (trimmed) => {
-        const paths = dedupePaths([...current, trimmed])
-        const payload: Record<string, string[]> = {}
-        for (const [k, v] of Object.entries(raw)) {
-          if (k === 'checkpoints' || k === 'vae' || k === 'lora' || k === 'text_encoders') continue
-          payload[k] = Array.isArray(v) ? [...v] : []
-        }
-        payload[key] = paths
-        await updatePaths(payload)
-        await loadPaths()
-      },
-    )
-  } catch (error) {
-    toastQuicksettingsError(error)
-  }
-}
-
-function dedupePaths(list: string[]): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const p of list) {
-    const key = p.replace(/\\+/g, '/').replace(/\/$/, '')
-    if (!seen.has(key)) {
-      seen.add(key)
-      out.push(p)
-    }
-  }
-  return out
+function onAddPathModalError(message: string): void {
+  const text = String(message || '').trim()
+  if (!text) return
+  qsToast(text)
 }
 
 function openPathInputModal(
@@ -1960,6 +1934,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cancelAdvancedAnimation()
+  showAddPathModal.value = false
   closePathInputModal()
   window.removeEventListener('resize', syncAdvancedHeight)
 })

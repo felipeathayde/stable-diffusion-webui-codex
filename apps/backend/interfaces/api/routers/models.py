@@ -19,6 +19,16 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_clean_anima_prompt_text` (function): Applies Anima runtime-equivalent prompt cleanup (`BREAK` -> whitespace).
 - `_count_anima_tokens` (function): Counts Anima prompt tokens with runtime-equivalent preprocessing and fail-loud max-length checks.
 - `_count_prompt_tokens` (function): Returns tokenizer-accurate prompt token counts for supported semantic engines.
+- `_sanitize_model_path_input` (function): Sanitizes incoming model path strings (quotes/slashes/whitespace normalization).
+- `_normalize_library_kind` (function): Validates `checkpoint|vae|text_encoder` path-library kinds.
+- `_kind_for_library_key` (function): Resolves library kind from a paths.json key suffix (`_ckpt|_vae|_tenc`).
+- `_allowed_exts_for_kind` (function): Returns allowed model file extensions per path-library kind.
+- `_is_supported_library_file` (function): Validates extension/blacklist policy for scan/add candidate files.
+- `_paths_config_path` (function): Returns `apps/paths.json` location for path-library mutations.
+- `_load_paths_config_for_mutation` (function): Loads and validates paths config payload for mutable operations.
+- `_save_paths_config` (function): Persists paths config updates (fail-loud).
+- `_resolve_paths_config_entry_path` (function): Resolves one paths config entry to an absolute filesystem path.
+- `_paths_config_entry_for_file` (function): Converts absolute file paths into paths.json entry semantics.
 """
 
 from __future__ import annotations
@@ -26,12 +36,15 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
+from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.interfaces.api.json_store import _load_json, _save_json
 from apps.backend.runtime.sampling import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 from apps.backend.interfaces.api.path_utils import _normalize_inventory_for_api
 from apps.backend.interfaces.api.serializers import _serialize_checkpoint
@@ -67,6 +80,22 @@ _ENGINE_TOKENIZER_KEY: Dict[str, str] = {
     "wan22_14b": "wan",
     "wan22_14b_animate": "wan",
 }
+
+_LIBRARY_KIND_CHECKPOINT = "checkpoint"
+_LIBRARY_KIND_VAE = "vae"
+_LIBRARY_KIND_TEXT_ENCODER = "text_encoder"
+_VALID_LIBRARY_KINDS = frozenset(
+    {
+        _LIBRARY_KIND_CHECKPOINT,
+        _LIBRARY_KIND_VAE,
+        _LIBRARY_KIND_TEXT_ENCODER,
+    }
+)
+_CHECKPOINT_SCAN_EXTS = frozenset({".ckpt", ".safetensor", ".safetensors", ".pt", ".pth", ".bin", ".gguf"})
+_CHECKPOINT_BLACKLIST_SUFFIXES = frozenset({".vae.ckpt", ".vae.safetensor", ".vae.safetensors", ".vae.pt", ".vae.pth", ".vae.bin"})
+_VAE_SCAN_EXTS = frozenset({".safetensor", ".safetensors", ".pt", ".bin"})
+_TENC_SCAN_EXTS = frozenset({".safetensor", ".safetensors", ".pt", ".bin", ".gguf"})
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[/\\\\]")
 
 
 @lru_cache(maxsize=32)
@@ -179,12 +208,305 @@ def _count_prompt_tokens(engine: str, prompt: str) -> int:
     return _tokenize_len(tokenizer, prompt)
 
 
+def _sanitize_model_path_input(raw: object) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+
+    while len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1].strip()
+
+    value = value.replace("\\", "/")
+    has_unc_prefix = value.startswith("//")
+    drive_prefix = value[:2] if _WINDOWS_DRIVE_RE.match(value) else ""
+
+    if drive_prefix:
+        rest = value[2:]
+        rest = re.sub(r"/{2,}", "/", rest)
+        if rest and not rest.startswith("/"):
+            rest = f"/{rest}"
+        value = f"{drive_prefix}{rest}"
+    else:
+        value = re.sub(r"/{2,}", "/", value)
+        if has_unc_prefix:
+            value = f"//{value.lstrip('/')}"
+    if len(value) > 1 and value.endswith("/") and not re.fullmatch(r"[A-Za-z]:/", value):
+        value = value.rstrip("/")
+    return value.strip()
+
+
+def _normalize_library_kind(raw: object) -> str:
+    kind = str(raw or "").strip().lower()
+    if kind not in _VALID_LIBRARY_KINDS:
+        allowed = ", ".join(sorted(_VALID_LIBRARY_KINDS))
+        raise HTTPException(status_code=400, detail=f"invalid model library kind {kind!r}; expected one of: {allowed}")
+    return kind
+
+
+def _kind_for_library_key(key: str) -> str:
+    normalized = str(key or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="library key is required")
+    if normalized.endswith("_ckpt"):
+        return _LIBRARY_KIND_CHECKPOINT
+    if normalized.endswith("_vae"):
+        return _LIBRARY_KIND_VAE
+    if normalized.endswith("_tenc"):
+        return _LIBRARY_KIND_TEXT_ENCODER
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"unsupported library key {normalized!r}; expected a paths.json key ending with "
+            "'_ckpt', '_vae', or '_tenc'"
+        ),
+    )
+
+
+def _allowed_exts_for_kind(kind: str) -> frozenset[str]:
+    if kind == _LIBRARY_KIND_CHECKPOINT:
+        return _CHECKPOINT_SCAN_EXTS
+    if kind == _LIBRARY_KIND_VAE:
+        return _VAE_SCAN_EXTS
+    if kind == _LIBRARY_KIND_TEXT_ENCODER:
+        return _TENC_SCAN_EXTS
+    raise RuntimeError(f"unsupported library kind: {kind!r}")
+
+
+def _is_supported_library_file(path: Path, *, kind: str) -> bool:
+    suffix = path.suffix.lower()
+    if suffix not in _allowed_exts_for_kind(kind):
+        return False
+    if kind == _LIBRARY_KIND_CHECKPOINT:
+        lower_name = path.name.lower()
+        if any(lower_name.endswith(suf) for suf in _CHECKPOINT_BLACKLIST_SUFFIXES):
+            return False
+    return True
+
+
+def _paths_config_path() -> Path:
+    return _REPO_ROOT / "apps" / "paths.json"
+
+
+def _load_paths_config_for_mutation() -> Dict[str, list[str]]:
+    cfg_path = _paths_config_path()
+    if not cfg_path.is_file():
+        raise HTTPException(status_code=500, detail=f"paths config missing: {cfg_path}")
+    try:
+        payload = _load_json(str(cfg_path))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to read paths config: {exc}") from exc
+
+    normalized: Dict[str, list[str]] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str):
+            raise HTTPException(status_code=500, detail=f"paths config contains a non-string key: {key!r}")
+        if not isinstance(value, list):
+            raise HTTPException(status_code=500, detail=f"paths config entry {key!r} must be a list")
+        out: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise HTTPException(status_code=500, detail=f"paths config entry {key!r} contains a non-string value")
+            cleaned = item.strip()
+            if not cleaned:
+                raise HTTPException(status_code=500, detail=f"paths config entry {key!r} contains an empty value")
+            out.append(cleaned)
+        normalized[key] = out
+    return normalized
+
+
+def _save_paths_config(payload: Dict[str, list[str]]) -> None:
+    cfg_path = _paths_config_path()
+    try:
+        _save_json(str(cfg_path), payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to write paths config: {exc}") from exc
+
+
+def _resolve_paths_config_entry_path(entry: str) -> Path:
+    raw = str(entry or "").strip()
+    if not raw:
+        raise RuntimeError("paths config entry must not be empty")
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_absolute() and not _WINDOWS_DRIVE_RE.match(raw):
+        candidate = _REPO_ROOT / candidate
+    return candidate.resolve(strict=False)
+
+
+def _paths_config_entry_for_file(path: Path) -> str:
+    resolved = path.resolve(strict=False)
+    repo_root = _REPO_ROOT.resolve(strict=False)
+    try:
+        rel = resolved.relative_to(repo_root)
+        return rel.as_posix()
+    except Exception:
+        return resolved.as_posix()
+
+
 def build_router(
     *,
     model_api: Any,
 ) -> APIRouter:
     router = APIRouter()
     log = logging.getLogger("backend.api")
+    inventory_log = logging.getLogger("inventory")
+    repo_root = _REPO_ROOT.resolve(strict=False)
+
+    def _resolve_library_target(payload: Dict[str, Any], *, require_key: bool) -> tuple[str | None, str]:
+        key_raw = str(payload.get("key") or "").strip()
+        kind_raw = str(payload.get("kind") or "").strip().lower()
+
+        key: str | None = key_raw or None
+        kind: str | None = None
+        if kind_raw:
+            kind = _normalize_library_kind(kind_raw)
+
+        if key is not None:
+            derived = _kind_for_library_key(key)
+            if kind is not None and kind != derived:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"library key {key!r} implies kind={derived!r}, but payload provided kind={kind!r}",
+                )
+            return key, derived
+
+        if require_key:
+            raise HTTPException(status_code=400, detail="'key' is required for add operations")
+        if kind is None:
+            raise HTTPException(status_code=400, detail="either 'key' or 'kind' is required")
+        return None, kind
+
+    def _resolve_payload_path(raw: object) -> Path:
+        sanitized = _sanitize_model_path_input(raw)
+        if not sanitized:
+            raise HTTPException(status_code=400, detail="'path' is required")
+        if _WINDOWS_DRIVE_RE.match(sanitized) and os.name != "nt":
+            raise HTTPException(
+                status_code=400,
+                detail=f"windows-style path is not valid on this server: {sanitized!r}",
+            )
+
+        candidate = Path(os.path.expanduser(sanitized))
+        if not candidate.is_absolute() and not _WINDOWS_DRIVE_RE.match(sanitized):
+            candidate = repo_root / candidate
+        return candidate.resolve(strict=False)
+
+    def _scan_library_candidates(path: Path, *, kind: str) -> list[Path]:
+        if not path.exists():
+            raise HTTPException(status_code=400, detail=f"path not found: {path}")
+        candidates: list[Path] = []
+        seen: set[str] = set()
+
+        def _append_if_supported(file_path: Path) -> None:
+            resolved = file_path.resolve(strict=False)
+            if not _is_supported_library_file(resolved, kind=kind):
+                return
+            key = os.path.normcase(str(resolved))
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(resolved)
+
+        if path.is_file():
+            _append_if_supported(path)
+            return candidates
+        if not path.is_dir():
+            raise HTTPException(status_code=400, detail=f"path is neither a file nor a directory: {path}")
+
+        try:
+            for entry in sorted(path.rglob("*"), key=lambda item: str(item).lower()):
+                if entry.is_file():
+                    _append_if_supported(entry)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to scan path {path}: {exc}") from exc
+        return candidates
+
+    def _add_library_file(*, key: str, kind: str, file_path_raw: object) -> Dict[str, Any]:
+        file_path = _resolve_payload_path(file_path_raw)
+        if not file_path.exists():
+            raise HTTPException(status_code=400, detail=f"path not found: {file_path}")
+        if not file_path.is_file():
+            raise HTTPException(status_code=400, detail=f"path is not a file: {file_path}")
+        if not _is_supported_library_file(file_path, kind=kind):
+            allowed = ", ".join(sorted(_allowed_exts_for_kind(kind)))
+            raise HTTPException(
+                status_code=400,
+                detail=f"unsupported file extension for kind={kind!r}: {file_path.name!r} (allowed: {allowed})",
+            )
+
+        paths_cfg = _load_paths_config_for_mutation()
+        current = paths_cfg.get(key)
+        if current is None:
+            current = []
+        if not isinstance(current, list):
+            raise HTTPException(status_code=500, detail=f"paths config entry {key!r} must be a list")
+
+        try:
+            existing_paths = [_resolve_paths_config_entry_path(entry) for entry in current]
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"invalid paths config entry under {key!r}: {exc}") from exc
+
+        resolved_file = file_path.resolve(strict=False)
+        normalized_file = os.path.normcase(str(resolved_file))
+        already_present = False
+        for existing in existing_paths:
+            normalized_existing = os.path.normcase(str(existing))
+            if normalized_existing == normalized_file:
+                already_present = True
+                break
+            if existing.is_dir():
+                try:
+                    resolved_file.relative_to(existing)
+                except ValueError:
+                    pass
+                else:
+                    already_present = True
+                    break
+
+        added = False
+        if not already_present:
+            current = [*current, _paths_config_entry_for_file(file_path)]
+            paths_cfg[key] = current
+            _save_paths_config(paths_cfg)
+            added = True
+
+        try:
+            sha256, short_hash = model_api.hash_for_file(str(file_path))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to compute hash for {file_path}: {exc}") from exc
+        if not sha256:
+            raise HTTPException(status_code=500, detail=f"failed to compute hash for {file_path}")
+
+        return {
+            "name": file_path.name,
+            "path": str(file_path),
+            "ext": file_path.suffix.lower(),
+            "type": kind,
+            "library_key": key,
+            "added": added,
+            "sha256": sha256,
+            "short_hash": short_hash,
+        }
+
+    def _log_inventory_refresh_summary(inv: Dict[str, Any]) -> None:
+        wan22_count = len(inv.get("wan22", []))
+        inventory_log.info(
+            "inventory: refreshed (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
+            len(inv.get("vaes", [])),
+            len(inv.get("text_encoders", [])),
+            len(inv.get("loras", [])),
+            wan22_count,
+            len(inv.get("metadata", [])),
+        )
+        if wan22_count != 0:
+            return
+
+        wan22_roots = get_paths_for("wan22_ckpt")
+        inventory_log.warning(
+            "inventory: wan22.gguf=0 after refresh; scanned `wan22_ckpt` roots=%s (recursive). "
+            "Place WAN22 .gguf files under one of these roots and refresh inventory "
+            "(/api/models/inventory?refresh=1 or POST /api/models/inventory/refresh).",
+            wan22_roots,
+        )
 
     @router.get("/api/models")
     def list_models(refresh: bool = Query(False, description="If true, re-scan checkpoint roots before returning.")) -> Dict[str, Any]:
@@ -200,14 +522,7 @@ def build_router(
         if refresh:
             try:
                 inv = _inv_cache.refresh()
-                logging.getLogger("inventory").info(
-                    "inventory: refreshed (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
-                    len(inv.get("vaes", [])),
-                    len(inv.get("text_encoders", [])),
-                    len(inv.get("loras", [])),
-                    len(inv.get("wan22", [])),
-                    len(inv.get("metadata", [])),
-                )
+                _log_inventory_refresh_summary(inv)
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"inventory refresh failed: {exc}")
         else:
@@ -218,6 +533,104 @@ def build_router(
             "loras": _normalize_inventory_for_api(inv.get("loras", [])),
             "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
             "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
+        }
+
+    @router.post("/api/models/path-scan")
+    def scan_model_path(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        _, kind = _resolve_library_target(payload, require_key=False)
+        root_path = _resolve_payload_path(payload.get("path"))
+        candidates = _scan_library_candidates(root_path, kind=kind)
+        return {
+            "kind": kind,
+            "key": str(payload.get("key") or "").strip() or None,
+            "root": str(root_path),
+            "items": [
+                {
+                    "name": candidate.name,
+                    "path": str(candidate),
+                    "ext": candidate.suffix.lower(),
+                }
+                for candidate in candidates
+            ],
+        }
+
+    @router.post("/api/models/path-add")
+    def add_model_path_item(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        key, kind = _resolve_library_target(payload, require_key=True)
+        assert key is not None
+        item = _add_library_file(key=key, kind=kind, file_path_raw=payload.get("path"))
+        return {
+            "key": key,
+            "kind": kind,
+            "item": item,
+        }
+
+    @router.post("/api/models/path-add-all")
+    def add_model_path_items(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        key, kind = _resolve_library_target(payload, require_key=True)
+        assert key is not None
+        root_path = _resolve_payload_path(payload.get("path"))
+        candidates = _scan_library_candidates(root_path, kind=kind)
+
+        results: list[Dict[str, Any]] = []
+        total = len(candidates)
+        added_count = 0
+        error_count = 0
+        for index, candidate in enumerate(candidates, start=1):
+            try:
+                item = _add_library_file(key=key, kind=kind, file_path_raw=str(candidate))
+                if item.get("added") is True:
+                    added_count += 1
+                results.append(
+                    {
+                        "index": index,
+                        "total": total,
+                        "ok": True,
+                        "item": item,
+                    }
+                )
+            except HTTPException as exc:
+                error_count += 1
+                results.append(
+                    {
+                        "index": index,
+                        "total": total,
+                        "ok": False,
+                        "item": {
+                            "name": candidate.name,
+                            "path": str(candidate),
+                            "ext": candidate.suffix.lower(),
+                            "type": kind,
+                            "library_key": key,
+                        },
+                        "detail": exc.detail,
+                    }
+                )
+            except Exception as exc:
+                error_count += 1
+                results.append(
+                    {
+                        "index": index,
+                        "total": total,
+                        "ok": False,
+                        "item": {
+                            "name": candidate.name,
+                            "path": str(candidate),
+                            "ext": candidate.suffix.lower(),
+                            "type": kind,
+                            "library_key": key,
+                        },
+                        "detail": str(exc),
+                    }
+                )
+        return {
+            "key": key,
+            "kind": kind,
+            "root": str(root_path),
+            "total": total,
+            "added_count": added_count,
+            "error_count": error_count,
+            "results": results,
         }
 
     @router.get("/api/models/file-metadata")
@@ -301,14 +714,7 @@ def build_router(
         from apps.backend.inventory import cache as _inv_cache
         try:
             inv = _inv_cache.refresh()
-            logging.getLogger("inventory").info(
-                "inventory: refreshed (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
-                len(inv.get("vaes", [])),
-                len(inv.get("text_encoders", [])),
-                len(inv.get("loras", [])),
-                len(inv.get("wan22", [])),
-                len(inv.get("metadata", [])),
-            )
+            _log_inventory_refresh_summary(inv)
             return {
                 "vaes": _normalize_inventory_for_api(inv.get("vaes", [])),
                 "text_encoders": _normalize_inventory_for_api(inv.get("text_encoders", [])),

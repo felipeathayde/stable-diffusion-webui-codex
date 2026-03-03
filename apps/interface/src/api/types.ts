@@ -51,6 +51,15 @@ Symbols (top-level; keep in sync; no ghosts):
 - `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
 - `PathsResponse` (interface): `/api/paths` response shape.
 - `PathsUpdateResponse` (interface): `/api/paths` update response shape.
+- `ModelPathLibraryKind` (type): Model library kind for add-path scan/add endpoints (`checkpoint|vae|text_encoder`).
+- `ModelPathScanRequest` (interface): Request payload for `/api/models/path-scan`.
+- `ModelPathScanItem` (interface): Candidate file row returned by `/api/models/path-scan`.
+- `ModelPathScanResponse` (interface): `/api/models/path-scan` response shape.
+- `ModelPathAddRequest` (interface): Request payload for `/api/models/path-add` and `/api/models/path-add-all`.
+- `ModelPathAddItem` (interface): Added-file payload including SHA/hash metadata.
+- `ModelPathAddResponse` (interface): `/api/models/path-add` response shape.
+- `ModelPathAddAllResult` (interface): Per-item sequential result row returned by `/api/models/path-add-all`.
+- `ModelPathAddAllResponse` (interface): `/api/models/path-add-all` response shape.
 - `SettingsCategory` (interface): Settings category entry in settings schema responses.
 - `SettingsSection` (interface): Settings section entry in settings schema responses.
 - `SettingsFieldType` (type): Allowed field types in settings schema definitions.
@@ -432,6 +441,65 @@ export interface EmbeddingsResponse {
 
 export interface PathsResponse { paths: Record<string, string[]> }
 export interface PathsUpdateResponse { ok: boolean }
+
+export type ModelPathLibraryKind = 'checkpoint' | 'vae' | 'text_encoder'
+
+export interface ModelPathScanRequest {
+  path: string
+  key?: string | null
+  kind?: ModelPathLibraryKind | null
+}
+
+export interface ModelPathScanItem {
+  name: string
+  path: string
+  ext: string
+}
+
+export interface ModelPathScanResponse {
+  kind: ModelPathLibraryKind
+  key?: string | null
+  root: string
+  items: ModelPathScanItem[]
+}
+
+export interface ModelPathAddRequest {
+  key: string
+  path: string
+  kind?: ModelPathLibraryKind | null
+}
+
+export interface ModelPathAddItem extends ModelPathScanItem {
+  type: ModelPathLibraryKind
+  library_key: string
+  added: boolean
+  sha256: string
+  short_hash: string | null
+}
+
+export interface ModelPathAddResponse {
+  key: string
+  kind: ModelPathLibraryKind
+  item: ModelPathAddItem
+}
+
+export interface ModelPathAddAllResult {
+  index: number
+  total: number
+  ok: boolean
+  item: ModelPathAddItem | (ModelPathScanItem & { library_key: string })
+  detail?: string
+}
+
+export interface ModelPathAddAllResponse {
+  key: string
+  kind: ModelPathLibraryKind
+  root: string
+  total: number
+  added_count: number
+  error_count: number
+  results: ModelPathAddAllResult[]
+}
 
 // Settings schema (extracted from legacy)
 export interface SettingsCategory { id: string; label: string }

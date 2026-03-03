@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, modals -->
 # apps/interface/src/components/modals Overview
 Date: 2025-12-04
-Last Review: 2026-02-21
+Last Review: 2026-03-03
 Status: Active
 
 ## Purpose
@@ -14,6 +14,7 @@ Status: Active
 - `apps/interface/src/components/modals/LoraModal.vue` — LoRA picker/insert helpers.
 - `apps/interface/src/components/modals/TextualInversionModal.vue` — TI picker/insert helpers.
 - `apps/interface/src/components/modals/QuickSettingsOverridesModal.vue` — global device + per-component overrides UI.
+- `apps/interface/src/components/modals/QuickSettingsAddPathModal.vue` — reusable quicksettings add-path workflow (scan candidates + add-one/add-all).
 - `apps/interface/src/components/modals/StyleEditorModal.vue` — create/edit prompt styles.
 
 ## Notes
@@ -30,3 +31,5 @@ Status: Active
 - 2026-03-02: `LoraModal.vue` now uses a compact toolbar row (`Search`, `Weight`, `Refresh`, count), removes the redundant footer close button (header `✕` remains), uses explicit per-row Prompt/Negative toggle actions, and refreshes quicksettings LoRA SHA mappings from the same inventory payload used by the modal list.
 - 2026-03-02: `AssetMetadataModal.vue` now keeps tree-view controls (`Beautify`, expand all, collapse all) visible after toggling Beautify off; object payloads always stay in `JsonTreeView` mode so controls no longer disappear until reload.
 - 2026-03-02: `LoraModal.vue` list rows are now scrollable with zebra/hover states and right-aligned action toggles; each action emits `add/remove` instead of unlimited repeated insertions.
+- 2026-03-03: Added `QuickSettingsAddPathModal.vue` as the reusable quicksettings add-path modal: sanitizes user paths, scans candidates without SHA, supports per-row add and sequential add-all progress, and keeps errors fail-loud for quicksettings toasts.
+- 2026-03-03: `QuickSettingsAddPathModal.vue` scan action now includes an explicit spinner animation while in-flight.

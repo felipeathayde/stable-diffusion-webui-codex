@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-01
+Last Review: 2026-03-03
 Status: Active
 
 ## Purpose
@@ -116,6 +116,8 @@ Status: Active
 - 2026-02-27: `generation.py` now accepts optional WAN `video_upscaling` object (`enabled` required bool + strict typed SeedVR2 options), rejects unknown keys, and forwards normalized values into request extras as `extras.video_upscaling`.
 - 2026-03-01: `generation.py` now validates/forwards WAN img2vid guide fields (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) into request extras with strict scale/range checks so runtime init-image preprocessing matches the UI framing guide.
 - 2026-03-02: `generation.py` keeps `img2vid_image_scale` optional at API boundary (field omitted when not provided); runtime receives no forced `1.0` fallback and applies its own auto-fit minimum scale policy.
+- 2026-03-03: `models.py` inventory refresh logs now emit an explicit warning when `wan22.gguf=0`, including resolved `wan22_ckpt` roots and actionable guidance (WAN22 GGUF discovery under those roots is recursive; refresh after copying files).
+- 2026-03-03: `models.py` add-path endpoints (`POST /api/models/path-scan`, `POST /api/models/path-add`, `POST /api/models/path-add-all`) now keep scan payloads lightweight (`name/path/ext` only; no SHA/type), while add/add-all compute SHA strictly at add-time and process add-all sequentially via add-one semantics (no bulk pre-hash fallback).
 - 2026-02-23: `options.py` now enforces main-device invariant on runtime updates: any device update to `codex_core_device`/`codex_te_device`/`codex_vae_device` is normalized to one shared value, and mixed values are rejected with HTTP 400.
 - 2026-02-23: `tools.py` GGUF conversion API now accepts `precision_mode` (`FULL_BF16|FULL_FP16|FULL_FP32|FP16_PLUS_FP32|BF16_PLUS_FP32`) and rejects ambiguous payloads that combine `precision_mode` with legacy `float_group_overrides`.
 - 2026-02-27: `generation.py` now rejects unknown top-level `/api/img2img` payload keys (allowlist) to prevent silent contract drift (txt2img already enforced this).

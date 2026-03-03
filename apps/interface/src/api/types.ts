@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Frontend API DTOs and response/payload types.
 Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows), including options revision/apply metadata fields used by strict generation contracts.
+Add-path contracts include optional nullable `size_bytes` metadata for byte-aware progress UX during sequential library adds.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`.
@@ -53,7 +54,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PathsUpdateResponse` (interface): `/api/paths` update response shape.
 - `ModelPathLibraryKind` (type): Model library kind for add-path scan/add endpoints (`checkpoint|vae|text_encoder`).
 - `ModelPathScanRequest` (interface): Request payload for `/api/models/path-scan`.
-- `ModelPathScanItem` (interface): Candidate file row returned by `/api/models/path-scan`.
+- `ModelPathScanItem` (interface): Candidate file row returned by `/api/models/path-scan` (optional nullable `size_bytes` for progress telemetry).
 - `ModelPathScanResponse` (interface): `/api/models/path-scan` response shape.
 - `ModelPathAddRequest` (interface): Request payload for `/api/models/path-add` and `/api/models/path-add-all`.
 - `ModelPathAddItem` (interface): Added-file payload including SHA/hash metadata.
@@ -454,6 +455,7 @@ export interface ModelPathScanItem {
   name: string
   path: string
   ext: string
+  size_bytes?: number | null
 }
 
 export interface ModelPathScanResponse {

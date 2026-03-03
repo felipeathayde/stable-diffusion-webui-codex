@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Reusable quicksettings add-path modal (scan + add-to-library).
 Provides add-path workflows for checkpoint/VAE/text-encoder path keys by scanning a user-supplied path (no hash on scan),
-then adding selected/all files with SHA computed only at add-time.
+then adding selected/all files with SHA computed only at add-time and byte-aware progress feedback.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsAddPathModal` (component): Modal for scanning and adding model files into a target paths.json key.
@@ -16,6 +16,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `scanCandidates` (function): Calls backend scan endpoint and populates candidate rows (no SHA).
 - `addOne` (function): Adds one candidate file to library key and records per-row SHA/result state.
 - `addAllSequential` (function): Adds all scanned candidates sequentially with visible per-row progress.
+- `normalizeSizeBytes` (function): Validates optional backend size metadata for honest progress calculations.
+- `formatBytes` (function): Formats byte counts for UI progress/status labels.
+- `planAddAllRun` (function): Builds one sequential add-all plan (pending rows + optional aggregate byte total).
 -->
 
 <template>
@@ -40,8 +43,22 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <div class="qs-add-path-actions">
         <button class="btn btn-sm btn-secondary" type="button" :disabled="!canAddAll" @click="addAllSequential">
-          {{ addAllRunning ? `Adding ${addAllIndex}/${scanResults.length}…` : 'Add whole folder' }}
+          <span v-if="addAllRunning && !hasAddAllByteTotal" class="qs-add-path-spinner" aria-hidden="true"></span>
+          {{ addAllRunning ? addAllProgressSummary : 'Add whole folder' }}
         </button>
+      </div>
+      <div v-if="showAddAllProgress" class="qs-add-path-progress" aria-live="polite">
+        <div class="qs-add-path-progress__meta">
+          <span>{{ addAllProgressSummary }}</span>
+          <span v-if="hasAddAllByteTotal" class="qs-add-path-progress__percent">{{ addAllProgressPercentLabel }}</span>
+          <span v-else class="qs-add-path-progress__fallback">
+            <span class="qs-add-path-spinner" aria-hidden="true"></span>
+            {{ addAllFallbackSummary }}
+          </span>
+        </div>
+        <div v-if="hasAddAllByteTotal" class="qs-add-path-progress__bar" role="progressbar" :aria-valuenow="addAllProgressPercent" aria-valuemin="0" aria-valuemax="100">
+          <div class="qs-add-path-progress__bar-fill" :style="{ width: `${addAllProgressPercent}%` }"></div>
+        </div>
       </div>
 
       <p v-if="scanError" class="panel-error">Error: {{ scanError }}</p>
@@ -57,7 +74,12 @@ Symbols (top-level; keep in sync; no ghosts):
             >
               <td class="qs-add-path-row__name" :title="item.path">
                 <div class="qs-add-path-row__title">{{ displayName(item) }}</div>
+                <div class="qs-add-path-row__size">{{ rowSizeLabel(item) }}</div>
                 <div v-if="rowState(item).error" class="qs-add-path-row__status qs-add-path-row__status--error">{{ rowState(item).error }}</div>
+                <div v-else-if="rowState(item).adding" class="qs-add-path-row__status qs-add-path-row__status--loading">
+                  <span class="qs-add-path-spinner" aria-hidden="true"></span>
+                  <span>Adding…</span>
+                </div>
                 <div
                   v-else-if="rowState(item).done && rowState(item).sha256"
                   class="qs-add-path-row__status"
@@ -98,6 +120,7 @@ interface RowStatus {
   sha256: string
   shortHash: string
   error: string
+  sizeBytes: number | null
 }
 
 const props = withDefaults(defineProps<{
@@ -132,6 +155,9 @@ const rowStatuses = ref<Record<string, RowStatus>>({})
 const addAllRunning = ref(false)
 const addAllIndex = ref(0)
 const addAllActivePath = ref('')
+const addAllPlannedPaths = ref<string[]>([])
+const addAllPlannedTotalBytes = ref<number | null>(null)
+const addAllProcessedBytes = ref(0)
 
 const placeholderExample = computed(() => {
   const explicit = String(props.placeholder || '').trim()
@@ -148,7 +174,32 @@ const placeholderExample = computed(() => {
 const sanitizedInput = computed(() => sanitizePathInput(pathInput.value))
 const hasRowAddInFlight = computed(() => scanResults.value.some((item) => rowState(item).adding))
 const canScan = computed(() => !scanLoading.value && !addAllRunning.value && Boolean(sanitizedInput.value))
-const canAddAll = computed(() => !scanLoading.value && !addAllRunning.value && !hasRowAddInFlight.value && scanResults.value.length > 0)
+const pendingAddCount = computed(() => scanResults.value.filter((item) => {
+  const state = rowState(item)
+  return !(state.done && !state.error)
+}).length)
+const canAddAll = computed(() => !scanLoading.value && !addAllRunning.value && !hasRowAddInFlight.value && pendingAddCount.value > 0)
+const hasAddAllByteTotal = computed(() => typeof addAllPlannedTotalBytes.value === 'number' && addAllPlannedTotalBytes.value > 0)
+const addAllProgressPercent = computed(() => {
+  const total = addAllPlannedTotalBytes.value
+  if (total === null || total <= 0) return 0
+  const raw = (addAllProcessedBytes.value / total) * 100
+  return Math.min(100, Math.max(0, Math.trunc(raw * 10) / 10))
+})
+const addAllProgressPercentLabel = computed(() => `${addAllProgressPercent.value.toFixed(1)}%`)
+const addAllProgressSummary = computed(() => {
+  if (hasAddAllByteTotal.value) {
+    return `Adding ${formatBytes(addAllProcessedBytes.value)} / ${formatBytes(addAllPlannedTotalBytes.value || 0)}`
+  }
+  return 'Adding…'
+})
+const addAllFallbackSummary = computed(() => {
+  const total = addAllPlannedPaths.value.length
+  if (total <= 0) return 'Byte totals unavailable'
+  const current = Math.min(addAllIndex.value, total)
+  return `Files ${current}/${total} · byte totals unavailable`
+})
+const showAddAllProgress = computed(() => addAllRunning.value)
 
 watch(open, (isOpen) => {
   if (!isOpen) {
@@ -171,6 +222,9 @@ function resetState(): void {
   addAllRunning.value = false
   addAllIndex.value = 0
   addAllActivePath.value = ''
+  addAllPlannedPaths.value = []
+  addAllPlannedTotalBytes.value = null
+  addAllProcessedBytes.value = 0
 }
 
 function isWindowsClient(): boolean {
@@ -224,6 +278,33 @@ function shortSha(sha: string): string {
   return normalized.slice(0, 10)
 }
 
+function normalizeSizeBytes(raw: unknown, filePath: string): number | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || !Number.isInteger(raw)) {
+    throw new Error(`invalid size_bytes for ${filePath}: ${String(raw)}`)
+  }
+  return raw
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let amount = value
+  let unitIndex = 0
+  while (amount >= 1024 && unitIndex < units.length - 1) {
+    amount /= 1024
+    unitIndex += 1
+  }
+  const digits = unitIndex <= 1 ? 0 : 1
+  return `${amount.toFixed(digits)} ${units[unitIndex]}`
+}
+
+function rowSizeLabel(item: ModelPathScanItem): string {
+  const sizeBytes = rowState(item).sizeBytes
+  if (sizeBytes === null) return 'Size unavailable'
+  return `Size ${formatBytes(sizeBytes)}`
+}
+
 function rowState(item: ModelPathScanItem): RowStatus {
   const existing = rowStatuses.value[item.path]
   if (existing) return existing
@@ -234,9 +315,33 @@ function rowState(item: ModelPathScanItem): RowStatus {
     sha256: '',
     shortHash: '',
     error: '',
+    sizeBytes: normalizeSizeBytes(item.size_bytes, item.path),
   }
   rowStatuses.value[item.path] = created
   return created
+}
+
+function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: number; sizeBytes: number | null }>; totalBytes: number | null } {
+  const entries: Array<{ item: ModelPathScanItem; index: number; sizeBytes: number | null }> = []
+  let totalBytes = 0
+  let hasUnknownBytes = false
+  for (let index = 0; index < scanResults.value.length; index += 1) {
+    const item = scanResults.value[index]
+    const state = rowState(item)
+    if (state.done && !state.error) continue
+    const sizeBytes = state.sizeBytes
+    if (sizeBytes === null) {
+      hasUnknownBytes = true
+    } else if (!Number.isFinite(sizeBytes) || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
+      throw new Error(`invalid size_bytes for ${item.path}: ${String(sizeBytes)}`)
+    } else {
+      totalBytes += sizeBytes
+    }
+    entries.push({ item, index, sizeBytes })
+  }
+  if (entries.length === 0) return { entries, totalBytes: null }
+  if (hasUnknownBytes || totalBytes <= 0) return { entries, totalBytes: null }
+  return { entries, totalBytes }
 }
 
 function isRowActionDisabled(item: ModelPathScanItem): boolean {
@@ -278,7 +383,11 @@ async function scanCandidates(): Promise<void> {
       key: props.targetKey,
       kind: props.targetKind,
     })
-    scanResults.value = [...response.items].sort((left, right) => {
+    const normalizedItems = response.items.map((item) => ({
+      ...item,
+      size_bytes: normalizeSizeBytes(item.size_bytes, item.path),
+    }))
+    scanResults.value = [...normalizedItems].sort((left, right) => {
       const byName = left.name.localeCompare(right.name)
       if (byName !== 0) return byName
       return left.path.localeCompare(right.path)
@@ -292,6 +401,7 @@ async function scanCandidates(): Promise<void> {
         sha256: '',
         shortHash: '',
         error: '',
+        sizeBytes: normalizeSizeBytes(item.size_bytes, item.path),
       }
     }
     rowStatuses.value = next
@@ -319,6 +429,8 @@ async function addOne(item: ModelPathScanItem, index: number, options?: { silent
     state.addedToLibrary = Boolean(response.item.added)
     state.sha256 = String(response.item.sha256 || '')
     state.shortHash = String(response.item.short_hash || '')
+    const responseSize = normalizeSizeBytes(response.item.size_bytes, item.path)
+    if (responseSize !== null) state.sizeBytes = responseSize
     if (state.addedToLibrary && !options?.silent) {
       emit('added', { addedCount: 1 })
     }
@@ -340,22 +452,34 @@ async function addOne(item: ModelPathScanItem, index: number, options?: { silent
 
 async function addAllSequential(): Promise<void> {
   if (!canAddAll.value) return
+  const runPlan = planAddAllRun()
+  if (runPlan.entries.length === 0) return
+
   addAllRunning.value = true
   addAllIndex.value = 0
   addAllActivePath.value = ''
+  addAllPlannedPaths.value = runPlan.entries.map((entry) => entry.item.path)
+  addAllPlannedTotalBytes.value = runPlan.totalBytes
+  addAllProcessedBytes.value = 0
 
   let addedCount = 0
   try {
-    for (let index = 0; index < scanResults.value.length; index += 1) {
-      const item = scanResults.value[index]
-      addAllIndex.value = index + 1
+    for (let runIndex = 0; runIndex < runPlan.entries.length; runIndex += 1) {
+      const { item, index, sizeBytes } = runPlan.entries[runIndex]
+      const state = rowState(item)
+      addAllIndex.value = runIndex + 1
       addAllActivePath.value = item.path
       const result = await addOne(item, index, { silent: true })
+      if (sizeBytes !== null) {
+        addAllProcessedBytes.value += sizeBytes
+      }
       if (result.added) addedCount += 1
       if (!result.ok) {
-        const state = rowState(item)
         if (state.error) emit('error', state.error)
       }
+    }
+    if (runPlan.totalBytes !== null) {
+      addAllProcessedBytes.value = runPlan.totalBytes
     }
   } finally {
     addAllRunning.value = false

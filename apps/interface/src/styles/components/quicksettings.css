@@ -250,6 +250,48 @@
     align-items: center;
   }
 
+  .qs-add-path-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.15rem;
+  }
+
+  .qs-add-path-progress__meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.74rem;
+    color: color-mix(in srgb, var(--color-foreground) 78%, transparent);
+  }
+
+  .qs-add-path-progress__percent {
+    color: color-mix(in srgb, var(--color-foreground) 86%, transparent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .qs-add-path-progress__fallback {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    color: color-mix(in srgb, var(--color-foreground) 84%, transparent);
+  }
+
+  .qs-add-path-progress__bar {
+    height: 0.36rem;
+    border-radius: 999px;
+    border: 0.0625rem solid color-mix(in srgb, var(--color-border) 82%, transparent);
+    background: color-mix(in srgb, var(--color-panel) 88%, black 12%);
+    overflow: hidden;
+  }
+
+  .qs-add-path-progress__bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, hsla(195, 95%, 58%, 0.9), hsla(210, 92%, 62%, 0.95));
+    transition: width 160ms linear;
+  }
+
   .qs-add-path-list-section {
     margin-top: 0.1rem;
     min-height: 0;
@@ -310,6 +352,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .qs-add-path-row__status--loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
   }
 
   .qs-add-path-row__status--error {

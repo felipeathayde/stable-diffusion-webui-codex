@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Model and asset inventory API routes.
-Exposes checkpoints, inventories (sync + async refresh task start), samplers/schedulers, embeddings, and engine capabilities.
+Exposes checkpoints, inventories (sync + async refresh task start), path scan/add helpers (with file size metadata), samplers/schedulers, embeddings,
+and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
 (`/api/models/prompt-token-count`) using vendored offline tokenizers, including WAN22 animate engine ids and Anima runtime-equivalent prompt preprocessing/max-length checks.
@@ -29,6 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_save_paths_config` (function): Persists paths config updates (fail-loud).
 - `_resolve_paths_config_entry_path` (function): Resolves one paths config entry to an absolute filesystem path.
 - `_paths_config_entry_for_file` (function): Converts absolute file paths into paths.json entry semantics.
+- `_file_size_bytes` (function): Reads file size metadata for scan/add payloads (fail-loud).
 """
 
 from __future__ import annotations
@@ -424,6 +426,12 @@ def build_router(
             raise HTTPException(status_code=500, detail=f"failed to scan path {path}: {exc}") from exc
         return candidates
 
+    def _file_size_bytes(file_path: Path) -> int:
+        try:
+            return int(file_path.stat().st_size)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to read file size for {file_path}: {exc}") from exc
+
     def _add_library_file(*, key: str, kind: str, file_path_raw: object) -> Dict[str, Any]:
         file_path = _resolve_payload_path(file_path_raw)
         if not file_path.exists():
@@ -473,6 +481,7 @@ def build_router(
             _save_paths_config(paths_cfg)
             added = True
 
+        size_bytes = _file_size_bytes(file_path)
         try:
             sha256, short_hash = model_api.hash_for_file(str(file_path))
         except Exception as exc:
@@ -484,6 +493,7 @@ def build_router(
             "name": file_path.name,
             "path": str(file_path),
             "ext": file_path.suffix.lower(),
+            "size_bytes": size_bytes,
             "type": kind,
             "library_key": key,
             "added": added,
@@ -556,6 +566,7 @@ def build_router(
                     "name": candidate.name,
                     "path": str(candidate),
                     "ext": candidate.suffix.lower(),
+                    "size_bytes": _file_size_bytes(candidate),
                 }
                 for candidate in candidates
             ],
@@ -584,7 +595,9 @@ def build_router(
         added_count = 0
         error_count = 0
         for index, candidate in enumerate(candidates, start=1):
+            size_bytes: int | None = None
             try:
+                size_bytes = _file_size_bytes(candidate)
                 item = _add_library_file(key=key, kind=kind, file_path_raw=str(candidate))
                 if item.get("added") is True:
                     added_count += 1
@@ -607,6 +620,7 @@ def build_router(
                             "name": candidate.name,
                             "path": str(candidate),
                             "ext": candidate.suffix.lower(),
+                            "size_bytes": size_bytes,
                             "type": kind,
                             "library_key": key,
                         },
@@ -624,6 +638,7 @@ def build_router(
                             "name": candidate.name,
                             "path": str(candidate),
                             "ext": candidate.suffix.lower(),
+                            "size_bytes": size_bytes,
                             "type": kind,
                             "library_key": key,
                         },

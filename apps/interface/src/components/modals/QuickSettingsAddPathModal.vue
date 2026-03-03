@@ -350,14 +350,18 @@ function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: num
 }
 
 function rowHasProgress(item: ModelPathScanItem): boolean {
-  if (!addAllRunning.value) return false
-  if (!hasAddAllByteTotal.value) return false
+  const state = rowState(item)
+  if (!state.adding) return false
+  if (!addAllRunning.value) return true
   return addAllActivePath.value === item.path
 }
 
 function rowProgressStyle(item: ModelPathScanItem): Record<string, string> {
   if (!rowHasProgress(item)) return {}
-  return { '--qs-row-progress': `${addAllProgressPercent.value}%` }
+  if (addAllRunning.value && hasAddAllByteTotal.value) {
+    return { '--qs-row-progress': `${addAllProgressPercent.value}%` }
+  }
+  return { '--qs-row-progress': '100%' }
 }
 
 function isRowActionDisabled(item: ModelPathScanItem): boolean {

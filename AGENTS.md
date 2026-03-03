@@ -182,6 +182,12 @@ You call `torch.load(..., weights_only=True, mmap=True)` when it applies.
 Keep Python disciplined.
 You do not add shebangs to source files.
 
+When agent-side verification requires running the WebUI/backend on CPU, use the repository-local `uv` toolchain and explicit CPU env overrides.
+- Prefer local `uv`: `./.uv/bin/uv` (never system/global `uv` for this workflow).
+- Required env for CPU lane: `CODEX_ROOT="$PWD" PYTHONPATH="$PWD" CODEX_TORCH_MODE=cpu CODEX_TORCH_BACKEND=cpu`.
+- Example check command pattern:
+  - `CODEX_ROOT="$PWD" PYTHONPATH="$PWD" CODEX_TORCH_MODE=cpu CODEX_TORCH_BACKEND=cpu ./.uv/bin/uv run --python .venv/bin/python --no-sync -m apps.backend.interfaces.api.run_api --help`
+
 ---
 
 ### ACT V – FRONTEND, LAYOUT, AND CSS

@@ -368,6 +368,10 @@ class _LazyAnimaT5Tokenizer:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._ensure_loaded(), name)
 
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        tokenizer = self._ensure_loaded()
+        return tokenizer(*args, **kwargs)
+
 
 @dataclass(frozen=True, slots=True)
 class AnimaTextPipelines:

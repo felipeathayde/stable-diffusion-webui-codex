@@ -15,6 +15,7 @@ Also stores API-only manual env overlay settings (`manual_api_env_enabled`, `man
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF dequant-cache/LoRA runtime knobs; default offload target is CPU).
+- `_default_external_terminal_enabled` (function): Canonical default provider for launcher "external terminal" preference (enabled on Windows, disabled elsewhere).
 - `_BOOTSTRAP_DEVICE_KEYS` (constant): Runtime-global launcher device keys that must stay scoped to `areas/core` (never model/non-core overlays).
 - `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
 - `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_CUDA_ALLOC_CONF` is unset.
@@ -118,6 +119,10 @@ DEFAULT_MANUAL_API_ENV_TEXT = "TORCH_CUDA_ARCH_LIST=8.6\nMAX_JOBS=4"
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+def _default_external_terminal_enabled() -> bool:
+    return os.name == "nt"
+
+
 def parse_manual_api_env_text(raw_text: str) -> Dict[str, str]:
     overlay: Dict[str, str] = {}
     seen_keys: Dict[str, tuple[str, int]] = {}
@@ -159,7 +164,7 @@ def parse_manual_api_env_text(raw_text: str) -> Dict[str, str]:
 
 @dataclass
 class LauncherMeta:
-    external_terminal: bool = False
+    external_terminal: bool = field(default_factory=_default_external_terminal_enabled)
     sdpa_policy: str = "auto"
     tab_index: int = 0
     active_model: str = DEFAULT_MODEL_NAME
@@ -542,8 +547,9 @@ def _load_meta(root: Path) -> LauncherMeta:
         data = json.loads(meta_path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise RuntimeError(f"Failed to read launcher meta {meta_path}: {exc}") from exc
+    external_terminal_default = _default_external_terminal_enabled()
     return LauncherMeta(
-        external_terminal=bool(data.get("external_terminal", False)),
+        external_terminal=bool(data["external_terminal"]) if "external_terminal" in data else external_terminal_default,
         sdpa_policy=str(data.get("sdpa_policy", "auto")),
         tab_index=int(data.get("tab_index", 0)),
         active_model=str(data.get("active_model", DEFAULT_MODEL_NAME)),
@@ -648,8 +654,11 @@ def _maybe_migrate_legacy(root: Path) -> None:
 
     LOGGER.info("Migrating legacy launcher profile from %s", legacy_path)
     legacy_env = {str(k): str(v) for k, v in (legacy.get("env") or {}).items()}
+    external_terminal_default = _default_external_terminal_enabled()
     meta = LauncherMeta(
-        external_terminal=bool(legacy.get("external_terminal", False)),
+        external_terminal=(
+            bool(legacy["external_terminal"]) if "external_terminal" in legacy else external_terminal_default
+        ),
         sdpa_policy=str(legacy.get("sdpa_policy", "auto")),
         tab_index=int(legacy.get("tab_index", 0)),
         active_model=DEFAULT_MODEL_NAME,

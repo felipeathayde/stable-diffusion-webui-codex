@@ -22,3 +22,4 @@ Status: Draft
 - 2026-02-09: Anima conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-23: `AnimaEngineRuntime.device` default now resolves from memory-manager mount-device authority (no hardcoded CPU default in runtime metadata).
 - 2026-03-02: `spec.assemble_anima_runtime(...)` now defers external component materialization (Qwen TE model, WAN VAE weights, T5 tokenizer) behind lazy wrappers with strict first-use load, reducing startup latency while preserving fail-loud external path validation at engine load time.
+- 2026-03-03: `spec._LazyAnimaT5Tokenizer` now forwards `__call__` to the materialized tokenizer so `tokenize_t5_with_weights(...)` can call the lazy proxy directly while retaining one-time lazy load + cache semantics.

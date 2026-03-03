@@ -175,10 +175,11 @@ const pendingAddCount = computed(() => scanResults.value.filter((item) => {
   return !(state.done && !state.error)
 }).length)
 const canAddAll = computed(() => !scanLoading.value && !addAllRunning.value && !hasRowAddInFlight.value && pendingAddCount.value > 0)
-const hasAddAllByteTotal = computed(() => typeof addAllPlannedTotalBytes.value === 'number' && addAllPlannedTotalBytes.value > 0)
+const hasAddAllByteTotal = computed(() => typeof addAllPlannedTotalBytes.value === 'number')
 const addAllProgressPercent = computed(() => {
   const total = addAllPlannedTotalBytes.value
-  if (total === null || total <= 0) return 0
+  if (total === null) return 0
+  if (total <= 0) return 100
   const raw = (addAllProcessedBytes.value / total) * 100
   return Math.min(100, Math.max(0, Math.trunc(raw * 10) / 10))
 })
@@ -324,7 +325,7 @@ function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: num
     entries.push({ item, index, sizeBytes })
   }
   if (entries.length === 0) return { entries, totalBytes: null }
-  if (knownByteEntries <= 0 || totalBytes <= 0) return { entries, totalBytes: null }
+  if (knownByteEntries <= 0) return { entries, totalBytes: null }
   return { entries, totalBytes }
 }
 

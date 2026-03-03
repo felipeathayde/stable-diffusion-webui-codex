@@ -250,46 +250,19 @@
     align-items: center;
   }
 
-  .qs-add-path-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    margin-top: 0.15rem;
-  }
-
-  .qs-add-path-progress__meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 0.74rem;
-    color: color-mix(in srgb, var(--color-foreground) 78%, transparent);
-  }
-
-  .qs-add-path-progress__percent {
-    color: color-mix(in srgb, var(--color-foreground) 86%, transparent);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .qs-add-path-progress__fallback {
+  .qs-add-path-actions .btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.32rem;
-    color: color-mix(in srgb, var(--color-foreground) 84%, transparent);
+    gap: 0.35rem;
   }
 
-  .qs-add-path-progress__bar {
-    height: 0.36rem;
-    border-radius: 999px;
-    border: 0.0625rem solid color-mix(in srgb, var(--color-border) 82%, transparent);
-    background: color-mix(in srgb, var(--color-panel) 88%, black 12%);
+  .qs-add-path-ellipsis {
+    display: inline-block;
+    width: 1.8ch;
     overflow: hidden;
-  }
-
-  .qs-add-path-progress__bar-fill {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, hsla(195, 95%, 58%, 0.9), hsla(210, 92%, 62%, 0.95));
-    transition: width 160ms linear;
+    white-space: nowrap;
+    animation: qs-add-path-ellipsis 0.95s steps(4, end) infinite;
+    vertical-align: baseline;
   }
 
   .qs-add-path-list-section {
@@ -317,6 +290,42 @@
     background: color-mix(in srgb, var(--color-panel) 82%, black 18%);
   }
 
+  .qs-add-path-row {
+    position: relative;
+    --qs-row-progress: 0%;
+  }
+
+  .qs-add-path-row.has-progress::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      hsla(195, 95%, 58%, 0.22) var(--qs-row-progress),
+      transparent var(--qs-row-progress)
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .qs-add-path-row.is-adding::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1.05rem;
+    height: 1.05rem;
+    margin-left: -0.525rem;
+    margin-top: -0.525rem;
+    border-radius: 999px;
+    border: 0.125rem solid hsla(0, 0%, 100%, 0.22);
+    border-top-color: hsla(195, 95%, 60%, 0.95);
+    animation: qs-add-path-spinner 0.8s linear infinite;
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0.88;
+  }
+
   .qs-add-path-row:hover {
     background: color-mix(in srgb, var(--color-panel) 72%, var(--color-accent) 28%);
   }
@@ -329,6 +338,8 @@
   .qs-add-path-row__actions {
     padding: 0.48rem 0.6rem;
     vertical-align: middle;
+    position: relative;
+    z-index: 1;
   }
 
   .qs-add-path-row__actions {
@@ -345,6 +356,12 @@
     text-overflow: ellipsis;
   }
 
+  .qs-add-path-row__size {
+    margin-top: 0.12rem;
+    font-size: 0.7rem;
+    color: color-mix(in srgb, var(--color-foreground) 68%, transparent);
+  }
+
   .qs-add-path-row__status {
     margin-top: 0.14rem;
     font-size: 0.72rem;
@@ -352,12 +369,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .qs-add-path-row__status--loading {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
   }
 
   .qs-add-path-row__status--error {
@@ -378,6 +389,11 @@
   @keyframes qs-add-path-spinner {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  @keyframes qs-add-path-ellipsis {
+    0% { width: 0; }
+    100% { width: 1.8ch; }
   }
 
 }

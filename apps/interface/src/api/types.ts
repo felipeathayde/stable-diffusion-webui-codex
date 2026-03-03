@@ -54,7 +54,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PathsUpdateResponse` (interface): `/api/paths` update response shape.
 - `ModelPathLibraryKind` (type): Model library kind for add-path scan/add endpoints (`checkpoint|vae|text_encoder`).
 - `ModelPathScanRequest` (interface): Request payload for `/api/models/path-scan`.
-- `ModelPathScanItem` (interface): Candidate file row returned by `/api/models/path-scan` (optional nullable `size_bytes` for progress telemetry).
+- `ModelPathScanItem` (interface): Candidate file row returned by `/api/models/path-scan` (optional `size_bytes` and `already_in_library` telemetry).
 - `ModelPathScanResponse` (interface): `/api/models/path-scan` response shape.
 - `ModelPathAddRequest` (interface): Request payload for `/api/models/path-add` and `/api/models/path-add-all`.
 - `ModelPathAddItem` (interface): Added-file payload including SHA/hash metadata.
@@ -456,6 +456,7 @@ export interface ModelPathScanItem {
   path: string
   ext: string
   size_bytes?: number | null
+  already_in_library?: boolean | null
 }
 
 export interface ModelPathScanResponse {

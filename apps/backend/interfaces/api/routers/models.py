@@ -31,6 +31,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_paths_config_entry_path` (function): Resolves one paths config entry to an absolute filesystem path.
 - `_paths_config_entry_for_file` (function): Converts absolute file paths into paths.json entry semantics.
 - `_file_size_bytes` (function): Reads file size metadata for scan/add payloads (fail-loud).
+- `_resolve_existing_library_paths` (function): Loads/validates one paths.json key and resolves entries to absolute paths.
+- `_is_file_already_in_library` (function): Checks whether a candidate file is already covered by a library key paths config.
 """
 
 from __future__ import annotations
@@ -432,6 +434,34 @@ def build_router(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"failed to read file size for {file_path}: {exc}") from exc
 
+    def _resolve_existing_library_paths(key: str) -> list[Path]:
+        paths_cfg = _load_paths_config_for_mutation()
+        current = paths_cfg.get(key)
+        if current is None:
+            return []
+        if not isinstance(current, list):
+            raise HTTPException(status_code=500, detail=f"paths config entry {key!r} must be a list")
+        try:
+            return [_resolve_paths_config_entry_path(entry) for entry in current]
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"invalid paths config entry under {key!r}: {exc}") from exc
+
+    def _is_file_already_in_library(*, file_path: Path, existing_paths: list[Path]) -> bool:
+        resolved_file = file_path.resolve(strict=False)
+        normalized_file = os.path.normcase(str(resolved_file))
+        for existing in existing_paths:
+            normalized_existing = os.path.normcase(str(existing))
+            if normalized_existing == normalized_file:
+                return True
+            if existing.is_dir():
+                try:
+                    resolved_file.relative_to(existing)
+                except ValueError:
+                    pass
+                else:
+                    return True
+        return False
+
     def _add_library_file(*, key: str, kind: str, file_path_raw: object) -> Dict[str, Any]:
         file_path = _resolve_payload_path(file_path_raw)
         if not file_path.exists():
@@ -445,37 +475,17 @@ def build_router(
                 detail=f"unsupported file extension for kind={kind!r}: {file_path.name!r} (allowed: {allowed})",
             )
 
-        paths_cfg = _load_paths_config_for_mutation()
-        current = paths_cfg.get(key)
-        if current is None:
-            current = []
-        if not isinstance(current, list):
-            raise HTTPException(status_code=500, detail=f"paths config entry {key!r} must be a list")
-
-        try:
-            existing_paths = [_resolve_paths_config_entry_path(entry) for entry in current]
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"invalid paths config entry under {key!r}: {exc}") from exc
-
-        resolved_file = file_path.resolve(strict=False)
-        normalized_file = os.path.normcase(str(resolved_file))
-        already_present = False
-        for existing in existing_paths:
-            normalized_existing = os.path.normcase(str(existing))
-            if normalized_existing == normalized_file:
-                already_present = True
-                break
-            if existing.is_dir():
-                try:
-                    resolved_file.relative_to(existing)
-                except ValueError:
-                    pass
-                else:
-                    already_present = True
-                    break
+        existing_paths = _resolve_existing_library_paths(key)
+        already_present = _is_file_already_in_library(file_path=file_path, existing_paths=existing_paths)
 
         added = False
         if not already_present:
+            paths_cfg = _load_paths_config_for_mutation()
+            current = paths_cfg.get(key)
+            if current is None:
+                current = []
+            if not isinstance(current, list):
+                raise HTTPException(status_code=500, detail=f"paths config entry {key!r} must be a list")
             current = [*current, _paths_config_entry_for_file(file_path)]
             paths_cfg[key] = current
             _save_paths_config(paths_cfg)
@@ -494,6 +504,7 @@ def build_router(
             "path": str(file_path),
             "ext": file_path.suffix.lower(),
             "size_bytes": size_bytes,
+            "already_in_library": already_present,
             "type": kind,
             "library_key": key,
             "added": added,
@@ -554,12 +565,13 @@ def build_router(
 
     @router.post("/api/models/path-scan")
     def scan_model_path(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        _, kind = _resolve_library_target(payload, require_key=False)
+        key, kind = _resolve_library_target(payload, require_key=False)
         root_path = _resolve_payload_path(payload.get("path"))
         candidates = _scan_library_candidates(root_path, kind=kind)
+        existing_paths = _resolve_existing_library_paths(key) if key is not None else []
         return {
             "kind": kind,
-            "key": str(payload.get("key") or "").strip() or None,
+            "key": key,
             "root": str(root_path),
             "items": [
                 {
@@ -567,6 +579,7 @@ def build_router(
                     "path": str(candidate),
                     "ext": candidate.suffix.lower(),
                     "size_bytes": _file_size_bytes(candidate),
+                    "already_in_library": _is_file_already_in_library(file_path=candidate, existing_paths=existing_paths),
                 }
                 for candidate in candidates
             ],

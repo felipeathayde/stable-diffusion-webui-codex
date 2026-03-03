@@ -121,6 +121,26 @@ class _LazyAnimaQwenModel(torch.nn.Module):
         self.preferred_device: torch.device | None = None
         self.preferred_dtype: torch.dtype | None = None
 
+    def _require_loaded_inner_model(self) -> torch.nn.Module:
+        loaded_model = self._loaded_model
+        if loaded_model is None:
+            raise AttributeError(
+                "_LazyAnimaQwenModel.model is unavailable before lazy materialization."
+            )
+        inner_model = getattr(loaded_model, "model", None)
+        if not isinstance(inner_model, torch.nn.Module):
+            raise RuntimeError(
+                "Anima lazy Qwen loaded model exposes invalid `.model` contract: "
+                f"{type(inner_model).__name__}."
+            )
+        return inner_model
+
+    @property
+    def model(self) -> torch.nn.Module:
+        # LoRA patchers resolve dotted parameter keys like `model.embed_tokens.weight`.
+        # Expose the loaded inner model at this path without forcing eager materialization.
+        return self._require_loaded_inner_model()
+
     def _ensure_loaded(self) -> torch.nn.Module:
         model = self._loaded_model
         if model is not None:
@@ -137,6 +157,12 @@ class _LazyAnimaQwenModel(torch.nn.Module):
                 raise RuntimeError(
                     "Anima lazy Qwen loader expected .model nn.Module, "
                     f"got {type(loaded_model).__name__}."
+                )
+            loaded_inner_model = getattr(loaded_model, "model", None)
+            if not isinstance(loaded_inner_model, torch.nn.Module):
+                raise RuntimeError(
+                    "Anima lazy Qwen loader expected loaded model to expose `.model` nn.Module "
+                    f"for LoRA dotted keys (model.*), got {type(loaded_inner_model).__name__}."
                 )
             if self.preferred_device is not None or self.preferred_dtype is not None:
                 loaded_model.to(

@@ -287,11 +287,11 @@
     overflow: auto;
   }
 
-  .qs-add-path-table {
+  .qs-add-path-list {
     width: 100%;
     min-width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
+    display: flex;
+    flex-direction: column;
   }
 
   .qs-add-path-row:nth-child(odd) {
@@ -305,6 +305,10 @@
   .qs-add-path-row {
     position: relative;
     --qs-row-progress: 0%;
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 
   .qs-add-path-row.has-progress::before {
@@ -313,8 +317,10 @@
     inset: 0;
     background: linear-gradient(
       90deg,
+      hsla(195, 95%, 58%, 0.22) 0%,
       hsla(195, 95%, 58%, 0.22) var(--qs-row-progress),
-      transparent var(--qs-row-progress)
+      hsla(195, 95%, 58%, 0.08) var(--qs-row-progress),
+      hsla(195, 95%, 58%, 0.08) 100%
     );
     pointer-events: none;
     z-index: 0;
@@ -349,14 +355,25 @@
   .qs-add-path-row__name,
   .qs-add-path-row__actions {
     padding: 0.48rem 0.6rem;
-    vertical-align: middle;
     position: relative;
     z-index: 1;
+    min-width: 0;
   }
 
   .qs-add-path-row__actions {
-    width: 10.5rem;
+    width: auto;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
     text-align: right;
+  }
+
+  .qs-add-path-row__actions .btn {
+    width: 9.5rem;
+    justify-content: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
   }
 
   .qs-add-path-row__title {
@@ -388,7 +405,7 @@
   }
 
   @media (max-width: 58rem) {
-    .qs-add-path-row__actions {
+    .qs-add-path-row__actions .btn {
       width: 8.8rem;
     }
   }

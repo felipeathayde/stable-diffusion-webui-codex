@@ -19,6 +19,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeSizeBytes` (function): Validates optional backend size metadata for honest progress calculations.
 - `formatBytes` (function): Formats byte counts for UI progress/status labels.
 - `planAddAllRun` (function): Builds one sequential add-all plan (pending rows + optional aggregate byte total).
+- `sumKnownBytesForEntries` (function): Sums known row sizes across one add-all run for byte-aware progress planning.
+- `sumProcessedKnownBytes` (function): Sums known row sizes for already-processed run entries.
 - `rowSizeLabel` (function): Formats per-row size status (`Size …` / `Size unavailable`).
 - `rowHasProgress` (function): Enables row overlay progress only for the active add-all row when totals are known.
 - `rowProgressStyle` (function): Binds row overlay percentage via CSS custom property.
@@ -55,48 +57,47 @@ Symbols (top-level; keep in sync; no ghosts):
       <p v-else-if="scanned && scanResults.length === 0 && !scanLoading" class="caption">No supported files found.</p>
 
       <div v-if="scanResults.length > 0" class="panel-section modal-list-section qs-add-path-list-section">
-        <table class="qs-add-path-table">
-          <tbody>
-            <tr
-              v-for="(item, index) in scanResults"
-              :key="item.path"
-              :class="[
-                'qs-add-path-row',
-                rowState(item).error ? 'is-error' : '',
-                rowState(item).adding ? 'is-adding' : '',
-                rowHasProgress(item) ? 'has-progress' : '',
-              ]"
-              :style="rowProgressStyle(item)"
-            >
-              <td class="qs-add-path-row__name" :title="item.path">
-                <div class="qs-add-path-row__title">{{ displayName(item) }}</div>
-                <div class="qs-add-path-row__size">{{ rowSizeLabel(item) }}</div>
-                <div v-if="rowState(item).error" class="qs-add-path-row__status qs-add-path-row__status--error">{{ rowState(item).error }}</div>
-                <div
-                  v-else-if="rowState(item).done && rowState(item).sha256"
-                  class="qs-add-path-row__status"
-                  :title="`SHA256: ${rowState(item).sha256}`"
-                >
-                  {{ rowState(item).addedToLibrary ? 'Added' : 'Already in library' }} · SHA {{ shortSha(rowState(item).sha256) }}
-                </div>
-                <div v-else-if="rowState(item).done && rowState(item).alreadyInLibrary" class="qs-add-path-row__status">
-                  Already in library
-                </div>
-              </td>
-              <td class="qs-add-path-row__actions">
-                <button
-                  class="btn btn-sm btn-outline"
-                  type="button"
-                  :disabled="isRowActionDisabled(item)"
-                  @click="addOne(item, index)"
-                >
-                  <span>{{ rowActionLabel(item) }}</span>
-                  <span v-if="rowState(item).adding" class="qs-add-path-ellipsis" aria-hidden="true"></span>
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="qs-add-path-list" role="list">
+          <div
+            v-for="(item, index) in scanResults"
+            :key="item.path"
+            :class="[
+              'qs-add-path-row',
+              rowState(item).error ? 'is-error' : '',
+              rowState(item).adding ? 'is-adding' : '',
+              rowHasProgress(item) ? 'has-progress' : '',
+            ]"
+            :style="rowProgressStyle(item)"
+            role="listitem"
+          >
+            <div class="qs-add-path-row__name" :title="item.path">
+              <div class="qs-add-path-row__title">{{ displayName(item) }}</div>
+              <div class="qs-add-path-row__size">{{ rowSizeLabel(item) }}</div>
+              <div v-if="rowState(item).error" class="qs-add-path-row__status qs-add-path-row__status--error">{{ rowState(item).error }}</div>
+              <div
+                v-else-if="rowState(item).done && rowState(item).sha256"
+                class="qs-add-path-row__status"
+                :title="`SHA256: ${rowState(item).sha256}`"
+              >
+                {{ rowState(item).addedToLibrary ? 'Added' : 'Already in library' }} · SHA {{ shortSha(rowState(item).sha256) }}
+              </div>
+              <div v-else-if="rowState(item).done && rowState(item).alreadyInLibrary" class="qs-add-path-row__status">
+                Already in library
+              </div>
+            </div>
+            <div class="qs-add-path-row__actions">
+              <button
+                class="btn btn-sm btn-outline"
+                type="button"
+                :disabled="isRowActionDisabled(item)"
+                @click="addOne(item, index)"
+              >
+                <span>{{ rowActionLabel(item) }}</span>
+                <span v-if="rowState(item).adding" class="qs-add-path-ellipsis" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </Modal>
@@ -305,28 +306,47 @@ function rowState(item: ModelPathScanItem): RowStatus {
   return created
 }
 
-function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: number; sizeBytes: number | null }>; totalBytes: number | null } {
-  const entries: Array<{ item: ModelPathScanItem; index: number; sizeBytes: number | null }> = []
+function sumKnownBytesForEntries(entries: Array<{ item: ModelPathScanItem; index: number }>): { knownEntries: number; totalBytes: number } {
   let totalBytes = 0
-  let knownByteEntries = 0
+  let knownEntries = 0
+  for (const entry of entries) {
+    const sizeBytes = rowState(entry.item).sizeBytes
+    if (sizeBytes === null) continue
+    if (!Number.isFinite(sizeBytes) || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
+      throw new Error(`invalid size_bytes for ${entry.item.path}: ${String(sizeBytes)}`)
+    }
+    totalBytes += sizeBytes
+    knownEntries += 1
+  }
+  return { knownEntries, totalBytes }
+}
+
+function sumProcessedKnownBytes(entries: Array<{ item: ModelPathScanItem; index: number }>, processedCount: number): number {
+  let processedBytes = 0
+  const cappedCount = Math.max(0, Math.min(entries.length, processedCount))
+  for (let index = 0; index < cappedCount; index += 1) {
+    const sizeBytes = rowState(entries[index].item).sizeBytes
+    if (sizeBytes === null) continue
+    if (!Number.isFinite(sizeBytes) || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
+      throw new Error(`invalid size_bytes for ${entries[index].item.path}: ${String(sizeBytes)}`)
+    }
+    processedBytes += sizeBytes
+  }
+  return processedBytes
+}
+
+function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: number }>; totalBytes: number | null } {
+  const entries: Array<{ item: ModelPathScanItem; index: number }> = []
   for (let index = 0; index < scanResults.value.length; index += 1) {
     const item = scanResults.value[index]
     const state = rowState(item)
     if (state.done && !state.error) continue
-    const sizeBytes = state.sizeBytes
-    if (sizeBytes === null) {
-      // Keep entry for add-all flow; fallback spinner is used only if all entries are unknown.
-    } else if (!Number.isFinite(sizeBytes) || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
-      throw new Error(`invalid size_bytes for ${item.path}: ${String(sizeBytes)}`)
-    } else {
-      totalBytes += sizeBytes
-      knownByteEntries += 1
-    }
-    entries.push({ item, index, sizeBytes })
+    entries.push({ item, index })
   }
   if (entries.length === 0) return { entries, totalBytes: null }
-  if (knownByteEntries <= 0) return { entries, totalBytes: null }
-  return { entries, totalBytes }
+  const totals = sumKnownBytesForEntries(entries)
+  if (totals.knownEntries <= 0) return { entries, totalBytes: null }
+  return { entries, totalBytes: totals.totalBytes }
 }
 
 function rowHasProgress(item: ModelPathScanItem): boolean {
@@ -349,12 +369,7 @@ function isRowActionDisabled(item: ModelPathScanItem): boolean {
 
 function rowActionLabel(item: ModelPathScanItem): string {
   const state = rowState(item)
-  if (state.adding) {
-    if (addAllRunning.value && addAllActivePath.value === item.path && hasAddAllByteTotal.value) {
-      return `Adding ${formatBytes(addAllProcessedBytes.value)} / ${formatBytes(addAllPlannedTotalBytes.value || 0)}`
-    }
-    return 'Adding'
-  }
+  if (state.adding) return 'Adding'
   if (state.done && !state.error) {
     return state.addedToLibrary ? 'Added' : 'Already in library'
   }
@@ -472,13 +487,27 @@ async function addAllSequential(): Promise<void> {
   let addedCount = 0
   try {
     for (let runIndex = 0; runIndex < runPlan.entries.length; runIndex += 1) {
-      const { item, index, sizeBytes } = runPlan.entries[runIndex]
+      const { item, index } = runPlan.entries[runIndex]
       const state = rowState(item)
       addAllIndex.value = runIndex + 1
       addAllActivePath.value = item.path
       const result = await addOne(item, index, { silent: true })
-      if (sizeBytes !== null) {
-        addAllProcessedBytes.value += sizeBytes
+      if (addAllPlannedTotalBytes.value === null) {
+        const upgradedTotals = sumKnownBytesForEntries(runPlan.entries)
+        if (upgradedTotals.knownEntries > 0) {
+          addAllPlannedTotalBytes.value = upgradedTotals.totalBytes
+          addAllProcessedBytes.value = sumProcessedKnownBytes(runPlan.entries, runIndex + 1)
+        } else {
+          addAllProcessedBytes.value = 0
+        }
+      } else {
+        addAllProcessedBytes.value = sumProcessedKnownBytes(runPlan.entries, runIndex + 1)
+      }
+      if (addAllPlannedTotalBytes.value === null) {
+        const invariantTotals = sumKnownBytesForEntries(runPlan.entries)
+        if (invariantTotals.knownEntries > 0) {
+          throw new Error('add-all progress invariant failed: known size entries present but total bytes unresolved')
+        }
       }
       if (result.added) addedCount += 1
       if (!result.ok) {

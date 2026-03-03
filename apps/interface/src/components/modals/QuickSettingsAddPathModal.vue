@@ -8,22 +8,20 @@ Required Notice: see NOTICE
 
 Purpose: Reusable quicksettings add-path modal (scan + add-to-library).
 Provides add-path workflows for checkpoint/VAE/text-encoder path keys by scanning a user-supplied path (no hash on scan),
-then adding selected/all files with SHA computed only at add-time and row-overlay byte progress (spinner fallback when byte totals are unavailable).
+then adding selected/all files with SHA computed only at add-time and per-row centered spinner while adding.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsAddPathModal` (component): Modal for scanning and adding model files into a target paths.json key.
 - `sanitizePathInput` (function): Sanitizes path input (trim, quote removal, slash normalization, repeated separator collapse).
 - `scanCandidates` (function): Calls backend scan endpoint and populates candidate rows (no SHA).
 - `addOne` (function): Adds one candidate file to library key and records per-row SHA/result state.
-- `addAllSequential` (function): Adds all scanned candidates sequentially with visible per-row progress.
+- `addAllSequential` (function): Adds all scanned candidates sequentially with visible per-row adding state.
 - `normalizeSizeBytes` (function): Validates optional backend size metadata for honest progress calculations.
 - `formatBytes` (function): Formats byte counts for UI progress/status labels.
 - `planAddAllRun` (function): Builds one sequential add-all plan (pending rows + optional aggregate byte total).
 - `sumKnownBytesForEntries` (function): Sums known row sizes across one add-all run for byte-aware progress planning.
 - `sumProcessedKnownBytes` (function): Sums known row sizes for already-processed run entries.
 - `rowSizeLabel` (function): Formats per-row size status (`Size …` / `Size unavailable`).
-- `rowHasProgress` (function): Enables row overlay progress only for the active add-all row when totals are known.
-- `rowProgressStyle` (function): Binds row overlay percentage via CSS custom property.
 -->
 
 <template>
@@ -49,7 +47,6 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="qs-add-path-actions">
         <button class="btn btn-sm btn-secondary" type="button" :disabled="!canAddAll" @click="addAllSequential">
           <span>{{ addAllRunning ? 'Adding' : 'Add whole folder' }}</span>
-          <span v-if="addAllRunning" class="qs-add-path-ellipsis" aria-hidden="true"></span>
         </button>
       </div>
 
@@ -65,9 +62,7 @@ Symbols (top-level; keep in sync; no ghosts):
               'qs-add-path-row',
               rowState(item).error ? 'is-error' : '',
               rowState(item).adding ? 'is-adding' : '',
-              rowHasProgress(item) ? 'has-progress' : '',
             ]"
-            :style="rowProgressStyle(item)"
             role="listitem"
           >
             <div class="qs-add-path-row__name" :title="item.path">
@@ -93,7 +88,6 @@ Symbols (top-level; keep in sync; no ghosts):
                 @click="addOne(item, index)"
               >
                 <span>{{ rowActionLabel(item) }}</span>
-                <span v-if="rowState(item).adding" class="qs-add-path-ellipsis" aria-hidden="true"></span>
               </button>
             </div>
           </div>
@@ -176,14 +170,6 @@ const pendingAddCount = computed(() => scanResults.value.filter((item) => {
   return !(state.done && !state.error)
 }).length)
 const canAddAll = computed(() => !scanLoading.value && !addAllRunning.value && !hasRowAddInFlight.value && pendingAddCount.value > 0)
-const hasAddAllByteTotal = computed(() => typeof addAllPlannedTotalBytes.value === 'number')
-const addAllProgressPercent = computed(() => {
-  const total = addAllPlannedTotalBytes.value
-  if (total === null) return 0
-  if (total <= 0) return 100
-  const raw = (addAllProcessedBytes.value / total) * 100
-  return Math.min(100, Math.max(0, Math.trunc(raw * 10) / 10))
-})
 
 watch(open, (isOpen) => {
   if (!isOpen) {
@@ -347,21 +333,6 @@ function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: num
   const totals = sumKnownBytesForEntries(entries)
   if (totals.knownEntries <= 0) return { entries, totalBytes: null }
   return { entries, totalBytes: totals.totalBytes }
-}
-
-function rowHasProgress(item: ModelPathScanItem): boolean {
-  const state = rowState(item)
-  if (!state.adding) return false
-  if (!addAllRunning.value) return true
-  return addAllActivePath.value === item.path
-}
-
-function rowProgressStyle(item: ModelPathScanItem): Record<string, string> {
-  if (!rowHasProgress(item)) return {}
-  if (addAllRunning.value && hasAddAllByteTotal.value) {
-    return { '--qs-row-progress': `${addAllProgressPercent.value}%` }
-  }
-  return { '--qs-row-progress': '100%' }
 }
 
 function isRowActionDisabled(item: ModelPathScanItem): boolean {

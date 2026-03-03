@@ -256,26 +256,6 @@
     gap: 0.35rem;
   }
 
-  .qs-add-path-ellipsis {
-    position: relative;
-    display: inline-block;
-    width: 1.8ch;
-    min-width: 1.8ch;
-    overflow: hidden;
-    white-space: nowrap;
-    vertical-align: baseline;
-  }
-
-  .qs-add-path-ellipsis::before {
-    content: '...';
-    position: absolute;
-    left: 0;
-    top: 0;
-    color: inherit;
-    animation: qs-add-path-ellipsis 0.95s steps(4, end) infinite;
-    clip-path: inset(0 100% 0 0);
-  }
-
   .qs-add-path-list-section {
     margin-top: 0.1rem;
     min-height: 0;
@@ -303,32 +283,10 @@
 
   .qs-add-path-row {
     position: relative;
-    --qs-row-progress: 0%;
     width: 100%;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-  }
-
-  .qs-add-path-row.has-progress::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(
-        90deg,
-        hsla(195, 95%, 58%, 0.48) 0%,
-        hsla(195, 95%, 58%, 0.48) var(--qs-row-progress),
-        transparent var(--qs-row-progress),
-        transparent 100%
-      ),
-      linear-gradient(
-        90deg,
-        hsla(195, 95%, 58%, 0.18) 0%,
-        hsla(195, 95%, 58%, 0.18) 100%
-      );
-    pointer-events: none;
-    z-index: 0;
   }
 
   .qs-add-path-row.is-adding::after {
@@ -423,14 +381,6 @@
   @keyframes qs-add-path-spinner {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
-  }
-
-  @keyframes qs-add-path-ellipsis {
-    0% { clip-path: inset(0 100% 0 0); }
-    25% { clip-path: inset(0 66% 0 0); }
-    50% { clip-path: inset(0 33% 0 0); }
-    75% { clip-path: inset(0 0 0 0); }
-    100% { clip-path: inset(0 100% 0 0); }
   }
 
 }

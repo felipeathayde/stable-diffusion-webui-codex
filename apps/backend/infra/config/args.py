@@ -50,7 +50,12 @@ import sys
 from typing import Mapping, MutableMapping, Sequence
 
 from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
-from .lora_online_math import DEFAULT_LORA_ONLINE_MATH, LoraOnlineMath
+from .lora_online_math import (
+    DEFAULT_LORA_ONLINE_MATH,
+    ENV_LORA_ONLINE_MATH,
+    LoraOnlineMath,
+    parse_lora_online_math,
+)
 from .lora_merge_mode import (
     DEFAULT_LORA_MERGE_MODE,
     ENV_LORA_MERGE_MODE,
@@ -1016,6 +1021,14 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     if raw_lora_mode is not None and not _has_value(getattr(ns, "lora_apply_mode", None)):
         try:
             ns.lora_apply_mode = parse_lora_apply_mode(raw_lora_mode).value
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    # LoRA online math mode: honour env only when CLI arg is unset.
+    raw_lora_online_math = env.get(ENV_LORA_ONLINE_MATH)
+    if raw_lora_online_math is not None and not _has_value(getattr(ns, "lora_online_math", None)):
+        try:
+            ns.lora_online_math = parse_lora_online_math(raw_lora_online_math).value
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 

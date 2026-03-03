@@ -75,6 +75,45 @@ bash update-webui.sh
 bash update-webui.sh --force
 ```
 
+### Docker (Linux / WSL)
+1) Build image:
+```bash
+docker build -t codex-webui:latest .
+```
+
+Optional build overrides:
+- `--build-arg CODEX_TORCH_MODE=cpu|cuda|rocm|skip`
+- `--build-arg CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64`
+- `--build-arg CODEX_CUDA_VARIANT=12.6|12.8|13`
+
+2) Run container (GPU example):
+```bash
+docker run --rm -it --gpus all \
+  -p 7850:7850 -p 7860:7860 \
+  -v "$(pwd)/models:/opt/stable-diffusion-webui-codex/models" \
+  -v "$(pwd)/output:/opt/stable-diffusion-webui-codex/output" \
+  -v "$(pwd)/.sangoi:/opt/stable-diffusion-webui-codex/.sangoi" \
+  codex-webui:latest
+```
+
+Runtime behavior:
+- Entry point is `run-webui-docker.sh`.
+- Interactive sessions open a terminal TUI (`apps/docker_tui_launcher.py`) to configure launcher env/profile values without manual `KEY=VALUE` typing.
+- Disable TUI with `-e CODEX_DOCKER_TUI=0` or container args `--no-tui`.
+- Configure-only mode: `codex-webui:latest --configure-only --tui`.
+- If `API_PORT_OVERRIDE` / `WEB_PORT` are changed in TUI/profile, host `-p` mappings must use the same ports.
+- Docker defaults are preseeded for this project profile (CUDA runtime path, SDPA flash, LoRA online, WAN22 `ram+hd`) and can be overridden with `-e KEY=VALUE` or compose `.env`.
+
+3) Compose (GPU + persisted volumes):
+```bash
+docker compose up --build
+```
+
+First-time interactive profile configuration:
+```bash
+docker compose run --rm webui --tui --configure-only
+```
+
 ## Manual install (no installer scripts)
 
 Use this if you want full manual control and do not want to run `install-webui.cmd`, `install-webui.ps1`, or `install-webui.sh`.

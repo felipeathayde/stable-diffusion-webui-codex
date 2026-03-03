@@ -1,0 +1,49 @@
+services:
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CODEX_TORCH_MODE: ${CODEX_TORCH_MODE:-cuda}
+        CODEX_CUDA_VARIANT: ${CODEX_CUDA_VARIANT:-12.8}
+        CODEX_TORCH_BACKEND: ${CODEX_TORCH_BACKEND:-}
+        CODEX_NODE_VERSION: ${CODEX_NODE_VERSION:-24.13.0}
+        CODEX_FFMPEG_VERSION: ${CODEX_FFMPEG_VERSION:-7.0.2}
+    image: codex-webui:latest
+    gpus: all
+    ports:
+      - "${CODEX_API_PORT:-7850}:${CODEX_API_PORT:-7850}"
+      - "${CODEX_WEB_PORT:-7860}:${CODEX_WEB_PORT:-7860}"
+    environment:
+      API_PORT_OVERRIDE: ${CODEX_API_PORT:-7850}
+      WEB_PORT: ${CODEX_WEB_PORT:-7860}
+      CODEX_DOCKER_TUI: ${CODEX_DOCKER_TUI:-0}
+      CODEX_MAIN_DEVICE: ${CODEX_MAIN_DEVICE:-cuda}
+      CODEX_MOUNT_DEVICE: ${CODEX_MOUNT_DEVICE:-cuda}
+      CODEX_OFFLOAD_DEVICE: ${CODEX_OFFLOAD_DEVICE:-cpu}
+      CODEX_CORE_DEVICE: ${CODEX_CORE_DEVICE:-cuda}
+      CODEX_TE_DEVICE: ${CODEX_TE_DEVICE:-cuda}
+      CODEX_VAE_DEVICE: ${CODEX_VAE_DEVICE:-cuda}
+      CODEX_ATTENTION_BACKEND: ${CODEX_ATTENTION_BACKEND:-pytorch}
+      CODEX_ATTENTION_SDPA_POLICY: ${CODEX_ATTENTION_SDPA_POLICY:-flash}
+      CODEX_LORA_APPLY_MODE: ${CODEX_LORA_APPLY_MODE:-online}
+      CODEX_LORA_ONLINE_MATH: ${CODEX_LORA_ONLINE_MATH:-weight_merge}
+      CODEX_LORA_MERGE_MODE: ${CODEX_LORA_MERGE_MODE:-fast}
+      CODEX_LORA_REFRESH_SIGNATURE: ${CODEX_LORA_REFRESH_SIGNATURE:-content_sha256}
+      CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE: ${CODEX_WAN22_IMG2VID_CHUNK_BUFFER_MODE:-ram+hd}
+      CODEX_CFG_BATCH_MODE: ${CODEX_CFG_BATCH_MODE:-fused}
+      CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF: ${CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF:-0}
+      CODEX_CUDA_MALLOC: ${CODEX_CUDA_MALLOC:-0}
+      PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-backend:cudaMallocAsync}
+      CODEX_SINGLE_FLIGHT: ${CODEX_SINGLE_FLIGHT:-1}
+      CODEX_SAFE_WEIGHTS: ${CODEX_SAFE_WEIGHTS:-0}
+      CODEX_TASK_CANCEL_DEFAULT_MODE: ${CODEX_TASK_CANCEL_DEFAULT_MODE:-immediate}
+      CODEX_TASK_EVENT_BUFFER_MAX_EVENTS: ${CODEX_TASK_EVENT_BUFFER_MAX_EVENTS:-5000}
+      CODEX_TASK_EVENT_BUFFER_MAX_MB: ${CODEX_TASK_EVENT_BUFFER_MAX_MB:-64}
+    volumes:
+      - ./models:/opt/stable-diffusion-webui-codex/models
+      - ./output:/opt/stable-diffusion-webui-codex/output
+      - ./.sangoi:/opt/stable-diffusion-webui-codex/.sangoi
+    stdin_open: true
+    tty: true
+    command: ["--no-tui", "--non-interactive"]

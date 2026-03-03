@@ -7,18 +7,18 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Anima engine specification and runtime assembly (Cosmos Predict2 / Anima adapter).
-Assembles a Codex-native runtime from the parsed Anima core bundle and validates sha-selected external assets (Qwen3-0.6B TE + WanVAE-style VAE),
-while deferring external TE/VAE/T5 tokenizer materialization to first use to reduce startup latency.
+Assembles a Codex-native runtime from the parsed Anima core bundle, validates sha-selected external assets
+(Qwen3-0.6B text encoder + WanVAE-style VAE), and eagerly loads external text/vae/tokenizer components through canonical loaders.
 Produces a denoiser patcher suitable for the canonical txt2img/img2img pipelines (Option A).
 Sets Anima predictor defaults, including SIMPLE schedule mode selection for ComfyUI sigma-ladder parity.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_parse_to_device_dtype` (function): Extract normalized `device`/`dtype` targets from `Module.to(...)` call arguments.
-- `_move_tensors_to_device` (function): Recursively moves tensor-only argument trees onto a target device.
-- `_LazyAnimaQwenModel` (class): Lazy Qwen3 model module that loads Anima text-encoder weights on first forward/use.
-- `_build_lazy_anima_vae_config` (function): Header-only strict Anima WAN VAE config probe used by lazy VAE wrapper.
-- `_LazyAnimaWanVAE` (class): Lazy WAN VAE module that loads safetensors weights on first encode/decode use.
-- `_LazyAnimaT5Tokenizer` (class): Lazy tokenizer proxy for Anima T5 tokenization path.
+- `_torch_dtype_label` (function): Convert canonical torch dtypes into runtime metadata labels (`fp16`/`bf16`/`fp32`).
+- `_predictor` (function): Build Anima predictor defaults (discrete-flow + ComfyUI SIMPLE schedule mode).
+- `_load_external_text_encoder` (function): Load and validate Anima Qwen3-0.6B text encoder from external safetensors.
+- `_load_external_vae` (function): Load and validate Anima WAN VAE from external safetensors.
+- `_require_external_asset_path` (function): Require non-empty external asset option values.
+- `_require_existing_external_asset_path` (function): Require existing external asset files on disk.
 - `AnimaTextPipelines` (dataclass): Text pipeline container (Qwen3 embeddings + offline T5 tokenizer).
 - `AnimaEngineRuntime` (dataclass): Assembled runtime container (denoiser + VAE + text pipelines + patchers).
 - `AnimaEngineSpec` (dataclass): Engine spec (family defaults + flow shift/multiplier overrides).
@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
-import threading
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -59,344 +57,6 @@ def _torch_dtype_label(dtype: torch.dtype) -> str:
     if dtype == torch.float32:
         return "fp32"
     raise ValueError(f"Unsupported torch dtype: {dtype!r}")
-
-
-def _parse_to_device_dtype(
-    *args: Any,
-    **kwargs: Any,
-) -> tuple[torch.device | None, torch.dtype | None]:
-    raw_device: Any = kwargs.get("device")
-    raw_dtype: Any = kwargs.get("dtype")
-
-    for arg in args:
-        if isinstance(arg, torch.dtype):
-            raw_dtype = arg
-            continue
-        if isinstance(arg, torch.device):
-            raw_device = arg
-            continue
-        if isinstance(arg, str):
-            try:
-                raw_device = torch.device(arg)
-            except Exception:
-                continue
-
-    device: torch.device | None = None
-    if raw_device is not None:
-        try:
-            device = torch.device(raw_device)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"Anima lazy loader received invalid device target: {raw_device!r}") from exc
-
-    dtype: torch.dtype | None = None
-    if raw_dtype is not None:
-        if not isinstance(raw_dtype, torch.dtype):
-            raise RuntimeError(f"Anima lazy loader received invalid dtype target: {raw_dtype!r}")
-        dtype = raw_dtype
-
-    return device, dtype
-
-
-def _move_tensors_to_device(value: Any, *, device: torch.device) -> Any:
-    if torch.is_tensor(value):
-        return value.to(device=device)
-    if isinstance(value, tuple):
-        return tuple(_move_tensors_to_device(item, device=device) for item in value)
-    if isinstance(value, list):
-        return [_move_tensors_to_device(item, device=device) for item in value]
-    if isinstance(value, dict):
-        return {key: _move_tensors_to_device(item, device=device) for key, item in value.items()}
-    return value
-
-
-class _LazyAnimaQwenModel(torch.nn.Module):
-    """Lazy loader for Anima Qwen3 model weights."""
-
-    def __init__(self, *, tenc_path: str, torch_dtype: torch.dtype) -> None:
-        super().__init__()
-        self._tenc_path = str(tenc_path)
-        self._torch_dtype = torch_dtype
-        self._lock = threading.Lock()
-        self._loaded_model: torch.nn.Module | None = None
-        self.preferred_device: torch.device | None = None
-        self.preferred_dtype: torch.dtype | None = None
-
-    def _require_loaded_inner_model(self) -> torch.nn.Module:
-        loaded_model = self._loaded_model
-        if loaded_model is None:
-            raise AttributeError(
-                "_LazyAnimaQwenModel.model is unavailable before lazy materialization."
-            )
-        inner_model = getattr(loaded_model, "model", None)
-        if not isinstance(inner_model, torch.nn.Module):
-            raise RuntimeError(
-                "Anima lazy Qwen loaded model exposes invalid `.model` contract: "
-                f"{type(inner_model).__name__}."
-            )
-        return inner_model
-
-    @property
-    def model(self) -> torch.nn.Module:
-        # LoRA patchers resolve dotted parameter keys like `model.embed_tokens.weight`.
-        # Expose the loaded inner model at this path without forcing eager materialization.
-        return self._require_loaded_inner_model()
-
-    def _ensure_loaded(self) -> torch.nn.Module:
-        model = self._loaded_model
-        if model is not None:
-            return model
-
-        with self._lock:
-            model = self._loaded_model
-            if model is not None:
-                return model
-
-            loaded_text_encoder = _load_external_text_encoder(tenc_path=self._tenc_path, torch_dtype=self._torch_dtype)
-            loaded_model = getattr(loaded_text_encoder, "model", None)
-            if not isinstance(loaded_model, torch.nn.Module):
-                raise RuntimeError(
-                    "Anima lazy Qwen loader expected .model nn.Module, "
-                    f"got {type(loaded_model).__name__}."
-                )
-            loaded_inner_model = getattr(loaded_model, "model", None)
-            if not isinstance(loaded_inner_model, torch.nn.Module):
-                raise RuntimeError(
-                    "Anima lazy Qwen loader expected loaded model to expose `.model` nn.Module "
-                    f"for LoRA dotted keys (model.*), got {type(loaded_inner_model).__name__}."
-                )
-            if self.preferred_device is not None or self.preferred_dtype is not None:
-                loaded_model.to(
-                    device=self.preferred_device,
-                    dtype=self.preferred_dtype or self._torch_dtype,
-                )
-            loaded_model.eval()
-            self._loaded_model = loaded_model
-            logger.info(
-                "Anima lazy load: qwen model materialized path=%s device=%s dtype=%s",
-                self._tenc_path,
-                str(self.preferred_device),
-                str(self.preferred_dtype or self._torch_dtype),
-            )
-            return loaded_model
-
-    def to(self, *args: Any, **kwargs: Any):  # type: ignore[override]
-        device, dtype = _parse_to_device_dtype(*args, **kwargs)
-        if device is not None:
-            self.preferred_device = device
-        if dtype is not None:
-            self.preferred_dtype = dtype
-        if self._loaded_model is not None:
-            self._loaded_model.to(*args, **kwargs)
-        return self
-
-    def state_dict(self, *args: Any, **kwargs: Any):  # type: ignore[override]
-        if self._loaded_model is None:
-            return {}
-        return self._loaded_model.state_dict(*args, **kwargs)
-
-    def parameters(self, recurse: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(())
-        return self._loaded_model.parameters(recurse=recurse)
-
-    def named_parameters(self, prefix: str = "", recurse: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(())
-        return self._loaded_model.named_parameters(prefix=prefix, recurse=recurse)
-
-    def buffers(self, recurse: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(())
-        return self._loaded_model.buffers(recurse=recurse)
-
-    def modules(self):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter((self,))
-        return self._loaded_model.modules()
-
-    def named_modules(self, memo=None, prefix: str = "", remove_duplicate: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(((prefix, self),))
-        return self._loaded_model.named_modules(
-            memo=memo,
-            prefix=prefix,
-            remove_duplicate=remove_duplicate,
-        )
-
-    def forward(self, *args: Any, **kwargs: Any):  # type: ignore[override]
-        model = self._ensure_loaded()
-        target_device = self.preferred_device
-        if target_device is None:
-            try:
-                target_device = next(model.parameters()).device
-            except StopIteration:
-                target_device = memory_management.manager.cpu_device
-        moved_args = _move_tensors_to_device(args, device=target_device)
-        moved_kwargs = _move_tensors_to_device(kwargs, device=target_device)
-        return model(*moved_args, **moved_kwargs)
-
-
-def _build_lazy_anima_vae_config(*, vae_path: str):
-    from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_header
-    from apps.backend.runtime.families.anima.wan_vae import (
-        WanVaeConfig,
-        detect_wan_vae_variant_from_header,
-        infer_wan_vae_config_from_safetensors_header,
-    )
-    from apps.backend.runtime.families.wan22.wan_latent_norms import WAN21_LATENTS_MEAN, WAN21_LATENTS_STD
-
-    header = read_safetensors_header(Path(vae_path))
-    variant = detect_wan_vae_variant_from_header(header)
-    if variant == "2.2":
-        raise NotImplementedError(
-            "WAN VAE 2.2 detected by safetensors header keys; "
-            "Anima v1 supports only WAN 2.1 image-mode assets."
-        )
-    inferred = infer_wan_vae_config_from_safetensors_header(header)
-    if int(inferred.latent_channels) != 16:
-        raise RuntimeError(
-            f"WAN VAE latent_channels mismatch for Anima: got {inferred.latent_channels}, expected 16."
-        )
-    return WanVaeConfig(
-        down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"),
-        latent_channels=int(inferred.latent_channels),
-        scaling_factor=1.0,
-        shift_factor=None,
-        latents_mean=tuple(float(value) for value in WAN21_LATENTS_MEAN),
-        latents_std=tuple(float(value) for value in WAN21_LATENTS_STD),
-    )
-
-
-class _LazyAnimaWanVAE(torch.nn.Module):
-    """Lazy loader for Anima WAN VAE weights."""
-
-    def __init__(self, *, vae_path: str, torch_dtype: torch.dtype) -> None:
-        super().__init__()
-        self._vae_path = str(vae_path)
-        self._torch_dtype = torch_dtype
-        self._lock = threading.Lock()
-        self._loaded_model: torch.nn.Module | None = None
-        self.preferred_device: torch.device | None = None
-        self.preferred_dtype: torch.dtype | None = None
-        self.config = _build_lazy_anima_vae_config(vae_path=self._vae_path)
-
-    def _ensure_loaded(self) -> torch.nn.Module:
-        model = self._loaded_model
-        if model is not None:
-            return model
-
-        with self._lock:
-            model = self._loaded_model
-            if model is not None:
-                return model
-
-            loaded_model = _load_external_vae(vae_path=self._vae_path, torch_dtype=self._torch_dtype)
-            if not isinstance(loaded_model, torch.nn.Module):
-                raise RuntimeError(
-                    "Anima lazy VAE loader returned invalid model type: "
-                    f"{type(loaded_model).__name__}"
-                )
-            if self.preferred_device is not None or self.preferred_dtype is not None:
-                loaded_model.to(
-                    device=self.preferred_device,
-                    dtype=self.preferred_dtype or self._torch_dtype,
-                )
-            loaded_model.eval()
-            self._loaded_model = loaded_model
-            logger.info(
-                "Anima lazy load: vae model materialized path=%s device=%s dtype=%s",
-                self._vae_path,
-                str(self.preferred_device),
-                str(self.preferred_dtype or self._torch_dtype),
-            )
-            return loaded_model
-
-    def to(self, *args: Any, **kwargs: Any):  # type: ignore[override]
-        device, dtype = _parse_to_device_dtype(*args, **kwargs)
-        if device is not None:
-            self.preferred_device = device
-        if dtype is not None:
-            self.preferred_dtype = dtype
-        if self._loaded_model is not None:
-            self._loaded_model.to(*args, **kwargs)
-        return self
-
-    def state_dict(self, *args: Any, **kwargs: Any):  # type: ignore[override]
-        if self._loaded_model is None:
-            return {}
-        return self._loaded_model.state_dict(*args, **kwargs)
-
-    def parameters(self, recurse: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(())
-        return self._loaded_model.parameters(recurse=recurse)
-
-    def named_parameters(self, prefix: str = "", recurse: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(())
-        return self._loaded_model.named_parameters(prefix=prefix, recurse=recurse)
-
-    def buffers(self, recurse: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(())
-        return self._loaded_model.buffers(recurse=recurse)
-
-    def modules(self):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter((self,))
-        return self._loaded_model.modules()
-
-    def named_modules(self, memo=None, prefix: str = "", remove_duplicate: bool = True):  # type: ignore[override]
-        if self._loaded_model is None:
-            return iter(((prefix, self),))
-        return self._loaded_model.named_modules(
-            memo=memo,
-            prefix=prefix,
-            remove_duplicate=remove_duplicate,
-        )
-
-    def eval(self):  # type: ignore[override]
-        if self._loaded_model is not None:
-            self._loaded_model.eval()
-        return self
-
-    def encode(self, *args: Any, **kwargs: Any):
-        model = self._ensure_loaded()
-        return model.encode(*args, **kwargs)
-
-    def decode(self, *args: Any, **kwargs: Any):
-        model = self._ensure_loaded()
-        return model.decode(*args, **kwargs)
-
-
-class _LazyAnimaT5Tokenizer:
-    """Lazy loader for Anima T5 tokenizer."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._tokenizer: Any | None = None
-
-    def _ensure_loaded(self) -> Any:
-        tokenizer = self._tokenizer
-        if tokenizer is not None:
-            return tokenizer
-        with self._lock:
-            tokenizer = self._tokenizer
-            if tokenizer is not None:
-                return tokenizer
-            from apps.backend.runtime.families.anima.text_encoder import load_anima_t5_tokenizer
-
-            tokenizer = load_anima_t5_tokenizer()
-            self._tokenizer = tokenizer
-            logger.info("Anima lazy load: t5 tokenizer materialized")
-            return tokenizer
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._ensure_loaded(), name)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        tokenizer = self._ensure_loaded()
-        return tokenizer(*args, **kwargs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -547,37 +207,49 @@ def assemble_anima_runtime(
 
     te_storage = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
     te_compute = memory_management.manager.compute_dtype_for_role(DeviceRole.TEXT_ENCODER, storage_dtype=te_storage)
-    lazy_qwen_model = _LazyAnimaQwenModel(tenc_path=tenc_path, torch_dtype=te_storage)
+    qwen_text_encoder = _load_external_text_encoder(tenc_path=tenc_path, torch_dtype=te_storage)
+    qwen_model = getattr(qwen_text_encoder, "model", None)
+    if not isinstance(qwen_model, torch.nn.Module):
+        raise RuntimeError(
+            "Anima external text encoder loader returned invalid `.model` contract: "
+            f"{type(qwen_model).__name__}."
+        )
 
     vae_storage = memory_management.manager.dtype_for_role(DeviceRole.VAE)
     vae_compute = memory_management.manager.compute_dtype_for_role(DeviceRole.VAE, storage_dtype=vae_storage)
-    lazy_vae_model = _LazyAnimaWanVAE(vae_path=vae_path, torch_dtype=vae_storage)
+    vae_model = _load_external_vae(vae_path=vae_path, torch_dtype=vae_storage)
+    if not isinstance(vae_model, torch.nn.Module):
+        raise RuntimeError(
+            "Anima external VAE loader returned invalid model type: "
+            f"{type(vae_model).__name__}."
+        )
 
     # Wrap VAE with shared patcher interface (encode/decode + normalization via family spec fallback).
-    vae = VAE(model=lazy_vae_model, family=ModelFamily.ANIMA)
+    vae = VAE(model=vae_model, family=ModelFamily.ANIMA)
 
     # Text encoder patcher for memory management integration.
     te_load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
     te_offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
-    from apps.backend.runtime.families.anima.text_encoder import AnimaQwenTextEncoder
+    from apps.backend.runtime.families.anima.text_encoder import (
+        AnimaQwenTextEncoder,
+        AnimaQwenTextProcessingEngine,
+        load_anima_t5_tokenizer,
+    )
 
-    text_encoder = AnimaQwenTextEncoder(model=lazy_qwen_model)
+    text_encoder = AnimaQwenTextEncoder(model=qwen_model)
     qwen = ModelPatcher(
-        lazy_qwen_model,
+        qwen_model,
         load_device=te_load_device,
         offload_device=te_offload_device,
-        size=1,
     )
 
     # Text pipelines: Qwen embeddings + offline T5 tokenizer.
-    from apps.backend.runtime.families.anima.text_encoder import AnimaQwenTextProcessingEngine
-
     qwen_max_length = int(os.getenv("CODEX_ANIMA_QWEN_MAX_LENGTH", "512") or 512)
     if qwen_max_length <= 0:
         raise ValueError("CODEX_ANIMA_QWEN_MAX_LENGTH must be > 0")
 
     text_engine = AnimaQwenTextProcessingEngine(text_encoder, max_length=qwen_max_length)
-    t5_tokenizer = _LazyAnimaT5Tokenizer()
+    t5_tokenizer = load_anima_t5_tokenizer()
     text_pipelines = AnimaTextPipelines(qwen3_text=text_engine, t5_tokenizer=t5_tokenizer)
 
     core_dev = memory_management.manager.get_device(DeviceRole.CORE)

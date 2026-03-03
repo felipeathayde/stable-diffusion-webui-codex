@@ -18,10 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `addAllSequential` (function): Adds all scanned candidates sequentially with visible per-row adding state.
 - `normalizeSizeBytes` (function): Validates optional backend size metadata for honest progress calculations.
 - `formatBytes` (function): Formats byte counts for UI progress/status labels.
-- `planAddAllRun` (function): Builds one sequential add-all plan (pending rows + optional aggregate byte total).
-- `sumKnownBytesForEntries` (function): Sums known row sizes across one add-all run for byte-aware progress planning.
-- `sumProcessedKnownBytes` (function): Sums known row sizes for already-processed run entries.
-- `rowSizeLabel` (function): Formats per-row size status (`Size …` / `Size unavailable`).
+- `planAddAllRun` (function): Builds one sequential add-all plan of pending rows.
+- `rowSizeLabel` (function): Formats per-row metadata (`Size …` and optional short SHA after add).
 -->
 
 <template>
@@ -69,16 +67,6 @@ Symbols (top-level; keep in sync; no ghosts):
               <div class="qs-add-path-row__title">{{ displayName(item) }}</div>
               <div class="qs-add-path-row__size">{{ rowSizeLabel(item) }}</div>
               <div v-if="rowState(item).error" class="qs-add-path-row__status qs-add-path-row__status--error">{{ rowState(item).error }}</div>
-              <div
-                v-else-if="rowState(item).done && rowState(item).sha256"
-                class="qs-add-path-row__status"
-                :title="`SHA256: ${rowState(item).sha256}`"
-              >
-                {{ rowState(item).addedToLibrary ? 'Added' : 'Already in library' }} · SHA {{ shortSha(rowState(item).sha256) }}
-              </div>
-              <div v-else-if="rowState(item).done && rowState(item).alreadyInLibrary" class="qs-add-path-row__status">
-                Already in library
-              </div>
             </div>
             <div class="qs-add-path-row__actions">
               <button
@@ -110,7 +98,6 @@ interface RowStatus {
   addedToLibrary: boolean
   alreadyInLibrary: boolean
   sha256: string
-  shortHash: string
   error: string
   sizeBytes: number | null
 }
@@ -147,8 +134,6 @@ const rowStatuses = ref<Record<string, RowStatus>>({})
 const addAllRunning = ref(false)
 const addAllIndex = ref(0)
 const addAllActivePath = ref('')
-const addAllPlannedTotalBytes = ref<number | null>(null)
-const addAllProcessedBytes = ref(0)
 
 const placeholderExample = computed(() => {
   const explicit = String(props.placeholder || '').trim()
@@ -192,8 +177,6 @@ function resetState(): void {
   addAllRunning.value = false
   addAllIndex.value = 0
   addAllActivePath.value = ''
-  addAllPlannedTotalBytes.value = null
-  addAllProcessedBytes.value = 0
 }
 
 function isWindowsClient(): boolean {
@@ -269,9 +252,13 @@ function formatBytes(value: number): string {
 }
 
 function rowSizeLabel(item: ModelPathScanItem): string {
-  const sizeBytes = rowState(item).sizeBytes
-  if (sizeBytes === null) return 'Size unavailable'
-  return `Size ${formatBytes(sizeBytes)}`
+  const state = rowState(item)
+  const sizeBytes = state.sizeBytes
+  const sizeLabel = sizeBytes === null ? 'Size unavailable' : `Size ${formatBytes(sizeBytes)}`
+  if (state.sha256) {
+    return `${sizeLabel} - SHA ${shortSha(state.sha256)}`
+  }
+  return sizeLabel
 }
 
 function rowState(item: ModelPathScanItem): RowStatus {
@@ -284,7 +271,6 @@ function rowState(item: ModelPathScanItem): RowStatus {
     addedToLibrary: false,
     alreadyInLibrary,
     sha256: '',
-    shortHash: '',
     error: '',
     sizeBytes: normalizeSizeBytes(item.size_bytes, item.path),
   }
@@ -292,36 +278,7 @@ function rowState(item: ModelPathScanItem): RowStatus {
   return created
 }
 
-function sumKnownBytesForEntries(entries: Array<{ item: ModelPathScanItem; index: number }>): { knownEntries: number; totalBytes: number } {
-  let totalBytes = 0
-  let knownEntries = 0
-  for (const entry of entries) {
-    const sizeBytes = rowState(entry.item).sizeBytes
-    if (sizeBytes === null) continue
-    if (!Number.isFinite(sizeBytes) || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
-      throw new Error(`invalid size_bytes for ${entry.item.path}: ${String(sizeBytes)}`)
-    }
-    totalBytes += sizeBytes
-    knownEntries += 1
-  }
-  return { knownEntries, totalBytes }
-}
-
-function sumProcessedKnownBytes(entries: Array<{ item: ModelPathScanItem; index: number }>, processedCount: number): number {
-  let processedBytes = 0
-  const cappedCount = Math.max(0, Math.min(entries.length, processedCount))
-  for (let index = 0; index < cappedCount; index += 1) {
-    const sizeBytes = rowState(entries[index].item).sizeBytes
-    if (sizeBytes === null) continue
-    if (!Number.isFinite(sizeBytes) || !Number.isInteger(sizeBytes) || sizeBytes < 0) {
-      throw new Error(`invalid size_bytes for ${entries[index].item.path}: ${String(sizeBytes)}`)
-    }
-    processedBytes += sizeBytes
-  }
-  return processedBytes
-}
-
-function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: number }>; totalBytes: number | null } {
+function planAddAllRun(): Array<{ item: ModelPathScanItem; index: number }> {
   const entries: Array<{ item: ModelPathScanItem; index: number }> = []
   for (let index = 0; index < scanResults.value.length; index += 1) {
     const item = scanResults.value[index]
@@ -329,10 +286,7 @@ function planAddAllRun(): { entries: Array<{ item: ModelPathScanItem; index: num
     if (state.done && !state.error) continue
     entries.push({ item, index })
   }
-  if (entries.length === 0) return { entries, totalBytes: null }
-  const totals = sumKnownBytesForEntries(entries)
-  if (totals.knownEntries <= 0) return { entries, totalBytes: null }
-  return { entries, totalBytes: totals.totalBytes }
+  return entries
 }
 
 function isRowActionDisabled(item: ModelPathScanItem): boolean {
@@ -388,7 +342,6 @@ async function scanCandidates(): Promise<void> {
         addedToLibrary: false,
         alreadyInLibrary,
         sha256: '',
-        shortHash: '',
         error: '',
         sizeBytes: normalizeSizeBytes(item.size_bytes, item.path),
       }
@@ -418,7 +371,6 @@ async function addOne(item: ModelPathScanItem, index: number, options?: { silent
     state.addedToLibrary = Boolean(response.item.added)
     state.alreadyInLibrary = response.item.already_in_library === true || !state.addedToLibrary
     state.sha256 = String(response.item.sha256 || '')
-    state.shortHash = String(response.item.short_hash || '')
     const responseSize = normalizeSizeBytes(response.item.size_bytes, item.path)
     if (responseSize !== null) state.sizeBytes = responseSize
     if (state.addedToLibrary && !options?.silent) {
@@ -442,55 +394,25 @@ async function addOne(item: ModelPathScanItem, index: number, options?: { silent
 
 async function addAllSequential(): Promise<void> {
   if (!canAddAll.value) return
-  let runPlan: ReturnType<typeof planAddAllRun>
-  try {
-    runPlan = planAddAllRun()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    scanError.value = message
-    emit('error', message)
-    return
-  }
-  if (runPlan.entries.length === 0) return
+  const runEntries = planAddAllRun()
+  if (runEntries.length === 0) return
 
   addAllRunning.value = true
   addAllIndex.value = 0
   addAllActivePath.value = ''
-  addAllPlannedTotalBytes.value = runPlan.totalBytes
-  addAllProcessedBytes.value = 0
 
   let addedCount = 0
   try {
-    for (let runIndex = 0; runIndex < runPlan.entries.length; runIndex += 1) {
-      const { item, index } = runPlan.entries[runIndex]
+    for (let runIndex = 0; runIndex < runEntries.length; runIndex += 1) {
+      const { item, index } = runEntries[runIndex]
       const state = rowState(item)
       addAllIndex.value = runIndex + 1
       addAllActivePath.value = item.path
       const result = await addOne(item, index, { silent: true })
-      if (addAllPlannedTotalBytes.value === null) {
-        const upgradedTotals = sumKnownBytesForEntries(runPlan.entries)
-        if (upgradedTotals.knownEntries > 0) {
-          addAllPlannedTotalBytes.value = upgradedTotals.totalBytes
-          addAllProcessedBytes.value = sumProcessedKnownBytes(runPlan.entries, runIndex + 1)
-        } else {
-          addAllProcessedBytes.value = 0
-        }
-      } else {
-        addAllProcessedBytes.value = sumProcessedKnownBytes(runPlan.entries, runIndex + 1)
-      }
-      if (addAllPlannedTotalBytes.value === null) {
-        const invariantTotals = sumKnownBytesForEntries(runPlan.entries)
-        if (invariantTotals.knownEntries > 0) {
-          throw new Error('add-all progress invariant failed: known size entries present but total bytes unresolved')
-        }
-      }
       if (result.added) addedCount += 1
       if (!result.ok) {
         if (state.error) emit('error', state.error)
       }
-    }
-    if (runPlan.totalBytes !== null) {
-      addAllProcessedBytes.value = runPlan.totalBytes
     }
   } finally {
     addAllRunning.value = false

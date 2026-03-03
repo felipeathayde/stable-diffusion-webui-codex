@@ -307,6 +307,16 @@
     opacity: 0.88;
   }
 
+  .qs-add-path-row.is-adding::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: hsla(195, 95%, 60%, 0.18);
+    animation: qs-add-path-row-pulse 1.25s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+
   .qs-add-path-row:hover {
     background: color-mix(in srgb, var(--color-panel) 72%, var(--color-accent) 28%);
   }
@@ -381,6 +391,12 @@
   @keyframes qs-add-path-spinner {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  @keyframes qs-add-path-row-pulse {
+    0% { opacity: 0.2; }
+    50% { opacity: 0.55; }
+    100% { opacity: 0.2; }
   }
 
 }

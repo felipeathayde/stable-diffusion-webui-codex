@@ -43,7 +43,10 @@ services:
     volumes:
       - ./models:/opt/stable-diffusion-webui-codex/models
       - ./output:/opt/stable-diffusion-webui-codex/output
-      - ./.sangoi:/opt/stable-diffusion-webui-codex/.sangoi
+      - codex_webui_profile:/opt/stable-diffusion-webui-codex/.sangoi
     stdin_open: true
     tty: true
     command: ["--no-tui", "--non-interactive"]
+
+volumes:
+  codex_webui_profile:

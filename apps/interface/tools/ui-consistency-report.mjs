@@ -34,8 +34,8 @@ const STYLES_ROOT = path.join(SRC_ROOT, 'styles')
 const REPORT_DIR = path.join(INTERFACE_ROOT, '.reports')
 const REPORT_PATH = path.join(REPORT_DIR, 'ui-consistency-report.md')
 
-const STYLE_GUIDE_PATH = path.join(REPO_ROOT, '.sangoi', 'frontend', 'guidelines', 'frontend-style-guide.md')
-const ARCH_GUIDE_PATH = path.join(REPO_ROOT, '.sangoi', 'frontend', 'guidelines', 'frontend-architecture-guide.md')
+const STYLE_GUIDE_PATH = path.join(INTERFACE_ROOT, 'src', 'styles', 'AGENTS.md')
+const ARCH_GUIDE_PATH = path.join(INTERFACE_ROOT, 'AGENTS.md')
 const PACKAGE_JSON_PATH = path.join(INTERFACE_ROOT, 'package.json')
 
 const SELECTOR_WATCHLIST = ['.viewer-card', '.viewer-empty', '.panel-stack', '.form-row']

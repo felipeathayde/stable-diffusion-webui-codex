@@ -27,7 +27,7 @@ Status: Active
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.
 - 2026-01-17: WAN Metadata selector was removed; WAN preset Mode now drives the metadata repo id used by payloads.
 - 2025-12-15: QuickSettings WAN groups now use `.qs-group-wan-*` sizing hooks so the header flex layout doesn’t collapse all controls to the left on wide screens.
-- 2025-12-15: WAN “Browse…” actions in `QuickSettingsWan.vue` are rendered as compact `+` icon buttons to match the header quicksettings affordance.
+- 2026-03-03: WAN model browse now uses a single compact `+` next to `LightX2V` (shared `wan22_ckpt` root); the duplicated per-select model `+` actions were removed.
 - 2025-12-20: Replaced WAN “Format” with a `LightX2V` toggle; per-stage LoRA selection now lives in the WAN tab (High/Low Noise) when enabled.
 - 2025-12-26: Removed the WAN Assets modal; metadata/text encoder/VAE selectors are now inline in the header quicksettings bar.
 - 2025-12-26: QuickSettings buttons now use `qs-btn-secondary`/`qs-btn-outline` so they fill the `qs-row` height and keep a visible border (no fixed `2rem` height from `.btn-*` variants).

@@ -55,7 +55,7 @@ export default defineConfig(({ mode }) => {
   const HMR_HOST = String(env.HMR_HOST || process.env.HMR_HOST || SERVER_HOST)
   const HMR_PROTOCOL = String(env.HMR_PROTOCOL || process.env.HMR_PROTOCOL || 'ws')
 
-  const allowedHosts = new Set<string>(['localhost', '127.0.0.1', '::1', 'webui.sangoi.dev'])
+  const allowedHosts = new Set<string>(['localhost', '127.0.0.1', '::1'])
   ;(env.ALLOWED_HOSTS || process.env.ALLOWED_HOSTS || '')
     .split(',')
     .map((s) => s.trim())

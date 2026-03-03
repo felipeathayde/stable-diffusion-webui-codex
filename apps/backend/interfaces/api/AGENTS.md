@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-01
+Last Review: 2026-03-03
 Status: Active
 
 ## Purpose
@@ -70,3 +70,4 @@ Status: Active
 - 2026-02-24: `run_api.py` now applies a Windows-only process startup patch via `SetProcessInformation(ProcessPowerThrottling)` to disable execution-speed throttling (EcoQoS background throttle path), with explicit startup logs for success/failure.
 - 2026-02-24: Windows power-throttling startup patch now logs decoded Win32 error text (`ctypes.WinError`) on failure and warns explicitly when `SetProcessInformation` is unavailable in the runtime.
 - 2026-03-01: `run_api.py` trace-debug bootstrap now treats category flags independently (`CODEX_TRACE_INFERENCE_DEBUG`, `CODEX_TRACE_LOAD_PATCH_DEBUG`, `CODEX_TRACE_CALL_DEBUG`): any one of them forces DEBUG visibility (`CODEX_LOG_DEBUG=1` + DEBUG logging bootstrap), while global call tracing via `sys.setprofile` remains exclusive to call-trace toggles.
+- 2026-03-03: `run_api.py` settings-registry import comment now uses a generic generator note (no `.sangoi` path mention inside backend runtime code).

@@ -177,19 +177,19 @@ Symbols (top-level; keep in sync; no ghosts):
             <li class="cdx-list-item">
               <div class="cdx-list-main">
                 <div class="cdx-list-title">Model tabs &amp; workflows spec</div>
-                <div class="cdx-list-meta"><code>.sangoi/design/flows/model-workflows.md</code></div>
+                <div class="cdx-list-meta"><code>apps/interface/public/help/workflows-basics.md</code></div>
               </div>
             </li>
             <li class="cdx-list-item">
               <div class="cdx-list-main">
                 <div class="cdx-list-title">Frontend architecture guide</div>
-                <div class="cdx-list-meta"><code>.sangoi/frontend/guidelines/frontend-architecture-guide.md</code></div>
+                <div class="cdx-list-meta"><code>apps/interface/README.md</code></div>
               </div>
             </li>
             <li class="cdx-list-item">
               <div class="cdx-list-main">
                 <div class="cdx-list-title">Frontend style guide</div>
-                <div class="cdx-list-meta"><code>.sangoi/frontend/guidelines/frontend-style-guide.md</code></div>
+                <div class="cdx-list-meta"><code>apps/interface/src/styles/AGENTS.md</code></div>
               </div>
             </li>
           </ul>
@@ -200,17 +200,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <ul class="cdx-list">
             <li class="cdx-list-item">
               <div class="cdx-list-main">
-                <div class="cdx-list-title">F1–F6 tasks</div>
+                <div class="cdx-list-title">Views/components ownership docs</div>
                 <div class="cdx-list-meta">
-                  <code>.sangoi/tasks/F1-model-tabs-infra.md</code>, <code>F2-wan-tab.md</code>, <code>F3-image-tabs.md</code>, <code>F4-tabs-workflows-backend.md</code>,
-                  <code>F5-workflows-tab.md</code>, <code>F6-refinements.md</code>
+                  <code>apps/interface/src/views/AGENTS.md</code>, <code>apps/interface/src/components/AGENTS.md</code>
                 </div>
               </div>
             </li>
             <li class="cdx-list-item">
               <div class="cdx-list-main">
-                <div class="cdx-list-title">Open tasks index</div>
-                <div class="cdx-list-meta"><code>.sangoi/tasks/open-tasks-index.md</code></div>
+                <div class="cdx-list-title">State/api ownership docs</div>
+                <div class="cdx-list-meta"><code>apps/interface/src/stores/AGENTS.md</code>, <code>apps/interface/src/api/AGENTS.md</code></div>
               </div>
             </li>
           </ul>
@@ -222,13 +221,13 @@ Symbols (top-level; keep in sync; no ghosts):
             <li class="cdx-list-item">
               <div class="cdx-list-main">
                 <div class="cdx-list-title">Repository structure</div>
-                <div class="cdx-list-meta"><code>.sangoi/architecture/repo-structure.md</code></div>
+                <div class="cdx-list-meta"><code>SUBSYSTEM-MAP.md</code></div>
               </div>
             </li>
             <li class="cdx-list-item">
               <div class="cdx-list-main">
-                <div class="cdx-list-title">Frontend task logs</div>
-                <div class="cdx-list-meta"><code>.sangoi/task-logs/2025-12-03-frontend-*.md</code>, <code>.sangoi/task-logs/2025-12-04-frontend-*.md</code></div>
+                <div class="cdx-list-title">Top-level ownership docs</div>
+                <div class="cdx-list-meta"><code>apps/AGENTS.md</code>, <code>apps/interface/AGENTS.md</code></div>
               </div>
             </li>
           </ul>

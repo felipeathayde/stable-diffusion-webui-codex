@@ -47,6 +47,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `finiteStageFlowShift` (function): Normalizes a stage `flowShift` into a finite number or `undefined` for stable policy comparisons.
 - `ensureWanFlowShiftPolicy` (function): Enforces managed WAN `flowShift` policy on the active tab (including initial load) without update loops.
 - `onWanModeChange` (function): Updates WAN mode selection and derived controls.
+- `onWanBrowseModels` (function): Opens the shared add-path modal for WAN model roots (`wan22_ckpt`) from the WAN quicksettings `+` action.
 - `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
 - `canShowModeToggles` (computed): Enables IMG2IMG/INPAINT quicksettings controls when the active image tab supports img2img.
@@ -64,6 +65,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `openAddPathModal` (function): Opens the reusable add-path modal for checkpoint/VAE/text-encoder library keys.
 - `onAddPathModalAdded` (function): Refreshes quicksettings lists after add-path operations mutate library paths.
 - `onAddPathModalError` (function): Surfaces add-path scan/add failures through quicksettings toasts.
+- `applyInventorySnapshot` (function): Applies one inventory payload to local quicksettings selector sources.
+- `parseInventoryTaskResult` (function): Parses inventory payloads from task `result` SSE events.
+- `runAsyncInventoryRefreshTask` (function): Starts `/api/models/inventory/refresh/async` and resolves when SSE emits terminal inventory data.
 - `openPathInputModal` (function): Opens the in-app path input modal and registers async apply behavior.
 - `confirmPathInputModal` (function): Validates/applies modal-entered path values.
 - `closePathInputModal` (function): Closes and clears the in-app path input modal state.
@@ -119,8 +123,7 @@ Symbols (top-level; keep in sync; no ghosts):
           @update:lowModel="onWanLowModelChange"
           @update:textEncoder="onWanTextEncoderChange"
           @update:vae="onWanVaeChange"
-          @browseHigh="onWanBrowseHigh"
-          @browseLow="onWanBrowseLow"
+          @browseModels="onWanBrowseModels"
           @browseTe="onWanBrowseTe"
           @browseVae="onWanBrowseVae"
           @refresh="refreshAll"
@@ -399,8 +402,18 @@ import { useUiBlocksStore } from '../stores/ui_blocks'
 import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams, type WanStageParams } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
-import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, fetchObliterateVram } from '../api/client'
-import type { ModelInfo } from '../api/types'
+import {
+  cacheModelInventorySnapshot,
+  fetchCheckpointMetadata,
+  fetchFileMetadata,
+  fetchModelInventory,
+  fetchPaths,
+  fetchObliterateVram,
+  refreshModelInventory,
+  startModelInventoryRefreshTask,
+  subscribeTask,
+} from '../api/client'
+import type { InventoryResponse, ModelInfo, TaskEvent } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
 import { normalizeTabFamily, tabFamilyFromSemanticEngine, type TabFamily } from '../utils/engine_taxonomy'
@@ -645,6 +658,10 @@ const semanticEngine = computed<string>(() => {
 
 async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void> {
   const inv = options?.forceRefresh ? await refreshModelInventory() : await fetchModelInventory()
+  applyInventorySnapshot(inv)
+}
+
+function applyInventorySnapshot(inv: InventoryResponse): void {
   inventoryVaes.value = inv.vaes
   inventoryWan.value = (inv.wan22?.gguf ?? []).map((g) => ({
     name: String(g.name),
@@ -1248,11 +1265,73 @@ async function initQuicksettings(
   }
 }
 
+function parseInventoryTaskResult(event: TaskEvent): InventoryResponse | null {
+  if (event.type !== 'result') return null
+  const payload = event as unknown as Record<string, unknown>
+  const direct = payload.inventory
+  if (isRecordObject(direct)) {
+    return direct as unknown as InventoryResponse
+  }
+  const info = payload.info
+  if (!isRecordObject(info)) return null
+  const nested = info.inventory
+  if (!isRecordObject(nested)) return null
+  return nested as unknown as InventoryResponse
+}
+
+async function runAsyncInventoryRefreshTask(): Promise<InventoryResponse> {
+  const { task_id } = await startModelInventoryRefreshTask()
+  return await new Promise<InventoryResponse>((resolve, reject) => {
+    let settled = false
+    let resolvedInventory: InventoryResponse | null = null
+    let unsubscribe: (() => void) | null = null
+    const settle = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      try { unsubscribe?.() } catch (_) { /* ignore */ }
+      unsubscribe = null
+      fn()
+    }
+
+    unsubscribe = subscribeTask(
+      task_id,
+      (event) => {
+        if (event.type === 'error') {
+          settle(() => reject(new Error(String(event.message || 'inventory refresh task failed'))))
+          return
+        }
+        if (event.type === 'result') {
+          const parsed = parseInventoryTaskResult(event)
+          if (parsed) resolvedInventory = parsed
+          return
+        }
+        if (event.type === 'end') {
+          if (resolvedInventory) {
+            settle(() => resolve(resolvedInventory as InventoryResponse))
+            return
+          }
+          settle(() => reject(new Error('inventory refresh task completed without inventory payload')))
+        }
+      },
+      (err) => {
+        settle(() => reject(err instanceof Error ? err : new Error(String(err))))
+      },
+    )
+  })
+}
+
 async function refreshAll(): Promise<void> {
+  if (isLoadingQuicksettings.value) return
+  isLoadingQuicksettings.value = true
   try {
-    await initQuicksettings({ forceInventoryRefresh: true, forceModelsRefresh: true })
+    await Promise.all([store.refreshModelsList(), loadPaths()])
+    const refreshedInventory = await runAsyncInventoryRefreshTask()
+    cacheModelInventorySnapshot(refreshedInventory)
+    applyInventorySnapshot(refreshedInventory)
   } catch (error) {
     toastQuicksettingsError(error)
+  } finally {
+    isLoadingQuicksettings.value = false
   }
 }
 
@@ -1859,30 +1938,13 @@ async function confirmPathInputModal(): Promise<void> {
   }
 }
 
-async function onWanBrowseHigh(): Promise<void> {
-  openPathInputModal(
-    {
-      title: 'WAN High Model',
-      label: 'WAN High model (.gguf) path or sha256',
-      initialValue: wanHighModel.value,
-    },
-    async (value) => {
-      await onWanHighModelChange(value)
-    },
-  )
-}
-
-async function onWanBrowseLow(): Promise<void> {
-  openPathInputModal(
-    {
-      title: 'WAN Low Model',
-      label: 'WAN Low model (.gguf) path or sha256',
-      initialValue: wanLowModel.value,
-    },
-    async (value) => {
-      await onWanLowModelChange(value)
-    },
-  )
+function onWanBrowseModels(): void {
+  openAddPathModal({
+    title: 'Add WAN Model Directory',
+    label: 'WAN model path',
+    key: 'wan22_ckpt',
+    kind: 'checkpoint',
+  })
 }
 
 async function onWanBrowseTe(): Promise<void> {

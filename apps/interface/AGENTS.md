@@ -1,7 +1,7 @@
 <!-- tags: frontend, interface, overview -->
 # apps/interface Overview
 Date: 2025-10-28
-Last Review: 2026-02-28
+Last Review: 2026-03-03
 Status: Active
 
 ## Purpose
@@ -26,6 +26,7 @@ Status: Active
 - 2025-11-14: API requests are built via `src/api/payloads.ts` (Zod schemas) — payload builders trim prompts and always attach the per-tab engine/model metadata (even for img2img).
 - 2025-12-03: Txt2Img prompt schema now rejects empty prompts at the frontend (`PromptSchema`), surfacing a validation error instead of silently sending `prompt=""` to the backend.
 - 2026-02-28: Frontend follows root testing policy: manual validation by default; automated/unit tests are not maintained unless explicitly requested by the repo owner.
+- 2026-03-03: `vite.config.ts` default `allowedHosts` baseline now includes only local loopback hosts (`localhost`, `127.0.0.1`, `::1`); extra hosts must be provided explicitly through `ALLOWED_HOSTS`.
 - 2026-01-01: Updated `apps/interface/README.md` to reflect the repo-local `.venv` (and `run-webui.sh` as the recommended dev entrypoint).
 - 2026-01-01: Added a branded `public/favicon.ico` and referenced it from `index.html` so the browser tab icon matches the project branding.
 - 2026-01-03: Added standardized file header blocks to WebUI entrypoints/config (`vite.config.ts`, `src/{App,main,router}.ts/.vue`, `src/api/types.ts`) (doc-only change; part of rollout).

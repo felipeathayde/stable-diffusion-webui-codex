@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-01
+Last Review: 2026-03-03
 Status: Active
 
 ## Purpose
@@ -24,6 +24,8 @@ Status: Active
 - 2026-01-28: `QuickSettingsBar.vue` supports a per-tab Z-Image Turbo toggle and can lock it when the selected checkpoint carries trusted `codex.zimage.variant` metadata (Codex-produced GGUFs).
 - 2026-03-02: `QuickSettingsBar.vue` keeps IMG2IMG/INPAINT mode toggles in the top row next to family controls; for ZImage they now anchor on the right side immediately before `Refresh`, while WAN `Refresh` is right-aligned to match other families.
 - 2026-03-02: `QuickSettingsBar.vue` now persists the Advanced collapse state in `localStorage` (`codex.quicksettings.advanced_open`) so collapse/expand preference survives page reloads and new sessions.
+- 2026-03-03: `QuickSettingsBar.vue` routes add-path actions (checkpoint/VAE/text encoder `+`) through reusable `QuickSettingsAddPathModal` flow (scan-no-sha + add-one sequential hash-at-add). WAN model roots now use the same modal through a single `+` next to `LightX2V` (`wan22_ckpt`), while WAN text-encoder/VAE browse remain on the legacy simple input modal.
+- 2026-03-03: `QuickSettingsBar.vue` refresh now uses async inventory task flow (`POST /api/models/inventory/refresh/async` + `/api/tasks/{id}/events`) and applies inventory once at terminal SSE result, avoiding synchronous inventory rescan churn in header selects.
 - 2026-01-01: `QuickSettingsBar.vue` “Refresh” now triggers a checkpoint rescan (`/api/models?refresh=1`) so newly copied weights under `*_ckpt` roots show up without restarting the backend.
 - 2025-12-26: QuickSettings header buttons now use `qs-btn-secondary`/`qs-btn-outline` (fill the `qs-row` height, with consistent borders; no fixed `2rem` height).
 - `ResultViewer.vue` exibe um overlay full-screen para zoom de imagens (sem modal encaixotado): o preview da galeria continua grande no card, enquanto o overlay usa o viewport inteiro com ferramenta lateral para pan/zoom (drag para pan, botões de Fit/1:1/+/−/Close na barra à direita).

@@ -92,7 +92,6 @@ docker run --rm -it --gpus all \
   -p 7850:7850 -p 7860:7860 \
   -v "$(pwd)/models:/opt/stable-diffusion-webui-codex/models" \
   -v "$(pwd)/output:/opt/stable-diffusion-webui-codex/output" \
-  -v "$(pwd)/.sangoi:/opt/stable-diffusion-webui-codex/.sangoi" \
   codex-webui:latest
 ```
 

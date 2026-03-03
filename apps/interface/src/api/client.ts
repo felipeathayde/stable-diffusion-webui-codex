@@ -26,6 +26,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fetchFileMetadata` (function): Reads GGUF/SafeTensors file metadata (`/models/file-metadata`).
 - `fetchCheckpointMetadata` (function): Fetches the metadata modal payload for a checkpoint selection (`/models/checkpoint-metadata`).
 - `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
+- `startModelInventoryRefreshTask` (function): Starts an async inventory refresh task (`/models/inventory/refresh/async`).
+- `cacheModelInventorySnapshot` (function): Writes an inventory snapshot into the local API cache (`/models/inventory`).
 - `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
 - `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
 - `analyzePngInfo` (function): Extracts PNG text metadata for the PNG Info view (`POST /tools/pnginfo/analyze` multipart).
@@ -328,6 +330,15 @@ export async function refreshModelInventory(): Promise<InventoryResponse> {
   const inv = await requestJson<InventoryResponse>('/models/inventory/refresh', { method: 'POST' })
   _jsonCache.set('/models/inventory', inv)
   return inv
+}
+
+export function startModelInventoryRefreshTask(): Promise<TaskStartResponse> {
+  invalidateJsonCache('/models/inventory')
+  return requestJson<TaskStartResponse>('/models/inventory/refresh/async', { method: 'POST' })
+}
+
+export function cacheModelInventorySnapshot(inv: InventoryResponse): void {
+  _jsonCache.set('/models/inventory', inv)
 }
 
 export async function fetchSamplers(): Promise<SamplersResponse> {

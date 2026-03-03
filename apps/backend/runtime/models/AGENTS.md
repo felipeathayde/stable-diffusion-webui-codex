@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-02-28
+Last Review: 2026-03-03
 Status: Active
 
 ## Scope
@@ -88,3 +88,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-02-18: GGUF core-loader smart-offload CPU staging now emits canonical INFO audit events via `log_smart_offload_action("cpu_stage_load", ...)` under `backend.smart_offload` (in addition to local loader diagnostics).
 - 2026-02-18: `loader.py` now emits CPU-staging events with `SmartOffloadAction.CPU_STAGE_LOAD`; generic smart-offload `load/unload` ownership remains centralized in `runtime/memory/manager.py`.
 - 2026-02-23: GGUF smart-stage construction in `loader.py` now resolves stage-load target from memory-manager offload policy (`offload_device`) instead of forcing a local CPU literal; logs/actions now report the resolved offload device explicitly.
+- 2026-03-03: `registry.py` checkpoint discovery (`_iter_checkpoint_files`) no longer swallows `paths.json` resolution failures (fail-loud path config behavior) and now accepts file-level checkpoint entries in `*_ckpt` keys in addition to recursive directory roots.

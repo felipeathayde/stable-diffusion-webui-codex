@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22-specific quicksettings selectors.
-Renders WAN model-mode selection (t2v/i2v + size), LightX2V toggle, stage model dirs (high/low), text encoder, and VAE selectors with “Browse…” actions.
+Renders WAN model-mode selection (t2v/i2v + size), LightX2V toggle with a shared model-browse action, stage model dirs (high/low), text encoder, and VAE selectors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsWan` (component): WAN quicksettings row used by the main quicksettings bar.
@@ -39,6 +39,15 @@ Symbols (top-level; keep in sync; no ghosts):
       >
         LightX2V
       </button>
+      <button
+        class="btn qs-btn-outline qs-inline-btn"
+        type="button"
+        title="Browse WAN models…"
+        aria-label="Browse WAN models…"
+        @click="$emit('browseModels')"
+      >
+        +
+      </button>
     </div>
   </div>
 
@@ -60,7 +69,6 @@ Symbols (top-level; keep in sync; no ghosts):
         >
           i
         </button>
-        <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseHigh')">+</button>
       </div>
     </div>
   </div>
@@ -83,7 +91,6 @@ Symbols (top-level; keep in sync; no ghosts):
         >
           i
         </button>
-        <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseLow')">+</button>
       </div>
     </div>
   </div>
@@ -163,8 +170,7 @@ defineEmits<{
   (e: 'update:lowModel', value: string): void
   (e: 'update:textEncoder', value: string): void
   (e: 'update:vae', value: string): void
-  (e: 'browseHigh'): void
-  (e: 'browseLow'): void
+  (e: 'browseModels'): void
   (e: 'browseTe'): void
   (e: 'browseVae'): void
   (e: 'refresh'): void

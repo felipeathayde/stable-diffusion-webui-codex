@@ -23,6 +23,7 @@
   Quick links:
   <a href="INSTALL.md">Install</a> |
   <a href="#quick-start">Quick Start</a> |
+  <a href="#docker-installation-guide">Docker Install</a> |
   <a href="README_HF_MODELS.md">Model Hub Notes</a> |
   <a href="#custom-pytorch-builds-flashattention2">Custom PyTorch FA2</a> |
   <a href="#support">Support</a>
@@ -30,9 +31,10 @@
 
 ## Preview screenshots
 
-![Launcher services tab showing installed service controls](assets/launcher_services_tab.png)
-
-![WebUI SDXL tab showing generation controls](assets/interface-sdxl-tab.png)
+| Launcher (Services tab) | WebUI (SDXL tab) |
+|---|---|
+| ![Launcher services tab showing installed service controls](assets/launcher_services_tab.png) | ![WebUI SDXL tab showing generation controls](assets/interface-sdxl-tab.png) |
+| Manage API/UI services and runtime startup state from one place. | Run SDXL workflows with generation controls and model/runtime options. |
 
 ## Custom PyTorch builds (FlashAttention2)
 
@@ -107,30 +109,60 @@ Open the UI URL in your browser. Stop with `Ctrl+C`.
 
 On Windows, use the launcher output/UI to confirm the active API and UI endpoints.
 
-### Docker (Linux / WSL)
+## Docker Installation Guide
+
+Use this path when you want containerized setup with persisted models/output state.
+
+### 1) Build the image
 
 ```bash
 docker build -t codex-webui:latest .
+```
+
+Optional build overrides:
+
+```bash
+docker build -t codex-webui:latest . \
+  --build-arg CODEX_TORCH_MODE=cpu \
+  --build-arg CODEX_TORCH_BACKEND=cu126
+```
+
+### 2) Run with GPU and persistent volumes
+
+```bash
 docker run --rm -it --gpus all \
   -p 7850:7850 -p 7860:7860 \
   -v "$(pwd)/models:/opt/stable-diffusion-webui-codex/models" \
   -v "$(pwd)/output:/opt/stable-diffusion-webui-codex/output" \
-  -v "$(pwd)/.sangoi:/opt/stable-diffusion-webui-codex/.sangoi" \
   codex-webui:latest
 ```
 
-- Container entrypoint is `run-webui-docker.sh`.
-- In interactive runs, the terminal launcher (`apps/docker_tui_launcher.py`) opens a TUI to configure runtime env keys and persists them in `.sangoi/launcher/`.
-- Disable the interactive TUI with `-e CODEX_DOCKER_TUI=0` or `--no-tui`.
-- Configure-only mode (persist settings, do not start services): `codex-webui:latest --configure-only --tui`.
-- If you override container ports (`API_PORT_OVERRIDE` / `WEB_PORT`) in TUI/profile, host `-p` mappings must match the same ports.
-- Docker defaults are preseeded for this project profile (CUDA runtime path, SDPA flash, LoRA online, WAN22 `ram+hd`) and can be overridden via `-e KEY=VALUE` or compose `.env`.
-- Compose path (non-interactive default):
-  - `docker compose up --build`
-  - first-time interactive profile setup: `docker compose run --rm webui --tui --configure-only`
-- Override torch backend at build time when needed, for example:
-  - `--build-arg CODEX_TORCH_MODE=cpu`
-  - `--build-arg CODEX_TORCH_BACKEND=cu126|cu128|cu130|rocm64`
+### 3) First-time profile setup only (no API/UI start)
+
+```bash
+docker run --rm -it \
+  codex-webui:latest --tui --configure-only
+```
+
+### 4) Compose path (non-interactive default)
+
+```bash
+docker compose up --build
+```
+
+First-time interactive profile setup with compose:
+
+```bash
+docker compose run --rm webui --tui --configure-only
+```
+
+### Docker runtime notes
+
+- Entrypoint is `run-webui-docker.sh` (delegates to `apps/docker_tui_launcher.py` and then `run-webui.sh`).
+- Disable interactive TUI with `-e CODEX_DOCKER_TUI=0` or runtime args `--no-tui --non-interactive`.
+- If you override `API_PORT_OVERRIDE` or `WEB_PORT` in TUI/profile, host `-p` mappings must use the same ports.
+- Docker defaults are preseeded for this project profile (CUDA runtime path, SDPA flash, LoRA online, WAN22 `ram+hd`) and can be overridden with `-e KEY=VALUE` or compose `.env`.
+- Default allocator env is `PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync`.
 
 ## Safe updater behavior
 

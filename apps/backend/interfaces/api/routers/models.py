@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Model and asset inventory API routes.
-Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
+Exposes checkpoints, inventories (sync + async refresh task start), samplers/schedulers, embeddings, and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
 (`/api/models/prompt-token-count`) using vendored offline tokenizers, including WAN22 animate engine ids and Anima runtime-equivalent prompt preprocessing/max-length checks.
@@ -33,17 +33,21 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
 import re
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
 from apps.backend.interfaces.api.json_store import _load_json, _save_json
 from apps.backend.runtime.sampling import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 from apps.backend.interfaces.api.path_utils import _normalize_inventory_for_api
@@ -508,6 +512,15 @@ def build_router(
             wan22_roots,
         )
 
+    def _normalized_inventory_payload(inv: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "vaes": _normalize_inventory_for_api(inv.get("vaes", [])),
+            "text_encoders": _normalize_inventory_for_api(inv.get("text_encoders", [])),
+            "loras": _normalize_inventory_for_api(inv.get("loras", [])),
+            "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
+            "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
+        }
+
     @router.get("/api/models")
     def list_models(refresh: bool = Query(False, description="If true, re-scan checkpoint roots before returning.")) -> Dict[str, Any]:
         entries = model_api.list_checkpoints(refresh=bool(refresh))
@@ -527,13 +540,7 @@ def build_router(
                 raise HTTPException(status_code=500, detail=f"inventory refresh failed: {exc}")
         else:
             inv = _inv_cache.get()
-        return {
-            "vaes": _normalize_inventory_for_api(inv.get("vaes", [])),
-            "text_encoders": _normalize_inventory_for_api(inv.get("text_encoders", [])),
-            "loras": _normalize_inventory_for_api(inv.get("loras", [])),
-            "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
-            "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
-        }
+        return _normalized_inventory_payload(inv)
 
     @router.post("/api/models/path-scan")
     def scan_model_path(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
@@ -715,15 +722,56 @@ def build_router(
         try:
             inv = _inv_cache.refresh()
             _log_inventory_refresh_summary(inv)
-            return {
-                "vaes": _normalize_inventory_for_api(inv.get("vaes", [])),
-                "text_encoders": _normalize_inventory_for_api(inv.get("text_encoders", [])),
-                "loras": _normalize_inventory_for_api(inv.get("loras", [])),
-                "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
-                "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
-            }
+            return _normalized_inventory_payload(inv)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"inventory refresh failed: {exc}")
+
+    @router.post("/api/models/inventory/refresh/async")
+    async def refresh_models_inventory_async() -> Dict[str, Any]:
+        from apps.backend.inventory import cache as _inv_cache
+
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-models-inventory-refresh-{uuid4().hex})"
+        register_task(task_id, entry)
+        inventory_log.info("inventory refresh task queued (task_id=%s)", task_id)
+
+        def worker() -> None:
+            try:
+                entry.push_event({"type": "status", "stage": "running"})
+                entry.push_event(
+                    {
+                        "type": "progress",
+                        "stage": "inventory.refresh",
+                        "percent": None,
+                        "step": None,
+                        "total_steps": None,
+                        "eta_seconds": None,
+                        "message": "Refreshing model inventory...",
+                    }
+                )
+                inventory_log.info("inventory refresh task started (task_id=%s)", task_id)
+                inv = _inv_cache.refresh()
+                _log_inventory_refresh_summary(inv)
+                payload = _normalized_inventory_payload(inv)
+                entry.result = {"result": {"inventory": payload}}
+                entry.mark_finished(success=True)
+                inventory_log.info(
+                    "inventory refresh task completed (task_id=%s vaes=%d text_encoders=%d loras=%d wan22.gguf=%d metadata=%d)",
+                    task_id,
+                    len(inv.get("vaes", [])),
+                    len(inv.get("text_encoders", [])),
+                    len(inv.get("loras", [])),
+                    len(inv.get("wan22", [])),
+                    len(inv.get("metadata", [])),
+                )
+            except Exception as exc:
+                entry.error = f"inventory refresh failed: {exc}"
+                entry.mark_finished(success=False)
+                inventory_log.error("inventory refresh task failed (task_id=%s): %s", task_id, exc)
+
+        threading.Thread(target=worker, name=f"inventory-refresh-task-{task_id}", daemon=True).start()
+        return {"task_id": task_id}
 
     @router.post("/api/models/load")
     def api_models_load(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

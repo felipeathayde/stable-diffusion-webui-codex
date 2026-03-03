@@ -8,11 +8,12 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage discovery policy used by inventories and registries.
 Defines strict roots for WAN22 GGUF stage weights (paths.json `wan22_ckpt`) and provides a shared stage classifier.
+Directory roots are scanned recursively so nested WAN22 folder layouts still populate inventory/UI selectors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `infer_wan22_stage` (function): Heuristically classify a GGUF filename as `high`/`low`/`unknown`.
-- `_ggufs_in_dir` (function): Lists `.gguf` files in a directory (non-recursive, stable order).
-- `iter_wan22_gguf_files` (function): Yields `.gguf` stage file paths under resolved roots (non-recursive, stable order).
+- `_ggufs_in_dir` (function): Lists `.gguf` files in a directory tree (recursive, stable order).
+- `iter_wan22_gguf_files` (function): Yields `.gguf` stage file paths under resolved roots (recursive for directory roots, stable order).
 """
 
 from __future__ import annotations
@@ -44,10 +45,14 @@ def _ggufs_in_dir(dir_path: str) -> list[str]:
         return []
     out: list[str] = []
     try:
-        for name in sorted(os.listdir(dir_path), key=lambda s: s.lower()):
-            full = os.path.join(dir_path, name)
-            if os.path.isfile(full) and name.lower().endswith(".gguf"):
-                out.append(full)
+        for current_root, dir_names, file_names in os.walk(dir_path):
+            dir_names.sort(key=lambda s: s.lower())
+            for name in sorted(file_names, key=lambda s: s.lower()):
+                if not name.lower().endswith(".gguf"):
+                    continue
+                full = os.path.join(current_root, name)
+                if os.path.isfile(full):
+                    out.append(full)
     except Exception:
         return []
     return out

@@ -22,3 +22,4 @@ Status: Active
 - Scanners intentionally ignore ad-hoc files under `models/` (only explicit roots from `apps/paths.json` are scanned).
 - 2026-01-17: `wan22_gguf.py` stage inference now recognizes `HN`/`LN` (and avoids false positives like `flow` → `low`) so WAN High/Low selectors populate correctly.
 - 2026-02-05: Per-family scanner roots now include Anima (`anima_tenc`, `anima_vae`, `anima_loras`) so inventory discovery matches the new `models/anima*` layout.
+- 2026-03-03: `wan22_gguf.py` now scans `wan22_ckpt` directory roots recursively for `.gguf` files (stable order), so nested WAN22 folder layouts from HF/manual extraction still populate `/api/models/inventory`.

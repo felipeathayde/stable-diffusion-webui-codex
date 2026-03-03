@@ -19,7 +19,6 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { useModelTabsStore } from './model_tabs'
-import { useQuicksettingsStore } from './quicksettings'
 
 export type BootstrapStatus = 'idle' | 'loading' | 'ready' | 'fatal'
 
@@ -74,20 +73,13 @@ export const useBootstrapStore = defineStore('bootstrap', () => {
 
     const engineCaps = useEngineCapabilitiesStore()
     const tabsStore = useModelTabsStore()
-    const quicksettingsStore = useQuicksettingsStore()
-
     bootstrapPromise = (async () => {
       await runRequired('Failed to load engine capabilities', async () => {
         await engineCaps.init({ force })
       })
-      await Promise.all([
-        runRequired('Failed to load model tabs', async () => {
-          await tabsStore.load()
-        }),
-        runRequired('Failed to load quick settings', async () => {
-          await quicksettingsStore.init()
-        }),
-      ])
+      await runRequired('Failed to load model tabs', async () => {
+        await tabsStore.load()
+      })
       status.value = 'ready'
     })()
 

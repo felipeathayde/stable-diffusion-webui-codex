@@ -1985,7 +1985,7 @@ onMounted(() => {
   bootstrap
     .runRequired('Failed to initialize QuickSettings', async () => {
       await Promise.all([
-        initQuicksettings(undefined, { includeStoreInit: false }),
+        initQuicksettings(),
         presets.init(currentTab()),
       ])
     })

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Apply per-stage LoRA patches to WAN22 GGUF stage models (merge or online).
 Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys via
-`remap_wan22_lora_logical_key` from `keymap_wan22_transformer.py` (canonical keymap authority),
+`resolve_wan22_lora_logical_key` from `keymap_wan22_transformer.py` (canonical keymap authority),
 with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO`.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -30,7 +30,7 @@ from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_a
 from apps.backend.patchers.lora_loader import CodexLoraLoader
 from apps.backend.runtime.adapters.lora.pipeline import build_patch_dicts
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.state_dict.keymap_wan22_transformer import remap_wan22_lora_logical_key
+from apps.backend.runtime.state_dict.keymap_wan22_transformer import resolve_wan22_lora_logical_key
 
 from .diagnostics import get_logger
 from .paths import normalize_win_path
@@ -154,7 +154,7 @@ def _extract_logical_keys(tensors: Mapping[str, torch.Tensor]) -> Set[str]:
 def _build_to_load_map(model: torch.nn.Module, tensors: Mapping[str, torch.Tensor]) -> Dict[str, str]:
     """Return LoRA logical-key → model-param mappings for a WAN stage model.
 
-    Mapping authority is `remap_wan22_lora_logical_key` from WAN22 state-dict keymap;
+    Mapping authority is `resolve_wan22_lora_logical_key` from WAN22 state-dict keymap;
     unsupported logical keys are left unmatched and handled by coverage/zero-match fail-loud
     checks at apply time.
     """
@@ -175,7 +175,7 @@ def _build_to_load_map(model: torch.nn.Module, tensors: Mapping[str, torch.Tenso
 
         target: str | None = None
         for candidate_logical in logical_candidates:
-            mapped_weight_key = remap_wan22_lora_logical_key(candidate_logical)
+            mapped_weight_key = resolve_wan22_lora_logical_key(candidate_logical)
             if mapped_weight_key is None:
                 continue
             if mapped_weight_key in model_keys:

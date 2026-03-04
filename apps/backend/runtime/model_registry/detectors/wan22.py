@@ -41,8 +41,6 @@ from apps.backend.runtime.model_registry.specs import (
     VAESignature,
 )
 from apps.backend.runtime.families.wan22.inference import infer_wan22_latent_channels, infer_wan22_patch_embedding
-from apps.backend.quantization.tensor import CodexParameter
-
 
 WAN_HEAD_KEY = "head.modulation"
 _WAN22_REPO_HINT_BY_MODEL_TYPE = {
@@ -65,7 +63,7 @@ class Wan22Detector(ModelDetector):
         return bool(patch and len(patch) == 5)
 
     def build_signature(self, bundle: SignalBundle) -> ModelSignature:  # type: ignore[override]
-        is_gguf = any(isinstance(v, CodexParameter) and v.qtype is not None for v in bundle.state_dict.values())
+        is_gguf = bundle.is_gguf_quantized()
 
         key = _find_key(bundle, WAN_HEAD_KEY)
         assert key is not None

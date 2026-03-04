@@ -22,9 +22,24 @@ from __future__ import annotations
 import sys
 import threading
 from collections.abc import MutableMapping
+from pathlib import Path
 from typing import Dict
 
 from safetensors.torch import safe_open
+from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
+
+
+def _inherit_source_metadata(view: object, base: object) -> None:
+    source_format = getattr(base, "source_format", None)
+    source_path = getattr(base, "source_path", None)
+    primary_dtype_hint = getattr(base, "primary_dtype_hint", None)
+
+    if isinstance(source_format, str) and source_format:
+        setattr(view, "source_format", source_format)
+    if isinstance(source_path, str) and source_path:
+        setattr(view, "source_path", source_path)
+    if isinstance(primary_dtype_hint, str) and primary_dtype_hint:
+        setattr(view, "primary_dtype_hint", primary_dtype_hint)
 
 
 class KeyPrefixView(MutableMapping):
@@ -38,6 +53,10 @@ class KeyPrefixView(MutableMapping):
     def __init__(self, base: MutableMapping, prefix: str):
         self._base = base
         self._prefix = prefix
+        _inherit_source_metadata(self, base)
+        header_shapes = getattr(base, "header_shapes", None)
+        if isinstance(header_shapes, dict):
+            self.header_shapes = {f"{prefix}{str(key)}": shape for key, shape in header_shapes.items()}
 
     def _strip(self, k: str) -> str:
         if not k.startswith(self._prefix):
@@ -64,6 +83,15 @@ class KeyPrefixView(MutableMapping):
             # Fallback: iterate
             return sum(1 for _ in self.__iter__())
 
+    def shape_of(self, k: str):
+        shape_getter = getattr(self._base, "shape_of", None)
+        if not callable(shape_getter):
+            return None
+        try:
+            return shape_getter(self._strip(k))
+        except Exception:
+            return None
+
 
 class FilterPrefixView(MutableMapping):
     """View over keys under a given prefix, optionally re-prefixed lazily.
@@ -77,6 +105,17 @@ class FilterPrefixView(MutableMapping):
         self._base = base
         self._prefix = prefix
         self._new_prefix = new_prefix
+        _inherit_source_metadata(self, base)
+        header_shapes = getattr(base, "header_shapes", None)
+        if isinstance(header_shapes, dict):
+            mapped_shapes: Dict[str, tuple[int, ...]] = {}
+            for key, shape in header_shapes.items():
+                key_str = str(key)
+                if not key_str.startswith(prefix):
+                    continue
+                presented = self._present_key(key_str)
+                mapped_shapes[presented] = shape
+            self.header_shapes = mapped_shapes
 
     def _to_base_key(self, k: str) -> str:
         # Map presented key 'k' back to the underlying base mapping key.
@@ -154,6 +193,15 @@ class FilterPrefixView(MutableMapping):
             return out, mapping
         return out
 
+    def shape_of(self, k: str):
+        shape_getter = getattr(self._base, "shape_of", None)
+        if not callable(shape_getter):
+            return None
+        try:
+            return shape_getter(self._to_base_key(k))
+        except Exception:
+            return None
+
 
 class RemapKeysView(MutableMapping):
     """Present a remapped keyspace over an underlying mapping lazily.
@@ -166,6 +214,15 @@ class RemapKeysView(MutableMapping):
     def __init__(self, base: MutableMapping, mapping: dict[str, str]):
         self._base = base
         self._map = dict(mapping)
+        _inherit_source_metadata(self, base)
+        header_shapes = getattr(base, "header_shapes", None)
+        if isinstance(header_shapes, dict):
+            mapped_shapes: Dict[str, tuple[int, ...]] = {}
+            for canonical_key, source_key in self._map.items():
+                shape = header_shapes.get(source_key)
+                if shape is not None:
+                    mapped_shapes[canonical_key] = shape
+            self.header_shapes = mapped_shapes
 
     def __getitem__(self, k: str):
         return self._base[self._map[k]]
@@ -194,6 +251,18 @@ class RemapKeysView(MutableMapping):
     def items(self):
         for k in self._map.keys():
             yield k, self._base[self._map[k]]
+
+    def shape_of(self, key: str):
+        shape_getter = getattr(self._base, "shape_of", None)
+        if not callable(shape_getter):
+            return None
+        source_key = self._map.get(key)
+        if source_key is None:
+            return None
+        try:
+            return shape_getter(source_key)
+        except Exception:
+            return None
 
 
 class CastOnGetView(MutableMapping):
@@ -238,6 +307,15 @@ class CastOnGetView(MutableMapping):
         except Exception:
             return sum(1 for _ in self.__iter__())
 
+    def shape_of(self, key: str):
+        shape_getter = getattr(self._base, "shape_of", None)
+        if not callable(shape_getter):
+            return None
+        try:
+            return shape_getter(key)
+        except Exception:
+            return None
+
 
 class LazySafetensorsDict(MutableMapping):
     """Lazy, mutable mapping backed by a .safetensors file.
@@ -255,10 +333,15 @@ class LazySafetensorsDict(MutableMapping):
     def __init__(self, filepath: str, device: str = "cpu"):
         self.filepath = filepath
         self.device = device or "cpu"
+        self.source_format = "safetensors"
+        self.source_path = str(filepath)
+        self.primary_dtype_hint = detect_safetensors_primary_dtype(Path(self.filepath))
+        self.header_shapes: Dict[str, tuple[int, ...]] = {}
         self._platform_windows = sys.platform.startswith("win")
         self._overlay = {}  # in-memory writes/overrides
         self._deleted = set()  # keys logically removed
         self._keys_cache = None  # cached set of underlying keys
+        self._shape_cache = None  # cached tensor shapes from safetensors header
         self._materialized = None  # holds all tensors after first access
         self._materialized_triggered = False
         self._handle = None  # persistent SafeTensors handle (non-Windows only)
@@ -275,6 +358,30 @@ class LazySafetensorsDict(MutableMapping):
                         self._handle = safe_open(self.filepath, framework="pt", device=self.device)
                     self._keys_cache = set(self._handle.keys())
         return self._keys_cache
+
+    def _base_shapes(self):
+        if self._shape_cache is None:
+            self._shape_cache = {}
+            try:
+                from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_header
+
+                header = read_safetensors_header(Path(self.filepath))
+                for raw_key, metadata in header.items():
+                    if raw_key == "__metadata__":
+                        continue
+                    if not isinstance(metadata, dict):
+                        continue
+                    shape = metadata.get("shape")
+                    if not isinstance(shape, (list, tuple)):
+                        continue
+                    try:
+                        self._shape_cache[str(raw_key)] = tuple(int(v) for v in shape)
+                    except Exception:
+                        continue
+            except Exception:
+                self._shape_cache = {}
+            self.header_shapes = dict(self._shape_cache)
+        return self._shape_cache
 
     def _ensure_materialized(self):
         """Load all tensors from file once to avoid reopening repeatedly."""
@@ -363,6 +470,22 @@ class LazySafetensorsDict(MutableMapping):
             return key in self._base_keys()
         except Exception:
             return False
+
+    def shape_of(self, key: str):
+        if not isinstance(key, str):
+            return None
+        if key in self._deleted:
+            return None
+        if key in self._overlay:
+            value = self._overlay[key]
+            shape = getattr(value, "shape", None)
+            if shape is None:
+                return None
+            try:
+                return tuple(int(v) for v in shape)
+            except Exception:
+                return None
+        return self._base_shapes().get(key)
 
     # Convenience helpers
     def keys(self):

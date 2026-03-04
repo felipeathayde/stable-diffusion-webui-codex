@@ -22,7 +22,8 @@ from typing import Any, Dict, Literal
 
 from apps.backend.runtime.state_dict.keymap_sdxl_clip import (
     ClipLayoutMetadata,
-    remap_clip_state_dict_with_layout,
+    clip_layout_metadata_from_resolved,
+    resolve_clip_keyspace_with_layout,
 )
 
 _QKVImpl = Literal["auto", "split", "fused"]
@@ -39,7 +40,7 @@ def normalize_codex_clip_state_dict_with_layout(
     layout_metadata: ClipLayoutMetadata | None = None,
     require_projection: bool = False,
 ) -> tuple[Dict[str, Any], ClipLayoutMetadata]:
-    _style, resolved_layout, remapped = remap_clip_state_dict_with_layout(
+    resolved = resolve_clip_keyspace_with_layout(
         dict(state_dict),
         num_layers=num_layers,
         keep_projection=keep_projection,
@@ -48,7 +49,8 @@ def normalize_codex_clip_state_dict_with_layout(
         layout_metadata=layout_metadata,
         require_projection=require_projection,
     )
-    return dict(remapped.items()), resolved_layout
+    resolved_layout = clip_layout_metadata_from_resolved(resolved)
+    return dict(resolved.view.items()), resolved_layout
 
 
 def normalize_codex_clip_state_dict(

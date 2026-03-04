@@ -13,12 +13,13 @@ NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant forma
 WAN22 variants use explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) with no shared family alias bucket.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 key normalization to a canonical keymap module.
-SDXL VAE conversion now preflights canonical projection keys after keymap remap so projection-lane shape violations surface explicitly (instead of collapsing into generic missing-key noise).
+SDXL VAE conversion now preflights canonical projection keys after keyspace resolution so projection-lane shape violations surface explicitly (instead of collapsing into generic missing-key noise).
 GGUF smart-offload staging for large transformer classes now emits canonical INFO audit events via `backend.smart_offload`.
 Those staging events are tagged via the canonical `SmartOffloadAction.STAGE_LOAD` enum action.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
+- `CheckpointInspection` (dataclass): Checkpoint inspection envelope (format, key count, optional safetensors header/shape metadata).
 - `DiffusionModelBundle` (dataclass): Loaded model components and configs (UNet/VAE/text encoders + signature + quant/layout info).
 - `_supported_inference_dtypes` (function): Returns supported inference dtypes for a given model family.
 - `_prediction_type_value` (function): Converts a `PredictionKind` into the string value expected by configs/pipelines.
@@ -27,7 +28,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_clip_layout_metadata_to_cache` (function): Serializes resolved CLIP layout metadata for registry cache persistence.
 - `_clip_layout_hint_from_cache` (function): Applies precedence rules to decide when cached layout metadata may be consumed.
 - `_projection_module_layout` (function): Resolves the projection module layout (`linear`/`matmul`) from resolved CLIP metadata.
-- `_load_state_dict` (function): Loads a state dict from disk (handles supported formats) for downstream parsing.
+- `_coerce_safetensors_shape` (function): Normalizes safetensors header shape payloads into integer tuples.
+- `_inspect_checkpoint` (function): Inspects checkpoint metadata before loading (safetensors header-first; non-safetensors format probe).
+- `_attach_checkpoint_inspection` (function): Wires safetensors inspection metadata onto lazy mappings when supported.
+- `_load_state_dict` (function): Loads a state dict from disk using inspection metadata and emits materialization events for non-safetensors.
 - `_read_json` (function): Reads a required JSON metadata file with explicit errors (used by vendored-HF signature builders).
 - `_zimage_signature_from_vendored_hf` (function): Builds a Z-Image `ModelSignature` from vendored HF metadata (`Tongyi-MAI/Z-Image-Turbo` layout; no state-dict detector).
 - `_flux_signature_from_vendored_hf` (function): Builds a Flux `ModelSignature` from vendored HF metadata (no state-dict detector).
@@ -45,7 +49,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_assert_flux_core_gguf_vae_path_not_checkpoint` (function): Rejects Flux core-only requests where `vae_path` equals the core GGUF checkpoint path.
 - `_safetensors_primary_dtype_hint` (function): Best-effort safetensors dtype hint reader (header-only, whole-file).
 - `_log_weights_dtype_hint` (function): Emits pipeline-debug logs for (role, selected dtype, weights dtype hint).
-- `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory (including canonical keymap-owned T5 remap).
+- `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory (including canonical keymap-owned T5 keyspace resolution).
 - `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
 - `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution (incl. `tenc_path` shorthand),
   VAE layout handling, dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
@@ -120,7 +124,10 @@ from apps.backend.runtime.checkpoint.io import load_torch_file, read_arbitrary_c
 from apps.backend.runtime.state_dict.tools import beautiful_print_gguf_state_dict_statics
 from apps.backend.runtime.state_dict.key_mapping import KeyMappingError
 from apps.backend.runtime.state_dict.keymap_sdxl_clip import ClipLayoutMetadata
-from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
+from apps.backend.runtime.checkpoint.safetensors_header import (
+    detect_safetensors_primary_dtype,
+    read_safetensors_header,
+)
 
 LOGGER = logging.getLogger(__name__)
 CLIP_LOG = logging.getLogger(__name__ + ".clip")
@@ -153,6 +160,16 @@ PREDICTION_TYPE_MAP = {
 class ParsedCheckpoint:
     signature: ModelSignature
     config: CodexEstimatedConfig
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointInspection:
+    path: str
+    format: str
+    key_count: int
+    shapes: Dict[str, tuple[int, ...]] = field(default_factory=dict)
+    header: Dict[str, object] | None = None
+    primary_dtype_hint: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,15 +348,105 @@ def _projection_module_layout(add_projection: bool, layout: ClipLayoutMetadata) 
     return layout.projection_orientation
 
 
-def _load_state_dict(path: str) -> Mapping[str, Any]:
+def _coerce_safetensors_shape(raw_shape: object) -> tuple[int, ...] | None:
+    if not isinstance(raw_shape, (list, tuple)):
+        return None
+    out: list[int] = []
+    for value in raw_shape:
+        if not isinstance(value, (int, float)):
+            return None
+        out.append(int(value))
+    return tuple(out)
+
+
+def _inspect_checkpoint(path: str) -> CheckpointInspection:
+    path_str = str(path)
+    suffix = Path(path_str).suffix.lower()
+    format_name = suffix.lstrip(".") or "unknown"
+    _trace.event("checkpoint_inspect_start", path=path_str, format=format_name)
+
+    if suffix in {".safetensor", ".safetensors"}:
+        header = read_safetensors_header(Path(path_str))
+        header_dict = {str(k): v for k, v in header.items()}
+        shapes: Dict[str, tuple[int, ...]] = {}
+        key_count = 0
+        for raw_key, meta in header_dict.items():
+            if raw_key == "__metadata__":
+                continue
+            key_count += 1
+            if not isinstance(meta, Mapping):
+                continue
+            shape = _coerce_safetensors_shape(meta.get("shape"))
+            if shape is not None:
+                shapes[raw_key] = shape
+        primary_dtype_hint = detect_safetensors_primary_dtype(Path(path_str))
+        inspection = CheckpointInspection(
+            path=path_str,
+            format="safetensors",
+            key_count=key_count,
+            shapes=shapes,
+            header=header_dict,
+            primary_dtype_hint=primary_dtype_hint,
+        )
+        _trace.event(
+            "checkpoint_inspect_done",
+            path=path_str,
+            format="safetensors",
+            keys=inspection.key_count,
+            shapes=len(inspection.shapes),
+            primary_dtype=str(inspection.primary_dtype_hint or "unknown"),
+        )
+        return inspection
+
+    inspection = CheckpointInspection(path=path_str, format=format_name, key_count=-1)
+    _trace.event(
+        "checkpoint_inspect_done",
+        path=path_str,
+        format=format_name,
+        keys=-1,
+        shapes=0,
+        primary_dtype="unknown",
+    )
+    return inspection
+
+
+def _attach_checkpoint_inspection(state_dict: Mapping[str, Any], inspection: CheckpointInspection) -> None:
+    if inspection.format != "safetensors":
+        return
+    if not hasattr(state_dict, "__dict__"):
+        return
+    try:
+        setattr(state_dict, "source_format", "safetensors")
+        setattr(state_dict, "source_path", inspection.path)
+        setattr(state_dict, "header_shapes", dict(inspection.shapes))
+        setattr(state_dict, "safetensors_header", dict(inspection.header or {}))
+        setattr(state_dict, "primary_dtype_hint", inspection.primary_dtype_hint)
+    except Exception:
+        # Best-effort metadata wiring; never weaken checkpoint load strictness.
+        pass
+
+
+def _load_state_dict(path: str, *, inspection: CheckpointInspection | None = None) -> Mapping[str, Any]:
+    inspection = inspection or _inspect_checkpoint(path)
     _trace.event("load_torch_file_start", path=str(path))
     # Resolve the initial load device explicitly (no 'auto' fallback)
     initial_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
+    if inspection.format != "safetensors":
+        _trace.event("checkpoint_materialize_start", path=str(path), format=inspection.format)
     sd = load_torch_file(path, device=initial_device)
+    if inspection.format == "safetensors":
+        _attach_checkpoint_inspection(sd, inspection)
     try:
         tensor_count = len(sd.keys())  # type: ignore[attr-defined]
     except Exception:
         tensor_count = -1
+    if inspection.format != "safetensors":
+        _trace.event(
+            "checkpoint_materialize_done",
+            path=str(path),
+            format=inspection.format,
+            tensors=tensor_count,
+        )
     _trace.event("load_torch_file_done", path=str(path), type=type(sd).__name__, tensors=tensor_count)
     return sd
 
@@ -571,11 +678,12 @@ def _parse_checkpoint(
     *,
     expected_family: ModelFamily | None = None,
 ) -> ParsedCheckpoint:
-    base_state = _load_state_dict(primary_path)
+    primary_inspection = _inspect_checkpoint(primary_path)
+    base_state = _load_state_dict(primary_path, inspection=primary_inspection)
     if _requires_sdxl_checkpoint_keymap(base_state, expected_family=expected_family):
-        from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import remap_sdxl_checkpoint_state_dict
+        from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import resolve_sdxl_checkpoint_keyspace
 
-        _, base_state = remap_sdxl_checkpoint_state_dict(base_state)
+        base_state = resolve_sdxl_checkpoint_keyspace(base_state).view
     if expected_family is ModelFamily.ZIMAGE:
         signature = _zimage_signature_from_vendored_hf(model_path=primary_path)
     elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
@@ -595,11 +703,12 @@ def _parse_checkpoint(
     if additional_paths:
         replacements: Dict[str, Mapping[str, Any]] = {}
         for extra in additional_paths:
-            extra_state = _load_state_dict(extra)
+            extra_inspection = _inspect_checkpoint(extra)
+            extra_state = _load_state_dict(extra, inspection=extra_inspection)
             if _requires_sdxl_checkpoint_keymap(extra_state, expected_family=expected_family):
-                from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import remap_sdxl_checkpoint_state_dict
+                from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import resolve_sdxl_checkpoint_keyspace
 
-                _, extra_state = remap_sdxl_checkpoint_state_dict(extra_state)
+                extra_state = resolve_sdxl_checkpoint_keyspace(extra_state).view
             if expected_family is ModelFamily.ZIMAGE:
                 extra_signature = _zimage_signature_from_vendored_hf(model_path=extra)
             elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
@@ -790,9 +899,9 @@ def _maybe_convert_sdxl_vae_state_dict(
     ):
         return state_dict
 
-    from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
+    from apps.backend.runtime.state_dict.keymap_sdxl_vae import resolve_sdxl_vae_keyspace
 
-    _, remapped = remap_sdxl_vae_state_dict(state_dict)  # fail loud on unknown/ambiguous layouts
+    remapped = resolve_sdxl_vae_keyspace(state_dict).view  # fail loud on unknown/ambiguous layouts
 
     # Preflight the canonical mid-attention projections so lane/shape contract errors
     # surface explicitly before safe-load accounting can collapse them into generic
@@ -1255,8 +1364,9 @@ def _load_huggingface_component(
         persist_layout_metadata = True
         if family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER) and component_name in {"text_encoder", "text_encoder_2"}:
             from apps.backend.runtime.state_dict.keymap_sdxl_clip import (
-                remap_sdxl_clip_g_state_dict_with_layout,
-                remap_sdxl_clip_l_state_dict_with_layout,
+                clip_layout_metadata_from_resolved,
+                resolve_sdxl_clip_g_keyspace_with_layout,
+                resolve_sdxl_clip_l_keyspace_with_layout,
             )
 
             requested_qkv = read_sdxl_te_qkv_impl()
@@ -1267,18 +1377,20 @@ def _load_huggingface_component(
                 allow_cache=persist_layout_metadata,
             )
             if family is ModelFamily.SDXL and component_name == "text_encoder":
-                _style, clip_layout, state_dict = remap_sdxl_clip_l_state_dict_with_layout(
+                resolved_clip = resolve_sdxl_clip_l_keyspace_with_layout(
                     state_dict,
                     qkv_impl=requested_impl,
                     layout_metadata=layout_hint,
                 )
             else:
-                _style, clip_layout, state_dict = remap_sdxl_clip_g_state_dict_with_layout(
+                resolved_clip = resolve_sdxl_clip_g_keyspace_with_layout(
                     state_dict,
                     qkv_impl=requested_impl,
                     projection_orientation="auto",
                     layout_metadata=layout_hint,
                 )
+            clip_layout = clip_layout_metadata_from_resolved(resolved_clip)
+            state_dict = resolved_clip.view
         else:
             state_dict, clip_layout = normalize_codex_clip_state_dict_with_layout(
                 state_dict,
@@ -1435,10 +1547,9 @@ def _load_huggingface_component(
         )
 
         if hasattr(state_dict, "keys"):
-            from apps.backend.runtime.state_dict.keymap_t5_text_encoder import remap_t5_text_encoder_state_dict
+            from apps.backend.runtime.state_dict.keymap_t5_text_encoder import resolve_t5_text_encoder_keyspace
 
-            _, remapped_state_dict = remap_t5_text_encoder_state_dict(state_dict)
-            state_dict = remapped_state_dict
+            state_dict = resolve_t5_text_encoder_keyspace(state_dict).view
 
         load_state_dict(
             model,
@@ -1646,7 +1757,7 @@ def _load_huggingface_component(
 
         if cls_name in {"UNet2DConditionModel", "FluxTransformer2DModel", "ChromaTransformer2DModel", "SD3Transformer2DModel", "ZImageTransformer2DModel"}:
             LOGGER.debug(
-                "Core load: using parser/keymap output directly for %s (no legacy remap normalization).",
+                "Core load: using parser/keymap output directly for %s (no legacy key-rename normalization).",
                 cls_name,
             )
 

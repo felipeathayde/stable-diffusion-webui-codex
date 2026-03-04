@@ -38,7 +38,7 @@ from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
-from apps.backend.runtime.state_dict.keymap_qwen_text_encoder import remap_qwen_text_encoder_state_dict
+from apps.backend.runtime.state_dict.keymap_qwen_text_encoder import resolve_qwen_text_encoder_keyspace
 from apps.backend.runtime.text_processing.parsing import parse_prompt_attention
 
 logger = logging.getLogger("backend.runtime.anima.text_encoder")
@@ -452,13 +452,13 @@ class AnimaQwenTextProcessingEngine:
 def _validate_qwen3_06b_header(*, header: Mapping[str, object], context: str) -> None:
     header_keys = {str(key): value for key, value in header.items()}
     try:
-        _, normalized_header_view = remap_qwen_text_encoder_state_dict(
+        resolved = resolve_qwen_text_encoder_keyspace(
             header_keys,
             allow_lm_head_aux=True,
             allow_visual_aux=False,
             require_backbone_keys=True,
         )
-        normalized_header: Mapping[str, object] = dict(normalized_header_view)
+        normalized_header: Mapping[str, object] = dict(resolved.view)
     except Exception as exc:  # noqa: BLE001 - surfaced as strict header validation context
         raise RuntimeError(f"Qwen3-0.6B header key mapping failed: {exc} ({context})") from exc
 
@@ -521,13 +521,16 @@ def load_anima_qwen3_06b_text_encoder(
         raise RuntimeError(f"Anima Qwen3-0.6B loader returned non-mapping state_dict: {type(sd).__name__}")
     sd = {str(k): v for k, v in sd.items()}
     try:
-        key_style, sd = remap_qwen_text_encoder_state_dict(
+        resolved = resolve_qwen_text_encoder_keyspace(
             sd,
             allow_lm_head_aux=True,
             allow_visual_aux=False,
             require_backbone_keys=True,
         )
-        logger.debug("Anima Qwen3-0.6B keymap style=%s", key_style.value)
+        key_style = resolved.style
+        sd = resolved.view
+        style_label = key_style.value if hasattr(key_style, "value") else str(key_style)
+        logger.debug("Anima Qwen3-0.6B keymap style=%s", style_label)
     except Exception as exc:  # noqa: BLE001 - surfaced as strict load-time context
         raise RuntimeError(f"Anima Qwen3-0.6B key mapping failed: {exc}") from exc
 

@@ -6,14 +6,14 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN22 VAE key-style detection + strict canonical remaps for 2D/3D lanes.
-Owns WAN22 model keymap behavior for VAE checkpoints and keeps remap logic out of
+Purpose: WAN22 VAE key-style detection + strict canonical keyspace resolvers for 2D/3D lanes.
+Owns WAN22 model keyspace normalization behavior for VAE checkpoints and keeps resolver logic out of
 router/payload seams. Supports 2D native LDM VAE keys and 3D Codex/Diffusers
 keyspaces with fail-loud mixed-style/collision guards.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `remap_wan22_vae_2d_state_dict` (function): Normalizes/validates WAN22 2D VAE keys.
-- `remap_wan22_vae_3d_state_dict` (function): Normalizes/remaps WAN22 3D VAE keys (`diffusers|codex` → canonical codex keyspace).
+- `resolve_wan22_vae_2d_keyspace` (function): Normalizes/validates WAN22 2D VAE keys.
+- `resolve_wan22_vae_3d_keyspace` (function): Normalizes/resolves WAN22 3D VAE keys (`diffusers|codex` → canonical codex keyspace).
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ import re
 from collections.abc import MutableMapping
 from typing import Any
 
-from apps.backend.runtime.state_dict.key_mapping import KeyMappingError, strip_repeated_prefixes
-from apps.backend.runtime.state_dict.keymap_wan21_vae import remap_wan21_vae_state_dict
+from apps.backend.runtime.state_dict.key_mapping import KeyMappingError, ResolvedKeyspace, strip_repeated_prefixes
+from apps.backend.runtime.state_dict.keymap_wan21_vae import resolve_wan21_vae_keyspace
 
 _WRAPPER_PREFIXES = (
     "module.",
@@ -194,7 +194,7 @@ def _map_decoder_up_block_key(key: str) -> str:
     )
 
 
-def remap_wan22_vae_2d_state_dict(state_dict: MutableMapping[str, Any]) -> tuple[str, MutableMapping[str, Any]]:
+def resolve_wan22_vae_2d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
     normalized = _normalize_state_dict(state_dict, detector_name="wan22_vae_2d_key_style")
     keys = tuple(normalized.keys())
     keys_set = frozenset(keys)
@@ -202,12 +202,12 @@ def remap_wan22_vae_2d_state_dict(state_dict: MutableMapping[str, Any]) -> tuple
     missing_required = [key for key in _WAN22_2D_REQUIRED_KEYS if key not in keys_set]
     if missing_required:
         raise KeyMappingError(
-            "wan22_vae_2d_key_style: remap output is missing required canonical keys. "
+            "wan22_vae_2d_key_style: resolver output is missing required canonical keys. "
             f"missing_sample={missing_required[:10]}"
         )
     if not any(key in keys_set for key in _WAN22_2D_OPTIONAL_QUANT_KEYS):
         raise KeyMappingError(
-            "wan22_vae_2d_key_style: remap output is missing quantization convolution keys "
+            "wan22_vae_2d_key_style: resolver output is missing quantization convolution keys "
             f"(requires one of {sorted(_WAN22_2D_OPTIONAL_QUANT_KEYS)})."
         )
     if any(key.startswith("encoder.downsamples.") or key.startswith("decoder.upsamples.") for key in keys):
@@ -218,10 +218,20 @@ def remap_wan22_vae_2d_state_dict(state_dict: MutableMapping[str, Any]) -> tuple
         raise KeyMappingError(
             "wan22_vae_2d_key_style: received 3d diffusers keyspace in 2d lane (encoder.down_blocks/decoder.up_blocks)."
         )
-    return "ldm_2d", normalized
+
+    return ResolvedKeyspace(
+        style="ldm_2d",
+        canonical_to_source={key: key for key in normalized.keys()},
+        metadata={
+            "resolver": "wan22_vae_2d",
+            "lane": "2d_native",
+            "source_style": "ldm_2d",
+        },
+        view=normalized,
+    )
 
 
-def remap_wan22_vae_3d_state_dict(state_dict: MutableMapping[str, Any]) -> tuple[str, MutableMapping[str, Any]]:
+def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
     normalized = _normalize_state_dict(state_dict, detector_name="wan22_vae_3d_key_style")
 
     has_codex = any(
@@ -246,6 +256,7 @@ def remap_wan22_vae_3d_state_dict(state_dict: MutableMapping[str, Any]) -> tuple
 
     if has_diffusers:
         mapped: dict[str, Any] = {}
+        mapped_to_source: dict[str, str] = {}
         for key, value in normalized.items():
             if key in _FIXED_DIFFUSERS_TO_CODEX_KEYS:
                 mapped_key = _FIXED_DIFFUSERS_TO_CODEX_KEYS[key]
@@ -257,15 +268,44 @@ def remap_wan22_vae_3d_state_dict(state_dict: MutableMapping[str, Any]) -> tuple
                 mapped_key = key
             if mapped_key in mapped:
                 raise KeyMappingError(
-                    "wan22_vae_3d_key_style: remap produced output collision "
+                    "wan22_vae_3d_key_style: resolver produced output collision "
                     f"for mapped key={mapped_key!r} (source key={key!r})."
                 )
             mapped[mapped_key] = value
-        _, validated = remap_wan21_vae_state_dict(mapped)
-        return "diffusers", validated
+            mapped_to_source[mapped_key] = key
 
-    _, validated = remap_wan21_vae_state_dict(normalized)
-    return "codex", validated
+        validated = resolve_wan21_vae_keyspace(mapped)
+        return ResolvedKeyspace(
+            style="diffusers",
+            canonical_to_source={
+                canonical: mapped_to_source.get(source, source)
+                for canonical, source in validated.canonical_to_source.items()
+            },
+            metadata={
+                "resolver": "wan22_vae_3d",
+                "lane": "3d_native",
+                "source_style": "diffusers",
+                "validator_style": (
+                    validated.style.value if hasattr(validated.style, "value") else str(validated.style)
+                ),
+            },
+            view=validated.view,
+        )
+
+    validated = resolve_wan21_vae_keyspace(normalized)
+    return ResolvedKeyspace(
+        style="codex",
+        canonical_to_source=dict(validated.canonical_to_source),
+        metadata={
+            "resolver": "wan22_vae_3d",
+            "lane": "3d_native",
+            "source_style": "codex",
+            "validator_style": (
+                validated.style.value if hasattr(validated.style, "value") else str(validated.style)
+            ),
+        },
+        view=validated.view,
+    )
 
 
-__all__ = ["remap_wan22_vae_2d_state_dict", "remap_wan22_vae_3d_state_dict"]
+__all__ = ["resolve_wan22_vae_2d_keyspace", "resolve_wan22_vae_3d_keyspace"]

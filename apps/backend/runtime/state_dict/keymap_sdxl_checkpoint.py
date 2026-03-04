@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: SDXL checkpoint wrapper/prefix key normalization (Comfy/original SDXL layout).
-Provides a strict, fail-loud remap that canonicalizes common wrapper prefixes (DDP `module.`, duplicated `model.model.*`,
+Purpose: SDXL checkpoint wrapper/prefix keyspace resolver (Comfy/original SDXL layout).
+Provides a strict, fail-loud resolver that canonicalizes common wrapper prefixes (DDP `module.`, duplicated `model.model.*`,
 `diffusion_model.*`, `vae.*`) and SDXL UNet nested label-embedding keys into canonical prefixes used by Codex detectors/parser plans.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `remap_sdxl_checkpoint_state_dict` (function): Returns (detected_style, remapped_view) for SDXL checkpoint wrapper/prefix normalization.
+- `resolve_sdxl_checkpoint_keyspace` (function): Resolves SDXL checkpoint wrapper/prefix normalization into canonical keyspace.
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ from apps.backend.runtime.state_dict.key_mapping import (
     KeyStyle,
     KeyStyleDetector,
     KeyStyleSpec,
+    ResolvedKeyspace,
     SentinelKind,
-    remap_state_dict_view,
+    resolve_state_dict_keyspace,
 )
 
 _T = TypeVar("_T")
@@ -46,7 +47,7 @@ _DETECTOR = KeyStyleDetector(
 )
 
 
-def remap_sdxl_checkpoint_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
+def resolve_sdxl_checkpoint_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
     """Normalize common SDXL checkpoint wrapper prefixes into canonical keys.
 
     This is intentionally string-only and import-light. It does **not** attempt to convert
@@ -95,13 +96,16 @@ def remap_sdxl_checkpoint_state_dict(state_dict: MutableMapping[str, _T]) -> tup
 
         return k
 
-    mappers = {
-        KeyStyle.CODEX: lambda k: k,
-    }
-
-    return remap_state_dict_view(
+    resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_DETECTOR,
         normalize=_normalize,
-        mappers=mappers,
+        mappers={
+            KeyStyle.CODEX: lambda k: k,
+        },
     )
+    resolved.metadata.setdefault("resolver", "sdxl_checkpoint")
+    return resolved
+
+
+__all__ = ["resolve_sdxl_checkpoint_keyspace"]

@@ -6,13 +6,13 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Canonical key-style detection + remap for Qwen text-encoder/backbone state_dict keys.
-Provides strict, fail-loud mapping for Qwen text checkpoints that may arrive as plain HF-style keys (`model.*`) or wrapped component keys
-(`module.*`, `text_encoder.*`), while explicitly allowing known auxiliary heads (`lm_head.*`, optional `visual.*`), ignoring safetensors metadata sentinels,
-and rejecting unknown keyspaces.
+Purpose: Canonical key-style detection + keyspace resolver for Qwen text-encoder/backbone state_dict keys.
+Provides strict, fail-loud normalization for Qwen text checkpoints that may arrive as plain HF-style keys (`model.*`) or wrapped component keys
+(`module.*`, `text_encoder.*`), while explicitly allowing known auxiliary heads (`lm_head.*`, optional `visual.*`), ignoring safetensors metadata
+sentinels, and rejecting unknown keyspaces.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `remap_qwen_text_encoder_state_dict` (function): Remaps Qwen text-checkpoint keys into canonical backbone keys (`model.*`) and drops known auxiliary heads.
+- `resolve_qwen_text_encoder_keyspace` (function): Resolves Qwen text-checkpoint keys into canonical backbone keys (`model.*`) and drops known auxiliary heads.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from apps.backend.runtime.state_dict.key_mapping import (
     KeyStyle,
     KeyStyleDetector,
     KeyStyleSpec,
+    ResolvedKeyspace,
     SentinelKind,
     strip_repeated_prefixes,
 )
@@ -104,20 +105,20 @@ def _validate_required_backbone_keys(keys: Sequence[str], *, context: str) -> No
         )
 
 
-def remap_qwen_text_encoder_state_dict(
+def resolve_qwen_text_encoder_keyspace(
     state_dict: MutableMapping[str, _T],
     *,
     allow_lm_head_aux: bool = True,
     allow_visual_aux: bool = True,
     require_backbone_keys: bool = True,
-) -> tuple[KeyStyle, MutableMapping[str, _T]]:
-    """Return a view that remaps Qwen text-encoder keys into canonical backbone keys.
+) -> ResolvedKeyspace[_T]:
+    """Resolve Qwen text-encoder keys into canonical backbone keys.
 
     Supported upstream styles:
     - HF: `model.*` (plus optional `lm_head.*`, `visual.*`)
     - Wrapped HF: `module.*`, `text_encoder.*`, `language_model.*`, `text_model.*`
 
-    Mapping behavior:
+    Resolver behavior:
     - Keeps canonical backbone weights under `model.*`.
     - Drops known auxiliary heads (`lm_head.*`, optional `visual.*`).
     - Ignores known metadata-only sentinel keys (currently `__metadata__`).
@@ -140,20 +141,20 @@ def remap_qwen_text_encoder_state_dict(
         )
     style = _DETECTOR.detect(normalized_keys_for_detection)
 
-    remap_table: dict[str, str] = {}
+    canonical_to_source: dict[str, str] = {}
     unsupported_keys: list[str] = []
     for source_key in keys:
         normalized = _normalize_key(source_key)
         if normalized in _IGNORED_META_KEYS:
             continue
         if normalized.startswith("model."):
-            previous = remap_table.get(normalized)
+            previous = canonical_to_source.get(normalized)
             if previous is not None and previous != source_key:
                 raise KeyMappingError(
                     "qwen_text_encoder_key_style: multiple source keys map to the same destination key: "
                     f"dst={normalized!r} srcs={previous!r},{source_key!r}"
                 )
-            remap_table[normalized] = source_key
+            canonical_to_source[normalized] = source_key
             continue
 
         if normalized.startswith("lm_head."):
@@ -176,19 +177,29 @@ def remap_qwen_text_encoder_state_dict(
             f"`lm_head.*`/`visual.*`. offenders_sample=[{sample}]"
         )
 
-    remapped_keys = list(remap_table.keys())
-    if not remapped_keys:
+    canonical_keys = list(canonical_to_source.keys())
+    if not canonical_keys:
         raise KeyMappingError(
             "qwen_text_encoder_key_style: no canonical backbone keys (`model.*`) were produced after normalization"
         )
 
     if require_backbone_keys:
         _validate_required_backbone_keys(
-            remapped_keys,
+            canonical_keys,
             context="qwen_text_encoder_key_style",
         )
 
-    return style, RemapKeysView(state_dict, remap_table)
+    return ResolvedKeyspace(
+        style=style,
+        canonical_to_source=canonical_to_source,
+        metadata={
+            "resolver": "qwen_text_encoder",
+            "allow_lm_head_aux": bool(allow_lm_head_aux),
+            "allow_visual_aux": bool(allow_visual_aux),
+            "require_backbone_keys": bool(require_backbone_keys),
+        },
+        view=RemapKeysView(state_dict, canonical_to_source),
+    )
 
 
-__all__ = ["remap_qwen_text_encoder_state_dict"]
+__all__ = ["resolve_qwen_text_encoder_keyspace"]

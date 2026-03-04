@@ -36,7 +36,7 @@ from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_
 from apps.backend.runtime.families.wan22.wan_latent_norms import WAN21_LATENTS_MEAN, WAN21_LATENTS_STD
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
-from apps.backend.runtime.state_dict.keymap_wan21_vae import remap_wan21_vae_state_dict
+from apps.backend.runtime.state_dict.keymap_wan21_vae import resolve_wan21_vae_keyspace
 
 logger = logging.getLogger("backend.runtime.anima.wan_vae")
 WAN_VAE_BASE_MARKER_KEY = "decoder.middle.0.residual.0.gamma"
@@ -514,9 +514,9 @@ def load_wan_vae_from_safetensors(
         raise RuntimeError(f"WAN VAE checkpoint loader returned non-mapping state_dict: {type(sd).__name__}")
     sd = {str(k): v for k, v in sd.items()}
     try:
-        _, sd = remap_wan21_vae_state_dict(sd)
+        sd = resolve_wan21_vae_keyspace(sd).view
     except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
-        raise RuntimeError(f"WAN VAE key remap failed: {exc}") from exc
+        raise RuntimeError(f"WAN VAE keyspace resolution failed: {exc}") from exc
 
     with using_codex_operations(device=None, dtype=torch_dtype, manual_cast_enabled=True):
         model = WanVAE(

@@ -36,3 +36,4 @@ Status: Draft
 - 2026-02-10: CLIP converter structural conversions (projection transpose paths in `converters/clip.py`) are now globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`: `auto` fails loud, `convert` opt-in allows conversion.
 - 2026-02-11: CLIP parser converter now delegates to canonical CLIP keymap normalization (`normalize_codex_clip_state_dict_with_layout`) and keeps native layout in AUTO (`qkv_impl=auto`, `projection_orientation=auto`) instead of forcing projection transpose.
 - 2026-02-16: WAN parser dispatch/config normalization now handles explicit WAN22 families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) instead of a single `WAN22` family bucket.
+- 2026-03-04: Safetensors parser planning now avoids eager root-component tensor reads: split diagnostics use header/source hints (no sample tensor fetch), and quantization detection skips full-value scans for safetensors-backed views.

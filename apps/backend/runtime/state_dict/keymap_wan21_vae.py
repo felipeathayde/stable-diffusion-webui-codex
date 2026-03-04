@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN2.1 VAE key-style detection + strict canonical remap.
+Purpose: WAN2.1 VAE key-style detection + strict canonical keyspace resolver.
 Normalizes wrapper prefixes for WAN2.1 VAE checkpoints and validates canonical
 key ownership fail-loud before model load.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `remap_wan21_vae_state_dict` (function): Returns `(detected_style, remapped_view)` for WAN2.1 VAE keys.
+- `resolve_wan21_vae_keyspace` (function): Resolves WAN2.1 VAE keys into canonical keyspace.
 """
 
 from __future__ import annotations
@@ -25,8 +25,9 @@ from apps.backend.runtime.state_dict.key_mapping import (
     KeyStyle,
     KeyStyleDetector,
     KeyStyleSpec,
+    ResolvedKeyspace,
     SentinelKind,
-    remap_state_dict_view,
+    resolve_state_dict_keyspace,
     strip_repeated_prefixes,
 )
 
@@ -73,7 +74,7 @@ def _validate_required_keys(*, keys: Sequence[str], required: Sequence[str], det
     missing = [key for key in required if key not in keys_set]
     if missing:
         raise KeyMappingError(
-            f"{detector_name}: remap output is missing required canonical keys. "
+            f"{detector_name}: resolver output is missing required canonical keys. "
             f"missing_sample={missing[:10]}"
         )
 
@@ -82,15 +83,12 @@ def _validate_forbidden_prefixes(*, keys: Sequence[str], prefixes: Sequence[str]
     offenders = [key for key in keys if key.startswith(tuple(prefixes))]
     if offenders:
         raise KeyMappingError(
-            f"{detector_name}: remap produced non-canonical keys with forbidden prefixes. "
+            f"{detector_name}: resolver produced non-canonical keys with forbidden prefixes. "
             f"offenders_sample={sorted(offenders)[:10]}"
         )
 
 
-def remap_wan21_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
-    def _normalize(key: str) -> str:
-        return strip_repeated_prefixes(str(key), _WAN21_VAE_PREFIXES)
-
+def resolve_wan21_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
     def _validate_output(keys: Sequence[str]) -> None:
         _validate_forbidden_prefixes(
             keys=keys,
@@ -103,14 +101,15 @@ def remap_wan21_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[Key
             detector_name=_WAN21_VAE_DETECTOR.name,
         )
 
-    mappers = {KeyStyle.CODEX: lambda key: key}
-    return remap_state_dict_view(
+    resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_WAN21_VAE_DETECTOR,
-        normalize=_normalize,
-        mappers=mappers,
+        normalize=lambda key: strip_repeated_prefixes(str(key), _WAN21_VAE_PREFIXES),
+        mappers={KeyStyle.CODEX: lambda key: key},
         output_validator=_validate_output,
     )
+    resolved.metadata.setdefault("resolver", "wan21_vae")
+    return resolved
 
 
-__all__ = ["remap_wan21_vae_state_dict"]
+__all__ = ["resolve_wan21_vae_keyspace"]

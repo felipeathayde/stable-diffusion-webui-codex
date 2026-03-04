@@ -11,6 +11,8 @@ Detects GGUF quantization via `CodexParameter` / CodexPack markers and detects N
 strict validation helper to catch mis-detections where a component contains no floating-point tensors.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_mapping_source_format` (function): Resolves source-format hints from mapping/view chains (e.g., safetensors-backed views).
+- `_hint_to_torch_dtype` (function): Converts normalized dtype hints (`fp16|bf16|fp8_*`) to torch dtypes when available.
 - `detect_quantization_from_tensors` (function): Recursively scans tensors/mappings to infer quantization kind (GGUF/none).
 - `detect_state_dict_dtype` (function): Best-effort dtype / quantization hint for a state dict (returns a torch dtype or `"gguf"`).
 - `detect_quantization_from_component` (function): Infers quantization from one component mapping (prefers GGUF tensor markers).
@@ -29,6 +31,50 @@ from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepac
 from apps.backend.quantization.tensor import CodexParameter
 from apps.backend.runtime.model_registry.specs import QuantizationHint, QuantizationKind
 from .errors import ValidationError
+
+
+def _mapping_source_format(mapping: Mapping[str, object]) -> str | None:
+    current: object | None = mapping
+    seen_ids: set[int] = set()
+    while current is not None:
+        marker = id(current)
+        if marker in seen_ids:
+            break
+        seen_ids.add(marker)
+
+        source_format = getattr(current, "source_format", None)
+        if isinstance(source_format, str) and source_format.strip():
+            return source_format.strip().lower()
+
+        filepath = getattr(current, "filepath", None)
+        if isinstance(filepath, str) and filepath:
+            lower = filepath.lower()
+            if lower.endswith(".safetensors") or lower.endswith(".safetensor"):
+                return "safetensors"
+            if lower.endswith(".gguf"):
+                return "gguf"
+
+        current = getattr(current, "_base", None)
+    return None
+
+
+def _hint_to_torch_dtype(hint: str | None) -> torch.dtype | None:
+    if not hint:
+        return None
+    normalized = str(hint).strip().lower()
+    hint_map: dict[str, torch.dtype] = {
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+        "fp32": torch.float32,
+        "fp64": torch.float64,
+    }
+    fp8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
+    fp8_e5m2 = getattr(torch, "float8_e5m2", None)
+    if isinstance(fp8_e4m3fn, torch.dtype):
+        hint_map["fp8_e4m3fn"] = fp8_e4m3fn
+    if isinstance(fp8_e5m2, torch.dtype):
+        hint_map["fp8_e5m2"] = fp8_e5m2
+    return hint_map.get(normalized)
 
 
 def detect_quantization_from_tensors(tensors: Iterable[object]) -> QuantizationHint:
@@ -50,6 +96,13 @@ def detect_state_dict_dtype(state_dict: Mapping[str, object]) -> torch.dtype | s
     - Returns ``"gguf"`` when the mapping contains CodexParameter packed weights.
     - Otherwise returns the first encountered torch dtype (defaults to fp32).
     """
+
+    source_format = _mapping_source_format(state_dict)
+    if source_format in {"safetensor", "safetensors"}:
+        hint_dtype = _hint_to_torch_dtype(getattr(state_dict, "primary_dtype_hint", None))
+        if hint_dtype is not None:
+            return hint_dtype
+        return torch.float32
 
     materialize = getattr(state_dict, "materialize", None)
     if callable(materialize):
@@ -75,6 +128,14 @@ def detect_state_dict_dtype(state_dict: Mapping[str, object]) -> torch.dtype | s
 def detect_quantization_from_component(component_state: Mapping[str, object]) -> QuantizationHint:
     has_nf4 = any("bitsandbytes__nf4" in key for key in component_state.keys())
     has_fp4 = any("bitsandbytes__fp4" in key for key in component_state.keys())
+
+    source_format = _mapping_source_format(component_state)
+    if source_format in {"safetensor", "safetensors"}:
+        if has_nf4:
+            return QuantizationHint(kind=QuantizationKind.NF4, detail="key_marker")
+        if has_fp4:
+            return QuantizationHint(kind=QuantizationKind.FP4, detail="key_marker")
+        return QuantizationHint()
 
     hint = detect_quantization_from_tensors(component_state.values())
     if hint.kind != QuantizationKind.NONE:

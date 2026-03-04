@@ -49,8 +49,8 @@ from apps.backend.runtime.common.vae_codex3d import (
     sanitize_codex3d_vae_config,
 )
 from apps.backend.runtime.state_dict.keymap_wan22_vae import (
-    remap_wan22_vae_2d_state_dict,
-    remap_wan22_vae_3d_state_dict,
+    resolve_wan22_vae_2d_keyspace,
+    resolve_wan22_vae_3d_keyspace,
 )
 from apps.backend.runtime.state_dict.key_mapping import strip_repeated_prefixes
 
@@ -241,7 +241,10 @@ def load_vae(
                 )
 
             if lane == "2d_native":
-                remap_style, state_dict = remap_wan22_vae_2d_state_dict(dict(normalized_state_dict))
+                resolved_2d = resolve_wan22_vae_2d_keyspace(dict(normalized_state_dict))
+                remap_style_obj = resolved_2d.style
+                remap_style = remap_style_obj.value if hasattr(remap_style_obj, "value") else str(remap_style_obj)
+                state_dict = resolved_2d.view
                 config = AutoencoderKL_LDM.load_config(config_dir)
                 native_config = sanitize_ldm_vae_config(config)
                 inferred_latent_channels = _infer_latent_channels_from_state_dict(state_dict)
@@ -267,7 +270,10 @@ def load_vae(
                 setattr(vae, "_codex_vae_style", remap_style)
                 return vae
 
-            remap_style, remapped_state_dict = remap_wan22_vae_3d_state_dict(dict(normalized_state_dict))
+            resolved_3d = resolve_wan22_vae_3d_keyspace(dict(normalized_state_dict))
+            remap_style_obj = resolved_3d.style
+            remap_style = remap_style_obj.value if hasattr(remap_style_obj, "value") else str(remap_style_obj)
+            remapped_state_dict = resolved_3d.view
             config = AutoencoderCodex3D.load_config(config_dir)
 
             native_config = sanitize_codex3d_vae_config(config)

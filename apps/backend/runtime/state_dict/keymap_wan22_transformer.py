@@ -13,8 +13,8 @@ Also owns WAN22 request-key allowlists used by generation routers, including img
 Symbols (top-level; keep in sync; no ghosts):
 - `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields and optional `video_upscaling` key).
 - `WAN22_REQUEST_KEYS` (constant): Singleton request-key map used by WAN22 request validators.
-- `remap_wan22_lora_logical_key` (function): Maps WAN22 LoRA logical keys to canonical WAN22 transformer weight keys.
-- `remap_wan22_transformer_state_dict` (function): Returns (detected_style, remapped_view) for WAN22 transformer keys.
+- `resolve_wan22_lora_logical_key` (function): Maps WAN22 LoRA logical keys to canonical WAN22 transformer weight keys.
+- `resolve_wan22_transformer_keyspace` (function): Resolves WAN22 transformer keys into canonical keyspace (`ResolvedKeyspace`).
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from apps.backend.runtime.state_dict.key_mapping import (
     KeyStyle,
     KeyStyleDetector,
     KeyStyleSpec,
+    ResolvedKeyspace,
     SentinelKind,
-    remap_state_dict_view,
+    resolve_state_dict_keyspace,
     strip_repeated_prefixes,
 )
 
@@ -266,7 +267,7 @@ class Wan22RequestKeys:
 WAN22_REQUEST_KEYS = Wan22RequestKeys()
 
 
-def remap_wan22_lora_logical_key(logical_key: str) -> str | None:
+def resolve_wan22_lora_logical_key(logical_key: str) -> str | None:
     """Map a WAN22 LoRA logical key to a canonical WAN22 transformer `.weight` key.
 
     Supported logical-key families:
@@ -333,7 +334,7 @@ def remap_wan22_lora_logical_key(logical_key: str) -> str | None:
     return None
 
 
-def remap_wan22_transformer_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
+def resolve_wan22_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
     def _normalize(key: str) -> str:
         return strip_repeated_prefixes(str(key), _PREFIXES)
 
@@ -464,18 +465,20 @@ def remap_wan22_transformer_state_dict(state_dict: MutableMapping[str, _T]) -> t
         KeyStyle.DIFFUSERS: lambda k: _export_to_codex(_diffusers_to_export(k)),
     }
 
-    return remap_state_dict_view(
+    resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_DETECTOR,
         normalize=_normalize,
         mappers=mappers,
         output_validator=_validate_output,
     )
+    resolved.metadata.setdefault("resolver", "wan22_transformer")
+    return resolved
 
 
 __all__ = [
     "Wan22RequestKeys",
     "WAN22_REQUEST_KEYS",
-    "remap_wan22_lora_logical_key",
-    "remap_wan22_transformer_state_dict",
+    "resolve_wan22_lora_logical_key",
+    "resolve_wan22_transformer_keyspace",
 ]

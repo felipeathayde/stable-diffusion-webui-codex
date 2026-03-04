@@ -135,9 +135,9 @@ def load_flow16_vae(
                 vae = AutoencoderKL_LDM.from_config(sanitize_ldm_vae_config(FLOW16_VAE_CONFIG))
             else:
                 # Normalize LDM-style Flow16 VAEs to diffusers keyspace when diffusers lane is active.
-                from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
+                from apps.backend.runtime.state_dict.keymap_sdxl_vae import resolve_sdxl_vae_keyspace
 
-                _, state_dict = remap_sdxl_vae_state_dict(state_dict)
+                state_dict = resolve_sdxl_vae_keyspace(state_dict).view
                 vae = AutoencoderKL.from_config(FLOW16_VAE_CONFIG)
 
             expected_total = len(vae.state_dict())

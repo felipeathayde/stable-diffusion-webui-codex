@@ -467,7 +467,7 @@ class Qwen3_4B(nn.Module):
         return hidden_states, intermediate
     
     def load_sd(self, state_dict: dict) -> Tuple[List[str], List[str]]:
-        """Load state dict with key remapping for GGUF compatibility.
+        """Load state dict with keyspace resolution for GGUF compatibility.
         
         Returns:
             Tuple of (missing_keys, unexpected_keys)
@@ -574,16 +574,18 @@ def remap_gguf_keys(gguf_state_dict: dict, num_layers: int = 36) -> dict:
 
     from apps.backend.runtime.state_dict.keymap_llama_gguf import (
         QWEN3_LLAMA_GGUF_LAYER_SUFFIX_TO_HF_PREFIX,
-        remap_llama_gguf_text_model_state_dict,
+        resolve_llama_gguf_text_model_keyspace,
     )
 
-    style, view = remap_llama_gguf_text_model_state_dict(
+    resolved = resolve_llama_gguf_text_model_keyspace(
         gguf_state_dict,
         num_layers=num_layers,
         layer_suffix_to_hf_prefix=QWEN3_LLAMA_GGUF_LAYER_SUFFIX_TO_HF_PREFIX,
     )
-    logger.debug("Qwen3 remap: detected style=%s", style.value)
-    return dict(view)
+    style = resolved.style
+    style_label = style.value if hasattr(style, "value") else str(style)
+    logger.debug("Qwen3 keyspace: detected style=%s", style_label)
+    return dict(resolved.view)
 
 
 __all__ = [

@@ -1266,11 +1266,13 @@ def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
     This function is strict and fails loud on unknown/ambiguous layouts.
     """
 
-    from apps.backend.runtime.state_dict.keymap_wan22_transformer import remap_wan22_transformer_state_dict
+    from apps.backend.runtime.state_dict.keymap_wan22_transformer import resolve_wan22_transformer_keyspace
 
-    style, view = remap_wan22_transformer_state_dict(state_dict)
-    logger.debug("WAN22 remap: detected style=%s", style.value)
-    return dict(view)
+    resolved = resolve_wan22_transformer_keyspace(state_dict)
+    style = resolved.style
+    style_label = style.value if hasattr(style, "value") else str(style)
+    logger.debug("WAN22 remap: detected style=%s", style_label)
+    return dict(resolved.view)
 
 
 def infer_wan_architecture_from_state_dict(state_dict: dict) -> WanArchitectureConfig:

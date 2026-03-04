@@ -30,7 +30,7 @@ import torch.nn as nn
 
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.state_dict.keymap_qwen_text_encoder import remap_qwen_text_encoder_state_dict
+from apps.backend.runtime.state_dict.keymap_qwen_text_encoder import resolve_qwen_text_encoder_keyspace
 
 from .debug import env_flag, env_int, find_indices, summarize_ints, tensor_stats, truncate_text
 
@@ -166,13 +166,16 @@ class ZImageTextEncoder(nn.Module):
 
         try:
             state_dict = {str(k): v for k, v in state_dict.items()}
-            key_style, remapped_state_dict = remap_qwen_text_encoder_state_dict(
+            resolved = resolve_qwen_text_encoder_keyspace(
                 state_dict,
                 allow_lm_head_aux=True,
                 allow_visual_aux=True,
                 require_backbone_keys=True,
             )
-            logger.debug("ZImage Qwen3 keymap style=%s", key_style.value)
+            key_style = resolved.style
+            remapped_state_dict = resolved.view
+            style_label = key_style.value if hasattr(key_style, "value") else str(key_style)
+            logger.debug("ZImage Qwen3 keymap style=%s", style_label)
 
             # Use native Qwen3_4B implementation (compatible with the exported format)
             from .qwen3 import Qwen3_4B, Qwen3Config

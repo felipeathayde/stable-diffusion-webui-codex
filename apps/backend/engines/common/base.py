@@ -724,9 +724,9 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                     ModelFamily.FLUX_KONTEXT,
                     ModelFamily.ZIMAGE,
                 ):
-                    from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
+                    from apps.backend.runtime.state_dict.keymap_sdxl_vae import resolve_sdxl_vae_keyspace
 
-                    _, state_dict = remap_sdxl_vae_state_dict(state_dict)
+                    state_dict = resolve_sdxl_vae_keyspace(state_dict).view
             if not hasattr(vae_target, "state_dict"):
                 raise TypeError(
                     "VAE override target does not expose state_dict(); "

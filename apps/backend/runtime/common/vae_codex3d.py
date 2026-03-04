@@ -37,7 +37,7 @@ from torch import nn
 
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.common.vae_ldm import DiagonalGaussianDistribution
-from apps.backend.runtime.state_dict.keymap_wan22_vae import remap_wan22_vae_3d_state_dict
+from apps.backend.runtime.state_dict.keymap_wan22_vae import resolve_wan22_vae_3d_keyspace
 
 _CACHE_T = 2
 
@@ -68,7 +68,10 @@ def _cuda_mem_snapshot_str(device: torch.device) -> str:
 def remap_codex3d_vae_state_dict(
     state_dict: MutableMapping[str, Any],
 ) -> tuple[str, MutableMapping[str, Any]]:
-    return remap_wan22_vae_3d_state_dict(state_dict)
+    resolved = resolve_wan22_vae_3d_keyspace(state_dict)
+    style = resolved.style
+    style_label = style.value if hasattr(style, "value") else str(style)
+    return style_label, resolved.view
 
 
 class Codex3DCausalConv(nn.Conv3d):

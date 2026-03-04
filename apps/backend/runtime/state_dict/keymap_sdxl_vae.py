@@ -16,7 +16,7 @@ Projection normalization is lane-based and explicit:
 - any other shape fails loud.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `remap_sdxl_vae_state_dict` (function): Returns (detected_style, remapped_view) for SDXL/Flow16 VAE keys.
+- `resolve_sdxl_vae_keyspace` (function): Resolves SDXL/Flow16 VAE keys into canonical keyspace (`ResolvedKeyspace`).
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from apps.backend.runtime.state_dict.key_mapping import (
     KeyStyle,
     KeyStyleDetector,
     KeyStyleSpec,
+    ResolvedKeyspace,
     SentinelKind,
-    remap_state_dict_view,
+    resolve_state_dict_keyspace,
     strip_repeated_prefixes,
 )
 
@@ -223,7 +224,7 @@ class _FilteredKeysView(MutableMapping[str, _T]):
         return list(self._keys)
 
 
-def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
+def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
     """Normalize SDXL/Flow16 VAE keys into diffusers AutoencoderKL layout (fail loud).
 
     Accepted inputs:
@@ -481,7 +482,7 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
         KeyStyle.DIFFUSERS: _diffusers_to_canonical,
         KeyStyle.LDM: _ldm_to_diffusers,
     }
-    return remap_state_dict_view(
+    resolved = resolve_state_dict_keyspace(
         filtered,
         detector=_DETECTOR,
         normalize=_normalize,
@@ -489,6 +490,8 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
         view_factory=lambda base, mapping: _SDXLVAERemapView(base, mapping),
         output_validator=_validate_output,
     )
+    resolved.metadata.setdefault("resolver", "sdxl_vae")
+    return resolved
 
 
-__all__ = ["remap_sdxl_vae_state_dict"]
+__all__ = ["resolve_sdxl_vae_keyspace"]

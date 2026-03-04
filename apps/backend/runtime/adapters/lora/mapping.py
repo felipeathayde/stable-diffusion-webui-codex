@@ -27,7 +27,7 @@ from apps.backend.runtime.misc.diffusers_state_dict import unet_to_diffusers
 from apps.backend.runtime.model_registry.specs import CodexCoreArchitecture
 from apps.backend.runtime.adapters.base import PatchTarget
 from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import (
-    remap_sdxl_checkpoint_state_dict,
+    resolve_sdxl_checkpoint_keyspace,
 )
 
 
@@ -58,8 +58,8 @@ def _build_unet_state_lookup(state_dict_keys) -> Dict[str, str]:
 
     canonical_source = {str(raw_key): str(raw_key) for raw_key in state_dict_keys}
     try:
-        _style, remapped = remap_sdxl_checkpoint_state_dict(canonical_source)
-        for canonical_key, original_key in remapped.items():
+        resolved = resolve_sdxl_checkpoint_keyspace(canonical_source)
+        for canonical_key, original_key in resolved.view.items():
             canonical = str(canonical_key)
             original = str(original_key)
             lookup.setdefault(canonical, original)

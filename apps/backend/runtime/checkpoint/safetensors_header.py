@@ -12,6 +12,7 @@ or loading tensor payloads.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `read_safetensors_header` (function): Reads and parses the SafeTensors JSON header (no tensor payload reads).
+- `detect_safetensors_primary_dtype_from_header` (function): Best-effort primary dtype hint from an already-read SafeTensors header mapping.
 - `detect_safetensors_primary_dtype` (function): Best-effort dtype hint for `.safetensors` (header-only parse; whole-file).
 """
 
@@ -20,7 +21,7 @@ from __future__ import annotations
 import json
 import struct
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 
 def read_safetensors_header(path: Path) -> dict[str, object]:
@@ -48,32 +49,15 @@ def read_safetensors_header(path: Path) -> dict[str, object]:
     return data  # type: ignore[return-value]
 
 
-def detect_safetensors_primary_dtype(path: Path) -> str | None:
-    """Best-effort dtype hint for `.safetensors` (header-only parse).
-
-    Computes the dominant float dtype by summing tensor payload sizes per dtype
-    using header offsets. Returns a normalized dtype label suitable for UI/debug
-    (e.g. `fp16`, `bf16`, `fp32`).
-    """
-
-    suffix = path.suffix.lower()
-    if suffix not in {".safetensor", ".safetensors"}:
-        return None
-
-    try:
-        data = read_safetensors_header(path)
-    except Exception:
-        return None
-
-    if not isinstance(data, dict):
-        return None
+def detect_safetensors_primary_dtype_from_header(header: Mapping[str, object]) -> str | None:
+    """Best-effort primary dtype hint from an already-read SafeTensors header."""
 
     float_types = {"F16", "BF16", "F32", "F64", "F8_E4M3FN", "F8_E5M2"}
     totals: Dict[str, int] = {}
-    for name, meta in data.items():
+    for name, meta in header.items():
         if name == "__metadata__":
             continue
-        if not isinstance(meta, dict):
+        if not isinstance(meta, Mapping):
             continue
         dtype = meta.get("dtype")
         if not isinstance(dtype, str) or dtype not in float_types:
@@ -105,5 +89,31 @@ def detect_safetensors_primary_dtype(path: Path) -> str | None:
     return mapping.get(best)
 
 
-__all__ = ["detect_safetensors_primary_dtype", "read_safetensors_header"]
+def detect_safetensors_primary_dtype(path: Path) -> str | None:
+    """Best-effort dtype hint for `.safetensors` (header-only parse).
 
+    Computes the dominant float dtype by summing tensor payload sizes per dtype
+    using header offsets. Returns a normalized dtype label suitable for UI/debug
+    (e.g. `fp16`, `bf16`, `fp32`).
+    """
+
+    suffix = path.suffix.lower()
+    if suffix not in {".safetensor", ".safetensors"}:
+        return None
+
+    try:
+        data = read_safetensors_header(path)
+    except Exception:
+        return None
+
+    if not isinstance(data, Mapping):
+        return None
+
+    return detect_safetensors_primary_dtype_from_header(data)
+
+
+__all__ = [
+    "detect_safetensors_primary_dtype",
+    "detect_safetensors_primary_dtype_from_header",
+    "read_safetensors_header",
+]

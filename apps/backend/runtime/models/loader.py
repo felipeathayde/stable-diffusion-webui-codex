@@ -126,6 +126,7 @@ from apps.backend.runtime.state_dict.key_mapping import KeyMappingError
 from apps.backend.runtime.state_dict.keymap_sdxl_clip import ClipLayoutMetadata
 from apps.backend.runtime.checkpoint.safetensors_header import (
     detect_safetensors_primary_dtype,
+    detect_safetensors_primary_dtype_from_header,
     read_safetensors_header,
 )
 
@@ -379,7 +380,7 @@ def _inspect_checkpoint(path: str) -> CheckpointInspection:
             shape = _coerce_safetensors_shape(meta.get("shape"))
             if shape is not None:
                 shapes[raw_key] = shape
-        primary_dtype_hint = detect_safetensors_primary_dtype(Path(path_str))
+        primary_dtype_hint = detect_safetensors_primary_dtype_from_header(header_dict)
         inspection = CheckpointInspection(
             path=path_str,
             format="safetensors",

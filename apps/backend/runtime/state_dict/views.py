@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Dict
 
 from safetensors.torch import safe_open
-from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
 
 
 def _inherit_source_metadata(view: object, base: object) -> None:
@@ -335,7 +334,7 @@ class LazySafetensorsDict(MutableMapping):
         self.device = device or "cpu"
         self.source_format = "safetensors"
         self.source_path = str(filepath)
-        self.primary_dtype_hint = detect_safetensors_primary_dtype(Path(self.filepath))
+        self.primary_dtype_hint: str | None = None
         self.header_shapes: Dict[str, tuple[int, ...]] = {}
         self._platform_windows = sys.platform.startswith("win")
         self._overlay = {}  # in-memory writes/overrides
@@ -363,9 +362,13 @@ class LazySafetensorsDict(MutableMapping):
         if self._shape_cache is None:
             self._shape_cache = {}
             try:
-                from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_header
+                from apps.backend.runtime.checkpoint.safetensors_header import (
+                    detect_safetensors_primary_dtype_from_header,
+                    read_safetensors_header,
+                )
 
                 header = read_safetensors_header(Path(self.filepath))
+                self.primary_dtype_hint = detect_safetensors_primary_dtype_from_header(header)
                 for raw_key, metadata in header.items():
                     if raw_key == "__metadata__":
                         continue
@@ -379,6 +382,7 @@ class LazySafetensorsDict(MutableMapping):
                     except Exception:
                         continue
             except Exception:
+                self.primary_dtype_hint = None
                 self._shape_cache = {}
             self.header_shapes = dict(self._shape_cache)
         return self._shape_cache

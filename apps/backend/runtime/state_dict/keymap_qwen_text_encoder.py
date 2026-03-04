@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Canonical key-style detection + remap for Qwen text-encoder/backbone state_dict keys.
 Provides strict, fail-loud mapping for Qwen text checkpoints that may arrive as plain HF-style keys (`model.*`) or wrapped component keys
-(`module.*`, `text_encoder.*`), while explicitly allowing known auxiliary heads (`lm_head.*`, optional `visual.*`) and rejecting unknown keyspaces.
+(`module.*`, `text_encoder.*`), while explicitly allowing known auxiliary heads (`lm_head.*`, optional `visual.*`), ignoring safetensors metadata sentinels,
+and rejecting unknown keyspaces.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_qwen_text_encoder_state_dict` (function): Remaps Qwen text-checkpoint keys into canonical backbone keys (`model.*`) and drops known auxiliary heads.
@@ -45,6 +46,12 @@ _REQUIRED_BACKBONE_KEYS = (
     "model.layers.0.self_attn.q_proj.weight",
     "model.layers.0.mlp.gate_proj.weight",
     "model.norm.weight",
+)
+
+_IGNORED_META_KEYS = frozenset(
+    {
+        "__metadata__",
+    }
 )
 
 _DETECTOR = KeyStyleDetector(
@@ -113,6 +120,7 @@ def remap_qwen_text_encoder_state_dict(
     Mapping behavior:
     - Keeps canonical backbone weights under `model.*`.
     - Drops known auxiliary heads (`lm_head.*`, optional `visual.*`).
+    - Ignores known metadata-only sentinel keys (currently `__metadata__`).
     - Raises on unknown keys, ambiguous style detection, key collisions, or missing required backbone keys.
     """
 
@@ -120,12 +128,24 @@ def remap_qwen_text_encoder_state_dict(
     if not keys:
         raise KeyMappingError("qwen_text_encoder_key_style: empty key list; cannot detect key style")
 
-    style = _DETECTOR.detect(keys)
+    normalized_keys_for_detection: list[str] = []
+    for key in keys:
+        normalized = _normalize_key(key)
+        if normalized in _IGNORED_META_KEYS:
+            continue
+        normalized_keys_for_detection.append(normalized)
+    if not normalized_keys_for_detection:
+        raise KeyMappingError(
+            "qwen_text_encoder_key_style: no tensor keys remained after metadata filtering; cannot detect key style"
+        )
+    style = _DETECTOR.detect(normalized_keys_for_detection)
 
     remap_table: dict[str, str] = {}
     unsupported_keys: list[str] = []
     for source_key in keys:
         normalized = _normalize_key(source_key)
+        if normalized in _IGNORED_META_KEYS:
+            continue
         if normalized.startswith("model."):
             previous = remap_table.get(normalized)
             if previous is not None and previous != source_key:

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Strict loader utilities for the Anima core transformer (`MiniTrainDiT` + `LLMAdapter`).
-Normalizes keys through the Anima transformer keymap before config inference/load; any remap/load mismatch is fatal and reported with actionable samples.
+Requires canonical Anima transformer keys before config inference/load; any keyspace/load mismatch is fatal and reported with actionable samples.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `load_anima_dit_from_state_dict` (function): Instantiate + strict-load `AnimaDiT` from a transformer state dict.
@@ -19,7 +19,6 @@ from collections.abc import Mapping
 import torch
 
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
-from apps.backend.runtime.state_dict.keymap_anima import remap_anima_transformer_state_dict
 
 from .config import AnimaConfig, infer_anima_config_from_state_dict
 from .model import AnimaDiT
@@ -42,10 +41,14 @@ def load_anima_dit_from_state_dict(
         )
 
     normalized_state_dict = {str(k): v for k, v in state_dict.items()}
-    try:
-        _, normalized_state_dict = remap_anima_transformer_state_dict(normalized_state_dict)
-    except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
-        raise RuntimeError(f"Anima core transformer key remap failed: {exc}") from exc
+    forbidden_prefixes = ("module.", "model.")
+    forbidden_keys = [key for key in normalized_state_dict if key.startswith(forbidden_prefixes)]
+    if forbidden_keys:
+        raise RuntimeError(
+            "Anima loader received non-canonical transformer keys. "
+            "Expected parser-normalized checkpoint keys without wrapper prefixes. "
+            f"forbidden_prefixes={forbidden_prefixes} offenders_sample={forbidden_keys[:10]}"
+        )
 
     try:
         config: AnimaConfig = infer_anima_config_from_state_dict(normalized_state_dict)

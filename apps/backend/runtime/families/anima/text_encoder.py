@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Anima Qwen3-0.6B text encoder runtime + offline tokenizers (Qwen + T5).
-Loads sha-selected Qwen3-0.6B weights through a strict Anima keymap into the native Qwen3 implementation and provides a small text-processing wrapper
+Loads sha-selected Qwen3-0.6B weights through strict Qwen key-style normalization into the native Qwen3 implementation and provides a small text-processing wrapper
 that produces embeddings for conditioning. Also loads an offline T5 tokenizer used only for dual-tokenization (token ids + weights).
 
 No runtime downloads are allowed: tokenizers must be resolved from vendored `apps/backend/huggingface/**` assets or explicit paths.
@@ -38,7 +38,7 @@ from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
-from apps.backend.runtime.state_dict.keymap_anima import remap_anima_qwen3_06b_state_dict
+from apps.backend.runtime.state_dict.keymap_qwen_text_encoder import remap_qwen_text_encoder_state_dict
 from apps.backend.runtime.text_processing.parsing import parse_prompt_attention
 
 logger = logging.getLogger("backend.runtime.anima.text_encoder")
@@ -450,8 +450,20 @@ class AnimaQwenTextProcessingEngine:
 
 
 def _validate_qwen3_06b_header(*, header: Mapping[str, object], context: str) -> None:
+    header_keys = {str(key): value for key, value in header.items()}
+    try:
+        _, normalized_header_view = remap_qwen_text_encoder_state_dict(
+            header_keys,
+            allow_lm_head_aux=True,
+            allow_visual_aux=False,
+            require_backbone_keys=True,
+        )
+        normalized_header: Mapping[str, object] = dict(normalized_header_view)
+    except Exception as exc:  # noqa: BLE001 - surfaced as strict header validation context
+        raise RuntimeError(f"Qwen3-0.6B header key mapping failed: {exc} ({context})") from exc
+
     def _shape(key: str) -> tuple[int, ...] | None:
-        meta = header.get(key)
+        meta = normalized_header.get(key)
         if isinstance(meta, dict):
             shape = meta.get("shape")
             if isinstance(shape, (list, tuple)) and all(isinstance(x, (int, float)) for x in shape):
@@ -473,10 +485,10 @@ def _validate_qwen3_06b_header(*, header: Mapping[str, object], context: str) ->
         "model.layers.0.mlp.gate_proj.weight",
         "model.norm.weight",
     )
-    missing = [k for k in required if k not in header]
+    missing = [k for k in required if k not in normalized_header]
     if missing:
         raise RuntimeError(
-            "Qwen3-0.6B weights file does not look like a Qwen3 HF-style checkpoint. "
+            "Qwen3-0.6B weights file does not look like a compatible Qwen text-encoder checkpoint. "
             f"Missing keys: {missing} ({context})"
         )
 
@@ -509,9 +521,15 @@ def load_anima_qwen3_06b_text_encoder(
         raise RuntimeError(f"Anima Qwen3-0.6B loader returned non-mapping state_dict: {type(sd).__name__}")
     sd = {str(k): v for k, v in sd.items()}
     try:
-        _, sd = remap_anima_qwen3_06b_state_dict(sd)
-    except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
-        raise RuntimeError(f"Anima Qwen3-0.6B key remap failed: {exc}") from exc
+        key_style, sd = remap_qwen_text_encoder_state_dict(
+            sd,
+            allow_lm_head_aux=True,
+            allow_visual_aux=False,
+            require_backbone_keys=True,
+        )
+        logger.debug("Anima Qwen3-0.6B keymap style=%s", key_style.value)
+    except Exception as exc:  # noqa: BLE001 - surfaced as strict load-time context
+        raise RuntimeError(f"Anima Qwen3-0.6B key mapping failed: {exc}") from exc
 
     with using_codex_operations(device=None, dtype=torch_dtype, manual_cast_enabled=True):
         model = Qwen3_06B(dtype=torch_dtype)

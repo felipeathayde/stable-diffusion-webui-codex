@@ -10,8 +10,8 @@ Purpose: Runtime state-dict views and helpers.
 Provides mapping views and small utilities used during checkpoint loading/normalization.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `keymap_anima` (module): Anima key-style detection + strict remaps for core transformer and Qwen3-0.6B text encoder.
 - `keymap_llama_gguf` (module): Key remapping helpers for llama.cpp-style GGUF tensor names.
+- `keymap_qwen_text_encoder` (module): Qwen text-encoder key-style detection + strict remap to canonical `model.*` backbone keys.
 - `keymap_sdxl_checkpoint` (module): SDXL checkpoint wrapper/prefix key normalization (Comfy/original SDXL layout).
 - `keymap_sdxl_clip` (module): SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
 - `keymap_sdxl_vae` (module): SDXL/Flow16 VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
@@ -25,8 +25,8 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 __all__ = [
-    "keymap_anima",
     "keymap_llama_gguf",
+    "keymap_qwen_text_encoder",
     "keymap_sdxl_checkpoint",
     "keymap_sdxl_clip",
     "keymap_sdxl_vae",

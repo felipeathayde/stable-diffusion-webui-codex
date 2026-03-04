@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22
-Last Review: 2026-03-03
+Last Review: 2026-03-04
 Status: Active
 
 ## Purpose
@@ -123,6 +123,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-02-21: `img2img-inpaint-params-card.css` now styles inline mask tools anchored under the init-image section (`.img2img-mask-inline-tools`), and `inpaint-mask-editor.css` now hides the internal upload input used by the editor toolbar import action.
 - 2026-02-21: `styles/components/result-viewer.css` now constrains image/video previews to `max-height: 30dvh` and proportional viewport width (`max-width: min(100%, 42dvw)`, fallback `100%` on smaller screens), with `object-fit: contain`; `styles/views/wan.css` applies the same height contract to WAN exported-video previews inside Results.
 - 2026-03-02: `styles/components/result-viewer.css` now vertically centers the basic zoom toolbar controls (`Fit`, `1:1`, `+`, `-`, `Close`) in `ImageZoomOverlay`, while guide-edit mode (`image-zoom-toolbar--with-guide`) remains top-aligned.
+- 2026-03-04: `styles/components/result-viewer.css` now includes dedicated `video-zoom-*` classes used by `VideoZoomOverlay.vue` for full-screen video pan/zoom toolbar layout plus WAN exported-video center-hitbox trigger styling.
 - 2026-02-21: `styles/components/param-blocks.css` now supports `data-cols=\"5\"` grids so WAN `Chunking` can keep five controls in one desktop row while reusing existing shared field layout primitives.
 - 2026-02-21: `styles/views/wan.css` now styles `.wan-temporal-controls` / `.wan-temporal-row` so WAN img2vid temporal mode renders as a stable two-row card (row-1 selects, row-2 sliders) without select+slider row-wrap collisions.
 - 2026-02-21: Added `styles/components/base-tab-header.css` and moved `BaseTabHeader.vue` action-row alignment/margins out of inline template styles.

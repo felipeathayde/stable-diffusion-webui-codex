@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-03
+Last Review: 2026-03-04
 Status: Active
 
 ## Purpose
@@ -75,6 +75,7 @@ Status: Active
 - 2026-03-01: `WANTab.vue` now passes WAN no-stretch zoom frame-guide state (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card and applies `update:zoomFrameGuide` edits back into `video.width/height` + guide fields, enabling interactive guide drag/resize while keeping WAN-safe dimension snapping.
 - 2026-03-02: `WANTab.vue` img2vid init-image card no longer renders the extra `Input / Mode is set in QuickSettings` row above the shared init-image card; the reused card title is now `Img2Vid Parameters` for parity with img2img panel semantics.
 - 2026-03-02: `WANTab.vue` and `ImageModelTab.vue` now render matching two-line results empty states (bold title + caption); WAN caption text is `Generate to see results here.` and image tabs keep `No images yet` + `Generate to see results here.` copy.
+- 2026-03-04: `WANTab.vue` exported-video preview now opens a dedicated full-screen video overlay from a center hitbox trigger (outside-click and `Esc` close), while keeping in-card `controls` and blocking native double-click fullscreen in both in-card and overlay videos.
 - 2026-03-02: `ImageModelTab.vue` Results header actions now match WAN button styling (`Save snapshot`/`Copy params` outlined), and the image `ResultViewer` no longer forces a left-column-synced minimum height (content-fit behavior like WAN).
 - 2026-03-02: Negative prompt fields are now CFG-gated in generation views: `ImageModelTab.vue` hides the main negative prompt when base CFG is `<= 1`, `WANTab.vue` hides High/Low negative prompts when each stage CFG is `<= 1`, and `HiresSettingsCard.vue` handles the same rule for second-pass overrides.
 - 2026-03-02: `Home.vue`/`App.vue` interface now hides `chroma` model tabs from tab-management/navigation surfaces, and the top nav no longer renders a `settings` tab link (routes remain available for direct navigation).

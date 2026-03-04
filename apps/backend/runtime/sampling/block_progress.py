@@ -81,16 +81,16 @@ class RichBlockProgressController:
             return
         try:
             progress = Progress(
-                TextColumn("{task.percentage:>3.0f}% |"),
+                TextColumn("  {task.percentage:>3.0f}% |"),
                 BarColumn(bar_width=32),
                 TextColumn("|"),
                 TimeElapsedColumn(),
-                TextColumn("| {task.completed:.0f}/{task.total:.0f} self_attn [{task.fields[blocks_per_second]}blocks/s]"),
+                TextColumn("| {task.completed:.0f}/{task.total:.0f} {task.fields[label]} [{task.fields[blocks_per_second]}blocks/s]"),
                 transient=True,
                 auto_refresh=True,
                 refresh_per_second=12,
             )
-            task_id = progress.add_task("", total=1, completed=0, blocks_per_second="0.00")
+            task_id = progress.add_task("", total=1, completed=0, blocks_per_second="0.00", label="layer")
             progress.start()
         except Exception:
             return
@@ -101,7 +101,7 @@ class RichBlockProgressController:
     def is_active(self) -> bool:
         return self._progress is not None and self._task_id is not None
 
-    def update(self, block_index: int, total_blocks: int) -> None:
+    def update(self, block_index: int, total_blocks: int, *, label: str | None = None) -> None:
         normalized_index, normalized_total = validate_block_progress_payload(block_index, total_blocks)
         if not self.is_active:
             return
@@ -126,6 +126,7 @@ class RichBlockProgressController:
             total=normalized_total,
             completed=normalized_index,
             blocks_per_second=f"{blocks_per_second:.2f}",
+            label=(str(label).strip() if isinstance(label, str) and label.strip() else "layer"),
         )
 
     def close(self) -> None:

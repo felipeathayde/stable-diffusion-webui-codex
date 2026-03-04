@@ -617,6 +617,7 @@ def sample_stage_latents_generator(
             local_block_progress_controller.update(
                 block_index=normalized_index,
                 total_blocks=normalized_total,
+                label=f"{stage_name}.layer",
             )
 
         model_transformer_options[BLOCK_PROGRESS_CALLBACK_KEY] = _on_block_progress

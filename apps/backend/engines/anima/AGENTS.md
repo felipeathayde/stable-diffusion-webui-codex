@@ -1,7 +1,7 @@
 # apps/backend/engines/anima Overview
 <!-- tags: backend, engines, anima, cosmos -->
 Date: 2026-02-05
-Last Review: 2026-03-03
+Last Review: 2026-03-04
 Status: Draft
 
 ## Purpose
@@ -21,4 +21,5 @@ Status: Draft
 - 2026-02-08: `spec._predictor()` opts Anima into `simple_schedule_mode="comfy_downsample_sigmas"` so `scheduler=simple` follows ComfyUI-style downsample of `predictor.sigmas` (parity target), while other flow families keep their existing SIMPLE behavior.
 - 2026-02-09: Anima conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-23: `AnimaEngineRuntime.device` default now resolves from memory-manager mount-device authority (no hardcoded CPU default in runtime metadata).
-- 2026-03-03: `spec.assemble_anima_runtime(...)` now eagerly loads external Qwen3 text-encoder weights, WAN VAE weights, and T5 tokenizer through canonical loaders; qwen patcher now wraps the concrete loaded model (no lazy shortcuts, no patcher size override hack).
+- 2026-03-03: `spec.assemble_anima_runtime(...)` now eagerly loads external Qwen3 text-encoder weights, WAN VAE weights, and T5 tokenizer through canonical loaders; qwen patcher now wraps the concrete loaded model.
+- 2026-03-04: Anima core denoiser now follows WAN22 load philosophy in `spec.assemble_anima_runtime(...)`: the transformer state dict is wrapped by a lazy module and `AnimaDiT` materialization is deferred until first real denoiser use (`to/_apply/forward/explicit attr access`). External Qwen/VAE/T5 loading remains eager and fail-loud.

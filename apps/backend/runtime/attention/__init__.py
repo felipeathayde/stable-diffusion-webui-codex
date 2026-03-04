@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `attention_split` (function): Splits attention computation into chunks to reduce peak memory.
 - `attention_xformers` (function): xFormers attention path (when available and not broken).
 - `attention_pytorch` (function): PyTorch SDPA attention path with optional per-call SDPA policy (`auto|flash|mem_efficient|math`) and flash fallback warning behavior.
+- `_coerce_sdpa_policy_for_head_dim` (function): Forces SDPA policy to `auto` when `head_dim > 256` to avoid ineligible explicit-kernel paths.
 - `_flash_sdpa_ineligibility_reason` (function): Validates hard flash-kernel constraints (shape/head-dim/device/dtype) so known-ineligible flash calls skip direct flash attempts and enter deterministic fallback with explicit reason.
 - `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`) with optional SDPA policy forwarding for PyTorch backend.
 - `attention_function_pre_shaped` (function): Dispatcher wrapper for pre-shaped Q/K/V tensors (`[B,H,S,D]` -> `[B,H,S,D]`), including optional SDPA policy forwarding.
@@ -55,6 +56,7 @@ _XFORMERS_VERSION = None
 _XFORMERS_IMPORT_ERROR: Exception | None = None
 _SDPA_POLICY_LOGGED: set[tuple[str, str, str, str]] = set()
 _SDPA_FLASH_FALLBACK_LOGGED: set[tuple[str, str, str, str, str]] = set()
+_SDPA_FORCED_AUTO_LOGGED: set[tuple[str, str, str, str, int]] = set()
 _ATTENTION_REQUEST_ID_CTX: ContextVar[str] = ContextVar("attention_request_id", default="-")
 
 
@@ -193,6 +195,36 @@ def _log_sdpa_flash_fallback_once(
     )
 
 
+def _coerce_sdpa_policy_for_head_dim(
+    *,
+    sdpa_policy: _SDPAPolicy,
+    q: torch.Tensor,
+) -> _SDPAPolicy:
+    if sdpa_policy == "auto":
+        return sdpa_policy
+    if q.ndim < 1:
+        return sdpa_policy
+    head_dim = int(q.shape[-1])
+    if head_dim <= 256:
+        return sdpa_policy
+
+    request_id = get_attention_request_id()
+    key = (request_id, sdpa_policy, str(q.device), str(q.dtype), head_dim)
+    if key not in _SDPA_FORCED_AUTO_LOGGED:
+        _SDPA_FORCED_AUTO_LOGGED.add(key)
+        _LOGGER.info(
+            "[attention][req=%s] forcing sdpa policy=auto for head_dim=%d "
+            "(requested=%s) device=%s dtype=%s",
+            request_id,
+            head_dim,
+            sdpa_policy,
+            str(q.device),
+            str(q.dtype),
+        )
+
+    return "auto"
+
+
 def _flash_sdpa_ineligibility_reason(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -233,6 +265,7 @@ def _run_pytorch_sdpa(
     sdpa_policy: str | None,
 ) -> torch.Tensor:
     normalized_policy = _normalize_sdpa_policy(sdpa_policy)
+    normalized_policy = _coerce_sdpa_policy_for_head_dim(sdpa_policy=normalized_policy, q=q)
 
     def _run_once(policy: _SDPAPolicy) -> torch.Tensor:
         _log_sdpa_policy_once(sdpa_policy=policy, device=q.device, dtype=q.dtype)

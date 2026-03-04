@@ -23,7 +23,17 @@ Symbols (top-level; keep in sync; no ghosts):
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { InventoryResponse, ModelInfo } from '../api/types'
-import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInventory, fetchPaths, fetchMemory, getCachedOptionsRevision } from '../api/client'
+import {
+  fetchModelsWithFreshness,
+  fetchOptions,
+  updateOptions,
+  fetchModelInventory,
+  fetchPaths,
+  fetchMemory,
+  getCachedOptionsRevision,
+  invalidateModelCatalogCaches,
+} from '../api/client'
+import type { ModelsFreshnessMarker } from '../api/client'
 
 const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_overrides'
 const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
@@ -136,6 +146,7 @@ function buildLoraShaMapFromInventory(inventory: Pick<InventoryResponse, 'loras'
 
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
+  const modelsFreshness = ref<ModelsFreshnessMarker | null>(null)
   const currentModel = ref<string>('')
   const vaeChoices = ref<string[]>([])
   const currentVae = ref<string>(DEFAULT_VAE_SELECTION)
@@ -173,6 +184,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const settingsRevision = ref<number>(Math.max(0, Math.trunc(getCachedOptionsRevision())))
   const lastAppliedNowMessages = ref<string[]>([])
   const lastRestartRequiredMessages = ref<string[]>([])
+  let modelsRequestSerial = 0
 
   function loadTextEncoderOverridesFromStorage(): void {
     try {
@@ -430,20 +442,46 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     ])
   }
 
-  async function loadModels(): Promise<void> {
-    const res = await fetchModels()
-    models.value = res.models
-    if (!currentModel.value && res.current) {
-      currentModel.value = res.current
+  function applyModelsResponse(args: {
+    response: { models: ModelInfo[]; current: string | null }
+    freshness: ModelsFreshnessMarker
+    requestSerial: number
+  }): void {
+    const { response, freshness, requestSerial } = args
+    // Ignore stale responses that resolve after a newer models request.
+    if (requestSerial !== modelsRequestSerial) return
+    models.value = response.models
+    modelsFreshness.value = freshness
+    if (!currentModel.value && response.current) {
+      currentModel.value = response.current
     }
   }
 
+  async function loadModelsList(options?: { refresh?: boolean; invalidate?: boolean }): Promise<void> {
+    const requestSerial = ++modelsRequestSerial
+    const { response, freshness } = await fetchModelsWithFreshness({
+      refresh: options?.refresh === true,
+      invalidate: options?.invalidate === true,
+    })
+    applyModelsResponse({
+      response,
+      freshness,
+      requestSerial,
+    })
+  }
+
+  async function loadModels(): Promise<void> {
+    await loadModelsList({ refresh: false })
+  }
+
+  function invalidateModelsList(): number {
+    return invalidateModelCatalogCaches()
+  }
+
   async function refreshModelsList(): Promise<void> {
-    const res = await refreshModels()
-    models.value = res.models
-    if (!currentModel.value && res.current) {
-      currentModel.value = res.current
-    }
+    // Explicit invalidation is centralized here (no scattered ad-hoc refresh semantics).
+    invalidateModelsList()
+    await loadModelsList({ refresh: true, invalidate: false })
   }
 
   async function loadOptions(): Promise<void> {
@@ -862,6 +900,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   return {
     models,
+    modelsFreshness,
     currentModel,
     vaeChoices,
     currentVae,
@@ -870,6 +909,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     deviceChoices,
     currentDevice,
     init,
+    invalidateModelsList,
     refreshModelsList,
     setModel,
     setVae,

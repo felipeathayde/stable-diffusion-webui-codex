@@ -43,6 +43,10 @@ from apps.backend.runtime.diagnostics.contract_trace import emit_event as emit_c
 from apps.backend.runtime.diagnostics.contract_trace import hash_request_prompt
 from apps.backend.runtime.diagnostics.fallback_state import fallback_used as fallback_state_used
 from apps.backend.runtime.diagnostics.fallback_state import reset_fallback_state
+from apps.backend.runtime.load_authority import (
+    LoadAuthorityStage,
+    coordinator_load_permit,
+)
 
 logger = logging.getLogger("backend.api.tasks.generation")
 
@@ -175,7 +179,11 @@ def force_runtime_memory_cleanup(*, reason: str, orch: Any | None = None) -> Non
         )
     else:
         try:
-            memory_state.manager.unload_all_models()
+            with coordinator_load_permit(
+                owner="api.tasks.generation.force_runtime_memory_cleanup",
+                stage=LoadAuthorityStage.CLEANUP,
+            ):
+                memory_state.manager.unload_all_models()
         except Exception as exc:
             cleanup_failures.append(f"unload_all_models:{exc}")
             logger.warning(

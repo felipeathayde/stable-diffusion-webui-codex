@@ -114,10 +114,26 @@ def resolve_noise_settings(processing: Any) -> NoiseSettings:
     if getattr(processing, "noise_source", None):
         source = processing.noise_source
 
-    try:
-        source_kind = NoiseSourceKind.from_string(source) if source else NoiseSourceKind.GPU
-    except ValueError:
+    if source is None:
         source_kind = NoiseSourceKind.GPU
+    else:
+        if not isinstance(source, str):
+            raise ValueError(
+                "randn_source/noise_source must be a string when provided "
+                f"(got {type(source).__name__})."
+            )
+        normalized_source = source.strip()
+        if not normalized_source:
+            source_kind = NoiseSourceKind.GPU
+        else:
+            try:
+                source_kind = NoiseSourceKind.from_string(normalized_source)
+            except ValueError as exc:
+                allowed = ", ".join(member.value for member in NoiseSourceKind)
+                raise ValueError(
+                    f"Invalid randn_source/noise_source value {source!r}. "
+                    f"Allowed: {allowed}."
+                ) from exc
 
     delta = int(getattr(processing, "eta_noise_seed_delta", eta_delta) or eta_delta or 0)
     settings = NoiseSettings(source=source_kind, eta_noise_seed_delta=delta)

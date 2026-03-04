@@ -186,6 +186,16 @@ export interface WanAssetsParams {
   vae: string
 }
 
+export type WanTabParams = Record<string, unknown> & {
+  schemaVersion: number
+  high: WanStageParams
+  low: WanStageParams
+  video: WanVideoParams
+  assets: WanAssetsParams
+  lightx2v: boolean
+  lowFollowsHigh: boolean
+}
+
 export interface BaseTab {
   id: string
   type: BaseTabType
@@ -197,6 +207,7 @@ export interface BaseTab {
 }
 
 export interface ImageBaseParams {
+  schemaVersion: number
   prompt: string
   negativePrompt: string
   width: number
@@ -268,14 +279,7 @@ export type TabParamsByType = {
   zimage: ImageBaseParams
   chroma: ImageBaseParams
   anima: ImageBaseParams
-  wan: {
-    high: WanStageParams
-    low: WanStageParams
-    video: WanVideoParams
-    assets: WanAssetsParams
-    lightx2v: boolean
-    lowFollowsHigh: boolean
-  }
+  wan: WanTabParams
 }
 
 export type TabByType<T extends BaseTabType = BaseTabType> = Omit<BaseTab, 'type' | 'params'> & {
@@ -292,6 +296,56 @@ type ModelTabsStorageState = {
 
 export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v2'
 const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
+const TAB_PARAMS_SCHEMA_VERSION = 1
+
+const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
+  'schemaVersion',
+  'prompt',
+  'negativePrompt',
+  'width',
+  'height',
+  'sampler',
+  'scheduler',
+  'steps',
+  'cfgScale',
+  'seed',
+  'clipSkip',
+  'batchSize',
+  'batchCount',
+  'img2imgResizeMode',
+  'img2imgUpscaler',
+  'guidanceAdvanced',
+  'hires',
+  'highres', // legacy alias
+  'refiner',
+  'checkpoint',
+  'textEncoders',
+  'useInitImage',
+  'initImageData',
+  'initImageName',
+  'denoiseStrength',
+  'useMask',
+  'maskImageData',
+  'maskImageName',
+  'maskEnforcement',
+  'inpaintFullResPadding',
+  'inpaintingFill',
+  'maskInvert',
+  'maskBlur',
+  'maskRound',
+  'maskRegionSplit',
+  'zimageTurbo',
+])
+
+const WAN_PARAM_TOP_LEVEL_KEYS = new Set<string>([
+  'schemaVersion',
+  'high',
+  'low',
+  'video',
+  'assets',
+  'lightx2v',
+  'lowFollowsHigh',
+])
 
 function buildStoragePayload(tabList: BaseTab[], currentActiveId: string): ModelTabsStorageState {
   const tabRefs: ModelTabsStorageTabRef[] = tabList.map((tab) => ({
@@ -385,6 +439,7 @@ function defaultParams<T extends BaseTabType>(
     }
     const assets: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
     const wanDefaults: TabParamsByType['wan'] = {
+      schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
       high: stage(),
       low: stage(),
       video,
@@ -430,6 +485,7 @@ function defaultParams<T extends BaseTabType>(
     refiner: { ...refinerDefaults },
   }
   const imageDefaults: ImageBaseParams = {
+    schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
     prompt: '',
     negativePrompt: config.capabilities.usesNegativePrompt ? '' : '',
     width: defaults.width,
@@ -513,6 +569,67 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function asParamsRecord(params: TabParamsByType[BaseTabType]): Record<string, unknown> {
   return params as unknown as Record<string, unknown>
+}
+
+function parseParamsSchemaVersion(rawValue: unknown): number | null {
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    return Math.max(0, Math.trunc(rawValue))
+  }
+  if (typeof rawValue === 'string') {
+    const trimmed = rawValue.trim()
+    if (/^-?\d+$/.test(trimmed)) return Math.max(0, Math.trunc(Number(trimmed)))
+  }
+  return null
+}
+
+function migrateImageParamsPatch(rawPatch: Record<string, unknown>): {
+  patch: Partial<ImageBaseParams>
+  droppedUnknownKeys: string[]
+  fromVersion: number | null
+} {
+  const patch: Record<string, unknown> = {}
+  const droppedUnknownKeys: string[] = []
+  for (const [key, value] of Object.entries(rawPatch)) {
+    if (!IMAGE_PARAM_TOP_LEVEL_KEYS.has(key)) {
+      droppedUnknownKeys.push(key)
+      continue
+    }
+    patch[key] = value
+  }
+  if (!Object.prototype.hasOwnProperty.call(patch, 'hires') && isPlainRecord(patch.highres)) {
+    patch.hires = patch.highres
+  }
+  delete patch.highres
+  const fromVersion = parseParamsSchemaVersion(rawPatch.schemaVersion)
+  patch.schemaVersion = TAB_PARAMS_SCHEMA_VERSION
+  return {
+    patch: patch as Partial<ImageBaseParams>,
+    droppedUnknownKeys,
+    fromVersion,
+  }
+}
+
+function migrateWanParamsPatch(rawPatch: Record<string, unknown>): {
+  patch: Partial<WanTabParams>
+  droppedUnknownKeys: string[]
+  fromVersion: number | null
+} {
+  const patch: Record<string, unknown> = {}
+  const droppedUnknownKeys: string[] = []
+  for (const [key, value] of Object.entries(rawPatch)) {
+    if (!WAN_PARAM_TOP_LEVEL_KEYS.has(key)) {
+      droppedUnknownKeys.push(key)
+      continue
+    }
+    patch[key] = value
+  }
+  const fromVersion = parseParamsSchemaVersion(rawPatch.schemaVersion)
+  patch.schemaVersion = TAB_PARAMS_SCHEMA_VERSION
+  return {
+    patch: patch as Partial<WanTabParams>,
+    droppedUnknownKeys,
+    fromVersion,
+  }
 }
 
 function normalizeWanFrameCount(rawValue: number, min = 9, max = 401): number {
@@ -791,7 +908,15 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
 }
 
 function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): TabParamsByType['wan'] {
-  const patch = asRecordObject(raw) as Partial<TabParamsByType['wan']>
+  const rawPatch = asRecordObject(raw)
+  const migration = migrateWanParamsPatch(rawPatch)
+  if (migration.droppedUnknownKeys.length > 0) {
+    console.warn(
+      `[model_tabs] Dropping stale WAN params key(s) during migration: ${migration.droppedUnknownKeys.join(', ')}`,
+      { fromVersion: migration.fromVersion, toVersion: TAB_PARAMS_SCHEMA_VERSION },
+    )
+  }
+  const patch = migration.patch
   const highPatch = asRecordObject(patch.high)
   const lowPatch = asRecordObject(patch.low)
   const videoPatch = asRecordObject(patch.video)
@@ -799,11 +924,13 @@ function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): Tab
   const normalizedVideo = normalizeWanVideoParams(videoPatch as Partial<WanVideoParams>, defaults.video)
   return {
     ...defaults,
-    ...patch,
     high: { ...defaults.high, ...(highPatch as Partial<WanStageParams>) },
     low: { ...defaults.low, ...(lowPatch as Partial<WanStageParams>) },
     video: normalizedVideo,
     assets: { ...defaults.assets, ...(assetsPatch as Partial<WanAssetsParams>) },
+    lightx2v: normalizeBoolean(patch.lightx2v, defaults.lightx2v),
+    lowFollowsHigh: normalizeBoolean(patch.lowFollowsHigh, defaults.lowFollowsHigh),
+    schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
   }
 }
 
@@ -841,7 +968,15 @@ function normalizeGuidanceAdvancedParams(raw: unknown, defaults: GuidanceAdvance
 }
 
 function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBaseParams {
-  const patch = asRecordObject(raw) as Partial<ImageBaseParams>
+  const rawPatch = asRecordObject(raw)
+  const migration = migrateImageParamsPatch(rawPatch)
+  if (migration.droppedUnknownKeys.length > 0) {
+    console.warn(
+      `[model_tabs] Dropping stale image params key(s) during migration: ${migration.droppedUnknownKeys.join(', ')}`,
+      { fromVersion: migration.fromVersion, toVersion: TAB_PARAMS_SCHEMA_VERSION },
+    )
+  }
+  const patch = migration.patch
   const hiresPatch = asRecordObject(patch.hires)
   const hiresRefinerPatch = asRecordObject(hiresPatch.refiner)
   const hiresTilePatch = asRecordObject(hiresPatch.tile)
@@ -905,6 +1040,7 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
     patch.guidanceAdvanced,
     defaults.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED_PARAMS,
   )
+  merged.schemaVersion = TAB_PARAMS_SCHEMA_VERSION
   return merged
 }
 
@@ -1203,6 +1339,9 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     const updatedAtSnapshot = tab.meta.updatedAt
     try {
       paramsToPersist = cloneParamsForPersist(tabId, 'persist', tab.params as Record<string, unknown>)
+      const migratedParams = asParamsRecord(normalizeParamsForType(tab.type, paramsToPersist, defaultParamsForType(tab.type)))
+      paramsToPersist = cloneParamsForPersist(tabId, 'persist', migratedParams)
+      tab.params = cloneParamsForPersist(tabId, 'persist', migratedParams)
     } catch (error) {
       const mapped = error instanceof ModelTabsStoreError
         ? error

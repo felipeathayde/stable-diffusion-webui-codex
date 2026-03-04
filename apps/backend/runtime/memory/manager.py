@@ -38,6 +38,10 @@ from typing import Dict, List, MutableSequence, Optional, Sequence, Set, Tuple
 import torch
 
 from apps.backend.runtime.diagnostics.fallback_state import mark_fallback_used
+from apps.backend.runtime.load_authority import (
+    LoadAuthorityStage,
+    guarded_load_entrypoint,
+)
 
 from .config import (
     AttentionBackend,
@@ -1055,6 +1059,16 @@ class CodexMemoryManager:
         if force:
             self._signal_empty_cache = False
 
+    @guarded_load_entrypoint(
+        action="runtime.memory.manager.unload_all_models",
+        allowed_stages=(
+            LoadAuthorityStage.LOAD,
+            LoadAuthorityStage.MATERIALIZE,
+            LoadAuthorityStage.UNLOAD,
+            LoadAuthorityStage.RELOAD,
+            LoadAuthorityStage.CLEANUP,
+        ),
+    )
     def unload_all_models(self) -> None:
         failures: List[Tuple[_LoadedModelRecord, Exception]] = []
         for record in list(self._loaded_models):
@@ -1088,6 +1102,16 @@ class CodexMemoryManager:
         """
         return self._find_loaded_model(model) is not None
 
+    @guarded_load_entrypoint(
+        action="runtime.memory.manager.unload_model_clones",
+        allowed_stages=(
+            LoadAuthorityStage.LOAD,
+            LoadAuthorityStage.MATERIALIZE,
+            LoadAuthorityStage.UNLOAD,
+            LoadAuthorityStage.RELOAD,
+            LoadAuthorityStage.CLEANUP,
+        ),
+    )
     def unload_model_clones(self, model: object) -> None:
         if not hasattr(model, "is_clone"):
             return
@@ -1104,6 +1128,16 @@ class CodexMemoryManager:
                 self._unload_record(record, avoid_model_moving=True, reason="unload_model_clones")
                 self._loaded_models.pop(index)
 
+    @guarded_load_entrypoint(
+        action="runtime.memory.manager.unload_model",
+        allowed_stages=(
+            LoadAuthorityStage.LOAD,
+            LoadAuthorityStage.MATERIALIZE,
+            LoadAuthorityStage.UNLOAD,
+            LoadAuthorityStage.RELOAD,
+            LoadAuthorityStage.CLEANUP,
+        ),
+    )
     def unload_model(
         self,
         model: object,
@@ -1150,6 +1184,14 @@ class CodexMemoryManager:
                 logger.debug("Suppressed CUDA empty_cache failure during unload_model: %s", exc)
 
     # --------------------------------------------------------------------- load/unload
+    @guarded_load_entrypoint(
+        action="runtime.memory.manager.load_models",
+        allowed_stages=(
+            LoadAuthorityStage.LOAD,
+            LoadAuthorityStage.MATERIALIZE,
+            LoadAuthorityStage.RELOAD,
+        ),
+    )
     def load_models(
         self,
         models: Sequence[object],

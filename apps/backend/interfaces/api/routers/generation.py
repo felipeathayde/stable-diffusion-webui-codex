@@ -75,6 +75,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _p = param_utils
 
     from apps.backend.core.engine_interface import TaskType
+    from apps.backend.core.rng import NoiseSourceKind
     from apps.backend.core.orchestrator import InferenceOrchestrator
     from apps.backend.core.requests import (
         ProgressEvent,
@@ -85,7 +86,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Img2VidRequest,
         Vid2VidRequest,
     )
-    from apps.backend.interfaces.api.device_selection import parse_device_from_payload
+    from apps.backend.interfaces.api.device_selection import (
+        GenerationRouteMode,
+        generation_route_device_policy,
+        parse_device_from_payload,
+    )
     from apps.backend.runtime.model_registry.capabilities import (
         ENGINE_SURFACES,
         SemanticEngine,
@@ -161,7 +166,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _IMG2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.IMG2VID_ALL)
     _WAN_STAGE_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
-    _WAN_RUNTIME_ALLOWED_DEVICES = {"cpu", "cuda"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
     _GUIDANCE_OPTION_KEYS = {
         "apg_enabled",
@@ -184,11 +188,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _ANIMA_ALLOWED_SAMPLERS = tuple(ENGINE_SURFACES[SemanticEngine.ANIMA].samplers or ())
     if not _ANIMA_ALLOWED_SAMPLERS:
         raise RuntimeError("Anima capability surface must declare a non-empty sampler allowlist.")
+    _NOISE_SOURCE_VALUES = tuple(member.value for member in NoiseSourceKind)
 
     def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
         unknown = sorted(set(obj.keys()) - allowed)
         if unknown:
-            raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unknown_request_keys",
+                    "message": f"Unexpected {context} key(s): {', '.join(unknown)}",
+                    "context": context,
+                    "unknown_keys": unknown,
+                },
+            )
 
     def _current_settings_revision() -> int:
         snapshot = _opts_snapshot()
@@ -1082,6 +1095,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="'metadata' must be an object")
         return dict(raw)
 
+    def _parse_noise_source_field(raw: object, *, field_name: str) -> str:
+        if not isinstance(raw, str):
+            allowed = ", ".join(_NOISE_SOURCE_VALUES)
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be one of: {allowed}")
+        normalized = raw.strip().lower()
+        if not normalized:
+            allowed = ", ".join(_NOISE_SOURCE_VALUES)
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be one of: {allowed}")
+        try:
+            return NoiseSourceKind.from_string(normalized).value
+        except ValueError as exc:
+            allowed = ", ".join(_NOISE_SOURCE_VALUES)
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be one of: {allowed}") from exc
+
 
     def _normalize_er_sde_solver_type(value: object, *, field_name: str) -> str:
         if not isinstance(value, str):
@@ -1231,7 +1258,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
         extras: Dict[str, Any] = {}
         if 'randn_source' in raw:
-            extras['randn_source'] = str(raw['randn_source'])
+            extras['randn_source'] = _parse_noise_source_field(
+                raw['randn_source'],
+                field_name="extras.randn_source",
+            )
         if 'eta_noise_seed_delta' in raw:
             val = raw['eta_noise_seed_delta']
             if isinstance(val, bool) or not isinstance(val, (int, float)):
@@ -1872,7 +1902,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         scheduler_name: str
         seed: int
         clip_skip: int | None
-        noise_source: Any
+        noise_source: str | None
         ensd_raw: Any
 
     @dataclass(frozen=True, slots=True)
@@ -2086,7 +2116,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             ) from exc
         seed_val = _require_int_field(payload, "img2img_seed")
         clip_skip = _require_int_field(payload, "img2img_clip_skip", minimum=0, maximum=12) if "img2img_clip_skip" in payload else None
-        noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
+        noise_source: str | None = None
+        if "img2img_randn_source" in payload:
+            noise_source = _parse_noise_source_field(
+                payload.get("img2img_randn_source"),
+                field_name="img2img_randn_source",
+            )
+        elif "img2img_noise_source" in payload:
+            noise_source = _parse_noise_source_field(
+                payload.get("img2img_noise_source"),
+                field_name="img2img_noise_source",
+            )
         ensd_raw = payload.get('img2img_eta_noise_seed_delta')
 
         return _Img2ImgCoreDTO(
@@ -2375,38 +2415,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     def _parse_explicit_device(
         payload: Dict[str, Any],
         *,
-        allowed_devices: Optional[set[str]] = None,
-        route_label: str = "generation",
+        route_mode: GenerationRouteMode,
     ) -> str:
         """Parse/validate the per-request device selection (fail loud).
 
         Note: do not apply `switch_primary_device()` here; apply it only when the task actually starts running
         (single-flight-safe).
         """
+        policy = generation_route_device_policy(route_mode)
         try:
-            device = parse_device_from_payload(payload)
+            return parse_device_from_payload(payload, route_policy=policy)
         except ValueError as exc:
             _router_log.warning("generation device selection validation failed: %s", exc)
             raise HTTPException(
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid 'device' selection"),
             ) from None
-        if allowed_devices is not None and device not in allowed_devices:
-            allowed = "|".join(sorted(allowed_devices))
-            _router_log.warning(
-                "%s device selection rejected: resolved_device=%s allowed=%s",
-                route_label,
-                device,
-                allowed,
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"{route_label} supports only {allowed} "
-                    "(or auto resolving to one of those backends)."
-                ),
-            )
-        return device
 
     _ORCH = InferenceOrchestrator()
 
@@ -2678,6 +2702,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raw_extras["guidance"] = _parse_guidance_options(
                     raw_extras["guidance"],
                     field_name="img2img_extras.guidance",
+                )
+            if "randn_source" in raw_extras:
+                raw_extras["randn_source"] = _parse_noise_source_field(
+                    raw_extras.get("randn_source"),
+                    field_name="img2img_extras.randn_source",
                 )
 
             extras.update(raw_extras)
@@ -3763,15 +3792,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             # before this worker marks done + releases inference gate.
                             continue
                         if isinstance(ev, ProgressEvent):
+                            progress_payload: Dict[str, Any] = {
+                                "type": "progress",
+                                "stage": ev.stage,
+                                "percent": ev.percent,
+                                "step": ev.step,
+                                "total_steps": ev.total_steps,
+                                "eta_seconds": ev.eta_seconds,
+                            }
+                            if ev.message is not None:
+                                progress_payload["message"] = ev.message
+                            if ev.data:
+                                progress_payload["data"] = dict(ev.data)
                             push(
-                                {
-                                    "type": "progress",
-                                    "stage": ev.stage,
-                                    "percent": ev.percent,
-                                    "step": ev.step,
-                                    "total_steps": ev.total_steps,
-                                    "eta_seconds": ev.eta_seconds,
-                                }
+                                progress_payload
                             )
                             emit_contract_trace(
                                 task_id=task_id,
@@ -3790,6 +3824,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                                     "step": ev.step,
                                     "total_steps": ev.total_steps,
                                     "percent": ev.percent,
+                                    "message": ev.message,
+                                    "data_keys": sorted(str(key) for key in ev.data.keys()) if ev.data else [],
                                 },
                             )
                         elif isinstance(ev, ResultEvent):
@@ -3984,8 +4020,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         device = _parse_explicit_device(
             payload,
-            allowed_devices=_WAN_RUNTIME_ALLOWED_DEVICES,
-            route_label="WAN video",
+            route_mode=GenerationRouteMode.TXT2IMG,
         )
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
@@ -4002,8 +4037,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         device = _parse_explicit_device(
             payload,
-            allowed_devices=_WAN_RUNTIME_ALLOWED_DEVICES,
-            route_label="WAN video",
+            route_mode=GenerationRouteMode.IMG2IMG,
         )
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
@@ -4018,7 +4052,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
 
-        device = _parse_explicit_device(payload)
+        device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.TXT2VID)
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-txt2vid-{uuid4().hex})"
@@ -4033,7 +4067,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
 
-        device = _parse_explicit_device(payload)
+        device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.IMG2VID)
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-img2vid-{uuid4().hex})"

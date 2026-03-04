@@ -181,7 +181,22 @@ def _yield_wan22_gguf_progress(ev: dict) -> Optional[ProgressEvent]:
     pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
     eta_raw = ev.get("eta_seconds", None)
     eta = float(eta_raw) if eta_raw is not None else None
-    return ProgressEvent(stage=stage, percent=pct_out, step=step, total_steps=total, eta_seconds=eta)
+    message_raw = ev.get("message", None)
+    message = str(message_raw) if message_raw is not None else None
+    raw_data = ev.get("data", None)
+    data_payload: dict[str, Any] = dict(raw_data) if isinstance(raw_data, Mapping) else {}
+    for key in ("progress_adapter", "progress_granularity", "coarse_reason"):
+        if key in ev and ev.get(key) is not None:
+            data_payload[key] = ev.get(key)
+    return ProgressEvent(
+        stage=stage,
+        percent=pct_out,
+        step=step,
+        total_steps=total,
+        eta_seconds=eta,
+        message=message,
+        data=data_payload,
+    )
 
 
 def run_txt2vid(

@@ -20,6 +20,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `getApiErrorStatus` (function): Reads an HTTP status code from request errors emitted by this client.
 - `getCurrentRevisionFromError` (function): Extracts `current_revision` from backend conflict errors (`409`) when present.
 - `getCachedOptionsRevision` (function): Returns the cached `/api/options` revision used by generation payload builders.
+- `ModelsFreshnessMarker` (type): Deterministic model-list freshness marker (`invalidationVersion` + content fingerprint + request id).
+- `fetchModelsWithFreshness` (function): Fetches `/models` with a freshness marker used by stores to avoid stale-response ambiguity.
+- `invalidateModelCatalogCaches` (function): Centralized invalidation for model/inventory caches and invalidation epoch bumps.
 - `fetchModels` (function): Fetches the model list (`/models`).
 - `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
 - `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
@@ -115,6 +118,21 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 const _jsonCache = new Map<string, unknown>()
 const _jsonInflight = new Map<string, Promise<unknown>>()
 let _cachedOptionsRevision = 0
+let _modelsInvalidationVersion = 0
+let _modelsRequestId = 0
+
+export type ModelsFreshnessMarker = {
+  requestId: number
+  invalidationVersion: number
+  refreshed: boolean
+  fetchedAtMs: number
+  contentFingerprint: string
+}
+
+type ModelsWithFreshnessResult = {
+  response: ModelsResponse
+  freshness: ModelsFreshnessMarker
+}
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -132,6 +150,40 @@ function normalizeRevision(value: unknown): number | null {
     }
   }
   return null
+}
+
+function stableHash32Hex(text: string): string {
+  // FNV-1a 32-bit hash for deterministic, low-cost fingerprints.
+  let hash = 0x811c9dc5
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+function computeModelsContentFingerprint(payload: ModelsResponse): string {
+  const normalizedModels = (Array.isArray(payload.models) ? payload.models : [])
+    .map((model) => ({
+      title: String(model?.title || '').trim(),
+      filename: String(model?.filename || '').trim().replace(/\\+/g, '/'),
+      hash: String(model?.hash || '').trim().toLowerCase(),
+      core_only: Boolean((model as any)?.core_only),
+      family_hint: String((model as any)?.family_hint || '').trim().toLowerCase(),
+    }))
+    .sort((left, right) => {
+      const byTitle = left.title.localeCompare(right.title)
+      if (byTitle !== 0) return byTitle
+      const byFile = left.filename.localeCompare(right.filename)
+      if (byFile !== 0) return byFile
+      return left.hash.localeCompare(right.hash)
+    })
+
+  const canonical = JSON.stringify({
+    current: String(payload.current || ''),
+    models: normalizedModels,
+  })
+  return stableHash32Hex(canonical)
 }
 
 function cacheOptionsRevisionFromPayload(payload: unknown): void {
@@ -198,6 +250,21 @@ export function getCurrentRevisionFromError(error: unknown): number | null {
 
 function detailToMessage(detail: unknown): string {
   if (typeof detail === 'string' && detail.trim()) return detail.trim()
+  if (isRecordObject(detail)) {
+    const unknownKeysRaw = detail.unknown_keys ?? detail.unknownKeys
+    const unknownKeys = Array.isArray(unknownKeysRaw)
+      ? unknownKeysRaw.map((entry) => String(entry || '').trim()).filter((entry) => entry.length > 0)
+      : []
+    if (unknownKeys.length > 0) {
+      const context = String(detail.context || detail.field || detail.tab_type || 'request').trim()
+      return `Unexpected ${context} key(s): ${unknownKeys.join(', ')}`
+    }
+    const message = typeof detail.message === 'string'
+      ? detail.message.trim()
+      : ''
+    if (message) return message
+    return JSON.stringify(detail)
+  }
   if (Array.isArray(detail)) {
     const msgs = detail
       .map((item) => {
@@ -234,6 +301,18 @@ function invalidateJsonCache(prefixPath: string): void {
   for (const key of Array.from(_jsonInflight.keys())) {
     if (key === prefixPath || key.startsWith(`${prefixPath}?`)) _jsonInflight.delete(key)
   }
+}
+
+function bumpModelsInvalidationVersion(): number {
+  const next = _modelsInvalidationVersion + 1
+  _modelsInvalidationVersion = Number.isSafeInteger(next) ? next : 1
+  return _modelsInvalidationVersion
+}
+
+export function invalidateModelCatalogCaches(): number {
+  invalidateJsonCache('/models')
+  invalidateJsonCache('/models/inventory')
+  return bumpModelsInvalidationVersion()
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -305,12 +384,32 @@ function withSettingsRevision(payload: Record<string, unknown>): Record<string, 
   return out
 }
 
+export async function fetchModelsWithFreshness(
+  options: { refresh?: boolean; invalidate?: boolean } = {},
+): Promise<ModelsWithFreshnessResult> {
+  const refreshed = options.refresh === true
+  const shouldInvalidate = options.invalidate === true || refreshed
+  const invalidationVersion = shouldInvalidate
+    ? invalidateModelCatalogCaches()
+    : _modelsInvalidationVersion
+  const path = refreshed ? '/models?refresh=1' : '/models'
+  const response = await requestJson<ModelsResponse>(path)
+  const freshness: ModelsFreshnessMarker = {
+    requestId: ++_modelsRequestId,
+    invalidationVersion,
+    refreshed,
+    fetchedAtMs: Date.now(),
+    contentFingerprint: computeModelsContentFingerprint(response),
+  }
+  return { response, freshness }
+}
+
 export function fetchModels(): Promise<ModelsResponse> {
-  return requestJson<ModelsResponse>('/models')
+  return fetchModelsWithFreshness().then(({ response }) => response)
 }
 
 export function refreshModels(): Promise<ModelsResponse> {
-  return requestJson<ModelsResponse>('/models?refresh=1')
+  return fetchModelsWithFreshness({ refresh: true, invalidate: true }).then(({ response }) => response)
 }
 
 export function fetchModelInventory(): Promise<InventoryResponse> {
@@ -326,14 +425,14 @@ export function fetchCheckpointMetadata(value: string): Promise<CheckpointMetada
 }
 
 export async function refreshModelInventory(): Promise<InventoryResponse> {
-  invalidateJsonCache('/models/inventory')
+  invalidateModelCatalogCaches()
   const inv = await requestJson<InventoryResponse>('/models/inventory/refresh', { method: 'POST' })
   _jsonCache.set('/models/inventory', inv)
   return inv
 }
 
 export function startModelInventoryRefreshTask(): Promise<TaskStartResponse> {
-  invalidateJsonCache('/models/inventory')
+  invalidateModelCatalogCaches()
   return requestJson<TaskStartResponse>('/models/inventory/refresh/async', { method: 'POST' })
 }
 
@@ -525,15 +624,13 @@ export function fetchPaths(): Promise<PathsResponse> {
 
 export function updatePaths(paths: Record<string, string[]>): Promise<PathsUpdateResponse> {
   invalidateJsonCache('/paths')
-  // Inventory resolution depends on roots; clear the cached snapshot so callers can re-fetch.
-  invalidateJsonCache('/models/inventory')
+  invalidateModelCatalogCaches()
   return requestJson<PathsUpdateResponse>('/paths', { method: 'POST', body: JSON.stringify({ paths }) })
 }
 
 function invalidateModelPathCaches(): void {
   invalidateJsonCache('/paths')
-  invalidateJsonCache('/models')
-  invalidateJsonCache('/models/inventory')
+  invalidateModelCatalogCaches()
 }
 
 export function scanModelPath(payload: ModelPathScanRequest): Promise<ModelPathScanResponse> {

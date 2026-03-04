@@ -143,6 +143,7 @@ def build_router(
     # Tabs & Workflows Persistence (JSON files)
     _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "chroma", "zimage", "wan", "anima"}
     _IMAGE_PARAM_TOP_LEVEL_KEYS = {
+        "schemaVersion",
         "prompt",
         "negativePrompt",
         "width",
@@ -180,6 +181,7 @@ def build_router(
         "zimageTurbo",
     }
     _WAN_PARAM_TOP_LEVEL_KEYS = {
+        "schemaVersion",
         "high",
         "low",
         "video",
@@ -243,10 +245,32 @@ def build_router(
             return _WAN_PARAM_TOP_LEVEL_KEYS
         return _IMAGE_PARAM_TOP_LEVEL_KEYS
 
-    def _sanitize_tab_params_patch(*, tab_type: str, raw_params: object, field: str = "params") -> Dict[str, Any]:
+    def _sanitize_tab_params_patch(
+        *,
+        tab_type: str,
+        raw_params: object,
+        field: str = "params",
+        reject_unknown: bool = True,
+    ) -> Dict[str, Any]:
         params_patch = _assert_plain_object(raw_params, field=field)
         allowed = _allowed_param_keys(tab_type)
-        sanitized: Dict[str, Any] = {key: value for key, value in params_patch.items() if key in allowed}
+        unknown_keys = sorted(key for key in params_patch.keys() if key not in allowed)
+        if unknown_keys and reject_unknown:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unknown_tab_params_keys",
+                    "message": f"Unexpected {field} key(s): {', '.join(unknown_keys)}",
+                    "field": field,
+                    "tab_type": tab_type,
+                    "unknown_keys": unknown_keys,
+                },
+            )
+        sanitized: Dict[str, Any] = (
+            dict(params_patch)
+            if not unknown_keys
+            else {key: value for key, value in params_patch.items() if key in allowed}
+        )
         for key in _NESTED_OBJECT_PARAM_KEYS:
             if key in sanitized and sanitized[key] is not None and not isinstance(sanitized[key], dict):
                 raise HTTPException(status_code=400, detail=f"{field}.{key} must be an object")
@@ -268,6 +292,7 @@ def build_router(
                 tab_type=tab_type,
                 raw_params=raw_params,
                 field="params",
+                reject_unknown=False,
             )
         except HTTPException as exc:
             raise HTTPException(

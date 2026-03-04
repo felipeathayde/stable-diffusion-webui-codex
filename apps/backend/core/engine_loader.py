@@ -30,6 +30,11 @@ from apps.backend.core.registry import create_engine
 from apps.backend.engines import register_default_engines
 from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as _apply_accel
 from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as _apply_attn
+from apps.backend.runtime.load_authority import (
+    LoadAuthorityStage,
+    coordinator_load_permit,
+    require_load_authority,
+)
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import (
     DiffusionModelBundle,
@@ -104,6 +109,27 @@ def _apply_runtime_options(engine: Any, opts: EngineLoadOptions | None) -> Any:
     return engine
 
 
+def _guarded_engine_load(engine: Any, model_ref: str, load_kwargs: Dict[str, Any]) -> None:
+    require_load_authority(
+        "core.engine_loader.engine.load",
+        allowed_stages=(LoadAuthorityStage.LOAD, LoadAuthorityStage.RELOAD),
+    )
+    engine.load(model_ref, **load_kwargs)
+
+
+def _guarded_engine_unload(engine: Any) -> None:
+    require_load_authority(
+        "core.engine_loader.engine.unload",
+        allowed_stages=(
+            LoadAuthorityStage.LOAD,
+            LoadAuthorityStage.UNLOAD,
+            LoadAuthorityStage.RELOAD,
+            LoadAuthorityStage.CLEANUP,
+        ),
+    )
+    engine.unload()
+
+
 def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     """Load and initialize a Codex diffusion engine for direct use."""
 
@@ -114,17 +140,29 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     load_kwargs["_bundle"] = bundle
 
     try:
-        engine.load(name_or_path, **load_kwargs)
+        with coordinator_load_permit(
+            owner="core.engine_loader.load_engine",
+            stage=LoadAuthorityStage.LOAD,
+        ):
+            _guarded_engine_load(engine, name_or_path, load_kwargs)
     except Exception:
-        with contextlib.suppress(Exception):
-            engine.unload()
+        with coordinator_load_permit(
+            owner="core.engine_loader.load_engine",
+            stage=LoadAuthorityStage.CLEANUP,
+        ):
+            with contextlib.suppress(Exception):
+                _guarded_engine_unload(engine)
         raise
 
     try:
         return _apply_runtime_options(engine, options)
     except Exception:
-        with contextlib.suppress(Exception):
-            engine.unload()
+        with coordinator_load_permit(
+            owner="core.engine_loader.load_engine",
+            stage=LoadAuthorityStage.UNLOAD,
+        ):
+            with contextlib.suppress(Exception):
+                _guarded_engine_unload(engine)
         raise
 
 

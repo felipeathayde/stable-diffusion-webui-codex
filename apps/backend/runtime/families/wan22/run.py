@@ -15,6 +15,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_WAN_CHUNK_HYBRID_RAM_BUDGET_MB` (constant): Default RAM budget threshold (MB) used by `chunk_buffer_mode='hybrid'` when resolving low/decode tensor storage (`ram` vs `ram+hd`).
 - `_wan_trace_inference_enabled` (function): Returns whether WAN orchestration trace checkpoints are enabled (`CODEX_TRACE_INFERENCE_DEBUG`).
 - `_wan_trace` (function): Emits gated `[wan22.trace]` DEBUG checkpoints for run-level orchestration boundaries.
+- `_WAN_PROGRESS_ADAPTER_NAME` (constant): Stable id for WAN unified progress-adapter payload metadata.
+- `_coarse_progress_event` (function): Emits explicit coarse-progress payloads for non-block phases.
+- `_WanUnifiedBlockProgressAdapter` (class): Canonical WAN stage adapter that wires/validates block-progress callback wiring.
 - `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager (explicit unload honors manager-provided target device).
 - `_teardown_stage` (function): Deterministic stage finalizer (unload from memory manager + cache/gc cleanup).
 - `_stage_transition_barrier` (function): Enforce a deterministic memory barrier between heavyweight stage transitions (release/sync/cache-gc/log) without altering mount policy.
@@ -78,6 +81,11 @@ from apps.backend.runtime.attention.wan_fused_v1 import (
 )
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+from apps.backend.runtime.sampling.block_progress import (
+    BLOCK_PROGRESS_CALLBACK_KEY,
+    RichBlockProgressController,
+    validate_block_progress_payload,
+)
 
 from .config import (
     RunConfig,
@@ -116,6 +124,84 @@ _WAN_CONTINUITY_PROFILE_OVERLAP = "overlap"
 _WAN_CONTINUITY_PROFILE_SVI2 = "svi2"
 _WAN_CONTINUITY_PROFILE_SVI2_PRO = "svi2_pro"
 _WAN_CHUNK_HYBRID_RAM_BUDGET_MB = 2048.0
+_WAN_PROGRESS_ADAPTER_NAME = "wan22_block_progress_v1"
+
+
+def _coarse_progress_event(
+    *,
+    stage: str,
+    step: int,
+    total: int,
+    percent: float,
+    reason: str,
+    eta_seconds: float | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": "progress",
+        "stage": str(stage),
+        "step": int(step),
+        "total": int(total),
+        "percent": float(percent),
+        "progress_adapter": _WAN_PROGRESS_ADAPTER_NAME,
+        "progress_granularity": "coarse",
+        "coarse_reason": str(reason),
+    }
+    if eta_seconds is not None:
+        payload["eta_seconds"] = float(eta_seconds)
+    return payload
+
+
+class _WanUnifiedBlockProgressAdapter:
+    """Canonical WAN stage adapter for block-progress callback wiring."""
+
+    def __init__(self, *, stage_name: str) -> None:
+        normalized_stage = str(stage_name or "").strip()
+        self._stage_name = normalized_stage if normalized_stage else "stage"
+        self._controller = RichBlockProgressController(enabled=env_flag("CODEX_PROGRESS_BAR", default=True))
+        self._wired = False
+        self._callback_hits = 0
+
+    def transformer_options(self) -> dict[str, Any]:
+        if self._wired:
+            raise RuntimeError(
+                "WAN22 GGUF: block-progress adapter reuse detected. "
+                f"Create a fresh adapter per stage branch (stage={self._stage_name!r})."
+            )
+        self._wired = True
+
+        def _on_block_progress(block_index: int, total_blocks: int) -> None:
+            normalized_index, normalized_total = validate_block_progress_payload(
+                block_index=block_index,
+                total_blocks=total_blocks,
+            )
+            self._callback_hits += 1
+            self._controller.update(
+                block_index=normalized_index,
+                total_blocks=normalized_total,
+                label=f"{self._stage_name}.layer",
+            )
+
+        return {BLOCK_PROGRESS_CALLBACK_KEY: _on_block_progress}
+
+    def assert_wired(self, *, branch: str) -> None:
+        if self._wired:
+            return
+        raise RuntimeError(
+            "WAN22 GGUF: missing block-progress emitter hookup before stage sampling "
+            f"(branch={branch!r} stage={self._stage_name!r})."
+        )
+
+    def assert_emitted(self, *, branch: str) -> None:
+        if self._callback_hits > 0:
+            return
+        raise RuntimeError(
+            "WAN22 GGUF: stage sampling completed without any block-progress callback emission "
+            f"(branch={branch!r} stage={self._stage_name!r}). "
+            "This indicates missing emitter wiring or a contract mismatch in the stage forward path."
+        )
+
+    def close(self) -> None:
+        self._controller.close()
 
 
 def _wan_trace_inference_enabled() -> bool:
@@ -970,6 +1056,10 @@ def _sample_chunk_stage_with_progress(
     chunk_index: int,
     chunk_total: int,
 ):
+    branch_label = f"chunk:{phase_name}:{stage_name}"
+    progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name=stage_name)
+    transformer_options = progress_adapter.transformer_options()
+    progress_adapter.assert_wired(branch=branch_label)
     generator = sample_stage_latents_generator(
         model=model,
         geom=geom,
@@ -993,30 +1083,37 @@ def _sample_chunk_stage_with_progress(
         flow_multiplier=flow_multiplier,
         stage_name=stage_name,
         emit_logs=False,
+        transformer_options=transformer_options,
     )
 
-    while True:
-        try:
-            event = next(generator)
-        except StopIteration as stop:
-            return stop.value
+    try:
+        while True:
+            try:
+                event = next(generator)
+            except StopIteration as stop:
+                progress_adapter.assert_emitted(branch=branch_label)
+                return stop.value
 
-        if not isinstance(event, dict) or event.get("type") != "progress":
-            continue
+            if not isinstance(event, dict) or event.get("type") != "progress":
+                continue
 
-        local_pct = float(event.get("percent", 0.0))
-        if local_pct > 1.0:
-            local_pct = local_pct / 100.0
-        local_pct = max(0.0, min(1.0, local_pct))
-        chunk_progress = (float(chunk_index) + local_pct) / max(float(chunk_total), 1.0)
-        yield {
-            "type": "progress",
-            "stage": phase_name,
-            "step": int(event.get("step", 0)),
-            "total": int(event.get("total", 0)),
-            "eta_seconds": event.get("eta_seconds"),
-            "percent": float(phase_start_pct) + (float(phase_span_pct) * chunk_progress),
-        }
+            local_pct = float(event.get("percent", 0.0))
+            if local_pct > 1.0:
+                local_pct = local_pct / 100.0
+            local_pct = max(0.0, min(1.0, local_pct))
+            chunk_progress = (float(chunk_index) + local_pct) / max(float(chunk_total), 1.0)
+            yield {
+                "type": "progress",
+                "stage": phase_name,
+                "step": int(event.get("step", 0)),
+                "total": int(event.get("total", 0)),
+                "eta_seconds": event.get("eta_seconds"),
+                "percent": float(phase_start_pct) + (float(phase_span_pct) * chunk_progress),
+                "progress_adapter": _WAN_PROGRESS_ADAPTER_NAME,
+                "progress_granularity": "coarse_step",
+            }
+    finally:
+        progress_adapter.close()
 
 
 def _resolve_stage_prompt_pairs(cfg: RunConfig) -> tuple[str, str, str, str]:
@@ -1285,30 +1382,38 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         )
 
         memory_management.manager.load_model(hi_mm)
-        latents_hi = sample_stage_latents(
-            model=hi_model,
-            geom=geom_hi,
-            steps=steps_hi,
-            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=high_prompt_embeds,
-            negative_embeds=high_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_hi,
-            scheduler_name=sched_hi,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=0,
-            timestep_end=steps_hi,
-            seed=cfg.seed,
-            state_init=None,
-            on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_hi_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="high",
-        )
+        high_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="high")
+        try:
+            high_transformer_options = high_progress_adapter.transformer_options()
+            high_progress_adapter.assert_wired(branch="run_txt2vid.high")
+            latents_hi = sample_stage_latents(
+                model=hi_model,
+                geom=geom_hi,
+                steps=steps_hi,
+                cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+                prompt_embeds=high_prompt_embeds,
+                negative_embeds=high_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_hi,
+                scheduler_name=sched_hi,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=0,
+                timestep_end=steps_hi,
+                seed=cfg.seed,
+                state_init=None,
+                on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_hi_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="high",
+                transformer_options=high_transformer_options,
+            )
+            high_progress_adapter.assert_emitted(branch="run_txt2vid.high")
+        finally:
+            high_progress_adapter.close()
         del high_prompt_embeds
         del high_negative_embeds
     finally:
@@ -1364,30 +1469,38 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
 
         memory_management.manager.load_model(lo_mm)
-        latents_lo = sample_stage_latents(
-            model=lo_model,
-            geom=geom_lo,
-            steps=steps_lo,
-            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=low_prompt_embeds,
-            negative_embeds=low_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_lo,
-            scheduler_name=sched_lo,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=steps_hi,
-            timestep_end=total_steps,
-            seed=None,
-            state_init=seed_latents,
-            on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_lo_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="low",
-        )
+        low_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="low")
+        try:
+            low_transformer_options = low_progress_adapter.transformer_options()
+            low_progress_adapter.assert_wired(branch="run_txt2vid.low")
+            latents_lo = sample_stage_latents(
+                model=lo_model,
+                geom=geom_lo,
+                steps=steps_lo,
+                cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+                prompt_embeds=low_prompt_embeds,
+                negative_embeds=low_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_lo,
+                scheduler_name=sched_lo,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=steps_hi,
+                timestep_end=total_steps,
+                seed=None,
+                state_init=seed_latents,
+                on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_lo_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="low",
+                transformer_options=low_transformer_options,
+            )
+            low_progress_adapter.assert_emitted(branch="run_txt2vid.low")
+        finally:
+            low_progress_adapter.close()
         del seed_latents
         del low_prompt_embeds
         del low_negative_embeds
@@ -1409,6 +1522,11 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     )
     latents_lo_decode = _backup_decode_latents(latents=latents_lo, logger=log, source="run_txt2vid")
     del latents_lo
+    if on_progress:
+        try:
+            on_progress(stage="decode", step=0, total=1, percent=0.95)
+        except Exception:
+            pass
     frames = decode_latents_to_frames(
         latents=latents_lo_decode,
         model_dir=os.path.dirname(lo_path),
@@ -1531,30 +1649,38 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
 
         memory_management.manager.load_model(hi_mm)
-        latents_hi = yield from sample_stage_latents_generator(
-            model=hi_model,
-            geom=geom_hi,
-            steps=steps_hi,
-            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=high_prompt_embeds,
-            negative_embeds=high_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_hi,
-            scheduler_name=sched_hi,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=0,
-            timestep_end=steps_hi,
-            seed=cfg.seed,
-            state_init=None,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_hi_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="high",
-            emit_logs=False,
-        )
+        high_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="high")
+        try:
+            high_transformer_options = high_progress_adapter.transformer_options()
+            high_progress_adapter.assert_wired(branch="stream_txt2vid.high")
+            latents_hi = yield from sample_stage_latents_generator(
+                model=hi_model,
+                geom=geom_hi,
+                steps=steps_hi,
+                cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+                prompt_embeds=high_prompt_embeds,
+                negative_embeds=high_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_hi,
+                scheduler_name=sched_hi,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=0,
+                timestep_end=steps_hi,
+                seed=cfg.seed,
+                state_init=None,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_hi_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="high",
+                emit_logs=False,
+                transformer_options=high_transformer_options,
+            )
+            high_progress_adapter.assert_emitted(branch="stream_txt2vid.high")
+        finally:
+            high_progress_adapter.close()
         del high_prompt_embeds
         del high_negative_embeds
     finally:
@@ -1596,30 +1722,38 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
         low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
         memory_management.manager.load_model(lo_mm)
-        latents_lo = yield from sample_stage_latents_generator(
-            model=lo_model,
-            geom=geom_lo,
-            steps=steps_lo,
-            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=low_prompt_embeds,
-            negative_embeds=low_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_lo,
-            scheduler_name=sched_lo,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=steps_hi,
-            timestep_end=total_steps,
-            seed=None,
-            state_init=seed_latents,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_lo_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="low",
-            emit_logs=False,
-        )
+        low_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="low")
+        try:
+            low_transformer_options = low_progress_adapter.transformer_options()
+            low_progress_adapter.assert_wired(branch="stream_txt2vid.low")
+            latents_lo = yield from sample_stage_latents_generator(
+                model=lo_model,
+                geom=geom_lo,
+                steps=steps_lo,
+                cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+                prompt_embeds=low_prompt_embeds,
+                negative_embeds=low_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_lo,
+                scheduler_name=sched_lo,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=steps_hi,
+                timestep_end=total_steps,
+                seed=None,
+                state_init=seed_latents,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_lo_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="low",
+                emit_logs=False,
+                transformer_options=low_transformer_options,
+            )
+            low_progress_adapter.assert_emitted(branch="stream_txt2vid.low")
+        finally:
+            low_progress_adapter.close()
         del seed_latents
         del low_prompt_embeds
         del low_negative_embeds
@@ -1650,6 +1784,13 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         source="stream_txt2vid",
     )
     del latents_lo_decode
+    yield _coarse_progress_event(
+        stage="decode",
+        step=0,
+        total=1,
+        percent=95.0,
+        reason="vae_decode_no_block_progress",
+    )
     frames = decode_latents_to_frames(
         latents=latents_lo_decode_backup,
         model_dir=os.path.dirname(lo_path),
@@ -1843,30 +1984,38 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         del latent_condition
 
         memory_management.manager.load_model(hi_mm)
-        latents_hi = sample_stage_latents(
-            model=hi_model,
-            geom=geom_hi,
-            steps=steps_hi,
-            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=high_prompt_embeds,
-            negative_embeds=high_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_hi,
-            scheduler_name=sched_hi,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=0,
-            timestep_end=steps_hi,
-            seed=None,
-            state_init=seed_hi,
-            on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_hi_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="high",
-        )
+        high_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="high")
+        try:
+            high_transformer_options = high_progress_adapter.transformer_options()
+            high_progress_adapter.assert_wired(branch="run_img2vid.high")
+            latents_hi = sample_stage_latents(
+                model=hi_model,
+                geom=geom_hi,
+                steps=steps_hi,
+                cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+                prompt_embeds=high_prompt_embeds,
+                negative_embeds=high_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_hi,
+                scheduler_name=sched_hi,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=0,
+                timestep_end=steps_hi,
+                seed=None,
+                state_init=seed_hi,
+                on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_hi_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="high",
+                transformer_options=high_transformer_options,
+            )
+            high_progress_adapter.assert_emitted(branch="run_img2vid.high")
+        finally:
+            high_progress_adapter.close()
         del seed_hi
         del high_prompt_embeds
         del high_negative_embeds
@@ -1910,30 +2059,38 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
         low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
         memory_management.manager.load_model(lo_mm)
-        latents_lo = sample_stage_latents(
-            model=lo_model,
-            geom=geom_lo,
-            steps=steps_lo,
-            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=low_prompt_embeds,
-            negative_embeds=low_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_lo,
-            scheduler_name=sched_lo,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=steps_hi,
-            timestep_end=total_steps,
-            seed=None,
-            state_init=seed_lo,
-            on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_lo_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="low",
-        )
+        low_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="low")
+        try:
+            low_transformer_options = low_progress_adapter.transformer_options()
+            low_progress_adapter.assert_wired(branch="run_img2vid.low")
+            latents_lo = sample_stage_latents(
+                model=lo_model,
+                geom=geom_lo,
+                steps=steps_lo,
+                cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+                prompt_embeds=low_prompt_embeds,
+                negative_embeds=low_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_lo,
+                scheduler_name=sched_lo,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=steps_hi,
+                timestep_end=total_steps,
+                seed=None,
+                state_init=seed_lo,
+                on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_lo_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="low",
+                transformer_options=low_transformer_options,
+            )
+            low_progress_adapter.assert_emitted(branch="run_img2vid.low")
+        finally:
+            low_progress_adapter.close()
         del seed_lo
         del low_prompt_embeds
         del low_negative_embeds
@@ -1964,6 +2121,11 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         source="run_img2vid",
     )
     del latents_lo_decode
+    if on_progress:
+        try:
+            on_progress(stage="decode", step=0, total=1, percent=0.95)
+        except Exception:
+            pass
     frames = decode_latents_to_frames(
         latents=latents_lo_decode_backup,
         model_dir=os.path.dirname(lo_path),
@@ -2134,30 +2296,38 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         del latent_condition
 
         memory_management.manager.load_model(hi_mm)
-        latents_hi = yield from sample_stage_latents_generator(
-            model=hi_model,
-            geom=geom_hi,
-            steps=steps_hi,
-            cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
-            prompt_embeds=high_prompt_embeds,
-            negative_embeds=high_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_hi,
-            scheduler_name=sched_hi,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=0,
-            timestep_end=steps_hi,
-            seed=None,
-            state_init=seed_hi,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_hi_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="high",
-            emit_logs=False,
-        )
+        high_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="high")
+        try:
+            high_transformer_options = high_progress_adapter.transformer_options()
+            high_progress_adapter.assert_wired(branch="stream_img2vid.high")
+            latents_hi = yield from sample_stage_latents_generator(
+                model=hi_model,
+                geom=geom_hi,
+                steps=steps_hi,
+                cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
+                prompt_embeds=high_prompt_embeds,
+                negative_embeds=high_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_hi,
+                scheduler_name=sched_hi,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=0,
+                timestep_end=steps_hi,
+                seed=None,
+                state_init=seed_hi,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_hi_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="high",
+                emit_logs=False,
+                transformer_options=high_transformer_options,
+            )
+            high_progress_adapter.assert_emitted(branch="stream_img2vid.high")
+        finally:
+            high_progress_adapter.close()
         del seed_hi
         del high_prompt_embeds
         del high_negative_embeds
@@ -2201,30 +2371,38 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         low_prompt_embeds = low_prompt_embeds.to(device=dev, dtype=dt)
         low_negative_embeds = low_negative_embeds.to(device=dev, dtype=dt)
         memory_management.manager.load_model(lo_mm)
-        latents_lo = yield from sample_stage_latents_generator(
-            model=lo_model,
-            geom=geom_lo,
-            steps=steps_lo,
-            cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
-            prompt_embeds=low_prompt_embeds,
-            negative_embeds=low_negative_embeds,
-            device=dev,
-            dtype=dt,
-            logger=log,
-            sampler_name=sampler_lo,
-            scheduler_name=sched_lo,
-            metadata_dir=cfg.metadata_dir,
-            scheduler_obj=scheduler,
-            timestep_start=steps_hi,
-            timestep_end=total_steps,
-            seed=None,
-            state_init=seed_lo,
-            log_mem_interval=getattr(cfg, "log_mem_interval", None),
-            flow_shift=flow_shift_lo_value,
-            flow_multiplier=flow_multiplier,
-            stage_name="low",
-            emit_logs=False,
-        )
+        low_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="low")
+        try:
+            low_transformer_options = low_progress_adapter.transformer_options()
+            low_progress_adapter.assert_wired(branch="stream_img2vid.low")
+            latents_lo = yield from sample_stage_latents_generator(
+                model=lo_model,
+                geom=geom_lo,
+                steps=steps_lo,
+                cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
+                prompt_embeds=low_prompt_embeds,
+                negative_embeds=low_negative_embeds,
+                device=dev,
+                dtype=dt,
+                logger=log,
+                sampler_name=sampler_lo,
+                scheduler_name=sched_lo,
+                metadata_dir=cfg.metadata_dir,
+                scheduler_obj=scheduler,
+                timestep_start=steps_hi,
+                timestep_end=total_steps,
+                seed=None,
+                state_init=seed_lo,
+                log_mem_interval=getattr(cfg, "log_mem_interval", None),
+                flow_shift=flow_shift_lo_value,
+                flow_multiplier=flow_multiplier,
+                stage_name="low",
+                emit_logs=False,
+                transformer_options=low_transformer_options,
+            )
+            low_progress_adapter.assert_emitted(branch="stream_img2vid.low")
+        finally:
+            low_progress_adapter.close()
         del seed_lo
         del low_prompt_embeds
         del low_negative_embeds
@@ -2255,6 +2433,13 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         source="stream_img2vid",
     )
     del latents_lo_decode
+    yield _coarse_progress_event(
+        stage="decode",
+        step=0,
+        total=1,
+        percent=95.0,
+        reason="vae_decode_no_block_progress",
+    )
     frames = decode_latents_to_frames(
         latents=latents_lo_decode_backup,
         model_dir=os.path.dirname(lo_path),
@@ -2409,7 +2594,13 @@ def stream_img2vid_chunked(
         str(continuity_profile_value),
         bool(reset_anchor_to_base),
     )
-    yield {"type": "progress", "stage": "chunk.prepare", "step": 0, "total": int(len(chunk_starts)), "percent": 0.0}
+    yield _coarse_progress_event(
+        stage="chunk.prepare",
+        step=0,
+        total=int(len(chunk_starts)),
+        percent=0.0,
+        reason="chunk_plan_setup_no_block_progress",
+    )
 
     latent_condition_base = vae_encode_video_condition(
         cfg.init_image,
@@ -2989,13 +3180,13 @@ def stream_img2vid_chunked(
                     else:
                         stitched.append(frames_chunk[frame_index])
 
-                yield {
-                    "type": "progress",
-                    "stage": "chunk.phase_decode",
-                    "step": int(chunk_index + 1),
-                    "total": int(len(chunk_starts)),
-                    "percent": 90.0 + (10.0 * (float(chunk_index + 1) / float(len(chunk_starts)))),
-                }
+                yield _coarse_progress_event(
+                    stage="chunk.phase_decode",
+                    step=int(chunk_index + 1),
+                    total=int(len(chunk_starts)),
+                    percent=90.0 + (10.0 * (float(chunk_index + 1) / float(len(chunk_starts)))),
+                    reason="chunk_vae_decode_no_block_progress",
+                )
                 if low_store_mode == "ram":
                     low_decode_ram[chunk_index] = torch.empty((0,), dtype=dt, device="cpu")
                 else:

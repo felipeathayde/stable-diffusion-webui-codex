@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `attention_split` (function): Splits attention computation into chunks to reduce peak memory.
 - `attention_xformers` (function): xFormers attention path (when available and not broken).
 - `attention_pytorch` (function): PyTorch SDPA attention path with optional per-call SDPA policy (`auto|flash|mem_efficient|math`) and flash fallback warning behavior.
-- `_coerce_sdpa_policy_for_head_dim` (function): Forces SDPA policy to `auto` when `head_dim > 256` to avoid ineligible explicit-kernel paths.
+- `_resolve_sdpa_policy_for_head_dim` (function): Applies explicit SDPA head-dim route policy (`head_dim<=256` => flash-preferred route; `head_dim>256` => default non-flash route for `auto|flash`).
 - `_flash_sdpa_ineligibility_reason` (function): Validates hard flash-kernel constraints (shape/head-dim/device/dtype) so known-ineligible flash calls skip direct flash attempts and enter deterministic fallback with explicit reason.
 - `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`) with optional SDPA policy forwarding for PyTorch backend.
 - `attention_function_pre_shaped` (function): Dispatcher wrapper for pre-shaped Q/K/V tensors (`[B,H,S,D]` -> `[B,H,S,D]`), including optional SDPA policy forwarding.
@@ -55,8 +55,9 @@ _XFORMERS_BROKEN = None
 _XFORMERS_VERSION = None
 _XFORMERS_IMPORT_ERROR: Exception | None = None
 _SDPA_POLICY_LOGGED: set[tuple[str, str, str, str]] = set()
-_SDPA_FLASH_FALLBACK_LOGGED: set[tuple[str, str, str, str, str]] = set()
-_SDPA_FORCED_AUTO_LOGGED: set[tuple[str, str, str, str, int]] = set()
+_SDPA_FLASH_FALLBACK_LOGGED: set[tuple[str, str, str, str, str, str]] = set()
+_SDPA_NON_FLASH_FALLBACK_LOGGED: set[tuple[str, str, str, str, str, str, str]] = set()
+_SDPA_HEAD_DIM_ROUTE_LOGGED: set[tuple[str, str, str, str, str, int]] = set()
 _ATTENTION_REQUEST_ID_CTX: ContextVar[str] = ContextVar("attention_request_id", default="-")
 
 
@@ -176,18 +177,20 @@ def _log_sdpa_flash_fallback_once(
     *,
     device: torch.device,
     dtype: torch.dtype,
+    requested_policy: _SDPAPolicy,
     fallback_policy: _SDPAPolicy,
     reason: str,
 ) -> None:
     request_id = get_attention_request_id()
-    key = (request_id, str(device), str(dtype), fallback_policy, reason)
+    key = (request_id, str(device), str(dtype), requested_policy, fallback_policy, reason)
     if key in _SDPA_FLASH_FALLBACK_LOGGED:
         return
     _SDPA_FLASH_FALLBACK_LOGGED.add(key)
     _LOGGER.warning(
-        "[attention][req=%s] requested sdpa policy=flash but flash is unavailable; "
+        "[attention][req=%s] flash SDPA route unavailable; requested_policy=%s "
         "falling back to policy=%s device=%s dtype=%s reason=%s",
         request_id,
+        requested_policy,
         fallback_policy,
         str(device),
         str(dtype),
@@ -195,34 +198,88 @@ def _log_sdpa_flash_fallback_once(
     )
 
 
-def _coerce_sdpa_policy_for_head_dim(
+def _log_sdpa_non_flash_fallback_once(
     *,
-    sdpa_policy: _SDPAPolicy,
+    device: torch.device,
+    dtype: torch.dtype,
+    requested_policy: _SDPAPolicy,
+    primary_policy: _SDPAPolicy,
+    fallback_policy: _SDPAPolicy,
+    reason: str,
+) -> None:
+    request_id = get_attention_request_id()
+    key = (request_id, str(device), str(dtype), requested_policy, primary_policy, fallback_policy, reason)
+    if key in _SDPA_NON_FLASH_FALLBACK_LOGGED:
+        return
+    _SDPA_NON_FLASH_FALLBACK_LOGGED.add(key)
+    _LOGGER.warning(
+        "[attention][req=%s] non-flash SDPA route fallback: requested_policy=%s "
+        "primary_policy=%s fallback_policy=%s device=%s dtype=%s reason=%s",
+        request_id,
+        requested_policy,
+        primary_policy,
+        fallback_policy,
+        str(device),
+        str(dtype),
+        reason,
+    )
+
+
+def _default_non_flash_sdpa_policy(*, device: torch.device) -> _SDPAPolicy:
+    # Deterministic non-flash default route:
+    # - CUDA prefers mem_efficient first.
+    # - Non-CUDA uses math.
+    if device.type == "cuda":
+        return "mem_efficient"
+    return "math"
+
+
+def _resolve_sdpa_policy_for_head_dim(
+    *,
+    requested_policy: _SDPAPolicy,
     q: torch.Tensor,
 ) -> _SDPAPolicy:
-    if sdpa_policy == "auto":
-        return sdpa_policy
     if q.ndim < 1:
-        return sdpa_policy
+        return requested_policy
+
     head_dim = int(q.shape[-1])
     if head_dim <= 256:
-        return sdpa_policy
+        # Explicit threshold policy:
+        # - default/auto route should prefer flash when eligible.
+        effective_policy = "flash" if requested_policy == "auto" else requested_policy
+    else:
+        # Explicit threshold policy:
+        # - head_dim > 256 defaults to a non-flash route.
+        # - explicit non-flash requests stay unchanged.
+        if requested_policy in {"auto", "flash"}:
+            effective_policy = _default_non_flash_sdpa_policy(device=q.device)
+        else:
+            effective_policy = requested_policy
+
+    if effective_policy == requested_policy:
+        return effective_policy
 
     request_id = get_attention_request_id()
-    key = (request_id, sdpa_policy, str(q.device), str(q.dtype), head_dim)
-    if key not in _SDPA_FORCED_AUTO_LOGGED:
-        _SDPA_FORCED_AUTO_LOGGED.add(key)
+    key = (request_id, requested_policy, effective_policy, str(q.device), str(q.dtype), head_dim)
+    if key not in _SDPA_HEAD_DIM_ROUTE_LOGGED:
+        _SDPA_HEAD_DIM_ROUTE_LOGGED.add(key)
+        route_note = (
+            "head_dim<=256 flash-preferred route"
+            if head_dim <= 256
+            else "head_dim>256 default non-flash route"
+        )
         _LOGGER.info(
-            "[attention][req=%s] forcing sdpa policy=auto for head_dim=%d "
-            "(requested=%s) device=%s dtype=%s",
+            "[attention][req=%s] %s: requested_policy=%s effective_policy=%s head_dim=%d device=%s dtype=%s",
             request_id,
+            route_note,
+            requested_policy,
+            effective_policy,
             head_dim,
-            sdpa_policy,
             str(q.device),
             str(q.dtype),
         )
 
-    return "auto"
+    return effective_policy
 
 
 def _flash_sdpa_ineligibility_reason(
@@ -264,8 +321,9 @@ def _run_pytorch_sdpa(
     is_causal: bool,
     sdpa_policy: str | None,
 ) -> torch.Tensor:
-    normalized_policy = _normalize_sdpa_policy(sdpa_policy)
-    normalized_policy = _coerce_sdpa_policy_for_head_dim(sdpa_policy=normalized_policy, q=q)
+    requested_policy = _normalize_sdpa_policy(sdpa_policy)
+    normalized_policy = _resolve_sdpa_policy_for_head_dim(requested_policy=requested_policy, q=q)
+    head_dim = int(q.shape[-1]) if q.ndim >= 1 else 0
 
     def _run_once(policy: _SDPAPolicy) -> torch.Tensor:
         _log_sdpa_policy_once(sdpa_policy=policy, device=q.device, dtype=q.dtype)
@@ -280,6 +338,23 @@ def _run_pytorch_sdpa(
             )
 
     if normalized_policy != "flash":
+        if (
+            head_dim > 256
+            and requested_policy in {"auto", "flash"}
+            and normalized_policy != "math"
+        ):
+            try:
+                return _run_once(normalized_policy)
+            except Exception as primary_exc:
+                _log_sdpa_non_flash_fallback_once(
+                    device=q.device,
+                    dtype=q.dtype,
+                    requested_policy=requested_policy,
+                    primary_policy=normalized_policy,
+                    fallback_policy="math",
+                    reason=str(primary_exc),
+                )
+                return _run_once("math")
         return _run_once(normalized_policy)
 
     precheck_failure = _flash_sdpa_ineligibility_reason(q, k, v)
@@ -289,6 +364,7 @@ def _run_pytorch_sdpa(
                 _log_sdpa_flash_fallback_once(
                     device=q.device,
                     dtype=q.dtype,
+                    requested_policy=requested_policy,
                     fallback_policy=fallback_policy,
                     reason=precheck_failure,
                 )
@@ -309,6 +385,7 @@ def _run_pytorch_sdpa(
                 _log_sdpa_flash_fallback_once(
                     device=q.device,
                     dtype=q.dtype,
+                    requested_policy=requested_policy,
                     fallback_policy=fallback_policy,
                     reason=str(flash_exc),
                 )

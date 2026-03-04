@@ -71,6 +71,7 @@ def _run_inference_worker(
     fn: Callable[[], Any],
     runtime_overrides: Mapping[str, bool | None] | None = None,
 ) -> tuple["threading.Event", _WorkerOutcome]:
+    import contextvars
     import threading
     import time
 
@@ -112,8 +113,9 @@ def _run_inference_worker(
     done = threading.Event()
     effective_preview_interval = int(preview_interval_steps(default=0))
     effective_preview_method = live_preview_method()
+    worker_context = contextvars.copy_context()
 
-    def _worker() -> None:
+    def _worker_body() -> None:
         from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
 
         try:
@@ -130,6 +132,9 @@ def _run_inference_worker(
         finally:
             outcome.sampling_end = time.perf_counter()
             done.set()
+
+    def _worker() -> None:
+        worker_context.run(_worker_body)
 
     threading.Thread(target=_worker, name=name, daemon=True).start()
     return done, outcome

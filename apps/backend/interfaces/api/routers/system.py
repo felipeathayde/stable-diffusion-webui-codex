@@ -37,6 +37,11 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from apps.backend.runtime.load_authority import (
+    LoadAuthorityStage,
+    coordinator_load_permit,
+)
+
 _LOG = logging.getLogger(__name__)
 
 _CRITICAL_PROCESS_BASENAMES: set[str] = {
@@ -332,7 +337,11 @@ def build_router(*, app_version: str) -> APIRouter:
             report["internal_failures"].append(f"memory_manager_import:{exc}")
         else:
             try:
-                memory_state.manager.unload_all_models()
+                with coordinator_load_permit(
+                    owner="api.routers.system.obliterate_vram",
+                    stage=LoadAuthorityStage.CLEANUP,
+                ):
+                    memory_state.manager.unload_all_models()
                 report["internal"]["runtime_unload_models"] = True
             except Exception as exc:
                 report["internal_failures"].append(f"runtime_unload_models:{exc}")

@@ -27,6 +27,10 @@ import logging
 from copy import deepcopy
 
 from apps.backend.infra.config import args as config_args
+from apps.backend.runtime.load_authority import (
+    LoadAuthorityStage,
+    coordinator_load_permit,
+)
 
 from .config import AttentionBackend, DeviceBackend, DeviceRole, RuntimeMemoryConfig
 from .manager import CodexMemoryManager
@@ -44,7 +48,11 @@ def _bind_config(config: RuntimeMemoryConfig) -> None:
 
     old_manager: CodexMemoryManager | None = globals().get("manager")
     if old_manager is not None:
-        old_manager.unload_all_models()
+        with coordinator_load_permit(
+            owner="runtime.memory.memory_management._bind_config",
+            stage=LoadAuthorityStage.CLEANUP,
+        ):
+            old_manager.unload_all_models()
 
     _CONFIG = config
     manager = CodexMemoryManager.create(config)

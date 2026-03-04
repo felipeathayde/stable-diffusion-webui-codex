@@ -44,6 +44,10 @@ class LauncherController:
         return env
 
     @property
+    def service_names(self) -> tuple[str, ...]:
+        return tuple(self.services.keys())
+
+    @property
     def external_terminal_supported(self) -> bool:
         return os.name == "nt"
 
@@ -62,11 +66,11 @@ class LauncherController:
         self.services[name].kill(wait=wait)
 
     def start_all(self, *, external_terminal: bool) -> None:
-        for name in ("API", "UI"):
+        for name in self.service_names:
             self.start_service(name, external_terminal=external_terminal)
 
     def stop_all(self, *, wait: float = 10.0) -> None:
-        for name in ("UI", "API"):
+        for name in reversed(self.service_names):
             self.stop_service(name, wait=wait)
 
     def persist_tab_index(self, tab_index: int) -> None:

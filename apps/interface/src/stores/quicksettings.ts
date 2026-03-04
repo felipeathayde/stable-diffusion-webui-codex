@@ -13,11 +13,11 @@ and caches the current `/api/options` revision for generation payload contracts 
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
 sanitized so `tenc_sha` resolution remains deterministic across families (including Anima). VAE state defaults to canonical `built-in`
 when no persisted value exists, request preflight can enforce fail-loud non-empty selection via `requireVaeSelection`, and LoRA SHA mappings
-can be hydrated directly from a refreshed inventory payload (`hydrateLoraShaMap`).
+are refreshed through the store-owned inventory flow (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
-  setters that call API updates, inventory hydrators (`hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
+  setters that call API updates, inventory hydrators (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
 */
 
 import { defineStore } from 'pinia'
@@ -28,6 +28,7 @@ import {
   fetchOptions,
   updateOptions,
   fetchModelInventory,
+  refreshModelInventoryAsync,
   fetchPaths,
   fetchMemory,
   getCachedOptionsRevision,
@@ -39,6 +40,7 @@ const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_ove
 const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
 const VAE_STORAGE_KEY = 'codex.quicksettings.vae'
 const VAE_BY_FAMILY_STORAGE_KEY = 'codex.quicksettings.vae_by_family'
+const VAE_BY_FAMILY_OPTION_KEY = 'codex_vae_by_family'
 const DEFAULT_VAE_SELECTION = 'built-in'
 const NONE_VAE_SELECTION = 'none'
 const VAE_FAMILIES = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'anima'] as const
@@ -119,6 +121,52 @@ function normalizeVaeSelection(value: string | null | undefined): string {
 
 function isVaeFamily(value: string): value is VaeFamily {
   return (VAE_FAMILIES as readonly string[]).includes(value)
+}
+
+function serializeVaeByFamilyOption(values: Partial<Record<VaeFamily, string>>): string {
+  const payload: Partial<Record<VaeFamily, string>> = {}
+  for (const family of VAE_FAMILIES) {
+    const normalized = normalizeVaeSelection(values[family] ?? '')
+    if (!normalized) continue
+    payload[family] = normalized
+  }
+  return JSON.stringify(payload)
+}
+
+function parseVaeByFamilyOption(value: unknown): Partial<Record<VaeFamily, string>> {
+  let parsed: unknown = value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      throw new Error(`Invalid options.${VAE_BY_FAMILY_OPTION_KEY}: expected JSON object string, got empty string.`)
+    }
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch (error) {
+      throw new Error(
+        `Invalid options.${VAE_BY_FAMILY_OPTION_KEY}: expected JSON object string (${String(error)}).`,
+      )
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Invalid options.${VAE_BY_FAMILY_OPTION_KEY}: expected object.`)
+  }
+  const next: Partial<Record<VaeFamily, string>> = {}
+  for (const [key, rawValue] of Object.entries(parsed as Record<string, unknown>)) {
+    const family = String(key || '').trim().toLowerCase()
+    if (!isVaeFamily(family)) {
+      throw new Error(`Invalid options.${VAE_BY_FAMILY_OPTION_KEY}: unknown family '${key}'.`)
+    }
+    if (typeof rawValue !== 'string') {
+      throw new Error(`Invalid options.${VAE_BY_FAMILY_OPTION_KEY}: family '${family}' must map to a string.`)
+    }
+    const normalized = normalizeVaeSelection(rawValue)
+    if (!normalized) {
+      throw new Error(`Invalid options.${VAE_BY_FAMILY_OPTION_KEY}: family '${family}' has empty VAE selection.`)
+    }
+    next[family] = normalized
+  }
+  return next
 }
 
 function buildLoraShaMapFromInventory(inventory: Pick<InventoryResponse, 'loras'> | null | undefined): Map<string, string> {
@@ -375,14 +423,21 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
   }
 
+  function getPersistedVaeForFamily(family: string): string {
+    const normalizedFamily = String(family || '').trim().toLowerCase()
+    if (!isVaeFamily(normalizedFamily)) return ''
+    const fromFamily = normalizeVaeSelection(vaeByFamily.value[normalizedFamily] ?? '')
+    return fromFamily || ''
+  }
+
   function getVaeForFamily(family: string): string {
     const normalizedFamily = String(family || '').trim().toLowerCase()
     if (!isVaeFamily(normalizedFamily)) {
       return currentVae.value || DEFAULT_VAE_SELECTION
     }
-    const fromFamily = normalizeVaeSelection(vaeByFamily.value[normalizedFamily] ?? '')
+    const fromFamily = getPersistedVaeForFamily(normalizedFamily)
     if (fromFamily) return fromFamily
-    return currentVae.value || DEFAULT_VAE_SELECTION
+    return DEFAULT_VAE_SELECTION
   }
 
   function syncSettingsRevisionFromCache(): void {
@@ -495,6 +550,16 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     const opts = res.values
     applySettingsRevision((res as any).revision ?? (opts as any)?.codex_options_revision)
     syncSettingsRevisionFromCache()
+    const hasVaeByFamilyOption = Object.prototype.hasOwnProperty.call(opts, VAE_BY_FAMILY_OPTION_KEY)
+    if (hasVaeByFamilyOption) {
+      const nextFromBackend = parseVaeByFamilyOption((opts as Record<string, unknown>)[VAE_BY_FAMILY_OPTION_KEY])
+      vaeByFamily.value = nextFromBackend
+      saveVaeByFamilyToStorage(nextFromBackend)
+    } else if (Object.keys(vaeByFamily.value).length > 0) {
+      await applyOptionUpdate({
+        [VAE_BY_FAMILY_OPTION_KEY]: serializeVaeByFamilyOption(vaeByFamily.value),
+      })
+    }
     if (typeof (opts as any).codex_core_device === 'string') {
       coreDevice.value = normalizeCoreDeviceSetting((opts as any).codex_core_device)
       if (coreDevice.value === 'auto') {
@@ -651,12 +716,22 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
     wanGgufShaMap.value = wanMap
 
-    loraShaMap.value = buildLoraShaMapFromInventory(inv)
+    hydrateLoraShaMap(inv)
     sanitizeTextEncoderOverrides()
   }
 
   function hydrateLoraShaMap(inventory: Pick<InventoryResponse, 'loras'> | null | undefined): void {
     loraShaMap.value = buildLoraShaMapFromInventory(inventory)
+  }
+
+  async function fetchInventoryWithLoraHydration(
+    options: { refresh?: boolean; signal?: AbortSignal } = {},
+  ): Promise<InventoryResponse> {
+    const inventory = options.refresh === true
+      ? await refreshModelInventoryAsync({ signal: options.signal })
+      : await fetchModelInventory()
+    hydrateLoraShaMap(inventory)
+    return inventory
   }
 
   function resolveTextEncoderSha(label: string | null | undefined): string | undefined {
@@ -790,16 +865,36 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setVaeForFamily(family: string, label: string): Promise<void> {
     const normalized = normalizeVaeSelection(label) || DEFAULT_VAE_SELECTION
-    currentVae.value = normalized
-    saveVaeToStorage(normalized)
-
     const normalizedFamily = String(family || '').trim().toLowerCase()
-    if (!isVaeFamily(normalizedFamily)) return
-    vaeByFamily.value = {
+    if (!isVaeFamily(normalizedFamily)) {
+      currentVae.value = normalized
+      saveVaeToStorage(normalized)
+      return
+    }
+
+    const previousCurrentVae = currentVae.value
+    const previousVaeByFamily = { ...vaeByFamily.value }
+    const nextVaeByFamily: Partial<Record<VaeFamily, string>> = {
       ...vaeByFamily.value,
       [normalizedFamily]: normalized,
     }
-    saveVaeByFamilyToStorage(vaeByFamily.value)
+
+    currentVae.value = normalized
+    saveVaeToStorage(normalized)
+    vaeByFamily.value = nextVaeByFamily
+    saveVaeByFamilyToStorage(nextVaeByFamily)
+
+    try {
+      await applyOptionUpdate({
+        [VAE_BY_FAMILY_OPTION_KEY]: serializeVaeByFamilyOption(nextVaeByFamily),
+      })
+    } catch (error) {
+      currentVae.value = previousCurrentVae
+      saveVaeToStorage(previousCurrentVae)
+      vaeByFamily.value = previousVaeByFamily
+      saveVaeByFamilyToStorage(previousVaeByFamily)
+      throw error
+    }
   }
 
   function requireVaeSelection(label?: string | null): string {
@@ -915,6 +1010,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     setVae,
     setVaeForFamily,
     getVaeForFamily,
+    getPersistedVaeForFamily,
     setTextEncoders,
     setDevice,
     coreDevice,
@@ -960,6 +1056,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     resolveWanGgufSha,
     isModelCoreOnly,
     hydrateLoraShaMap,
+    fetchInventoryWithLoraHydration,
     vaeShaMap,
     loraShaMap,
     wanGgufShaMap,

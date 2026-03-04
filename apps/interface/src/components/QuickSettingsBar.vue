@@ -66,8 +66,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onAddPathModalAdded` (function): Refreshes quicksettings lists after add-path operations mutate library paths.
 - `onAddPathModalError` (function): Surfaces add-path scan/add failures through quicksettings toasts.
 - `applyInventorySnapshot` (function): Applies one inventory payload to local quicksettings selector sources.
-- `parseInventoryTaskResult` (function): Parses inventory payloads from task `result` SSE events.
-- `runAsyncInventoryRefreshTask` (function): Starts `/api/models/inventory/refresh/async` and resolves when SSE emits terminal inventory data.
+- `refreshAll` (function): Refreshes models/paths and inventory via the shared store-owned inventory refresh+LoRA hydration flow.
 - `openPathInputModal` (function): Opens the in-app path input modal and registers async apply behavior.
 - `confirmPathInputModal` (function): Validates/applies modal-entered path values.
 - `closePathInputModal` (function): Closes and clears the in-app path input modal state.
@@ -401,19 +400,13 @@ import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
 import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams, type WanStageParams } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
-import { useBootstrapStore } from '../stores/bootstrap'
 import {
-  cacheModelInventorySnapshot,
   fetchCheckpointMetadata,
   fetchFileMetadata,
-  fetchModelInventory,
   fetchPaths,
   fetchObliterateVram,
-  refreshModelInventory,
-  startModelInventoryRefreshTask,
-  subscribeTask,
 } from '../api/client'
-import type { InventoryResponse, ModelInfo, TaskEvent } from '../api/types'
+import type { InventoryResponse, ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
 import { normalizeTabFamily, tabFamilyFromSemanticEngine, type TabFamily } from '../utils/engine_taxonomy'
@@ -435,7 +428,6 @@ const route = useRoute()
 const uiBlocks = useUiBlocksStore()
 const tabsStore = useModelTabsStore()
 const engineCaps = useEngineCapabilitiesStore()
-const bootstrap = useBootstrapStore()
 const pathsConfig = ref<Record<string, string[]>>({})
 type InventoryVae = { name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }
 type InventoryWanGguf = { name: string; path: string; sha256?: string; stage: string }
@@ -657,7 +649,9 @@ const semanticEngine = computed<string>(() => {
 })
 
 async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void> {
-  const inv = options?.forceRefresh ? await refreshModelInventory() : await fetchModelInventory()
+  const inv = await store.fetchInventoryWithLoraHydration({
+    refresh: options?.forceRefresh === true,
+  })
   applyInventorySnapshot(inv)
 }
 
@@ -984,21 +978,25 @@ function withBuiltInVaeChoice(values: string[]): string[] {
   return out
 }
 
-function canonicalizeVaeChoiceForActiveFamily(current: string, choices: readonly string[]): string | null {
+type VaeCanonicalizationReason = 'exact' | 'sentinel' | 'sha' | 'fallback'
+type VaeCanonicalizationResult = { value: string; reason: VaeCanonicalizationReason }
+
+function canonicalizeVaeChoiceForActiveFamily(current: string, choices: readonly string[]): VaeCanonicalizationResult | null {
   if (!Array.isArray(choices) || choices.length === 0) return null
 
   const rawCurrent = String(current || '').trim()
+  const defaultChoice = choices.includes('built-in') ? 'built-in' : String(choices[0] || '')
   if (!rawCurrent) {
-    return choices.includes('built-in') ? 'built-in' : String(choices[0] || '')
+    return { value: defaultChoice, reason: 'fallback' }
   }
-  if (choices.includes(rawCurrent)) return rawCurrent
+  if (choices.includes(rawCurrent)) return { value: rawCurrent, reason: 'exact' }
 
   const currentLower = rawCurrent.toLowerCase()
   if (currentLower === 'automatic' || currentLower === 'built in' || currentLower === 'built-in') {
-    return choices.includes('built-in') ? 'built-in' : String(choices[0] || '')
+    return { value: defaultChoice, reason: 'sentinel' }
   }
   if (currentLower === 'none' && choices.includes('none')) {
-    return 'none'
+    return { value: 'none', reason: 'sentinel' }
   }
 
   const currentSha = store.resolveVaeSha(rawCurrent)
@@ -1008,12 +1006,12 @@ function canonicalizeVaeChoiceForActiveFamily(current: string, choices: readonly
       const candidateSha = store.resolveVaeSha(choice)
       if (!candidateSha) continue
       if (String(candidateSha).trim().toLowerCase() === normalizedCurrentSha) {
-        return choice
+        return { value: choice, reason: 'sha' }
       }
     }
   }
 
-  return choices.includes('built-in') ? 'built-in' : String(choices[0] || '')
+  return { value: defaultChoice, reason: 'fallback' }
 }
 
 const filteredVaeChoices = computed(() => {
@@ -1046,10 +1044,25 @@ watch(
     if (!activeModelTab.value) return
     if (family === 'wan') return
     if (!quicksettingsReady) return
-    const familyVae = store.getVaeForFamily(family)
-    const nextVae = canonicalizeVaeChoiceForActiveFamily(String(familyVae || currentVae || ''), choices)
-    if (!nextVae) return
-    if (String(currentVae || '') === nextVae && String(familyVae || '') === nextVae) return
+    const persistedFamilyVae = store.getPersistedVaeForFamily(family)
+    const sourceVae = String(persistedFamilyVae || '')
+    const canonical = canonicalizeVaeChoiceForActiveFamily(sourceVae, choices)
+    if (!canonical) return
+    const nextVae = canonical.value
+    if (canonical.reason === 'fallback') {
+      if (String(currentVae || '') === nextVae) return
+      store.setVae(nextVae).catch((error) => {
+        toastQuicksettingsError(error)
+      })
+      return
+    }
+    if (String(persistedFamilyVae || '') === nextVae) {
+      if (String(currentVae || '') === nextVae) return
+      store.setVae(nextVae).catch((error) => {
+        toastQuicksettingsError(error)
+      })
+      return
+    }
     store.setVaeForFamily(family, nextVae).catch((error) => {
       toastQuicksettingsError(error)
     })
@@ -1268,68 +1281,12 @@ async function initQuicksettings(
   }
 }
 
-function parseInventoryTaskResult(event: TaskEvent): InventoryResponse | null {
-  if (event.type !== 'result') return null
-  const payload = event as unknown as Record<string, unknown>
-  const direct = payload.inventory
-  if (isRecordObject(direct)) {
-    return direct as unknown as InventoryResponse
-  }
-  const info = payload.info
-  if (!isRecordObject(info)) return null
-  const nested = info.inventory
-  if (!isRecordObject(nested)) return null
-  return nested as unknown as InventoryResponse
-}
-
-async function runAsyncInventoryRefreshTask(): Promise<InventoryResponse> {
-  const { task_id } = await startModelInventoryRefreshTask()
-  return await new Promise<InventoryResponse>((resolve, reject) => {
-    let settled = false
-    let resolvedInventory: InventoryResponse | null = null
-    let unsubscribe: (() => void) | null = null
-    const settle = (fn: () => void): void => {
-      if (settled) return
-      settled = true
-      try { unsubscribe?.() } catch (_) { /* ignore */ }
-      unsubscribe = null
-      fn()
-    }
-
-    unsubscribe = subscribeTask(
-      task_id,
-      (event) => {
-        if (event.type === 'error') {
-          settle(() => reject(new Error(String(event.message || 'inventory refresh task failed'))))
-          return
-        }
-        if (event.type === 'result') {
-          const parsed = parseInventoryTaskResult(event)
-          if (parsed) resolvedInventory = parsed
-          return
-        }
-        if (event.type === 'end') {
-          if (resolvedInventory) {
-            settle(() => resolve(resolvedInventory as InventoryResponse))
-            return
-          }
-          settle(() => reject(new Error('inventory refresh task completed without inventory payload')))
-        }
-      },
-      (err) => {
-        settle(() => reject(err instanceof Error ? err : new Error(String(err))))
-      },
-    )
-  })
-}
-
 async function refreshAll(): Promise<void> {
   if (isLoadingQuicksettings.value) return
   isLoadingQuicksettings.value = true
   try {
     await Promise.all([store.refreshModelsList(), loadPaths()])
-    const refreshedInventory = await runAsyncInventoryRefreshTask()
-    cacheModelInventorySnapshot(refreshedInventory)
+    const refreshedInventory = await store.fetchInventoryWithLoraHydration({ refresh: true })
     applyInventorySnapshot(refreshedInventory)
   } catch (error) {
     toastQuicksettingsError(error)
@@ -1985,16 +1942,20 @@ function openOverrides(): void {
 onMounted(() => {
   window.addEventListener('resize', syncAdvancedHeight)
   requestAnimationFrame(syncAdvancedHeight)
-  bootstrap
-    .runRequired('Failed to initialize QuickSettings', async () => {
-      await Promise.all([
-        initQuicksettings(),
-        presets.init(currentTab()),
-      ])
-    })
-    .catch(() => {
-      // Fatal state is already set by bootstrap store.
-    })
+  void Promise.allSettled([
+    initQuicksettings(),
+    presets.init(currentTab()),
+  ]).then((results) => {
+    const [quicksettingsResult, presetsResult] = results
+    if (quicksettingsResult.status === 'rejected') {
+      console.error('[quicksettings] failed to initialize quicksettings', quicksettingsResult.reason)
+      toastQuicksettingsError(quicksettingsResult.reason)
+    }
+    if (presetsResult.status === 'rejected') {
+      console.error('[quicksettings] failed to initialize presets', presetsResult.reason)
+      toastQuicksettingsError(presetsResult.reason)
+    }
+  })
 })
 
 onBeforeUnmount(() => {

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Full-screen video zoom overlay with dedicated pan/zoom controls.
-Provides a WAN-exported-video overlay that opens only for valid `modelValue && src`, supports wheel zoom + mouse drag panning,
+Provides a WAN-exported-video overlay that opens only for valid `modelValue && src`, supports wheel zoom plus explicit pan-mode drag zoning,
 closes on `Escape` or outside-click, and blocks browser/native fullscreen on double-click.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -16,7 +16,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `computeFitZoom` (function): Computes fit-to-viewport zoom for the current video source.
 - `applyFitView` (function): Applies fit zoom and resets pan offsets.
 - `setActualSize` (function): Resets pan and applies `1:1` zoom.
+- `togglePanMode` (function): Toggles explicit drag-pan mode (controls-safe by default).
 - `onOverlayWheel` (function): Handles wheel-based zoom on the main overlay region.
+- `onPanZoneMouseDown` (function): Starts drag pan only from the explicit pan zone when pan mode is enabled.
 - `onWindowKeydown` (function): Handles keyboard close semantics (`Escape` closes).
 -->
 
@@ -31,8 +33,12 @@ Symbols (top-level; keep in sync; no ghosts):
           :aria-label="resolvedAriaLabel"
           controls
           @loadedmetadata="onVideoMetadata"
-          @mousedown="onPanStart"
           @dblclick.prevent.stop
+        />
+        <div
+          :class="['video-zoom-pan-zone', panMode ? 'video-zoom-pan-zone--active' : '']"
+          aria-hidden="true"
+          @mousedown="onPanZoneMouseDown"
         />
       </div>
     </div>
@@ -41,6 +47,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="toolbar-group">
         <button class="btn btn-sm btn-outline" type="button" @click="applyFitView">Fit</button>
         <button class="btn btn-sm btn-outline" type="button" @click="setActualSize">1:1</button>
+        <button class="btn btn-sm btn-outline" type="button" @click="togglePanMode">{{ panMode ? 'Pan: On' : 'Pan: Off' }}</button>
         <button class="btn btn-sm btn-outline" type="button" @click="zoomIn">+</button>
         <button class="btn btn-sm btn-outline" type="button" @click="zoomOut">-</button>
         <button class="btn btn-sm btn-secondary" type="button" @click="close">Close</button>
@@ -77,6 +84,7 @@ const videoEl = ref<HTMLVideoElement | null>(null)
 const zoom = ref(1)
 const offsetX = ref(0)
 const offsetY = ref(0)
+const panMode = ref(false)
 
 let panState: { startX: number; startY: number; originX: number; originY: number } | null = null
 
@@ -87,6 +95,7 @@ function clearPanListeners(): void {
 
 function close(): void {
   emit('update:modelValue', false)
+  panMode.value = false
   panState = null
   clearPanListeners()
 }
@@ -141,6 +150,14 @@ function adjustZoom(delta: number): void {
   zoom.value = clampZoom(zoom.value + delta)
 }
 
+function togglePanMode(): void {
+  panMode.value = !panMode.value
+  if (!panMode.value) {
+    panState = null
+    clearPanListeners()
+  }
+}
+
 function zoomIn(): void {
   adjustZoom(0.25)
 }
@@ -157,14 +174,7 @@ const zoomStyle = computed<CSSProperties>(() => ({
 }))
 
 function onPanStart(event: MouseEvent): void {
-  if (!isOpen.value || event.button !== 0) return
-  const target = event.currentTarget
-  if (!(target instanceof HTMLVideoElement)) return
-  const bounds = target.getBoundingClientRect()
-  if (bounds.height > 0) {
-    const normalizedY = (event.clientY - bounds.top) / bounds.height
-    if (normalizedY >= 0.86) return
-  }
+  if (!isOpen.value || !panMode.value || event.button !== 0) return
   event.preventDefault()
   panState = {
     startX: event.clientX,
@@ -174,6 +184,10 @@ function onPanStart(event: MouseEvent): void {
   }
   window.addEventListener('mousemove', onPanMove)
   window.addEventListener('mouseup', onPanEnd)
+}
+
+function onPanZoneMouseDown(event: MouseEvent): void {
+  onPanStart(event)
 }
 
 function onPanMove(event: MouseEvent): void {
@@ -227,6 +241,7 @@ watch(isOpen, (open) => {
     return
   }
   window.removeEventListener('keydown', onWindowKeydown)
+  panMode.value = false
   panState = null
   clearPanListeners()
 }, { immediate: true })
@@ -238,6 +253,7 @@ watch(src, () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  panMode.value = false
   panState = null
   clearPanListeners()
 })

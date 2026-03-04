@@ -256,6 +256,37 @@
     gap: 0.35rem;
   }
 
+  .qs-add-path-progress-caption {
+    margin: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .qs-add-path-progress-bar {
+    width: 100%;
+    height: 0.5rem;
+    border: 0;
+    border-radius: 999px;
+    overflow: hidden;
+    appearance: none;
+    background: color-mix(in srgb, var(--color-panel) 74%, black 26%);
+  }
+
+  .qs-add-path-progress-bar::-webkit-progress-bar {
+    background: color-mix(in srgb, var(--color-panel) 74%, black 26%);
+    border-radius: 999px;
+  }
+
+  .qs-add-path-progress-bar::-webkit-progress-value {
+    background: linear-gradient(90deg, hsla(195, 95%, 52%, 0.95), hsla(195, 95%, 68%, 0.95));
+    border-radius: 999px;
+  }
+
+  .qs-add-path-progress-bar::-moz-progress-bar {
+    background: linear-gradient(90deg, hsla(195, 95%, 52%, 0.95), hsla(195, 95%, 68%, 0.95));
+    border-radius: 999px;
+  }
+
   .qs-add-path-list-section {
     margin-top: 0.1rem;
     min-height: 0;

@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-03
+Last Review: 2026-03-04
 Status: Active
 
 ## Purpose
@@ -58,3 +58,4 @@ Status: Active
 - 2026-02-21: `client.ts` no longer exports `startVid2Vid`; frontend WAN generation dispatch is restricted to `startTxt2Vid`/`startImg2Vid` while backend vid2vid remains disabled (501).
 - 2026-03-02: `types.ts` task progress contracts now expose optional `message` + `data` on both streaming `TaskEvent.progress` and polled `TaskResult.progress`, enabling frontend consumption of backend total-progress metadata without schema drift.
 - 2026-03-03: Model add-path wrappers now keep scan rows minimal (`name/path/ext` only; no SHA/type) via `scanModelPath` (`POST /api/models/path-scan`), while `addModelPathItem` (`POST /api/models/path-add`) and `addModelPathItemsAll` (`POST /api/models/path-add-all`) remain SHA-at-add sequential add operations.
+- 2026-03-04: `types.ts` add-path contracts now use explicit nullable byte metadata (`ModelPathSizeBytes = number | null`) with non-optional `ModelPathScanItem.size_bytes` / `already_in_library`, and `ModelPathAddAllResult.item` now uses a dedicated `ModelPathAddAllErrorItem` fallback contract for fail-loud byte-progress consumers.

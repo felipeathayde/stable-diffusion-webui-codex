@@ -89,7 +89,7 @@ class ServicesTab:
         ttk.Button(btns, text="Stop All", command=self._stop_all).pack(side="left")
 
         row = 1
-        for svc_name in ("API", "UI"):
+        for svc_name in self._controller.service_names:
             card_frame = ttk.LabelFrame(frame, text=f"  {svc_name}  ", padding=16, style="Service.Card.TLabelframe")
             card_frame.grid(row=row, column=0, sticky="ew", padx=8, pady=(0, 10))
             card_frame.columnconfigure(1, weight=1)
@@ -306,12 +306,15 @@ class ServicesTab:
             root_url = f"http://{host}:{port}"
             return root_url, f"{root_url}/docs"
 
-        host = _browser_host(str(env.get("SERVER_HOST", "localhost")))
-        base_port = self._parse_port(env.get("WEB_PORT", service.spec.base_env.get("WEB_PORT", "7860")), default=7860)
-        effective_port = self._resolve_ui_effective_port(base_port=base_port, interface_cwd=Path(service.spec.cwd))
-        port = str(effective_port)
-        root_url = f"http://{host}:{port}"
-        return root_url, None
+        if service_name == "UI":
+            host = _browser_host(str(env.get("SERVER_HOST", "localhost")))
+            base_port = self._parse_port(env.get("WEB_PORT", service.spec.base_env.get("WEB_PORT", "7860")), default=7860)
+            effective_port = self._resolve_ui_effective_port(base_port=base_port, interface_cwd=Path(service.spec.cwd))
+            port = str(effective_port)
+            root_url = f"http://{host}:{port}"
+            return root_url, None
+
+        return "-", None
 
     def dispose(self) -> None:
         return

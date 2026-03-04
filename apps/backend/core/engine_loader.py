@@ -16,15 +16,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_instantiate_engine` (function): Creates an engine instance for a resolved diffusion bundle (family → engine key).
 - `_options_to_kwargs` (function): Converts `EngineLoadOptions` into `engine.load(...)` keyword arguments.
 - `_apply_runtime_options` (function): Applies runtime options (attention backend from explicit load options or runtime memory config, plus accelerator) to diffusers-backed engines.
-- `load_engine` (function): Loads and initializes a diffusion engine for direct use (best-effort cleanup on failures).
+- `load_engine` (function): Loads and initializes a diffusion engine for direct use (cleanup is fail-loud and residency-verified on failures).
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from apps.backend.core.registry import create_engine
 from apps.backend.engines import register_default_engines
@@ -130,6 +129,91 @@ def _guarded_engine_unload(engine: Any) -> None:
     engine.unload()
 
 
+def _engine_residency_targets(engine: Any) -> list[tuple[str, object]]:
+    codex_objects = getattr(engine, "codex_objects", None)
+    if codex_objects is None:
+        return []
+
+    targets: list[tuple[str, object]] = []
+    for label in ("denoiser", "unet", "vae", "clipvision"):
+        candidate = getattr(codex_objects, label, None)
+        if candidate is not None:
+            targets.append((label, candidate))
+
+    text_encoders = getattr(codex_objects, "text_encoders", None)
+    if isinstance(text_encoders, Mapping):
+        for name, candidate in text_encoders.items():
+            if candidate is None:
+                continue
+            targets.append((f"text_encoder:{name}", candidate))
+
+    return targets
+
+
+def _verify_engine_unloaded(engine: Any, *, source: str) -> None:
+    loaded_flag = getattr(engine, "_is_loaded", None)
+    if not isinstance(loaded_flag, bool):
+        raise RuntimeError(
+            f"Post-unload residency verification failed at {source}: invalid engine._is_loaded={loaded_flag!r}."
+        )
+
+    status_loaded = loaded_flag
+    status_payload = engine.status()
+    if isinstance(status_payload, Mapping):
+        raw_loaded = status_payload.get("loaded", loaded_flag)
+        if not isinstance(raw_loaded, bool):
+            raise RuntimeError(
+                f"Post-unload residency verification failed at {source}: "
+                f"engine.status()['loaded'] is not bool ({raw_loaded!r})."
+            )
+        status_loaded = raw_loaded
+
+    if loaded_flag or status_loaded:
+        raise RuntimeError(
+            f"Post-unload residency verification failed at {source}: "
+            f"engine still reports loaded (_is_loaded={loaded_flag}, status.loaded={status_loaded})."
+        )
+
+
+def _unload_engine_with_residency_verification(engine: Any, *, source: str) -> None:
+    targets = _engine_residency_targets(engine)
+    tracked_targets: list[tuple[str, object]] = []
+    for label, target in targets:
+        try:
+            was_loaded = memory_management.manager.is_model_loaded(target)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Failed to evaluate pre-unload residency target '{label}' at {source}: {exc}"
+            ) from exc
+        if was_loaded:
+            tracked_targets.append((label, target))
+
+    _guarded_engine_unload(engine)
+    mark_unloaded = getattr(engine, "mark_unloaded", None)
+    if not callable(mark_unloaded):
+        raise RuntimeError(
+            f"Post-unload residency verification failed at {source}: engine does not expose callable mark_unloaded()."
+        )
+    mark_unloaded()
+    _verify_engine_unloaded(engine, source=source)
+
+    lingering: list[str] = []
+    for label, target in tracked_targets:
+        try:
+            if memory_management.manager.is_model_loaded(target):
+                lingering.append(label)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Failed to evaluate post-unload residency target '{label}' at {source}: {exc}"
+            ) from exc
+
+    if lingering:
+        raise RuntimeError(
+            f"Post-unload residency verification failed at {source}: "
+            f"lingering memory-manager residency for {', '.join(lingering)}."
+        )
+
+
 def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     """Load and initialize a Codex diffusion engine for direct use."""
 
@@ -145,24 +229,48 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
             stage=LoadAuthorityStage.LOAD,
         ):
             _guarded_engine_load(engine, name_or_path, load_kwargs)
-    except Exception:
+    except Exception as exc:
+        cleanup_failures: list[str] = []
         with coordinator_load_permit(
             owner="core.engine_loader.load_engine",
             stage=LoadAuthorityStage.CLEANUP,
         ):
-            with contextlib.suppress(Exception):
-                _guarded_engine_unload(engine)
+            try:
+                _unload_engine_with_residency_verification(
+                    engine,
+                    source="core.engine_loader.load_engine.load_failure_cleanup",
+                )
+            except Exception as cleanup_exc:  # noqa: BLE001
+                cleanup_failures.append(f"engine_unload:{cleanup_exc}")
+        if cleanup_failures:
+            detail = "; ".join(cleanup_failures)
+            raise RuntimeError(
+                f"Failed to load engine for '{name_or_path}': {exc}. "
+                f"Additional cleanup failure(s): {detail}"
+            ) from exc
         raise
 
     try:
         return _apply_runtime_options(engine, options)
-    except Exception:
+    except Exception as exc:
+        cleanup_failures: list[str] = []
         with coordinator_load_permit(
             owner="core.engine_loader.load_engine",
             stage=LoadAuthorityStage.UNLOAD,
         ):
-            with contextlib.suppress(Exception):
-                _guarded_engine_unload(engine)
+            try:
+                _unload_engine_with_residency_verification(
+                    engine,
+                    source="core.engine_loader.load_engine.apply_failure_cleanup",
+                )
+            except Exception as cleanup_exc:  # noqa: BLE001
+                cleanup_failures.append(f"engine_unload:{cleanup_exc}")
+        if cleanup_failures:
+            detail = "; ".join(cleanup_failures)
+            raise RuntimeError(
+                f"Failed to apply runtime options for '{name_or_path}': {exc}. "
+                f"Additional cleanup failure(s): {detail}"
+            ) from exc
         raise
 
 

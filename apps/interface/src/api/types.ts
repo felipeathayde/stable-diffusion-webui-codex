@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Frontend API DTOs and response/payload types.
 Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows), including options revision/apply metadata fields used by strict generation contracts.
-Add-path contracts include optional nullable `size_bytes` metadata for byte-aware progress UX during sequential library adds.
+Add-path contracts expose explicit nullable `size_bytes` metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`.
@@ -53,12 +53,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PathsResponse` (interface): `/api/paths` response shape.
 - `PathsUpdateResponse` (interface): `/api/paths` update response shape.
 - `ModelPathLibraryKind` (type): Model library kind for add-path scan/add endpoints (`checkpoint|vae|text_encoder`).
+- `ModelPathSizeBytes` (type): Explicit nullable file-size contract used by add-path scan/add responses (`number | null`).
 - `ModelPathScanRequest` (interface): Request payload for `/api/models/path-scan`.
-- `ModelPathScanItem` (interface): Candidate file row returned by `/api/models/path-scan` (optional `size_bytes` and `already_in_library` telemetry).
+- `ModelPathScanItem` (interface): Candidate file row returned by `/api/models/path-scan` with explicit size/already-in-library metadata.
 - `ModelPathScanResponse` (interface): `/api/models/path-scan` response shape.
 - `ModelPathAddRequest` (interface): Request payload for `/api/models/path-add` and `/api/models/path-add-all`.
 - `ModelPathAddItem` (interface): Added-file payload including SHA/hash metadata.
 - `ModelPathAddResponse` (interface): `/api/models/path-add` response shape.
+- `ModelPathAddAllErrorItem` (interface): Per-file fallback payload returned by `/api/models/path-add-all` when add fails.
 - `ModelPathAddAllResult` (interface): Per-item sequential result row returned by `/api/models/path-add-all`.
 - `ModelPathAddAllResponse` (interface): `/api/models/path-add-all` response shape.
 - `SettingsCategory` (interface): Settings category entry in settings schema responses.
@@ -444,6 +446,7 @@ export interface PathsResponse { paths: Record<string, string[]> }
 export interface PathsUpdateResponse { ok: boolean }
 
 export type ModelPathLibraryKind = 'checkpoint' | 'vae' | 'text_encoder'
+export type ModelPathSizeBytes = number | null
 
 export interface ModelPathScanRequest {
   path: string
@@ -455,8 +458,8 @@ export interface ModelPathScanItem {
   name: string
   path: string
   ext: string
-  size_bytes?: number | null
-  already_in_library?: boolean | null
+  size_bytes: ModelPathSizeBytes
+  already_in_library: boolean
 }
 
 export interface ModelPathScanResponse {
@@ -486,11 +489,20 @@ export interface ModelPathAddResponse {
   item: ModelPathAddItem
 }
 
+export interface ModelPathAddAllErrorItem {
+  name: string
+  path: string
+  ext: string
+  size_bytes: ModelPathSizeBytes
+  type: ModelPathLibraryKind
+  library_key: string
+}
+
 export interface ModelPathAddAllResult {
   index: number
   total: number
   ok: boolean
-  item: ModelPathAddItem | (ModelPathScanItem & { library_key: string })
+  item: ModelPathAddItem | ModelPathAddAllErrorItem
   detail?: string
 }
 

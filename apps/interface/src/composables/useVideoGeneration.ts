@@ -12,7 +12,7 @@ to update UI state and fetch final results. Every start payload includes `settin
 trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 mode prompt fields from the High stage in payload builders for backend compatibility. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/
-`pingpong`/`returnFrames`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), and stage `flowShift`
+`pingpong`/`returnFrames`/`saveOutput`/`saveMetadata`/`trimToAudio`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), and stage `flowShift`
 pass-through in common WAN payload input. Also snapshots and forwards optional SeedVR2 upscaling controls as `video_upscaling`.
 Img2vid temporal payload fields are gated by `img2vidMode` (`solo|sliding|svi2|svi2_pro`), and WAN prompt `<lora:...>` tags are parsed client-side into
 stage-level LoRA arrays (`wan_high/wan_low.loras[]` with `sha+weight`) before payload dispatch. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
@@ -304,6 +304,9 @@ function defaultVideo(): WanVideoParams {
     crf: 15,
     loopCount: 0,
     pingpong: false,
+    saveMetadata: true,
+    saveOutput: true,
+    trimToAudio: false,
     returnFrames: false,
     interpolationFps: 0,
     upscalingEnabled: false,
@@ -341,6 +344,10 @@ function normalizeGuideOffset(rawValue: unknown): number {
     throw new Error(`useVideoGeneration: img2vid crop offset must be in [0,1] (got ${String(rawValue)}).`)
   }
   return numeric
+}
+
+function resolveBooleanWithDefault(rawValue: unknown, fallback: boolean): boolean {
+  return typeof rawValue === 'boolean' ? rawValue : fallback
 }
 
 export function useVideoGeneration(tabId: string) {
@@ -547,8 +554,11 @@ export function useVideoGeneration(tabId: string) {
         pixFmt: v.pixFmt,
         crf: v.crf,
         loopCount: v.loopCount,
-        pingpong: v.pingpong,
-        returnFrames: v.returnFrames,
+        pingpong: resolveBooleanWithDefault(v.pingpong, false),
+        saveMetadata: resolveBooleanWithDefault(v.saveMetadata, true),
+        saveOutput: resolveBooleanWithDefault(v.saveOutput, true),
+        trimToAudio: resolveBooleanWithDefault(v.trimToAudio, false),
+        returnFrames: resolveBooleanWithDefault(v.returnFrames, false),
       },
       interpolation: {
         targetFps: v.interpolationFps,
@@ -715,8 +725,11 @@ export function useVideoGeneration(tabId: string) {
         pixFmt: v.pixFmt,
         crf: v.crf,
         loopCount: v.loopCount,
-        pingpong: v.pingpong,
-        returnFrames: v.returnFrames,
+        pingpong: resolveBooleanWithDefault(v.pingpong, false),
+        saveMetadata: resolveBooleanWithDefault(v.saveMetadata, true),
+        saveOutput: resolveBooleanWithDefault(v.saveOutput, true),
+        trimToAudio: resolveBooleanWithDefault(v.trimToAudio, false),
+        returnFrames: resolveBooleanWithDefault(v.returnFrames, false),
       },
       interpolation: {
         targetFps: v.interpolationFps,

@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolve_video_output_fps` (function): Computes output fps from request/base fps and interpolation metadata.
 - `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
 - `prepare_base_snapshot_video_options` (function): Builds a fail-loud snapshot export options payload for base-video persistence before post-processing.
+- `build_video_request_effective_snapshot` (function): Builds an immutable request-vs-effective execution snapshot for WAN video metadata.
 - `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
 - `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
 - `__all__` (constant): Explicit export list for the module.
@@ -385,6 +386,268 @@ def prepare_base_snapshot_video_options(
     return normalized_options
 
 
+def _snapshot_clone(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _snapshot_clone(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_snapshot_clone(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _export_meta_field(meta: Any, *, key: str) -> Any:
+    if isinstance(meta, Mapping):
+        return meta.get(key)
+    return getattr(meta, key, None)
+
+
+def _normalized_export_meta(meta: Any) -> dict[str, Any] | None:
+    if meta is None:
+        return None
+    if isinstance(meta, Mapping):
+        payload: dict[str, Any] = dict(meta)
+    else:
+        payload = {
+            "saved": getattr(meta, "saved", None),
+            "rel_path": getattr(meta, "rel_path", None),
+            "mime": getattr(meta, "mime", None),
+            "reason": getattr(meta, "reason", None),
+            "fps": getattr(meta, "fps", None),
+            "frames": getattr(meta, "frame_count", None),
+        }
+    if payload.get("frames") is None and payload.get("frame_count") is not None:
+        payload["frames"] = payload.get("frame_count")
+    payload.pop("frame_count", None)
+    return _snapshot_clone(payload)
+
+
+def _container_supports_audio(format_value: Any) -> bool:
+    normalized = str(format_value or "").strip().lower()
+    if normalized in {"video/gif", "image/gif", "gif"}:
+        return False
+    return True
+
+
+def build_video_request_effective_snapshot(
+    *,
+    request: Any,
+    plan: VideoPlan,
+    video_meta: Any,
+    upscaling_options: VideoUpscalingOptions | None,
+    upscaling_meta: Mapping[str, Any] | None,
+    interpolation_options: VideoInterpolationOptions | None,
+    interpolation_meta: Mapping[str, Any] | None,
+    base_video_meta: Any = None,
+    audio_input: bool = False,
+    final_frame_count: int,
+) -> dict[str, Any]:
+    """Build an immutable snapshot of requested vs effective WAN video execution settings."""
+
+    raw_video_options = getattr(request, "video_options", None)
+    video_options: dict[str, Any] = dict(raw_video_options) if isinstance(raw_video_options, Mapping) else {}
+    extras_raw = getattr(request, "extras", {})
+    extras: dict[str, Any] = dict(extras_raw) if isinstance(extras_raw, Mapping) else {}
+
+    requested_return_frames = parse_bool_value(
+        extras.get("video_return_frames"),
+        field="extras.video_return_frames",
+        default=False,
+    )
+    requested_save_output = parse_bool_value(
+        video_options.get("save_output"),
+        field="video_options.save_output",
+        default=False,
+    )
+    requested_save_metadata = parse_bool_value(
+        video_options.get("save_metadata"),
+        field="video_options.save_metadata",
+        default=False,
+    )
+    requested_trim_to_audio = parse_bool_value(
+        video_options.get("trim_to_audio"),
+        field="video_options.trim_to_audio",
+        default=False,
+    )
+    requested_pingpong = parse_bool_value(
+        video_options.get("pingpong"),
+        field="video_options.pingpong",
+        default=False,
+    )
+
+    requested_interpolation_enabled = bool(interpolation_options is not None and interpolation_options.enabled)
+    requested_interpolation_times = (
+        int(interpolation_options.times)
+        if interpolation_options is not None and interpolation_options.times is not None
+        else None
+    )
+    requested_interpolation_toggle = bool(
+        requested_interpolation_enabled and int(requested_interpolation_times or 0) > 1
+    )
+    requested_upscaling_toggle = bool(upscaling_options is not None and upscaling_options.enabled)
+    requested_base_snapshot = bool(
+        requested_save_output and (requested_upscaling_toggle or requested_interpolation_toggle)
+    )
+
+    video_saved = parse_bool_value(
+        _export_meta_field(video_meta, key="saved"),
+        field="video_meta.saved",
+        default=False,
+    )
+    export_failed = bool(requested_save_output and not video_saved)
+    effective_return_frames = bool(requested_return_frames or (not requested_save_output) or export_failed)
+
+    upscaling_result_raw = (
+        upscaling_meta.get("result")
+        if isinstance(upscaling_meta, Mapping)
+        else None
+    )
+    upscaling_applied = parse_bool_value(
+        upscaling_result_raw.get("applied") if isinstance(upscaling_result_raw, Mapping) else None,
+        field="video_upscaling.result.applied",
+        default=False,
+    )
+    interpolation_result_raw = (
+        interpolation_meta.get("result")
+        if isinstance(interpolation_meta, Mapping)
+        else None
+    )
+    interpolation_applied = parse_bool_value(
+        interpolation_result_raw.get("applied") if isinstance(interpolation_result_raw, Mapping) else None,
+        field="video_interpolation.result.applied",
+        default=False,
+    )
+
+    base_snapshot_saved = parse_bool_value(
+        _export_meta_field(base_video_meta, key="saved"),
+        field="video_base_snapshot.saved",
+        default=False,
+    )
+
+    format_effective = str(video_options.get("format") or "video/h264-mp4")
+    pix_fmt_effective = str(video_options.get("pix_fmt") or "yuv420p")
+    crf_effective = int(video_options.get("crf", 23) or 23)
+    loop_count_effective = int(video_options.get("loop_count", 0) or 0)
+    trim_to_audio_effective = bool(
+        requested_trim_to_audio
+        and requested_save_output
+        and video_saved
+        and audio_input
+        and _container_supports_audio(format_effective)
+    )
+    save_metadata_effective = bool(
+        requested_save_metadata
+        and requested_save_output
+        and video_saved
+    )
+    pingpong_effective = bool(
+        requested_pingpong
+        and requested_save_output
+        and video_saved
+    )
+
+    requested_snapshot = {
+        "video_options": {
+            "format": video_options.get("format"),
+            "pix_fmt": video_options.get("pix_fmt"),
+            "crf": video_options.get("crf"),
+            "loop_count": video_options.get("loop_count"),
+            "pingpong": requested_pingpong,
+            "save_output": requested_save_output,
+            "save_metadata": requested_save_metadata,
+            "trim_to_audio": requested_trim_to_audio,
+        },
+        "video_return_frames": requested_return_frames,
+        "video_interpolation": (
+            interpolation_options.as_dict() if interpolation_options is not None else {"enabled": False}
+        ),
+        "video_upscaling": (
+            upscaling_options.as_dict() if upscaling_options is not None else {"enabled": False}
+        ),
+        "video_base_snapshot": {"requested": requested_base_snapshot},
+        "input_geometry": {
+            "width": int(getattr(request, "width", plan.width) or plan.width),
+            "height": int(getattr(request, "height", plan.height) or plan.height),
+            "fps": int(getattr(request, "fps", plan.fps) or plan.fps),
+            "frames": int(getattr(request, "num_frames", final_frame_count) or final_frame_count),
+        },
+        "audio_input": bool(audio_input),
+    }
+
+    effective_snapshot = {
+        "video_options": {
+            "format": format_effective,
+            "pix_fmt": pix_fmt_effective,
+            "crf": crf_effective,
+            "loop_count": loop_count_effective,
+            "pingpong": pingpong_effective,
+            "save_output": bool(video_saved),
+            "save_metadata": save_metadata_effective,
+            "trim_to_audio": trim_to_audio_effective,
+        },
+        "video_return_frames": effective_return_frames,
+        "video_interpolation": (
+            _snapshot_clone(interpolation_meta)
+            if isinstance(interpolation_meta, Mapping)
+            else {"enabled": requested_interpolation_enabled, "result": {"applied": interpolation_applied}}
+        ),
+        "video_upscaling": (
+            _snapshot_clone(upscaling_meta)
+            if isinstance(upscaling_meta, Mapping)
+            else {"enabled": requested_upscaling_toggle, "result": {"applied": upscaling_applied}}
+        ),
+        "video_base_snapshot": _normalized_export_meta(base_video_meta),
+        "video_export": _normalized_export_meta(video_meta),
+        "output_geometry": {
+            "width": int(plan.width),
+            "height": int(plan.height),
+            "fps": int(plan.fps),
+            "frames": int(final_frame_count),
+        },
+    }
+
+    toggle_effective_map = {
+        "video_return_frames": {
+            "requested": requested_return_frames,
+            "effective": effective_return_frames,
+        },
+        "video_save_output": {
+            "requested": requested_save_output,
+            "effective": bool(video_saved),
+        },
+        "video_save_metadata": {
+            "requested": requested_save_metadata,
+            "effective": save_metadata_effective,
+        },
+        "video_trim_to_audio": {
+            "requested": requested_trim_to_audio,
+            "effective": trim_to_audio_effective,
+        },
+        "video_pingpong": {
+            "requested": requested_pingpong,
+            "effective": pingpong_effective,
+        },
+        "video_interpolation_enabled": {
+            "requested": requested_interpolation_toggle,
+            "effective": interpolation_applied,
+        },
+        "video_upscaling_enabled": {
+            "requested": requested_upscaling_toggle,
+            "effective": upscaling_applied,
+        },
+        "video_base_snapshot": {
+            "requested": requested_base_snapshot,
+            "effective": base_snapshot_saved,
+        },
+    }
+
+    return {
+        "request_snapshot": _snapshot_clone(requested_snapshot),
+        "effective_snapshot": _snapshot_clone(effective_snapshot),
+        "toggle_effective_map": _snapshot_clone(toggle_effective_map),
+    }
+
+
 def assemble_video_metadata(
     engine: Any,
     plan: VideoPlan,
@@ -464,6 +727,7 @@ __all__ = [
     "resolve_video_output_fps",
     "export_video",
     "prepare_base_snapshot_video_options",
+    "build_video_request_effective_snapshot",
     "assemble_video_metadata",
     "build_video_result",
 ]

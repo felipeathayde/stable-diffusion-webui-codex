@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN video output options panel.
-Configures export format/pixel format/CRF/loop options, compact output toggles (`pingpong`, `returnFrames`), and RIFE interpolation target FPS (`0=off`) for WAN video tasks.
+Configures export format/pixel format/CRF/loop options, compact output toggles (`pingpong`, `returnFrames`, `saveOutput`, `saveMetadata`, `trimToAudio`), and RIFE interpolation target FPS (`0=off`) for WAN video tasks.
 Also exposes optional SeedVR2 video upscaling controls (`video_upscaling`) inside a dedicated collapsible card with header toggle parity to Temporal Loom,
 including the same `EXPERIMENTAL` badge treatment used in the temporal card.
 
@@ -112,6 +112,33 @@ Symbols (top-level; keep in sync; no ghosts):
           @click="updateVideo({ returnFrames: !video.returnFrames })"
         >
           Return frames
+        </button>
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', (video.saveOutput ?? true) ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          type="button"
+          :disabled="disabled"
+          :aria-pressed="video.saveOutput ?? true"
+          @click="updateVideo({ saveOutput: !(video.saveOutput ?? true) })"
+        >
+          Save output
+        </button>
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', (video.saveMetadata ?? true) ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          type="button"
+          :disabled="disabled"
+          :aria-pressed="video.saveMetadata ?? true"
+          @click="updateVideo({ saveMetadata: !(video.saveMetadata ?? true) })"
+        >
+          Save metadata
+        </button>
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', (video.trimToAudio ?? false) ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          type="button"
+          :disabled="disabled"
+          :aria-pressed="video.trimToAudio ?? false"
+          @click="updateVideo({ trimToAudio: !(video.trimToAudio ?? false) })"
+        >
+          Trim to audio
         </button>
       </div>
     </div>

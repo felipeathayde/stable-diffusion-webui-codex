@@ -104,6 +104,21 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
 
     proc = build_txt2img_processing(request)
     proc.sd_model = engine
+    import threading
+
+    task_context = str(threading.current_thread().name or "").strip() or "unknown-thread"
+    setattr(proc, "_codex_pipeline_mode", "txt2img")
+    task_id: str | None = None
+    marker = "-task-"
+    if marker in task_context:
+        candidate = task_context.split(marker, 1)[1].strip()
+        if candidate:
+            task_id = candidate
+    if task_id is not None:
+        setattr(proc, "_codex_task_id", task_id)
+        setattr(proc, "_codex_correlation_id", task_id)
+        setattr(proc, "_codex_hires_correlation_id", task_id)
+        setattr(proc, "_codex_correlation_source", "task_id")
 
     base_seed, seeds, subseeds, subseed_strength = _resolve_seed_plan(
         seed=getattr(request, "seed", None),

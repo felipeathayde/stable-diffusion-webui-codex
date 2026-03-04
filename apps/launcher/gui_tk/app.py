@@ -58,7 +58,10 @@ class CodexLauncherApp(tk.Tk):
 
         store = LauncherProfileStore.load()
         log_buffer = CodexLogBuffer(capacity=4000)
-        services = default_services(log_buffer=log_buffer)
+        services = default_services(
+            log_buffer=log_buffer,
+            mode_profile=str(getattr(store.meta, "app_mode_profile", "") or ""),
+        )
         self._controller = LauncherController(
             codex_root=self.codex_root,
             store=store,
@@ -272,7 +275,9 @@ class CodexLauncherApp(tk.Tk):
     def _run_checks_async(self) -> None:
         def _worker() -> None:
             try:
-                results = run_launch_checks()
+                results = run_launch_checks(
+                    mode_profile=str(getattr(self._controller.store.meta, "app_mode_profile", "") or ""),
+                )
             except Exception as exc:
                 results = [CodexLaunchCheck(name="launch-checks", ok=False, detail=str(exc))]
 

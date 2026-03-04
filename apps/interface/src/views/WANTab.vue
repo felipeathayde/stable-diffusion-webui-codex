@@ -18,7 +18,7 @@ Supports task resume after reload (auto-reattaches to in-flight tasks via SSE re
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
 payload parsing/LoRA SHA resolution is handled in `useVideoGeneration`.
 Temporal Loom reset-anchor control is rendered as a compact content-width toggle button, and upscaling controls keep the same experimental badge treatment as Temporal Loom.
-Exported result video preview supports center-click open into a dedicated full-screen video overlay with pan/zoom, outside-click/Escape close, and double-click fullscreen suppression.
+Exported result video preview uses an explicit `Zoom` action to open a dedicated full-screen video overlay with pan/zoom, outside-click/Escape close, and double-click fullscreen suppression.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/cancel, history apply/reuse, and guided-generation UX.
@@ -94,7 +94,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `sendToWorkflows` (function): Sends the current snapshot into the workflows subsystem (async).
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
 - `videoZoomOpen` (const): Controls dedicated exported-video overlay visibility.
-- `openResultVideoZoom` (function): Opens exported-video overlay from the in-card center hitbox trigger.
+- `openResultVideoZoom` (function): Opens exported-video overlay from the explicit in-card `Zoom` action.
 - `formatVideoModeLabel` (function): Returns a user-facing mode label, preserving unsupported/unknown modes explicitly.
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
 - `readHistorySnapshotText` (function): Reads legacy root-level prompt text from a history snapshot.
@@ -601,23 +601,12 @@ Symbols (top-level; keep in sync; no ghosts):
         <div v-if="videoUrl" class="gen-card mb-3">
           <div class="row-split">
             <span class="label-muted">Exported Video</span>
-            <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
+            <div class="wan-header-actions">
+              <button class="btn btn-sm btn-outline" type="button" @click="openResultVideoZoom">Zoom</button>
+              <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
+            </div>
           </div>
-          <div class="video-zoom-preview">
-            <video
-              class="video-zoom-preview__media w-full rounded"
-              :src="videoUrl"
-              controls
-              @dblclick.prevent.stop
-            />
-            <button
-              class="video-zoom-preview-hitbox"
-              type="button"
-              title="Zoom exported video"
-              aria-label="Open exported video zoom overlay"
-              @click="openResultVideoZoom"
-            />
-          </div>
+          <video class="w-full rounded" :src="videoUrl" controls @dblclick.prevent.stop />
           <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_ROOT/output is writable.</p>
         </div>
         <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">

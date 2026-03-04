@@ -14,8 +14,11 @@ global upscalers runtime, and computes correct `start_at_step` semantics from `d
 Symbols (top-level; keep in sync; no ghosts):
 - `HiresFillCropPlan` (dataclass): Aspect-preserving hires resize plan (internal fill size + crop offsets).
 - `HiresPreparation` (dataclass): Prepared hires inputs and continuation mode for the second pass (`init_latent` or `image_latents`).
+- `PipelineTelemetryContext` (dataclass): Canonical telemetry context for pipeline events (`mode`, `task_id`, `correlation_id`, source).
 - `compute_hires_fill_crop_plan` (function): Compute a fill-then-crop plan for hires pass (Forge-like semantics).
 - `start_at_step_from_denoise` (function): Maps `denoise` in [0..1] to `start_at_step` (0..steps-1) with correct monotonic semantics.
+- `resolve_pipeline_telemetry_context` (function): Resolve and persist canonical task-scoped correlation context (fail loud on missing mode).
+- `resolve_hires_family_strategy` (function): Global family strategy + capability gate for hires compatibility checks.
 - `prepare_hires_latents_and_conditioning` (function): Prepares hires inputs via family-dispatched backends (SD, flow-like, Kontext).
 """
 
@@ -23,10 +26,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import threading
 from typing import Any, Callable, Literal, Optional
 
 import torch
 
+from apps.backend.runtime.logging import emit_backend_event
+from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.runtime.processing.conditioners import decode_latent_batch, encode_image_batch
 from apps.backend.runtime.processing.datatypes import HiResPlan
 from apps.backend.runtime.vision.upscalers.registry import upscale_image_tensor, upscale_latent_tensor
@@ -66,6 +72,84 @@ class HiresPreparation:
     latents: torch.Tensor
     image_conditioning: torch.Tensor | None
     continuation_mode: HiresContinuationMode
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineTelemetryContext:
+    """Canonical telemetry context for pipeline events."""
+
+    mode: str
+    task_id: str | None
+    correlation_id: str
+    correlation_source: Literal["task_id", "processing", "thread_object"]
+
+
+def _extract_task_id_from_thread_name(thread_name: str) -> str | None:
+    marker = "-task-"
+    text = str(thread_name or "").strip()
+    if marker not in text:
+        return None
+    task_id = text.split(marker, 1)[1].strip()
+    return task_id or None
+
+
+def resolve_pipeline_telemetry_context(
+    processing: Any,
+    *,
+    default_mode: str | None = None,
+    require_mode: bool = True,
+) -> PipelineTelemetryContext:
+    """Resolve and persist canonical task-scoped telemetry context."""
+
+    if processing is None:
+        raise RuntimeError("Pipeline telemetry context requires a non-null processing object.")
+
+    mode = str(getattr(processing, "_codex_pipeline_mode", "") or "").strip()
+    if mode == "" and default_mode is not None:
+        mode = str(default_mode).strip()
+        if mode:
+            setattr(processing, "_codex_pipeline_mode", mode)
+    if require_mode and mode == "":
+        raise RuntimeError(
+            "Pipeline telemetry context is missing required `_codex_pipeline_mode`."
+        )
+
+    thread_name = str(threading.current_thread().name or "").strip() or "unknown-thread"
+    task_id = str(getattr(processing, "_codex_task_id", "") or "").strip()
+    if task_id == "":
+        parsed_task_id = _extract_task_id_from_thread_name(thread_name)
+        if parsed_task_id is not None:
+            task_id = parsed_task_id
+            setattr(processing, "_codex_task_id", task_id)
+
+    existing_correlation = str(
+        getattr(processing, "_codex_correlation_id", "")
+        or getattr(processing, "_codex_hires_correlation_id", "")
+        or ""
+    ).strip()
+    if task_id != "":
+        correlation_id = task_id
+        correlation_source: Literal["task_id", "processing", "thread_object"] = "task_id"
+    elif existing_correlation != "":
+        correlation_id = existing_correlation
+        correlation_source = "processing"
+    else:
+        correlation_id = f"{thread_name}:{id(processing):x}"
+        correlation_source = "thread_object"
+
+    if correlation_id == "":
+        raise RuntimeError("Pipeline telemetry context failed to resolve correlation_id.")
+
+    setattr(processing, "_codex_correlation_id", correlation_id)
+    setattr(processing, "_codex_hires_correlation_id", correlation_id)
+    setattr(processing, "_codex_correlation_source", correlation_source)
+
+    return PipelineTelemetryContext(
+        mode=mode,
+        task_id=(task_id if task_id != "" else None),
+        correlation_id=correlation_id,
+        correlation_source=correlation_source,
+    )
 
 
 def _ceil_div(num: int, den: int) -> int:
@@ -197,6 +281,23 @@ def _resolve_hires_backend(engine_id: str) -> HiresBackend:
     )
 
 
+def resolve_hires_family_strategy(engine_id: str) -> HiresBackend:
+    """Resolve a hires family strategy and fail loud when the engine is incompatible."""
+
+    normalized_engine_id = str(engine_id or "").strip()
+    if normalized_engine_id == "":
+        raise RuntimeError("Hires compatibility check requires a non-empty engine id.")
+    try:
+        semantic_engine = semantic_engine_for_engine_id(normalized_engine_id)
+    except KeyError as exc:
+        raise NotImplementedError(
+            f"Hires is not supported for engine '{normalized_engine_id}' because no semantic capability surface is registered."
+        ) from exc
+    if not ENGINE_SURFACES[semantic_engine].supports_hires:
+        raise NotImplementedError(f"Hires is not supported for engine '{normalized_engine_id}'.")
+    return _resolve_hires_backend(normalized_engine_id)
+
+
 def _prepare_flow_hires_latents(
     sd_model: Any,
     *,
@@ -310,7 +411,22 @@ def prepare_hires_latents_and_conditioning(
         processing.update_extra_param("Hires crop top", int(resize_plan.crop_top))
 
     engine_id = str(getattr(sd_model, "engine_id", "") or "").strip()
-    backend = _resolve_hires_backend(engine_id)
+    backend = resolve_hires_family_strategy(engine_id)
+    telemetry = resolve_pipeline_telemetry_context(processing, require_mode=True)
+    emit_backend_event(
+        "pipeline.hires.prepare.dispatch",
+        logger="backend.runtime.pipeline_stages.hires_fix",
+        mode=telemetry.mode,
+        stage="hires.prepare.dispatch",
+        correlation_id=telemetry.correlation_id,
+        correlation_source=telemetry.correlation_source,
+        task_id=telemetry.task_id,
+        engine_id=engine_id,
+        strategy=backend,
+        upscaler_id=str(hires_plan.upscaler_id),
+        target_width=int(resize_plan.target_width),
+        target_height=int(resize_plan.target_height),
+    )
 
     if backend == "sd":
         from apps.backend.runtime.families.sd.hires_fix import prepare_hires_latents_and_conditioning as _sd_prepare
@@ -328,6 +444,24 @@ def prepare_hires_latents_and_conditioning(
             progress_callback=progress_callback,
             resize_plan=resize_plan,
         )
+        emit_backend_event(
+            "pipeline.hires.prepare.ready",
+            logger="backend.runtime.pipeline_stages.hires_fix",
+            mode=telemetry.mode,
+            stage="hires.prepare.ready",
+            correlation_id=telemetry.correlation_id,
+            correlation_source=telemetry.correlation_source,
+            task_id=telemetry.task_id,
+            engine_id=engine_id,
+            strategy=backend,
+            continuation_mode="init_latent",
+            latents_shape=tuple(int(dim) for dim in latents.shape),
+            image_conditioning_shape=(
+                tuple(int(dim) for dim in image_conditioning.shape)
+                if isinstance(image_conditioning, torch.Tensor)
+                else None
+            ),
+        )
         return HiresPreparation(
             latents=latents,
             image_conditioning=image_conditioning,
@@ -343,6 +477,20 @@ def prepare_hires_latents_and_conditioning(
             tile=tile,
             progress_callback=progress_callback,
             resize_plan=resize_plan,
+        )
+        emit_backend_event(
+            "pipeline.hires.prepare.ready",
+            logger="backend.runtime.pipeline_stages.hires_fix",
+            mode=telemetry.mode,
+            stage="hires.prepare.ready",
+            correlation_id=telemetry.correlation_id,
+            correlation_source=telemetry.correlation_source,
+            task_id=telemetry.task_id,
+            engine_id=engine_id,
+            strategy=backend,
+            continuation_mode="init_latent",
+            latents_shape=tuple(int(dim) for dim in latents.shape),
+            image_conditioning_shape=None,
         )
         return HiresPreparation(
             latents=latents,
@@ -360,6 +508,20 @@ def prepare_hires_latents_and_conditioning(
             progress_callback=progress_callback,
             resize_plan=resize_plan,
         )
+        emit_backend_event(
+            "pipeline.hires.prepare.ready",
+            logger="backend.runtime.pipeline_stages.hires_fix",
+            mode=telemetry.mode,
+            stage="hires.prepare.ready",
+            correlation_id=telemetry.correlation_id,
+            correlation_source=telemetry.correlation_source,
+            task_id=telemetry.task_id,
+            engine_id=engine_id,
+            strategy=backend,
+            continuation_mode="image_latents",
+            latents_shape=tuple(int(dim) for dim in latents.shape),
+            image_conditioning_shape=None,
+        )
         return HiresPreparation(
             latents=latents,
             image_conditioning=None,
@@ -372,7 +534,10 @@ def prepare_hires_latents_and_conditioning(
 __all__ = [
     "HiresFillCropPlan",
     "HiresPreparation",
+    "PipelineTelemetryContext",
     "compute_hires_fill_crop_plan",
     "prepare_hires_latents_and_conditioning",
+    "resolve_hires_family_strategy",
+    "resolve_pipeline_telemetry_context",
     "start_at_step_from_denoise",
 ]

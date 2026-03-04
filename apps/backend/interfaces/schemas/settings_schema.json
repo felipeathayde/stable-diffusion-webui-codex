@@ -329,6 +329,18 @@
       "choices_source": null
     },
     {
+      "key": "codex_vae_by_family",
+      "label": "(Codex) VAE by family (JSON map)",
+      "type": "text",
+      "section": "system",
+      "default": "{}",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
+    },
+    {
       "key": "codex_smart_offload",
       "label": "(Codex) Smart offload (TE/VAE unload between stages)",
       "type": "checkbox",

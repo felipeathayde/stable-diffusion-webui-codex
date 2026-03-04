@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, modals -->
 # apps/interface/src/components/modals Overview
 Date: 2025-12-04
-Last Review: 2026-03-03
+Last Review: 2026-03-04
 Status: Active
 
 ## Purpose
@@ -33,3 +33,4 @@ Status: Active
 - 2026-03-02: `LoraModal.vue` list rows are now scrollable with zebra/hover states and right-aligned action toggles; each action emits `add/remove` instead of unlimited repeated insertions.
 - 2026-03-03: Added `QuickSettingsAddPathModal.vue` as the reusable quicksettings add-path modal: sanitizes user paths, scans candidates without SHA, supports per-row add and sequential add-all progress, and keeps errors fail-loud for quicksettings toasts.
 - 2026-03-03: `QuickSettingsAddPathModal.vue` scan action now includes an explicit spinner animation while in-flight.
+- 2026-03-04: `QuickSettingsAddPathModal.vue` now enforces an explicit row FSM (`queued|adding|added|already_in_library|error`), computes add-all byte progress deterministically only when all pending rows have valid `size_bytes`, and fails loud on missing/invalid byte metadata.

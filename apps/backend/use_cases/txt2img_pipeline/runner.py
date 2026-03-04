@@ -48,7 +48,6 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
     record_smart_cache_miss,
 )
-from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.runtime.memory.smart_offload_invariants import (
     enforce_smart_offload_pre_conditioning_residency,
     enforce_smart_offload_text_encoders_off,
@@ -66,6 +65,8 @@ from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_e
 from apps.backend.runtime.pipeline_stages.image_io import maybe_decode_for_hr
 from apps.backend.runtime.pipeline_stages.hires_fix import (
     prepare_hires_latents_and_conditioning,
+    resolve_hires_family_strategy,
+    resolve_pipeline_telemetry_context,
 )
 from apps.backend.runtime.pipeline_stages.prompt_context import (
     apply_dimension_overrides,
@@ -594,6 +595,22 @@ class Txt2ImgPipelineRunner:
 
         with capture_context as timeline_capture:
             setattr(processing, "_codex_last_decode_engine", None)
+            setattr(processing, "_codex_pipeline_mode", "txt2img")
+            telemetry = resolve_pipeline_telemetry_context(
+                processing,
+                default_mode="txt2img",
+                require_mode=True,
+            )
+            emit_backend_event(
+                "pipeline.run.start",
+                logger=self._logger.name,
+                mode=telemetry.mode,
+                stage="run.start",
+                correlation_id=telemetry.correlation_id,
+                correlation_source=telemetry.correlation_source,
+                task_id=telemetry.task_id,
+                engine_id=str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "unknown"),
+            )
             t_start = time.perf_counter()
             t_prepare_end: float | None = None
             t_base_end: float | None = None
@@ -613,16 +630,49 @@ class Txt2ImgPipelineRunner:
                 subseed_strength,
                 prompts,
             )
-            base_result = self._execute_base_sampling(processing, state)
+            emit_backend_event(
+                "pipeline.stage.complete",
+                logger=self._logger.name,
+                mode=telemetry.mode,
+                stage="prepare.complete",
+                stage_name="prepare",
+                correlation_id=telemetry.correlation_id,
+                correlation_source=telemetry.correlation_source,
+                task_id=telemetry.task_id,
+                hires_enabled=bool(state.hires_plan is not None),
+            )
             t_prepare_end = time.perf_counter()
+            base_result = self._execute_base_sampling(processing, state)
+            t_base_end = time.perf_counter()
+            emit_backend_event(
+                "pipeline.stage.complete",
+                logger=self._logger.name,
+                mode=telemetry.mode,
+                stage="base_sampling.complete",
+                stage_name="base_sampling",
+                correlation_id=telemetry.correlation_id,
+                correlation_source=telemetry.correlation_source,
+                task_id=telemetry.task_id,
+                samples_shape=tuple(int(dim) for dim in base_result.samples.shape),
+            )
 
             final_samples = base_result.samples
-            t_base_end = time.perf_counter()
 
             if state.hires_plan is not None:
                 self._reload_for_hires(processing, state)
                 final_samples = self._run_hires_pass(processing, state, base_result)
                 t_hires_end = time.perf_counter()
+                emit_backend_event(
+                    "pipeline.stage.complete",
+                    logger=self._logger.name,
+                    mode=telemetry.mode,
+                    stage="hires_sampling.complete",
+                    stage_name="hires_sampling",
+                    correlation_id=telemetry.correlation_id,
+                    correlation_source=telemetry.correlation_source,
+                    task_id=telemetry.task_id,
+                    samples_shape=tuple(int(dim) for dim in final_samples.shape),
+                )
             else:
                 t_hires_end = t_base_end
 
@@ -641,6 +691,17 @@ class Txt2ImgPipelineRunner:
                     timings["refiner_ms"] = max(0.0, (t_refiner_end - t_hires_end) * 1000.0)
                 timings["total_pipeline_ms"] = max(0.0, (t_refiner_end or time.perf_counter()) - t_start) * 1000.0
                 processing.update_extra_param("Timings (ms)", timings)
+                emit_backend_event(
+                    "pipeline.run.complete",
+                    logger=self._logger.name,
+                    mode=telemetry.mode,
+                    stage="run.complete",
+                    correlation_id=telemetry.correlation_id,
+                    correlation_source=telemetry.correlation_source,
+                    task_id=telemetry.task_id,
+                    hires_enabled=bool(state.hires_plan is not None),
+                    total_pipeline_ms=float(timings["total_pipeline_ms"]),
+                )
             except Exception:
                 # Timings must never break generation; swallow errors defensively.
                 pass
@@ -855,11 +916,38 @@ class Txt2ImgPipelineRunner:
             processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
             processing.prepare_prompt_data()
 
+            telemetry = resolve_pipeline_telemetry_context(
+                processing,
+                default_mode="txt2img",
+                require_mode=True,
+            )
+            engine_id = str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "unknown")
+            hires_strategy = str(getattr(processing, "_codex_hires_strategy", "unknown") or "unknown")
             base_samples_shape = tuple(int(dim) for dim in base_result.samples.shape)
             base_decoded_shape = (
                 tuple(int(dim) for dim in base_result.decoded.shape)
                 if isinstance(base_result.decoded, torch.Tensor)
                 else None
+            )
+            emit_backend_event(
+                "pipeline.hires.transition",
+                logger=self._logger.name,
+                mode=telemetry.mode,
+                stage="hires.transition",
+                correlation_id=telemetry.correlation_id,
+                correlation_source=telemetry.correlation_source,
+                task_id=telemetry.task_id,
+                engine_id=engine_id,
+                strategy=hires_strategy,
+                upscaler_id=hires_plan_cfg.upscaler_id,
+                target_width=target_width,
+                target_height=target_height,
+                steps=steps,
+                denoise=denoise,
+                sampler=hires_sampler,
+                scheduler=hires_scheduler,
+                base_samples_shape=base_samples_shape,
+                base_decoded_shape=base_decoded_shape,
             )
             self._logger.info(
                 "[hires] transition base_to_hires upscaler=%s target=%dx%d steps=%d denoise=%.4f sampler=%s scheduler=%s base_samples=%s base_decoded=%s",
@@ -909,6 +997,23 @@ class Txt2ImgPipelineRunner:
                 tuple(int(dim) for dim in image_conditioning.shape)
                 if isinstance(image_conditioning, torch.Tensor)
                 else None
+            )
+            emit_backend_event(
+                "pipeline.hires.inputs_ready",
+                logger=self._logger.name,
+                mode=telemetry.mode,
+                stage="hires.inputs_ready",
+                correlation_id=telemetry.correlation_id,
+                correlation_source=telemetry.correlation_source,
+                task_id=telemetry.task_id,
+                engine_id=engine_id,
+                strategy=hires_strategy,
+                continuation_mode=continuation_mode,
+                latents_shape=tuple(int(dim) for dim in latents.shape),
+                image_conditioning_shape=image_conditioning_shape,
+                start_at_step=start_index,
+                total_steps=int(processing.steps),
+                allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
             )
             self._logger.info(
                 "[hires] upscale_ready latents=%s image_conditioning=%s start_at_step=%d total_steps=%d",
@@ -1059,14 +1164,8 @@ class Txt2ImgPipelineRunner:
         engine_id = str(getattr(model, "engine_id", "") or "").strip()
         if engine_id == "":
             raise RuntimeError("Hires is enabled but processing.sd_model.engine_id is unavailable.")
-        try:
-            semantic_engine = semantic_engine_for_engine_id(engine_id)
-        except KeyError as exc:
-            raise NotImplementedError(
-                f"Hires is not supported for engine '{engine_id}' because no semantic capability surface is registered."
-            ) from exc
-        if not ENGINE_SURFACES[semantic_engine].supports_hires:
-            raise NotImplementedError(f"Hires is not supported for engine '{engine_id}'.")
+        hires_strategy = resolve_hires_family_strategy(engine_id)
+        setattr(processing, "_codex_hires_strategy", hires_strategy)
 
         hi_cfg = processing.hires
         raw_upscaler = getattr(hi_cfg, "upscaler", None)
@@ -1119,6 +1218,27 @@ class Txt2ImgPipelineRunner:
             raise ValueError("Hires is enabled but resolved 'steps' must be > 0.")
         denoise = float(hi_cfg.denoise)
         cfg_scale = hi_cfg.cfg
+        telemetry = resolve_pipeline_telemetry_context(
+            processing,
+            default_mode="txt2img",
+            require_mode=True,
+        )
+        emit_backend_event(
+            "pipeline.hires.plan",
+            logger=self._logger.name,
+            mode=telemetry.mode,
+            stage="hires.plan",
+            correlation_id=telemetry.correlation_id,
+            correlation_source=telemetry.correlation_source,
+            task_id=telemetry.task_id,
+            engine_id=engine_id,
+            strategy=hires_strategy,
+            upscaler_id=upscaler_id,
+            target_width=target_width,
+            target_height=target_height,
+            steps=int(steps),
+            denoise=float(denoise),
+        )
         return HiResPlan(
             enabled=True,
             target_width=target_width,

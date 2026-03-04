@@ -11,6 +11,9 @@ Provides seed normalization, worker-thread execution (with smart runtime overrid
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_seed_plan` (function): Normalize request seed + batch_total into (seed, all_seeds, subseeds, subseed_strength).
+- `_task_context_from_worker_name` (function): Normalize worker thread names into task-context tokens for structured logs.
+- `_log_runtime_override_failure` (function): Emit classified smart-runtime override failure events with task/request context.
+- `_normalize_runtime_overrides` (function): Validate/normalize worker smart runtime overrides (fail-loud contract, explicit transient path).
 - `_run_inference_worker` (function): Run a callable in a daemon thread while propagating smart runtime overrides and capturing output/error/timings.
 - `_iter_sampling_progress` (function): Poll `backend_state` and yield phase-aware progress snapshots (sampling + VAE encode/decode blocks) until a worker signals completion.
 - `_decode_generation_output` (function): Normalize `GenerationResult`/tensor output into a list of PIL images and decode timing (pre-decode cache flush + CPU-target decode transfer).
@@ -20,10 +23,17 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
 _SEED_MASK = 0x7FFFFFFF
+_SMART_RUNTIME_OVERRIDE_KEYS: tuple[str, str, str] = (
+    "smart_offload",
+    "smart_fallback",
+    "smart_cache",
+)
+_SMART_RUNTIME_OVERRIDE_KEYSET = frozenset(_SMART_RUNTIME_OVERRIDE_KEYS)
 
 
 def _normalize_seed(value: int) -> int:
@@ -65,6 +75,132 @@ class _WorkerOutcome:
     sampling_end: float | None = None
 
 
+def _task_context_from_worker_name(name: str) -> str:
+    worker_name = str(name or "").strip()
+    if not worker_name:
+        return "unknown"
+    if worker_name.endswith("-worker"):
+        return worker_name[: -len("-worker")] or worker_name
+    return worker_name
+
+
+def _log_runtime_override_failure(
+    *,
+    category: str,
+    worker_name: str,
+    request_context: str,
+    error: BaseException,
+    details: Mapping[str, object] | None = None,
+    transient: bool,
+) -> None:
+    from apps.backend.runtime.logging import emit_backend_event
+
+    payload: dict[str, object] = {
+        "category": str(category),
+        "task_context": _task_context_from_worker_name(worker_name),
+        "request_context": str(request_context or "unknown"),
+        "worker_name": str(worker_name),
+        "error_type": type(error).__name__,
+        "error": str(error),
+    }
+    if details:
+        payload.update({str(key): value for key, value in details.items()})
+    emit_backend_event(
+        "smart_cache.runtime_overrides_failure",
+        logger="smart_offload",
+        level=(logging.WARNING if transient else logging.ERROR),
+        **payload,
+    )
+
+
+def _normalize_runtime_overrides(
+    *,
+    runtime_overrides: Mapping[str, bool | None] | None,
+    worker_name: str,
+    request_context: str,
+) -> dict[str, bool | None]:
+    from apps.backend.runtime.memory.smart_offload import current_smart_runtime_overrides
+
+    source_overrides: Mapping[str, object]
+    if runtime_overrides is None:
+        try:
+            source_overrides = current_smart_runtime_overrides()
+        except Exception as exc:  # noqa: BLE001 - explicit transient classification/logging
+            wrapped = RuntimeError(
+                "Failed to snapshot smart runtime overrides before worker launch."
+            )
+            _log_runtime_override_failure(
+                category="transient",
+                worker_name=worker_name,
+                request_context=request_context,
+                error=wrapped,
+                details={"stage": "current_smart_runtime_overrides", "source_error": str(exc)},
+                transient=True,
+            )
+            raise wrapped from exc
+    else:
+        source_overrides = runtime_overrides
+
+    if not isinstance(source_overrides, Mapping):
+        err = TypeError(
+            "runtime_overrides must be Mapping[str, bool | None] when provided "
+            f"(got {type(source_overrides).__name__})."
+        )
+        _log_runtime_override_failure(
+            category="contract",
+            worker_name=worker_name,
+            request_context=request_context,
+            error=err,
+            details={"stage": "runtime_overrides.mapping_type"},
+            transient=False,
+        )
+        raise err
+
+    unknown_keys = sorted(
+        str(key)
+        for key in source_overrides.keys()
+        if key not in _SMART_RUNTIME_OVERRIDE_KEYSET
+    )
+    if unknown_keys:
+        err = ValueError(
+            "runtime_overrides received unknown keys; expected only "
+            f"{sorted(_SMART_RUNTIME_OVERRIDE_KEYSET)} (got {unknown_keys})."
+        )
+        _log_runtime_override_failure(
+            category="contract",
+            worker_name=worker_name,
+            request_context=request_context,
+            error=err,
+            details={"stage": "runtime_overrides.unknown_keys", "unknown_keys": unknown_keys},
+            transient=False,
+        )
+        raise err
+
+    normalized: dict[str, bool | None] = {}
+    for key in _SMART_RUNTIME_OVERRIDE_KEYS:
+        raw_value = source_overrides.get(key, None)
+        if raw_value is not None and not isinstance(raw_value, bool):
+            err = TypeError(
+                "runtime_overrides values must be bool | None "
+                f"(key={key!r}, got {type(raw_value).__name__})."
+            )
+            _log_runtime_override_failure(
+                category="contract",
+                worker_name=worker_name,
+                request_context=request_context,
+                error=err,
+                details={
+                    "stage": "runtime_overrides.value_type",
+                    "key": key,
+                    "value_type": type(raw_value).__name__,
+                },
+                transient=False,
+            )
+            raise err
+        normalized[key] = raw_value
+    return normalized
+
+
 def _run_inference_worker(
     *,
     name: str,
@@ -80,34 +216,13 @@ def _run_inference_worker(
         preview_interval_steps,
         preview_runtime_overrides,
     )
-    from apps.backend.runtime.memory.smart_offload import (
-        current_smart_runtime_overrides,
-    )
 
-    if runtime_overrides is None:
-        effective_runtime_overrides = current_smart_runtime_overrides()
-    else:
-        if not isinstance(runtime_overrides, Mapping):
-            raise TypeError(
-                "runtime_overrides must be Mapping[str, bool | None] when provided "
-                f"(got {type(runtime_overrides).__name__})."
-            )
-        allowed_keys = {"smart_offload", "smart_fallback", "smart_cache"}
-        unknown_keys = sorted(str(key) for key in runtime_overrides.keys() if key not in allowed_keys)
-        if unknown_keys:
-            raise ValueError(
-                "runtime_overrides received unknown keys; expected only "
-                f"{sorted(allowed_keys)} (got {unknown_keys})."
-            )
-        effective_runtime_overrides: dict[str, bool | None] = {}
-        for key in ("smart_offload", "smart_fallback", "smart_cache"):
-            raw_value = runtime_overrides.get(key, None)
-            if raw_value is not None and not isinstance(raw_value, bool):
-                raise TypeError(
-                    "runtime_overrides values must be bool | None "
-                    f"(key={key!r}, got {type(raw_value).__name__})."
-                )
-            effective_runtime_overrides[key] = raw_value
+    request_context = threading.current_thread().name
+    effective_runtime_overrides = _normalize_runtime_overrides(
+        runtime_overrides=runtime_overrides,
+        worker_name=name,
+        request_context=request_context,
+    )
 
     outcome = _WorkerOutcome()
     done = threading.Event()

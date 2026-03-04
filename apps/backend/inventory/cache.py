@@ -24,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_SHA_TO_PATH` (constant): Lazy cache mapping `sha256 -> path` populated from the current inventory.
 - `_SHA_TO_VAE_PATH` (constant): Lazy cache mapping `sha256 -> vae_path` populated from the current inventory.
 - `scan_all` (function): Scans configured roots and returns an `Inventory` snapshot.
+- `invalidate` (function): Clears process-local inventory and SHA maps so the next read rescans from current roots.
 - `init` (function): Initializes the process-local inventory cache.
 - `get` (function): Returns the cached inventory as a JSON-friendly dict.
 - `refresh` (function): Rebuilds the inventory and replaces the process-local cache.
@@ -224,6 +225,19 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
         )
 
     return Inventory(vaes=vaes, text_encoders=text_encoders, loras=loras, wan22=wan22, metadata=metadata)
+
+
+def invalidate() -> None:
+    """Clear process-local inventory + SHA resolution caches.
+
+    Use this when roots/config changed and callers want lazy rebuild on next `get()`.
+    """
+
+    global _CACHE
+    _SHA_TO_PATH.clear()
+    _SHA_TO_VAE_PATH.clear()
+    _SHA_TO_TEXT_ENCODER_SLOT.clear()
+    _CACHE = None
 
 
 def init(models_root: str | None = None, hf_root: str | None = None) -> None:

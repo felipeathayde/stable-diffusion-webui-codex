@@ -8,7 +8,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
-This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
+This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files only when explicit embedded app mode is enabled (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
 Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`, `CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) from resolved runtime namespace values.
 Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid reliability-critical values
@@ -22,6 +22,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_parse_trace_max` (function): Parses `--trace-debug-max-per-func` / `--trace-call-debug-max-per-func` into a non-negative int (or `None`).
 - `_env_truthy` (function): Parses launcher/env boolean tokens (`1/true/yes/on`) from string values.
 - `_trace_debug_logging_requested` (function): Resolves whether any trace-debug category requests DEBUG logging bootstrap.
+- `_resolve_app_mode_profile` (function): Resolves explicit app mode profile (`dev_service|embedded`) from environment.
+- `_assert_embedded_dist_contract` (function): Enforces embedded SPA packaging contract (`dist/index.html` + assets bundles).
 - `ensure_initialized` (function): Performs early runtime bootstrap (repo root/sys.path, optional tracing/logging hooks) before serving.
 - `_SuppressUvicornAccessNoiseFilter` (class): Logging filter to reduce uvicorn access-log spam for noisy endpoints.
 - `_install_uvicorn_access_noise_filter` (function): Installs `_SuppressUvicornAccessNoiseFilter` when configured.
@@ -44,6 +46,7 @@ import math
 import os
 import socket
 import sys
+from pathlib import Path
 from contextlib import closing, asynccontextmanager
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 import logging
@@ -153,6 +156,73 @@ _initialized = False
 _RUNTIME_NAMESPACE: Optional[Any] = None
 _APP: Optional[FastAPI] = None
 _WINDOWS_POWER_THROTTLING_ATTEMPTED = False
+_APP_MODE_PROFILE_ENV_KEY = "CODEX_APP_MODE_PROFILE"
+_APP_MODE_PROFILE_DEV_SERVICE = "dev_service"
+_APP_MODE_PROFILE_EMBEDDED = "embedded"
+_APP_MODE_PROFILE_CHOICES: tuple[str, ...] = (
+    _APP_MODE_PROFILE_DEV_SERVICE,
+    _APP_MODE_PROFILE_EMBEDDED,
+)
+
+
+def _resolve_app_mode_profile(env: Mapping[str, str]) -> str:
+    raw_value = str(
+        env.get(_APP_MODE_PROFILE_ENV_KEY, _APP_MODE_PROFILE_DEV_SERVICE)
+        or _APP_MODE_PROFILE_DEV_SERVICE
+    ).strip().lower()
+    if raw_value in _APP_MODE_PROFILE_CHOICES:
+        return raw_value
+    allowed = ", ".join(_APP_MODE_PROFILE_CHOICES)
+    raise RuntimeError(
+        f"Invalid {_APP_MODE_PROFILE_ENV_KEY}={raw_value!r}. Allowed values: {allowed}."
+    )
+
+
+def _assert_embedded_dist_contract(ui_dist_dir: Path) -> None:
+    index_path = ui_dist_dir / "index.html"
+    assets_dir = ui_dist_dir / "assets"
+    if not ui_dist_dir.is_dir():
+        raise RuntimeError(
+            "Embedded app mode requires a built frontend package at "
+            f"{ui_dist_dir}. Run 'npm run build' in apps/interface."
+        )
+    if not index_path.is_file():
+        raise RuntimeError(
+            "Embedded app mode packaging contract violation: missing "
+            f"{index_path}."
+        )
+    if not assets_dir.is_dir():
+        raise RuntimeError(
+            "Embedded app mode packaging contract violation: missing assets directory "
+            f"{assets_dir}."
+        )
+    js_assets = sorted(assets_dir.glob("*.js"))
+    css_assets = sorted(assets_dir.glob("*.css"))
+    if not js_assets:
+        raise RuntimeError(
+            "Embedded app mode packaging contract violation: no JavaScript bundle found under "
+            f"{assets_dir}."
+        )
+    if not css_assets:
+        raise RuntimeError(
+            "Embedded app mode packaging contract violation: no CSS bundle found under "
+            f"{assets_dir}."
+        )
+    try:
+        index_html = index_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Embedded app mode packaging contract violation: failed reading {index_path}: {exc}"
+        ) from exc
+    missing_refs: list[str] = []
+    for asset_name in (js_assets[0].name, css_assets[0].name):
+        if f"assets/{asset_name}" not in index_html:
+            missing_refs.append(asset_name)
+    if missing_refs:
+        raise RuntimeError(
+            "Embedded app mode packaging contract violation: index.html does not reference "
+            f"asset(s): {', '.join(missing_refs)}."
+        )
 
 
 def ensure_initialized() -> None:
@@ -395,7 +465,7 @@ class _DummyRequest:
         self.username = username
 
 
-def build_app() -> FastAPI:
+def build_app(*, app_mode_profile: str | None = None) -> FastAPI:
     ensure_initialized()
 
     # Native parameter helpers (replace legacy _txt2img/_img2img parsers)
@@ -450,7 +520,12 @@ def build_app() -> FastAPI:
         get_snapshot as _opts_snapshot,
         load_values as _opts_load_native,
     )
-    _ui_dist_dir = str(CODEX_ROOT / 'apps' / 'interface' / 'dist')
+    _ui_dist_dir = CODEX_ROOT / "apps" / "interface" / "dist"
+    resolved_app_mode_profile = _resolve_app_mode_profile(
+        {_APP_MODE_PROFILE_ENV_KEY: app_mode_profile}
+        if app_mode_profile is not None
+        else os.environ
+    )
     if dump_current_exception is not None:
         @app.middleware('http')
         async def _errors_middleware(request, call_next):  # type: ignore[no-untyped-def]  # pragma: no cover
@@ -630,9 +705,19 @@ def build_app() -> FastAPI:
                     pass
                 raise
 
-    # Mount UI dist after API routes
-    if os.path.isdir(_ui_dist_dir):
-        app.mount('/', SPAStaticFiles(directory=_ui_dist_dir, html=True), name='ui')
+    # Mount UI dist after API routes when embedded mode is explicitly selected.
+    if resolved_app_mode_profile == _APP_MODE_PROFILE_EMBEDDED:
+        _assert_embedded_dist_contract(Path(_ui_dist_dir))
+        app.mount("/", SPAStaticFiles(directory=str(_ui_dist_dir), html=True), name="ui")
+    elif resolved_app_mode_profile == _APP_MODE_PROFILE_DEV_SERVICE:
+        _LOG.info(
+            "startup: app mode profile '%s' selected; skipping embedded SPA mount.",
+            _APP_MODE_PROFILE_DEV_SERVICE,
+        )
+    else:  # pragma: no cover - guarded by _resolve_app_mode_profile
+        raise RuntimeError(
+            f"Unhandled {_APP_MODE_PROFILE_ENV_KEY} value {resolved_app_mode_profile!r}."
+        )
 
     return app
 
@@ -783,12 +868,14 @@ def _enable_trace_debug(ns: Any) -> None:
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
     argv_seq = list(argv or [])
+    env_map = env or os.environ
     settings = options_store.load_values()
-    ns = _bootstrap_runtime(argv_seq, env or os.environ, settings)
+    ns = _bootstrap_runtime(argv_seq, env_map, settings)
     _enable_trace_debug(ns)
     ensure_initialized()
+    app_mode_profile = _resolve_app_mode_profile(env_map)
     # Build a fresh app each time to avoid stale/None globals under factory mode
-    app = build_app()
+    app = build_app(app_mode_profile=app_mode_profile)
     if app is None:
         raise RuntimeError("build_app() returned None")
     global _APP

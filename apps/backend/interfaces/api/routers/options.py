@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any, Callable, Dict, List
 
@@ -33,12 +34,15 @@ def build_router(
     setting_type,
 ) -> APIRouter:
     router = APIRouter()
+    VAE_BY_FAMILY_OPTION_KEY = "codex_vae_by_family"
+    VAE_FAMILIES = ("sd15", "sdxl", "flux1", "chroma", "zimage", "anima")
     hot_apply_reasons: Dict[str, str] = {
         "codex_smart_offload": "hot-applied immediately (effective for the next generation request).",
         "codex_smart_fallback": "hot-applied immediately (effective for the next generation request).",
         "codex_smart_cache": "hot-applied immediately (effective for the next generation request).",
         "codex_core_streaming": "hot-applied immediately (effective for the next generation request).",
         "codex_export_video": "hot-applied immediately (effective for the next generation request).",
+        "codex_vae_by_family": "hot-applied immediately (UI preference persistence).",
     }
 
     @router.get("/api/options")
@@ -114,6 +118,70 @@ def build_router(
             ),
         )
 
+    def _normalize_vae_selection(raw: str) -> str:
+        value = str(raw or "").strip()
+        if not value:
+            return ""
+        lower = value.lower()
+        if lower in {"automatic", "built in", "built-in"}:
+            return "built-in"
+        if lower == "none":
+            return "none"
+        return value
+
+    def _validate_vae_by_family_value(value: Any) -> str:
+        parsed: Any = value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid value for {VAE_BY_FAMILY_OPTION_KEY}: expected JSON object string "
+                        "or object payload."
+                    ),
+                )
+            try:
+                parsed = json.loads(text)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid value for {VAE_BY_FAMILY_OPTION_KEY}: invalid JSON ({exc}).",
+                ) from exc
+        if not isinstance(parsed, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid value for {VAE_BY_FAMILY_OPTION_KEY}: expected object.",
+            )
+        out: Dict[str, str] = {}
+        for family_raw, selected_raw in parsed.items():
+            family = str(family_raw or "").strip().lower()
+            if family not in VAE_FAMILIES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid value for {VAE_BY_FAMILY_OPTION_KEY}: unknown family "
+                        f"'{family_raw}'. Allowed: {', '.join(VAE_FAMILIES)}."
+                    ),
+                )
+            if not isinstance(selected_raw, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid value for {VAE_BY_FAMILY_OPTION_KEY}: family '{family}' must map to a string."
+                    ),
+                )
+            normalized_selection = _normalize_vae_selection(selected_raw)
+            if not normalized_selection:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid value for {VAE_BY_FAMILY_OPTION_KEY}: family '{family}' has empty selection."
+                    ),
+                )
+            out[family] = normalized_selection
+        return json.dumps(out, sort_keys=True, separators=(",", ":"))
+
     def _validate_options(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="invalid payload")
@@ -138,6 +206,9 @@ def build_router(
         for k, v in payload.items():
             f = idx[k]
             try:
+                if k == VAE_BY_FAMILY_OPTION_KEY:
+                    out[k] = _validate_vae_by_family_value(v)
+                    continue
                 if getattr(f, "choices", None) and isinstance(f.choices, list) and v not in f.choices:
                     raise HTTPException(status_code=400, detail=f"Invalid value for {k}: not in choices")
                 if getattr(f, "type", None) in (setting_type.SLIDER, setting_type.NUMBER):
@@ -223,6 +294,9 @@ def build_router(
                 rejected[k] = "unknown key"
                 continue
             try:
+                if k == VAE_BY_FAMILY_OPTION_KEY:
+                    accepted[k] = _validate_vae_by_family_value(v)
+                    continue
                 if getattr(f, "choices", None) and isinstance(f.choices, list) and v not in f.choices:
                     rejected[k] = "not in choices"
                     continue

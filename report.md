@@ -16,6 +16,57 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - Severity split: `93 High`, `55 Blocker`
   - Buckets: `resolved` (`98`), `duplicates-2026-02-28` (`35`), `duplicates-2026-02-28-p1` (`15`)
 
+## Execution Status (post-fan-in)
+
+- Integrated execution commit: `459cb55ec` (`feat: integrate P0 runtime guards, policy matrix, WAN progress, and params migration`).
+- Completed Code Machine responses from this execution wave were archived.
+- Archive actions performed:
+  - Moved to `archive/resolved`:
+    - `senior-code-machine-response-20260304-155244Z.md`
+    - `senior-code-machine-response-20260304-155352Z.md`
+    - `senior-code-machine-response-20260304-155417Z.md`
+    - `senior-code-machine-response-20260304-155736Z.md`
+  - Moved to `archive/duplicates-2026-03-04` (superseded blocked/no-brief responses):
+    - `senior-code-machine-response-20260304-154206Z.md`
+    - `senior-code-machine-response-20260304-154244Z.md`
+    - `senior-code-machine-response-20260304-154312Z.md`
+    - `senior-code-machine-response-20260304-154334Z.md`
+  - Moved to `archive/resolved` (next 12-lane execution wave):
+    - `senior-code-machine-response-20260304-162256Z.md`
+    - `senior-code-machine-response-20260304-162350Z.md`
+    - `senior-code-machine-response-20260304-162354Z.md`
+    - `senior-code-machine-response-20260304-162415Z.md`
+    - `senior-code-machine-response-20260304-162416Z.md`
+    - `senior-code-machine-response-20260304-162501Z.md`
+    - `senior-code-machine-response-20260304-162553Z.md`
+    - `senior-code-machine-response-20260304-162739Z.md`
+    - `senior-code-machine-response-20260304-162839Z.md`
+    - `senior-code-machine-response-20260304-162854Z.md`
+    - `senior-code-machine-response-20260304-163055Z.md`
+  - Moved to `archive/duplicates-2026-03-04` (next wave no-brief/superseded responses):
+    - `senior-code-machine-response-20260304-161815Z.md`
+    - `senior-code-machine-response-20260304-161817Z.md`
+    - `senior-code-machine-response-20260304-161819Z.md`
+    - `senior-code-machine-response-20260304-161824Z.md`
+    - `senior-code-machine-response-20260304-161825Z.md`
+    - `senior-code-machine-response-20260304-161826Z.md`
+    - `senior-code-machine-response-20260304-161827Z.md`
+    - `senior-code-machine-response-20260304-161828Z.md`
+    - `senior-code-machine-response-20260304-161833Z.md`
+  - Moved to `archive/resolved` (in-progress-cluster closure wave):
+    - `senior-code-machine-response-20260304-164147Z.md`
+    - `senior-code-machine-response-20260304-164429Z.md`
+    - `senior-code-machine-response-20260304-164616Z.md`
+    - `senior-code-machine-response-20260304-164645Z.md`
+    - `senior-code-machine-response-20260304-164903Z.md`
+  - Moved to `archive/duplicates-2026-03-04` (status-check/superseded responses):
+    - `senior-code-machine-response-20260304-164430Z.md`
+    - `senior-code-machine-response-20260304-164723Z.md`
+    - `senior-code-machine-response-20260304-164726Z.md`
+  - Moved to `archive/resolved` (remaining in-progress closure wave):
+    - `senior-code-machine-response-20260304-165307Z.md`
+    - `senior-code-machine-response-20260304-165802Z.md`
+
 ## Consolidated Active Findings (20 clusters, expanded)
 
 ### 1) Device policy inversion/misapplication across generation routes (includes Blocker)
@@ -410,6 +461,33 @@ Constraint applied: no new patrol subagents were spawned in this run.
 **Global non-acknowledged block (linked to Item 6 A+D):**
 - Any load/materialization attempt not acknowledged by runtime coordinator is blocked globally.
 - This includes deferred/lazy paths reached during execution without explicit permit.
+
+## Cluster Execution Status (current)
+
+Status source: integrated fan-in commit `459cb55ec` + completed 12-lane wave + in-progress-cluster closure wave (2026-03-04).
+
+| Cluster | Status | Scope note |
+| --- | --- | --- |
+| 1 | **Done** | Typed route/device policy matrix is integrated in backend route parsing flow. |
+| 2 | **Done** | Invalid `randn_source` is rejected at boundary and planner no longer silently coerces invalid values. |
+| 3 | **Done** | Smart-cache/runtime-override handling is now strict fail-loud with classified errors and no silent swallow path. |
+| 4 | **Done** | Runtime load authority permits/guards are implemented with fail-loud violations. |
+| 5 | **Done** | WAN canonical key ownership is centralized and legacy aliases are rejected at generation seams. |
+| 6 | **Done** | Non-acknowledged load/materialization is globally blocked by authority checks. |
+| 7 | **Done** | Engine-loader cleanup now follows fail-loud unload parity with explicit post-unload residency verification (no suppress-based cleanup masking). |
+| 8 | **Done** | SDPA threshold rule is explicit (`<=256` flash-preferred, `>256` non-flash route). |
+| 9 | **Done** | Bootstrap now uses two-phase readiness (`critical` + deferred heavy init) instead of a single blocking gate. |
+| 10 | **Done** | Family-scoped VAE map is now persisted server-side via validated backend option contract (`codex_vae_by_family`) with rollback on apply failure. |
+| 11 | **Done** | LoRA refresh+hydrate orchestration is centralized in store authority and reused by QuickSettings and LoRA modal (duplicate local orchestration removed). |
+| 12 | **Done** | Add-path flow now has explicit row FSM, strict `size_bytes` contract, and deterministic byte-progress behavior. |
+| 13 | **Done** | Overlay flow now uses explicit trigger ownership + dedicated component zoning for interaction safety. |
+| 14 | **Done** | App-mode preflight/profile split/packaging contract enforcement is integrated in launcher + backend boot path. |
+| 15 | **Done** | Backend model catalog now has unified refresh/invalidation authority and shared `models_revision` freshness token. |
+| 16 | **Done** | Persisted params versioned migration + structured unknown-key diagnostics are integrated. |
+| 17 | **Done** | WAN unified block-progress adapter + required emitter assertions are integrated. |
+| 18 | **Done** | WAN output toggles are normalized end-to-end: payload mapping uses real request intent and WAN UI now exposes explicit controls for `saveOutput/saveMetadata/trimToAudio`. |
+| 19 | **Done** | Hires compatibility strategy seam and fail-loud family gate are integrated in shared runtime/use-case paths. |
+| 20 | **Done** | Canonical task-scoped correlation context + structured run/stage telemetry now cover txt2img/img2img/txt2vid/img2vid/vid2vid stage boundaries. |
 
 ## Historical `>= High/P1` (Archive)
 

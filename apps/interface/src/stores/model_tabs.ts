@@ -163,6 +163,9 @@ export interface WanVideoParams {
   crf: number
   loopCount: number
   pingpong: boolean
+  saveMetadata?: boolean
+  saveOutput?: boolean
+  trimToAudio?: boolean
   returnFrames: boolean
   // Interpolation (RIFE target FPS; 0 disables interpolation)
   interpolationFps: number
@@ -423,6 +426,9 @@ function defaultParams<T extends BaseTabType>(
       crf: 15,
       loopCount: 0,
       pingpong: false,
+      saveMetadata: true,
+      saveOutput: true,
+      trimToAudio: false,
       returnFrames: false,
       interpolationFps: 0,
       upscalingEnabled: false,
@@ -832,6 +838,9 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   )
   merged.img2vidCropOffsetX = normalizeUnitInterval(merged.img2vidCropOffsetX, defaults.img2vidCropOffsetX)
   merged.img2vidCropOffsetY = normalizeUnitInterval(merged.img2vidCropOffsetY, defaults.img2vidCropOffsetY)
+  merged.saveMetadata = normalizeBoolean(merged.saveMetadata, defaults.saveMetadata ?? true)
+  merged.saveOutput = normalizeBoolean(merged.saveOutput, defaults.saveOutput ?? true)
+  merged.trimToAudio = normalizeBoolean(merged.trimToAudio, defaults.trimToAudio ?? false)
 
   merged.interpolationFps = normalizeInterpolationTargetFps(
     merged.interpolationFps,
@@ -891,6 +900,9 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     crf: merged.crf,
     loopCount: merged.loopCount,
     pingpong: merged.pingpong,
+    saveMetadata: merged.saveMetadata,
+    saveOutput: merged.saveOutput,
+    trimToAudio: merged.trimToAudio,
     returnFrames: merged.returnFrames,
     interpolationFps: merged.interpolationFps,
     upscalingEnabled: merged.upscalingEnabled,
@@ -1088,6 +1100,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
   const pendingParamsPersists = new Map<string, PendingParamsPersist>()
+  let loadPromise: Promise<void> | null = null
 
   const PARAMS_PERSIST_DEBOUNCE_MS = 220
 
@@ -1444,40 +1457,50 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   }
 
   async function load(): Promise<void> {
-    if (pendingParamsPersists.size > 0) {
-      for (const tabId of pendingParamsPersists.keys()) {
-        clearPendingParamsPersist(
-          tabId,
-          new ModelTabsStoreError('invalid_response', 'Tabs were reloaded while param updates were pending.'),
-        )
+    if (loadPromise) return loadPromise
+
+    loadPromise = (async () => {
+      if (pendingParamsPersists.size > 0) {
+        for (const tabId of pendingParamsPersists.keys()) {
+          clearPendingParamsPersist(
+            tabId,
+            new ModelTabsStoreError('invalid_response', 'Tabs were reloaded while param updates were pending.'),
+          )
+        }
       }
-    }
-    const requiredTypes = await resolveRequiredTypesFromCapabilities()
-    const preferredActiveId = activeId.value || (() => {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (!raw) return ''
-        const parsed = JSON.parse(raw) as { activeId?: unknown }
-        return typeof parsed.activeId === 'string' ? parsed.activeId : ''
-      } catch {
-        return ''
+      const requiredTypes = await resolveRequiredTypesFromCapabilities()
+      const preferredActiveId = activeId.value || (() => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY)
+          if (!raw) return ''
+          const parsed = JSON.parse(raw) as { activeId?: unknown }
+          return typeof parsed.activeId === 'string' ? parsed.activeId : ''
+        } catch {
+          return ''
+        }
+      })()
+
+      const res = await fetchTabs()
+      if (!res || !Array.isArray(res.tabs)) {
+        const msg = "Invalid '/api/ui/tabs' response: missing 'tabs' array."
+        console.error(`[model_tabs] ${msg}`, res)
+        throw new ModelTabsStoreError('invalid_response', msg, { details: { response: res as unknown as Record<string, unknown> } })
       }
+
+      tabs.value = (res.tabs as unknown as BaseTab[]).map((tab) => normalizeTab(tab, defaultParamsForType))
+      tabs.value.sort((a, b) => a.order - b.order)
+      activeId.value = (preferredActiveId && tabs.value.some(t => t.id === preferredActiveId)) ? preferredActiveId : (tabs.value[0]?.id ?? '')
+      await ensureRequiredTabs(requiredTypes)
+      tabs.value.sort((a, b) => a.order - b.order)
+      if (activeId.value && !tabs.value.some(t => t.id === activeId.value)) activeId.value = tabs.value[0]?.id ?? ''
+      save()
     })()
 
-    const res = await fetchTabs()
-    if (!res || !Array.isArray(res.tabs)) {
-      const msg = "Invalid '/api/ui/tabs' response: missing 'tabs' array."
-      console.error(`[model_tabs] ${msg}`, res)
-      throw new ModelTabsStoreError('invalid_response', msg, { details: { response: res as unknown as Record<string, unknown> } })
+    try {
+      await loadPromise
+    } finally {
+      loadPromise = null
     }
-
-    tabs.value = (res.tabs as unknown as BaseTab[]).map((tab) => normalizeTab(tab, defaultParamsForType))
-    tabs.value.sort((a, b) => a.order - b.order)
-    activeId.value = (preferredActiveId && tabs.value.some(t => t.id === preferredActiveId)) ? preferredActiveId : (tabs.value[0]?.id ?? '')
-    await ensureRequiredTabs(requiredTypes)
-    tabs.value.sort((a, b) => a.order - b.order)
-    if (activeId.value && !tabs.value.some(t => t.id === activeId.value)) activeId.value = tabs.value[0]?.id ?? ''
-    save()
   }
 
   async function create(type: BaseTabType, title?: string): Promise<string> {

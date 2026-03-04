@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `list_checkpoints` (function): Returns checkpoint records (optional refresh).
 - `list_vaes` (function): Returns VAE records (optional refresh).
 - `refresh` (function): Forces a rescan + cache update for checkpoints/VAEs.
+- `invalidate` (function): Clears in-memory checkpoint/VAE scan snapshots (next read lazily rescans).
 """
 
 from __future__ import annotations
@@ -409,6 +410,12 @@ class ModelRegistry:
         with self._lock:
             self._scan_locked()
 
+    def invalidate(self) -> None:
+        with self._lock:
+            self._checkpoints = {}
+            self._vaes = {}
+            self._last_scan = 0.0
+
     def get_checkpoint(self, name: str) -> CheckpointRecord | None:
         with self._lock:
             if not self._checkpoints:
@@ -651,10 +658,15 @@ def refresh() -> None:
     _DEFAULT_REGISTRY.refresh()
 
 
+def invalidate() -> None:
+    _DEFAULT_REGISTRY.invalidate()
+
+
 __all__ = [
     "LayoutMetadata",
     "ModelRegistry",
     "get_registry",
+    "invalidate",
     "list_checkpoints",
     "list_vaes",
     "refresh",

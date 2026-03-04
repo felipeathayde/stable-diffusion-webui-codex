@@ -1074,19 +1074,25 @@ class CodexMemoryManager:
         for record in list(self._loaded_models):
             try:
                 self._unload_record(record, avoid_model_moving=True, reason="unload_all_models")
+                self._remove_loaded_record(
+                    record,
+                    reason="unload_all_models",
+                    verify_model_absent=False,
+                )
             except Exception as exc:
                 failures.append((record, exc))
                 continue
-            try:
-                self._loaded_models.remove(record)
-            except ValueError:  # pragma: no cover
-                pass
 
         if failures:
             details = self._format_record_failures(failures)
             raise MemoryLoadError(
                 f"Failed to unload {len(failures)} model(s) during unload_all_models: {details}"
             ) from failures[0][1]
+        if self._loaded_models:
+            raise MemoryLoadError(
+                "unload_all_models completed with lingering residency records: "
+                f"{len(self._loaded_models)} record(s) still registered."
+            )
 
         logger.info("Unloaded all models, cache cleared.")
 
@@ -1118,15 +1124,31 @@ class CodexMemoryManager:
         predicate = getattr(model, "is_clone")
         if not callable(predicate):
             return
-        for index in range(len(self._loaded_models) - 1, -1, -1):
-            record = self._loaded_models[index]
+        for record in list(self._loaded_models):
             try:
                 matches = predicate(record.model)
             except Exception:  # pragma: no cover
                 matches = False
             if matches:
                 self._unload_record(record, avoid_model_moving=True, reason="unload_model_clones")
-                self._loaded_models.pop(index)
+                self._remove_loaded_record(
+                    record,
+                    reason="unload_model_clones",
+                    verify_model_absent=False,
+                )
+
+        lingering = 0
+        for record in self._loaded_models:
+            try:
+                if predicate(record.model):
+                    lingering += 1
+            except Exception:  # pragma: no cover
+                continue
+        if lingering:
+            raise MemoryLoadError(
+                "unload_model_clones completed with lingering clone residency: "
+                f"{lingering} clone record(s) still registered."
+            )
 
     @guarded_load_entrypoint(
         action="runtime.memory.manager.unload_model",
@@ -1171,10 +1193,11 @@ class CodexMemoryManager:
             event_component=component_hint,
             event_reason=event_reason,
         )
-        try:
-            self._loaded_models.remove(record)
-        except ValueError:  # pragma: no cover
-            pass
+        self._remove_loaded_record(
+            record,
+            reason="unload_model",
+            verify_model_absent=True,
+        )
         if self._primary_device.type == DeviceBackend.CUDA.value:
             try:
                 torch.cuda.empty_cache()
@@ -1315,7 +1338,11 @@ class CodexMemoryManager:
 
         for record in release_candidates:
             self._unload_record(record, avoid_model_moving=free_all, reason="free_memory")
-            self._loaded_models.remove(record)
+            self._remove_loaded_record(
+                record,
+                reason="free_memory",
+                verify_model_absent=False,
+            )
             released += record.exclusive_memory
             if not free_all and released >= memory_required:
                 break
@@ -1330,6 +1357,34 @@ class CodexMemoryManager:
             if record.matches(model):
                 return record
         return None
+
+    def _remove_loaded_record(
+        self,
+        record: _LoadedModelRecord,
+        *,
+        reason: str,
+        verify_model_absent: bool,
+    ) -> None:
+        try:
+            self._loaded_models.remove(record)
+        except ValueError as exc:
+            raise MemoryLoadError(
+                f"Failed to unregister model record during {reason}: {self._record_label(record)} was not in loaded registry."
+            ) from exc
+
+        if any(existing is record for existing in self._loaded_models):
+            raise MemoryLoadError(
+                f"Failed to unregister model record during {reason}: duplicate identity for "
+                f"{self._record_label(record)} remains in loaded registry."
+            )
+
+        if verify_model_absent:
+            lingering = self._find_loaded_model(record.model)
+            if lingering is not None:
+                raise MemoryLoadError(
+                    f"Post-unload residency verification failed during {reason}: "
+                    f"{self._record_label(record)} is still registered as loaded."
+                )
 
     @staticmethod
     def _record_alias_exists(record: _LoadedModelRecord, records: Sequence[_LoadedModelRecord]) -> bool:
@@ -1436,11 +1491,65 @@ class CodexMemoryManager:
                 failures.append((record, exc))
                 continue
             try:
-                self._loaded_models.remove(record)
-            except ValueError:  # pragma: no cover
-                pass
+                self._remove_loaded_record(
+                    record,
+                    reason="rollback_after_load_failure",
+                    verify_model_absent=False,
+                )
+            except Exception as exc:
+                failures.append((record, exc))
 
         return failures
+
+    def _verify_unload_residency(
+        self,
+        *,
+        record: _LoadedModelRecord,
+        loader: object,
+        module: torch.nn.Module | None,
+        pre_unload_device: torch.device | None,
+        target_device: torch.device | None,
+        avoid_model_moving: bool,
+    ) -> None:
+        if record.model_accelerated:
+            raise MemoryLoadError(
+                f"Post-unload residency verification failed for {self._record_label(record)}: "
+                "record is still marked accelerated."
+            )
+
+        if avoid_model_moving:
+            return
+
+        if target_device is None:
+            raise MemoryLoadError(
+                f"Post-unload residency verification failed for {self._record_label(record)}: "
+                "target_device is undefined."
+            )
+
+        observed_device = self._first_module_device(module) if module is not None else None
+        if observed_device is None:
+            loader_device = getattr(loader, "current_device", None)
+            if loader_device is not None:
+                try:
+                    observed_device = torch.device(loader_device)
+                except Exception as exc:
+                    raise MemoryLoadError(
+                        f"Post-unload residency verification failed for {self._record_label(record)}: "
+                        f"invalid loader.current_device={loader_device!r}."
+                    ) from exc
+
+        if observed_device is None:
+            raise MemoryLoadError(
+                f"Post-unload residency verification failed for {self._record_label(record)}: "
+                f"unable to resolve device after unload (pre={pre_unload_device}, target={target_device})."
+            )
+
+        if observed_device != target_device:
+            raise MemoryLoadError(
+                f"Post-unload residency verification failed for {self._record_label(record)}: "
+                f"observed_device={observed_device} does not match target_device={target_device} "
+                f"(pre={pre_unload_device})."
+            )
 
     # ------------------------------------------------------------------ load target helpers
     def _extract_module(self, obj: object, *, visited: Optional[Set[int]] = None) -> torch.nn.Module | None:
@@ -1758,19 +1867,14 @@ class CodexMemoryManager:
             elif hasattr(loader, "to") and not avoid_model_moving:
                 loader.to(target_device)
             record.model_accelerated = False
-            if (
-                not avoid_model_moving
-                and module is not None
-                and pre_unload_device is not None
-                and pre_unload_device.type != DeviceBackend.CPU.value
-                and target_device is not None
-            ):
-                post_unload_device = self._first_module_device(module) or pre_unload_device
-                if post_unload_device == pre_unload_device:
-                    raise MemoryLoadError(
-                        f"Unload failed to move {self._record_label(record)} off {pre_unload_device} "
-                        f"(target_device={target_device})."
-                    )
+            self._verify_unload_residency(
+                record=record,
+                loader=loader,
+                module=module,
+                pre_unload_device=pre_unload_device,
+                target_device=target_device,
+                avoid_model_moving=avoid_model_moving,
+            )
             logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
             if smart_offload_enabled():
                 action_memory_after = self._smart_offload_memory_fields(prefix="memory_after")

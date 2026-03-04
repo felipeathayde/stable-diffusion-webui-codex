@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_repo_root` (function): Returns repo root (delegates to `get_repo_root()`).
 - `_paths_json_path` (function): Returns the absolute path to `apps/paths.json` under the repo root.
 - `_load_paths_config` (function): Loads and caches the `paths.json` mapping (and triggers best-effort directory provisioning).
+- `invalidate_paths_cache` (function): Clears the process-local `paths.json` cache so the next read reloads from disk.
 - `_resolve_repo_relative_path` (function): Resolves and validates repo-relative entries with root-containment checks.
 - `_ensure_model_dirs` (function): Creates missing model directories for known keys when entries are repo-relative.
 - `get_paths_config` (function): Returns a shallow copy of the raw `paths.json` mapping.
@@ -166,6 +167,13 @@ def _load_paths_config() -> Dict[str, List[str]]:
     return cfg
 
 
+def invalidate_paths_cache() -> None:
+    global _PATHS_CACHE, _PATHS_MTIME
+    _PATHS_CACHE = None
+    _PATHS_MTIME = None
+    _LOG.debug("paths config cache invalidated")
+
+
 def _ensure_model_dirs(cfg: Dict[str, List[str]]) -> None:
     """Create default model directories for known keys when missing.
 
@@ -228,4 +236,4 @@ def get_paths_for(key: str) -> List[str]:
     return out
 
 
-__all__ = ["get_paths_config", "get_paths_for"]
+__all__ = ["get_paths_config", "get_paths_for", "invalidate_paths_cache"]

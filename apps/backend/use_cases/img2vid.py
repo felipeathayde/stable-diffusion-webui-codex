@@ -13,6 +13,8 @@ Diffusers stage execution requires explicit non-empty stage prompts in `extras.w
 Temporal routing requires explicit `extras.img2vid_mode` (`solo|sliding|svi2|svi2_pro`) and rejects implicit mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity while SVI modes default to incremented per-window seeding, and result metadata includes frame-count diagnostics across generation/interpolation/export stages.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_build_pipeline_telemetry_scope` (function): Creates a mutable task-scoped telemetry context owner for img2vid run/stage events.
+- `_emit_pipeline_event` (function): Emits canonical structured pipeline telemetry events (`pipeline.*`) for img2vid.
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
 - `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
@@ -24,19 +26,24 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Iterator, Optional
 
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent
 from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
+from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.processing.datatypes import VideoPlan
+from apps.backend.runtime.pipeline_stages.hires_fix import resolve_pipeline_telemetry_context
 from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
     apply_video_interpolation,
     apply_video_upscaling,
+    build_video_request_effective_snapshot,
     build_video_plan,
     build_video_result,
     configure_sampler,
@@ -46,6 +53,50 @@ from apps.backend.runtime.pipeline_stages.video import (
     read_video_upscaling_options,
     resolve_video_output_fps,
 )
+
+
+def _build_pipeline_telemetry_scope(*, mode: str) -> SimpleNamespace:
+    scope = SimpleNamespace()
+    setattr(scope, "_codex_pipeline_mode", str(mode))
+    task_context = str(threading.current_thread().name or "").strip() or "unknown-thread"
+    marker = "-task-"
+    if marker in task_context:
+        candidate = task_context.split(marker, 1)[1].strip()
+        if candidate:
+            setattr(scope, "_codex_task_id", candidate)
+            setattr(scope, "_codex_correlation_id", candidate)
+            setattr(scope, "_codex_hires_correlation_id", candidate)
+            setattr(scope, "_codex_correlation_source", "task_id")
+    resolve_pipeline_telemetry_context(
+        scope,
+        default_mode=str(mode),
+        require_mode=True,
+    )
+    return scope
+
+
+def _emit_pipeline_event(
+    scope: Any,
+    event: str,
+    *,
+    stage: str,
+    **fields: object,
+) -> None:
+    telemetry = resolve_pipeline_telemetry_context(
+        scope,
+        default_mode="img2vid",
+        require_mode=True,
+    )
+    emit_backend_event(
+        event,
+        logger="backend.use_cases.img2vid",
+        mode=telemetry.mode,
+        stage=stage,
+        correlation_id=telemetry.correlation_id,
+        correlation_source=telemetry.correlation_source,
+        task_id=telemetry.task_id,
+        **fields,
+    )
 
 
 def _build_result_payload(
@@ -402,17 +453,39 @@ def run_img2vid(
     request: Img2VidRequest,
 ) -> Iterator[InferenceEvent]:
     logger = getattr(engine, "_logger", None)
+    telemetry_scope = _build_pipeline_telemetry_scope(mode="img2vid")
     if getattr(request, "init_image", None) is None:
         raise RuntimeError("img2vid requires 'init_image'")
 
     plan = build_video_plan(request)
     start = time.perf_counter()
-
-    yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid")
-
     pipe = getattr(comp, "pipeline", None)
     high_model = getattr(comp, "pipeline_high", None)
     low_model = getattr(comp, "pipeline_low", None)
+    backend_variant = "gguf" if (pipe is None and high_model is None and low_model is None) else "diffusers"
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.run.start",
+        stage="run.start",
+        backend=backend_variant,
+        engine_id=str(getattr(engine, "engine_id", "") or "unknown"),
+        requested_frames=int(plan.frames),
+        requested_width=int(plan.width),
+        requested_height=int(plan.height),
+    )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="prepare.complete",
+        stage_name="prepare",
+        backend=backend_variant,
+        frames=int(plan.frames),
+        width=int(plan.width),
+        height=int(plan.height),
+        steps=int(plan.steps),
+    )
+
+    yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid")
 
     if pipe is None and high_model is None and low_model is None:
         from apps.backend.runtime.families.wan22.config import build_wan22_gguf_run_config
@@ -420,6 +493,14 @@ def run_img2vid(
 
         extras = dict(plan.extras) if isinstance(plan.extras, dict) else {}
         temporal_opts = _parse_img2vid_temporal_options(extras, total_frames=plan.frames)
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="temporal_options.complete",
+            stage_name="temporal_options",
+            backend="gguf",
+            temporal_mode=str(temporal_opts.mode),
+        )
 
         cfg = None
         frames: list[Any] | None = None
@@ -647,6 +728,15 @@ def run_img2vid(
         if cfg is None:
             raise RuntimeError("WAN22 GGUF: runtime config resolution failed (cfg is None).")
         generated_frame_count = int(len(frames))
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="generation.complete",
+            stage_name="generation",
+            backend="gguf",
+            temporal_mode=str(temporal_opts.mode),
+            frame_count=int(generated_frame_count),
+        )
 
         upscaling_options = read_video_upscaling_options(plan.extras)
         vfi_options = read_video_interpolation_options(plan.extras)
@@ -675,6 +765,16 @@ def run_img2vid(
             logger_=logger,
             component_device=getattr(comp, "device", None),
         )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="upscaling.complete",
+            stage_name="upscaling",
+            backend="gguf",
+            temporal_mode=str(temporal_opts.mode),
+            upscaling_enabled=bool(upscaling_options is not None and upscaling_options.enabled),
+            frame_count=int(len(frames)),
+        )
         if frames:
             first_size = getattr(frames[0], "size", None)
             if isinstance(first_size, tuple) and len(first_size) == 2:
@@ -686,8 +786,34 @@ def run_img2vid(
         frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
         interpolated_frame_count = int(len(frames))
         plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="interpolation.complete",
+            stage_name="interpolation",
+            backend="gguf",
+            temporal_mode=str(temporal_opts.mode),
+            interpolation_enabled=bool(vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1),
+            output_fps=int(plan.fps),
+            frame_count=int(interpolated_frame_count),
+        )
 
         video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
+        video_saved = parse_bool_value(
+            video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
+            field="video_meta.saved",
+            default=False,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="export.complete",
+            stage_name="export",
+            backend="gguf",
+            temporal_mode=str(temporal_opts.mode),
+            video_saved=video_saved,
+            final_frame_count=int(len(frames)),
+        )
         export_frame_count: int | None = None
         if isinstance(video_meta, Mapping):
             raw_export_frame_count = video_meta.get("frames", video_meta.get("frame_count"))
@@ -712,6 +838,18 @@ def run_img2vid(
             extra_meta["video_interpolation"] = vfi_opts
         if base_video_meta is not None:
             extra_meta["video_base_snapshot"] = base_video_meta
+        extra_meta["video_request_vs_effective_snapshot"] = build_video_request_effective_snapshot(
+            request=request,
+            plan=plan,
+            video_meta=video_meta,
+            upscaling_options=upscaling_options,
+            upscaling_meta=upscaling_opts,
+            interpolation_options=vfi_options,
+            interpolation_meta=vfi_opts,
+            base_video_meta=base_video_meta,
+            audio_input=False,
+            final_frame_count=len(frames),
+        )
         extra_meta["frame_counts"] = {
             "requested": int(getattr(request, "num_frames", plan.frames) or plan.frames),
             "generated": int(generated_frame_count),
@@ -741,6 +879,16 @@ def run_img2vid(
             task="img2vid",
             extra=extra_meta,
             video_meta=video_meta,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.run.complete",
+            stage="run.complete",
+            backend="gguf",
+            temporal_mode=str(temporal_opts.mode),
+            total_pipeline_ms=max(0.0, float(elapsed) * 1000.0),
+            final_frame_count=int(len(frames)),
+            video_saved=video_saved,
         )
 
         yield ResultEvent(
@@ -791,6 +939,14 @@ def run_img2vid(
         negative_prompt=high_negative_prompt,
         init_image=getattr(request, "init_image", None),
     )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="run_high.complete",
+        stage_name="run_high",
+        backend="diffusers",
+        frame_count=int(len(frames)),
+    )
 
     active_pipe_lo = low_model or pipe
     outcome_lo = None
@@ -825,6 +981,23 @@ def run_img2vid(
             negative_prompt=low_negative_prompt,
             init_image=frames[-1],
         )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="run_low.complete",
+            stage_name="run_low",
+            backend="diffusers",
+            frame_count=int(len(frames)),
+        )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="generation.complete",
+        stage_name="generation",
+        backend="diffusers",
+        low_stage_enabled=bool(outcome_lo is not None),
+        frame_count=int(len(frames)),
+    )
 
     upscaling_options = read_video_upscaling_options(extras)
     vfi_options = read_video_interpolation_options(extras)
@@ -853,6 +1026,15 @@ def run_img2vid(
         logger_=logger,
         component_device=getattr(comp, "device", None),
     )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="upscaling.complete",
+        stage_name="upscaling",
+        backend="diffusers",
+        upscaling_enabled=bool(upscaling_options is not None and upscaling_options.enabled),
+        frame_count=int(len(frames)),
+    )
     if frames:
         first_size = getattr(frames[0], "size", None)
         if isinstance(first_size, tuple) and len(first_size) == 2:
@@ -863,8 +1045,32 @@ def run_img2vid(
         yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
     frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
     plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="interpolation.complete",
+        stage_name="interpolation",
+        backend="diffusers",
+        interpolation_enabled=bool(vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1),
+        output_fps=int(plan.fps),
+        frame_count=int(len(frames)),
+    )
 
     video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="img2vid")
+    video_saved = parse_bool_value(
+        video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
+        field="video_meta.saved",
+        default=False,
+    )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="export.complete",
+        stage_name="export",
+        backend="diffusers",
+        video_saved=video_saved,
+        final_frame_count=int(len(frames)),
+    )
 
     extra_meta: dict[str, Any] = dict(extras) if isinstance(extras, dict) else {}
     if upscaling_opts is not None:
@@ -873,6 +1079,18 @@ def run_img2vid(
         extra_meta["video_interpolation"] = vfi_opts
     if base_video_meta is not None:
         extra_meta["video_base_snapshot"] = base_video_meta
+    extra_meta["video_request_vs_effective_snapshot"] = build_video_request_effective_snapshot(
+        request=request,
+        plan=plan,
+        video_meta=video_meta,
+        upscaling_options=upscaling_options,
+        upscaling_meta=upscaling_opts,
+        interpolation_options=vfi_options,
+        interpolation_meta=vfi_opts,
+        base_video_meta=base_video_meta,
+        audio_input=False,
+        final_frame_count=len(frames),
+    )
     if outcome_lo is not None:
         extra_meta["sampler_low"] = {
             "sampler_in": getattr(outcome_lo, "sampler_in", None),
@@ -891,6 +1109,15 @@ def run_img2vid(
         task="img2vid",
         extra=extra_meta,
         video_meta=video_meta,
+    )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.run.complete",
+        stage="run.complete",
+        backend="diffusers",
+        total_pipeline_ms=max(0.0, float(elapsed) * 1000.0),
+        final_frame_count=int(len(frames)),
+        video_saved=video_saved,
     )
 
     yield ResultEvent(

@@ -21,7 +21,7 @@ Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image
 	- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
 	- `WanStageLoraInput` (interface): UI-friendly stage LoRA entry (`sha` + optional `weight`) mapped to stage `loras[]`.
 	- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
-	- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames) mapped into payload.
+	- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames, save toggles) mapped into payload.
 - `WanInterpolationInput` (interface): Interpolation target FPS input (`0`=off, values above base FPS enable backend interpolation).
 - `WanVideoUpscalingInput` (interface): Optional SeedVR2 upscaling input mapped to backend `video_upscaling`.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
@@ -163,14 +163,15 @@ const CommonWanVideoPayloadSchema = z
     codex_device: DeviceEnum,
     settings_revision: z.number().int().min(0),
 
-    video_return_frames: z.boolean().optional(),
+    video_return_frames: z.boolean(),
     video_format: z.string().min(1).optional(),
     video_pix_fmt: z.string().min(1).optional(),
     video_crf: z.number().int().min(0).max(51).optional(),
     video_loop_count: z.number().int().min(0).optional(),
-    video_pingpong: z.boolean().optional(),
-    video_save_metadata: z.literal(true),
-    video_save_output: z.literal(true),
+    video_pingpong: z.boolean(),
+    video_save_metadata: z.boolean(),
+    video_save_output: z.boolean(),
+    video_trim_to_audio: z.boolean(),
 
     video_interpolation: VideoInterpolationSchema.optional(),
     video_upscaling: VideoUpscalingSchema.optional(),
@@ -383,6 +384,9 @@ export interface WanVideoOutputInput {
   crf: number
   loopCount: number
   pingpong: boolean
+  saveMetadata?: boolean
+  saveOutput?: boolean
+  trimToAudio?: boolean
   returnFrames?: boolean
 }
 
@@ -620,16 +624,24 @@ function addWanAssets(payload: Record<string, unknown>, assets: WanAssetsInput):
 }
 
 function addWanOutput(payload: Record<string, unknown>, out: WanVideoOutputInput): void {
+  const resolveToggle = (value: unknown, field: string, fallback: boolean): boolean => {
+    if (value === undefined) return fallback
+    if (typeof value !== 'boolean') {
+      throw new Error(`WAN output.${field} must be boolean when provided`)
+    }
+    return value
+  }
   const format = String(out.format || '').trim()
   if (format) payload.video_format = format
   const pixFmt = String(out.pixFmt || '').trim()
   if (pixFmt) payload.video_pix_fmt = pixFmt
   if (Number.isFinite(out.crf)) payload.video_crf = out.crf
   if (Number.isFinite(out.loopCount)) payload.video_loop_count = out.loopCount
-  payload.video_pingpong = Boolean(out.pingpong)
-  payload.video_save_metadata = true
-  payload.video_save_output = true
-  if (out.returnFrames) payload.video_return_frames = true
+  payload.video_pingpong = resolveToggle(out.pingpong, 'pingpong', false)
+  payload.video_save_metadata = resolveToggle(out.saveMetadata, 'saveMetadata', true)
+  payload.video_save_output = resolveToggle(out.saveOutput, 'saveOutput', true)
+  payload.video_trim_to_audio = resolveToggle(out.trimToAudio, 'trimToAudio', false)
+  payload.video_return_frames = resolveToggle(out.returnFrames, 'returnFrames', false)
 }
 
 function addWanInterpolation(

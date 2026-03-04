@@ -17,7 +17,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import contextlib
 import gc
 import logging
 import threading
@@ -203,6 +202,97 @@ class InferenceOrchestrator:
         )
         engine.unload()
 
+    @staticmethod
+    def _engine_residency_targets(engine: BaseInferenceEngine) -> list[tuple[str, object]]:
+        codex_objects = getattr(engine, "codex_objects", None)
+        if codex_objects is None:
+            return []
+
+        targets: list[tuple[str, object]] = []
+        for label in ("denoiser", "unet", "vae", "clipvision"):
+            candidate = getattr(codex_objects, label, None)
+            if candidate is not None:
+                targets.append((label, candidate))
+
+        text_encoders = getattr(codex_objects, "text_encoders", None)
+        if isinstance(text_encoders, Mapping):
+            for name, candidate in text_encoders.items():
+                if candidate is None:
+                    continue
+                targets.append((f"text_encoder:{name}", candidate))
+
+        return targets
+
+    @staticmethod
+    def _verify_engine_unloaded(engine: BaseInferenceEngine, *, source: str) -> None:
+        loaded_flag = getattr(engine, "_is_loaded", None)
+        if not isinstance(loaded_flag, bool):
+            raise RuntimeError(
+                f"Post-unload residency verification failed at {source}: invalid engine._is_loaded={loaded_flag!r}."
+            )
+
+        status_loaded = loaded_flag
+        status_payload = engine.status()
+        if isinstance(status_payload, Mapping):
+            raw_loaded = status_payload.get("loaded", loaded_flag)
+            if not isinstance(raw_loaded, bool):
+                raise RuntimeError(
+                    f"Post-unload residency verification failed at {source}: "
+                    f"engine.status()['loaded'] is not bool ({raw_loaded!r})."
+                )
+            status_loaded = raw_loaded
+
+        if loaded_flag or status_loaded:
+            raise RuntimeError(
+                f"Post-unload residency verification failed at {source}: "
+                f"engine still reports loaded (_is_loaded={loaded_flag}, status.loaded={status_loaded})."
+            )
+
+    def _unload_engine_with_residency_verification(
+        self,
+        engine: BaseInferenceEngine,
+        *,
+        source: str,
+    ) -> None:
+        targets = self._engine_residency_targets(engine)
+        tracked_targets: list[tuple[str, object]] = []
+
+        if targets:
+            from apps.backend.runtime.memory import memory_management as _mem
+
+            for label, target in targets:
+                try:
+                    was_loaded = _mem.manager.is_model_loaded(target)
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        f"Failed to evaluate pre-unload residency target '{label}' at {source}: {exc}"
+                    ) from exc
+                if was_loaded:
+                    tracked_targets.append((label, target))
+
+        self._guarded_engine_unload(engine)
+        engine.mark_unloaded()
+        self._verify_engine_unloaded(engine, source=source)
+
+        if tracked_targets:
+            from apps.backend.runtime.memory import memory_management as _mem
+
+            lingering: list[str] = []
+            for label, target in tracked_targets:
+                try:
+                    if _mem.manager.is_model_loaded(target):
+                        lingering.append(label)
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        f"Failed to evaluate post-unload residency target '{label}' at {source}: {exc}"
+                    ) from exc
+
+            if lingering:
+                raise RuntimeError(
+                    f"Post-unload residency verification failed at {source}: "
+                    f"lingering memory-manager residency for {', '.join(lingering)}."
+                )
+
     def _purge_vram(self, *, reason: str, clear_engine_cache: bool = False) -> None:
         def _is_cleanup_oom(detail: str) -> bool:
             text = str(detail or "").strip().lower()
@@ -217,8 +307,10 @@ class InferenceOrchestrator:
                 if not clear_engine_cache and not getattr(cached_engine, "_is_loaded", False):
                     continue
                 try:
-                    self._guarded_engine_unload(cached_engine)
-                    cached_engine.mark_unloaded()
+                    self._unload_engine_with_residency_verification(
+                        cached_engine,
+                        source="core.orchestrator._purge_vram",
+                    )
                 except Exception as exc:  # noqa: BLE001
                     purge_failures.append(f"cached_engine_unload:{exc}")
 
@@ -362,9 +454,10 @@ class InferenceOrchestrator:
                         stage=load_stage,
                     ):
                         if engine._is_loaded:
-                            with contextlib.suppress(Exception):
-                                self._guarded_engine_unload(engine)
-                                engine.mark_unloaded()
+                            self._unload_engine_with_residency_verification(
+                                engine,
+                                source="core.orchestrator.run.reload_transition",
+                            )
                             logger.info(
                                 "Running VRAM cleanup barrier between unload/load transition. engine=%s model=%s",
                                 engine_key,
@@ -378,19 +471,27 @@ class InferenceOrchestrator:
                     raise
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Engine '%s' failed during load (model=%s).", engine_key, model_ref)
+                    cleanup_failures: list[str] = []
                     with coordinator_load_permit(
                         owner="core.orchestrator.run",
                         stage=LoadAuthorityStage.CLEANUP,
                     ):
-                        with contextlib.suppress(Exception):
-                            self._guarded_engine_unload(engine)
-                            engine.mark_unloaded()
+                        try:
+                            self._unload_engine_with_residency_verification(
+                                engine,
+                                source="core.orchestrator.run.load_failure_cleanup",
+                            )
+                        except Exception as cleanup_exc:  # noqa: BLE001
+                            cleanup_failures.append(f"engine_unload:{cleanup_exc}")
                     try:
                         self._purge_vram(reason="engine load failure", clear_engine_cache=True)
                     except Exception as purge_exc:  # noqa: BLE001
+                        cleanup_failures.append(f"purge:{purge_exc}")
+                    if cleanup_failures:
+                        detail = "; ".join(cleanup_failures)
                         raise EngineLoadError(
                             f"Failed to load engine '{engine_key}' for model '{model_ref}': {exc}. "
-                            f"Additional cleanup failure: {purge_exc}"
+                            f"Additional cleanup failure(s): {detail}"
                         ) from exc
                     raise EngineLoadError(
                         f"Failed to load engine '{engine_key}' for model '{model_ref}': {exc}"
@@ -414,22 +515,27 @@ class InferenceOrchestrator:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("Engine '%s' failed during '%s'", engine_key, task.value)
+            cleanup_failures: list[str] = []
             with coordinator_load_permit(
                 owner="core.orchestrator.run",
                 stage=LoadAuthorityStage.UNLOAD,
             ):
-                with contextlib.suppress(Exception):
-                    self._guarded_engine_unload(engine)
-                    engine.mark_unloaded()
-            purge_failure: Exception | None = None
+                try:
+                    self._unload_engine_with_residency_verification(
+                        engine,
+                        source="core.orchestrator.run.execution_failure_cleanup",
+                    )
+                except Exception as cleanup_exc:  # noqa: BLE001
+                    cleanup_failures.append(f"engine_unload:{cleanup_exc}")
             try:
                 self._purge_vram(reason="engine execution failure", clear_engine_cache=True)
             except Exception as purge_exc:  # noqa: BLE001
-                purge_failure = purge_exc
-            if purge_failure is not None:
+                cleanup_failures.append(f"purge:{purge_exc}")
+            if cleanup_failures:
+                detail = "; ".join(cleanup_failures)
                 raise EngineExecutionError(
                     f"Engine '{engine_key}' failed during '{task.value}': {exc}. "
-                    f"Additional cleanup failure: {purge_failure}"
+                    f"Additional cleanup failure(s): {detail}"
                 ) from exc
             raise EngineExecutionError(f"Engine '{engine_key}' failed during '{task.value}': {exc}") from exc
 
@@ -466,9 +572,10 @@ class InferenceOrchestrator:
             owner="core.orchestrator.evict",
             stage=LoadAuthorityStage.CLEANUP,
         ):
-            with contextlib.suppress(Exception):
-                self._guarded_engine_unload(engine)
-                engine.mark_unloaded()
+            self._unload_engine_with_residency_verification(
+                engine,
+                source="core.orchestrator.evict",
+            )
         logger.info("Evicted engine '%s'", normalized_key)
 
     def clear_cache(self) -> None:

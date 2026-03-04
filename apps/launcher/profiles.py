@@ -20,6 +20,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
 - `ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY` (constant): Env key toggling default allocator config injection when `PYTORCH_CUDA_ALLOC_CONF` is unset.
 - `CODEX_CUDA_MALLOC_KEY` (constant): Env key toggling backend `--cuda-malloc` forwarding in launcher-managed runs.
+- `CODEX_APP_MODE_PROFILE_ENV_KEY` (constant): Env key selecting launcher app mode profile (`dev_service|embedded`).
+- `LAUNCHER_MODE_PROFILE_CHOICES` (constant): Allowed launcher app mode profiles.
+- `normalize_mode_profile` (function): Strict parser/validator for launcher app mode profile values.
 - `DEFAULT_MANUAL_API_ENV_TEXT` (constant): Suggested manual API env overlay text prefilled in launcher metadata.
 - `parse_manual_api_env_text` (function): Parses manual API env text (`KEY=VALUE` per line) with strict, line-numbered validation.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy, manual API env overlay).
@@ -115,12 +118,30 @@ DEFAULT_MODEL_NAME = "default"
 DEFAULT_PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
 ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF_KEY = "CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF"
 CODEX_CUDA_MALLOC_KEY = "CODEX_CUDA_MALLOC"
+CODEX_APP_MODE_PROFILE_ENV_KEY = "CODEX_APP_MODE_PROFILE"
+LAUNCHER_MODE_PROFILE_DEV_SERVICE = "dev_service"
+LAUNCHER_MODE_PROFILE_EMBEDDED = "embedded"
+LAUNCHER_MODE_PROFILE_CHOICES: tuple[str, ...] = (
+    LAUNCHER_MODE_PROFILE_DEV_SERVICE,
+    LAUNCHER_MODE_PROFILE_EMBEDDED,
+)
+DEFAULT_LAUNCHER_MODE_PROFILE = LAUNCHER_MODE_PROFILE_DEV_SERVICE
 DEFAULT_MANUAL_API_ENV_TEXT = "TORCH_CUDA_ARCH_LIST=8.6\nMAX_JOBS=4"
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _default_external_terminal_enabled() -> bool:
     return os.name == "nt"
+
+
+def normalize_mode_profile(raw_value: str, *, source: str) -> str:
+    normalized = str(raw_value or "").strip().lower()
+    if normalized in LAUNCHER_MODE_PROFILE_CHOICES:
+        return normalized
+    allowed = ", ".join(LAUNCHER_MODE_PROFILE_CHOICES)
+    raise ValueError(
+        f"Invalid {source}: {raw_value!r}. Allowed values: {allowed}."
+    )
 
 
 def parse_manual_api_env_text(raw_text: str) -> Dict[str, str]:
@@ -170,6 +191,7 @@ class LauncherMeta:
     active_model: str = DEFAULT_MODEL_NAME
     window_geometry: str = ""
     show_advanced_controls: bool = False
+    app_mode_profile: str = DEFAULT_LAUNCHER_MODE_PROFILE
     manual_api_env_enabled: bool = False
     manual_api_env_text: str = DEFAULT_MANUAL_API_ENV_TEXT
 
@@ -348,6 +370,13 @@ class LauncherProfileStore:
 
     def _ensure_consistency(self) -> bool:
         changed = False
+        normalized_mode_profile = normalize_mode_profile(
+            str(getattr(self.meta, "app_mode_profile", DEFAULT_LAUNCHER_MODE_PROFILE) or DEFAULT_LAUNCHER_MODE_PROFILE),
+            source="launcher meta app_mode_profile",
+        )
+        if getattr(self.meta, "app_mode_profile", None) != normalized_mode_profile:
+            self.meta.app_mode_profile = normalized_mode_profile
+            changed = True
         # Legacy migration: when old profiles only have component device keys,
         # seed CODEX_MAIN_DEVICE from core device before defaults are merged.
         for container in list(self.areas.values()):
@@ -548,6 +577,14 @@ def _load_meta(root: Path) -> LauncherMeta:
     except Exception as exc:
         raise RuntimeError(f"Failed to read launcher meta {meta_path}: {exc}") from exc
     external_terminal_default = _default_external_terminal_enabled()
+    raw_mode_profile = str(data.get("app_mode_profile", DEFAULT_LAUNCHER_MODE_PROFILE) or DEFAULT_LAUNCHER_MODE_PROFILE)
+    try:
+        app_mode_profile = normalize_mode_profile(
+            raw_mode_profile,
+            source=f"{meta_path} app_mode_profile",
+        )
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     return LauncherMeta(
         external_terminal=bool(data["external_terminal"]) if "external_terminal" in data else external_terminal_default,
         sdpa_policy=str(data.get("sdpa_policy", "auto")),
@@ -555,6 +592,7 @@ def _load_meta(root: Path) -> LauncherMeta:
         active_model=str(data.get("active_model", DEFAULT_MODEL_NAME)),
         window_geometry=str(data.get("window_geometry", "") or ""),
         show_advanced_controls=bool(data.get("show_advanced_controls", False)),
+        app_mode_profile=app_mode_profile,
         manual_api_env_enabled=bool(data.get("manual_api_env_enabled", False)),
         manual_api_env_text=str(data.get("manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     )
@@ -568,6 +606,10 @@ def _write_meta(root: Path, meta: LauncherMeta) -> None:
         "tab_index": meta.tab_index,
         "active_model": meta.active_model,
         "show_advanced_controls": bool(getattr(meta, "show_advanced_controls", False)),
+        "app_mode_profile": normalize_mode_profile(
+            str(getattr(meta, "app_mode_profile", DEFAULT_LAUNCHER_MODE_PROFILE) or DEFAULT_LAUNCHER_MODE_PROFILE),
+            source="launcher meta app_mode_profile",
+        ),
         "manual_api_env_enabled": bool(getattr(meta, "manual_api_env_enabled", False)),
         "manual_api_env_text": str(getattr(meta, "manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     }

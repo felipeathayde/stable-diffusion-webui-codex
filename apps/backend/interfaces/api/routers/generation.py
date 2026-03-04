@@ -106,7 +106,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         register_default_engines(replace=False)
 
     from apps.backend.types.payloads import EXTRAS_KEYS, TXT2IMG_KEYS
-    from apps.backend.runtime.state_dict.keymap_wan22_transformer import WAN22_REQUEST_KEYS
+    from apps.backend.runtime.state_dict.keymap_wan22_transformer import (
+        WAN22_REQUEST_KEYS,
+        legacy_wan22_request_key_alias_target,
+    )
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL) - set(TXT2IMG_KEYS.SMART)
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
@@ -202,6 +205,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "unknown_keys": unknown,
                 },
             )
+
+    def _reject_legacy_wan_request_key_aliases(payload: Mapping[str, Any], *, context: str) -> None:
+        aliases: dict[str, str] = {}
+        for raw_key in payload.keys():
+            if not isinstance(raw_key, str):
+                continue
+            canonical = legacy_wan22_request_key_alias_target(raw_key)
+            if canonical is None:
+                continue
+            aliases[raw_key] = canonical
+        if not aliases:
+            return
+        ordered = sorted(aliases.items())
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "legacy_request_key_alias",
+                "message": (
+                    f"Legacy {context} key alias(es) are unsupported. "
+                    "Use canonical request keys."
+                ),
+                "context": context,
+                "legacy_keys": [alias for alias, _ in ordered],
+                "canonical_keys": [canonical for _, canonical in ordered],
+                "replacements": {
+                    alias: canonical
+                    for alias, canonical in ordered
+                },
+            },
+        )
 
     def _current_settings_revision() -> int:
         snapshot = _opts_snapshot()
@@ -810,7 +843,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Preferred contract: pass `wan_metadata_repo="Org/Repo"` and resolve it under
         `apps/backend/huggingface/` (vendored HF mirror).
 
-        Back-compat: accept `wan_metadata_dir` (or `wan_tokenizer_dir`) as an explicit path.
+        Canonical fallback: accept `wan_metadata_dir` as an explicit path.
         """
         raw_repo = payload.get("wan_metadata_repo")
         if isinstance(raw_repo, str) and raw_repo.strip():
@@ -833,7 +866,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=409, detail=f"WAN metadata repo not found locally: {repo_id}")
             return str(local_dir)
 
-        meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
+        meta_dir = payload.get("wan_metadata_dir")
         if isinstance(meta_dir, str) and meta_dir.strip():
             try:
                 return _path_from_api(meta_dir)
@@ -2260,6 +2293,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         default_sampler: str = "uni-pc",
         default_scheduler: str = "simple",
     ) -> _VideoCoreDTO:
+        _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
         _reject_unknown_keys(payload, _TXT2VID_ALLOWED_KEYS, "txt2vid")
         return _parse_video_core_dto(
             payload,
@@ -2281,6 +2315,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         default_sampler: str = "uni-pc",
         default_scheduler: str = "simple",
     ) -> _VideoCoreDTO:
+        _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
         _reject_unknown_keys(payload, _IMG2VID_ALLOWED_KEYS, "img2vid")
         return _parse_video_core_dto(
             payload,
@@ -2422,6 +2457,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Note: do not apply `switch_primary_device()` here; apply it only when the task actually starts running
         (single-flight-safe).
         """
+        for legacy_key in ("codex_device", "codex_diffusion_device"):
+            canonical = legacy_wan22_request_key_alias_target(legacy_key)
+            if canonical != "device":
+                continue
+            if legacy_key in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported legacy device key: '{legacy_key}'. Use '{canonical}'.",
+                )
         policy = generation_route_device_policy(route_mode)
         try:
             return parse_device_from_payload(payload, route_policy=policy)
@@ -2856,6 +2900,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
+        _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         wan_metadata_dir = _resolve_wan_metadata_dir(payload)
         default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
@@ -3107,6 +3152,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
+        _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         wan_metadata_dir = _resolve_wan_metadata_dir(payload)
         default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
@@ -4051,6 +4097,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
+        _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
 
         device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.TXT2VID)
         loop = asyncio.get_running_loop()
@@ -4066,6 +4113,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
+        _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
 
         device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.IMG2VID)
         loop = asyncio.get_running_loop()

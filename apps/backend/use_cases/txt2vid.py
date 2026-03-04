@@ -12,6 +12,8 @@ resulting video, and yields progress/result events.
 Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when provided and falls back to request negative only when missing.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_build_pipeline_telemetry_scope` (function): Creates a mutable task-scoped telemetry context owner for txt2vid run/stage events.
+- `_emit_pipeline_event` (function): Emits canonical structured pipeline telemetry events (`pipeline.*`) for txt2vid.
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_pipeline` (function): Runs a Diffusers txt2vid pipeline and returns generated frames.
 - `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
@@ -21,19 +23,24 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Iterator, Optional
 
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
 from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
+from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.processing.datatypes import VideoPlan
+from apps.backend.runtime.pipeline_stages.hires_fix import resolve_pipeline_telemetry_context
 from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
     apply_video_interpolation,
     apply_video_upscaling,
+    build_video_request_effective_snapshot,
     build_video_plan,
     build_video_result,
     configure_sampler,
@@ -43,6 +50,50 @@ from apps.backend.runtime.pipeline_stages.video import (
     read_video_upscaling_options,
     resolve_video_output_fps,
 )
+
+
+def _build_pipeline_telemetry_scope(*, mode: str) -> SimpleNamespace:
+    scope = SimpleNamespace()
+    setattr(scope, "_codex_pipeline_mode", str(mode))
+    task_context = str(threading.current_thread().name or "").strip() or "unknown-thread"
+    marker = "-task-"
+    if marker in task_context:
+        candidate = task_context.split(marker, 1)[1].strip()
+        if candidate:
+            setattr(scope, "_codex_task_id", candidate)
+            setattr(scope, "_codex_correlation_id", candidate)
+            setattr(scope, "_codex_hires_correlation_id", candidate)
+            setattr(scope, "_codex_correlation_source", "task_id")
+    resolve_pipeline_telemetry_context(
+        scope,
+        default_mode=str(mode),
+        require_mode=True,
+    )
+    return scope
+
+
+def _emit_pipeline_event(
+    scope: Any,
+    event: str,
+    *,
+    stage: str,
+    **fields: object,
+) -> None:
+    telemetry = resolve_pipeline_telemetry_context(
+        scope,
+        default_mode="txt2vid",
+        require_mode=True,
+    )
+    emit_backend_event(
+        event,
+        logger="backend.use_cases.txt2vid",
+        mode=telemetry.mode,
+        stage=stage,
+        correlation_id=telemetry.correlation_id,
+        correlation_source=telemetry.correlation_source,
+        task_id=telemetry.task_id,
+        **fields,
+    )
 
 
 def _build_result_payload(
@@ -206,12 +257,36 @@ def run_txt2vid(
     request: Txt2VidRequest,
 ) -> Iterator[InferenceEvent]:
     logger = getattr(engine, "_logger", None)
+    telemetry_scope = _build_pipeline_telemetry_scope(mode="txt2vid")
     plan = build_video_plan(request)
     start = time.perf_counter()
+    pipe = getattr(comp, "pipeline", None)
+    backend_variant = "gguf" if pipe is None else "diffusers"
+
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.run.start",
+        stage="run.start",
+        backend=backend_variant,
+        engine_id=str(getattr(engine, "engine_id", "") or "unknown"),
+        requested_frames=int(plan.frames),
+        requested_width=int(plan.width),
+        requested_height=int(plan.height),
+    )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="prepare.complete",
+        stage_name="prepare",
+        backend=backend_variant,
+        frames=int(plan.frames),
+        width=int(plan.width),
+        height=int(plan.height),
+        steps=int(plan.steps),
+    )
 
     yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid")
 
-    pipe = getattr(comp, "pipeline", None)
     if pipe is None:
         from apps.backend.runtime.families.wan22.config import build_wan22_gguf_run_config
         from apps.backend.runtime.families.wan22 import wan22 as gguf
@@ -250,6 +325,14 @@ def run_txt2vid(
 
         if not frames:
             raise RuntimeError("WAN22 GGUF: produced no frames")
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="generation.complete",
+            stage_name="generation",
+            backend="gguf",
+            frame_count=int(len(frames)),
+        )
 
         upscaling_options = read_video_upscaling_options(plan.extras)
         vfi_options = read_video_interpolation_options(plan.extras)
@@ -278,6 +361,15 @@ def run_txt2vid(
             logger_=logger,
             component_device=getattr(comp, "device", None),
         )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="upscaling.complete",
+            stage_name="upscaling",
+            backend="gguf",
+            upscaling_enabled=bool(upscaling_options is not None and upscaling_options.enabled),
+            frame_count=int(len(frames)),
+        )
         if frames:
             first_size = getattr(frames[0], "size", None)
             if isinstance(first_size, tuple) and len(first_size) == 2:
@@ -288,8 +380,32 @@ def run_txt2vid(
             yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
         frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
         plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="interpolation.complete",
+            stage_name="interpolation",
+            backend="gguf",
+            interpolation_enabled=bool(vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1),
+            output_fps=int(plan.fps),
+            frame_count=int(len(frames)),
+        )
 
         video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="txt2vid")
+        video_saved = parse_bool_value(
+            video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
+            field="video_meta.saved",
+            default=False,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="export.complete",
+            stage_name="export",
+            backend="gguf",
+            video_saved=video_saved,
+            final_frame_count=int(len(frames)),
+        )
 
         @dataclass(frozen=True)
         class _SamplerOutcome:
@@ -306,6 +422,18 @@ def run_txt2vid(
             extra_meta["video_interpolation"] = vfi_opts
         if base_video_meta is not None:
             extra_meta["video_base_snapshot"] = base_video_meta
+        extra_meta["video_request_vs_effective_snapshot"] = build_video_request_effective_snapshot(
+            request=request,
+            plan=plan,
+            video_meta=video_meta,
+            upscaling_options=upscaling_options,
+            upscaling_meta=upscaling_opts,
+            interpolation_options=vfi_options,
+            interpolation_meta=vfi_opts,
+            base_video_meta=base_video_meta,
+            audio_input=False,
+            final_frame_count=len(frames),
+        )
         if cfg.low is not None:
             extra_meta["sampler_low"] = {
                 "sampler_in": cfg.low.sampler,
@@ -329,6 +457,15 @@ def run_txt2vid(
             task="txt2vid",
             extra=extra_meta,
             video_meta=video_meta,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.run.complete",
+            stage="run.complete",
+            backend="gguf",
+            total_pipeline_ms=max(0.0, float(elapsed) * 1000.0),
+            final_frame_count=int(len(frames)),
+            video_saved=video_saved,
         )
 
         yield ResultEvent(
@@ -375,6 +512,14 @@ def run_txt2vid(
         prompt=prompt_text,
         negative_prompt=negative_prompt_text,
     )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="generation.complete",
+        stage_name="generation",
+        backend="diffusers",
+        frame_count=int(len(frames)),
+    )
 
     upscaling_options = read_video_upscaling_options(plan.extras)
     vfi_options = read_video_interpolation_options(plan.extras)
@@ -403,6 +548,15 @@ def run_txt2vid(
         logger_=logger,
         component_device=getattr(comp, "device", None),
     )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="upscaling.complete",
+        stage_name="upscaling",
+        backend="diffusers",
+        upscaling_enabled=bool(upscaling_options is not None and upscaling_options.enabled),
+        frame_count=int(len(frames)),
+    )
     if frames:
         first_size = getattr(frames[0], "size", None)
         if isinstance(first_size, tuple) and len(first_size) == 2:
@@ -413,8 +567,32 @@ def run_txt2vid(
         yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
     frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
     plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="interpolation.complete",
+        stage_name="interpolation",
+        backend="diffusers",
+        interpolation_enabled=bool(vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1),
+        output_fps=int(plan.fps),
+        frame_count=int(len(frames)),
+    )
 
     video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="txt2vid")
+    video_saved = parse_bool_value(
+        video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
+        field="video_meta.saved",
+        default=False,
+    )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.stage.complete",
+        stage="export.complete",
+        stage_name="export",
+        backend="diffusers",
+        video_saved=video_saved,
+        final_frame_count=int(len(frames)),
+    )
 
     extra_meta: dict[str, Any] = dict(plan.extras)
     if upscaling_opts is not None:
@@ -423,6 +601,18 @@ def run_txt2vid(
         extra_meta["video_interpolation"] = vfi_opts
     if base_video_meta is not None:
         extra_meta["video_base_snapshot"] = base_video_meta
+    extra_meta["video_request_vs_effective_snapshot"] = build_video_request_effective_snapshot(
+        request=request,
+        plan=plan,
+        video_meta=video_meta,
+        upscaling_options=upscaling_options,
+        upscaling_meta=upscaling_opts,
+        interpolation_options=vfi_options,
+        interpolation_meta=vfi_opts,
+        base_video_meta=base_video_meta,
+        audio_input=False,
+        final_frame_count=len(frames),
+    )
 
     elapsed = time.perf_counter() - start
     result = build_video_result(
@@ -434,6 +624,15 @@ def run_txt2vid(
         task="txt2vid",
         extra=extra_meta,
         video_meta=video_meta,
+    )
+    _emit_pipeline_event(
+        telemetry_scope,
+        "pipeline.run.complete",
+        stage="run.complete",
+        backend="diffusers",
+        total_pipeline_ms=max(0.0, float(elapsed) * 1000.0),
+        final_frame_count=int(len(frames)),
+        video_saved=video_saved,
     )
 
     yield ResultEvent(

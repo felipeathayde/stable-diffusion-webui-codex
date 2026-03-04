@@ -17,7 +17,7 @@ Status: Active
 - `apps/interface/src/components/ui/JsonTreeView.vue` — Collapsible JSON renderer used by the metadata modal (`<details>/<summary>` tree).
 - `apps/interface/src/components/ui/Dropzone.vue` — Drag-and-drop file picker primitive (presentational; emits `select`/`rejected`).
 - `apps/interface/src/components/ui/ImageZoomOverlay.vue` — Full-screen image zoom overlay with shared close semantics (Esc and outside-click).
-- `apps/interface/src/components/ui/VideoZoomOverlay.vue` — Full-screen video zoom overlay with pan/zoom, outside-click/Escape close, and double-click fullscreen suppression.
+- `apps/interface/src/components/ui/VideoZoomOverlay.vue` — Full-screen video zoom overlay with controls-safe default interaction (`Pan: Off`), explicit drag-pan zoning (`Pan: On`), outside-click/Escape close, and double-click fullscreen suppression.
 - `apps/interface/src/components/ui/InpaintMaskEditorOverlay.vue` — Full-screen inpaint mask editor overlay (brush/eraser/circle/polygon + zoom/pan + undo/redo).
 - `apps/interface/src/components/ui/inpaint_mask_editor_engine.ts` — Pure mask-editing engine used by the inpaint editor overlay (draw ops + bounded history + mask helpers).
 
@@ -38,3 +38,4 @@ Status: Active
 - 2026-03-02: `ImageZoomOverlay.vue` frame-guide normalization now preserves user-selected `imageScale` while source dimensions are still unknown (no implicit clamp-to-1 during unresolved-source state); min-scale clamping is only applied after source/frame geometry is known.
 - 2026-03-02: `Modal.vue` now supports optional per-instance panel classes (`panelClass`) and optional footer rendering (`showFooter`) so modal consumers can tune size/layout and remove redundant footer actions while keeping shared close semantics (`✕` + backdrop click).
 - 2026-03-04: Added `VideoZoomOverlay.vue` as a dedicated video-only overlay component (separate from image overlay) with wheel zoom + drag pan, `Esc`/outside-click close, and `@dblclick.prevent.stop` to block native video fullscreen.
+- 2026-03-04: `VideoZoomOverlay.vue` now defaults to controls-safe interaction (`Pan: Off`) and exposes explicit drag-pan zoning (`Pan: On`) so overlay pan does not accidentally suppress native media controls.

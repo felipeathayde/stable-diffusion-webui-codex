@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import gc
 import math
+import threading
 from dataclasses import replace
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -53,7 +54,7 @@ from apps.backend.runtime.memory.smart_offload_invariants import (
     enforce_smart_offload_pre_conditioning_residency,
     enforce_smart_offload_text_encoders_off,
 )
-from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
+from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -71,6 +72,8 @@ from apps.backend.runtime.pipeline_stages.image_init import prepare_init_bundle
 from apps.backend.runtime.pipeline_stages.image_io import latents_to_pil, pil_to_tensor
 from apps.backend.runtime.pipeline_stages.hires_fix import (
     prepare_hires_latents_and_conditioning,
+    resolve_hires_family_strategy,
+    resolve_pipeline_telemetry_context,
 )
 from apps.backend.runtime.pipeline_stages.masked_img2img import (
     MASK_ENFORCEMENT_PER_STEP_CLAMP,
@@ -149,6 +152,30 @@ def _pick_preferred_kontext_resolution(image: Image.Image) -> tuple[int, int]:
 
 def _conditioning_cache_hit_metadata(processing: CodexProcessingImg2Img) -> dict[str, object]:
     return {"conditioning_cache_hit": bool(getattr(processing, "_codex_conditioning_cache_hit", False))}
+
+
+def _emit_pipeline_event(
+    processing: CodexProcessingImg2Img,
+    event: str,
+    *,
+    stage: str,
+    **fields: object,
+) -> None:
+    telemetry = resolve_pipeline_telemetry_context(
+        processing,
+        default_mode="img2img",
+        require_mode=True,
+    )
+    emit_backend_event(
+        event,
+        logger=logger.name,
+        mode=telemetry.mode,
+        stage=stage,
+        correlation_id=telemetry.correlation_id,
+        correlation_source=telemetry.correlation_source,
+        task_id=telemetry.task_id,
+        **fields,
+    )
 
 
 def _smart_cache_buckets_for_engine(sd_model: Any) -> tuple[str, ...]:
@@ -363,6 +390,15 @@ def _generate_kontext_img2img(
         payload.unconditional["image_latents"] = image_latents
 
     hires_plan = _build_hires_plan(processing)
+    _emit_pipeline_event(
+        processing,
+        "pipeline.stage.complete",
+        stage="prepare.complete",
+        stage_name="prepare",
+        variant="kontext",
+        hires_enabled=bool(hires_plan is not None),
+        image_latents_shape=tuple(int(dim) for dim in image_latents.shape),
+    )
 
     tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
     try:
@@ -380,6 +416,14 @@ def _generate_kontext_img2img(
         )
     finally:
         finalize_tiling(tiling_applied, old_tiled)
+    _emit_pipeline_event(
+        processing,
+        "pipeline.stage.complete",
+        stage="base_sampling.complete",
+        stage_name="base_sampling",
+        variant="kontext",
+        samples_shape=tuple(int(dim) for dim in samples.shape),
+    )
 
     if hires_plan is None:
         return samples
@@ -403,14 +447,8 @@ def _build_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | None:
     engine_id = str(getattr(model, "engine_id", "") or "").strip()
     if engine_id == "":
         raise RuntimeError("Hires is enabled but processing.sd_model.engine_id is unavailable.")
-    try:
-        semantic_engine = semantic_engine_for_engine_id(engine_id)
-    except KeyError as exc:
-        raise NotImplementedError(
-            f"Hires is not supported for engine '{engine_id}' because no semantic capability surface is registered."
-        ) from exc
-    if not ENGINE_SURFACES[semantic_engine].supports_hires:
-        raise NotImplementedError(f"Hires is not supported for engine '{engine_id}'.")
+    hires_strategy = resolve_hires_family_strategy(engine_id)
+    setattr(processing, "_codex_hires_strategy", hires_strategy)
 
     hi_cfg = processing.hires
     raw_upscaler = getattr(hi_cfg, "upscaler", None)
@@ -463,6 +501,18 @@ def _build_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | None:
         raise ValueError("Hires is enabled but resolved 'steps' must be > 0.")
     denoise = float(hi_cfg.denoise)
     cfg_scale = hi_cfg.cfg
+    _emit_pipeline_event(
+        processing,
+        "pipeline.hires.plan",
+        stage="hires.plan",
+        engine_id=engine_id,
+        strategy=hires_strategy,
+        upscaler_id=upscaler_id,
+        target_width=target_width,
+        target_height=target_height,
+        steps=int(steps),
+        denoise=float(denoise),
+    )
     return HiResPlan(
         enabled=True,
         target_width=target_width,
@@ -550,6 +600,23 @@ def _run_hires_pass(
         processing.scheduler = hires_scheduler
         processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
         processing.prepare_prompt_data()
+        engine_id = str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "unknown")
+        hires_strategy = str(getattr(processing, "_codex_hires_strategy", "unknown") or "unknown")
+        _emit_pipeline_event(
+            processing,
+            "pipeline.hires.transition",
+            stage="hires.transition",
+            engine_id=engine_id,
+            strategy=hires_strategy,
+            upscaler_id=hires_plan.upscaler_id,
+            target_width=target_width,
+            target_height=target_height,
+            steps=steps,
+            denoise=denoise,
+            sampler=hires_sampler,
+            scheduler=hires_scheduler,
+            base_samples_shape=tuple(int(dim) for dim in base_samples.shape),
+        )
 
         hires_inputs = prepare_hires_latents_and_conditioning(
             processing,
@@ -579,6 +646,24 @@ def _run_hires_pass(
         init_latent: torch.Tensor | None = latents
         sampling_image_conditioning = image_conditioning
         allow_txt2img_conditioning_fallback = True
+        image_conditioning_shape = (
+            tuple(int(dim) for dim in image_conditioning.shape)
+            if isinstance(image_conditioning, torch.Tensor)
+            else None
+        )
+        _emit_pipeline_event(
+            processing,
+            "pipeline.hires.inputs_ready",
+            stage="hires.inputs_ready",
+            engine_id=engine_id,
+            strategy=hires_strategy,
+            continuation_mode=continuation_mode,
+            latents_shape=tuple(int(dim) for dim in latents.shape),
+            image_conditioning_shape=image_conditioning_shape,
+            start_at_step=int(start_index),
+            total_steps=int(processing.steps),
+            allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
+        )
 
         hr_plan = replace(
             plan,
@@ -620,7 +705,7 @@ def _run_hires_pass(
             int(start_index),
         )
 
-        return execute_sampling(
+        samples = execute_sampling(
             processing,
             hr_plan,
             hires_payload,
@@ -635,6 +720,14 @@ def _run_hires_pass(
             denoise_strength=denoise_strength,
             allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
         )
+        _emit_pipeline_event(
+            processing,
+            "pipeline.stage.complete",
+            stage="hires_sampling.complete",
+            stage_name="hires_sampling",
+            samples_shape=tuple(int(dim) for dim in samples.shape),
+        )
+        return samples
     finally:
         processing.prompts = original["prompts"]
         processing.negative_prompts = original["negative_prompts"]
@@ -671,9 +764,23 @@ def generate_img2img(
 ) -> GenerationResult:
     if not isinstance(processing, CodexProcessingImg2Img):
         raise TypeError("generate_img2img expects CodexProcessingImg2Img")
+    setattr(processing, "_codex_pipeline_mode", "img2img")
+    resolve_pipeline_telemetry_context(
+        processing,
+        default_mode="img2img",
+        require_mode=True,
+    )
     setattr(processing, "_codex_conditioning_cache_hit", False)
+    variant = _resolve_img2img_variant(processing)
+    _emit_pipeline_event(
+        processing,
+        "pipeline.run.start",
+        stage="run.start",
+        variant=variant,
+        engine_id=str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "unknown"),
+    )
 
-    if _resolve_img2img_variant(processing) == "kontext":
+    if variant == "kontext":
         if processing.has_mask():
             raise NotImplementedError("masking is not supported for flux1_kontext img2img yet")
         samples = _generate_kontext_img2img(
@@ -684,6 +791,14 @@ def generate_img2img(
             seeds=seeds,
             subseeds=subseeds,
             subseed_strength=subseed_strength,
+        )
+        _emit_pipeline_event(
+            processing,
+            "pipeline.run.complete",
+            stage="run.complete",
+            variant=variant,
+            hires_enabled=bool(getattr(processing, "enable_hr", False)),
+            samples_shape=tuple(int(dim) for dim in samples.shape),
         )
         return GenerationResult(samples=samples, decoded=None, metadata=_conditioning_cache_hit_metadata(processing))
 
@@ -723,6 +838,14 @@ def generate_img2img(
         prompts,
         conditioning,
         unconditional_conditioning,
+    )
+    _emit_pipeline_event(
+        processing,
+        "pipeline.stage.complete",
+        stage="prepare.complete",
+        stage_name="prepare",
+        hires_enabled=bool(hires_plan is not None),
+        has_mask=bool(processing.has_mask()),
     )
 
     pre_denoiser_hook = None
@@ -847,6 +970,23 @@ def generate_img2img(
 
                 if last_samples is None:
                     raise RuntimeError("mask_region_split produced no passes (internal bug)")
+                _emit_pipeline_event(
+                    processing,
+                    "pipeline.stage.complete",
+                    stage="base_sampling.complete",
+                    stage_name="base_sampling",
+                    region_split=True,
+                    region_count=int(len(component_bboxes)),
+                    samples_shape=tuple(int(dim) for dim in last_samples.shape),
+                )
+                _emit_pipeline_event(
+                    processing,
+                    "pipeline.run.complete",
+                    stage="run.complete",
+                    hires_enabled=False,
+                    region_split=True,
+                    samples_shape=tuple(int(dim) for dim in last_samples.shape),
+                )
                 return GenerationResult(
                     samples=last_samples,
                     decoded=[current],
@@ -916,6 +1056,14 @@ def generate_img2img(
         )
     finally:
         finalize_tiling(tiling_applied, old_tiled)
+    _emit_pipeline_event(
+        processing,
+        "pipeline.stage.complete",
+        stage="base_sampling.complete",
+        stage_name="base_sampling",
+        has_mask=bool(processing.has_mask()),
+        samples_shape=tuple(int(dim) for dim in samples.shape),
+    )
 
     if full_res_plan is not None:
         gc.collect()
@@ -928,6 +1076,14 @@ def generate_img2img(
         )
         images = latents_to_pil(decoded)
         composited = apply_inpaint_full_res_composite(images, plan=full_res_plan)
+        _emit_pipeline_event(
+            processing,
+            "pipeline.run.complete",
+            stage="run.complete",
+            hires_enabled=False,
+            full_res_masked=True,
+            samples_shape=tuple(int(dim) for dim in samples.shape),
+        )
         return GenerationResult(
             samples=samples,
             decoded=composited,
@@ -935,6 +1091,13 @@ def generate_img2img(
         )
 
     if hires_plan is None:
+        _emit_pipeline_event(
+            processing,
+            "pipeline.run.complete",
+            stage="run.complete",
+            hires_enabled=False,
+            samples_shape=tuple(int(dim) for dim in samples.shape),
+        )
         return GenerationResult(samples=samples, decoded=None, metadata=_conditioning_cache_hit_metadata(processing))
 
     hires_samples = _run_hires_pass(
@@ -943,6 +1106,13 @@ def generate_img2img(
         plan,
         samples,
         prompt_context,
+    )
+    _emit_pipeline_event(
+        processing,
+        "pipeline.run.complete",
+        stage="run.complete",
+        hires_enabled=True,
+        samples_shape=tuple(int(dim) for dim in hires_samples.shape),
     )
 
     return GenerationResult(
@@ -987,6 +1157,19 @@ def run_img2img(
 
     proc = build_img2img_processing(request)
     proc.sd_model = engine
+    task_context = str(threading.current_thread().name or "").strip() or "unknown-thread"
+    setattr(proc, "_codex_pipeline_mode", "img2img")
+    task_id: str | None = None
+    marker = "-task-"
+    if marker in task_context:
+        candidate = task_context.split(marker, 1)[1].strip()
+        if candidate:
+            task_id = candidate
+    if task_id is not None:
+        setattr(proc, "_codex_task_id", task_id)
+        setattr(proc, "_codex_correlation_id", task_id)
+        setattr(proc, "_codex_hires_correlation_id", task_id)
+        setattr(proc, "_codex_correlation_source", "task_id")
 
     base_seed, seeds, subseeds, subseed_strength = _resolve_seed_plan(
         seed=getattr(request, "seed", None),

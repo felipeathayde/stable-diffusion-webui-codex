@@ -358,6 +358,11 @@ def build_router(
     log = logging.getLogger("backend.api")
     inventory_log = logging.getLogger("inventory")
     repo_root = _REPO_ROOT.resolve(strict=False)
+    from apps.backend.services.model_catalog import (
+        current_models_revision,
+        invalidate_model_catalog,
+        refresh_model_catalog,
+    )
 
     def _resolve_library_target(payload: Dict[str, Any], *, require_key: bool) -> tuple[str | None, str]:
         key_raw = str(payload.get("key") or "").strip()
@@ -542,26 +547,56 @@ def build_router(
             "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
         }
 
+    def _current_models_revision() -> int:
+        return int(current_models_revision())
+
+    def _refresh_model_catalog_or_raise(*, reason: str, detail_prefix: str) -> tuple[int, Dict[str, list[Dict[str, str]]]]:
+        try:
+            return refresh_model_catalog(reason=reason)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"{detail_prefix}: {exc}") from exc
+
+    def _invalidate_model_catalog_or_raise(*, reason: str, detail_prefix: str) -> int:
+        try:
+            return int(invalidate_model_catalog(reason=reason))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"{detail_prefix}: {exc}") from exc
+
     @router.get("/api/models")
     def list_models(refresh: bool = Query(False, description="If true, re-scan checkpoint roots before returning.")) -> Dict[str, Any]:
-        entries = model_api.list_checkpoints(refresh=bool(refresh))
+        if refresh:
+            _refresh_model_catalog_or_raise(
+                reason="api.models.list(refresh=true)",
+                detail_prefix="model catalog refresh failed",
+            )
+            entries = model_api.list_checkpoints(refresh=False)
+        else:
+            entries = model_api.list_checkpoints(refresh=False)
         models = [_serialize_checkpoint(entry) for entry in entries]
         models_info = [e.as_dict() for e in entries]
         current = models[0]["title"] if models else None
-        return {"models": models, "current": current, "models_info": models_info}
+        return {
+            "models": models,
+            "current": current,
+            "models_info": models_info,
+            "models_revision": _current_models_revision(),
+        }
 
     @router.get("/api/models/inventory")
     def list_models_inventory(refresh: bool = Query(False, description="If true, re-scan the models/ and huggingface/ folders.")) -> Dict[str, Any]:
         from apps.backend.inventory import cache as _inv_cache
         if refresh:
-            try:
-                inv = _inv_cache.refresh()
-                _log_inventory_refresh_summary(inv)
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail=f"inventory refresh failed: {exc}")
+            revision, inv = _refresh_model_catalog_or_raise(
+                reason="api.models.inventory.list(refresh=true)",
+                detail_prefix="inventory refresh failed",
+            )
+            _log_inventory_refresh_summary(inv)
         else:
             inv = _inv_cache.get()
-        return _normalized_inventory_payload(inv)
+            revision = _current_models_revision()
+        payload = _normalized_inventory_payload(inv)
+        payload["models_revision"] = int(revision)
+        return payload
 
     @router.post("/api/models/path-scan")
     def scan_model_path(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
@@ -590,10 +625,18 @@ def build_router(
         key, kind = _resolve_library_target(payload, require_key=True)
         assert key is not None
         item = _add_library_file(key=key, kind=kind, file_path_raw=payload.get("path"))
+        if item.get("added") is True:
+            models_revision = _invalidate_model_catalog_or_raise(
+                reason=f"api.models.path-add:{key}",
+                detail_prefix="path-add updated paths but model catalog invalidation failed",
+            )
+        else:
+            models_revision = _current_models_revision()
         return {
             "key": key,
             "kind": kind,
             "item": item,
+            "models_revision": int(models_revision),
         }
 
     @router.post("/api/models/path-add-all")
@@ -658,6 +701,13 @@ def build_router(
                         "detail": str(exc),
                     }
                 )
+        if added_count > 0:
+            models_revision = _invalidate_model_catalog_or_raise(
+                reason=f"api.models.path-add-all:{key}",
+                detail_prefix="path-add-all updated paths but model catalog invalidation failed",
+            )
+        else:
+            models_revision = _current_models_revision()
         return {
             "key": key,
             "kind": kind,
@@ -666,6 +716,7 @@ def build_router(
             "added_count": added_count,
             "error_count": error_count,
             "results": results,
+            "models_revision": int(models_revision),
         }
 
     @router.get("/api/models/file-metadata")
@@ -746,18 +797,17 @@ def build_router(
 
     @router.post("/api/models/inventory/refresh")
     def refresh_models_inventory() -> Dict[str, Any]:
-        from apps.backend.inventory import cache as _inv_cache
-        try:
-            inv = _inv_cache.refresh()
-            _log_inventory_refresh_summary(inv)
-            return _normalized_inventory_payload(inv)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"inventory refresh failed: {exc}")
+        revision, inv = _refresh_model_catalog_or_raise(
+            reason="api.models.inventory.refresh(sync)",
+            detail_prefix="inventory refresh failed",
+        )
+        _log_inventory_refresh_summary(inv)
+        payload = _normalized_inventory_payload(inv)
+        payload["models_revision"] = int(revision)
+        return payload
 
     @router.post("/api/models/inventory/refresh/async")
     async def refresh_models_inventory_async() -> Dict[str, Any]:
-        from apps.backend.inventory import cache as _inv_cache
-
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-models-inventory-refresh-{uuid4().hex})"
@@ -779,14 +829,16 @@ def build_router(
                     }
                 )
                 inventory_log.info("inventory refresh task started (task_id=%s)", task_id)
-                inv = _inv_cache.refresh()
+                revision, inv = refresh_model_catalog(reason="api.models.inventory.refresh(async)")
                 _log_inventory_refresh_summary(inv)
                 payload = _normalized_inventory_payload(inv)
-                entry.result = {"result": {"inventory": payload}}
+                payload["models_revision"] = int(revision)
+                entry.result = {"result": {"inventory": payload, "models_revision": int(revision)}}
                 entry.mark_finished(success=True)
                 inventory_log.info(
-                    "inventory refresh task completed (task_id=%s vaes=%d text_encoders=%d loras=%d wan22.gguf=%d metadata=%d)",
+                    "inventory refresh task completed (task_id=%s revision=%d vaes=%d text_encoders=%d loras=%d wan22.gguf=%d metadata=%d)",
                     task_id,
+                    revision,
                     len(inv.get("vaes", [])),
                     len(inv.get("text_encoders", [])),
                     len(inv.get("loras", [])),

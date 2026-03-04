@@ -8,11 +8,14 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 transformer key-style detection + remapping (Diffusers/WAN-export/Codex).
 Normalizes multiple upstream key layouts into the canonical Codex WAN22 runtime layout and fails loud on unknown/ambiguous inputs.
-Also owns WAN22 request-key allowlists used by generation routers, including img2vid temporal mode/window controls, no-stretch guide controls (`img2vid_image_scale` + crop offsets), optional `video_upscaling`, and canonical sampler keys (`*_sampler`, no legacy `*_sampling` aliases).
+Also owns WAN22 request-key allowlists and legacy-key equivalence metadata used by generation routers, including img2vid temporal mode/window controls, no-stretch guide controls (`img2vid_image_scale` + crop offsets), optional `video_upscaling`, and canonical sampler keys (`*_sampler`, no legacy `*_sampling` aliases).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields and optional `video_upscaling` key).
 - `WAN22_REQUEST_KEYS` (constant): Singleton request-key map used by WAN22 request validators.
+- `WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS` (constant): Explicit legacy request-key → canonical request-key map used for fail-loud alias rejection.
+- `canonical_wan22_request_key` (function): Resolve a request key into its canonical WAN22 key using `WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS`.
+- `legacy_wan22_request_key_alias_target` (function): Return canonical target for a legacy WAN22 alias key, or `None` when key is already canonical/unknown.
 - `resolve_wan22_lora_logical_key` (function): Maps WAN22 LoRA logical keys to canonical WAN22 transformer weight keys.
 - `resolve_wan22_transformer_keyspace` (function): Resolves WAN22 transformer keys into canonical keyspace (`ResolvedKeyspace`).
 """
@@ -21,7 +24,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from collections.abc import MutableMapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
+from types import MappingProxyType
 from typing import FrozenSet, TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
@@ -131,7 +135,7 @@ _DETECTOR = KeyStyleDetector(
 class Wan22RequestKeys:
     """Canonical WAN22 request-key allowlists used by generation routers."""
 
-    DEVICE: FrozenSet[str] = frozenset({"codex_device", "device", "codex_diffusion_device"})
+    DEVICE: FrozenSet[str] = frozenset({"device"})
     REVISION: FrozenSet[str] = frozenset({"settings_revision"})
     VIDEO_EXPORT: FrozenSet[str] = frozenset(
         {
@@ -174,7 +178,6 @@ class Wan22RequestKeys:
             "wan_format",
             "wan_metadata_repo",
             "wan_metadata_dir",
-            "wan_tokenizer_dir",
             "wan_vae_sha",
             "wan_tenc_sha",
             "wan_vae_path",
@@ -265,6 +268,27 @@ class Wan22RequestKeys:
 
 
 WAN22_REQUEST_KEYS = Wan22RequestKeys()
+
+
+WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS: Mapping[str, str] = MappingProxyType(
+    {
+        "codex_device": "device",
+        "codex_diffusion_device": "device",
+        "wan_tokenizer_dir": "wan_metadata_dir",
+        "txt2vid_sampling": "txt2vid_sampler",
+        "img2vid_sampling": "img2vid_sampler",
+    }
+)
+
+
+def canonical_wan22_request_key(raw_key: str) -> str:
+    key = str(raw_key)
+    return WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS.get(key, key)
+
+
+def legacy_wan22_request_key_alias_target(raw_key: str) -> str | None:
+    key = str(raw_key)
+    return WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS.get(key)
 
 
 def resolve_wan22_lora_logical_key(logical_key: str) -> str | None:
@@ -479,6 +503,9 @@ def resolve_wan22_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> R
 __all__ = [
     "Wan22RequestKeys",
     "WAN22_REQUEST_KEYS",
+    "WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS",
+    "canonical_wan22_request_key",
+    "legacy_wan22_request_key_alias_target",
     "resolve_wan22_lora_logical_key",
     "resolve_wan22_transformer_keyspace",
 ]

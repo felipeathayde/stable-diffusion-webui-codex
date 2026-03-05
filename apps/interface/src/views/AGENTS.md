@@ -37,7 +37,7 @@ Status: Active
 - 2026-02-23: `ToolsTab.vue` mixed precision control now uses a dedicated `precision_mode` select (`Full BF16`, `Full FP16`, `Full FP32`, `FP16+FP32`, `BF16+FP32`) and sends `precision_mode` to `/api/tools/convert-gguf`.
 - 2026-01-16: `ToolsTab.vue` GGUF converter presets include WAN22 denoisers (selectable via vendored model metadata).
 - 2026-03-02: `ToolsTab.vue` removed the standalone `CodexPack v1 Packer` card from the Tools UI; Tools now exposes only the GGUF converter workflow.
-- 2026-03-05: `ToolsTab.vue` now adds a second `Safetensors Merger` card (`POST /api/tools/merge-safetensors` + polling on `/api/tools/merge-safetensors/{job_id}`) with source/output browse, overwrite toggle, deterministic directory-picked output naming (`<stem>-merged.safetensors`), and a dedicated merge status block.
+- 2026-03-05: `ToolsTab.vue` now adds a second `Safetensors Merger` card (`POST /api/tools/merge-safetensors` + polling on `/api/tools/merge-safetensors/{job_id}`) with source/output browse, overwrite toggle, deterministic directory-picked output naming (`<stem>-merged.safetensors`), a dedicated merge status block, and a source contract limited to `.safetensors`, `*.safetensors.index.json`, or a folder (no generic `.index.json` picker/filter copy).
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.
 - 2026-01-21: WAN stage LoRA selection became sha-based (`loraSha` in params → payload `lora_sha`) for the old stage-level control path.
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.

@@ -15,7 +15,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/paths.py` — `apps/paths.json` endpoints.
 - `apps/backend/interfaces/api/routers/options.py` — options store read/update/validate endpoints.
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
-- `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + file browser endpoints.
+- `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + safetensors merge + CodexPack + file browser + PNG metadata endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
 - `apps/backend/interfaces/api/routers/supir.py` — SUPIR enhance endpoints (tasks + model diagnostics).
 - `apps/backend/interfaces/api/routers/upscale.py` — upscalers inventory + remote downloads + standalone upscaling endpoints.
@@ -118,6 +118,7 @@ Status: Active
 - 2026-03-01: `generation.py` now validates/forwards WAN img2vid guide fields (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) into request extras with strict scale/range checks so runtime init-image preprocessing matches the UI framing guide.
 - 2026-03-02: `generation.py` keeps `img2vid_image_scale` optional at API boundary (field omitted when not provided); runtime receives no forced `1.0` fallback and applies its own auto-fit minimum scale policy.
 - 2026-03-03: `models.py` inventory refresh logs now emit an explicit warning when `wan22.gguf=0`, including resolved `wan22_ckpt` roots and actionable guidance (WAN22 GGUF discovery under those roots is recursive; refresh after copying files).
+- 2026-03-05: `tools.py` adds async safetensors merge endpoints (`POST /api/tools/merge-safetensors`, `GET /api/tools/merge-safetensors/{job_id}`) with fail-loud path validation and shared tools job payload schema.
 - 2026-03-03: `models.py` add-path endpoints (`POST /api/models/path-scan`, `POST /api/models/path-add`, `POST /api/models/path-add-all`) now keep scan payloads lightweight (`name/path/ext` only; no SHA/type), while add/add-all compute SHA strictly at add-time and process add-all sequentially via add-one semantics (no bulk pre-hash fallback).
 - 2026-03-03: `models.py` now exposes async inventory refresh start (`POST /api/models/inventory/refresh/async`) backed by task registry SSE (`/api/tasks/{id}/events`), with info-level start/completion lifecycle logs and terminal result payload carrying normalized inventory for one-shot frontend refresh application.
 - 2026-02-23: `options.py` now enforces main-device invariant on runtime updates: any device update to `codex_core_device`/`codex_te_device`/`codex_vae_device` is normalized to one shared value, and mixed values are rejected with HTTP 400.

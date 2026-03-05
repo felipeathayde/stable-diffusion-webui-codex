@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-03
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -16,7 +16,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/paths.py` — `apps/paths.json` endpoints.
 - `apps/backend/interfaces/api/routers/options.py` — options store read/update/validate endpoints.
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
-- `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + file browser endpoints.
+- `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + SafeTensors merge + file browser endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
 - `apps/backend/interfaces/api/file_metadata.py` — GGUF/SafeTensors header readers for `/api/models/file-metadata` (UI/debug).
 - `apps/backend/interfaces/api/path_utils.py` — repo-relative path normalization helpers.
@@ -71,3 +71,4 @@ Status: Active
 - 2026-02-24: Windows power-throttling startup patch now logs decoded Win32 error text (`ctypes.WinError`) on failure and warns explicitly when `SetProcessInformation` is unavailable in the runtime.
 - 2026-03-01: `run_api.py` trace-debug bootstrap now treats category flags independently (`CODEX_TRACE_INFERENCE_DEBUG`, `CODEX_TRACE_LOAD_PATCH_DEBUG`, `CODEX_TRACE_CALL_DEBUG`): any one of them forces DEBUG visibility (`CODEX_LOG_DEBUG=1` + DEBUG logging bootstrap), while global call tracing via `sys.setprofile` remains exclusive to call-trace toggles.
 - 2026-03-03: `run_api.py` settings-registry import comment now uses a generic generator note (no `.sangoi` path mention inside backend runtime code).
+- 2026-03-05: `run_api.py` uvicorn access-noise filter now suppresses both `/api/tools/convert-gguf/*` and `/api/tools/merge-safetensors/*` polling endpoints to keep long-running tools jobs from flooding INFO access logs.

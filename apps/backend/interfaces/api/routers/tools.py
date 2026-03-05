@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Tools API routes (GGUF conversion + CodexPack v1 packing + file browser + PNG metadata inspection).
-Provides long-running conversion/packing job tracking, filesystem browsing for file picker dialogs, and small utility endpoints used by the UI.
+Purpose: Tools API routes (GGUF conversion + SafeTensors merge + CodexPack v1 packing + file browser + PNG metadata inspection).
+Provides long-running conversion/packing/merge job tracking, filesystem browsing for file picker dialogs, and small utility endpoints used by the UI.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for tools endpoints.
@@ -40,6 +40,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         LOADING_WEIGHTS = "loading_weights"
         CONVERTING = "converting"
         VERIFYING = "verifying"
+        MERGING_SAFETENSORS = "merging_safetensors"
         FINALIZING = "finalizing"
         PACKING_CODEXPACK = "packing_codexpack"
         CANCELLING = "cancelling"
@@ -55,6 +56,8 @@ def build_router(*, codex_root: Path) -> APIRouter:
     _ALLOWED_JOB_STATUS_TRANSITIONS: Final[dict[_ToolJobStatus, set[_ToolJobStatus]]] = {
         _ToolJobStatus.PENDING: {
             _ToolJobStatus.LOADING_CONFIG,
+            _ToolJobStatus.LOADING_WEIGHTS,
+            _ToolJobStatus.MERGING_SAFETENSORS,
             _ToolJobStatus.FINALIZING,
             _ToolJobStatus.PACKING_CODEXPACK,
             _ToolJobStatus.CANCELLING,
@@ -68,6 +71,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
             _ToolJobStatus.ERROR,
         },
         _ToolJobStatus.LOADING_WEIGHTS: {
+            _ToolJobStatus.MERGING_SAFETENSORS,
             _ToolJobStatus.CONVERTING,
             _ToolJobStatus.CANCELLING,
             _ToolJobStatus.CANCELLED,
@@ -81,6 +85,12 @@ def build_router(*, codex_root: Path) -> APIRouter:
             _ToolJobStatus.ERROR,
         },
         _ToolJobStatus.VERIFYING: {
+            _ToolJobStatus.FINALIZING,
+            _ToolJobStatus.CANCELLING,
+            _ToolJobStatus.CANCELLED,
+            _ToolJobStatus.ERROR,
+        },
+        _ToolJobStatus.MERGING_SAFETENSORS: {
             _ToolJobStatus.FINALIZING,
             _ToolJobStatus.CANCELLING,
             _ToolJobStatus.CANCELLED,
@@ -104,6 +114,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
             _ToolJobStatus.LOADING_WEIGHTS,
             _ToolJobStatus.CONVERTING,
             _ToolJobStatus.VERIFYING,
+            _ToolJobStatus.MERGING_SAFETENSORS,
             _ToolJobStatus.FINALIZING,
             _ToolJobStatus.PACKING_CODEXPACK,
             _ToolJobStatus.COMPLETE,
@@ -143,10 +154,18 @@ def build_router(*, codex_root: Path) -> APIRouter:
         src_path: Path
         final_path: Path
 
+    @dataclass(slots=True)
+    class _SafetensorsMergeControl:
+        source_path: Path
+        tmp_path: Path
+        final_path: Path
+
     _gguf_conversion_jobs: Dict[str, _ToolJobState] = {}
     _gguf_conversion_controls: Dict[str, _GgufConversionControl] = {}
     _codexpack_pack_jobs: Dict[str, _ToolJobState] = {}
     _codexpack_pack_controls: Dict[str, _CodexPackControl] = {}
+    _safetensors_merge_jobs: Dict[str, _ToolJobState] = {}
+    _safetensors_merge_controls: Dict[str, _SafetensorsMergeControl] = {}
     _job_state_lock = threading.RLock()
     _UNSET = object()
 
@@ -496,6 +515,133 @@ def build_router(*, codex_root: Path) -> APIRouter:
             ctrl.cancel_event.set()
             _set_job_state(job, status=_ToolJobStatus.CANCELLING)
         return {"ok": True}
+
+    @router.post("/api/tools/merge-safetensors")
+    async def merge_safetensors(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Start a safetensors merge job."""
+        from apps.backend.runtime.tools.safetensors_merge import (
+            SafetensorsMergeConfig,
+            SafetensorsMergeProgress,
+            merge_safetensors_source,
+        )
+
+        source_path_raw = str(payload.get("source_path") or "").strip()
+        output_path_raw = str(payload.get("output_path") or "").strip()
+        try:
+            overwrite = parse_bool_value(payload.get("overwrite"), field="overwrite", default=False)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if not source_path_raw:
+            raise HTTPException(status_code=400, detail="source_path is required")
+        if not output_path_raw:
+            raise HTTPException(status_code=400, detail="output_path is required")
+
+        source_path = Path(os.path.expanduser(source_path_raw)).resolve()
+        if not source_path.exists():
+            raise HTTPException(status_code=400, detail=f"source_path not found: {source_path}")
+
+        final_path = Path(os.path.expanduser(output_path_raw)).resolve()
+        if not final_path.name.lower().endswith(".safetensors"):
+            raise HTTPException(status_code=400, detail="output_path must end with `.safetensors`.")
+        if not final_path.parent.exists():
+            raise HTTPException(
+                status_code=400,
+                detail=f"output_path parent directory does not exist: {final_path.parent}",
+            )
+        if not final_path.parent.is_dir():
+            raise HTTPException(status_code=400, detail=f"output_path parent is not a directory: {final_path.parent}")
+        if final_path.exists() and final_path.is_dir():
+            raise HTTPException(status_code=400, detail=f"output_path is a directory: {final_path}")
+        if final_path.exists() and not overwrite:
+            raise HTTPException(status_code=409, detail=f"Output file already exists: {final_path}")
+
+        job_id = str(uuid.uuid4())[:8]
+        tmp_path = _alloc_nonexistent_path(
+            final_path.parent,
+            prefix=f"{final_path.stem}.part-{job_id}-",
+            suffix=final_path.suffix or ".safetensors",
+        )
+
+        with _job_state_lock:
+            _safetensors_merge_jobs[job_id] = _ToolJobState(
+                status=_ToolJobStatus.PENDING,
+                progress=0.0,
+                current_tensor="",
+                error=None,
+                output_path=str(final_path),
+            )
+            _safetensors_merge_controls[job_id] = _SafetensorsMergeControl(
+                source_path=source_path,
+                tmp_path=tmp_path,
+                final_path=final_path,
+            )
+
+        def run_merge() -> None:
+            try:
+                with _job_state_lock:
+                    job = _safetensors_merge_jobs[job_id]
+                    ctrl = _safetensors_merge_controls[job_id]
+
+                config = SafetensorsMergeConfig(
+                    source_path=str(ctrl.source_path),
+                    output_path=str(ctrl.tmp_path),
+                    overwrite=False,
+                )
+
+                def progress_cb(prog: SafetensorsMergeProgress) -> None:
+                    status = _normalize_job_status(prog.status)
+                    percent = float(prog.progress_percent)
+                    if status is _ToolJobStatus.COMPLETE:
+                        # Runtime merge reports complete before the final atomic rename.
+                        status = _ToolJobStatus.FINALIZING
+                        percent = min(99.9, percent)
+                    with _job_state_lock:
+                        _set_job_state(
+                            job,
+                            status=status,
+                            progress=percent,
+                            current_tensor=prog.current_tensor,
+                        )
+
+                merge_safetensors_source(config, progress_callback=progress_cb)
+
+                with _job_state_lock:
+                    _set_job_state(job, status=_ToolJobStatus.FINALIZING, progress=99.9)
+
+                if ctrl.final_path.exists() and ctrl.final_path.is_dir():
+                    raise IsADirectoryError(f"output_path is a directory: {ctrl.final_path}")
+                if ctrl.final_path.exists() and not overwrite:
+                    raise FileExistsError(f"output file already exists: {ctrl.final_path}")
+
+                os.replace(str(ctrl.tmp_path), str(ctrl.final_path))
+
+                with _job_state_lock:
+                    _set_job_state(job, status=_ToolJobStatus.COMPLETE, progress=100.0, error=None)
+            except Exception as exc:
+                try:
+                    with _job_state_lock:
+                        ctrl = _safetensors_merge_controls[job_id]
+                    if ctrl.tmp_path.exists():
+                        ctrl.tmp_path.unlink()
+                except Exception:
+                    pass
+                with _job_state_lock:
+                    job = _safetensors_merge_jobs[job_id]
+                    _set_job_state(job, status=_ToolJobStatus.ERROR, error=str(exc))
+
+        thread = threading.Thread(target=run_merge, daemon=True)
+        thread.start()
+
+        return {"job_id": job_id, "status": "started"}
+
+    @router.get("/api/tools/merge-safetensors/{job_id}")
+    async def get_merge_safetensors_status(job_id: str) -> Dict[str, Any]:
+        with _job_state_lock:
+            job = _safetensors_merge_jobs.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            return job.to_payload()
 
     @router.post("/api/tools/codexpack/pack-v1")
     async def pack_codexpack_v1(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

@@ -319,7 +319,10 @@ def _try_disable_windows_power_throttling() -> None:
     except Exception:
         _LOG.exception("startup: failed to apply Windows power-throttling patch")
 
-_UVICORN_ACCESS_NOISE_PREFIXES = ("/api/tools/convert-gguf/",)
+_UVICORN_ACCESS_NOISE_PREFIXES = (
+    "/api/tools/convert-gguf/",
+    "/api/tools/merge-safetensors/",
+)
 _UVICORN_ACCESS_NOISE_FILTER_INSTALLED = False
 
 
@@ -365,8 +368,8 @@ class _SuppressUvicornAccessNoiseFilter(logging.Filter):
 def _install_uvicorn_access_noise_filter() -> None:
     """Suppress noisy uvicorn access logs for high-frequency polling endpoints.
 
-    The UI polls some tool endpoints (e.g. GGUF conversion progress). Uvicorn logs
-    every request at INFO, flooding the console during long conversions.
+    The UI polls some tool endpoints (e.g. GGUF conversion and safetensors merge progress).
+    Uvicorn logs every request at INFO, flooding the console during long-running jobs.
     """
     global _UVICORN_ACCESS_NOISE_FILTER_INSTALLED
     if _UVICORN_ACCESS_NOISE_FILTER_INSTALLED:

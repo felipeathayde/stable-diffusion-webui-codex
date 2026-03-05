@@ -1,6 +1,6 @@
 # apps/backend/runtime/tools Overview
 Date: 2025-12-31
-Last Review: 2026-02-23
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 - `apps/backend/runtime/tools/gguf_converter_float_groups.py` — Defines profile-scoped FP16/FP32 float dtype groups exposed as UI knobs.
 - `apps/backend/runtime/tools/gguf_converter_key_mapping.py` — Hugging Face → GGUF tensor-name remapping helpers (layer-indexed mappings).
 - `apps/backend/runtime/tools/gguf_converter_safetensors_source.py` — SafeTensors source helpers (single-file + sharded index/dir).
+- `apps/backend/runtime/tools/safetensors_merge.py` — Merges safetensors sources (single file/index/directory) into one `.safetensors` output with typed progress.
 - `apps/backend/runtime/tools/gguf_converter_quantization.py` — Quantization selector + generic per-tensor shape/block compatibility rules.
 - `apps/backend/runtime/tools/gguf_converter_tensor_planner.py` — Tensor conversion planning helpers (types + stored byte shapes).
 - `apps/backend/runtime/tools/gguf_converter_types.py` — Public converter types (config, quantization enum, progress, verification error).
@@ -51,3 +52,4 @@ Status: Active
 - 2026-01-29: CodexPack v1 packer now falls back to `F16` for non tile-aligned `Q4_K` 2D weights (e.g. `out_features=64`), keeping the packed path for tile-aligned weights and preserving the “no raw quant outside `__codexpack__.*`” invariant.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).
 - 2026-02-23: GGUF converter mixed precision controls now support `precision_mode` (`FULL_BF16|FULL_FP16|FULL_FP32|FP16_PLUS_FP32|BF16_PLUS_FP32`): PLUS modes inject profile float-group overrides before required rules (required policy still wins), while FULL modes force all non-quantized tensors to the selected float dtype.
+- 2026-03-05: Added `safetensors_merge.py` runtime tool (`merge_safetensors_source`) that resolves single/sharded SafeTensors layouts, validates each source payload as fully indexed/contiguous, rejects output paths that alias source shard files, and streams tensor payload bytes into one `.safetensors` output with progress callbacks and fail-loud path validation.

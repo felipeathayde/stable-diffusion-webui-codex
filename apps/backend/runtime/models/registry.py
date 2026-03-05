@@ -484,6 +484,7 @@ class ModelRegistry:
                     "sd1": "sd15",
                     "sdxl": "sdxl",
                     "flux": "flux1",
+                    "flux2": "flux2",
                     "zimage": "zimage",
                     "anima": "anima",
                     "wan22": "wan22",
@@ -509,7 +510,7 @@ class ModelRegistry:
 
     def _scan_vaes(self) -> Iterable[VAERecord]:
         candidates: List[Path] = []
-        for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "anima_vae", "wan22_vae", "zimage_vae"):
+        for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "flux2_vae", "anima_vae", "wan22_vae", "zimage_vae"):
             for raw in get_paths_for(key):
                 p = Path(raw)
                 if p not in candidates:
@@ -548,7 +549,7 @@ class ModelRegistry:
         """Iterate over checkpoint files using paths.json overrides + curated defaults.
 
         Resolution order:
-        1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, wan22_ckpt).
+        1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, flux2_ckpt, wan22_ckpt).
            Entries may be directories (recursive scan) or individual files.
         2) Built-in defaults under models/: per-engine folders only (sd15, sdxl, flux, wan22, zimage).
 
@@ -558,7 +559,7 @@ class ModelRegistry:
 
         # 1) User overrides from apps/paths.json per engine.
         # Fail loud when paths config cannot be resolved (no silent fallback).
-        for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "anima_ckpt", "wan22_ckpt", "zimage_ckpt"):
+        for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "flux2_ckpt", "anima_ckpt", "wan22_ckpt", "zimage_ckpt"):
             for raw in get_paths_for(key):
                 p = Path(raw)
                 if p not in candidates:
@@ -571,6 +572,7 @@ class ModelRegistry:
                 self._models_root / "sd15",
                 self._models_root / "sdxl",
                 self._models_root / "flux",
+                self._models_root / "flux2",
                 self._models_root / "anima",
                 self._models_root / "wan22",
                 self._models_root / "zimage",

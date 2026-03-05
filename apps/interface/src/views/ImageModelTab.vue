@@ -1087,6 +1087,7 @@ function readHistorySnapshotText(item: ImageRunHistoryItem, key: string): string
 
 function profileStorageKeyFor(type: ImageTabType): string {
   if (type === 'flux1') return 'codex.flux1.profile.v1'
+  if (type === 'flux2') return 'codex.flux2.profile.v1'
   if (type === 'sdxl') return 'codex.sdxl.profile.v1'
   if (type === 'zimage') return 'codex.zimage.profile'
   if (type === 'sd15') return 'codex.sd15.profile.v1'
@@ -1401,8 +1402,8 @@ async function syncInitImageDims(): Promise<void> {
 }
 
 function maybeApplyKontextDefaults(): void {
-  if (props.type !== 'flux1') return
-  const defaults = getEngineDefaults('flux1')
+  if (props.type !== 'flux1' && props.type !== 'flux2') return
+  const defaults = getEngineDefaults(props.type)
   const defaultCfg = defaults.distilledCfg ?? defaults.cfg
   // Only apply when user hasn't customized away from the Flux defaults.
   if (params.value.steps === defaults.steps) setParams({ steps: _KONTEXT_DEFAULT_STEPS })

@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-03-03
+Last Review: 2026-03-05
 Status: Active
 
 ## Scope
@@ -90,3 +90,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-02-23: GGUF smart-stage construction in `loader.py` now resolves stage-load target from memory-manager offload policy (`offload_device`) instead of forcing a local CPU literal; logs/actions now report the resolved offload device explicitly.
 - 2026-03-03: `registry.py` checkpoint discovery (`_iter_checkpoint_files`) no longer swallows `paths.json` resolution failures (fail-loud path config behavior) and now accepts file-level checkpoint entries in `*_ckpt` keys in addition to recursive directory roots.
 - 2026-03-04: `loader.py` startup parsing is now inspection-first for safetensors (`checkpoint_inspect_start|done`), with explicit non-safetensors materialization events (`checkpoint_materialize_start|done`) and no eager root-denoiser tensor materialization during safetensors planning.
+- 2026-03-05: `registry.py` discovery roots now include Flux.2 path keys (`flux2_ckpt`, `flux2_vae`) and `family_hint` now recognizes `models/flux2/*` prefix as `flux2`.

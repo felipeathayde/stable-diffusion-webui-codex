@@ -11,7 +11,7 @@ Defines engine types and per-engine defaults/capabilities used by dynamic tabs a
 Variant-dependent engines (e.g. Z-Image Turbo/Base) must be gated by per-tab params in views/payload builders, not by these static flags.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `EngineType` (type): Known engine identifiers used by the UI config (includes `anima`).
+- `EngineType` (type): Known engine identifiers used by the UI config (includes `flux2` and `anima`).
 - `TaskType` (type): Supported task identifiers (txt2img/img2img/txt2vid/img2vid).
 - `EngineCapabilities` (interface): Capability flags used to gate UI controls (CFG/negative prompt/etc.).
 - `EngineDefaults` (interface): Default generation parameters (width/height/steps/cfg/etc.).
@@ -28,6 +28,7 @@ export type EngineType =
   | 'sd15' 
   | 'sdxl' 
   | 'flux1' 
+  | 'flux2'
   | 'zimage' 
   | 'chroma'
   | 'anima'
@@ -108,6 +109,25 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
   flux1: {
     id: 'flux1',
     label: 'FLUX.1',
+    capabilities: {
+      tasks: ['txt2img', 'img2img'],
+      usesCfg: false,
+      usesDistilledCfg: true,
+      usesNegativePrompt: false,
+      isVideoEngine: false,
+    },
+    defaults: {
+      width: 1024,
+      height: 1024,
+      steps: 4,
+      cfg: 1,
+      distilledCfg: 3.5,
+    },
+  },
+
+  flux2: {
+    id: 'flux2',
+    label: 'FLUX.2',
     capabilities: {
       tasks: ['txt2img', 'img2img'],
       usesCfg: false,

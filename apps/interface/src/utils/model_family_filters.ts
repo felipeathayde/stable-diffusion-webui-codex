@@ -22,9 +22,12 @@ function normalizePath(path: string): string {
   return String(path || '').replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '').toLowerCase().trim()
 }
 
-export function enginePrefixForFamily(family: TabFamily): 'sd15' | 'sdxl' | 'flux1' | 'wan22' | 'zimage' | 'anima' {
+export function enginePrefixForFamily(
+  family: TabFamily,
+): 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'wan22' | 'zimage' | 'anima' {
   if (family === 'wan') return 'wan22'
   if (family === 'chroma') return 'flux1'
+  if (family === 'flux2') return 'flux2'
   if (family === 'anima') return 'anima'
   return family
 }
@@ -63,6 +66,7 @@ export function modelMatchesFamily(
   if (metadataFamily) return metadataFamily.includes(family)
   if (family === 'sdxl') return title.includes('sdxl') || filename.includes('sdxl')
   if (family === 'sd15') return title.includes('1.5') || title.includes('sd15') || filename.includes('sd15') || filename.includes('v1-5')
+  if (family === 'flux2') return title.includes('flux2') || title.includes('flux.2') || filename.includes('flux2') || filename.includes('flux.2')
   if (family === 'flux1') return false
   if (family === 'chroma') return title.includes('chroma') || filename.includes('chroma')
   if (family === 'wan') return title.includes('wan') || filename.includes('wan')

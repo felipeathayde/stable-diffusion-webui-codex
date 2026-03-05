@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + img2vid temporal controls + no-stretch guide controls (`img2vidImageScale` + crop offsets) + output/interpolation + SeedVR2 upscaling controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
-- `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
+- `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Flux.2/Chroma/ZImage
   (includes optional family-specific fields like `zimageTurbo`, img2img layout state `img2imgResizeMode`/`img2imgUpscaler`,
   inpaint mask controls (`maskRegionSplit` and related toggles), and advanced guidance policy controls).
 - `GuidanceAdvancedParams` (interface): Per-tab advanced guidance policy state (APG/rescale/trunc/renorm).
@@ -279,6 +279,7 @@ export type TabParamsByType = {
   sd15: ImageBaseParams
   sdxl: ImageBaseParams
   flux1: ImageBaseParams
+  flux2: ImageBaseParams
   zimage: ImageBaseParams
   chroma: ImageBaseParams
   anima: ImageBaseParams
@@ -456,7 +457,7 @@ function defaultParams<T extends BaseTabType>(
     return wanDefaults as TabParamsByType[T]
   }
 
-  // Image tabs (SD15, SDXL, FLUX.1)
+  // Image tabs (SD15, SDXL, FLUX.1, FLUX.2)
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
   const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
@@ -1086,7 +1087,7 @@ function normalizeTab(
   }
 }
 
-const BASE_REQUIRED_TYPES: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'wan']
+const BASE_REQUIRED_TYPES: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'flux2', 'chroma', 'zimage', 'wan']
 
 export function requiredTypesFromCapabilities(engines: Record<string, unknown>): BaseTabType[] {
   const types: BaseTabType[] = [...BASE_REQUIRED_TYPES]

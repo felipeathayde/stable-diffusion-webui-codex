@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Load and normalize the `apps/paths.json` backend paths config.
 Provides cached accessors for model asset roots (checkpoints/text encoders/VAEs/LoRAs) and expands repo-relative paths into absolute paths.
 Also provides roots for global modules such as upscalers.
-Known per-family model keys include SD1.5, SDXL, Flux, Anima, WAN22, and ZImage roots.
+Known per-family model keys include SD1.5, SDXL, Flux.1, Flux.2, Anima, WAN22, and ZImage roots.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_MODEL_DIR_KEYS` (constant): Keys in `apps/paths.json` whose missing repo-relative directories are created best-effort.
@@ -54,6 +54,11 @@ _MODEL_DIR_KEYS: tuple[str, ...] = (
     "flux1_tenc",
     "flux1_vae",
     "flux1_loras",
+    # Flux.2
+    "flux2_ckpt",
+    "flux2_tenc",
+    "flux2_vae",
+    "flux2_loras",
     # Anima
     "anima_ckpt",
     "anima_tenc",

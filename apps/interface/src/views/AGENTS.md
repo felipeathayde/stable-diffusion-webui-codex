@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-04
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -11,9 +11,10 @@ Status: Active
 - Views should compose reusable components and stores; avoid duplicating logic that belongs in shared modules.
 - Keep routes documented in `apps/interface/src/router.ts` and the UI taxonomy in `.sangoi/frontend/guidelines/`.
 - 2026-03-03: `Home.vue` Docs & Help reference paths now point only to repo-shipped docs under `apps/**` and root docs (`SUBSYSTEM-MAP.md`, `apps/**/AGENTS.md`), with no `.sangoi` path mentions.
+- 2026-03-05: `Home.vue` and `ModelsList.vue` tab-creation selectors now include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` now persists per-tab profiles under a dedicated `flux2` key and applies Kontext defaults for both `flux1` and `flux2`.
 - All generation workspaces live under model tabs (`/models/:tabId`):
   - `ModelTabView.vue` mounts `WANTab.vue` when `tab.type === 'wan'`.
-  - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|chroma|zimage|anima`.
+- `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|flux2|chroma|zimage|anima`.
 - `Home.vue` is the engine-agnostic landing page and the canonical place to manage tabs (enable/disable, rename, duplicate, remove).
 - `WANTab.vue` uses typed WAN video payload builders and `useVideoGeneration(tabId)` for streaming progress.
 - `ImageModelTab.vue` mirrors the legacy engine-tab layout (same `panels` + `panel-stack` structure as WAN): PromptCard (prompt + optional init-image controls), Basic parameters (txt2img: `BasicParametersCard`; img2img: `Img2ImgBasicParametersCard`) + optional Hires/Refiner, RunCard (batch dropdown + unified status panel), ResultsCard (gentime/actions), ResultViewer gallery, and an Info panel; generation/payload wiring lives in `useGeneration(tabId)` and capability gating uses `useEngineCapabilitiesStore()`.

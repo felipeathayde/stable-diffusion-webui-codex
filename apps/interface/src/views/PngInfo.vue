@@ -299,7 +299,7 @@ const resolvedVae = computed<VaeResolution>(() => {
   if (matches.length > 1) return { warnings: [`VAE '${raw}' is ambiguous (${matches.length} matches); leaving unchanged.`] }
 
   const entry = matches[0]
-  const wantsPath = tab.type === 'flux1' || tab.type === 'chroma' || tab.type === 'zimage'
+  const wantsPath = tab.type === 'flux1' || tab.type === 'flux2' || tab.type === 'chroma' || tab.type === 'zimage'
   const label = wantsPath ? String(entry.path || '').replace(/\\+/g, '/') : String(entry.name || '').trim()
   if (!label) return { warnings: [`VAE '${raw}' resolved, but label is empty; leaving unchanged.`] }
   return { label, warnings: [] }

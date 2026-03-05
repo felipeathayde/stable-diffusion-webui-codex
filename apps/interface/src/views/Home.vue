@@ -34,7 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="panel-header">Welcome</div>
       <div class="panel-body">
         <p class="subtitle">
-          This home workspace is engine-agnostic. Use it to create and manage model tabs (SD 1.5, SDXL, FLUX, Z Image, Anima, WAN 2.2)
+          This home workspace is engine-agnostic. Use it to create and manage model tabs (SD 1.5, SDXL, FLUX.1, FLUX.2, Z Image, Anima, WAN 2.2)
           and to navigate to workflows or utilities. Generation happens in tabs and workflows, not here.
         </p>
 
@@ -87,6 +87,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 <option value="sd15">SD 1.5</option>
                 <option value="sdxl">SDXL</option>
                 <option value="flux1">FLUX.1</option>
+                <option value="flux2">FLUX.2</option>
                 <option value="zimage">Z Image</option>
                 <option v-if="showAnimaOption" value="anima">Anima</option>
                 <option value="wan">WAN 2.2</option>

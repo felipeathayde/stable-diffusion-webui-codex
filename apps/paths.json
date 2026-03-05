@@ -35,6 +35,18 @@
   "flux1_loras": [
     "models/flux-loras"
   ],
+  "flux2_ckpt": [
+    "models/flux2"
+  ],
+  "flux2_tenc": [
+    "models/flux2-tenc"
+  ],
+  "flux2_vae": [
+    "models/flux2-vae"
+  ],
+  "flux2_loras": [
+    "models/flux2-loras"
+  ],
   "anima_ckpt": [
     "models/anima"
   ],

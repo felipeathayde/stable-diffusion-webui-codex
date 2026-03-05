@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <option value="sd15">SD 1.5</option>
             <option value="sdxl">SDXL</option>
             <option value="flux1">FLUX.1</option>
+            <option value="flux2">FLUX.2</option>
             <option value="zimage">Z Image</option>
             <option v-if="showAnimaOption" value="anima">Anima</option>
             <option value="wan">WAN 2.2</option>

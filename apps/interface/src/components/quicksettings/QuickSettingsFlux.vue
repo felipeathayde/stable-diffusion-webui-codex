@@ -6,18 +6,18 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: FLUX.1-specific quicksettings selectors.
-Renders checkpoint/VAE selectors plus a dual text-encoder selection row (CLIP + T5) for FLUX.1 model tabs.
+Purpose: Flux-family quicksettings selectors.
+Renders checkpoint/VAE selectors plus a dual text-encoder selection row (CLIP + T5) for Flux.1/Flux.2 model tabs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `QuickSettingsFlux` (component): FLUX.1 quicksettings for checkpoint/VAE and dual text encoders.
+- `QuickSettingsFlux` (component): Flux-family quicksettings for checkpoint/VAE and dual text encoders.
 - `truncatePath` (function): Truncates absolute paths for compact dropdown labels.
 - `isVaeSentinel` (function): Returns whether a VAE value is a sentinel selection (built-in/none) without metadata.
 - `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder values.
 -->
 
 <template>
-  <!-- FLUX.1-specific quicksettings row -->
+  <!-- Flux-family quicksettings row -->
   <div class="quicksettings-group qs-group-checkpoint">
     <label class="label-muted">Checkpoint</label>
     <div class="qs-row">
@@ -64,7 +64,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
   </div>
 
-  <div class="quicksettings-group qs-group-flux1-tenc">
+  <div class="quicksettings-group qs-group-flux-tenc">
     <label class="label-muted">Text Encoders</label>
     <div class="qs-row">
       <div class="qs-pair">

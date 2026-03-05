@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fallbackSamplingDefaultsForTabFamily` (function): Stable frontend fallback sampler/scheduler defaults by tab family.
 */
 
-export type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'chroma' | 'wan' | 'zimage' | 'anima'
+export type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'chroma' | 'wan' | 'zimage' | 'anima'
 
 export type SemanticEngine =
   | 'sd15'
@@ -51,6 +51,7 @@ const TAB_FAMILY_ALIASES: Readonly<Record<string, TabFamily>> = Object.freeze({
   sd15: 'sd15',
   sdxl: 'sdxl',
   flux1: 'flux1',
+  flux2: 'flux2',
   chroma: 'chroma',
   zimage: 'zimage',
   anima: 'anima',
@@ -93,6 +94,7 @@ const TAB_FAMILY_FALLBACK_SAMPLING: Readonly<Record<TabFamily, SamplingDefaults>
   sd15: { sampler: 'pndm', scheduler: 'ddim' },
   sdxl: { sampler: 'euler', scheduler: 'euler_discrete' },
   flux1: { sampler: 'euler', scheduler: 'simple' },
+  flux2: { sampler: 'euler', scheduler: 'simple' },
   chroma: { sampler: 'euler', scheduler: 'simple' },
   zimage: { sampler: 'euler', scheduler: 'simple' },
   anima: { sampler: 'euler', scheduler: 'simple' },
@@ -124,7 +126,9 @@ export function normalizeTabFamily(value: unknown): TabFamily | null {
 }
 
 export function semanticEngineFromTabFamily(family: TabFamily): SemanticEngine {
-  return family === 'wan' ? 'wan22' : family
+  if (family === 'wan') return 'wan22'
+  if (family === 'flux2') return 'flux1'
+  return family
 }
 
 export function tabFamilyFromSemanticEngine(value: unknown): TabFamily | null {
@@ -142,7 +146,8 @@ export function resolveImageRequestEngineId(tabType: string, useInitImage: boole
   }
   if (family === 'wan') return 'wan22'
   if (family === 'chroma') return 'flux1_chroma'
-  if (family === 'flux1' && useInitImage) return 'flux1_kontext'
+  if ((family === 'flux1' || family === 'flux2') && useInitImage) return 'flux1_kontext'
+  if (family === 'flux2') return 'flux1'
   return family
 }
 

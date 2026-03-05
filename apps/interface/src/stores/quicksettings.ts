@@ -43,19 +43,20 @@ const VAE_BY_FAMILY_STORAGE_KEY = 'codex.quicksettings.vae_by_family'
 const VAE_BY_FAMILY_OPTION_KEY = 'codex_vae_by_family'
 const DEFAULT_VAE_SELECTION = 'built-in'
 const NONE_VAE_SELECTION = 'none'
-const VAE_FAMILIES = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'anima'] as const
+const VAE_FAMILIES = ['sd15', 'sdxl', 'flux1', 'flux2', 'chroma', 'zimage', 'anima'] as const
 type VaeFamily = (typeof VAE_FAMILIES)[number]
 
 const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
   ['sd15', 'sd15_tenc'],
   ['sdxl', 'sdxl_tenc'],
   ['flux1', 'flux1_tenc'],
+  ['flux2', 'flux2_tenc'],
   ['anima', 'anima_tenc'],
   ['wan22', 'wan22_tenc'],
   ['zimage', 'zimage_tenc'],
 ]
 
-const TEXT_ENCODER_PREFIXES = ['sd15', 'sdxl', 'flux1', 'anima', 'chroma', 'wan22', 'zimage']
+const TEXT_ENCODER_PREFIXES = ['sd15', 'sdxl', 'flux1', 'flux2', 'anima', 'chroma', 'wan22', 'zimage']
 
 function normalizeRevision(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {

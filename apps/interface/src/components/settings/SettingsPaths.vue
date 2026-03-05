@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Settings panel for model search paths (`/api/paths`).
-Edits engine-specific checkpoint/VAE/LoRA/text-encoder roots (`sd15/sdxl/flux1/anima/wan22`) and persists them via the backend paths API,
+Edits engine-specific checkpoint/VAE/LoRA/text-encoder roots (`sd15/sdxl/flux1/flux2/anima/wan22`) and persists them via the backend paths API,
 using `PathList` to manage per-key lists.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -86,6 +86,28 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <div class="panel-section">
+      <h3 class="label-muted">FLUX.2</h3>
+      <div class="space-y-2">
+        <div>
+          <label class="label-muted">Checkpoints</label>
+          <PathList v-model="paths.flux2.ckpt" />
+        </div>
+        <div>
+          <label class="label-muted">VAE</label>
+          <PathList v-model="paths.flux2.vae" />
+        </div>
+        <div>
+          <label class="label-muted">LoRA</label>
+          <PathList v-model="paths.flux2.loras" />
+        </div>
+        <div>
+          <label class="label-muted">Text Encoders</label>
+          <PathList v-model="paths.flux2.tenc" />
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
       <h3 class="label-muted">Anima</h3>
       <div class="space-y-2">
         <div>
@@ -141,7 +163,7 @@ import { onMounted, reactive } from 'vue'
 import { fetchPaths, updatePaths } from '../../api/client'
 import PathList from './widgets/PathList.vue'
 
-type EngineId = 'sd15' | 'sdxl' | 'flux1' | 'anima' | 'wan22'
+type EngineId = 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'anima' | 'wan22'
 type EnginePaths = { ckpt: string[]; vae: string[]; loras: string[]; tenc: string[] }
 type EnginePathsState = Record<EngineId, EnginePaths>
 type RawPaths = Record<string, string[]>
@@ -150,6 +172,7 @@ const paths = reactive<EnginePathsState>({
   sd15: { ckpt: [], vae: [], loras: [], tenc: [] },
   sdxl: { ckpt: [], vae: [], loras: [], tenc: [] },
   flux1: { ckpt: [], vae: [], loras: [], tenc: [] },
+  flux2: { ckpt: [], vae: [], loras: [], tenc: [] },
   anima: { ckpt: [], vae: [], loras: [], tenc: [] },
   wan22: { ckpt: [], vae: [], loras: [], tenc: [] },
 })
@@ -189,6 +212,11 @@ async function reload(): Promise<void> {
     paths.flux1.loras = getList(loaded, 'flux1_loras')
     paths.flux1.tenc = getList(loaded, 'flux1_tenc')
 
+    paths.flux2.ckpt = getList(loaded, 'flux2_ckpt')
+    paths.flux2.vae = getList(loaded, 'flux2_vae')
+    paths.flux2.loras = getList(loaded, 'flux2_loras')
+    paths.flux2.tenc = getList(loaded, 'flux2_tenc')
+
     paths.anima.ckpt = getList(loaded, 'anima_ckpt')
     paths.anima.vae = getList(loaded, 'anima_vae')
     paths.anima.loras = getList(loaded, 'anima_loras')
@@ -226,6 +254,11 @@ async function save(): Promise<void> {
   next.flux1_vae = [...paths.flux1.vae]
   next.flux1_loras = [...paths.flux1.loras]
   next.flux1_tenc = [...paths.flux1.tenc]
+
+  next.flux2_ckpt = [...paths.flux2.ckpt]
+  next.flux2_vae = [...paths.flux2.vae]
+  next.flux2_loras = [...paths.flux2.loras]
+  next.flux2_tenc = [...paths.flux2.tenc]
 
   next.anima_ckpt = [...paths.anima.ckpt]
   next.anima_vae = [...paths.anima.vae]

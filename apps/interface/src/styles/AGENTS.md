@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22
-Last Review: 2026-03-04
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -142,4 +142,5 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-03-02: `styles/components/views-shared.css` now styles dual run-progress bars (`run-progress-status__bars`, `__bar-group`, `__bar-caption`, `__bar-meta`) with separate visual treatments for `total` and `steps` progress tracks.
 - 2026-03-03: `styles/components/quicksettings.css` add-path modal styles (`qs-add-path-*`) include input+scan row, animated scan spinner state, right-aligned add-all action, scrollable zebra candidate table, row status/error states, and modal sizing hooks.
 - 2026-03-04: `styles/components/quicksettings.css` add-path modal now styles byte-progress telemetry during add-all (`qs-add-path-progress-caption` + `qs-add-path-progress-bar`) with deterministic numeric alignment and themed progress fills.
+- 2026-03-05: `styles/components/quicksettings.css` renamed the Flux dual text-encoder sizing hook from `.qs-group-flux1-tenc` to `.qs-group-flux-tenc` so class naming matches Flux-family scope (`flux1` + `flux2`).
 - 2026-02-27: `styles/views/wan.css` now stacks `Ping-pong`/`Return frames` vertically in `WanVideoOutputPanel.vue` (`.wan-video-output-toggle-row` single-column grid), keeping output toggles compact under the Loop/CRF/Interpolation FPS row.

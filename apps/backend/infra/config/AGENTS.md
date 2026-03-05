@@ -1,6 +1,6 @@
 # apps/backend/infra/config Overview
 Date: 2026-02-18
-Last Review: 2026-02-23
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -24,4 +24,5 @@ Status: Active
 - 2026-02-23: `args.py` now supports `--main-device` and enforces a global main-device invariant (core/TE/VAE locked to one value), with fallback to `cuda` when available (else `cpu`) when not explicitly provided.
 - 2026-02-23: `args.py` now defaults offload authority to CPU when `--offload-device`/`CODEX_OFFLOAD_DEVICE` is unset or `auto`; invalid unresolved offload backend states now fail loud in `build_runtime_memory_config(...)` instead of silently mirroring main-device backend.
 - 2026-02-23: `args.py` now validates `--cuda-malloc` against allocator env contract: strict mode fails loud unless `PYTORCH_CUDA_ALLOC_CONF` resolves to `backend:cudaMallocAsync` (including malformed/multiple backend entry detection).
+- 2026-03-05: `paths.py` model-root provisioning now includes Flux.2 keys (`flux2_ckpt`, `flux2_tenc`, `flux2_vae`, `flux2_loras`) alongside existing families.
 - Keep this folder focused on config/bootstrap contracts; runtime execution logic belongs outside `infra/config`.

@@ -130,15 +130,15 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </template>
 
-      <!-- FLUX.1-specific quicksettings -->
-      <template v-else-if="activeFamily === 'flux1'">
+      <!-- FLUX-family-specific quicksettings -->
+      <template v-else-if="activeFamily === 'flux1' || activeFamily === 'flux2'">
         <QuickSettingsFlux
           :checkpoint="effectiveCheckpoint"
           :checkpoints="filteredModelTitles"
           :vae="store.currentVae"
           :vae-choices="filteredVaeChoices"
-          :text-encoder-primary="flux1TextEncoderPrimary"
-          :text-encoder-secondary="flux1TextEncoderSecondary"
+          :text-encoder-primary="fluxTextEncoderPrimary"
+          :text-encoder-secondary="fluxTextEncoderSecondary"
           :text-encoder-choices="filteredTextEncoderChoices"
           @update:checkpoint="onModelChange"
           @update:vae="onVaeChange"
@@ -409,7 +409,7 @@ import {
 import type { InventoryResponse, ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
-import { normalizeTabFamily, tabFamilyFromSemanticEngine, type TabFamily } from '../utils/engine_taxonomy'
+import { normalizeTabFamily, semanticEngineFromTabFamily, tabFamilyFromSemanticEngine, type TabFamily } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily, enginePrefixForFamily } from '../utils/model_family_filters'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
@@ -432,7 +432,7 @@ const pathsConfig = ref<Record<string, string[]>>({})
 type InventoryVae = { name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }
 type InventoryWanGguf = { name: string; path: string; sha256?: string; stage: string }
 type InventoryTextEncoder = { name: string; path: string; sha256?: string }
-type ImageTab = TabByType<'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'anima'>
+type ImageTab = TabByType<'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'zimage' | 'chroma' | 'anima'>
 type WanTab = TabByType<'wan'>
 type AddPathTargetKind = 'checkpoint' | 'vae' | 'text_encoder'
 const inventoryVaes = ref<InventoryVae[]>([])
@@ -738,7 +738,7 @@ function stripFamilyPrefix(label: string): string {
   const prefix = norm.slice(0, idx)
   const rest = norm.slice(idx + 1)
   if (!rest) return norm
-  if (['sd15', 'sdxl', 'flux1', 'chroma', 'wan22', 'zimage'].includes(prefix)) return rest
+  if (['sd15', 'sdxl', 'flux1', 'flux2', 'chroma', 'wan22', 'zimage'].includes(prefix)) return rest
   return norm
 }
 
@@ -958,6 +958,7 @@ function isVaeForFamily(name: string, fam: string): boolean {
   if (fam === 'sdxl') return (scale !== null) ? Math.abs(Number(scale) - 0.13025) < 1e-3 : /sdxl|xl/i.test(name)
   if (fam === 'sd15') return (scale !== null) ? Math.abs(Number(scale) - 0.18215) < 5e-3 : /sd1|1\.5|sd15|v1-5/i.test(name)
   if (fam === 'flux1') return fileInPaths(path, 'flux1_vae')
+  if (fam === 'flux2') return fileInPaths(path, 'flux2_vae')
   if (fam === 'chroma') return fileInPaths(path, 'flux1_vae')
   if (fam === 'zimage') return fileInPaths(path, 'zimage_vae') || fileInPaths(path, 'flux1_vae')  // Z Image uses same VAE as Flux.1
   return true
@@ -1016,9 +1017,10 @@ function canonicalizeVaeChoiceForActiveFamily(current: string, choices: readonly
 
 const filteredVaeChoices = computed(() => {
   const fam = activeFamily.value
-  if (fam === 'flux1' || fam === 'chroma') {
+  if (fam === 'flux1' || fam === 'flux2' || fam === 'chroma') {
+    const vaePathKey = fam === 'flux2' ? 'flux2_vae' : 'flux1_vae'
     return withBuiltInVaeChoice(inventoryVaes.value
-      .filter((v) => typeof v.path === 'string' && fileInPaths(v.path, 'flux1_vae'))
+      .filter((v) => typeof v.path === 'string' && fileInPaths(v.path, vaePathKey))
       .map((v) => String(v.path || ''))
     )
   }
@@ -1072,11 +1074,12 @@ watch(
 
 const filteredTextEncoderChoices = computed(() => {
   const fam = activeFamily.value
-  if (fam === 'flux1') {
-    // For FLUX.1, derive choices from inventory.text_encoders constrained by flux1_tenc paths.
+  if (fam === 'flux1' || fam === 'flux2') {
+    const tencKey = fam === 'flux2' ? 'flux2_tenc' : 'flux1_tenc'
+    // For Flux-family tabs, derive choices from inventory.text_encoders constrained by family tenc roots.
     return inventoryTextEncoders.value
-      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux1_tenc'))
-      .map((item) => `flux1/${item.path}`)
+      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, tencKey))
+      .map((item) => `${fam}/${item.path}`)
   }
   if (fam === 'chroma') {
     // Chroma uses a single T5 text encoder; roots are shared with Flux.1 (`flux1_tenc`).
@@ -1102,7 +1105,7 @@ const activeImageTab = computed(() => {
 const activeImageSurface = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return null
-  return engineCaps.get(tab.type)
+  return engineCaps.get(semanticEngineFromTabFamily(tab.type))
 })
 const canToggleInitImage = computed(() => {
   const tab = activeImageTab.value
@@ -1130,7 +1133,7 @@ const hasInitImage = computed(() => {
 const supportsInpaint = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return false
-  return tab.type !== 'flux1'
+  return tab.type !== 'flux1' && tab.type !== 'flux2'
 })
 const isActiveImageTabRunning = computed(() => {
   const tab = activeImageTab.value
@@ -1145,7 +1148,7 @@ const inpaintToggleDisabled = computed(() => (
 ))
 const inpaintToggleTitle = computed(() => {
   if (isActiveImageTabRunning.value) return 'Cannot change INPAINT while generation is running.'
-  if (!supportsInpaint.value) return 'INPAINT is not supported for Flux.1 img2img (Kontext) yet.'
+  if (!supportsInpaint.value) return 'INPAINT is not supported for Flux.1/Flux.2 img2img (Kontext) yet.'
   if (!useInitImage.value) return 'Enable IMG2IMG first.'
   if (!hasInitImage.value) return 'Select an init image first.'
   return 'Toggle INPAINT'
@@ -1166,9 +1169,13 @@ const effectiveTextEncoders = computed(() => {
 
 const primaryTextEncoder = computed(() => effectiveTextEncoders.value[0] ?? '')
 
-const flux1TextEncoders = computed(() => effectiveTextEncoders.value.filter((label) => typeof label === 'string' && label.startsWith('flux1/')))
-const flux1TextEncoderPrimary = computed(() => flux1TextEncoders.value[0] ?? '')
-const flux1TextEncoderSecondary = computed(() => flux1TextEncoders.value[1] ?? '')
+const fluxTextEncoderPrefix = computed<'flux1' | 'flux2'>(() => (activeFamily.value === 'flux2' ? 'flux2' : 'flux1'))
+const fluxTextEncoders = computed(() => {
+  const prefix = `${fluxTextEncoderPrefix.value}/`
+  return effectiveTextEncoders.value.filter((label) => typeof label === 'string' && label.startsWith(prefix))
+})
+const fluxTextEncoderPrimary = computed(() => fluxTextEncoders.value[0] ?? '')
+const fluxTextEncoderSecondary = computed(() => fluxTextEncoders.value[1] ?? '')
 
 const primaryTeAutomaticLabel = 'Built-in'
 const secondaryTeAutomaticLabel = 'Secondary (optional)'
@@ -1503,7 +1510,7 @@ async function onUseMaskChange(value: boolean): Promise<void> {
     const tab = activeImageTab.value
     if (!tab) return
     if (isActiveImageTabRunning.value) return
-    if (tab.type === 'flux1') return
+    if (tab.type === 'flux1' || tab.type === 'flux2') return
     if (!useInitImage.value) return
     if (!hasInitImage.value) return
     const patch: Partial<ImageBaseParams> = { useMask: Boolean(value) }
@@ -1526,8 +1533,10 @@ function textEncoderLabel(raw: unknown): string {
   return `${family}/${basename}`
 }
 
-async function updateFlux1TextEncoders(primary: string, secondary: string): Promise<void> {
+async function updateFluxTextEncoders(primary: string, secondary: string): Promise<void> {
   const tab = activeImageTab.value
+  const familyPrefix = fluxTextEncoderPrefix.value
+  const labelPrefix = `${familyPrefix}/`
   const fluxLabels: string[] = []
   const p = primary.trim()
   const s = secondary.trim()
@@ -1538,17 +1547,21 @@ async function updateFlux1TextEncoders(primary: string, secondary: string): Prom
     return
   }
   const all = store.currentTextEncoders.slice()
-  const other = all.filter((label) => !String(label).startsWith('flux1/'))
-  const next = [...other, ...fluxLabels]
+  const other = all.filter((label) => {
+    const text = String(label)
+    return !text.startsWith('flux1/') && !text.startsWith('flux2/')
+  })
+  const normalizedFluxLabels = fluxLabels.filter((label) => String(label).startsWith(labelPrefix))
+  const next = [...other, ...normalizedFluxLabels]
   await store.setTextEncoders(next)
 }
 
 function onPrimaryTextEncoderChange(value: string): void {
   const fam = activeFamily.value
-  if (fam === 'flux1') {
+  if (fam === 'flux1' || fam === 'flux2') {
     const primary = value || ''
-    const secondary = flux1TextEncoderSecondary.value || ''
-    updateFlux1TextEncoders(primary, secondary).catch((error) => {
+    const secondary = fluxTextEncoderSecondary.value || ''
+    updateFluxTextEncoders(primary, secondary).catch((error) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   } else {
@@ -1568,10 +1581,10 @@ function onPrimaryTextEncoderChange(value: string): void {
 
 function onSecondaryTextEncoderChange(value: string): void {
   const fam = activeFamily.value
-  if (fam !== 'flux1') return
-  const primary = flux1TextEncoderPrimary.value || ''
+  if (fam !== 'flux1' && fam !== 'flux2') return
+  const primary = fluxTextEncoderPrimary.value || ''
   const secondary = value || ''
-  updateFlux1TextEncoders(primary, secondary).catch((error) => {
+  updateFluxTextEncoders(primary, secondary).catch((error) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }

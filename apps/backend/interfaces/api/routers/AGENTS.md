@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-03
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -54,6 +54,7 @@ Status: Active
 - 2026-02-06: `models.py` engine capabilities now include backend-owned `dependency_checks` (ready + row list) so frontend tabs can render readiness panels and disable generation when dependencies are missing.
 - 2026-02-06: `models.py` `engine_id_to_semantic_engine` now also maps `flux1_fill -> flux1` to keep strict frontend known-id semantic resolution in sync.
 - 2026-02-05: `ui.py` tab allowlist now accepts `anima`; unknown/empty tab types are fail-loud (`400` for create payloads, `500` on invalid persisted `tabs.json` entries) instead of silent coercion to `sd15`.
+- 2026-03-05: `ui.py` tab/workflow allowlist now includes `flux2`; default tabs now seed `FLUX.2`, and create-tab default title normalization recognizes `flux2 -> FLUX.2`.
 - 2026-02-07: `generation.py` now validates Anima sampler selections early (txt2img/img2img + hires sampler overrides) against the semantic capability allowlist, returning HTTP 400 instead of late runtime `NotImplementedError`.
 - 2026-02-08: `generation.py` now parses `extras.er_sde` / `img2img_extras.er_sde` strictly (unknown-key rejection, solver normalization, numeric bounds/finite checks), enforces ER-SDE Anima-only release scope on base+hires sampler fields, and validates prompt `<sampler:...>` control tags against release scope/allowlists.
 - 2026-02-08: `generation.py` hires parser hardening now keeps allowlist and consumed keys aligned for `extras.hires.distilled_cfg`, validates hires numeric fields (`denoise`, `scale`, `cfg`, `distilled_cfg`) via `_require_float_field`, and rejects non-finite values (`NaN`, `Infinity`) with fail-loud 400s.

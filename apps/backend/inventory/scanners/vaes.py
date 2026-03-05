@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: VAE file discovery policy used by backend inventories and registries.
-Defines per-family VAE roots via `apps/paths.json` keys (`*_vae`, including Anima) and yields weight file paths in stable order.
+Defines per-family VAE roots via `apps/paths.json` keys (`*_vae`, including Flux.2 and Anima) and yields weight file paths in stable order.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `VAE_EXTS` (constant): Recognized VAE weight file extensions.
@@ -30,7 +30,7 @@ def iter_vae_files(models_root: str | None = None) -> Iterable[str]:
     out: list[str] = []
 
     # Engine-specific overrides (roots may be files or dirs).
-    for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "anima_vae", "zimage_vae", "wan22_vae"):
+    for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "flux2_vae", "anima_vae", "zimage_vae", "wan22_vae"):
         for root in get_paths_for(key):
             if os.path.isfile(root) and root.lower().endswith(VAE_EXTS):
                 out.append(root)

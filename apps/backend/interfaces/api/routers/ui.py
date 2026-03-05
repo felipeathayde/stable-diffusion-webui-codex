@@ -141,7 +141,7 @@ def build_router(
 
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
-    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "chroma", "zimage", "wan", "anima"}
+    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "flux2", "chroma", "zimage", "wan", "anima"}
     _IMAGE_PARAM_TOP_LEVEL_KEYS = {
         "schemaVersion",
         "prompt",
@@ -340,9 +340,10 @@ def build_router(
                 mk("sd15", "SD 1.5", 0),
                 mk("sdxl", "SDXL", 1),
                 mk("flux1", "FLUX.1", 2),
-                mk("chroma", "Chroma", 3),
-                mk("zimage", "Z Image", 4),
-                mk("wan", "WAN 2.2", 5),
+                mk("flux2", "FLUX.2", 3),
+                mk("chroma", "Chroma", 4),
+                mk("zimage", "Z Image", 5),
+                mk("wan", "WAN 2.2", 6),
             ],
         }
 
@@ -481,7 +482,10 @@ def build_router(
         if raw_type not in _ALLOWED_TAB_TYPES and raw_type not in ("wan22", "wan22_14b", "wan22_5b", "wan22_14b_animate"):
             raise HTTPException(status_code=400, detail=f"invalid tab type: {raw_type}")
         ttype = _normalize_tab_type(raw_type)
-        title = str(payload.get("title") or ("FLUX.1" if ttype == "flux1" else ttype.upper()))
+        title = str(
+            payload.get("title")
+            or ("FLUX.1" if ttype == "flux1" else "FLUX.2" if ttype == "flux2" else ttype.upper())
+        )
         if "params" in payload:
             params = _sanitize_tab_params_patch(tab_type=ttype, raw_params=payload.get("params"), field="params")
         else:

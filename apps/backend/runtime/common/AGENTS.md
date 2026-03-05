@@ -1,6 +1,6 @@
 # apps/backend/runtime/common Overview
 Date: 2025-10-28
-Last Review: 2026-03-01
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -26,6 +26,7 @@ Status: Active
 - 2026-03-01: `vae_codex3d.py::AutoencoderCodex3D.decode(...)` now runs `conv2` per temporal decode chunk with causal-cache carry-over (instead of materializing `conv2(z)` for full timeline upfront), reducing decode-boundary peak VRAM while preserving chunk-by-chunk decode semantics.
 - 2026-03-01: `vae_codex3d.py` now emits block-level decode trace diagnostics under `CODEX_TRACE_INFERENCE_DEBUG=1` (`[wan22.vae.trace]`), including per-frame decode boundaries plus decoder block pre/post tensor dtype/device/shape and CUDA memory snapshots for OOM triage.
 - 2026-03-01: `vae_codex3d.py::Codex3DCausalConv` now overrides `_conv_forward` to use direct `torch.cudnn_convolution` when running on CUDA fp16/bf16 with PyTorch>=2.9 and cuDNN>=91002, bypassing the known Conv3d dispatch regression path that can trigger large workspace spikes.
+- 2026-03-05: Added `vae_tiled.py` as the shared owner of VAE tiled geometry typing/policy and tile-window iteration (`VaeTileGeometry`, `VaeTileWindow`, `resolve_vae_decode_tiled_geometry`, `iter_vae_tile_windows`), including Anima-specific decode fallback geometry override while preserving non-Anima defaults.
 - 2026-02-21: `vae_ldm.py` `DiagonalGaussianDistribution.sample()` now allocates noise directly on the target device/dtype (`torch.randn(..., device=..., dtype=...)`) to avoid hidden alloc+cast churn.
 - 2026-01-06: `vae.load_flow16_vae(...)` now accepts `.gguf` weights (dequantized upfront) in addition to diffusers directories and `.safetensors` files.
 - 2026-02-15: `vae.load_flow16_vae(...)` now routes GGUF and torch-file state-dict loading through the requested `device` to keep checkpoint placement consistent with runtime target-device selection.

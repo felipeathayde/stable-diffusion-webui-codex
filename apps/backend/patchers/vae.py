@@ -10,7 +10,8 @@ Purpose: VAE patcher + tiled encode/decode fallback helpers (diffusers + WAN-awa
 Provides a VAE wrapper that normalizes diffusers outputs (scalar and optional per-channel latent stats) using family-aware policy resolution for scale/shift semantics,
 supports tiled decode/encode paths, and integrates memory-management and smart-fallback behavior. Supports separate storage vs compute dtype selection
 without hardcoded fp32 casts in hot decode/encode paths (compute defaults still follow runtime policy unless overridden).
-Tiled VAE fallback uses context-padding and center-crop stitching to reduce seams without fast/approximate paths.
+Tiled VAE fallback uses context-padding and center-crop stitching (via shared `runtime.common.vae_tiled` helpers) to reduce seams without fast/approximate paths,
+including family-aware decode fallback geometry resolution.
 Regular-path OOM fallback notices are emitted through structured backend logger warnings.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -19,8 +20,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_unwrap_encode_output` (function): Normalizes diffusers encode outputs to a latent tensor (handles `latent_dist`, `.sample()`, `.mean`, etc.).
 - `_report_vae_progress` (function): Reports VAE encode/decode block progress into backend state for phase-aware streaming.
 - `_NormalizingFirstStage` (class): Wrapper around a first-stage VAE that applies strict scalar/per-channel latent normalization (including optional shift semantics) and proxies encode/decode APIs.
-- `_TileWindow` (dataclass): Immutable tile descriptor for core and context bounds in tiled VAE passes.
-- `_iter_tile_windows` (function): Yields ordered tiled windows with context padding and fail-loud geometry validation.
+- `VaeTileGeometry` (class import): Shared typed tile geometry contract consumed by tiled decode/encode helpers.
+- `DEFAULT_VAE_DECODE_TILED_GEOMETRY` (constant import): Default decode tiled geometry for non-family-specific fallback paths.
+- `resolve_vae_decode_tiled_geometry` (function import): Shared family-aware decode tiled geometry resolver.
+- `iter_vae_tile_windows` (function import): Shared tile-window iterator with strict geometry/padding checks.
 - `VAE` (class): ModelPatcher for VAEs; provides encode/decode APIs (optionally tiled), device/dtype placement, and fallback/normalization logic
   (includes nested helpers for memory-management and diffusers/WAN VAE compatibility).
 """
@@ -28,7 +31,6 @@ Symbols (top-level; keep in sync; no ghosts):
 import contextlib
 import gc
 import math
-from dataclasses import dataclass
 
 import torch
 
@@ -45,6 +47,13 @@ except Exception:  # noqa: BLE001
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceBackend, DeviceRole
 from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
+from apps.backend.runtime.model_registry.specs import ModelFamily
+from apps.backend.runtime.common.vae_tiled import (
+    DEFAULT_VAE_DECODE_TILED_GEOMETRY,
+    VaeTileGeometry,
+    iter_vae_tile_windows,
+    resolve_vae_decode_tiled_geometry,
+)
 from apps.backend.runtime.logging import get_backend_logger
 from .base import ModelPatcher
 from .vae_normalization_policy import read_vae_config_field, resolve_vae_normalization_policy
@@ -295,54 +304,6 @@ class _NormalizingFirstStage:
             latents_std=latents_std_values,
         )
 
-
-@dataclass(frozen=True)
-class _TileWindow:
-    core_y0: int
-    core_y1: int
-    core_x0: int
-    core_x1: int
-    context_y0: int
-    context_y1: int
-    context_x0: int
-    context_x1: int
-
-
-def _iter_tile_windows(
-    *,
-    height: int,
-    width: int,
-    tile_y: int,
-    tile_x: int,
-    pad_y: int,
-    pad_x: int,
-):
-    if height <= 0 or width <= 0:
-        raise RuntimeError(f"Invalid tiled VAE geometry: height={height} width={width}.")
-    if tile_y <= 0 or tile_x <= 0:
-        raise RuntimeError(f"Invalid tiled VAE tile size: tile_y={tile_y} tile_x={tile_x}.")
-    if pad_y < 0 or pad_x < 0:
-        raise RuntimeError(f"Invalid tiled VAE padding: pad_y={pad_y} pad_x={pad_x}.")
-
-    for core_y0 in range(0, height, tile_y):
-        core_y1 = min(height, core_y0 + tile_y)
-        context_y0 = max(0, core_y0 - pad_y)
-        context_y1 = min(height, core_y1 + pad_y)
-        for core_x0 in range(0, width, tile_x):
-            core_x1 = min(width, core_x0 + tile_x)
-            context_x0 = max(0, core_x0 - pad_x)
-            context_x1 = min(width, core_x1 + pad_x)
-            yield _TileWindow(
-                core_y0=core_y0,
-                core_y1=core_y1,
-                core_x0=core_x0,
-                core_x1=core_x1,
-                context_y0=context_y0,
-                context_y1=context_y1,
-                context_x0=context_x0,
-                context_x1=context_x1,
-            )
-
 class VAE:
     def __init__(self, model=None, device=None, dtype=None, no_init=False, *, family=None):
         if no_init:
@@ -356,9 +317,13 @@ class VAE:
         )
         self.downscale_ratio = int(2 ** (len(model.config.down_block_types) - 1))
         self.latent_channels = int(model.config.latent_channels)
+        if family is not None and not isinstance(family, ModelFamily):
+            raise RuntimeError(f"Invalid VAE family type: {type(family)!r}. Expected ModelFamily or None.")
+        self.family: ModelFamily | None = family
+        self._decode_geometry_override_logged = False
 
         # Ensure process_in/out are always available via adapter
-        self.first_stage_model = _NormalizingFirstStage.wrap(model.eval(), family=family)
+        self.first_stage_model = _NormalizingFirstStage.wrap(model.eval(), family=self.family)
 
         if device is None:
             device = memory_management.manager.get_device(DeviceRole.VAE)
@@ -407,6 +372,8 @@ class VAE:
         n.vae_compute_dtype = self.vae_compute_dtype
         n._supports_manual_cast_split = self._supports_manual_cast_split
         n._manual_cast_split_warned = self._manual_cast_split_warned
+        n.family = self.family
+        n._decode_geometry_override_logged = self._decode_geometry_override_logged
         n.output_device = self.output_device
         return n
 
@@ -618,12 +585,30 @@ class VAE:
             )
         return out_start, out_end, crop_start, crop_end
 
+    def _resolve_decode_tiled_geometry(self) -> VaeTileGeometry:
+        geometry = resolve_vae_decode_tiled_geometry(family=self.family)
+        if geometry != DEFAULT_VAE_DECODE_TILED_GEOMETRY and not self._decode_geometry_override_logged:
+            family = self.family
+            if family is None:
+                raise RuntimeError("Non-default VAE decode tiled geometry requires a known model family.")
+            logger.info(
+                "Applying family decode tiled geometry override: family=%s tile_x=%d tile_y=%d overlap=%d",
+                family.value,
+                geometry.tile_x,
+                geometry.tile_y,
+                geometry.overlap,
+            )
+            self._decode_geometry_override_logged = True
+        return geometry
+
     def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16, progress_callback=None):
         if samples.ndim != 4:
             raise RuntimeError(f"decode_tiled_ expects NCHW latents; got shape={tuple(samples.shape)}.")
-        pad = max(0, int(overlap))
-        tile_x = int(tile_x)
-        tile_y = int(tile_y)
+        geometry = VaeTileGeometry(
+            tile_x=int(tile_x),
+            tile_y=int(tile_y),
+            overlap=max(0, int(overlap)),
+        )
         forward_dtype = self._active_forward_dtype()
         output_height = round(samples.shape[2] * self.downscale_ratio)
         output_width = round(samples.shape[3] * self.downscale_ratio)
@@ -633,13 +618,13 @@ class VAE:
             dtype=forward_dtype,
         )
         windows = tuple(
-            _iter_tile_windows(
+            iter_vae_tile_windows(
                 height=int(samples.shape[2]),
                 width=int(samples.shape[3]),
-                tile_y=tile_y,
-                tile_x=tile_x,
-                pad_y=pad,
-                pad_x=pad,
+                tile_y=geometry.tile_y,
+                tile_x=geometry.tile_x,
+                pad_y=geometry.overlap,
+                pad_x=geometry.overlap,
             )
         )
         if not windows:
@@ -692,9 +677,11 @@ class VAE:
     def encode_tiled_(self, pixel_samples, tile_x=512, tile_y=512, overlap=64, progress_callback=None):
         if pixel_samples.ndim != 4:
             raise RuntimeError(f"encode_tiled_ expects NCHW pixels; got shape={tuple(pixel_samples.shape)}.")
-        pad = max(0, int(overlap))
-        tile_x = int(tile_x)
-        tile_y = int(tile_y)
+        geometry = VaeTileGeometry(
+            tile_x=int(tile_x),
+            tile_y=int(tile_y),
+            overlap=max(0, int(overlap)),
+        )
         forward_dtype = self._active_forward_dtype()
         output_height = round(pixel_samples.shape[2] // self.downscale_ratio)
         output_width = round(pixel_samples.shape[3] // self.downscale_ratio)
@@ -704,13 +691,13 @@ class VAE:
             dtype=forward_dtype,
         )
         windows = tuple(
-            _iter_tile_windows(
+            iter_vae_tile_windows(
                 height=int(pixel_samples.shape[2]),
                 width=int(pixel_samples.shape[3]),
-                tile_y=tile_y,
-                tile_x=tile_x,
-                pad_y=pad,
-                pad_x=pad,
+                tile_y=geometry.tile_y,
+                tile_x=geometry.tile_x,
+                pad_y=geometry.overlap,
+                pad_x=geometry.overlap,
             )
         )
         if not windows:
@@ -884,6 +871,7 @@ class VAE:
 
             try:
                 if use_tiled:
+                    decode_geometry = self._resolve_decode_tiled_geometry()
                     decode_total_blocks = max(1, int(samples_in.shape[0]))
                     _report_vae_progress(
                         phase=progress_phase,
@@ -903,6 +891,9 @@ class VAE:
 
                     pixel_samples = self.decode_tiled_(
                         samples_in,
+                        tile_x=decode_geometry.tile_x,
+                        tile_y=decode_geometry.tile_y,
+                        overlap=decode_geometry.overlap,
                         progress_callback=_decode_progress,
                     )
                 else:
@@ -993,8 +984,12 @@ class VAE:
                             total_blocks=decode_total_blocks,
                         )
 
+                    decode_geometry = self._resolve_decode_tiled_geometry()
                     pixel_samples = self.decode_tiled_(
                         samples_in,
+                        tile_x=decode_geometry.tile_x,
+                        tile_y=decode_geometry.tile_y,
+                        overlap=decode_geometry.overlap,
                         progress_callback=_decode_retry_progress,
                     )
 
@@ -1054,7 +1049,19 @@ class VAE:
         )
         self._apply_precision(desired_storage)
         self.vae_compute_dtype = desired_compute
-        output = self.decode_tiled_(samples, tile_x, tile_y, overlap)
+        geometry = VaeTileGeometry(
+            tile_x=int(tile_x),
+            tile_y=int(tile_y),
+            overlap=max(0, int(overlap)),
+        )
+        if geometry == DEFAULT_VAE_DECODE_TILED_GEOMETRY:
+            geometry = self._resolve_decode_tiled_geometry()
+        output = self.decode_tiled_(
+            samples,
+            tile_x=geometry.tile_x,
+            tile_y=geometry.tile_y,
+            overlap=geometry.overlap,
+        )
         # Return BCHW format in [-1, 1] range like decode_inner
         return output * 2.0 - 1.0
 

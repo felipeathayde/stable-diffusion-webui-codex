@@ -85,7 +85,7 @@ Symbols (top-level; keep in sync; no ghosts):
           <div class="field">
             <label class="label-muted">Safetensors File or Folder</label>
             <div class="row-inline">
-              <input class="ui-input cdx-tools-grow" type="text" v-model="ggufForm.safetensorsPath" placeholder="Path to .safetensors file, index.json, or folder" :disabled="isConverting" />
+              <input class="ui-input cdx-tools-grow" type="text" v-model="ggufForm.safetensorsPath" placeholder="Path to .safetensors file, .safetensors.index.json, or folder" :disabled="isConverting" />
               <button class="btn-icon" type="button" @click="browseForSafetensors" :disabled="isConverting" aria-label="Browse for safetensors file">…</button>
             </div>
             <p class="caption">For sharded weights, select the folder that contains <code>*.safetensors.index.json</code>.</p>
@@ -204,22 +204,22 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="gen-card cdx-tools-card">
           <div>
             <div class="h3">Safetensors Merger</div>
-            <p class="caption">Merge Safetensors file/index/folder inputs into one output file</p>
+            <p class="caption">Merge Safetensors file, sharded index, or folder inputs into one output file</p>
           </div>
 
           <div class="field">
-            <label class="label-muted">Source Path (file/index/folder)</label>
+            <label class="label-muted">Source Path (file/sharded-index/folder)</label>
             <div class="row-inline">
               <input
                 class="ui-input cdx-tools-grow"
                 type="text"
                 v-model="mergeForm.sourcePath"
-                placeholder="Path to .safetensors file, index.json, or folder"
+                placeholder="Path to .safetensors file, .safetensors.index.json, or folder"
                 :disabled="isMerging"
               />
               <button class="btn-icon" type="button" @click="browseForMergeSource" :disabled="isMerging" aria-label="Browse for merge source">…</button>
             </div>
-            <p class="caption">Supports <code>.safetensors</code>, <code>.safetensors.index.json</code>, <code>.index.json</code>, or a folder.</p>
+            <p class="caption">Supports <code>.safetensors</code>, <code>.safetensors.index.json</code>, or a folder.</p>
           </div>
 
           <div class="field">
@@ -522,9 +522,6 @@ function _deriveSourceStem(path: string): string {
   }
   if (name.toLowerCase().endsWith('.safetensors')) {
     return name.slice(0, -'.safetensors'.length)
-  }
-  if (name.toLowerCase().endsWith('.index.json')) {
-    return name.slice(0, -'.index.json'.length)
   }
   // If user picked a folder, use its leaf.
   return name
@@ -901,7 +898,7 @@ async function loadBrowserPath() {
   try {
     let ext = ''
     if (browserMode.value === 'gguf_safetensors' || browserMode.value === 'merge_source') {
-      ext = '.safetensors,.safetensors.index.json,.index.json'
+      ext = '.safetensors,.safetensors.index.json'
     }
 
     const response = await fetch(

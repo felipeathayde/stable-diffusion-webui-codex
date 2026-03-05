@@ -154,7 +154,7 @@ def resolve_safetensors_source(path: str) -> ResolvedSafetensorsSource:
         )
 
     if p.suffix.lower() != ".safetensors":
-        raise ValueError(f"Expected a .safetensors file/dir/index.json, got: {p}")
+        raise ValueError(f"Expected a .safetensors file, '*.safetensors.index.json', or directory, got: {p}")
     if not p.is_file():
         raise FileNotFoundError(f"Safetensors file not found: {p}")
     resolved = p.resolve()

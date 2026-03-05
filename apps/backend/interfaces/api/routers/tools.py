@@ -523,6 +523,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
             SafetensorsMergeConfig,
             SafetensorsMergeProgress,
             merge_safetensors_source,
+            validate_safetensors_merge_config,
         )
 
         source_path_raw = str(payload.get("source_path") or "").strip()
@@ -537,24 +538,18 @@ def build_router(*, codex_root: Path) -> APIRouter:
         if not output_path_raw:
             raise HTTPException(status_code=400, detail="output_path is required")
 
-        source_path = Path(os.path.expanduser(source_path_raw)).resolve()
-        if not source_path.exists():
-            raise HTTPException(status_code=400, detail=f"source_path not found: {source_path}")
-
-        final_path = Path(os.path.expanduser(output_path_raw)).resolve()
-        if not final_path.name.lower().endswith(".safetensors"):
-            raise HTTPException(status_code=400, detail="output_path must end with `.safetensors`.")
-        if not final_path.parent.exists():
-            raise HTTPException(
-                status_code=400,
-                detail=f"output_path parent directory does not exist: {final_path.parent}",
+        try:
+            source_path, final_path, _resolved = validate_safetensors_merge_config(
+                SafetensorsMergeConfig(
+                    source_path=source_path_raw,
+                    output_path=output_path_raw,
+                    overwrite=overwrite,
+                )
             )
-        if not final_path.parent.is_dir():
-            raise HTTPException(status_code=400, detail=f"output_path parent is not a directory: {final_path.parent}")
-        if final_path.exists() and final_path.is_dir():
-            raise HTTPException(status_code=400, detail=f"output_path is a directory: {final_path}")
-        if final_path.exists() and not overwrite:
-            raise HTTPException(status_code=409, detail=f"Output file already exists: {final_path}")
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (FileNotFoundError, NotADirectoryError, IsADirectoryError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         job_id = str(uuid.uuid4())[:8]
         tmp_path = _alloc_nonexistent_path(

@@ -12,6 +12,7 @@ Accepts the same source formats as the GGUF converter source helper (single file
 Symbols (top-level; keep in sync; no ghosts):
 - `SafetensorsMergeConfig` (dataclass): Merge input/output configuration (`source_path`, `output_path`, `overwrite`).
 - `SafetensorsMergeProgress` (dataclass): Progress payload emitted while loading/merging tensors.
+- `validate_safetensors_merge_config` (function): Validate merge paths and resolve the concrete safetensors source layout.
 - `merge_safetensors_source` (function): Merge a safetensors source into one output `.safetensors` file.
 - `__all__` (constant): Explicit export list for merge tool public API.
 """
@@ -428,6 +429,25 @@ def _validate_output_aliases(
         raise ValueError(f"output_path must not overwrite a safetensors {source_kind}: {output_path}")
 
 
+def validate_safetensors_merge_config(
+    config: SafetensorsMergeConfig,
+) -> tuple[Path, Path, ResolvedSafetensorsSource]:
+    """Validate merge paths and resolve the concrete safetensors source layout."""
+
+    source_path, output_path = _validate_merge_paths(config)
+    try:
+        resolved = resolve_safetensors_source(str(source_path))
+    except ValueError as exc:
+        if str(exc).startswith("Expected a .safetensors file/dir/index.json, got:"):
+            raise ValueError(
+                "Expected a .safetensors file, '*.safetensors.index.json', or directory, "
+                f"got: {source_path}"
+            ) from exc
+        raise
+    _validate_output_aliases(resolved=resolved, output_path=output_path)
+    return source_path, output_path, resolved
+
+
 def merge_safetensors_source(
     config: SafetensorsMergeConfig,
     *,
@@ -437,9 +457,7 @@ def merge_safetensors_source(
 
     progress = SafetensorsMergeProgress(status="pending")
     try:
-        source_path, output_path = _validate_merge_paths(config)
-        resolved = resolve_safetensors_source(str(source_path))
-        _validate_output_aliases(resolved=resolved, output_path=output_path)
+        _source_path, output_path, resolved = validate_safetensors_merge_config(config)
 
         progress.status = "loading_weights"
         _emit_progress(progress_callback, progress)
@@ -475,5 +493,6 @@ def merge_safetensors_source(
 __all__ = [
     "SafetensorsMergeConfig",
     "SafetensorsMergeProgress",
+    "validate_safetensors_merge_config",
     "merge_safetensors_source",
 ]

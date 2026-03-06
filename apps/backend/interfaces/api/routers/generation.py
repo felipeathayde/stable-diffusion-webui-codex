@@ -24,6 +24,7 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses backend API-owned WAN video request key allowlists from `interfaces/api/wan_video_request_keys.py`,
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
+FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
 WAN sampler fields accept any non-empty string at API parse-time (known names canonicalized when possible); scheduler fields remain strict (`simple`) for WAN22 requests.
 Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|sliding|svi2|svi2_pro`) with mode-scoped validation for chunk/window fields,
@@ -434,7 +435,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=f"'{stage_key}.lora_weight' is unsupported; use '{stage_key}.loras'",
             )
-
         raw_loras = stage_raw.get("loras")
         if raw_loras is None:
             return []
@@ -1525,6 +1525,60 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         return resolved.strip()
 
+    def _find_checkpoint_record_from_request(
+        *,
+        model_override: Any,
+        extras: Mapping[str, Any] | None,
+        field_prefix: str,
+    ):
+        extras_map: Dict[str, Any] = dict(extras or {})
+        resolved_model_ref = _resolve_model_ref_from_sha_or_name(
+            model_override=model_override,
+            extras=extras_map,
+            field_prefix=field_prefix,
+            models_api=models_api,
+        )
+        return models_api.find_checkpoint(resolved_model_ref)
+
+    def _resolve_flux2_guidance_mode_for_request(
+        *,
+        model_override: Any,
+        extras: Mapping[str, Any] | None,
+        field_prefix: str,
+    ) -> str:
+        record = _find_checkpoint_record_from_request(
+            model_override=model_override,
+            extras=extras,
+            field_prefix=field_prefix,
+        )
+        if record is None:
+            raise HTTPException(status_code=409, detail="FLUX.2 checkpoint not found for the selected request model.")
+
+        family_hint = str(record.family_hint or "").strip().lower()
+        if family_hint and family_hint != "flux2":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Selected checkpoint '{record.filename}' is not a FLUX.2 checkpoint.",
+            )
+
+        metadata = dict(record.metadata or {})
+        variant_raw = metadata.get("flux2_variant")
+        if variant_raw is None:
+            variant_raw = metadata.get("codex.flux2.variant")
+        if variant_raw is None and isinstance(metadata.get("is_distilled"), bool):
+            variant_raw = "klein" if bool(metadata["is_distilled"]) else "base"
+
+        variant = str(variant_raw or "").strip().lower()
+        if variant not in {"base", "klein"}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported FLUX.2 checkpoint variant for '{record.filename}'. "
+                    "Only Klein 4B and Klein base-4B are supported."
+                ),
+            )
+        return "cfg" if variant == "base" else "distilled_cfg"
+
     def _build_hires(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
         if cfg is None:
             return {
@@ -1585,6 +1639,40 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             return _engine_registry.get_descriptor(key).key
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Unknown engine key: {key}") from exc
+
+    def _validate_route_engine_capability(
+        payload: Mapping[str, Any],
+        *,
+        route_mode: GenerationRouteMode,
+    ) -> None:
+        raw_engine = payload.get("engine")
+        if raw_engine is None:
+            return
+        engine_key = _canonical_engine_key(raw_engine)
+        if not engine_key:
+            return
+        try:
+            semantic_engine = semantic_engine_for_engine_id(engine_key)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown engine id for route capability validation: {engine_key!r}",
+            ) from exc
+        capability_attr, route_label = {
+            GenerationRouteMode.TXT2IMG: ("supports_txt2img", "txt2img"),
+            GenerationRouteMode.IMG2IMG: ("supports_img2img", "img2img"),
+            GenerationRouteMode.TXT2VID: ("supports_txt2vid", "txt2vid"),
+            GenerationRouteMode.IMG2VID: ("supports_img2vid", "img2vid"),
+        }.get(route_mode, ("", ""))
+        if not capability_attr:
+            return
+        surface = ENGINE_SURFACES[semantic_engine]
+        if getattr(surface, capability_attr):
+            return
+        raise HTTPException(
+            status_code=400,
+            detail=f"Engine '{engine_key}' does not support route '{route_label}'.",
+        )
 
     def _parse_optional_sampler_field(*, value: object, field_name: str) -> str | None:
         if value is None:
@@ -1970,8 +2058,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
-        supports_cfg = engine_supports_cfg(engine_key)
-        if not supports_cfg:
+        if engine_key == "flux2":
+            raw_extras = payload.get("extras")
+            if raw_extras is not None and not isinstance(raw_extras, Mapping):
+                raise HTTPException(status_code=400, detail="'extras' must be an object")
+            guidance_mode = _resolve_flux2_guidance_mode_for_request(
+                model_override=payload.get("model"),
+                extras=raw_extras if isinstance(raw_extras, Mapping) else None,
+                field_prefix="extras",
+            )
+            if guidance_mode == "distilled_cfg":
+                if 'cfg' in payload:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Selected FLUX.2 checkpoint uses distilled guidance; use 'distilled_cfg'.",
+                    )
+                if 'distilled_cfg' not in payload:
+                    raise HTTPException(status_code=400, detail="Selected FLUX.2 checkpoint requires 'distilled_cfg'.")
+                cfg_scale = 1.0
+                distilled_cfg_scale = _require_float_field(payload, 'distilled_cfg')
+            else:
+                if 'distilled_cfg' in payload:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Selected FLUX.2 checkpoint uses classic CFG; use 'cfg'.",
+                    )
+                if 'cfg' not in payload:
+                    raise HTTPException(status_code=400, detail="Selected FLUX.2 checkpoint requires 'cfg'.")
+                cfg_scale = _require_float_field(payload, 'cfg')
+                distilled_cfg_scale = 3.5
+        elif not engine_supports_cfg(engine_key):
             if 'cfg' in payload:
                 raise HTTPException(
                     status_code=400,
@@ -2070,8 +2186,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         else:
             raise HTTPException(status_code=400, detail="'img2img_steps' is required")
 
-        supports_cfg = engine_supports_cfg(engine_key)
-        if supports_cfg:
+        if engine_key == "flux2":
+            raw_img2img_extras = payload.get("img2img_extras")
+            if raw_img2img_extras is not None and not isinstance(raw_img2img_extras, Mapping):
+                raise HTTPException(status_code=400, detail="'img2img_extras' must be an object")
+            guidance_mode = _resolve_flux2_guidance_mode_for_request(
+                model_override=model_override,
+                extras=raw_img2img_extras if isinstance(raw_img2img_extras, Mapping) else None,
+                field_prefix="img2img_extras",
+            )
+            if guidance_mode == "distilled_cfg":
+                if 'img2img_cfg_scale' in payload:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Selected FLUX.2 checkpoint uses distilled guidance; use 'img2img_distilled_cfg_scale'.",
+                    )
+                if 'img2img_distilled_cfg_scale' not in payload:
+                    raise HTTPException(status_code=400, detail="'img2img_distilled_cfg_scale' is required")
+                cfg_scale = 1.0
+                distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale')
+            else:
+                if 'img2img_distilled_cfg_scale' in payload:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Selected FLUX.2 checkpoint uses classic CFG; use 'img2img_cfg_scale'.",
+                    )
+                if 'img2img_cfg_scale' not in payload:
+                    raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
+                cfg_scale = _require_float_field(payload, 'img2img_cfg_scale')
+                distilled_cfg_scale = None
+        elif engine_supports_cfg(engine_key):
             if 'img2img_cfg_scale' not in payload:
                 raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
             if 'img2img_distilled_cfg_scale' in payload:
@@ -2639,6 +2783,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _reject_legacy_hires_keys(payload)
 
         enable_hires = _require_bool_field(payload, "img2img_hires_enable") if "img2img_hires_enable" in payload else False
+        if enable_hires and engine_key == "flux2" and mask_image is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "FLUX.2 img2img hires does not support masks/inpaint in this backend seam yet. "
+                    "Disable hires or remove 'img2img_mask'."
+                ),
+            )
         if enable_hires:
             try:
                 hr_tile_cfg = tile_config_from_payload(payload.get("img2img_hires_tile"), context="img2img_hires_tile")
@@ -2900,7 +3052,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
-        _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         wan_metadata_dir = _resolve_wan_metadata_dir(payload)
         default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
@@ -3052,9 +3203,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 resolve_asset_by_sha_fn=resolve_asset_by_sha,
             )
             out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
-            out.pop("lora_path", None)
-            out.pop("lora_sha", None)
-            out.pop("lora_weight", None)
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -3152,7 +3300,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
-        _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         wan_metadata_dir = _resolve_wan_metadata_dir(payload)
         default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
@@ -3306,9 +3453,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 resolve_asset_by_sha_fn=resolve_asset_by_sha,
             )
             out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
-            out.pop("lora_path", None)
-            out.pop("lora_sha", None)
-            out.pop("lora_weight", None)
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -4063,6 +4207,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
+        _validate_route_engine_capability(payload, route_mode=GenerationRouteMode.TXT2IMG)
 
         device = _parse_explicit_device(
             payload,
@@ -4080,6 +4225,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
+        _validate_route_engine_capability(payload, route_mode=GenerationRouteMode.IMG2IMG)
 
         device = _parse_explicit_device(
             payload,
@@ -4097,6 +4243,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
+        _validate_route_engine_capability(payload, route_mode=GenerationRouteMode.TXT2VID)
         _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
 
         device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.TXT2VID)
@@ -4113,6 +4260,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
+        _validate_route_engine_capability(payload, route_mode=GenerationRouteMode.IMG2VID)
         _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
 
         device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.IMG2VID)

@@ -76,6 +76,7 @@ _CHECKPOINT_REQUIRED_ENGINES: frozenset[str] = frozenset(
         "sd15",
         "sdxl",
         "flux1",
+        "flux2",
         "chroma",
         "zimage",
         "anima",
@@ -85,6 +86,48 @@ _CHECKPOINT_REQUIRED_ENGINES: frozenset[str] = frozenset(
 )
 
 _WAN_METADATA_PREFIX = "wan-ai/wan2.2-"
+
+_CHECKPOINT_ROOT_KEYS_BY_ENGINE: dict[str, tuple[str, ...]] = {
+    "sd15": ("sd15_ckpt",),
+    "sdxl": ("sdxl_ckpt",),
+    "flux1": ("flux1_ckpt",),
+    "flux2": ("flux2_ckpt",),
+    "chroma": ("flux1_ckpt",),
+    "zimage": ("zimage_ckpt",),
+    "anima": ("anima_ckpt",),
+    "wan22": ("wan22_ckpt",),
+}
+
+_CHECKPOINT_FAMILY_HINTS_BY_ENGINE: dict[str, tuple[str, ...]] = {
+    "sd15": ("sd15",),
+    "sdxl": ("sdxl",),
+    "flux1": ("flux1",),
+    "flux2": ("flux2",),
+    "chroma": ("chroma", "flux1"),
+    "zimage": ("zimage",),
+    "anima": ("anima",),
+    "wan22": ("wan22",),
+}
+
+_VAE_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
+    "flux1": ("flux1_vae",),
+    "flux2": ("flux2_vae",),
+    "zimage": ("zimage_vae", "flux1_vae"),
+    "anima": ("anima_vae",),
+    "wan22_5b": ("wan22_vae",),
+    "wan22_14b": ("wan22_vae",),
+    "wan22_14b_animate": ("wan22_vae",),
+}
+
+_TEXT_ENCODER_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
+    "flux1": ("flux1_tenc",),
+    "flux2": ("flux2_tenc",),
+    "zimage": ("zimage_tenc",),
+    "anima": ("anima_tenc",),
+    "wan22_5b": ("wan22_tenc",),
+    "wan22_14b": ("wan22_tenc",),
+    "wan22_14b_animate": ("wan22_tenc",),
+}
 
 
 def _count_list_entries(value: object) -> int:
@@ -144,6 +187,47 @@ def _count_assets_in_roots(value: object, roots: list[str]) -> int:
     return count
 
 
+def _roots_for_keys(keys: tuple[str, ...]) -> list[str]:
+    roots: list[str] = []
+    for key in keys:
+        for raw in get_paths_for(key):
+            try:
+                resolved = str(Path(raw).resolve())
+            except Exception:
+                resolved = str(raw or "").strip()
+            if resolved and resolved not in roots:
+                roots.append(resolved)
+    return roots
+
+
+def _count_checkpoints_for_engine(model_api: Any, semantic_engine: str) -> int:
+    records = model_api.list_checkpoints(refresh=False)
+    if not isinstance(records, list):
+        return 0
+
+    family_hints = tuple(str(value).strip().lower() for value in _CHECKPOINT_FAMILY_HINTS_BY_ENGINE.get(semantic_engine, ()))
+    if family_hints:
+        scoped = 0
+        for record in records:
+            hint = str(getattr(record, "family_hint", "") or "").strip().lower()
+            if hint in family_hints:
+                scoped += 1
+        if scoped > 0:
+            return scoped
+
+    root_keys = _CHECKPOINT_ROOT_KEYS_BY_ENGINE.get(semantic_engine, ())
+    roots = _roots_for_keys(root_keys)
+    if not roots:
+        return len(records)
+
+    scoped = 0
+    for record in records:
+        path = str(getattr(record, "filename", "") or "").strip()
+        if _path_in_roots(path, roots):
+            scoped += 1
+    return scoped
+
+
 def _text_encoder_slots(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
@@ -182,7 +266,6 @@ def build_engine_dependency_checks(
     """
 
     inventory = inventory_cache.get()
-    checkpoint_count = _checkpoint_count(model_api)
     vae_count = _count_list_entries(inventory.get("vaes"))
     text_encoder_count = _count_list_entries(inventory.get("text_encoders"))
     text_encoder_slots = _text_encoder_slots(inventory.get("text_encoders"))
@@ -207,6 +290,7 @@ def build_engine_dependency_checks(
         )
 
         if semantic_engine in _CHECKPOINT_REQUIRED_ENGINES:
+            checkpoint_count = _count_checkpoints_for_engine(model_api, semantic_engine)
             has_checkpoint = checkpoint_count > 0
             checks.append(
                 DependencyCheckRow(
@@ -226,15 +310,38 @@ def build_engine_dependency_checks(
 
         contract_engine = contract_owner_for_semantic_engine(semantic_engine)
         contract = contract_for_engine(contract_engine)
+        scoped_vae_roots = _roots_for_keys(_VAE_ROOT_KEYS_BY_CONTRACT_OWNER.get(contract_engine, ()))
+        scoped_tenc_roots = _roots_for_keys(_TEXT_ENCODER_ROOT_KEYS_BY_CONTRACT_OWNER.get(contract_engine, ()))
+        scoped_vae_count = (
+            _count_assets_in_roots(inventory.get("vaes"), scoped_vae_roots)
+            if scoped_vae_roots
+            else vae_count
+        )
+        scoped_text_encoder_count = (
+            _count_assets_in_roots(inventory.get("text_encoders"), scoped_tenc_roots)
+            if scoped_tenc_roots
+            else text_encoder_count
+        )
+        scoped_text_encoder_slots = (
+            {
+                str(item.get("slot") or "").strip()
+                for item in inventory.get("text_encoders", [])
+                if isinstance(item, dict)
+                and _path_in_roots(str(item.get("path") or "").strip(), scoped_tenc_roots)
+                and str(item.get("slot") or "").strip()
+            }
+            if scoped_tenc_roots
+            else text_encoder_slots
+        )
         if contract.requires_vae:
-            has_vae = vae_count > 0
+            has_vae = scoped_vae_count > 0
             checks.append(
                 DependencyCheckRow(
                     id="vae_inventory",
                     label="VAE Inventory",
                     ok=has_vae,
                     message=(
-                        f"{vae_count} VAE file(s) discovered."
+                        f"{scoped_vae_count} VAE file(s) discovered."
                         if has_vae
                         else "No VAE files discovered. Configure VAE roots and refresh inventory."
                     ),
@@ -242,17 +349,17 @@ def build_engine_dependency_checks(
             )
         if contract.tenc_count > 0:
             required = int(contract.tenc_count)
-            has_tenc = text_encoder_count >= required
+            has_tenc = scoped_text_encoder_count >= required
             checks.append(
                 DependencyCheckRow(
                     id="text_encoder_inventory",
                     label="Text Encoder Inventory",
                     ok=has_tenc,
                     message=(
-                        f"{text_encoder_count} text encoder file(s) discovered (requires >= {required})."
+                        f"{scoped_text_encoder_count} text encoder file(s) discovered (requires >= {required})."
                         if has_tenc
                         else (
-                            f"Only {text_encoder_count} text encoder file(s) discovered "
+                            f"Only {scoped_text_encoder_count} text encoder file(s) discovered "
                             f"(requires >= {required}). Configure text-encoder roots and refresh inventory."
                         )
                     ),
@@ -260,7 +367,7 @@ def build_engine_dependency_checks(
             )
             required_slots = tuple(str(slot) for slot in contract.tenc_slots)
             if required_slots:
-                missing_slots = [slot for slot in required_slots if slot not in text_encoder_slots]
+                missing_slots = [slot for slot in required_slots if slot not in scoped_text_encoder_slots]
                 has_required_slots = len(missing_slots) == 0
                 checks.append(
                     DependencyCheckRow(

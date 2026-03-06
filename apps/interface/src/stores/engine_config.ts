@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Static engine configs (defaults + capability flags) for the WebUI.
 Defines engine types and per-engine defaults/capabilities used by dynamic tabs and composables to pick UI defaults and gate fields.
-Variant-dependent engines (e.g. Z-Image Turbo/Base) must be gated by per-tab params in views/payload builders, not by these static flags.
+Variant-dependent engines (for example Z-Image Turbo/Base and FLUX.2 Klein distilled/base-4B) must be gated by per-tab checkpoint state
+in views/payload builders, not by these static flags.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineType` (type): Known engine identifiers used by the UI config (includes `flux2` and `anima`).
@@ -130,17 +131,17 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
     label: 'FLUX.2',
     capabilities: {
       tasks: ['txt2img', 'img2img'],
-      usesCfg: false,
+      usesCfg: true,
       usesDistilledCfg: true,
-      usesNegativePrompt: false,
+      usesNegativePrompt: true,
       isVideoEngine: false,
     },
     defaults: {
       width: 1024,
       height: 1024,
-      steps: 4,
-      cfg: 1,
-      distilledCfg: 3.5,
+      steps: 20,
+      cfg: 4,
+      distilledCfg: 4,
     },
   },
   

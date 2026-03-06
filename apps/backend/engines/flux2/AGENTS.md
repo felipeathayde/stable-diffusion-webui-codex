@@ -1,0 +1,32 @@
+# apps/backend/engines/flux2 Overview
+<!-- tags: backend, engines, flux2, qwen3 -->
+Date: 2026-03-06
+Last Review: 2026-03-06
+Status: Active
+
+## Purpose
+- Host the truthful FLUX.2 Klein 4B/base-4B engine seam for backend image generation.
+
+## Key Files
+- `apps/backend/engines/flux2/flux2.py` — `Flux2Engine` facade (Qwen conditioning + normalized-external FLUX.2 latent encode/decode overrides + txt2img/img2img task exposure).
+- `apps/backend/engines/flux2/spec.py` — Runtime assembly for FLUX.2 loader-resolved components.
+- `apps/backend/engines/flux2/factory.py` — Factory seam returning `(runtime, CodexObjects)`.
+- `apps/backend/engines/flux2/img2img.py` — Dedicated FLUX.2 img2img wrapper that injects `image_latents` instead of reusing classic init-latent denoise semantics.
+- `apps/backend/engines/flux2/__init__.py` — Package marker only.
+
+## Notes
+- Loader/parser already own FLUX.2 checkpoint detection + component loading; engine code must reuse the resolved bundle instead of inventing new loading paths.
+- The active FLUX.2 backend seam is **txt2img + image-conditioned img2img/inpaint** for Klein 4B/base-4B:
+  - `supports_img2img=true`
+  - `supports_hires=true`
+  - `supports_lora=false`
+  - `encode_first_stage(...)` uses the local AutoencoderKLFlux2 batch-norm latent normalization contract; do not map FLUX.2 to Flow16/Flux.1 semantics.
+  - Masked img2img/inpaint reuses the shared masked bundle/full-res composite path, but FLUX.2 still conditions through `image_latents` rather than SD-family `image_conditioning`.
+  - Partial-denoise img2img is wired through sampler-native continuation (`init_latent` + `denoise_strength`) while keeping clean `image_latents` conditioning.
+  - Unmasked hires img2img is wired through the shared hires-prep dispatcher plus the dedicated FLUX.2 second pass; masked hires still fails loud.
+- FLUX.2 conditioning is Qwen-only cross-attention (`7680` dim). `get_learned_conditioning(...)` now returns sampler-ready dict conditioning (`crossattn` + inert `vector`) so `image_latents` can flow through the compiled-conditioning path without special-case shims.
+- Sampler state is normalized external **32-channel** latent BCHW. Encode/decode apply the FLUX.2 VAE batch-norm mean/std over the patchified 128-channel latent space; do not map FLUX.2 to Flow16/Flux.1 latent semantics.
+- Variant behavior is runtime-resolved:
+  - `FLUX.2-klein-4B` → distilled checkpoint; non-empty negative prompts fail loud and the engine uses the request's distilled guidance scale as the effective sampling CFG.
+  - `FLUX.2-klein-base-4B` → classic CFG / negative prompts
+- Use `img2img.py` for FLUX.2 image-conditioned generation; the common `apps/backend/use_cases/img2img.py` route still models classic init-latent denoise / Kontext continuation and is not truthful for FLUX.2.

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Canonical frontend engine/tab taxonomy helpers.
 Centralizes tab-family aliases, image request engine-id resolution, backend engine-id -> semantic-engine resolution, and sampler/scheduler
-fallback defaults so stores/composables stop duplicating mapping tables.
+fallback defaults so stores/composables stop duplicating mapping tables. FLUX.2 stays first-class in frontend taxonomy (no FLUX.1 aliasing).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TabFamily` (type): Canonical model tab families used by the UI.
@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `semanticEngineFromTabFamily` (function): Converts tab family to semantic engine id.
 - `tabFamilyFromSemanticEngine` (function): Converts semantic engine id to tab family when representable.
 - `resolveImageRequestEngineId` (function): Canonical image request tab/mode -> engine-id mapper.
+- `supportsImg2ImgMaskingForEngineId` (function): Returns whether an img2img engine id truthfully supports mask/inpaint semantics.
 - `KNOWN_ENGINE_IDS` (constant): Known engine ids that must have valid semantic mapping.
 - `isKnownEngineId` (function): Type guard for `KNOWN_ENGINE_IDS`.
 - `resolveSemanticEngineForEngineId` (function): Resolves engine id to semantic id using backend map, failing loud for missing known mappings.
@@ -32,6 +33,7 @@ export type SemanticEngine =
   | 'sd15'
   | 'sdxl'
   | 'flux1'
+  | 'flux2'
   | 'zimage'
   | 'anima'
   | 'chroma'
@@ -66,6 +68,7 @@ const SEMANTIC_ENGINE_SET: ReadonlySet<string> = new Set<string>([
   'sd15',
   'sdxl',
   'flux1',
+  'flux2',
   'zimage',
   'anima',
   'chroma',
@@ -78,6 +81,7 @@ const ENGINE_ID_SET: ReadonlySet<string> = new Set<string>([
   'sd15',
   'sdxl',
   'flux1',
+  'flux2',
   'flux1_chroma',
   'flux1_kontext',
   'flux1_fill',
@@ -127,7 +131,6 @@ export function normalizeTabFamily(value: unknown): TabFamily | null {
 
 export function semanticEngineFromTabFamily(family: TabFamily): SemanticEngine {
   if (family === 'wan') return 'wan22'
-  if (family === 'flux2') return 'flux1'
   return family
 }
 
@@ -146,9 +149,15 @@ export function resolveImageRequestEngineId(tabType: string, useInitImage: boole
   }
   if (family === 'wan') return 'wan22'
   if (family === 'chroma') return 'flux1_chroma'
-  if ((family === 'flux1' || family === 'flux2') && useInitImage) return 'flux1_kontext'
-  if (family === 'flux2') return 'flux1'
+  if (family === 'flux1' && useInitImage) return 'flux1_kontext'
   return family
+}
+
+export function supportsImg2ImgMaskingForEngineId(engineId: EngineRequestId | string): boolean {
+  if (!isKnownEngineId(engineId)) {
+    throw new Error(`Unknown engine id for img2img masking support: ${engineId}`)
+  }
+  return engineId !== 'flux1_kontext'
 }
 
 export function resolveSemanticEngineForEngineId(

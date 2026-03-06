@@ -134,6 +134,16 @@ export const useXyzStore = defineStore('xyz', () => {
     const engineKey = resolveImageRequestEngineId(tabFamily, false)
     const checkpoint = String((params as any)?.checkpoint || '').trim()
     const modelLabel = checkpoint || quick.currentModel
+    const resolvedModelInfo = quick.resolveModelInfo(modelLabel)
+    const guidanceMode = engineKey === 'flux2'
+      ? (() => {
+          const variant = quick.resolveFlux2CheckpointVariant(resolvedModelInfo ?? checkpoint)
+          if (!variant) {
+            throw new Error('Unsupported FLUX.2 checkpoint variant. Only Klein 4B/base-4B is supported.')
+          }
+          return variant === 'base' ? 'cfg' : 'distilled_cfg'
+        })()
+      : undefined
     const resolvedModelSha = quick.resolveModelSha(modelLabel)
     const fallbackSampling = fallbackSamplingDefaultsForTabFamily(tabFamily)
     const samplingDefaults = caps.resolveSamplingDefaults(engineKey, {
@@ -166,6 +176,7 @@ export const useXyzStore = defineStore('xyz', () => {
       settingsRevision: quick.getSettingsRevision(),
       engine: engineKey,
       model: resolvedModelSha || modelLabel,
+      guidanceMode,
     }
   }
 

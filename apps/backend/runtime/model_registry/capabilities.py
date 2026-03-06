@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
-`er sde` in the sampler allowlist. Non-SD image semantics (Flux/Chroma/ZImage/Anima) now expose hires support in the shared second-pass pipeline.
+`er sde` in the sampler allowlist. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
+image-conditioned img2img with hires enabled only after the real backend continuation path landed; LoRA remains off.
 WAN semantic capabilities are bound to explicit WAN22 variant families via primary-family mapping.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -44,6 +45,7 @@ class SemanticEngine(str, Enum):
     SD15 = "sd15"
     SDXL = "sdxl"
     FLUX = "flux1"
+    FLUX2 = "flux2"
     ZIMAGE = "zimage"
     ANIMA = "anima"
     CHROMA = "chroma"
@@ -152,6 +154,21 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         default_sampler="euler",
         default_scheduler="simple",
     ),
+    # FLUX.2 Klein (single-Qwen; txt2img + image-conditioned img2img; hires enabled after dedicated continuation wiring).
+    SemanticEngine.FLUX2: EngineParamSurface(
+        supports_txt2img=True,
+        supports_img2img=True,
+        supports_txt2vid=False,
+        supports_img2vid=False,
+        supports_hires=True,
+        supports_refiner=False,
+        supports_lora=False,
+        supports_controlnet=False,
+        samplers=("euler", "dpm++ 2m"),
+        schedulers=("simple",),
+        default_sampler="euler",
+        default_scheduler="simple",
+    ),
     # Z-Image (Turbo/Base variants; flow-based; tuned for simple predictor schedule).
     SemanticEngine.ZIMAGE: EngineParamSurface(
         supports_txt2img=True,
@@ -247,6 +264,7 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "flux1": SemanticEngine.FLUX,
     "flux1_kontext": SemanticEngine.FLUX,
     "flux1_fill": SemanticEngine.FLUX,
+    "flux2": SemanticEngine.FLUX2,
     "flux1_chroma": SemanticEngine.CHROMA,
     "zimage": SemanticEngine.ZIMAGE,
     "anima": SemanticEngine.ANIMA,
@@ -266,6 +284,7 @@ _ENGINE_ID_PRIMARY_FAMILY: Dict[str, ModelFamily] = {
     "flux1": ModelFamily.FLUX,
     "flux1_kontext": ModelFamily.FLUX_KONTEXT,
     "flux1_fill": ModelFamily.FLUX,
+    "flux2": ModelFamily.FLUX2,
     "flux1_chroma": ModelFamily.CHROMA,
     "zimage": ModelFamily.ZIMAGE,
     "anima": ModelFamily.ANIMA,

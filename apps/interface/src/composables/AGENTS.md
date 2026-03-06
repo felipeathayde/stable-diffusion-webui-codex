@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-03-01
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -12,7 +12,8 @@ Status: Active
 - 2025-12-28: `useGeneration(tabId)` now propagates tab-scoped `batchCount`/`batchSize` into txt2img/img2img payloads (previously fixed to 1×1) and tracks `progress`/`info`/`gentimeMs` for the image-tabs Results UI.
 - 2025-12-28: `useGeneration(tabId)` now maintains a small per-tab image run history (task id + params snapshot) and exposes `loadHistory/clearHistory` so views can render a History panel.
 - 2025-12-31: FLUX.1 img2img requests from `useGeneration(tabId)` are routed to the Kontext workflow engine (canonical key `engine="flux1_kontext"`, previously `kontext`) and include `img2img_extras.tenc_sha` (no `text_encoder_override` for Flux.1; backend derives the override from sha).
-- 2026-01-29: `useGeneration(tabId)` now emits Codex-native masked img2img (“inpaint”) fields when `tab.params.useMask` is enabled (`img2img_mask_enforcement`, full-res crop/padding, invert/round/blur, masked-content mode). Flux.1 (Kontext) masking is blocked explicitly until semantics are implemented.
+- 2026-01-29: `useGeneration(tabId)` now emits Codex-native masked img2img (“inpaint”) fields when `tab.params.useMask` is enabled (`img2img_mask_enforcement`, full-res crop/padding, invert/round/blur, masked-content mode). Engines that still reject mask/inpaint semantics (`flux1_kontext`) are blocked explicitly through the shared taxonomy helper instead of per-view engine lists.
+- 2026-03-06: `useGeneration(tabId)` now derives FLUX.2 guidance mode from the selected Klein 4B vs base-4B checkpoint before payload assembly; txt2img/img2img emit exactly one matching guidance field (`cfg` / `img2img_cfg_scale` for base-4B, `distilled_cfg` / `img2img_distilled_cfg_scale` for distilled 4B), negative prompts stay suppressed only for distilled flows, and FLUX.2 img2img denoise now passes through truthfully instead of being forced to `1.0`.
 - 2025-12-14: `useVideoGeneration(tabId)` encapsulates WAN `/txt2vid` + `/img2vid` generation + SSE streaming state so `WANTab.vue` stays a thin view.
 - 2025-12-16: `useVideoGeneration(tabId)` exposes WAN video task execution + export URL wiring (`/api/output/{rel_path}`) for the active WAN modes.
 - 2026-01-17: `useVideoGeneration(tabId)` now derives `wan_metadata_repo` for the known WAN2.2 repos from the current input mode + size hint (prevents stale repo ids after switching txt/img/vid modes).
@@ -27,15 +28,15 @@ Status: Active
 - 2026-01-18: `useGeneration(tabId)` now derives required VAE/text encoder count from backend-provided `asset_contracts` and uses `models[].core_only` (via `quicksettings.isModelCoreOnly(...)`) to enforce core-only requirements (no duplicated per-engine lists in the UI).
 - 2026-01-18: `useGeneration(tabId)` maps the `chroma` tab type to backend engine id `flux1_chroma` (keeps tab taxonomy explicit while requests use canonical engine keys).
 - 2026-01-28: `useGeneration(tabId)` emits `extras.zimage_variant="turbo"|"base"` for Z-Image requests; both variants use classic CFG (negative prompts supported) and the toggle exists to drive scheduler shift + recommended defaults.
-- 2026-02-03: `useGeneration(tabId)` hires payloads emit `extras.hires` in txt2img requests.
-- 2026-02-04: `useGeneration(tabId)` propagates the global `min_tile` preference into txt2img hires tile payloads (`extras.hires.tile.min_tile`, clamped to `tile`).
+- 2026-03-06: `useGeneration(tabId)` hires payloads emit `extras.hires` in txt2img requests and `img2img_hires_*` in img2img requests, both built from the shared hires normalizer in `api/payloads.ts`.
+- 2026-03-06: `useGeneration(tabId)` propagates the global `min_tile` preference into both txt2img hires tile payloads (`extras.hires.tile.min_tile`) and img2img hires tile payloads (`img2img_hires_tile.min_tile`), always clamped to `tile`.
 - 2026-01-03: Added standardized file header blocks to composables (doc-only change; part of rollout).
 - 2026-02-05: `useGeneration(tabId)` now hard-checks backend engine surface before request send; missing capabilities or unsupported mode (`supports_txt2img`/`supports_img2img`) fail loud with explicit errors.
 - 2026-02-05: `useGeneration` now exports `resolveEngineForRequest(...)` as the canonical tab-type/mode engine mapper; `ImageModelTab.vue` reuses it so disable-state and request preflight stay in parity.
 - 2026-02-06: `useVideoGeneration(tabId)` default WAN video params now include `returnFrames` (default false) and keep `interpolationFps` in parity with the canonical WAN params surface (prevents drift between store/view/composable defaults).
 - 2026-02-06: `useGeneration` engine mapping now delegates to `utils/engine_taxonomy.ts` so request engine-id resolution (`flux1_kontext`, `flux1_chroma`) is centralized and shared with other frontend modules.
 - 2026-02-08: `useGeneration.ts` now exports `isGenerationRunningForTab(tabId)` so header quicksettings controls can enforce run-lock behavior on mode toggles (e.g., INPAINT).
-- 2026-02-18: `useGeneration.ts` keeps img2img payloads hires-free at the payload source (no `img2img_hires_*` keys are emitted); `img2imgResizeMode`/`img2imgUpscaler` are UI-state fields only (layout/selection, no hires dispatch).
+- 2026-03-06: `useGeneration.ts` now emits `img2img_hires_*` only when the engine capability says hires is supported and the run is unmasked; `img2imgResizeMode`/`img2imgUpscaler` remain UI-state fields only (layout/selection, no direct payload dispatch), and masked hires still fails loud.
 - 2026-02-18: `useGeneration.ts` now builds optional `extras.guidance` / `img2img_extras.guidance` from `tab.params.guidanceAdvanced`, gated by backend `engineSurface.guidance_advanced` so unsupported engines/controls are omitted at source.
 - 2026-02-15: `useGeneration(tabId)` and `useVideoGeneration(tabId)` now emit `settings_revision` on every start payload and handle stale-revision backend conflicts (`409` + `current_revision`) by refreshing revision state and surfacing a manual-retry message.
 - 2026-02-15: Added `settings_revision_conflict.ts` shared composable helper for parsing/formatting stale-settings conflict UX across image/video generation.
@@ -59,6 +60,7 @@ Status: Active
 - 2026-03-01: `useVideoGeneration(tabId)` now forwards no-stretch guide fields (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) into img2vid payload input and validates scale/offsets strictly (`imageScale > 0`, offsets in `[0,1]`).
 - 2026-03-02: `useVideoGeneration(tabId)` now omits `img2vidImageScale` from payload input when normalized value is default `1`, so runtime-side auto-fit minimum scaling is preserved unless users choose an explicit non-default guide scale.
 - 2026-03-02: `useGeneration(tabId)` progress state now persists backend `message`/`data` metadata and parses total-progress fields (`total_percent`, `total_phase`, `phase_step`, `phase_total_steps`, `phase_eta_seconds`) from task progress payloads for dual-bar Run status rendering.
+- 2026-03-05: `useGeneration(tabId)` now treats `flux2` as a real txt2img/img2img engine, resolves Klein distilled-vs-base guidance mode from the selected checkpoint (`resolveModelInfo`/`resolveFlux2CheckpointVariant`), and only suppresses negative prompts for the distilled 4B variant.
 - 2026-02-21: `useVideoGeneration(tabId)` resume-state parsing is now strict for mode (`txt2vid|img2vid` only): unsupported legacy values (e.g. `vid2vid`) are rejected fail-loud, the stale resume marker is cleared, and UI surfaces a clear resume notice instead of silently downgrading mode.
 - 2026-02-21: `useVideoGeneration(tabId)` now logs structured start-failure diagnostics to browser console (`status`, backend `detail`, parsed `body`, message, mode/tab) before surfacing UI error text, improving visibility for hidden request-contract failures.
 - 2026-02-27: `useVideoGeneration(tabId)` removed obsolete WAN output fields (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) from snapshots/common payload input and now carries interpolation as one `interpolation.targetFps` field (`0` disables, active values are interpreted as output FPS targets).

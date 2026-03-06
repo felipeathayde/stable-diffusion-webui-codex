@@ -1,7 +1,7 @@
 <!-- tags: frontend, interface, overview -->
 # apps/interface Overview
 Date: 2025-10-28
-Last Review: 2026-03-03
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -36,3 +36,4 @@ Status: Active
 - 2026-02-06: Added `vue-tsc` typechecking (`npm run typecheck`) and gated `npm run dev` on typecheck to prevent “build passes, types broken” drift.
 - 2026-02-08: SDXL swap-model UI contract now uses explicit pointer semantics (`swapAtStep` in frontend state, serialized as `switch_at_step` in API payloads), replacing refiner step-count wording/behavior.
 - 2026-02-21: Added UI consistency scanner (`tools/ui-consistency-report.mjs`) and wired `npm run verify` to run strict style-contract gating (`report:ui-consistency:strict`) before typecheck/build.
+- 2026-03-05: FLUX.2 frontend requests now target the backend-owned Klein 4B / base-4B slice only: the UI keeps `flux2` first-class, uses one `Qwen3-4B` selector, and no longer aliases FLUX.2 img2img into FLUX.1 Kontext.

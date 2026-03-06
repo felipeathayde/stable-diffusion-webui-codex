@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2vid/img2vid/vid2vid).
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
-handling unset sentinels and producing backend-ready payloads for `/api/*` requests (including `settings_revision`).
+handling unset sentinels and producing backend-ready payloads for `/api/*` requests with canonical WAN video keys (including `device` and `settings_revision`).
 WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler contract on backend).
 Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image_scale` + crop offsets) with fail-loud validation.
 
@@ -160,7 +160,7 @@ const WanStageSchema = z
 
 const CommonWanVideoPayloadSchema = z
   .object({
-    codex_device: DeviceEnum,
+    device: DeviceEnum,
     settings_revision: z.number().int().min(0),
 
     video_return_frames: z.boolean(),
@@ -182,7 +182,6 @@ const CommonWanVideoPayloadSchema = z
     wan_metadata_repo: RepoIdSchema,
     wan_vae_sha: Sha256Schema,
     wan_tenc_sha: Sha256Schema,
-    wan_tokenizer_dir: z.string().min(1).optional(),
     gguf_attention_mode: WanAttentionModeEnum.optional(),
   })
   .strict()
@@ -366,7 +365,7 @@ export interface WanStageInput {
   prompt: string
   negativePrompt: string
   sampler: string
-  scheduler: string
+  scheduler?: string
   steps: number
   cfgScale: number
   seed: number
@@ -412,7 +411,6 @@ export interface WanAssetsInput {
   metadataRepo: string
   textEncoderSha: string
   vaeSha: string
-  tokenizerDir?: string
 }
 
 export interface WanVideoCommonInput {
@@ -464,10 +462,10 @@ export interface WanVid2VidInput extends WanVideoCommonInput {
   videoPath?: string
 }
 
-function normalizeDevice(device: string): WanTxt2VidPayload['codex_device'] {
+function normalizeDevice(device: string): WanTxt2VidPayload['device'] {
   const normalized = device.trim().toLowerCase()
   if (DEVICE_VALUES.includes(normalized as (typeof DEVICE_VALUES)[number])) {
-    return normalized as WanTxt2VidPayload['codex_device']
+    return normalized as WanTxt2VidPayload['device']
   }
   throw new Error(`Unsupported device '${device}'`)
 }
@@ -613,9 +611,6 @@ function addWanAssets(payload: Record<string, unknown>, assets: WanAssetsInput):
   const repo = String(assets.metadataRepo || '').trim()
   if (repo && !isUnsetSentinel(repo)) payload.wan_metadata_repo = repo
 
-  const tokenizerDir = String(assets.tokenizerDir || '').trim()
-  if (tokenizerDir && !isUnsetSentinel(tokenizerDir)) payload.wan_tokenizer_dir = tokenizerDir
-
   const vaeSha = String(assets.vaeSha || '').trim().toLowerCase()
   if (vaeSha) payload.wan_vae_sha = vaeSha
 
@@ -723,7 +718,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
   const frames = normalizeWanFrameCount(input.frames)
   const { prompt, negativePrompt } = resolveTopLevelPrompts(input)
   const payload: Record<string, unknown> = {
-    codex_device: normalizeDevice(input.device),
+    device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
     txt2vid_prompt: prompt,
     txt2vid_neg_prompt: negativePrompt,
@@ -760,7 +755,7 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
   const frames = normalizeWanFrameCount(input.frames)
   const { prompt, negativePrompt } = resolveTopLevelPrompts(input)
   const payload: Record<string, unknown> = {
-    codex_device: normalizeDevice(input.device),
+    device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
     img2vid_prompt: prompt,
     img2vid_neg_prompt: negativePrompt,
@@ -850,7 +845,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
   const frames = normalizeWanFrameCount(input.frames)
   const { prompt, negativePrompt } = resolveTopLevelPrompts(input)
   const payload: Record<string, unknown> = {
-    codex_device: normalizeDevice(input.device),
+    device: normalizeDevice(input.device),
     settings_revision: normalizeSettingsRevision(input.settingsRevision),
     vid2vid_prompt: prompt,
     vid2vid_neg_prompt: negativePrompt,

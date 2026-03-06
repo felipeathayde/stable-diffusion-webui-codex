@@ -16,4 +16,4 @@ Status: Active
 ## Notes
 - Keep this pipeline aligned with `apps/backend/patchers/lora_apply.py` and the options service so selections remain consistent.
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `mapping.py`, `pipeline.py`, and `types.py` (doc-only change; part of rollout).
-- 2026-02-18: `mapping.py` now builds UNet LoRA aliases from runtime state keys plus canonical SDXL checkpoint keymap normalization (`keymap_sdxl_checkpoint`) so SDXL `model.diffusion_model.*` wrappers and runtime-native key layouts map without custom remap paths.
+- 2026-02-18: `mapping.py` now builds UNet LoRA aliases from runtime state keys plus canonical SDXL checkpoint keymap normalization (`keymap_sdxl_checkpoint`) so SDXL `model.diffusion_model.*` wrappers and runtime-native key layouts resolve without custom fallback translation paths.

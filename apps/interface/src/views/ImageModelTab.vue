@@ -8,8 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-family engines.
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
-submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
-When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with current img2img payload semantics).
+submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base and FLUX.2 Klein distilled/base-4B are variant-dependent:
+CFG label + negative prompt gating follow the selected checkpoint/tab state, while img2img denoise + hires visibility stay truthful to the active capability/mask contract).
+When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with honest img2img control visibility).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
 Also shares the global `min_tile` preference (tiled lower bound) with `/upscale`.
@@ -54,11 +55,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `readImageDimensions` (function): Reads width/height from an image source URL (used for init-image dimension sync).
 - `syncInitImageDims` (function): Synchronizes init-image derived dimensions into width/height params (async).
 - `maskEditorImageWidth`/`maskEditorImageHeight` (const): Derived init-image dimensions used by the inpaint mask editor canvas (keeps backend mask-dimension contract).
-- `maybeApplyKontextDefaults` (function): Applies Kontext-specific default params when relevant to the current engine/tab.
+- `maybeApplyKontextDefaults` (function): Applies FLUX.1 Kontext-specific default params when relevant to the current engine/tab.
 - `onGenerate` (function): Run handler for the Run card; dispatches standard generation or XYZ sweep depending on XYZ enable state.
 - `runGenerateDisabled`/`runGenerateTitle` (const): Run CTA state/title derived from capabilities + active mode + XYZ running/enabled state.
 - `missingInpaintMask` (const): Derived guard flag used to disable generation when INPAINT is enabled without an applied mask.
-- `hideNegativePrompt` (const): Hides the base Negative Prompt field when effective base CFG is `<= 1`.
+- `supportsImg2ImgMasking` (const): Truthful engine-level mask/inpaint support gate for img2img engines.
+- `hideNegativePrompt` (const): Hides the base Negative Prompt field when the active checkpoint/model does not support it or effective base CFG is `<= 1`.
 - `xyzSamplerChoices`/`xyzSchedulerChoices` (const): Sampler/scheduler names passed to embedded XYZ autofill (scheduler list is sampler-compatible).
 -->
 
@@ -84,7 +86,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :initImageName="params.initImageName"
             :imageWidth="maskEditorImageWidth"
             :imageHeight="maskEditorImageHeight"
-            :useMask="params.useMask"
+            :useMask="supportsImg2ImgMasking ? params.useMask : false"
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"
             :maskEnforcement="params.maskEnforcement"
@@ -131,6 +133,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :cfg-scale="params.cfgScale"
             :cfg-label="cfgLabel"
             :denoise-strength="params.denoiseStrength"
+            :show-denoise="true"
             :seed="params.seed"
             :clip-skip="params.clipSkip"
             :show-clip-skip="showClipSkip"
@@ -499,7 +502,7 @@ import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import { useXyzStore } from '../stores/xyz'
-import { normalizeTabFamily } from '../utils/engine_taxonomy'
+import { normalizeTabFamily, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
 import { normalizeImg2ImgResizeMode } from '../utils/img2img_resize'
 import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy } from '../utils/image_params'
@@ -698,8 +701,21 @@ const dependencyError = computed(() => engineCaps.firstDependencyError(resolvedE
 const dependencyReady = computed(() => Boolean(dependencyStatus.value?.ready))
 
 const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean(params.value.zimageTurbo ?? true) : false)
-const supportsNegative = computed(() => Boolean(familyCapabilities.value?.supports_negative_prompt))
+const flux2Variant = computed(() => (
+  props.type === 'flux2'
+    ? quicksettingsStore.resolveFlux2CheckpointVariant(String(params.value.checkpoint || '').trim())
+    : null
+))
+const usesDistilledCfgModel = computed(() => {
+  if (props.type === 'flux2') return flux2Variant.value === 'distilled'
+  return Boolean(engineConfig.value.capabilities.usesDistilledCfg) && !engineConfig.value.capabilities.usesCfg
+})
+const supportsNegative = computed(() => {
+  if (!familyCapabilities.value?.supports_negative_prompt) return false
+  return !usesDistilledCfgModel.value
+})
 const hideNegativePrompt = computed(() => {
+  if (!supportsNegative.value) return true
   const cfg = Number(params.value.cfgScale)
   return Number.isFinite(cfg) && cfg <= 1
 })
@@ -733,12 +749,14 @@ const xyzSchedulerChoices = computed(() => filteredSchedulers.value.map((entry) 
 const xyzRunning = computed(() => xyzStore.status === 'running')
 const isRunBusy = computed(() => isRunning.value || xyzRunning.value)
 const generateLabel = 'Generate'
+const supportsImg2ImgMasking = computed(() => supportsImg2ImgMaskingForEngineId(resolvedEngineForMode.value))
 const xyzProgressPercent = computed(() => {
   if (!xyzStore.progress.total) return null
   return (xyzStore.progress.completed / xyzStore.progress.total) * 100
 })
 const missingInpaintMask = computed(() =>
   Boolean(params.value.useInitImage)
+  && supportsImg2ImgMasking.value
   && Boolean(params.value.useMask)
   && !String(params.value.maskImageData || '').trim(),
 )
@@ -771,7 +789,7 @@ const toolbarLabel = computed(() => {
   return zimageTurbo.value ? 'Z Image Turbo' : 'Z Image Base'
 })
 
-const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
+const cfgLabel = computed(() => (usesDistilledCfgModel.value ? 'Distilled CFG' : 'CFG'))
 const showClipSkip = computed(() => Boolean(familyCapabilities.value?.shows_clip_skip))
 const minClipSkip = computed(() => 0)
 const swapModelChoices = computed(() => {
@@ -786,7 +804,11 @@ const supportsHiresForEngine = computed(() => {
   if (!surf) return true
   return surf.supports_hires
 })
-const hiresModePolicy = computed(() => resolveHiresModePolicy(Boolean(params.value.useInitImage), supportsHiresForEngine.value))
+const hiresModePolicy = computed(() => resolveHiresModePolicy(
+  Boolean(params.value.useInitImage),
+  supportsHiresForEngine.value,
+  Boolean(params.value.useMask),
+))
 const showHires = computed(() => hiresModePolicy.value.showCard)
 
 const showHiresRefiner = computed(() => !Boolean(params.value.useInitImage))
@@ -831,7 +853,7 @@ const hiresScheduler = computed(() => {
 })
 
 const hiresCfgValue = computed(() => {
-  if (engineConfig.value.capabilities.usesDistilledCfg) {
+  if (usesDistilledCfgModel.value) {
     const value = Number(params.value.hires.distilledCfg)
     if (Number.isFinite(value)) return value
     return params.value.cfgScale
@@ -884,7 +906,7 @@ function onHiresSchedulerChange(value: string): void {
 
 function onHiresCfgChange(value: number): void {
   const normalized = clampFloat(value, 0, 30)
-  if (engineConfig.value.capabilities.usesDistilledCfg) {
+  if (usesDistilledCfgModel.value) {
     setHires({ distilledCfg: normalized, cfg: undefined })
     return
   }
@@ -918,6 +940,15 @@ watch([supportsImg2Img, () => engineCaps.loaded], ([supported, capsLoaded]) => {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
+  })
+}, { immediate: true })
+
+watch([supportsImg2ImgMasking, () => params.value.useMask], ([supported, useMask]) => {
+  if (supported || !useMask) return
+  setParams({
     useMask: false,
     maskImageData: '',
     maskImageName: '',
@@ -1402,7 +1433,7 @@ async function syncInitImageDims(): Promise<void> {
 }
 
 function maybeApplyKontextDefaults(): void {
-  if (props.type !== 'flux1' && props.type !== 'flux2') return
+  if (props.type !== 'flux1') return
   const defaults = getEngineDefaults(props.type)
   const defaultCfg = defaults.distilledCfg ?? defaults.cfg
   // Only apply when user hasn't customized away from the Flux defaults.

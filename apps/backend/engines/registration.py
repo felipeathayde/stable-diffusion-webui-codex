@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `register_sdxl` (function): Registers SDXL base/refiner engines and aliases.
 - `register_sd35` (function): Registers the SD 3.5 engine and aliases.
 - `register_flux` (function): Registers the Flux engine.
+- `register_flux2` (function): Registers the FLUX.2 Klein engine.
 - `register_kontext` (function): Registers the Flux Kontext engine.
 - `register_chroma` (function): Registers the Chroma engine.
 - `register_wan22_5b` (function): Registers WAN22 GGUF 5B engine and aliases.
@@ -65,6 +66,11 @@ def register_sd35(*, registry: EngineRegistry | None = None, replace: bool = Fal
 def register_flux(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     from apps.backend.engines.flux.flux import Flux
     _reg("flux1", Flux, registry=registry, replace=replace, aliases=())
+
+
+def register_flux2(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
+    from apps.backend.engines.flux2.flux2 import Flux2Engine
+    _reg("flux2", Flux2Engine, registry=registry, replace=replace, aliases=())
 
 
 def register_kontext(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:

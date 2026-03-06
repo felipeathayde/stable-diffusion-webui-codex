@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-04
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -36,6 +36,7 @@ Status: Active
 - 2026-02-28: `payloads_video.ts` accepted img2vid modes are `solo|sliding|svi2|svi2_pro`; unsupported mode values now fail loud during payload normalization.
 - 2026-03-01: `payloads_video.ts` emits no-stretch img2vid guide fields (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) with strict validation (`image_scale > 0` + offsets in `[0,1]`).
 - 2026-03-02: `payloads_video.ts` now keeps `img2vid_image_scale` optional in WAN img2vid payloads (omits the field when unset), so backend runtime auto-fit minimum scale can resolve guide geometry without a forced frontend `1.0` default.
+- 2026-03-06: `payloads_video.ts` WAN video requests now emit the current canonical router-accepted sha-first common fields: top-level `device` plus WAN asset selectors `wan_metadata_repo`, `wan_vae_sha`, and `wan_tenc_sha` only.
 - 2026-02-27: `payloads_video.ts` WAN output contract now hard-sets `video_save_output=true` and `video_save_metadata=true`, removed obsolete output fields (`video_filename_prefix`, `video_trim_to_audio`), and maps interpolation through one `targetFps` input (`0` disables; values above base FPS emit `video_interpolation.times >= 2` via `ceil(targetFps/baseFps)` with fixed model `rife47.pth`).
 - 2026-02-27: `payloads_video.ts` now includes optional strict `video_upscaling` payload mapping (SeedVR2 fields) via `WanVideoUpscalingInput`; builders emit `video_upscaling` only when enabled, and schema enforces typed ranges/enums plus `batch_size` `4n+1`.
 - 2026-02-22: `client.ts` adds `fetchObliterateVram(payload?)` for `POST /api/obliterate-vram` with default `external_kill_mode='disabled'`; `types.ts` defines request/response DTOs (including external kill mode + skip/failure rows) so quick settings can report safe-default cleanup status fail-loud.
@@ -46,6 +47,7 @@ Status: Active
 - 2026-01-02: Added standardized file header blocks to `client.ts` and `payloads.ts` (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header block to `types.ts` (doc-only change; part of rollout).
 - 2026-01-04: `payloads.ts` treats Flux.1 family keys as flow engines (`flux1*`) for distilled-CFG handling (legacy engine key aliases are not accepted).
+- 2026-03-06: `payloads.ts` no longer hard-codes `engine="flux2"` as distilled-only; callers pass checkpoint-resolved FLUX.2 guidance mode (`cfg` for base-4B, `distilled_cfg` for distilled 4B) while the request contract stays unchanged (`tenc_sha` = one `Qwen3-4B`, no extra variant field).
 - 2026-01-25: `payloads.ts` now allows `clip_skip` in `[0..12]` (0 = “use default”) and sends `clip_skip=0` when selected so the backend can reset clip skip per request without a separate UI toggle.
 - 2026-01-28: `payloads.ts` supports Z-Image Turbo/Base by emitting `extras.zimage_variant="turbo"|"base"`; both variants use classic CFG (`cfg` + optional `negative_prompt`) and the variant only affects scheduler semantics (shift=3.0/6.0) and UI defaults.
 - 2026-01-29: Added `analyzePngInfo()` client wrapper + `PngInfoAnalyzeResponse` for `POST /api/tools/pnginfo/analyze` (used by the PNG Info view).

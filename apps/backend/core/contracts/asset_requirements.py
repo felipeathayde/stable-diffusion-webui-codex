@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Canonical per-engine asset requirements (VAE/text encoders) for generation requests.
 Centralizes “what is required” so UI ↔ API ↔ loader can stay in sync and drift cannot reappear via duplicated `engine_id in (...)` logic.
-Includes sha-selected external-asset engines (e.g., Z-Image and Anima) where VAE/text-encoder weights must be provided explicitly.
+    Includes sha-selected external-asset engines (e.g., FLUX.2 Klein, Z-Image, and Anima) where VAE/text-encoder weights must be provided explicitly.
 WAN22 engine variants (`wan22_5b`, `wan22_14b`, `wan22_14b_animate`) are modeled as explicit engine contracts with strict owner mapping.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -167,6 +167,14 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
         sha_only=True,
         notes="External-assets-first: requires VAE + 2 text encoders (CLIP + T5) via sha selection.",
     ),
+    "flux2": EngineAssetContract(
+        requires_vae=True,
+        tenc_slots=("qwen3_4b",),
+        tenc_slot_labels=("Qwen3-4B",),
+        tenc_kind=TextEncoderKind.QWEN,
+        sha_only=True,
+        notes="External-assets-first: requires FLUX.2 VAE + 1 Qwen3-4B text encoder via sha selection.",
+    ),
     "zimage": EngineAssetContract(
         requires_vae=True,
         tenc_slots=("qwen3_4b",),
@@ -240,6 +248,7 @@ _CONTRACT_OWNER_BY_ENGINE_ID: dict[str, str] = {
     "flux1": "flux1",
     "flux1_kontext": "flux1_kontext",
     "flux1_fill": "flux1",
+    "flux2": "flux2",
     "flux1_chroma": "flux1_chroma",
     "zimage": "zimage",
     "anima": "anima",
@@ -254,6 +263,7 @@ _CONTRACT_OWNER_BY_SEMANTIC_ENGINE: dict[str, str] = {
     "sd15": "sd15",
     "sdxl": "sdxl",
     "flux1": "flux1",
+    "flux2": "flux2",
     "chroma": "flux1_chroma",
     "zimage": "zimage",
     "anima": "anima",
@@ -304,6 +314,7 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
     if owner in (
         "flux1",
         "flux1_kontext",
+        "flux2",
         "zimage",
         "anima",
         "wan22_5b",

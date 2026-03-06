@@ -8,7 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Zod request schemas + payload builders for image generation (txt2img/img2img).
 Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including hires/refiner) and to
-apply engine-agnostic request normalization/validation (including required `settings_revision`).
+apply engine-agnostic request normalization/validation (including required `settings_revision`). FLUX.2 guidance mode is checkpoint-resolved
+by callers (`cfg` for base-4B, `distilled_cfg` for distilled 4B) instead of being hard-coded by engine id, and hires normalization is shared
+between txt2img (`extras.hires`) and img2img (`img2img_hires_*`) payload builders.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DISTILLED_CFG_ENGINES` (const): Engine ids treated as distilled-guidance engines (use `distilled_cfg`; CFG/negative prompt omitted).
@@ -25,6 +27,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `RefinerFormState` (interface): UI form state for refiner options.
 - `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
 - `normalizeDevice` (function): Normalizes and validates a device token.
+- `buildNormalizedHiresOptions` (function): Normalizes shared hires form state into the canonical hires payload shape used by txt2img/img2img builders.
+- `buildImg2ImgHiresPayloadFields` (function): Flattens normalized hires state into the img2img `img2img_hires_*` contract.
 - `buildTxt2ImgPayload` (function): Builds and validates a `Txt2ImgRequest` from UI form state (supports hires tile prefs: fallback + min_tile).
 - `formatZodError` (function): Converts Zod errors (or unknown errors) into a readable message.
 */
@@ -32,10 +36,13 @@ Symbols (top-level; keep in sync; no ghosts):
 import { z, ZodError } from 'zod'
 import { resolveTextOverride } from '../utils/image_params'
 
-// Engines that use distilled guidance (single-branch conditioning) and therefore use distilled_cfg.
+type Txt2ImgGuidanceMode = 'cfg' | 'distilled_cfg'
+
+// Engines that always use distilled guidance (single-branch conditioning) and therefore use distilled_cfg.
 const DISTILLED_CFG_ENGINES = ['flux1', 'flux1_kontext', 'flux1_chroma'] as const
 const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
+const FLUX2_BASE_VARIANT_MARKERS = ['flux.2-klein-base-4b', 'flux2-klein-base-4b', 'base-4b', 'base_4b', '/base/'] as const
 
 const RefinerOptionsSchema = z
   .object({
@@ -106,8 +113,8 @@ export const Txt2ImgRequestSchema = z
     width: z.number().int().min(8).max(8192),
     height: z.number().int().min(8).max(8192),
     steps: z.number().int().min(1),
-    cfg: z.number().optional(),  // Diffusion models (SD, SDXL)
-    distilled_cfg: z.number().optional(),  // Distilled-guidance engines (Flux, Chroma)
+    cfg: z.number().optional(),  // Classic CFG models (SD, SDXL, FLUX.2 base-4B)
+    distilled_cfg: z.number().optional(),  // Distilled-guidance models (Flux.1/Chroma + FLUX.2 distilled 4B)
     sampler: z.string().min(1),
     scheduler: z.string().min(1),
     seed: z.number().int(),
@@ -197,6 +204,7 @@ export interface Txt2ImgFormState {
   settingsRevision: number
   engine?: string
   model?: string
+  guidanceMode?: Txt2ImgGuidanceMode
   hires?: HiresFormState
   refiner?: RefinerFormState
   extras?: Record<string, unknown>
@@ -219,17 +227,125 @@ function normalizeSettingsRevision(value: unknown): number {
   return 0
 }
 
-export function buildTxt2ImgPayload(
-  state: Txt2ImgFormState,
+function inferFlux2GuidanceMode(modelRef: unknown): Txt2ImgGuidanceMode | null {
+  const normalized = String(modelRef || '').trim().toLowerCase().replace(/\\+/g, '/')
+  if (!normalized) return null
+  if (FLUX2_BASE_VARIANT_MARKERS.some((marker) => normalized.includes(marker))) return 'cfg'
+  return 'distilled_cfg'
+}
+
+function resolveGuidanceMode(state: Txt2ImgFormState): Txt2ImgGuidanceMode {
+  if (state.guidanceMode === 'cfg' || state.guidanceMode === 'distilled_cfg') {
+    return state.guidanceMode
+  }
+  if (DISTILLED_CFG_ENGINES.includes(state.engine as typeof DISTILLED_CFG_ENGINES[number])) {
+    return 'distilled_cfg'
+  }
+  if (state.engine === 'flux2') {
+    return inferFlux2GuidanceMode(state.model) ?? 'distilled_cfg'
+  }
+  return 'cfg'
+}
+
+function buildNormalizedHiresOptions(
+  state: Pick<Txt2ImgFormState, 'prompt' | 'negativePrompt' | 'hires'>,
+  guidanceMode: Txt2ImgGuidanceMode,
   opts: { hiresFallbackOnOom?: boolean; hiresMinTile?: number } = {},
-): Txt2ImgRequest {
-  const isDistilledCfgModel = DISTILLED_CFG_ENGINES.includes(state.engine as typeof DISTILLED_CFG_ENGINES[number])
+): z.infer<typeof HiresOptionsSchema> | null {
+  if (!state.hires?.enabled) return null
+
   const hiresFallbackOnOom = opts.hiresFallbackOnOom ?? true
   const hiresMinTilePrefRaw = opts.hiresMinTile
   const hiresMinTilePref = (typeof hiresMinTilePrefRaw === 'number' && Number.isFinite(hiresMinTilePrefRaw))
     ? Math.max(1, Math.trunc(hiresMinTilePrefRaw))
     : 128
-  
+  const hiresPrompt = resolveTextOverride(state.prompt, state.hires.prompt)
+  const hiresNegativePrompt = resolveTextOverride(state.negativePrompt, state.hires.negativePrompt)
+  const tile = state.hires.tile ?? { tile: 256, overlap: 16 }
+  const tileSize = Math.max(1, Math.trunc(Number(tile.tile)))
+  const overlap = Math.max(0, Math.trunc(Number(tile.overlap)))
+  const minTile = Math.max(1, Math.min(tileSize, hiresMinTilePref))
+  const checkpoint = String(state.hires.checkpoint ?? '').trim()
+  const sampler = String(state.hires.sampler ?? '').trim()
+  const scheduler = String(state.hires.scheduler ?? '').trim()
+  const modules = Array.isArray(state.hires.modules)
+    ? state.hires.modules.map((entry) => String(entry ?? '').trim()).filter((entry) => entry.length > 0)
+    : []
+  const guidanceValue = guidanceMode === 'distilled_cfg'
+    ? state.hires.distilledCfg
+    : state.hires.cfg
+
+  return HiresOptionsSchema.parse({
+    enable: true,
+    denoise: state.hires.denoise,
+    scale: state.hires.scale,
+    resize_x: state.hires.resizeX,
+    resize_y: state.hires.resizeY,
+    steps: state.hires.steps,
+    upscaler: state.hires.upscaler,
+    tile: {
+      tile: tileSize,
+      overlap,
+      fallback_on_oom: Boolean(hiresFallbackOnOom),
+      min_tile: minTile,
+    },
+    checkpoint: checkpoint || undefined,
+    modules: modules.length > 0 ? modules : undefined,
+    sampler: sampler || undefined,
+    scheduler: scheduler || undefined,
+    prompt: hiresPrompt,
+    negative_prompt: hiresNegativePrompt,
+    ...(Number.isFinite(Number(guidanceValue))
+      ? (guidanceMode === 'distilled_cfg'
+          ? { distilled_cfg: Number(guidanceValue) }
+          : { cfg: Number(guidanceValue) })
+      : {}),
+    refiner: state.hires.refiner?.enabled
+      ? {
+          enable: true,
+          switch_at_step: state.hires.refiner.swapAtStep,
+          cfg: state.hires.refiner.cfg,
+          seed: state.hires.refiner.seed,
+          model: String(state.hires.refiner.model ?? '').trim() || undefined,
+        }
+      : undefined,
+  })
+}
+
+export function buildImg2ImgHiresPayloadFields(
+  state: Pick<Txt2ImgFormState, 'prompt' | 'negativePrompt' | 'hires'>,
+  guidanceMode: Txt2ImgGuidanceMode,
+  opts: { hiresFallbackOnOom?: boolean; hiresMinTile?: number } = {},
+): Record<string, unknown> {
+  const hires = buildNormalizedHiresOptions(state, guidanceMode, opts)
+  if (!hires) return {}
+
+  const payload: Record<string, unknown> = {
+    img2img_hires_enable: true,
+    img2img_hires_denoise: hires.denoise,
+    img2img_hires_scale: hires.scale,
+    img2img_hires_resize_x: hires.resize_x,
+    img2img_hires_resize_y: hires.resize_y,
+    img2img_hires_steps: hires.steps,
+    img2img_hires_upscaler: hires.upscaler,
+    img2img_hires_tile: hires.tile,
+    img2img_hires_prompt: hires.prompt ?? '',
+    img2img_hires_neg_prompt: hires.negative_prompt ?? '',
+  }
+  if (hires.sampler) payload.img2img_hires_sampling = hires.sampler
+  if (hires.scheduler) payload.img2img_hires_scheduler = hires.scheduler
+  if (typeof hires.cfg === 'number') payload.img2img_hires_cfg = hires.cfg
+  if (typeof hires.distilled_cfg === 'number') payload.img2img_hires_distilled_cfg = hires.distilled_cfg
+  return payload
+}
+
+export function buildTxt2ImgPayload(
+  state: Txt2ImgFormState,
+  opts: { hiresFallbackOnOom?: boolean; hiresMinTile?: number } = {},
+): Txt2ImgRequest {
+  const guidanceMode = resolveGuidanceMode(state)
+  const isDistilledCfgModel = guidanceMode === 'distilled_cfg'
+
   const payload: Record<string, unknown> = {
     device: normalizeDevice(state.device),
     settings_revision: normalizeSettingsRevision(state.settingsRevision),
@@ -246,8 +362,8 @@ export function buildTxt2ImgPayload(
     payload.clip_skip = Math.trunc(state.clipSkip)
   }
   
-  // Distilled-guidance engines: use distilled_cfg, no CFG/negative prompt (single-branch conditioning)
-  // CFG engines: use cfg with negative prompt
+  // Distilled-guidance models: use distilled_cfg, no CFG/negative prompt (single-branch conditioning)
+  // CFG models: use cfg with negative prompt
   if (isDistilledCfgModel) {
     payload.distilled_cfg = state.guidanceScale
   } else {
@@ -273,44 +389,9 @@ export function buildTxt2ImgPayload(
     batch_size: state.batchSize,
     batch_count: state.batchCount,
   }
-  if (state.hires?.enabled) {
-    const hiresPrompt = resolveTextOverride(state.prompt, state.hires.prompt)
-    const hiresNegativePrompt = resolveTextOverride(state.negativePrompt, state.hires.negativePrompt)
-    const tile = state.hires.tile ?? { tile: 256, overlap: 16 }
-    const tileSize = Math.max(1, Math.trunc(tile.tile))
-    const minTile = Math.max(1, Math.min(tileSize, hiresMinTilePref))
-    extras.hires = {
-      enable: true,
-      denoise: state.hires.denoise,
-      scale: state.hires.scale,
-      resize_x: state.hires.resizeX,
-      resize_y: state.hires.resizeY,
-      steps: state.hires.steps,
-      upscaler: state.hires.upscaler,
-      tile: {
-        tile: tileSize,
-        overlap: Math.trunc(tile.overlap),
-        fallback_on_oom: Boolean(hiresFallbackOnOom),
-        min_tile: minTile,
-      },
-      checkpoint: state.hires.checkpoint,
-      modules: state.hires.modules && state.hires.modules.length > 0 ? state.hires.modules : undefined,
-      sampler: state.hires.sampler,
-      scheduler: state.hires.scheduler,
-      prompt: hiresPrompt,
-      negative_prompt: hiresNegativePrompt,
-      cfg: state.hires.cfg,
-      distilled_cfg: state.hires.distilledCfg,
-      refiner: state.hires.refiner?.enabled
-        ? {
-            enable: true,
-            switch_at_step: state.hires.refiner.swapAtStep,
-            cfg: state.hires.refiner.cfg,
-            seed: state.hires.refiner.seed,
-            model: state.hires.refiner.model,
-          }
-        : undefined,
-    }
+  const hires = buildNormalizedHiresOptions(state, guidanceMode, opts)
+  if (hires) {
+    extras.hires = hires
   }
   if (state.refiner?.enabled) {
     extras.refiner = {

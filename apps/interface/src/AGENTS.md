@@ -1,7 +1,7 @@
 <!-- tags: frontend, interface-src, overview -->
 # apps/interface/src Overview
 Date: 2025-10-28
-Last Review: 2026-02-28
+Last Review: 2026-03-05
 Status: Active
 
 ## Purpose
@@ -41,4 +41,5 @@ Status: Active
 - 2026-02-08: Hires controls now follow the Basic Parameters row organization, are hidden in img2img mode by policy, and txt2img hires prompt overrides now fallback to base prompts when blank.
 - 2026-02-17: Top navigation removed `models`/`xyz`, added `/gallery` placeholder route/tab, and moved XYZ workflow into an embeddable card used inside image-tab Generation Parameters (with `/xyz` kept as compatibility wrapper).
 - 2026-03-02: `App.vue` top navigation no longer renders the `settings` link and now excludes `chroma` model tabs from the dynamic nav list; routes/contracts remain intact.
+- 2026-03-05: FLUX.2 image tabs now follow the backend Klein 4B / base-4B slice end-to-end: `utils/engine_taxonomy.ts` resolves `engine="flux2"`, quicksettings render one `Qwen3-4B` selector, and stale img2img/Kontext state is normalized away from persisted tabs.
 - 2026-02-17: Footer branding now links to the repository/commit and `@lucas_sangoi` profile; Run progress UI is standardized via shared `components/results/RunProgressStatus.vue` across generation surfaces.

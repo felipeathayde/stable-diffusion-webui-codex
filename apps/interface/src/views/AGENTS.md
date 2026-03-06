@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-05
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -11,7 +11,7 @@ Status: Active
 - Views should compose reusable components and stores; avoid duplicating logic that belongs in shared modules.
 - Keep routes documented in `apps/interface/src/router.ts` and the UI taxonomy in `.sangoi/frontend/guidelines/`.
 - 2026-03-03: `Home.vue` Docs & Help reference paths now point only to repo-shipped docs under `apps/**` and root docs (`SUBSYSTEM-MAP.md`, `apps/**/AGENTS.md`), with no `.sangoi` path mentions.
-- 2026-03-05: `Home.vue` and `ModelsList.vue` tab-creation selectors now include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` now persists per-tab profiles under a dedicated `flux2` key and applies Kontext defaults for both `flux1` and `flux2`.
+- 2026-03-06: `Home.vue` and `ModelsList.vue` tab-creation selectors include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` persists per-tab profiles under a dedicated `flux2` key, preserves capability-driven img2img state, resolves FLUX.2 CFG/negative-prompt semantics from the selected Klein 4B vs base-4B checkpoint, keeps FLUX.2 img2img denoise truthful/visible, and gates img2img hires through shared capability + mask policy (Kontext defaults remain FLUX.1-only).
 - All generation workspaces live under model tabs (`/models/:tabId`):
   - `ModelTabView.vue` mounts `WANTab.vue` when `tab.type === 'wan'`.
 - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|flux2|chroma|zimage|anima`.
@@ -22,7 +22,7 @@ Status: Active
 - 2025-12-29: `WANTab.vue` uses `WanSubHeader` for consistent section headers and keeps “Video” + “Video Output” as sequential (separate) cards; Video exposes a compact Aspect selector inline with the Width slider.
 - 2025-12-29: `WANTab.vue` renders the History card above the results viewer for parity with `ImageModelTab.vue`.
 - 2025-12-31: `ImageModelTab.vue` now syncs Width/Height from the init image (auto on upload and “Send to Img2Img”, plus a manual re-sync action) and applies Kontext-friendly defaults on FLUX.1 init-image runs without overriding custom values.
-- 2026-01-29: `ImageModelTab.vue` now exposes Codex-native masked img2img (“inpaint”) controls alongside init-image img2img (mask upload + enforcement mode + full-res “Only masked” + invert/round/blur + masked-content mode); Flux.1 (Kontext) masking remains explicitly disabled/unsupported for now.
+- 2026-01-29: `ImageModelTab.vue` now exposes Codex-native masked img2img (“inpaint”) controls alongside init-image img2img (mask upload + enforcement mode + full-res “Only masked” + invert/round/blur + masked-content mode); engines that still reject mask/inpaint semantics (`flux1_kontext`) keep init-image img2img but clear/hide mask state through the shared taxonomy gate.
 - 2026-02-08: `ImageModelTab.vue` no longer renders a local “Use Mask (inpaint)” toggle; IMG2IMG/INPAINT mode toggles are now owned by `QuickSettingsBar.vue`, while mask asset/enforcement controls remain in-panel when `params.useMask` is enabled.
 - 2026-01-01: `ImageModelTab.vue` now exposes per-tab `CLIP Skip` (SD15/SDXL/FLUX.1) and persists it in saved profiles; requests send `clip_skip`/`img2img_clip_skip` to the backend.
 - 2026-01-01: `ImageModelTab.vue` and `WANTab.vue` History sections now use `WanSubHeader` and hide per-item actions until hover (with horizontal scroll when needed) to save space.
@@ -39,7 +39,6 @@ Status: Active
 - 2026-03-02: `ToolsTab.vue` removed the standalone `CodexPack v1 Packer` card from the Tools UI; Tools now exposes only the GGUF converter workflow.
 - 2026-03-05: `ToolsTab.vue` now adds a second `Safetensors Merger` card (`POST /api/tools/merge-safetensors` + polling on `/api/tools/merge-safetensors/{job_id}`) with source/output browse, overwrite toggle, deterministic directory-picked output naming (`<stem>-merged.safetensors`), a dedicated merge status block, and a source contract limited to `.safetensors`, `*.safetensors.index.json`, or a folder (no generic `.index.json` picker/filter copy).
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.
-- 2026-01-21: WAN stage LoRA selection became sha-based (`loraSha` in params → payload `lora_sha`) for the old stage-level control path.
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.
 - 2026-02-17: `WANTab.vue` Video Aspect selector now includes `Image` mode; when selected, width/height lock to the current init-image aspect ratio (auto-falls back to `Free` if no init image is available).
 - 2026-02-17: `WANTab.vue` now exposes WAN attention mode (`global|sliding`) and windowed img2vid controls with explicit tooltips for `anchor_alpha` and `chunk_seed_mode`; frame values normalize to nearest `4n+1` on blur and immediately before Generate (including direct click on Generate).
@@ -65,12 +64,14 @@ Status: Active
 - 2026-02-06: `ImageModelTab.vue` now narrows to typed image tabs and removed core helper casts (`setParams`/`setHires`/`setRefiner`/history apply) as part of Phase 5 `any` reduction.
 - 2026-02-08: `ImageModelTab.vue` swap-model controls now bind step-pointer semantics (`swapAtStep`) for both global and hires nested swap config (UI clamps to min 1).
 - 2026-02-08: `ImageModelTab.vue` now composes `Img2ImgInpaintParamsCard.vue` for detailed img2img/inpaint controls (init-image, denoise, mask parameters), removing the large inline block while keeping parent-owned state updates and normalization.
-- 2026-02-08: `ImageModelTab.vue` now hides `HiresSettingsCard` while `useInitImage=true` (img2img mode), keeps global swap-model controls visible, and routes hires card visibility/reset behavior through `resolveHiresModePolicy(...)`.
+- 2026-03-06: `ImageModelTab.vue` now routes `HiresSettingsCard` visibility/reset through `resolveHiresModePolicy(...)`, so txt2img and unmasked img2img can share the same hires card when the active engine supports hires, while masked img2img still hides and resets hires state.
 - 2026-02-17: Added `Gallery.vue` as a placeholder route/tab; top nav removed direct `models`/`xyz` static tabs while keeping model tabs dynamic and `/xyz` available as a compatibility route.
 - 2026-02-17: `ImageModelTab.vue` now embeds XYZ controls/results at the end of Generation Parameters through `components/XyzSweepCard.vue`.
 - 2026-02-17: Run cards across `ImageModelTab.vue`, `WANTab.vue`, and `Upscale.vue` now use shared `components/results/RunProgressStatus.vue` for the canonical Stage/Progress/Step/ETA block.
 - 2026-02-17: `ImageModelTab.vue` init-image controls now use PNG-Info-style dropzone handling (thumbnail preview + click-to-zoom full-screen).
-- 2026-02-18: In `useInitImage` mode, `ImageModelTab.vue` now renders `Img2ImgBasicParametersCard.vue` (hires-like layout with resize-type/upscaler gating) instead of the txt2img `BasicParametersCard.vue`; this is layout/state parity only (img2img payload remains hires-free).
+- 2026-03-06: In `useInitImage` mode, `ImageModelTab.vue` renders `Img2ImgBasicParametersCard.vue` (hires-like layout with resize-type/upscaler gating) instead of the txt2img `BasicParametersCard.vue`; img2img payload wiring remains in `useGeneration(tabId)` and can now emit hires when the active engine supports it and masking is off.
+- 2026-03-06: `ImageModelTab.vue` now keeps the img2img denoise slider visible for FLUX.2 and no longer rewrites stored FLUX.2 denoise back to `1.0`.
+- 2026-03-06: `Test.vue` now routes WAN txt2vid/img2vid runs through the shared `buildWanTxt2VidPayload(...)` / `buildWanImg2VidPayload(...)` builders, sends canonical `device` + `wan_high/wan_low.loras[]` + explicit `img2vid_mode`, uses metadata repo ids instead of metadata-dir wording, and keeps width/height input on a 16px WAN-safe grid.
 - 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.
 - 2026-02-20: `ImageModelTab.vue` and `WANTab.vue` History strips now render square 1:1 thumbnail cards (image fit/contain, no inline metadata text); clicking a card opens a details modal with organized run metadata (mode/time/status/task), prompt/negative prompt, params snapshot, and explicit Load/Apply/Copy actions.
 - 2026-02-21: `WANTab.vue` `img2vid` init-image input now reuses `components/Img2ImgInpaintParamsCard.vue` (with `useMask=false`) instead of mounting `InitialImageCard.vue` directly, keeping shared init-image dropzone/thumb/zoom behavior and preserving the guided selector anchor `#wan-guided-init-image`.
@@ -79,7 +80,7 @@ Status: Active
 - 2026-03-02: `WANTab.vue` and `ImageModelTab.vue` now render matching two-line results empty states (bold title + caption); WAN caption text is `Generate to see results here.` and image tabs keep `No images yet` + `Generate to see results here.` copy.
 - 2026-03-04: `WANTab.vue` exported-video preview now opens a dedicated full-screen video overlay from a center hitbox trigger (outside-click and `Esc` close), while keeping in-card `controls` and blocking native double-click fullscreen in both in-card and overlay videos.
 - 2026-03-02: `ImageModelTab.vue` Results header actions now match WAN button styling (`Save snapshot`/`Copy params` outlined), and the image `ResultViewer` no longer forces a left-column-synced minimum height (content-fit behavior like WAN).
-- 2026-03-02: Negative prompt fields are now CFG-gated in generation views: `ImageModelTab.vue` hides the main negative prompt when base CFG is `<= 1`, `WANTab.vue` hides High/Low negative prompts when each stage CFG is `<= 1`, and `HiresSettingsCard.vue` handles the same rule for second-pass overrides.
+- 2026-03-06: Negative prompt fields are now checkpoint-aware in generation views: `ImageModelTab.vue` hides the main negative prompt when the active model does not support it (for example FLUX.2 distilled 4B) or base CFG is `<= 1`, `WANTab.vue` hides High/Low negative prompts when each stage CFG is `<= 1`, and `HiresSettingsCard.vue` handles the same CFG rule for second-pass overrides.
 - 2026-03-02: `Home.vue`/`App.vue` interface now hides `chroma` model tabs from tab-management/navigation surfaces, and the top nav no longer renders a `settings` tab link (routes remain available for direct navigation).
 - 2026-03-02: `ImageModelTab.vue` no longer binds a hires-card `fallbackOnOom` toggle event; hires tile controls now expose only Tile/Overlap/Min-tile editing while preserving shared global `min_tile` preference wiring.
 - 2026-03-02: `ImageModelTab.vue` now wires shared `guidanceAdvanced` + `guidanceSupport` into both swap-model cards (global + hires `Second-Pass Swap Model`) and handles APG edits through `setGuidanceAdvanced`; refiner seed remains in persisted params/payload defaults but is no longer editable in those UI cards, and each swap card keeps its own local Advanced panel-open state.

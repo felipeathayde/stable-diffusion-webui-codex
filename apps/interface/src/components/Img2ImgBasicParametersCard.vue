@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Img2img-focused Basic Parameters card with hires-like structure.
-Renders sampler/scheduler/steps, dimensions, resize-mode + upscaler controls, and seed/CFG/denoise
+Renders sampler/scheduler/steps, dimensions, resize-mode + upscaler controls, and seed/CFG with optional denoise
 for init-image mode without hires-only prompt/checkpoint swap controls, plus optional advanced CFG/APG controls
 gated by per-engine capabilities.
 
@@ -231,6 +231,7 @@ Symbols (top-level; keep in sync; no ghosts):
         </SliderField>
 
         <SliderField
+          v-if="showDenoise"
           class="gc-col"
           label="Denoise"
           :modelValue="denoiseStrength"
@@ -499,6 +500,7 @@ const props = withDefaults(defineProps<{
   steps: number
   cfgScale: number
   denoiseStrength: number
+  showDenoise?: boolean
   seed: number
   width: number
   height: number
@@ -536,6 +538,7 @@ const props = withDefaults(defineProps<{
   minCfg: 0,
   maxCfg: 30,
   cfgStep: 0.5,
+  showDenoise: true,
   cfgLabel: 'CFG',
   minWidth: 64,
   maxWidth: 8192,

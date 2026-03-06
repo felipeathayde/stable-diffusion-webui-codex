@@ -6,11 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Internal/test view for WAN GGUF harness (manual request builder + SSE streaming preview).
+Purpose: Internal/test view for WAN GGUF harness (canonical WAN payload builders + SSE streaming preview).
 Used for debugging WAN video generation, asset selection, and streaming task events without going through the full Model Tabs UX.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Test` (component): WAN GGUF harness UI; builds payloads, starts tasks, subscribes to SSE events, and renders previews/results.
+- `Test` (component): WAN GGUF harness UI; builds canonical WAN payloads, starts tasks, subscribes to SSE events, and renders previews/results.
 - `toDataUrl` (function): Converts a `GeneratedImage` payload into a data URL for rendering.
 - `stopStream` (function): Unsubscribes from the active task SSE stream (if any).
 - `readFileAsDataURL` (function): Reads a `File` into a data URL (used for init image upload).
@@ -46,10 +46,10 @@ Symbols (top-level; keep in sync; no ghosts):
                 </datalist>
               </div>
               <div class="field-stack">
-                <label class="label" for="metadataDir">Metadata Dir (input list)</label>
-                <input id="metadataDir" class="ui-input" list="dl-meta" v-model="state.metadataDir" placeholder="apps/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <label class="label" for="metadataRepo">Metadata Repo (input list)</label>
+                <input id="metadataRepo" class="ui-input" list="dl-meta" v-model="state.metadataRepo" placeholder="Wan-AI/Wan2.2-T2V-A14B-Diffusers" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-meta">
-                  <option v-for="opt in options.metadata" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
+                  <option v-for="opt in options.metadata" :key="opt.name" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
             </div>
@@ -68,11 +68,11 @@ Symbols (top-level; keep in sync; no ghosts):
                 <div class="test-grid test-grid-two">
                   <div>
                     <label class="label" for="width">Width</label>
-                    <input id="width" class="ui-input" type="number" min="64" step="8" v-model.number="state.width" />
+                    <input id="width" class="ui-input" type="number" min="64" step="16" v-model.number="state.width" />
                   </div>
                   <div>
                     <label class="label" for="height">Height</label>
-                    <input id="height" class="ui-input" type="number" min="64" step="8" v-model.number="state.height" />
+                    <input id="height" class="ui-input" type="number" min="64" step="16" v-model.number="state.height" />
                   </div>
                 </div>
                 <div class="test-grid test-grid-two">
@@ -186,14 +186,10 @@ Symbols (top-level; keep in sync; no ghosts):
 
           <div class="test-section">
             <h4 class="h5">Execution</h4>
-            <div class="test-grid test-grid-three">
+            <div class="test-grid test-grid-two">
               <div>
                 <label class="label" for="sampler">Sampler</label>
                 <input id="sampler" class="ui-input" type="text" v-model="state.sampler" placeholder="euler" />
-              </div>
-              <div>
-                <label class="label" for="scheduler">Scheduler</label>
-                <input id="scheduler" class="ui-input" type="text" v-model="state.scheduler" placeholder="simple" />
               </div>
               <div>
                 <label class="label" for="format">Format</label>
@@ -236,6 +232,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { startImg2Vid, startTxt2Vid, subscribeTask, fetchModelInventory } from '../api/client'
+import { buildWanImg2VidPayload, buildWanTxt2VidPayload } from '../api/payloads_video'
 import ResultViewer from '../components/ResultViewer.vue'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 
@@ -251,8 +248,7 @@ const state = reactive({
   initImageName: '',
   vaeSha: '',
   textEncoderSha: '',
-  tokenizerDir: '',
-  metadataDir: '',
+  metadataRepo: '',
   high: {
     modelSha: '',
     steps: 2, cfgScale: 3,
@@ -265,7 +261,7 @@ const state = reactive({
     useLora: false,
     loraSha: '', loraWeight: 1.0,
   },
-  sampler: 'euler', scheduler: 'simple', wanFormat: 'gguf',
+  sampler: 'euler', wanFormat: 'gguf',
   // Offload level and TE kernel are controlled via env vars only
   seed: -1,
 })
@@ -278,7 +274,7 @@ let unsubscribe: (() => void) | null = null
 const options = reactive({
   vaes: [] as Array<{ name: string; sha256: string }>,
   textEncoders: [] as Array<{ name: string; sha256: string }>,
-  metadata: [] as Array<{ name: string; path: string }>,
+  metadata: [] as Array<{ name: string }>,
   loras: [] as Array<{ name: string; sha256: string }>,
   wanHigh: [] as Array<{ name: string; sha256: string }>,
   wanLow: [] as Array<{ name: string; sha256: string }>,
@@ -291,6 +287,8 @@ const maps = reactive({
   lora: {} as Record<string, string>,
   wanHigh: {} as Record<string, string>,
   wanLow: {} as Record<string, string>,
+  wanHighNames: {} as Record<string, string>,
+  wanLowNames: {} as Record<string, string>,
 })
 
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
@@ -316,7 +314,7 @@ function readFileAsDataURL(file: File): Promise<string> {
     options.textEncoders = (inv.text_encoders || [])
       .filter((t: any) => typeof t?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(t.sha256)))
       .map((t: any) => ({ name: String(t.name || ''), sha256: String(t.sha256 || '').toLowerCase() }))
-    options.metadata = (inv.metadata || []).map((m: any) => ({ name: m.name, path: m.path }))
+    options.metadata = (inv.metadata || []).map((m: any) => ({ name: String(m?.name || '') }))
     options.loras = (inv.loras || [])
       .filter((l: any) => typeof l?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(l.sha256)))
       .map((l: any) => ({ name: String(l.name || ''), sha256: String(l.sha256 || '').toLowerCase() }))
@@ -326,13 +324,15 @@ function readFileAsDataURL(file: File): Promise<string> {
       .filter((e: any) => typeof e?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(e.sha256)))
       .map((e: any) => ({ name: String(e.name || ''), sha256: String(e.sha256 || '').toLowerCase() }))
     options.wanLow = options.wanHigh
-    // Build name->path maps for resolution at submit
+    // Build inventory-name -> canonical asset maps for resolution at submit
     maps.vae = Object.fromEntries(options.vaes.map((x) => [x.name, x.sha256]))
     maps.te = Object.fromEntries(options.textEncoders.map((x) => [x.name, x.sha256]))
-    maps.meta = Object.fromEntries(options.metadata.map((x) => [x.name, x.path]))
+    maps.meta = Object.fromEntries(options.metadata.map((x) => [x.name, x.name] as const))
     maps.lora = Object.fromEntries(options.loras.map((x) => [x.name, x.sha256]))
     maps.wanHigh = Object.fromEntries(options.wanHigh.map((x) => [x.name, x.sha256]))
+    maps.wanHighNames = Object.fromEntries(options.wanHigh.map((x) => [x.sha256, x.name]))
     maps.wanLow = maps.wanHigh
+    maps.wanLowNames = maps.wanHighNames
   } catch (err) {
     console.error('[inventory] failed to load', err)
   }
@@ -359,6 +359,7 @@ async function generate(): Promise<void> {
   errorMessage.value = ''
   framesResult.value = []
   try {
+    const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
     const shaRe = /^[0-9a-f]{64}$/i
     const resolveSha = (val: string, map: Record<string, string>) => {
       const raw = String(val || '').trim()
@@ -368,54 +369,111 @@ async function generate(): Promise<void> {
       if (!shaRe.test(mapped)) throw new Error(`expected sha256 (64 hex), got: ${mapped}`)
       return mapped.toLowerCase()
     }
-    const resolvePath = (val: string, map: Record<string, string>) => (map && map[val]) ? map[val] : val
+    const resolveMetadataRepo = (val: string, map: Record<string, string>) => {
+      const raw = String(val || '').trim()
+      if (!raw) return ''
+      const mapped = (map && map[raw]) ? map[raw] : raw
+      if (!/^[^/]+\/[^/]+$/.test(mapped)) {
+        throw new Error(`Invalid metadata repo '${raw}'. Expected 'Org/Repo'.`)
+      }
+      return mapped
+    }
+    const buildStageLoras = (stageName: 'high' | 'low', useLora: boolean, loraSha: string, weight: number) => {
+      if (!useLora || !String(loraSha || '').trim()) return []
+      if (!Number.isFinite(weight)) throw new Error(`WAN ${stageName} LoRA weight must be a finite number`)
+      return [{ sha: resolveSha(loraSha, maps.lora), weight }]
+    }
+    const inferMetadataRepo = (highSha: string, lowSha: string) => {
+      const hint = `${maps.wanHighNames[highSha] || highSha} ${maps.wanLowNames[lowSha] || lowSha}`.toLowerCase()
+      if (hint.includes('ti2v') || hint.includes('5b')) return 'Wan-AI/Wan2.2-TI2V-5B-Diffusers'
+      if (state.useInitImage) return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
+      return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
+    }
+    const resolveWanFormat = (): 'auto' | 'diffusers' | 'gguf' => {
+      const raw = String(state.wanFormat || '').trim().toLowerCase()
+      if (raw === 'auto' || raw === 'diffusers' || raw === 'gguf') return raw
+      throw new Error(`unsupported WAN format '${state.wanFormat}'`)
+    }
 
     const highSha = resolveSha(state.high.modelSha, maps.wanHigh)
     const lowSha = resolveSha(state.low.modelSha, maps.wanLow)
     const vaeSha = resolveSha(state.vaeSha, maps.vae)
     const teSha = resolveSha(state.textEncoderSha, maps.te)
-    const metaDir = resolvePath(state.metadataDir, maps.meta)
-
-    const extras: Record<string, unknown> = {
-      wan_high: { sampler: state.sampler, scheduler: state.scheduler, steps: state.high.steps, cfg_scale: state.high.cfgScale, model_sha: highSha || undefined },
-      wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_sha: lowSha || undefined },
-      wan_vae_sha: vaeSha || undefined,
-      wan_tenc_sha: teSha || undefined,
-      wan_metadata_dir: metaDir || undefined,
+    const metadataRepo = resolveMetadataRepo(state.metadataRepo, maps.meta) || inferMetadataRepo(highSha, lowSha)
+    const common = {
+      device: quick.currentDevice || 'cpu',
+      settingsRevision: quick.getSettingsRevision(),
+      width: state.width,
+      height: state.height,
+      fps: state.fps,
+      frames: state.frames,
+      attentionMode: 'global' as const,
+      format: resolveWanFormat(),
+      high: {
+        modelSha: highSha,
+        prompt: state.prompt,
+        negativePrompt: state.negative,
+        sampler: state.sampler,
+        steps: state.high.steps,
+        cfgScale: state.high.cfgScale,
+        seed: state.seed,
+        loras: buildStageLoras('high', state.high.useLora, state.high.loraSha, state.high.loraWeight),
+      },
+      low: {
+        modelSha: lowSha,
+        prompt: state.prompt,
+        negativePrompt: state.negative,
+        sampler: state.sampler,
+        steps: state.low.steps,
+        cfgScale: state.low.cfgScale,
+        seed: state.seed,
+        loras: buildStageLoras('low', state.low.useLora, state.low.loraSha, state.low.loraWeight),
+      },
+      assets: {
+        metadataRepo,
+        textEncoderSha: teSha,
+        vaeSha,
+      },
+      output: {
+        format: 'video/h264-mp4',
+        pixFmt: 'yuv420p',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+        saveMetadata: true,
+        saveOutput: true,
+        trimToAudio: false,
+        returnFrames: true,
+      },
+      interpolation: {
+        targetFps: 0,
+      },
+      upscaling: {
+        enabled: false,
+        model: '',
+        resolution: 0,
+        maxResolution: 0,
+        batchSize: 1,
+        uniformBatchSize: false,
+        temporalOverlap: 0,
+        prependFrames: 0,
+        colorCorrection: 'none' as const,
+        inputNoiseScale: 0,
+        latentNoiseScale: 0,
+      },
     }
-    // Offload/kernel controls removed (payload/options-driven; no env overrides).
-    if (state.high.useLora && state.high.loraSha) { (extras.wan_high as any).lora_sha = resolveSha(state.high.loraSha, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }
-    if (state.low.useLora && state.low.loraSha) { (extras.wan_low as any).lora_sha = resolveSha(state.low.loraSha, maps.lora); (extras.wan_low as any).lora_weight = state.low.loraWeight }
+
     if (state.useInitImage && state.initImageData) {
-      const payload = {
-        __strict_version: 1,
-        img2vid_prompt: state.prompt,
-        img2vid_neg_prompt: state.negative,
-        img2vid_width: state.width,
-        img2vid_height: state.height,
-        img2vid_num_frames: state.frames,
-        img2vid_fps: state.fps,
-        img2vid_seed: state.seed,
-        img2vid_init_image: state.initImageData,
-        ...extras,
-      }
-      const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
-      const { task_id } = await startImg2Vid({ codex_device: quick.currentDevice, ...payload })
+      const payload = buildWanImg2VidPayload({
+        ...common,
+        initImageData: state.initImageData,
+        img2vidMode: 'solo',
+      })
+      const { task_id } = await startImg2Vid(payload)
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     } else {
-      const payload = {
-        __strict_version: 1,
-        txt2vid_prompt: state.prompt,
-        txt2vid_neg_prompt: state.negative,
-        txt2vid_width: state.width,
-        txt2vid_height: state.height,
-        txt2vid_num_frames: state.frames,
-        txt2vid_fps: state.fps,
-        txt2vid_seed: state.seed,
-        ...extras,
-      }
-      const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
-      const { task_id } = await startTxt2Vid({ codex_device: quick.currentDevice, ...payload })
+      const payload = buildWanTxt2VidPayload(common)
+      const { task_id } = await startTxt2Vid(payload)
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     }
   } catch (e) {
@@ -465,7 +523,7 @@ function onTaskEvent(ev: TaskEvent): void {
   }
 }
 
-const STORAGE_KEY = 'codex.test.profile.v1'
+const STORAGE_KEY = 'codex.test.profile.v2'
 
 // Load defaults from localStorage on first mount
 ;(function loadDefaults() {
@@ -483,8 +541,7 @@ const STORAGE_KEY = 'codex.test.profile.v1'
     assign('useInitImage', !!snap.useInitImage)
     assign('vaeSha', snap.vaeSha)
     assign('textEncoderSha', snap.textEncoderSha)
-    assign('tokenizerDir', snap.tokenizerDir)
-    assign('metadataDir', snap.metadataDir)
+    assign('metadataRepo', snap.metadataRepo)
     // high/low blocks
     if (snap.high) {
       state.high.modelSha = snap.high.modelSha ?? state.high.modelSha
@@ -503,7 +560,6 @@ const STORAGE_KEY = 'codex.test.profile.v1'
       state.low.loraWeight = Number(snap.low.loraWeight ?? 1.0)
     }
     assign('sampler', snap.sampler)
-    assign('scheduler', snap.scheduler)
     assign('wanFormat', snap.wanFormat)
     assign('seed', Number(snap.seed))
   } catch (e) {
@@ -524,12 +580,10 @@ function saveProfile(): void {
       useInitImage: state.useInitImage,
       vaeSha: state.vaeSha,
       textEncoderSha: state.textEncoderSha,
-      tokenizerDir: state.tokenizerDir,
-      metadataDir: state.metadataDir,
+      metadataRepo: state.metadataRepo,
       high: { ...state.high },
       low: { ...state.low },
       sampler: state.sampler,
-      scheduler: state.scheduler,
       wanFormat: state.wanFormat,
       seed: state.seed,
     }

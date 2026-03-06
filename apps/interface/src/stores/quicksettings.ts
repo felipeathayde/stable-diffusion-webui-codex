@@ -13,11 +13,14 @@ and caches the current `/api/options` revision for generation payload contracts 
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
 sanitized so `tenc_sha` resolution remains deterministic across families (including Anima). VAE state defaults to canonical `built-in`
 when no persisted value exists, request preflight can enforce fail-loud non-empty selection via `requireVaeSelection`, and LoRA SHA mappings
-are refreshed through the store-owned inventory flow (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`).
+are refreshed through the store-owned inventory flow (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`). FLUX.2 override persistence
+stays truthful to the current Klein 4B / base-4B slice by keeping at most one `flux2/*` Qwen selector.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `normalizeTextEncoderSelectionLabels` (function): Normalizes persisted/current TE override labels, deduping values and capping FLUX.2 to one selector.
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
   setters that call API updates, inventory hydrators (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
+  It also exports checkpoint helpers (`resolveModelInfo`, `resolveFlux2CheckpointVariant`) so FLUX.2 guidance semantics can be derived from the selected model without extra request fields.
 */
 
 import { defineStore } from 'pinia'
@@ -57,6 +60,22 @@ const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
 ]
 
 const TEXT_ENCODER_PREFIXES = ['sd15', 'sdxl', 'flux1', 'flux2', 'anima', 'chroma', 'wan22', 'zimage']
+const FLUX2_UNSUPPORTED_VARIANT_MARKERS = [
+  'flux.2-klein-base-9b',
+  'flux2-klein-base-9b',
+  'flux.2-klein-9b',
+  'flux2-klein-9b',
+  'base-9b',
+  '/9b/',
+  '-9b',
+] as const
+const FLUX2_BASE_VARIANT_MARKERS = [
+  'flux.2-klein-base-4b',
+  'flux2-klein-base-4b',
+  'base-4b',
+  'base_4b',
+  '/base/',
+] as const
 
 function normalizeRevision(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -76,6 +95,48 @@ function normalizePath(raw: string): string {
   const normalized = String(raw || '').trim().replace(/\\+/g, '/')
   if (normalized.length <= 1) return normalized
   return normalized.replace(/\/+$/g, '')
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeFlux2Variant(value: unknown): 'distilled' | 'base' | null {
+  const normalized = normalizePath(String(value || '')).toLowerCase()
+  if (!normalized) return null
+  if (normalized === 'base') return 'base'
+  if (normalized === 'distilled' || normalized === 'klein') return 'distilled'
+  if (FLUX2_BASE_VARIANT_MARKERS.some((marker) => normalized.includes(marker))) return 'base'
+  return null
+}
+
+function appendUniqueCandidate(target: string[], seen: Set<string>, value: unknown): void {
+  const normalized = normalizePath(String(value || ''))
+  if (!normalized) return
+  const key = normalized.toLowerCase()
+  if (seen.has(key)) return
+  seen.add(key)
+  target.push(normalized)
+}
+
+function normalizeTextEncoderSelectionLabels(labels: readonly string[]): string[] {
+  const next: string[] = []
+  const seen = new Set<string>()
+  let flux2Selected = false
+
+  for (const raw of labels) {
+    const normalized = normalizePath(String(raw || ''))
+    if (!normalized) continue
+    if (seen.has(normalized)) continue
+    if (normalized.startsWith('flux2/')) {
+      if (flux2Selected) continue
+      flux2Selected = true
+    }
+    seen.add(normalized)
+    next.push(normalized)
+  }
+
+  return next
 }
 
 function pathMatchesRoot(filePath: string, rootPath: string): boolean {
@@ -241,9 +302,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       if (!raw) return
       const parsed = JSON.parse(raw)
       if (!Array.isArray(parsed)) return
-      currentTextEncoders.value = parsed
-        .map((entry) => String(entry).trim())
-        .filter((entry) => entry.length > 0)
+      currentTextEncoders.value = normalizeTextEncoderSelectionLabels(
+        parsed
+          .map((entry) => String(entry).trim())
+          .filter((entry) => entry.length > 0),
+      )
     } catch (err) {
       console.warn('[quicksettings] failed to load text encoder overrides from localStorage', err)
     }
@@ -289,12 +352,13 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       }
     }
 
+    const normalizedNext = normalizeTextEncoderSelectionLabels(next)
     const changed =
-      next.length !== currentTextEncoders.value.length ||
-      next.some((label, index) => label !== currentTextEncoders.value[index])
+      normalizedNext.length !== currentTextEncoders.value.length ||
+      normalizedNext.some((label, index) => label !== currentTextEncoders.value[index])
     if (changed) {
-      currentTextEncoders.value = next
-      saveTextEncoderOverridesToStorage(next)
+      currentTextEncoders.value = normalizedNext
+      saveTextEncoderOverridesToStorage(normalizedNext)
     }
   }
 
@@ -774,6 +838,74 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     return undefined
   }
 
+  function resolveFlux2CheckpointVariant(
+    source: string | ModelInfo | null | undefined,
+  ): 'distilled' | 'base' | null {
+    const raw = typeof source === 'string' ? String(source || '').trim() : ''
+    const model = typeof source === 'string' ? resolveModelInfo(source) : source
+
+    if (model) {
+      const metadata = isRecordObject(model.metadata) ? model.metadata : null
+      if (metadata) {
+        const explicitVariant = normalizeFlux2Variant(
+          metadata.flux2_variant
+          ?? metadata.variant
+          ?? metadata.model_variant
+          ?? metadata['codex.flux2.variant'],
+        )
+        if (explicitVariant) return explicitVariant
+
+        const isDistilled = metadata.is_distilled
+        if (typeof isDistilled === 'boolean') return isDistilled ? 'distilled' : 'base'
+
+        const rawMetadata = isRecordObject(metadata.raw) ? metadata.raw : null
+        if (rawMetadata) {
+          const rawVariant = normalizeFlux2Variant(
+            rawMetadata['codex.flux2.variant']
+            ?? rawMetadata.flux2_variant
+            ?? rawMetadata.variant,
+          )
+          if (rawVariant) return rawVariant
+          const rawIsDistilled = rawMetadata.is_distilled
+          if (typeof rawIsDistilled === 'boolean') return rawIsDistilled ? 'distilled' : 'base'
+        }
+      }
+    }
+
+    const candidates: string[] = []
+    const seen = new Set<string>()
+    if (model) {
+      appendUniqueCandidate(candidates, seen, model.title)
+      appendUniqueCandidate(candidates, seen, model.name)
+      appendUniqueCandidate(candidates, seen, model.model_name)
+      appendUniqueCandidate(candidates, seen, model.filename)
+      appendUniqueCandidate(candidates, seen, model.family_hint)
+      const metadata = isRecordObject(model.metadata) ? model.metadata : null
+      if (metadata) {
+        appendUniqueCandidate(candidates, seen, metadata.repo_hint)
+        appendUniqueCandidate(candidates, seen, metadata.repo_id)
+        appendUniqueCandidate(candidates, seen, metadata.huggingface_repo)
+        appendUniqueCandidate(candidates, seen, metadata._name_or_path)
+      }
+    }
+    appendUniqueCandidate(candidates, seen, raw)
+
+    if (candidates.length === 0) return null
+
+    for (const candidate of candidates) {
+      const normalized = normalizePath(candidate).toLowerCase()
+      if (!normalized) continue
+      if (FLUX2_UNSUPPORTED_VARIANT_MARKERS.some((marker) => normalized.includes(marker))) {
+        return null
+      }
+      if (FLUX2_BASE_VARIANT_MARKERS.some((marker) => normalized.includes(marker))) {
+        return 'base'
+      }
+    }
+
+    return 'distilled'
+  }
+
   function resolveModelSha(label: string | null | undefined): string | undefined {
     const raw = String(label || '').trim()
     if (!raw) return undefined
@@ -907,8 +1039,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   }
 
   async function setTextEncoders(labels: string[]): Promise<void> {
-    currentTextEncoders.value = labels.slice()
-    saveTextEncoderOverridesToStorage(labels)
+    const normalized = normalizeTextEncoderSelectionLabels(labels)
+    currentTextEncoders.value = normalized
+    saveTextEncoderOverridesToStorage(normalized)
   }
 
   async function setDevice(value: string): Promise<void> {
@@ -1050,6 +1183,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     // SHA maps for asset resolution
     textEncoderShaMap,
     resolveTextEncoderSha,
+    resolveModelInfo,
+    resolveFlux2CheckpointVariant,
     resolveModelSha,
     resolveVaeSha,
     requireVaeSelection,

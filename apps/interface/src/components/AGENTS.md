@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-05
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -26,7 +26,7 @@ Status: Active
 - 2026-03-02: `QuickSettingsBar.vue` now persists the Advanced collapse state in `localStorage` (`codex.quicksettings.advanced_open`) so collapse/expand preference survives page reloads and new sessions.
 - 2026-03-03: `QuickSettingsBar.vue` routes add-path actions (checkpoint/VAE/text encoder `+`) through reusable `QuickSettingsAddPathModal` flow (scan-no-sha + add-one sequential hash-at-add). WAN model roots now use the same modal through a single `+` next to `LightX2V` (`wan22_ckpt`), while WAN text-encoder/VAE browse remain on the legacy simple input modal.
 - 2026-03-03: `QuickSettingsBar.vue` refresh now uses async inventory task flow (`POST /api/models/inventory/refresh/async` + `/api/tasks/{id}/events`) and applies inventory once at terminal SSE result, avoiding synchronous inventory rescan churn in header selects.
-- 2026-03-05: `QuickSettingsBar.vue` now treats `flux2` as a first-class image family in the same header lane as Flux.1: dual text-encoder selectors route through `flux2_tenc`, VAE filtering uses `flux2_vae`, model-path add actions resolve `flux2_*` keys, and Flux-family INPAINT guard rails apply to both Flux.1 and Flux.2.
+- 2026-03-06: `QuickSettingsBar.vue` now keeps FLUX.2 first-class in the shared header lane with truthful mode gating: FLUX.1 img2img/inpaint resolves to `flux1_kontext` and stays mask-blocked through `supportsImg2ImgMaskingForEngineId(...)`, while FLUX.2 masked img2img/inpaint is active through the same shared helper. The FLUX.2 lane still uses one `Qwen3-4B` selector under `flux2_tenc`, `flux2_vae` filtering, and `flux2_*` add-path keys; FLUX.2 img2img now keeps denoise truthful and allows unmasked hires when the backend capability supports it, while masked hires remains blocked.
 - 2026-01-01: `QuickSettingsBar.vue` “Refresh” now triggers a checkpoint rescan (`/api/models?refresh=1`) so newly copied weights under `*_ckpt` roots show up without restarting the backend.
 - 2025-12-26: QuickSettings header buttons now use `qs-btn-secondary`/`qs-btn-outline` (fill the `qs-row` height, with consistent borders; no fixed `2rem` height).
 - `ResultViewer.vue` exibe um overlay full-screen para zoom de imagens (sem modal encaixotado): o preview da galeria continua grande no card, enquanto o overlay usa o viewport inteiro com ferramenta lateral para pan/zoom (drag para pan, botões de Fit/1:1/+/−/Close na barra à direita).
@@ -71,7 +71,8 @@ Status: Active
 - 2026-02-08: `RefinerSettingsCard.vue` / `HiresSettingsCard.vue` swap-model controls now use step-pointer semantics (`Swap At Step`, min 1) and avoid “refiner step-count” wording.
 - 2026-02-08: Added `Img2ImgInpaintParamsCard.vue` to host detailed init-image + inpaint mask controls extracted from `ImageModelTab.vue`; parent view remains the source of truth for normalization/clamps and file handlers.
 - 2026-02-08: `HiresSettingsCard.vue` now follows the Basic Parameters row organization (sampler/scheduler/steps; upscaler/cfg/denoise; scale/width/height; model selector; prompt overrides) and keeps tile controls below prompts.
-- 2026-02-18: Added `Img2ImgBasicParametersCard.vue` for init-image mode (hires-like structure without swap-model/prompt overrides): sampler/scheduler/steps, scale+dimensions, resize-type/upscaler gating, and seed+CFG+denoise.
+- 2026-02-18: Added `Img2ImgBasicParametersCard.vue` for init-image mode (hires-like structure without swap-model/prompt overrides): sampler/scheduler/steps, scale+dimensions, resize-type/upscaler gating, and seed+CFG with optional denoise.
+- 2026-03-06: `Img2ImgBasicParametersCard.vue` now mirrors `BasicParametersCard.vue` with a `showDenoise` prop so callers can hide denoise when an img2img backend path genuinely suppresses that control.
 - 2026-02-18: `HiresSettingsCard.vue` row order now renders dimensions (`scale/width/height`) before the upscaler row (`upscaler/cfg/denoise`) for parity with the img2img basic-parameters layout.
 - 2026-02-18: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now expose a CFG-side `Advanced` toggle and a conditional row below CFG for advanced guidance controls (APG/rescale/trunc/renorm), with per-control visibility gated by capability flags.
 - 2026-02-18: In both basic parameter cards, enabling `Advanced` now auto-activates APG + CFG trunc payload paths (when supported), removes per-feature On/Off toggles, and surfaces ELI5-style slider tooltips (hover/focus on label `?`).

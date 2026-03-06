@@ -1,7 +1,7 @@
 # apps/backend/interfaces Overview
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
-Last Review: 2026-02-03
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -49,10 +49,11 @@ Status: Active
 - 2026-01-24: Settings schema/options were tightened: `/api/settings/schema` is served from `apps/backend/interfaces/schemas/settings_registry.py` (generated from `settings_schema.json`) with JSON fallback, and `apps/settings_values.json` is pruned against the registry on startup (unknown keys dropped; invalid values clamped).
 - 2026-01-01: `/api/models` now accepts `?refresh=1` to re-scan checkpoint roots so the UI can pick up newly copied weights without restarting the backend.
 - 2026-01-02: Added standardized file header docstrings to interface modules (doc-only change; part of rollout).
-- 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); `run_api.py` resolves engine keys via the registry and rejects unknown keys with HTTP 400.
+- 2026-01-04: Image-family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` plus the separate FLUX.2 key `flux2` (no legacy aliases); `run_api.py` resolves engine keys via the registry and rejects unknown keys with HTTP 400.
 - 2026-01-04: Text encoder override labels are now derived from `apps/paths.json` (`*_tenc` roots via `/api/paths`) and inventory-derived TE files; tooling guardrail added to prevent direct `apps/paths.json` reads outside `infra/config/paths.py`.
 - 2026-01-06: `/api/{txt2img,img2img}` now treats `.gguf` checkpoints as core-only: requires `vae_sha` + `tenc_sha` (tenc accepts arrays for multi-encoder models); ZImage enforces exactly 1 (Qwen3) and Flux.1 enforces exactly 2 (CLIP + T5).
 - 2026-01-06: API workers now set `engine_options.vae_source`/`engine_options.tenc_source` (`built_in` vs `external`) to make asset selection explicit (pairs with `engine_options.vae_path`/`engine_options.tenc_path` when external).
 - 2026-01-06: `/api/{samplers,schedulers}` now returns minimal entries; `/api/{txt2img,img2img}` validates canonical sampler/scheduler selection (including per-sampler scheduler compatibility) and fails fast with HTTP 400.
 - 2026-01-06: `/api/{txt2vid,img2vid}` default sampler now uses `uni-pc` (scheduler `simple`) to match WAN22 diffusers scheduler metadata.
 - 2026-01-08: `run_api.py` was modularized into router modules under `apps/backend/interfaces/api/routers` (composition-only entrypoint; route logic moved to focused router files).
+- 2026-03-06: `/api/img2img` no longer hard-rejects FLUX.2 partial denoise at request parse-time now that the backend continuation path is real; the same router explicitly rejects masked FLUX.2 hires (`img2img_mask` + `img2img_hires_enable`) until that backend path exists.

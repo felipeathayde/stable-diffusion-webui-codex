@@ -11,7 +11,8 @@ Exposes checkpoints, inventories (sync + async refresh task start), path scan/ad
 and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
-(`/api/models/prompt-token-count`) using vendored offline tokenizers, including WAN22 animate engine ids and Anima runtime-equivalent prompt preprocessing/max-length checks.
+(`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, WAN22 animate engine ids, and
+Anima runtime-equivalent prompt preprocessing/max-length checks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -65,6 +66,7 @@ _PROMPT_TOKENIZER_DIRS: Dict[str, Path] = {
     "sd15": _HF_ROOT / "runwayml/stable-diffusion-v1-5/tokenizer",
     "sdxl": _HF_ROOT / "stabilityai/stable-diffusion-xl-base-1.0/tokenizer",
     "flux1": _HF_ROOT / "black-forest-labs/FLUX.1-dev/tokenizer_2",
+    "flux2": _HF_ROOT / "black-forest-labs/FLUX.2-klein-4B/tokenizer",
     "chroma": _HF_ROOT / "Chroma/tokenizer",
     "zimage": _HF_ROOT / "Tongyi-MAI/Z-Image/tokenizer",
     "wan": _HF_ROOT / "Wan-AI/Wan2.2-T2V-A14B-Diffusers/tokenizer",
@@ -78,6 +80,7 @@ _ENGINE_TOKENIZER_KEY: Dict[str, str] = {
     "sdxl": "sdxl",
     "flux1": "flux1",
     "flux1_kontext": "flux1",
+    "flux2": "flux2",
     "chroma": "chroma",
     "flux1_chroma": "chroma",
     "zimage": "zimage",

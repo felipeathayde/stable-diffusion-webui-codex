@@ -8,21 +8,25 @@ Required Notice: see NOTICE
 
 Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
-starts `/api/txt2img` and `/api/img2img` (txt2img can include hires settings; img2img stays hires-free),
+starts `/api/txt2img` and `/api/img2img` (both can include hires settings when the backend capability allows it),
 includes `settings_revision` in payloads, handles
 stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
 Consumes rich progress payload metadata (`progress.message` + `progress.data`) and derives total-phase progress fields for dual run-card bars.
 Exposes task cancellation for active runs (`/api/tasks/:id/cancel`).
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
+FLUX.2 img2img guidance emission is variant-aware (`img2img_cfg_scale` xor `img2img_distilled_cfg_scale`), and img2img hires emission is
+shared with the canonical hires payload builder while remaining blocked for masked runs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageRunHistoryItem` (interface): Persisted per-tab run history entry (task id, status, summary, params snapshot, error message).
 - `GenerationState` (interface): Per-tab reactive runtime state (status/progress with sampling + total-phase metadata/preview/gallery/history selection).
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
+- `usesStaticDistilledCfgEngine` (function): Returns whether an engine id uses a fixed distilled-guidance contract independent of checkpoint metadata.
 - `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
-- `BuildImg2ImgPayloadArgs` (interface): Input contract for deterministic img2img payload assembly (no hires keys).
-- `buildImg2ImgPayload` (function): Builds img2img start payload at the source and enforces the no-`img2img_hires_*` invariant fail-loud.
+- `buildImg2ImgGuidanceFields` (function): Emits the single img2img guidance field that matches the resolved guidance mode.
+- `BuildImg2ImgPayloadArgs` (interface): Input contract for deterministic img2img payload assembly.
+- `buildImg2ImgPayload` (function): Builds img2img start payload at the source, including capability-gated unmasked hires fields.
 - `buildGuidancePayload` (function): Builds `extras.guidance` payload from tab state + per-engine advanced-guidance support matrix.
 - `extractLoraNamesFromPrompt` (function): Extracts LoRA token names from prompt text (`<lora:name:weight>`).
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
@@ -32,15 +36,19 @@ Symbols (top-level; keep in sync; no ghosts):
 */
 
 import { computed, reactive, ref } from 'vue'
-import { useModelTabsStore, type BaseTab, type GuidanceAdvancedParams, type ImageBaseParams } from '../stores/model_tabs'
+import {
+  useModelTabsStore,
+  type BaseTab,
+  type GuidanceAdvancedParams,
+  type ImageBaseParams,
+} from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useUpscalersStore } from '../stores/upscalers'
-import { getEngineConfig, type EngineType } from '../stores/engine_config'
-import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
+import { buildImg2ImgHiresPayloadFields, buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
 import { cancelTask, fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '../api/types'
-import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
+import { resolveImageRequestEngineId, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
 import { normalizeMaskEnforcement } from '../utils/image_params'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
@@ -246,22 +254,43 @@ function buildProgressStateFromPayload(
 export interface BuildImg2ImgPayloadArgs {
   params: ImageBaseParams
   supportsNegativePrompt: boolean
-  isDistilledCfgModel: boolean
+  supportsHires: boolean
+  guidanceMode: 'cfg' | 'distilled_cfg'
   batchCount: number
   batchSize: number
   device: string
   settingsRevision: number
   engineId: string
   modelOverride: string
+  hiresFallbackOnOom: boolean
+  hiresMinTile: number
   extras: Record<string, unknown>
+}
+
+function buildImg2ImgGuidanceFields(
+  guidanceScale: number,
+  guidanceMode: 'cfg' | 'distilled_cfg',
+): Record<string, number> {
+  if (guidanceMode === 'distilled_cfg') {
+    return { img2img_distilled_cfg_scale: guidanceScale }
+  }
+  return { img2img_cfg_scale: guidanceScale }
 }
 
 export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<string, unknown> {
   const params = args.params
   const useMask = normalizeBooleanParam(params.useMask, false)
+  const hiresEnabled = normalizeBooleanParam(params.hires?.enabled, false)
   const maskInvert = normalizeBooleanParam(params.maskInvert, false)
   const maskRound = normalizeBooleanParam(params.maskRound, true)
   const maskRegionSplit = normalizeBooleanParam(params.maskRegionSplit, false)
+  const guidanceFields = buildImg2ImgGuidanceFields(params.cfgScale, args.guidanceMode)
+  if (hiresEnabled && !args.supportsHires) {
+    throw new Error(`This engine does not support img2img hires (${args.engineId}).`)
+  }
+  if (hiresEnabled && useMask) {
+    throw new Error('Masked img2img hires is not supported yet. Disable the mask or hires before generating.')
+  }
   const payload: Record<string, unknown> = {
     img2img_init_image: params.initImageData,
     img2img_mask: useMask ? params.maskImageData : '',
@@ -271,8 +300,7 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
     img2img_batch_count: args.batchCount,
     img2img_batch_size: args.batchSize,
     img2img_steps: params.steps,
-    img2img_cfg_scale: args.isDistilledCfgModel ? 1.0 : params.cfgScale,
-    img2img_distilled_cfg_scale: args.isDistilledCfgModel ? params.cfgScale : undefined,
+    ...guidanceFields,
     img2img_denoising_strength: params.denoiseStrength,
     img2img_width: params.width,
     img2img_height: params.height,
@@ -285,6 +313,20 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
     engine: args.engineId,
     model: args.modelOverride,
     img2img_extras: { ...args.extras },
+  }
+  if (hiresEnabled) {
+    Object.assign(
+      payload,
+      buildImg2ImgHiresPayloadFields(
+        {
+          prompt: params.prompt,
+          negativePrompt: args.supportsNegativePrompt ? params.negativePrompt : '',
+          hires: params.hires,
+        },
+        args.guidanceMode,
+        { hiresFallbackOnOom: args.hiresFallbackOnOom, hiresMinTile: args.hiresMinTile },
+      ),
+    )
   }
   if (useMask) {
     const maskData = String(params.maskImageData || '').trim()
@@ -309,11 +351,6 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
       }
     }
     payload.img2img_mask_region_split = wantsRegionSplit
-  }
-  for (const key of Object.keys(payload)) {
-    if (key.startsWith('img2img_hires_')) {
-      throw new Error(`Invalid img2img payload key '${key}'. Fix payload builder source.`)
-    }
   }
   return payload
 }
@@ -382,6 +419,10 @@ export function isGenerationRunningForTab(tabId: string): boolean {
   return getTabState(tabId).status === 'running'
 }
 
+function usesStaticDistilledCfgEngine(engineId: string): boolean {
+  return engineId === 'flux1' || engineId === 'flux1_kontext' || engineId === 'flux1_chroma'
+}
+
 // Per-tab generation state (keyed by tab ID)
 const tabStates = new Map<string, GenerationState>()
 const unsubscribers = new Map<string, () => void>()
@@ -406,18 +447,18 @@ export function useGeneration(tabId: string) {
   // Tab info
   const tab = computed(() => modelTabs.tabs.find(t => t.id === tabId) as BaseTab | undefined)
   const params = computed(() => tab.value?.params as ImageBaseParams | undefined)
-  const engineType = computed(() => tab.value?.type as EngineType | undefined)
-  const engineConfig = computed(() => engineType.value ? getEngineConfig(engineType.value) : null)
+  const engineType = computed(() => tab.value?.type as string | undefined)
 
-  function buildRunSummary(p: ImageBaseParams): string {
+  function buildRunSummary(p: ImageBaseParams, guidanceMode: 'cfg' | 'distilled_cfg'): string {
     const sampler = p.sampler
     const scheduler = p.scheduler
     const seedLabel = p.seed === -1 ? 'seed random' : `seed ${p.seed}`
     const clipSkipLabel = Number.isFinite(p.clipSkip) && p.clipSkip > 0 && p.clipSkip !== 1 ? ` · clip-skip ${p.clipSkip}` : ''
-    return `${p.width}×${p.height} px · ${p.steps} steps · cfg ${p.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel}${clipSkipLabel} · batch ${p.batchCount}×${p.batchSize}`
+    const guidanceLabel = guidanceMode === 'distilled_cfg' ? 'distilled cfg' : 'cfg'
+    return `${p.width}×${p.height} px · ${p.steps} steps · ${guidanceLabel} ${p.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel}${clipSkipLabel} · batch ${p.batchCount}×${p.batchSize}`
   }
 
-  function buildParamsSnapshot(p: ImageBaseParams): Record<string, unknown> {
+  function buildParamsSnapshot(p: ImageBaseParams, engineId: string): Record<string, unknown> {
     return {
       checkpoint: p.checkpoint,
       textEncoders: p.textEncoders,
@@ -501,8 +542,26 @@ export function useGeneration(tabId: string) {
     state.value.finishedAtMs = null
 
     const p = params.value
-    const config = engineConfig.value!
     const checkpoint = String((p as any).checkpoint || '').trim()
+    const useInitImage = normalizeBooleanParam(p.useInitImage, false)
+    const useMask = normalizeBooleanParam(p.useMask, false)
+    const tabType = String(engineType.value)
+    const engineOverrideForRequest = resolveEngineForRequest(tabType, useInitImage)
+    const resolvedModelInfo = quicksettings.resolveModelInfo(checkpoint)
+    const flux2Variant = engineOverrideForRequest === 'flux2'
+      ? quicksettings.resolveFlux2CheckpointVariant(resolvedModelInfo ?? checkpoint)
+      : null
+    if (engineOverrideForRequest === 'flux2' && checkpoint && !flux2Variant) {
+      state.value.status = 'error'
+      state.value.errorMessage = 'Unsupported FLUX.2 checkpoint variant. Only Klein 4B/base-4B is supported.'
+      return
+    }
+    const guidanceMode: 'cfg' | 'distilled_cfg' = (
+      engineOverrideForRequest === 'flux2'
+        ? (flux2Variant === 'base' ? 'cfg' : 'distilled_cfg')
+        : (usesStaticDistilledCfgEngine(engineOverrideForRequest) ? 'distilled_cfg' : 'cfg')
+    )
+    const usesDistilledCfgModel = guidanceMode === 'distilled_cfg'
     const modelIsCoreOnly = quicksettings.isModelCoreOnly(checkpoint)
     const resolvedModelSha = quicksettings.resolveModelSha(checkpoint)
     const modelOverride = resolvedModelSha || checkpoint
@@ -514,17 +573,12 @@ export function useGeneration(tabId: string) {
 
     const createdAtMs = Date.now()
     const promptPreview = String(p.prompt || '').trim().slice(0, 120)
-    const summary = buildRunSummary(p)
-    const paramsSnapshot = buildParamsSnapshot(p)
+    const summary = buildRunSummary(p, guidanceMode)
+    const paramsSnapshot = buildParamsSnapshot(p, engineOverrideForRequest)
 
     const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
     const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
     const settingsRevision = quicksettings.getSettingsRevision()
-    const useInitImage = normalizeBooleanParam(p.useInitImage, false)
-    const useMask = normalizeBooleanParam(p.useMask, false)
-
-    const tabType = String(engineType.value)
-    const engineOverrideForRequest = resolveEngineForRequest(tabType, useInitImage)
 
     const engineSurface = backendCaps.get(engineOverrideForRequest)
     if (!engineSurface) {
@@ -542,7 +596,7 @@ export function useGeneration(tabId: string) {
       state.value.errorMessage = message
       return
     }
-    const supportsNegative = familyCaps.supports_negative_prompt
+    const supportsNegative = familyCaps.supports_negative_prompt && !usesDistilledCfgModel
     const guidanceSupport = engineSurface.guidance_advanced ?? null
 
     const assetContract = backendCaps.getAssetContract(engineOverrideForRequest, { checkpointCoreOnly: modelIsCoreOnly })
@@ -569,9 +623,9 @@ export function useGeneration(tabId: string) {
         return
       }
       if (useMask) {
-        if (engineOverrideForRequest === 'flux1_kontext') {
+        if (!supportsImg2ImgMaskingForEngineId(engineOverrideForRequest)) {
           state.value.status = 'error'
-          state.value.errorMessage = 'Masking is not supported for Flux.1 img2img (Kontext) yet.'
+          state.value.errorMessage = `Masking is not supported for ${engineOverrideForRequest} img2img yet.`
           return
         }
         if (!p.maskImageData) {
@@ -696,13 +750,16 @@ export function useGeneration(tabId: string) {
         const payload = buildImg2ImgPayload({
           params: p,
           supportsNegativePrompt: supportsNegative,
-          isDistilledCfgModel: Boolean(config.capabilities.usesDistilledCfg) && !config.capabilities.usesCfg,
+          supportsHires: Boolean(engineSurface.supports_hires),
+          guidanceMode,
           batchCount,
           batchSize,
           device,
           settingsRevision,
           engineId: engineOverrideForRequest,
           modelOverride,
+          hiresFallbackOnOom: Boolean(upscalersStore.fallbackOnOom),
+          hiresMinTile: Number(upscalersStore.minTile),
           extras,
         })
         const { task_id } = await startImg2Img(payload)
@@ -728,6 +785,7 @@ export function useGeneration(tabId: string) {
             settingsRevision,
             engine: engineOverrideForRequest,
             model: modelOverride,
+            guidanceMode,
             hires: p.hires,
             refiner: p.refiner,
             extras,
@@ -1007,7 +1065,6 @@ export function useGeneration(tabId: string) {
     tab,
     params,
     engineType,
-    engineConfig,
     
     // Actions
     generate,

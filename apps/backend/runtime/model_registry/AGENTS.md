@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-03-02
+Last Review: 2026-03-06
 Status: Draft
 
 ## Purpose
@@ -9,7 +9,7 @@ Status: Draft
 
 ## Current Status
 - Core dataclasses/enums (now `CodexCoreSignature`/`CodexCoreArchitecture`) in place with manifest-driven metadata harvesting.
-- Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, Qwen Image, and Anima (Cosmos Predict2 core `net.*` format).
+- Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), FLUX.2 Klein 4B/base-4B core-only SafeTensors, AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, Qwen Image, and Anima (Cosmos Predict2 core `net.*` format).
 - `capabilities.py` defines `SemanticEngine` and an `EngineParamSurface` describing which high-level UI parameter sections (txt2img/img2img/video/hires/refiner/LoRA/ControlNet) are expected to be used for each semantic engine tag; exposed to the API for frontend gating.
 - 2025-12-14: `ModelSignature` gained a legacy `unet` alias for `core`, keeping older call sites working while the new contract stays `signature.core`.
 - 2025-12-14: Qwen Image detector reintroduced (`detectors/qwen_image.py`) and enums extended (`ModelFamily.QWEN_IMAGE`, `LatentFormat.QWEN_IMAGE`).
@@ -31,6 +31,8 @@ Status: Draft
 - 2026-02-21: `capabilities.engine_supports_cfg(engine_id)` now resolves family from explicit `engine_id -> ModelFamily` mapping (including WAN22 variants) instead of semantic-primary-family fallback, removing hidden `wan22 -> WAN22_5B` drift at capability checks.
 - 2026-03-02: `capabilities.py` semantic surfaces now declare `supports_hires=true` for non-SD image families implemented in the shared hires second-pass (`flux1`, `flux1_chroma`, `zimage`, `anima`).
 - 2026-03-04: Detector `SignalBundle` now carries source-format hints (`safetensors|gguf`) and header-backed `shape_of(...)` usage, so safetensors signature detection avoids full `state_dict.values()` scans/materialization during startup planning.
+- 2026-03-05: Added `detectors/flux2.py` for the truthful FLUX.2 Klein 4B/base-4B core-only SafeTensors layout (`double_blocks.*`, `single_blocks.*`, `img_in.*`, `txt_in.*`, `single_stream_modulation.*`, `final_layer.*`); unsupported FLUX.2 variants (for example 9B) intentionally do not match.
+- 2026-03-06: FLUX.2 runtime/capability metadata is now a single truthful family entry: `latent_channels=32`, scalar-identity FLUX.2 VAE normalization, `patch_size=2`, `flow_shift=None`, `context_dim=7680`, and a semantic surface for the supported Klein 4B/base-4B slice (`supports_txt2img=true`, `supports_img2img=true`, `supports_hires=true`, `supports_lora=false`, samplers `euler|dpm++ 2m`, scheduler `simple`). This capability surface matches the live FLUX.2 slice: masked img2img/inpaint is active, partial denoise is supported, and hires is supported for unmasked runs.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

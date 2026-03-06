@@ -1,7 +1,7 @@
 # AGENT — Model Parser
 <!-- tags: runtime, model-parser -->
 Date: 2025-10-29
-Last Review: 2026-02-28
+Last Review: 2026-03-05
 Status: Draft
 
 ## Mandate
@@ -37,3 +37,4 @@ Status: Draft
 - 2026-02-11: CLIP parser converter now delegates to canonical CLIP keymap normalization (`normalize_codex_clip_state_dict_with_layout`) and keeps native layout in AUTO (`qkv_impl=auto`, `projection_orientation=auto`) instead of forcing projection transpose.
 - 2026-02-16: WAN parser dispatch/config normalization now handles explicit WAN22 families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) instead of a single `WAN22` family bucket.
 - 2026-03-04: Safetensors parser planning now avoids eager root-component tensor reads: split diagnostics use header/source hints (no sample tensor fetch), and quantization detection skips full-value scans for safetensors-backed views.
+- 2026-03-05: Added `families/flux2.py` for the FLUX.2 Klein 4B/base-4B core-only SafeTensors slice: the parser now registers one external `qwen3_4b` alias and converts the raw Comfy/Codex transformer layout into Diffusers `Flux2Transformer2DModel` keys, failing loud on Diffusers exports, embedded assets, or unsupported 9B-like configs.

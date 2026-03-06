@@ -35,7 +35,7 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter()
     VAE_BY_FAMILY_OPTION_KEY = "codex_vae_by_family"
-    VAE_FAMILIES = ("sd15", "sdxl", "flux1", "chroma", "zimage", "anima")
+    VAE_FAMILIES = ("sd15", "sdxl", "flux1", "flux2", "chroma", "zimage", "anima")
     hot_apply_reasons: Dict[str, str] = {
         "codex_smart_offload": "hot-applied immediately (effective for the next generation request).",
         "codex_smart_fallback": "hot-applied immediately (effective for the next generation request).",

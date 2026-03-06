@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/WAN).
 Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
-and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders.
+and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders. FLUX.2 stays first-class as the
+current Klein 4B / base-4B slice (single Qwen3-4B selector, shared-taxonomy img2img/inpaint gating, no FLUX.1 aliasing).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
@@ -33,9 +34,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeTextEncoderLabels` (function): Normalizes raw TE values into a stable label list (used for Flux/WAN multi-TE cases).
 - `WanAssetsParams` (type): Minimal WAN assets triple used for payload building (metadata dir + TE + VAE).
 - `currentWanAssets` (function): Builds `WanAssetsParams` from current UI selections (used by WAN payload generation).
-- `textEncoderLabel` (function): Converts raw TE selector values into a canonical label (handles WAN-style prefixes).
+- `flux2TextEncoderFieldLabel` (computed): Resolves the truthful FLUX.2 Klein Qwen3-4B selector label from backend asset contracts.
 - `onPrimaryTextEncoderChange` (function): Applies primary text-encoder selection changes (and triggers dependent updates).
-- `onSecondaryTextEncoderChange` (function): Applies secondary text-encoder selection changes (Flux/Kontext dual-encoder workflows).
+- `onSecondaryTextEncoderChange` (function): Applies secondary text-encoder selection changes (FLUX.1 dual-encoder workflow only).
 - `onSmartOffloadChange` (function): Updates Smart Offload toggle (impacts per-request memory behavior).
 - `onSmartFallbackChange` (function): Updates Smart Fallback toggle (best-effort OOM fallback behavior).
 - `onSmartCacheChange` (function): Updates Smart Cache toggle (conditioning caching behavior).
@@ -52,11 +53,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
 - `canShowModeToggles` (computed): Enables IMG2IMG/INPAINT quicksettings controls when the active image tab supports img2img.
 - `useMask` (computed): Reflects active image-tab inpaint toggle state (`tab.params.useMask`).
-- `supportsInpaint` (computed): Flags whether inpaint toggle is supported for the active image family.
+- `resolvedImageRequestEngineId` (computed): Resolves the shared frontend request engine id for the active image tab/mode.
+- `supportsInpaint` (computed): Flags whether the resolved active image-mode engine truthfully supports mask/inpaint semantics.
 - `isActiveImageTabRunning` (computed): Tracks whether the active image tab currently has an in-flight generation task.
-- `inpaintToggleDisabled` (computed): Disables INPAINT when unsupported, when IMG2IMG is off, or when no init image is loaded.
+- `inpaintToggleDisabled` (computed): Disables INPAINT when the current state cannot be changed safely from quick settings.
 - `inpaintToggleTitle` (computed): Tooltip reason for INPAINT enabled/disabled state.
-- `onUseMaskChange` (function): Toggles inpaint mode (`useMask`) from quick settings with explicit IMG2IMG/Flux guards.
+- `onUseMaskChange` (function): Toggles inpaint mode (`useMask`) from quick settings with shared-engine support guards.
 - `zimageTurbo` (computed): Returns the current Z-Image Turbo toggle state for the active tab.
 - `zimageTurboLocked` (ref): When true, the Z-Image Turbo toggle is fixed by trusted checkpoint metadata.
 - `_trustedZImageVariantFromCheckpointMeta` (function): Extracts `codex.zimage.variant` when metadata is trusted (Codex provenance).
@@ -133,17 +135,35 @@ Symbols (top-level; keep in sync; no ghosts):
       <!-- FLUX-family-specific quicksettings -->
       <template v-else-if="activeFamily === 'flux1' || activeFamily === 'flux2'">
         <QuickSettingsFlux
+          v-if="activeFamily === 'flux1'"
           :checkpoint="effectiveCheckpoint"
           :checkpoints="filteredModelTitles"
           :vae="store.currentVae"
           :vae-choices="filteredVaeChoices"
-          :text-encoder-primary="fluxTextEncoderPrimary"
-          :text-encoder-secondary="fluxTextEncoderSecondary"
+          :text-encoder-primary="flux1TextEncoderPrimary"
+          :text-encoder-secondary="flux1TextEncoderSecondary"
           :text-encoder-choices="filteredTextEncoderChoices"
           @update:checkpoint="onModelChange"
           @update:vae="onVaeChange"
           @update:textEncoderPrimary="onPrimaryTextEncoderChange"
           @update:textEncoderSecondary="onSecondaryTextEncoderChange"
+          @addCheckpointPath="onAddCheckpointPath"
+          @addVaePath="onAddVaePath"
+          @addTencPath="onAddTencPath"
+          @showMetadata="onShowMetadata"
+        />
+        <QuickSettingsFlux2
+          v-else
+          :checkpoint="effectiveCheckpoint"
+          :checkpoints="filteredModelTitles"
+          :vae="store.currentVae"
+          :vae-choices="filteredVaeChoices"
+          :text-encoder="flux2TextEncoder"
+          :text-encoder-choices="filteredTextEncoderChoices"
+          :text-encoder-field-label="flux2TextEncoderFieldLabel"
+          @update:checkpoint="onModelChange"
+          @update:vae="onVaeChange"
+          @update:textEncoder="onPrimaryTextEncoderChange"
           @addCheckpointPath="onAddCheckpointPath"
           @addVaePath="onAddVaePath"
           @addTencPath="onAddTencPath"
@@ -409,12 +429,20 @@ import {
 import type { InventoryResponse, ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
-import { normalizeTabFamily, semanticEngineFromTabFamily, tabFamilyFromSemanticEngine, type TabFamily } from '../utils/engine_taxonomy'
+import {
+  normalizeTabFamily,
+  resolveImageRequestEngineId,
+  semanticEngineFromTabFamily,
+  supportsImg2ImgMaskingForEngineId,
+  tabFamilyFromSemanticEngine,
+  type TabFamily,
+} from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily, enginePrefixForFamily } from '../utils/model_family_filters'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
 import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
 import QuickSettingsFlux from './quicksettings/QuickSettingsFlux.vue'
+import QuickSettingsFlux2 from './quicksettings/QuickSettingsFlux2.vue'
 import QuickSettingsChroma from './quicksettings/QuickSettingsChroma.vue'
 import QuickSettingsZImage from './quicksettings/QuickSettingsZImage.vue'
 import QuickSettingsOverridesModal from './modals/QuickSettingsOverridesModal.vue'
@@ -1130,10 +1158,15 @@ const hasInitImage = computed(() => {
   if (!tab) return false
   return String(tab.params.initImageData || '').trim().length > 0
 })
-const supportsInpaint = computed(() => {
+const resolvedImageRequestEngineId = computed(() => {
   const tab = activeImageTab.value
-  if (!tab) return false
-  return tab.type !== 'flux1' && tab.type !== 'flux2'
+  if (!tab) return null
+  return resolveImageRequestEngineId(tab.type, useInitImage.value)
+})
+const supportsInpaint = computed(() => {
+  const engineId = resolvedImageRequestEngineId.value
+  if (!engineId) return false
+  return supportsImg2ImgMaskingForEngineId(engineId)
 })
 const isActiveImageTabRunning = computed(() => {
   const tab = activeImageTab.value
@@ -1144,13 +1177,16 @@ const inpaintToggleDisabled = computed(() => (
   isActiveImageTabRunning.value
   || !useInitImage.value
   || !hasInitImage.value
-  || !supportsInpaint.value
+  || (!supportsInpaint.value && !useMask.value)
 ))
 const inpaintToggleTitle = computed(() => {
   if (isActiveImageTabRunning.value) return 'Cannot change INPAINT while generation is running.'
-  if (!supportsInpaint.value) return 'INPAINT is not supported for Flux.1/Flux.2 img2img (Kontext) yet.'
   if (!useInitImage.value) return 'Enable IMG2IMG first.'
   if (!hasInitImage.value) return 'Select an init image first.'
+  if (!supportsInpaint.value) {
+    if (useMask.value) return 'INPAINT is not supported for the active img2img engine. Disable it to clear the stale mask state.'
+    return 'INPAINT is not supported for the active img2img engine.'
+  }
   return 'Toggle INPAINT'
 })
 
@@ -1168,17 +1204,10 @@ const effectiveTextEncoders = computed(() => {
 })
 
 const primaryTextEncoder = computed(() => effectiveTextEncoders.value[0] ?? '')
-
-const fluxTextEncoderPrefix = computed<'flux1' | 'flux2'>(() => (activeFamily.value === 'flux2' ? 'flux2' : 'flux1'))
-const fluxTextEncoders = computed(() => {
-  const prefix = `${fluxTextEncoderPrefix.value}/`
-  return effectiveTextEncoders.value.filter((label) => typeof label === 'string' && label.startsWith(prefix))
-})
-const fluxTextEncoderPrimary = computed(() => fluxTextEncoders.value[0] ?? '')
-const fluxTextEncoderSecondary = computed(() => fluxTextEncoders.value[1] ?? '')
-
-const primaryTeAutomaticLabel = 'Built-in'
-const secondaryTeAutomaticLabel = 'Secondary (optional)'
+const flux1TextEncoders = computed(() => effectiveTextEncoders.value.filter((label) => label.startsWith('flux1/')))
+const flux1TextEncoderPrimary = computed(() => flux1TextEncoders.value[0] ?? '')
+const flux1TextEncoderSecondary = computed(() => flux1TextEncoders.value[1] ?? '')
+const flux2TextEncoder = computed(() => effectiveTextEncoders.value.find((label) => label.startsWith('flux2/')) ?? '')
 
 const effectiveCheckpoint = computed(() => {
   const tab = activeImageTab.value
@@ -1186,6 +1215,37 @@ const effectiveCheckpoint = computed(() => {
   const ckpt = String(tab.params.checkpoint || '').trim()
   if (ckpt) return ckpt
   return filteredModelTitles.value[0] ?? ''
+})
+
+const activeImageAssetContract = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return null
+  const checkpoint = String(tab.params.checkpoint || '').trim()
+  return engineCaps.getAssetContract(semanticEngineFromTabFamily(tab.type), {
+    checkpointCoreOnly: store.isModelCoreOnly(checkpoint),
+  })
+})
+
+const flux2TextEncoderFieldLabel = computed(() => {
+  const fallback = 'Text Encoder (Qwen3-4B)'
+  if (activeFamily.value !== 'flux2') return fallback
+
+  const contract = activeImageAssetContract.value
+  const slotLabel = Array.isArray(contract?.tenc_slot_labels)
+    ? contract.tenc_slot_labels
+        .map((value) => String(value || '').trim())
+        .find((value) => value.length > 0)
+    : ''
+  if (slotLabel) {
+    return /text encoder/i.test(slotLabel) ? slotLabel : `Text Encoder (${slotLabel})`
+  }
+
+  const kindLabel = String(contract?.tenc_kind_label || '').trim()
+  if (kindLabel) {
+    return /text encoder/i.test(kindLabel) ? kindLabel : `Text Encoder (${kindLabel})`
+  }
+
+  return fallback
 })
 
 const CODEX_REPO_URL = 'https://github.com/sangoi-exe/stable-diffusion-webui-codex'
@@ -1510,9 +1570,9 @@ async function onUseMaskChange(value: boolean): Promise<void> {
     const tab = activeImageTab.value
     if (!tab) return
     if (isActiveImageTabRunning.value) return
-    if (tab.type === 'flux1' || tab.type === 'flux2') return
     if (!useInitImage.value) return
     if (!hasInitImage.value) return
+    if (value && !supportsInpaint.value) return
     const patch: Partial<ImageBaseParams> = { useMask: Boolean(value) }
     if (!value) {
       patch.maskImageData = ''
@@ -1524,44 +1584,46 @@ async function onUseMaskChange(value: boolean): Promise<void> {
   }
 }
 
-function textEncoderLabel(raw: unknown): string {
-  const value = String(raw ?? '')
-  if (!value.includes('/')) return value
-  const [family, ...rest] = value.replace(/\\/g, '/').split('/').filter(Boolean)
-  if (!family || rest.length === 0) return value
-  const basename = rest[rest.length - 1] || rest[0]
-  return `${family}/${basename}`
-}
-
-async function updateFluxTextEncoders(primary: string, secondary: string): Promise<void> {
-  const tab = activeImageTab.value
-  const familyPrefix = fluxTextEncoderPrefix.value
+async function updatePrefixedTextEncoders(familyPrefix: 'flux1' | 'flux2', labels: string[]): Promise<void> {
   const labelPrefix = `${familyPrefix}/`
-  const fluxLabels: string[] = []
-  const p = primary.trim()
-  const s = secondary.trim()
-  if (p) fluxLabels.push(p)
-  if (s && s !== p) fluxLabels.push(s)
+  const normalizedLabels = labels
+    .map((label) => String(label || '').trim())
+    .filter((label, index, array) => label.startsWith(labelPrefix) && label.length > 0 && array.indexOf(label) === index)
+  const tab = activeImageTab.value
   if (tab) {
-    await updateImageTabParams(tab.id, { textEncoders: fluxLabels })
+    await updateImageTabParams(tab.id, { textEncoders: normalizedLabels })
     return
   }
   const all = store.currentTextEncoders.slice()
-  const other = all.filter((label) => {
-    const text = String(label)
-    return !text.startsWith('flux1/') && !text.startsWith('flux2/')
-  })
-  const normalizedFluxLabels = fluxLabels.filter((label) => String(label).startsWith(labelPrefix))
-  const next = [...other, ...normalizedFluxLabels]
+  const other = all.filter((label) => !String(label || '').startsWith(labelPrefix))
+  const next = [...other, ...normalizedLabels]
   await store.setTextEncoders(next)
+}
+
+async function updateFlux1TextEncoders(primary: string, secondary: string): Promise<void> {
+  const flux1Labels: string[] = []
+  const normalizedPrimary = String(primary || '').trim()
+  const normalizedSecondary = String(secondary || '').trim()
+  if (normalizedPrimary) flux1Labels.push(normalizedPrimary)
+  if (normalizedSecondary && normalizedSecondary !== normalizedPrimary) flux1Labels.push(normalizedSecondary)
+  await updatePrefixedTextEncoders('flux1', flux1Labels)
+}
+
+async function updateFlux2TextEncoder(value: string): Promise<void> {
+  const selected = String(value || '').trim()
+  await updatePrefixedTextEncoders('flux2', selected ? [selected] : [])
 }
 
 function onPrimaryTextEncoderChange(value: string): void {
   const fam = activeFamily.value
-  if (fam === 'flux1' || fam === 'flux2') {
+  if (fam === 'flux1') {
     const primary = value || ''
-    const secondary = fluxTextEncoderSecondary.value || ''
-    updateFluxTextEncoders(primary, secondary).catch((error) => {
+    const secondary = flux1TextEncoderSecondary.value || ''
+    updateFlux1TextEncoders(primary, secondary).catch((error) => {
+      qsToast(error instanceof Error ? error.message : String(error))
+    })
+  } else if (fam === 'flux2') {
+    updateFlux2TextEncoder(value).catch((error) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   } else {
@@ -1581,10 +1643,10 @@ function onPrimaryTextEncoderChange(value: string): void {
 
 function onSecondaryTextEncoderChange(value: string): void {
   const fam = activeFamily.value
-  if (fam !== 'flux1' && fam !== 'flux2') return
-  const primary = fluxTextEncoderPrimary.value || ''
+  if (fam !== 'flux1') return
+  const primary = flux1TextEncoderPrimary.value || ''
   const secondary = value || ''
-  updateFluxTextEncoders(primary, secondary).catch((error) => {
+  updateFlux1TextEncoders(primary, secondary).catch((error) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }

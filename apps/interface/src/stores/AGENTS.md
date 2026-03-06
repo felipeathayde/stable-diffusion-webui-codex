@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-03-05
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -78,6 +78,8 @@ Status: Active
 - 2026-03-01: `model_tabs.ts` WAN `video` params now persist no-stretch guide settings (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with strict normalization (`imageScale > 0` + crop offsets in `[0,1]`).
 - 2026-03-02: `quicksettings.ts` now exposes `hydrateLoraShaMap(inventory)` so LoRA inventory refresh surfaces (for example `LoraModal.vue`) can refresh LoRA filename/path → SHA mapping immediately without requiring a separate quicksettings refresh path.
 - 2026-03-05: `model_tabs.ts` baseline required tab types now include `flux2`; `engine_config.ts` now exposes `flux2` defaults/capabilities, and `quicksettings.ts` now recognizes `flux2` in VAE-by-family and text-encoder root/prefix mappings (`flux2_tenc`).
+- 2026-03-06: FLUX.2 store semantics now match the backend Klein 4B / base-4B image slice: `engine_config.ts` exposes mixed task/cfg capabilities (txt2img + img2img; CFG + distilled-CFG), `model_tabs.ts` preserves init-image/mask state while still capping `flux2/*` text encoders to one selector without forcing img2img denoise to `1.0`, and `quicksettings.ts` now exports `resolveModelInfo(...)` + `resolveFlux2CheckpointVariant(...)` so views/composables can derive checkpoint-specific FLUX.2 guidance mode without adding request fields.
+- 2026-03-06: `xyz.ts` now derives FLUX.2 guidance mode from `quicksettings.resolveModelInfo(...)` + `resolveFlux2CheckpointVariant(...)` before building sweep payloads, and `engine_config.ts` aligns FLUX.2 default steps with the backend family runtime baseline (`20`).
 - 2026-02-27: `model_tabs.ts` WAN `video` params removed obsolete output flags (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and migrated interpolation state to one `interpolationFps` field (`0` off, active values normalized as output-FPS targets mapped to backend interpolation times).
 - 2026-02-27: `model_tabs.ts` WAN `video.fps` default is now `15` (was `24`) to align initial WAN runs with the updated UI baseline.
 - 2026-02-27: `model_tabs.ts` WAN `video` params now include SeedVR2 upscaling controls (`upscaling*` fields) with strict normalization (`batch_size` as `4n+1`, noise scales clamped to `[0,1]`, color-correction enum validation).

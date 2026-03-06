@@ -6,11 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Flux-family quicksettings selectors.
-Renders checkpoint/VAE selectors plus a dual text-encoder selection row (CLIP + T5) for Flux.1/Flux.2 model tabs.
+Purpose: FLUX.1 quicksettings selectors.
+Renders checkpoint/VAE selectors plus a dual text-encoder selection row (CLIP + T5) for FLUX.1 model tabs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `QuickSettingsFlux` (component): Flux-family quicksettings for checkpoint/VAE and dual text encoders.
+- `QuickSettingsFlux` (component): FLUX.1 quicksettings for checkpoint/VAE and dual text encoders.
 - `truncatePath` (function): Truncates absolute paths for compact dropdown labels.
 - `isVaeSentinel` (function): Returns whether a VAE value is a sentinel selection (built-in/none) without metadata.
 - `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder values.

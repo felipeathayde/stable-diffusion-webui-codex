@@ -7,14 +7,12 @@ Constraint applied: no new patrol subagents were spawned in this run.
 ## Snapshot
 
 - Active pool (outside `archive/`):
-  - `130` findings `>= High/P1` in `52` files
-  - Severity split: `129 High`, `1 Blocker`
+  - `0` pending response files (root queue drained in latest archival batch)
 - New-wave active files (`2026-03-03` and `2026-03-04`):
-  - `73` findings in `28` files
+  - `0` pending files after archival consolidation
 - Archive pool:
-  - `148` findings `>= High/P1` in `82` files
-  - Severity split: `93 High`, `55 Blocker`
-  - Buckets: `resolved` (`98`), `duplicates-2026-02-28` (`35`), `duplicates-2026-02-28-p1` (`15`)
+  - `809` archived response files
+  - Buckets: `resolved` (`720`), `duplicates-2026-03-04` (`53`), `duplicates-2026-02-28` (`21`), `duplicates-2026-02-28-p1` (`15`)
 
 ## Execution Status (post-fan-in)
 
@@ -66,6 +64,10 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - Moved to `archive/resolved` (remaining in-progress closure wave):
     - `senior-code-machine-response-20260304-165307Z.md`
     - `senior-code-machine-response-20260304-165802Z.md`
+  - Moved to `archive/resolved` (bulk backlog consolidation):
+    - `181` files moved (manifest: `.sangoi/subagent-responses/archive/archive-batch-20260304-190233Z.md`)
+  - Moved to `archive/duplicates-2026-03-04` (bulk no-brief/readiness backlog):
+    - `37` files moved (manifest: `.sangoi/subagent-responses/archive/archive-batch-20260304-190233Z.md`)
 
 ## Consolidated Active Findings (20 clusters, expanded)
 
@@ -83,9 +85,9 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Validate by runtime capabilities resolved from engine+model, not by hardcoded route strings.
   - D) Add matrix contract checks (route x device) in validation gate to fail on drift.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-code-reviewer-response-20260303-144809Z.md:23`
-  - `.sangoi/subagent-responses/senior-code-reviewer-response-20260304-013709Z.md:25`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-210538Z.md:28`
+  - `.sangoi/subagent-responses/archive/resolved/senior-code-reviewer-response-20260303-144809Z.md:23`
+  - `.sangoi/subagent-responses/archive/resolved/senior-code-reviewer-response-20260304-013709Z.md:25`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-210538Z.md:28`
 
 ### 2) Invalid RNG source is silently coerced (fail-loud violation)
 
@@ -101,7 +103,7 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Remove fallback branch in planner; unknown value becomes fatal.
   - D) Constrain frontend emitters to server-advertised enum choices only.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-code-reviewer-response-20260304-013709Z.md:53`
+  - `.sangoi/subagent-responses/archive/resolved/senior-code-reviewer-response-20260304-013709Z.md:53`
 
 ### 3) Smart-cache contract errors are swallowed with hidden fallback behavior
 
@@ -117,8 +119,8 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Classify errors (contract vs transient I/O) and only retry transient class.
   - D) Add telemetry counter + warning/error logs for every cache-key failure path.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-code-reviewer-response-20260303-205955Z.md:25`
-  - `.sangoi/subagent-responses/senior-code-reviewer-response-20260303-205955Z.md:43`
+  - `.sangoi/subagent-responses/archive/resolved/senior-code-reviewer-response-20260303-205955Z.md:25`
+  - `.sangoi/subagent-responses/archive/resolved/senior-code-reviewer-response-20260303-205955Z.md:43`
 
 ### 4) Core loading lifecycle remains eager in multiple families
 
@@ -134,9 +136,9 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Move realization behind explicit runtime stage boundary with mandatory ownership.
   - D) Add conformity checks to block new eager paths from entering active code.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-011944Z.md:24`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-012219Z.md:31`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-012219Z.md:158`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-011944Z.md:24`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-012219Z.md:31`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-012219Z.md:158`
 
 ### 5) Keymap/contract drift risk from hidden compatibility and ownership coupling
 
@@ -152,9 +154,9 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Generate allowed keys from schema at build time and reject undeclared keys at runtime.
   - D) Disable env-based bypasses in production profile.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-013759Z.md:32`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-013759Z.md:41`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-013759Z.md:70`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-013759Z.md:32`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-013759Z.md:41`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-013759Z.md:70`
 
 ### 6) Anima lazy Qwen/VAE materialization occurs outside manager-owned load boundary
 
@@ -170,8 +172,8 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Require explicit model callbacks for "about to realize heavy tensors".
   - D) Block execution when manager has not acknowledged all required realized components.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-225029Z.md:27`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-225029Z.md:49`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-225029Z.md:27`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-225029Z.md:49`
 
 ### 7) Unload path reports success while residency can remain
 
@@ -187,7 +189,7 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Add explicit cleanup audit (refs/tensors/modules) after unload stage.
   - D) Expose diagnostic endpoint/trace for runtime residency verification.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-230013Z.md:11`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-230013Z.md:11`
 
 ### 8) SDPA route rule ambiguity around `head_dim` threshold
 
@@ -203,7 +205,7 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Attempt requested policy first and fallback only on proven incompatibility.
   - D) Add strict mode that errors instead of silently coercing policy.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-023644Z.md:34`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-023644Z.md:34`
 
 ### 9) Bootstrap splash can stall indefinitely on hanging required requests
 
@@ -219,8 +221,8 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Add watchdog timer per stage with explicit fatal reason.
   - D) Use short-lived startup cache to avoid hard dependency on slow calls.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-175353Z.md:24`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-175353Z.md:34`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-175353Z.md:24`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-175353Z.md:34`
 
 ### 10) VAE selection persistence is vulnerable to overwrite/canonicalization drift
 
@@ -236,7 +238,7 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Do not persist automatic fallback; persist only explicit user actions.
   - D) Add precedence model where user-selected value outranks canonical fallback writes.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-231229Z.md:26`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-231229Z.md:26`
 
 ### 11) LoRA refresh path is synchronous while async task/SSE handling has sharp edges
 
@@ -252,8 +254,8 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Add result versioning so only latest refresh updates modal/store.
   - D) Buffer payload and apply only on terminal event with strict error handling.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-173332Z.md:14`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-173332Z.md:28`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-173332Z.md:14`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-173332Z.md:28`
 
 ### 12) QuickSettings add-path byte-progress contract is incomplete
 
@@ -269,9 +271,9 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Define explicit row FSM (`queued/adding/done/error`) with byte semantics.
   - D) Add dedicated progress payload/update path instead of UI-derived inference.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-181117Z.md:16`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-191035Z.md:14`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260303-200737Z.md:10`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-181117Z.md:16`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-191035Z.md:14`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260303-200737Z.md:10`
 
 ### 13) Video overlay ownership/trigger wiring and media interaction suppression are high-risk seams
 
@@ -287,9 +289,9 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Separate gesture surface from controls with explicit pointer-event policy.
   - D) Add interaction contract tests for click/dblclick/keyboard paths.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-031721Z.md:22`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-031721Z.md:42`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-031721Z.md:69`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-031721Z.md:22`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-031721Z.md:42`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-031721Z.md:69`
 
 ### 14) App mode/launcher integration is not a narrow toggle
 
@@ -305,9 +307,9 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Enforce release packaging contract for SPA assets before mode switch.
   - D) Provide explicit fallback path with clear user-facing diagnostics.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-035733Z.md:19`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-035733Z.md:30`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260304-035733Z.md:87`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-035733Z.md:19`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-035733Z.md:30`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260304-035733Z.md:87`
 
 ### 15) Quicksettings model list has multiple non-folder gates and drift vectors
 
@@ -323,11 +325,11 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Introduce freshness token/version so frontend detects stale cache deterministically.
   - D) Emit scanner/list diagnostics to explain why each candidate was filtered.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260302-203325Z.md:33`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260302-203325Z.md:48`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260302-203325Z.md:62`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260302-203325Z.md:74`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260302-203325Z.md:87`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260302-203325Z.md:33`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260302-203325Z.md:48`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260302-203325Z.md:62`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260302-203325Z.md:74`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260302-203325Z.md:87`
 
 ### 16) Strict unknown-params backend guard clashes with persisted legacy keys
 
@@ -343,8 +345,8 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Return structured unknown-key diagnostics to aid precise cleanup.
   - D) Run one-shot local storage migration on startup with fail-loud notice.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-172456Z.md:17`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-172456Z.md:30`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-172456Z.md:17`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-172456Z.md:30`
 
 ### 17) Unified block-progress contract is partially disconnected in WAN paths
 
@@ -360,8 +362,8 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Add runtime assertion when stage executes without progress emitter.
   - D) Provide explicit "coarse progress only" state where fine-grain is unavailable.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-053432Z.md:17`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-172129Z.md:31`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-053432Z.md:17`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-172129Z.md:31`
 
 ### 18) WAN video toggles/flags and memory path still have high-risk mismatches
 
@@ -377,8 +379,8 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Add immutable request-vs-effective snapshot in task metadata.
   - D) Enforce memory budget guardrails before sequence materialization.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-225104Z.md:31`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-225104Z.md:59`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-225104Z.md:31`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-225104Z.md:59`
 
 ### 19) Global Hires prep remains SD-family hard-wired
 
@@ -394,7 +396,7 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Introduce strategy registry keyed by family.
   - D) Align UI capability exposure with backend strategy availability.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260302-174101Z.md:72`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260302-174101Z.md:72`
 
 ### 20) VRAM/offload observability and trace/debug behavior has known high-risk masking paths
 
@@ -410,11 +412,11 @@ Constraint applied: no new patrol subagents were spawned in this run.
   - C) Introduce end-to-end correlation id across route/use-case/engine path.
   - D) Add alert thresholds for fallback rate and VRAM anomaly spikes.
 - Evidence:
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-035928Z.md:21`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-172751Z.md:27`
-  - `.sangoi/subagent-responses/senior-scout-cavalry-response-20260301-221006Z.md:27`
-  - `.sangoi/subagent-responses/senior-code-reviewer-response-20260301-221949Z.md:22`
-  - `.sangoi/subagent-responses/senior-code-reviewer-response-20260301-172541Z.md:27`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-035928Z.md:21`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-172751Z.md:27`
+  - `.sangoi/subagent-responses/archive/resolved/senior-scout-cavalry-response-20260301-221006Z.md:27`
+  - `.sangoi/subagent-responses/archive/resolved/senior-code-reviewer-response-20260301-221949Z.md:22`
+  - `.sangoi/subagent-responses/archive/resolved/senior-code-reviewer-response-20260301-172541Z.md:27`
 
 ## Locked Decision Matrix (selected options + delivery priority)
 
@@ -491,7 +493,7 @@ Status source: integrated fan-in commit `459cb55ec` + completed 12-lane wave + i
 
 ## Historical `>= High/P1` (Archive)
 
-- Archive currently contains `148` entries (`93 High`, `55 Blocker`) across resolved/duplicate buckets.
+- Archive currently contains `809` response files across resolved/duplicate buckets.
 - The dominant buckets are `resolved` and `duplicates`; they remain useful as incident history but should not be treated as active blockers without revalidation.
 
 Examples of historical P1/Blocker references:

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Pure normalization helpers for image-tab parameter controls.
-Centralizes normalization used by img2img/inpaint UI updates to keep parent handlers explicit and unit-testable.
+Centralizes normalization used by img2img/inpaint UI updates and capability-driven hires visibility so parent handlers stay explicit and unit-testable.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `MaskEnforcement` (type): Allowed mask enforcement values.
@@ -15,8 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeInpaintingFill` (function): Clamps masked-content fill mode to backend-supported integer range `[0, 3]`.
 - `normalizeNonNegativeInt` (function): Truncates and clamps any numeric input to `>= 0`.
 - `resolveTextOverride` (function): Uses override text when non-blank; otherwise falls back to base text.
-- `isHiresVisibleForMode` (function): Returns whether hires controls should be visible for the active mode/engine.
-- `resolveHiresModePolicy` (function): Resolves hires panel visibility and reset behavior for the active mode/engine.
+- `isHiresVisibleForMode` (function): Returns whether hires controls should be visible for the active mode/engine/mask combination.
+- `resolveHiresModePolicy` (function): Resolves hires panel visibility and reset behavior for the active mode/engine/mask combination.
 */
 
 export type MaskEnforcement = 'post_blend' | 'per_step_clamp'
@@ -39,13 +39,20 @@ export function resolveTextOverride(baseText: string, overrideText?: string): st
   return String(baseText ?? '')
 }
 
-export function isHiresVisibleForMode(useInitImage: boolean, supportsHires: boolean): boolean {
-  return !useInitImage && supportsHires
+export function isHiresVisibleForMode(useInitImage: boolean, supportsHires: boolean, useMask = false): boolean {
+  if (!supportsHires) return false
+  if (!useInitImage) return true
+  return !useMask
 }
 
-export function resolveHiresModePolicy(useInitImage: boolean, supportsHiresForEngine: boolean): { showCard: boolean; resetState: boolean } {
+export function resolveHiresModePolicy(
+  useInitImage: boolean,
+  supportsHiresForEngine: boolean,
+  useMask = false,
+): { showCard: boolean; resetState: boolean } {
+  const maskedImg2Img = useInitImage && useMask
   return {
-    showCard: isHiresVisibleForMode(useInitImage, supportsHiresForEngine),
-    resetState: !supportsHiresForEngine,
+    showCard: isHiresVisibleForMode(useInitImage, supportsHiresForEngine, useMask),
+    resetState: !supportsHiresForEngine || maskedImg2Img,
   }
 }

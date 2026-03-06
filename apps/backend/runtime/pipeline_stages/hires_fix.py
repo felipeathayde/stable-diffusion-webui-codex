@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `start_at_step_from_denoise` (function): Maps `denoise` in [0..1] to `start_at_step` (0..steps-1) with correct monotonic semantics.
 - `resolve_pipeline_telemetry_context` (function): Resolve and persist canonical task-scoped correlation context (fail loud on missing mode).
 - `resolve_hires_family_strategy` (function): Global family strategy + capability gate for hires compatibility checks.
-- `prepare_hires_latents_and_conditioning` (function): Prepares hires inputs via family-dispatched backends (SD, flow-like, Kontext).
+- `prepare_hires_latents_and_conditioning` (function): Prepares hires inputs via family-dispatched backends (SD, flow-like, Kontext, FLUX.2).
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class HiresFillCropPlan:
 
 
 HiresContinuationMode = Literal["init_latent", "image_latents"]
-HiresBackend = Literal["sd", "flow", "kontext"]
+HiresBackend = Literal["sd", "flow", "kontext", "flux2"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +276,8 @@ def _resolve_hires_backend(engine_id: str) -> HiresBackend:
         return "flow"
     if normalized_engine_id == "flux1_kontext":
         return "kontext"
+    if normalized_engine_id == "flux2":
+        return "flux2"
     raise NotImplementedError(
         f"Hires preparation backend is not implemented for engine '{normalized_engine_id}'."
     )
@@ -499,6 +501,46 @@ def prepare_hires_latents_and_conditioning(
         )
 
     if backend == "kontext":
+        latents = _prepare_flow_hires_latents(
+            sd_model,
+            base_samples=base_samples,
+            base_decoded=base_decoded,
+            upscaler_id=str(hires_plan.upscaler_id),
+            tile=tile,
+            progress_callback=progress_callback,
+            resize_plan=resize_plan,
+        )
+        emit_backend_event(
+            "pipeline.hires.prepare.ready",
+            logger="backend.runtime.pipeline_stages.hires_fix",
+            mode=telemetry.mode,
+            stage="hires.prepare.ready",
+            correlation_id=telemetry.correlation_id,
+            correlation_source=telemetry.correlation_source,
+            task_id=telemetry.task_id,
+            engine_id=engine_id,
+            strategy=backend,
+            continuation_mode="image_latents",
+            latents_shape=tuple(int(dim) for dim in latents.shape),
+            image_conditioning_shape=None,
+        )
+        return HiresPreparation(
+            latents=latents,
+            image_conditioning=None,
+            continuation_mode="image_latents",
+        )
+
+    if backend == "flux2":
+        if int(resize_plan.internal_width) % 16 != 0 or int(resize_plan.internal_height) % 16 != 0:
+            raise ValueError(
+                "FLUX.2 hires internal dimensions must be multiples of 16. "
+                f"Got internal={resize_plan.internal_width}x{resize_plan.internal_height}."
+            )
+        if int(resize_plan.target_width) % 16 != 0 or int(resize_plan.target_height) % 16 != 0:
+            raise ValueError(
+                "FLUX.2 hires target dimensions must be multiples of 16. "
+                f"Got target={resize_plan.target_width}x{resize_plan.target_height}."
+            )
         latents = _prepare_flow_hires_latents(
             sd_model,
             base_samples=base_samples,

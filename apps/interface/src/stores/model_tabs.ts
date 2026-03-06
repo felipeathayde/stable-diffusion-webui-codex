@@ -11,7 +11,8 @@ Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, norm
 default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
 `img2imgUpscaler`) decoupled from backend hires dispatch. WAN video normalization persists no-stretch img2vid guide controls
-(`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization.
+(`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization. FLUX.2 tabs keep the truthful Klein 4B / base-4B
+slice contract by capping `textEncoders` to one `flux2/*` Qwen selector without overriding shared img2img denoise state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -460,7 +461,7 @@ function defaultParams<T extends BaseTabType>(
   // Image tabs (SD15, SDXL, FLUX.1, FLUX.2)
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
-  const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
+  const guidance = (!config.capabilities.usesCfg && defaults.distilledCfg !== undefined) ? defaults.distilledCfg : defaults.cfg
   const samplingDefaults = fallbackSamplingDefaultsForTabFamily(type as TabFamily)
   const resolvedSampler = String(opts?.sampler || '').trim() || samplingDefaults.sampler
   const resolvedScheduler = String(opts?.scheduler || '').trim() || samplingDefaults.scheduler
@@ -1049,6 +1050,11 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   )
   merged.img2imgResizeMode = normalizeImg2ImgResizeMode(merged.img2imgResizeMode)
   merged.img2imgUpscaler = String(merged.img2imgUpscaler || '').trim() || defaults.img2imgUpscaler
+  merged.textEncoders = Array.isArray(merged.textEncoders)
+    ? merged.textEncoders
+        .map((entry) => String(entry || '').trim())
+        .filter((entry, index, array) => entry.length > 0 && array.indexOf(entry) === index)
+    : defaults.textEncoders.slice()
   merged.guidanceAdvanced = normalizeGuidanceAdvancedParams(
     patch.guidanceAdvanced,
     defaults.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED_PARAMS,
@@ -1066,7 +1072,13 @@ function normalizeParamsForType<T extends BaseTabType>(
   if (type === 'wan') {
     return normalizeWanParams(raw, defaults as TabParamsByType['wan']) as TabParamsByType[T]
   }
-  return normalizeImageParams(raw, defaults as ImageBaseParams) as TabParamsByType[T]
+  const normalized = normalizeImageParams(raw, defaults as ImageBaseParams)
+  if (type === 'flux2') {
+    normalized.textEncoders = normalized.textEncoders
+      .filter((label) => label.startsWith('flux2/'))
+      .slice(0, 1)
+  }
+  return normalized as TabParamsByType[T]
 }
 
 type RawTab = Omit<BaseTab, 'type' | 'params'> & {

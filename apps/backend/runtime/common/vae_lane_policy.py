@@ -14,7 +14,7 @@ WAN22 variant families (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) are always const
 Symbols (top-level; keep in sync; no ghosts):
 - `LDM_NATIVE_VAE_FAMILIES` (constant): Families that support native LDM VAE lane.
 - `_WAN22_FAMILIES` (constant): WAN22 variant families that are hard-pinned to native LDM VAE lane.
-- `strip_known_vae_prefixes` (function): Returns a lazy key-remapped view with known wrapper prefixes stripped.
+- `strip_known_vae_prefixes` (function): Returns a lazy keyspace-lookup view with known wrapper prefixes stripped.
 - `detect_vae_layout` (function): Detects VAE keyspace layout (`ldm` or `diffusers`) with ambiguity checks.
 - `resolve_vae_layout_lane` (function): Resolves effective lane (`ldm_native`/`diffusers_native`) from global policy + family + layout.
 - `uses_ldm_native_lane` (function): True when effective lane is native LDM.
@@ -27,7 +27,7 @@ from typing import Any, Mapping, Optional
 
 from apps.backend.infra.config.vae_layout_lane import VaeLayoutLane, read_vae_layout_lane
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.state_dict.views import RemapKeysView
+from apps.backend.runtime.state_dict.views import KeyspaceLookupView
 
 LDM_NATIVE_VAE_FAMILIES = {
     ModelFamily.FLUX,
@@ -72,7 +72,7 @@ def strip_known_vae_prefixes(state_dict: Mapping[str, Any]) -> Mapping[str, Any]
 
     if not mapping:
         return state_dict
-    return RemapKeysView(state_dict, mapping)
+    return KeyspaceLookupView(state_dict, mapping)
 
 
 def detect_vae_layout(state_dict: Mapping[str, Any]) -> str:

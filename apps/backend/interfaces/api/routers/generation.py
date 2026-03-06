@@ -21,7 +21,7 @@ Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asse
 Resolves `extras.lora_sha` / `img2img_extras.lora_sha` into server-side `lora_path` overrides only for engines with `supports_lora=True`
 and when SHA ownership matches LoRA inventory (`inventory.loras`, `.safetensors`), rejecting unsupported-engine/non-LoRA resolution fail-loud.
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
-Uses model-owned WAN22 request key allowlists from `runtime/state_dict/keymap_wan22_transformer.py` (no payload-owned WAN keymap),
+Uses backend API-owned WAN video request key allowlists from `interfaces/api/wan_video_request_keys.py`,
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
@@ -106,9 +106,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         register_default_engines(replace=False)
 
     from apps.backend.types.payloads import EXTRAS_KEYS, TXT2IMG_KEYS
-    from apps.backend.runtime.state_dict.keymap_wan22_transformer import (
-        WAN22_REQUEST_KEYS,
-        legacy_wan22_request_key_alias_target,
+    from apps.backend.interfaces.api.wan_video_request_keys import (
+        WAN_VIDEO_REQUEST_KEYS,
+        legacy_wan_video_request_key_alias_target,
     )
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL) - set(TXT2IMG_KEYS.SMART)
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
@@ -165,9 +165,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "model",
         "settings_revision",
     }
-    _TXT2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.TXT2VID_ALL)
-    _IMG2VID_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.IMG2VID_ALL)
-    _WAN_STAGE_ALLOWED_KEYS = set(WAN22_REQUEST_KEYS.WAN_STAGE_ALLOWED)
+    _TXT2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.TXT2VID_ALL)
+    _IMG2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.IMG2VID_ALL)
+    _WAN_STAGE_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
     _GUIDANCE_OPTION_KEYS = {
@@ -211,7 +211,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         for raw_key in payload.keys():
             if not isinstance(raw_key, str):
                 continue
-            canonical = legacy_wan22_request_key_alias_target(raw_key)
+            canonical = legacy_wan_video_request_key_alias_target(raw_key)
             if canonical is None:
                 continue
             aliases[raw_key] = canonical
@@ -2458,7 +2458,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         (single-flight-safe).
         """
         for legacy_key in ("codex_device", "codex_diffusion_device"):
-            canonical = legacy_wan22_request_key_alias_target(legacy_key)
+            canonical = legacy_wan_video_request_key_alias_target(legacy_key)
             if canonical != "device":
                 continue
             if legacy_key in payload:

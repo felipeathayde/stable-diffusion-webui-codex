@@ -7,13 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model mounting.
-Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize=False`, `computation_dtype=dtype`) so placement policy remains centralized. Also triggers WAN fused-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
+Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN keyspace resolution, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize=False`, `computation_dtype=dtype`) so placement policy remains centralized. Also triggers WAN fused-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
 Optionally applies an ordered per-stage LoRA sequence (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `pick_stage_gguf` (function): Validates and returns the stage GGUF file path (strict: must be an explicit `.gguf` file).
 - `_resolve_stage_mount_device` (function): Resolves the mount device from memory manager policy.
-- `mount_stage_model_from_gguf` (function): Mounts a stage GGUF into a runtime transformer (mount-device GGUF load + key remapping + mount-device ops wrapper); final lifecycle ownership remains delegated to memory manager.
+- `mount_stage_model_from_gguf` (function): Mounts a stage GGUF into a runtime transformer (mount-device GGUF load + keyspace resolution + mount-device ops wrapper); final lifecycle ownership remains delegated to memory manager.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
 from .diagnostics import get_logger, log_cuda_mem
-from .model import load_wan_transformer_from_state_dict, remap_wan22_gguf_state_dict
+from .model import load_wan_transformer_from_state_dict, resolve_wan22_gguf_keyspace
 from .paths import normalize_win_path
 from .stage_lora import apply_wan22_stage_lora
 
@@ -80,7 +80,7 @@ def mount_stage_model_from_gguf(
         device=mount_device,
     )
     log_cuda_mem(log, label=f"{stage}:after-mount-load")
-    state = remap_wan22_gguf_state_dict(state)
+    state = resolve_wan22_gguf_keyspace(state)
     with using_codex_operations(device=mount_device, dtype=dtype, weight_format="gguf"):
         model = load_wan_transformer_from_state_dict(state, config=None)
     del state

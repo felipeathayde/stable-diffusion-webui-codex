@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-03-01
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -17,11 +17,11 @@ Status: Active
 - `scheduler.py`: Diffusers-free scheduler helpers for WAN2.2 (vendor `scheduler_config.json` reader + UniPC flow-sigmas scheduler + experimental FlowMatch-Euler lane).
 - `text_context.py`: tokenizer + text encoder (strict local-files-only) para embeddings de prompt/negative.
 - `vae_io.py`: VAE encode/decode + latent norms (I2V conditioning encode + decode frames), com offload.
-- `stage_loader.py`: validação de paths `.gguf` + load de weights em `WanTransformer2DModel` via `using_codex_operations(..., weight_format="gguf")` + remap de chaves.
+- `stage_loader.py`: validação de paths `.gguf` + load de weights em `WanTransformer2DModel` via `using_codex_operations(..., weight_format="gguf")` + resolução de keyspace.
 - `stage_lora.py`: aplicação de LoRA por stage (High/Low) no caminho GGUF (LightX2V), com mapping Diffusers→Codex e modo global `CODEX_LORA_APPLY_MODE`.
 - `paths.py`: normalização de paths Windows (`C:\\...`) para WSL (`/mnt/c/...`) usada por config + loaders (evita drift).
 - `diagnostics.py`: logging/diagnostics (sigmas parity, CUDA mem snapshots, cache empty) para o caminho GGUF.
-- `model.py`: `WanArchitectureConfig` + `WanTransformer2DModel` e helpers (`remap_wan22_gguf_state_dict`, `infer_wan_architecture_from_state_dict`, `load_wan_transformer_from_state_dict`) para manter o core WAN22 format-agnóstico.
+- `model.py`: `WanArchitectureConfig` + `WanTransformer2DModel` e helpers (`resolve_wan22_gguf_keyspace`, `infer_wan_architecture_from_state_dict`, `load_wan_transformer_from_state_dict`) para manter o core WAN22 format-agnóstico.
 - `inference.py`: helpers compartilhados de inferência de shapes (patch embedding/head) usados por detector e loader (evita drift PyTorch vs GGUF layouts).
 - `sdpa.py`: seleção de backend SDPA + chunking (policy/chunk) usada pelo core WAN22 (para alinhar com env/flags do runtime).
 - `streaming/`: infraestrutura de streaming de core para `WanTransformer2DModel` (`WanExecutionPlan`, `WanCoreController`, `StreamedWanTransformer`) com execução por segmentos; controller semantics são compartilhadas com Flux via `apps/backend/runtime/streaming/controller.py` para evitar drift.
@@ -41,7 +41,8 @@ Status: Active
 - 2026-02-01: WAN22 GGUF scheduler no longer depends on the Diffusers library (`UniPCMultistepScheduler`); the runtime implements a strict, WAN-only UniPC flow scheduler under `scheduler.py` and keeps parity validation checks vs `.refs/diffusers`.
 - 2026-01-08: Removed the global `WAN_FLOW_SHIFT_DEFAULT`; `StageConfig.flow_shift` is required and defaults are resolved from the vendored diffusers `scheduler_config.json` (variant-correct, fail-fast if missing).
 - 2026-01-08: Refreshed `run.py` file header block to include new helpers and removed a duplicate `_require_flow_shift` call (no behavior change).
-- 2026-01-16: Updated `model.py` remapping to accept Diffusers `WanTransformer3DModel` key layout (`condition_embedder.*`, `attn1/attn2`, `scale_shift_table`, `proj_out`, `norm2↔norm3`) and aligned modulation parameter shapes/head modulation semantics with upstream exports.
+- 2026-01-16: Updated `model.py` keyspace resolution to accept Diffusers `WanTransformer3DModel` key layout (`condition_embedder.*`, `attn1/attn2`, `scale_shift_table`, `proj_out`, `norm2↔norm3`) and aligned modulation parameter shapes/head modulation semantics with upstream exports.
+- 2026-03-06: WAN22 GGUF transformer/VAE load paths now keep original tensors behind lookup views (`resolve_wan22_gguf_keyspace`, `resolve_wan22_vae_{2d,3d}_keyspace`) instead of materializing renamed state dict copies during stage/VAE load.
 - 2026-01-18: Centralized GGUF state-dict loading in runtime IO (`apps/backend/runtime/checkpoint/io.py:load_gguf_state_dict`) for WAN22 (stage loader + text encoder GGUF path), avoiding private helpers and direct quantization imports.
 - 2026-01-20: WAN22 GGUF agora suporta LoRA por stage (High/Low) via `wan_high/wan_low.lora_sha` (sha → `.safetensors`) + `lora_weight` e aplica no load do stage; modo global `CODEX_LORA_APPLY_MODE=merge|online` (default `merge`).
 - 2026-01-21: WAN22 GGUF now honors Smart flags in video runs: TE runs on CUDA for embedding generation and offloads to CPU when Smart Offload is enabled; VAE IO honors `vae_always_tiled` (Diffusers tiling) and retries encode/decode on CPU under Smart Fallback.
@@ -49,7 +50,7 @@ Status: Active
 - 2026-01-23: WAN22 GGUF enforces `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping when latent H/W are odd (e.g. 360px → 352px).
 - 2026-01-23: WAN22 GGUF core model parity: self-attn now applies RoPE + Q/K RMSNorm across heads (qk_norm), cross-attn applies Q/K RMSNorm, and the timestep embedding matches Diffusers `Timesteps(..., downscale_freq_shift=0, flip_sin_to_cos=True)` (fixes noisy outputs caused by missing positional/timestep semantics).
 - 2026-01-23: WAN22 GGUF numeric stability parity: transformer LayerNorms and gated residual math now follow Diffusers’ FP32 strategy (FP32 LayerNorm + float32 accumulations), addressing VAE decode non-finite outputs caused by fp16 instability drifting latents out of range.
-- 2026-01-23: Centralized WAN22 transformer key remapping in `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`; `model.py:remap_wan22_gguf_state_dict` delegates to it and `stage_lora.py` treats key-style detection failures as “no match” (so LoRA application remains fail-loud at the “0 targets” boundary).
+- 2026-01-23: Centralized WAN22 transformer keyspace resolution in `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`; `model.py:resolve_wan22_gguf_keyspace` delegates to it and `stage_lora.py` treats key-style detection failures as “no match” (so LoRA application remains fail-loud at the “0 targets” boundary).
 - 2026-02-08: `wan_latent_norms.py` now exposes `WAN21_LATENTS_MEAN` / `WAN21_LATENTS_STD` constants as shared source-of-truth for Wan21 latent stats (reused by Anima VAE config to avoid duplicated literals).
 - 2026-02-10: WAN22 strict-load contract hardened: `load_wan_transformer_from_state_dict` and `text_context.get_text_context` now fail loud on any missing/unexpected keys instead of warning/debug-only continuation.
 - 2026-02-11: `vae_io.decode_latents_to_frames` now fails loud unless input latents match supported WAN VAE latent channels (`16`/`48`); implicit C-slicing remains removed to keep decode contracts explicit and traceable.
@@ -59,7 +60,7 @@ Status: Active
 - 2026-02-11: WAN GGUF run-config now requires `wan_vae_path` to be a VAE bundle directory (`config.json` + supported weights file); file-path inputs are rejected as contract errors before runtime execution.
 - 2026-02-11: WAN VAE deterministic path/config contract failures now raise a dedicated non-retryable error (`WAN22VAEContractError`) so encode/decode dtype fallback loops do not mask root cause with retry noise.
 - 2026-02-11: WAN GGUF now supports file-based VAE paths when explicit config source exists (sibling `config.json` or metadata `vae/config.json`), propagated via `RunConfig.vae_config_dir` into VAE IO; missing config sources remain deterministic fail-loud contract errors (no dtype fallback retries).
-- 2026-02-11: `vae_io.load_vae` now resolves explicit native lanes (`2d_native` / `3d_native`) from core kernel ranks; 3D checkpoints load through shared `runtime/common/vae_codex3d.py::AutoencoderCodex3D` with strict key remap, and 3D encode/decode paths bypass frame flattening.
+- 2026-02-11: `vae_io.load_vae` now resolves explicit native lanes (`2d_native` / `3d_native`) from core kernel ranks; 3D checkpoints load through shared `runtime/common/vae_codex3d.py::AutoencoderCodex3D` with strict keyspace resolution, and 3D encode/decode paths bypass frame flattening.
 - 2026-02-11: `scheduler.py` UniPC corrector now promotes low-precision linear-solve inputs (`fp16`/`bf16`) to `fp32` before `torch.linalg.solve` and casts back after solve, preventing CUDA `lu_factor_cusolver` half-precision backend errors.
 - 2026-02-11: `run.py` img2vid batch/stream paths now slice pure latent channels from I2V state before VAE decode (order-aware via `resolve_i2v_order`), preventing `C=36` conditioning-state tensors (`lat+mask+img`) from reaching VAE decode contracts that require latent-only channels.
 - 2026-02-12: `sampling.py` now enforces fail-loud per-step finite checks at loop-entry/model/CFG/scheduler boundaries and runs scheduler-state math in `fp32` when model execution dtype is `fp16`/`bf16` (preserving strict contracts while stabilizing low-stage I2V updates).
@@ -69,7 +70,7 @@ Status: Active
 - 2026-02-16: `run.py` now enforces deterministic stage finalization for WAN22 GGUF txt2vid/img2vid (batch + streaming): each stage lifecycle is wrapped in `try/finally` teardown, `_MemoryManagedModule` exposes explicit `codex_unpatch_model(...)` offload semantics for memory-manager unload, and teardown ordering remains guaranteed on cancel/error/OOM paths.
 - 2026-02-16: `vae_io.py` now resolves WAN22 VAE keyspaces through model-owned state_dict keymaps (`keymap_wan22_vae.py` for 2D/3D lanes), including strict mixed-style and collision fail-loud behavior before strict load.
 - 2026-02-17: `run.py` now resolves WAN variant identity from both stage filenames (`wan_high` + `wan_low`) and fails loud on explicit high/low 5B↔14B mismatches for txt2vid/img2vid (batch + streaming), preventing silent mixed-lane execution.
-- 2026-02-17: WAN22 3D VAE loading remains native-only (`AutoencoderCodex3D`) for both codex/diffusers key styles; wrapper-prefix normalization happens before lane detection, and style-specific remap still feeds strict native load.
+- 2026-02-17: WAN22 3D VAE loading remains native-only (`AutoencoderCodex3D`) for both codex/diffusers key styles; wrapper-prefix normalization happens before lane detection, and style-specific keyspace resolution still feeds strict native load.
 - 2026-02-17: `runtime/common/vae_codex3d.py` now mirrors upstream temporal cache/chunk semantics for encode/decode (causal-conv cache, 3D upsample cache handling, nearest-exact upsample), restoring native decode parity for WAN2.2 14B I2V VAE outputs.
 - 2026-02-17: WAN22 GGUF attention path now supports explicit `gguf_attention_mode` (`global|sliding`) with fail-loud parsing in `config.py`; sliding mode auto-uses `gguf_attn_chunk=1024` when omitted, `sdpa.py` applies local K/V windows per chunk, and `run.py` propagates mode into txt2vid/img2vid batch+stream entrypoints.
 - 2026-02-20: `sdpa.py` sliding mode now detects `q_len != kv_len` (cross-attention path) and falls back to full-K/V per query chunk instead of query-indexed sliding windows, preventing deterministic empty-window context loss on long video token sequences.
@@ -120,7 +121,7 @@ Status: Active
 - 2026-03-01: `run.py` img2vid entrypoints (`run_img2vid`, `stream_img2vid`, `stream_img2vid_chunked`) now forward `RunConfig` guide controls (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) into VAE init-image preprocessing so runtime framing matches the UI projection contract.
 - 2026-03-02: WAN22 img2vid guide scale is now optional end-to-end (`RunConfig.img2vid_image_scale: float | None`); when omitted, `vae_io` computes and applies the minimum no-stretch scale required by output geometry instead of forcing a router/runtime default `1.0`.
 - 2026-03-01: `sampling.py::sample_stage_latents*` now wires `transformer_options` block-progress callbacks into all stage model forwards (non-CFG and CFG cond/uncond), optionally enables the shared Rich block bar (`CODEX_PROGRESS_BAR`) via `runtime/sampling/block_progress.py`, and suppresses periodic WAN step phrase logs while block-callback progress is active (generator progress payload contract unchanged).
-- 2026-02-28: `stage_lora.py::_build_to_load_map(...)` now uses `keymap_wan22_transformer.py::resolve_wan22_lora_logical_key(...)` as mapping authority (no direct/remap fallback path), enabling canonical `lora_unet_*` adapter layouts (including `lora_unet_blocks_*`) and keeping unsupported layouts fail-loud via zero-match/coverage guards.
+- 2026-02-28: `stage_lora.py::_build_to_load_map(...)` now uses `keymap_wan22_transformer.py::resolve_wan22_lora_logical_key(...)` as mapping authority (no direct fallback lookup path), enabling canonical `lora_unet_*` adapter layouts (including `lora_unet_blocks_*`) and keeping unsupported layouts fail-loud via zero-match/coverage guards.
 - 2026-02-22: `text_context.py::get_text_context(...)` now enforces strict `gguf_te_device` contract at runtime (`auto|cpu|cuda|cuda:<index>`; `gpu -> cuda` normalization) and rejects invalid values fail-loud instead of implicit CPU fallback.
 - 2026-02-22: `sdpa.py` now stores SDPA policy/mode/chunk in context-local state (`ContextVar`) instead of process-global mutable dict, preventing cross-request policy bleed under concurrent WAN22 runs.
 - 2026-02-22: `vae_io.py::vae_decode_video(...)` now emits frames incrementally from decoded temporal chunks (2D lane slices + 3D callback stream path) with per-chunk finite/layout validation, so decode no longer requires full `[B,C,T,H,W]` tensor residency before host export.

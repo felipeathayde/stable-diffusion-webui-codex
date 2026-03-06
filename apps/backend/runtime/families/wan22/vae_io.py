@@ -11,7 +11,7 @@ Loads WAN VAE weights via explicit native lanes (`2d_native` or `3d_native`), ap
 I2V init-image preprocessing is deterministic and no-stretch (`scale + crop + resize`) across tensor/PIL/ndarray paths before VAE encode,
 with optional image scale (`img2vid_image_scale > 0` when provided; omitted = auto-fit minimum) and normalized crop offsets (`x/y` in `[0,1]`)
 aligned to the frontend guide projection contract.
-Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks). Model key remap ownership is delegated to `runtime/state_dict/keymap_wan22_vae.py`.
+Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks). Model keyspace ownership is delegated to `runtime/state_dict/keymap_wan22_vae.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN22VAEContractError` (exception): Deterministic WAN VAE path/config contract failure (non-retryable by dtype fallback loops).
@@ -242,12 +242,14 @@ def load_vae(
 
             if lane == "2d_native":
                 resolved_2d = resolve_wan22_vae_2d_keyspace(dict(normalized_state_dict))
-                remap_style_obj = resolved_2d.style
-                remap_style = remap_style_obj.value if hasattr(remap_style_obj, "value") else str(remap_style_obj)
-                state_dict = resolved_2d.view
+                resolved_style_obj = resolved_2d.style
+                resolved_style = (
+                    resolved_style_obj.value if hasattr(resolved_style_obj, "value") else str(resolved_style_obj)
+                )
+                resolved_state_dict_view = resolved_2d.view
                 config = AutoencoderKL_LDM.load_config(config_dir)
                 native_config = sanitize_ldm_vae_config(config)
-                inferred_latent_channels = _infer_latent_channels_from_state_dict(state_dict)
+                inferred_latent_channels = _infer_latent_channels_from_state_dict(resolved_state_dict_view)
                 if inferred_latent_channels is not None:
                     configured_channels = native_config.get("latent_channels")
                     if configured_channels is None:
@@ -255,29 +257,34 @@ def load_vae(
                     elif int(configured_channels) != int(inferred_latent_channels):
                         raise WAN22VAEContractError(
                             "WAN22 GGUF: VAE config/state_dict latent channel mismatch "
-                            f"(lane=2d_native style={remap_style} config latent_channels={int(configured_channels)} "
+                            f"(lane=2d_native keyspace_style={resolved_style} "
+                            f"config latent_channels={int(configured_channels)} "
                             f"inferred={int(inferred_latent_channels)})."
                         )
                 vae = AutoencoderKL_LDM.from_config(native_config)
-                missing, unexpected = safe_load_state_dict(vae, state_dict, log_name="WAN22 VAE (2d_native)")
+                missing, unexpected = safe_load_state_dict(
+                    vae,
+                    resolved_state_dict_view,
+                    log_name="WAN22 VAE (2d_native)",
+                )
                 if missing or unexpected:
                     raise WAN22VAEContractError(
                         "WAN22 GGUF: native VAE load failed strict validation "
                         f"(lane=2d_native missing={len(missing)} unexpected={len(unexpected)} "
                         f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]})."
-                )
+                    )
                 setattr(vae, "_codex_vae_lane", "2d_native")
-                setattr(vae, "_codex_vae_style", remap_style)
+                setattr(vae, "_codex_vae_style", resolved_style)
                 return vae
 
             resolved_3d = resolve_wan22_vae_3d_keyspace(dict(normalized_state_dict))
-            remap_style_obj = resolved_3d.style
-            remap_style = remap_style_obj.value if hasattr(remap_style_obj, "value") else str(remap_style_obj)
-            remapped_state_dict = resolved_3d.view
+            resolved_style_obj = resolved_3d.style
+            resolved_style = resolved_style_obj.value if hasattr(resolved_style_obj, "value") else str(resolved_style_obj)
+            resolved_state_dict_view = resolved_3d.view
             config = AutoencoderCodex3D.load_config(config_dir)
 
             native_config = sanitize_codex3d_vae_config(config)
-            inferred_latent_channels = _infer_latent_channels_from_state_dict(remapped_state_dict)
+            inferred_latent_channels = _infer_latent_channels_from_state_dict(resolved_state_dict_view)
             if inferred_latent_channels is not None:
                 configured_channels = native_config.get("z_dim")
                 if configured_channels is None:
@@ -285,19 +292,24 @@ def load_vae(
                 elif int(configured_channels) != int(inferred_latent_channels):
                     raise WAN22VAEContractError(
                         "WAN22 GGUF: VAE config/state_dict latent channel mismatch "
-                        f"(lane=3d_native style={remap_style} config z_dim={int(configured_channels)} "
+                        f"(lane=3d_native keyspace_style={resolved_style} config z_dim={int(configured_channels)} "
                         f"inferred={int(inferred_latent_channels)})."
                     )
             vae = AutoencoderCodex3D.from_config(native_config)
-            missing, unexpected = safe_load_state_dict(vae, remapped_state_dict, log_name="WAN22 VAE (3d_native)")
+            missing, unexpected = safe_load_state_dict(
+                vae,
+                resolved_state_dict_view,
+                log_name="WAN22 VAE (3d_native)",
+            )
             if missing or unexpected:
                 raise WAN22VAEContractError(
                     "WAN22 GGUF: native VAE load failed strict validation "
-                    f"(lane=3d_native style={remap_style} missing={len(missing)} unexpected={len(unexpected)} "
-                    f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]})."
+                    f"(lane=3d_native keyspace_style={resolved_style} missing={len(missing)} "
+                    f"unexpected={len(unexpected)} missing_sample={missing[:10]} "
+                    f"unexpected_sample={unexpected[:10]})."
                 )
             setattr(vae, "_codex_vae_lane", "3d_native")
-            setattr(vae, "_codex_vae_style", remap_style)
+            setattr(vae, "_codex_vae_style", resolved_style)
             return vae
         except WAN22VAEContractError:
             raise
@@ -821,8 +833,8 @@ def vae_encode_video_condition(
             vae = vae.to(device=target, dtype=torch_dtype)
             lane = _resolve_loaded_vae_lane(vae)
             last_lane = lane
-            style = str(getattr(vae, "_codex_vae_style", "unknown")).strip().lower() or "unknown"
-            log.info("[wan22.gguf] VAE lane=%s style=%s", lane, style)
+            keyspace_style = str(getattr(vae, "_codex_vae_style", "unknown")).strip().lower() or "unknown"
+            log.info("[wan22.gguf] VAE lane=%s keyspace_style=%s", lane, keyspace_style)
 
             image = _prepare_init_image_tensor(
                 init_image,

@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanFFN` (class): Feed-forward (MLP) block used in WAN transformer blocks.
 - `WanTransformerBlock` (class): One transformer block combining attention + FFN + norms/residuals.
 - `WanTransformer2DModel` (class): Full WAN transformer stack (embeddings/blocks/forward); used by `runtime/wan22/wan22.py`.
-- `remap_wan22_gguf_state_dict` (function): Remaps WAN22 transformer state-dict keys into this module’s expected parameter keys (Diffusers/WAN-export/Codex).
+- `resolve_wan22_gguf_keyspace` (function): Resolves WAN22 transformer checkpoint keys into this module’s expected parameter lookup space (Diffusers/WAN-export/Codex).
 - `infer_wan_architecture_from_state_dict` (function): Infers `WanArchitectureConfig` from a loaded state dict (dims/layers/heads).
 - `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with strict fail-loud key mismatch handling).
 """
@@ -35,9 +35,10 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -1255,8 +1256,8 @@ class WanTransformer2DModel(nn.Module):
 
 
 # Weight loading helper
-def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
-    """Remap WAN transformer checkpoint keys to WanTransformer2DModel keys.
+def resolve_wan22_gguf_keyspace(state_dict: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Resolve WAN transformer checkpoint keys to WanTransformer2DModel lookup keys.
 
     Supported input styles:
     - Diffusers-style keys (e.g. `condition_embedder.*`, `blocks.N.attn1/attn2.*`, `ffn.net.*`, `proj_out.*`).
@@ -1271,12 +1272,12 @@ def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
     resolved = resolve_wan22_transformer_keyspace(state_dict)
     style = resolved.style
     style_label = style.value if hasattr(style, "value") else str(style)
-    logger.debug("WAN22 remap: detected style=%s", style_label)
-    return dict(resolved.view)
+    logger.debug("WAN22 keyspace: detected style=%s", style_label)
+    return resolved.view
 
 
 def infer_wan_architecture_from_state_dict(state_dict: dict) -> WanArchitectureConfig:
-    """Infer WAN architecture parameters from a (remapped) state_dict."""
+    """Infer WAN architecture parameters from a resolved WAN keyspace."""
 
     def _shape(key: str) -> tuple[int, ...] | None:
         value = state_dict.get(key)

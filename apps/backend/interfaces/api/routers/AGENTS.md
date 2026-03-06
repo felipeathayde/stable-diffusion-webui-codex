@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-05
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -26,7 +26,7 @@ Status: Active
 - 2026-02-28: `generation.py` img2vid API contract now accepts only `solo|sliding|svi2|svi2_pro`; unsupported mode values return fail-loud HTTP 400.
 - 2026-02-28: `generation.py` keeps `/api/vid2vid` route scaffolded but intentionally disabled (HTTP 501 + `NotImplementedError`) until the capability-driven router/runtime contract is finalized.
 - 2026-01-13: `tools.py` supports GGUF conversion cancellation (`POST /api/tools/convert-gguf/:job_id/cancel`) and an `overwrite` flag (default false; fails with 409 if the output path exists).
-- 2026-01-14: `tools.py` accepts a `comfy_layout` flag for GGUF conversion to control Flux/ZImage Comfy/Codex remapping (default true).
+- 2026-01-14: `tools.py` accepts a `comfy_layout` flag for GGUF conversion to control Flux/ZImage Comfy/Codex key-layout translation (default true).
 - 2026-01-13: `models.py` adds `/api/models/checkpoint-metadata` so the UI can fetch the full metadata modal payload without constructing it client-side.
 - 2026-01-18: `models.py` now includes backend `asset_contracts` in `/api/engines/capabilities` so the UI can gate required VAE/text encoder selection from a single contract source.
 - 2026-01-18: `generation.py` enforces image asset requirements via `apps/backend/core/contracts/asset_requirements.py` and keeps engine registration lazy (avoids torch-heavy startup for non-generation endpoints).
@@ -74,12 +74,13 @@ Status: Active
 - 2026-02-15: `generation.py`/`upscale.py`/`supir.py` now sanitize synchronous `HTTPException.detail` paths (and `upscale.py` manifest parse error fields) through `public_http_error_detail(...)`, so API callers do not receive raw exception strings.
 - 2026-02-16: `generation.py` video worker now logs typed `EngineExecutionError` explicitly to API console logs before writing sanitized task error payloads (keeps local debugging signal while preserving public error contract).
 - 2026-02-16: `generation.py` video worker immediate-cancel path now drains orchestrator iterators instead of returning early, so teardown/finalizers complete before `release_inference_gate()`; video smart-flag parsing now reuses the shared strict helper from `tasks/generation_tasks.py`.
-- 2026-02-16: WAN22 video request allowlists are now owned by model keymap module `apps/backend/runtime/state_dict/keymap_wan22_transformer.py` (`WAN22_REQUEST_KEYS`), not by payload type definitions.
+- 2026-03-06: `generation.py` WAN txt2vid/img2vid unknown-key rejection now consumes backend API-owned allowlists from `apps/backend/interfaces/api/wan_video_request_keys.py`; request-contract authority no longer lives in `runtime/state_dict`.
 - 2026-02-18: `tasks.py` cancellation endpoint now accepts both `immediate` and `after_current`; when `mode` is omitted it uses `CODEX_TASK_CANCEL_DEFAULT_MODE` (strictly validated at startup, fail-loud on invalid values). `stop_generating()` is invoked only for `immediate`.
 - 2026-02-18: `generation.py` video worker inference-gate wait now aborts on any cancel mode (`immediate`/`after_current`) before start; in-flight interruption remains immediate-only and still drains orchestrator iterators before gate release.
 - 2026-02-16: `models.py` prompt-token endpoint now recognizes `wan22_14b_animate`; `ui.py` tab-type normalization accepts `wan22_14b_animate` and normalizes all WAN aliases to `wan`.
+- 2026-03-05: `models.py` prompt-token counting now accepts `engine="flux2"` and uses the vendored `black-forest-labs/FLUX.2-klein-4B/tokenizer` (Qwen2TokenizerFast) for offline FLUX.2 Klein 4B/base-4B token counts.
 - 2026-02-17: `generation.py` WAN variant resolution now preserves 14B identity across repo/path hints (expanded token set + 14B-first heuristics) and avoids silent 14B→5B collapse during engine-key resolution.
-- 2026-03-02: `generation.py` no longer remaps `wan22_14b_animate` to `wan22_14b` for txt2vid/img2vid; WAN variant resolution now dispatches the resolved engine key directly so unsupported task/lane combinations fail loud at execution boundary.
+- 2026-03-02: `generation.py` no longer aliases `wan22_14b_animate` to `wan22_14b` for txt2vid/img2vid; WAN variant resolution now dispatches the resolved engine key directly so unsupported task/lane combinations fail loud at execution boundary.
 - 2026-02-17: `generation.py` WAN video core validation now enforces frame domain `4n+1` in `[9,401]`, accepts strict `gguf_attention_mode` (`global|sliding`), and validates/forwards windowed img2vid controls fail-loud (`img2vid_window_frames`, `img2vid_window_stride`, `img2vid_window_commit_frames`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`, optional `img2vid_chunk_buffer_mode`).
 - 2026-02-20: `generation.py` img2vid temporal parser enforces strict mode-scoped field validation and keeps windowed continuity checks fail-loud at API parse time (HTTP 400).
 - 2026-02-21: `generation.py` now validates/forwards optional `img2vid_chunk_buffer_mode` (`hybrid|ram|ram+hd`) for windowed img2vid modes (`sliding|svi2|svi2_pro`) and fails loud when provided in `solo` mode.
@@ -101,7 +102,7 @@ Status: Active
 - 2026-03-01: `ui.py` tab params sanitization now drops unsupported top-level keys during create/update and persisted-tab hydration (instead of 400 on unknown keys), writes sanitized values back to `tabs.json`, and migrates legacy image `highres` into canonical `hires` before persistence.
 - 2026-02-21: `generation.py` now validates optional `video_interpolation` payload objects (`enabled` required bool; optional `times` must be int>=2; optional `model` must be string) and forwards normalized values only, preventing silent interpolation enablement from permissive coercion.
 - 2026-02-21: `generation.py` WAN sampler fields (`txt2vid_sampler`, `img2vid_sampler`, `wan_high.sampler`, `wan_low.sampler`) now accept any non-empty sampler string at API parse time (known names are canonicalized when possible); WAN scheduler fields remain strict (`simple`).
-- 2026-02-21: `ui.py` now fails loud for malformed UI persistence payloads (`tabs.json`, `workflows.json`, `presets.json`) instead of silently remapping to defaults/empty lists; workflow creation now requires explicit `type` and validates `params_snapshot` as object.
+- 2026-02-21: `ui.py` now fails loud for malformed UI persistence payloads (`tabs.json`, `workflows.json`, `presets.json`) instead of silently coercing them to defaults/empty lists; workflow creation now requires explicit `type` and validates `params_snapshot` as object.
 - 2026-02-21: `ui.py` loaders now also enforce top-level object payloads before `.get(...)` access (tabs/workflows/presets/blocks), and `blocks.d` merge order is now sorted to keep override precedence deterministic.
 - 2026-02-21: `tools.py` CodexPack v1 metadata gate now parses `codex.converter.comfy_layout` with strict bool parsing (`parse_bool_value`) to avoid permissive `bool(\"false\") == True` layout bypass.
 - 2026-02-21: `options.py` no longer clamps out-of-range numeric values in `POST /api/options`; out-of-range values now reject with HTTP 400 to match `/api/options/validate` semantics.
@@ -119,6 +120,7 @@ Status: Active
 - 2026-03-02: `generation.py` keeps `img2vid_image_scale` optional at API boundary (field omitted when not provided); runtime receives no forced `1.0` fallback and applies its own auto-fit minimum scale policy.
 - 2026-03-03: `models.py` inventory refresh logs now emit an explicit warning when `wan22.gguf=0`, including resolved `wan22_ckpt` roots and actionable guidance (WAN22 GGUF discovery under those roots is recursive; refresh after copying files).
 - 2026-03-05: `tools.py` adds async safetensors merge endpoints (`POST /api/tools/merge-safetensors`, `GET /api/tools/merge-safetensors/{job_id}`) with fail-loud path validation, synchronous preflight rejection when `output_path` aliases a source shard/source file, and shared tools job payload schema.
+- 2026-03-06: `generation.py` now preflights route-mode capability against `ENGINE_SURFACES` before task creation (`txt2img` / `img2img` / `txt2vid` / `img2vid`), resolves FLUX.2 guidance mode from the selected checkpoint via `model` or `<field_prefix>.model_sha` before validating `cfg` vs `distilled_cfg`, and allows FLUX.2 img2img partial denoise now that the backend continuation path is real; masked FLUX.2 hires remains explicitly rejected.
 - 2026-03-03: `models.py` add-path endpoints (`POST /api/models/path-scan`, `POST /api/models/path-add`, `POST /api/models/path-add-all`) now keep scan payloads lightweight (`name/path/ext` only; no SHA/type), while add/add-all compute SHA strictly at add-time and process add-all sequentially via add-one semantics (no bulk pre-hash fallback).
 - 2026-03-03: `models.py` now exposes async inventory refresh start (`POST /api/models/inventory/refresh/async`) backed by task registry SSE (`/api/tasks/{id}/events`), with info-level start/completion lifecycle logs and terminal result payload carrying normalized inventory for one-shot frontend refresh application.
 - 2026-02-23: `options.py` now enforces main-device invariant on runtime updates: any device update to `codex_core_device`/`codex_te_device`/`codex_vae_device` is normalized to one shared value, and mixed values are rejected with HTTP 400.

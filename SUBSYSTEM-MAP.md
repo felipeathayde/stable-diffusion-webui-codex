@@ -26,7 +26,7 @@ See `AGENTS.md` and `.sangoi/reference/**` for authoritative contracts.
 ## Fast Lookup (Concept -> Where)
 | Concept | Aliases | Go to |
 |---|---|---|
-| Keymaps | checkpoint key mapping, VAE key remap, TE key remap | [Keymaps](#concept-keymaps) |
+| Keymaps | checkpoint keyspace mapping, VAE keyspace resolution, TE keyspace resolution | [Keymaps](#concept-keymaps) |
 | Native Conv3D VAE | conv3d native, codex3d vae | [Native Conv3D VAE](#concept-conv3d-vae) |
 | Hires Fix | hires second pass, high-res fix | [Hires Fix](#concept-hires-fix) |
 | Mode Pipelines | txt2img/img2img/txt2vid/img2vid/vid2vid flow | [Mode Pipelines](#concept-mode-pipelines) |
@@ -89,7 +89,7 @@ Snapshot date: 2026-02-16
 - Canonical: `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`
 - Secondary: `apps/backend/quantization/codexpack_keymaps.py`
 - Secondary: `apps/backend/runtime/tools/gguf_converter_key_mapping.py`
-- Why: key-style detection/remap ownership for checkpoint, VAE, and text-encoder layouts.
+- Why: key-style detection/keyspace-resolution ownership for checkpoint, VAE, and text-encoder layouts.
 
 <a id="concept-conv3d-vae"></a>
 ### Native Conv3D VAE

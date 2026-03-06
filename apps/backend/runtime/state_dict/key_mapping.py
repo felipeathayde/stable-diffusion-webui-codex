@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Declarative key-style detection + strict keyspace resolver primitives for checkpoint state_dicts.
-Provides fail-loud style detection and canonical keyspace resolution utilities used by model-family loaders to normalize multiple upstream
-key layouts into one canonical runtime layout without ad-hoc string-replace chains or silent fallbacks.
+Provides fail-loud style detection and canonical keyspace resolution utilities used by model-family loaders to resolve multiple upstream
+key layouts into one canonical lookup space without mutating source keys or relying on ad-hoc string-replace chains.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyMappingError` (exception): Raised when key-style detection or keyspace resolution fails (unknown style, ambiguous style, collisions).
@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Generic, Mapping, MutableMapping, Sequence, TypeVar
 
-from apps.backend.runtime.state_dict.views import RemapKeysView
+from apps.backend.runtime.state_dict.views import KeyspaceLookupView
 
 _T = TypeVar("_T")
 
@@ -226,7 +226,7 @@ def resolve_state_dict_keyspace(
                 f"offenders_sample={sorted(offenders)[:10]}"
             )
 
-    factory = view_factory or (lambda base, mapping: RemapKeysView(base, mapping))
+    factory = view_factory or (lambda base, mapping: KeyspaceLookupView(base, mapping))
     resolved_metadata = dict(metadata or {})
     resolved_metadata.setdefault("detector", detector.name)
     resolved_metadata.setdefault("source_keys", len(keys))

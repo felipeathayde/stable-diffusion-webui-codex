@@ -25,7 +25,8 @@ Status: Draft
 - `wan_vae.py` performs explicit header-key variant detection (`2.1` vs `2.2`) before weight load; Anima v1 currently ports `2.1` only and must fail loud on `2.2`.
 - `wan_vae.py` infers `dim` from `decoder.head.0.gamma.shape` and expects broadcastable `(dim, 1, 1, 1)` (WAN 2.1); errors distinguish missing vs invalid shape, and `encoder.conv1.weight.shape[0]` must match `dim` (fail loud on mismatch).
 - Do not copy `.refs/**` code into `apps/**`; extract intent and re-implement cleanly.
-- `loader.py` requires canonical core-transformer keyspace (no key remap), while `text_encoder.py` uses strict generic Qwen key-style normalization (`runtime/state_dict/keymap_qwen_text_encoder.py`) that only accepts known schemas/aux heads and fails loud on unknown keys.
+- `loader.py` requires canonical core-transformer keyspace (no runtime key renaming), while `text_encoder.py` uses strict generic Qwen key-style normalization (`runtime/state_dict/keymap_qwen_text_encoder.py`) that only accepts known schemas/aux heads and fails loud on unknown keys.
+- 2026-03-06: `text_encoder.py` Qwen3-0.6B header validation now consumes the resolved keyspace view directly for metadata checks; no normalized header copy is materialized in that validation path.
 - 2026-02-08: `wan_vae.py` now populates Wan21 per-channel latent stats on `WanVaeConfig` (`latents_mean`/`latents_std`) for decode/encode normalization parity with Comfy; constructor enforces `z_dim=16` fail-loud for Anima image-mode scope.
 - 2026-02-08: `wan_vae.py` now emits `shift_factor=None` (not numeric `0.0`) for Anima Wan21 parity; shared VAE no-shift policy remains strict and continues to reject explicit numeric shift values for Anima.
 - 2026-02-16: WAN2.1 VAE keymap ownership moved to `apps/backend/runtime/state_dict/keymap_wan21_vae.py`; `wan_vae.py` now consumes model-owned keymap directly (no Anima mixed-ownership).

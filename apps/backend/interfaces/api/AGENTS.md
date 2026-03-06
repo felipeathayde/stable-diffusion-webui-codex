@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-05
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -18,6 +18,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
 - `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + SafeTensors merge + file browser endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
+- `apps/backend/interfaces/api/wan_video_request_keys.py` — backend API-owned WAN video request-key allowlists used by `routers/generation.py`.
 - `apps/backend/interfaces/api/file_metadata.py` — GGUF/SafeTensors header readers for `/api/models/file-metadata` (UI/debug).
 - `apps/backend/interfaces/api/path_utils.py` — repo-relative path normalization helpers.
 - `apps/backend/interfaces/api/json_store.py` — JSON load/save helpers for persistence files.
@@ -31,6 +32,7 @@ Status: Active
 ## Notes
 - `run_api.py` is composition-only: it wires routers and mounts the UI; route logic lives in `routers/`.
 - Task state is centralized in `task_registry.py` so generation + tasks routers share cancellation/status logic.
+- 2026-03-06: WAN video request allowlists are backend API-owned in `wan_video_request_keys.py`; `routers/generation.py` consumes them directly, and `runtime/state_dict/keymap_wan22_transformer.py` no longer owns HTTP request-key authority.
 - `/api/models/file-metadata` is intended for UI/debug; it returns `flat` plus a nested view of dotted keys. Codex-generated GGUF files use `model.*`, `codex.*`, and `gguf.*` keys (no legacy `general.*` provenance fields).
 - 2026-01-18: `/api/models` checkpoint serialization now includes `core_only`, `core_only_reason`, and optional `family_hint` so the UI can stop guessing core-only status from filename suffixes alone.
 - 2026-01-18: `/api/engines/capabilities` now also includes `engine_id_to_semantic_engine` so UI callers can keep engine-id and semantic-engine key spaces explicit.
@@ -58,7 +60,7 @@ Status: Active
 - 2026-02-18: `run_api.py` bootstrap env publication now also exports non-default LoRA loader toggles (`CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) alongside `CODEX_LORA_APPLY_MODE`, preserving CLI/env/settings precedence without mutating process `os.environ`.
 - 2026-02-20: `json_store.py` is now fail-loud for persistence faults: `_load_json` returns `{}` only for missing files and raises on parse/read/type violations; `_save_json` raises on write/serialization failures (no best-effort swallow).
 - 2026-02-21: `run_api.py` startup settings normalization now parses checkbox values via shared strict bool parser and fails startup on invalid checkbox literals (no silent coercion of unknown strings to `False`).
-- 2026-02-21: UI persistence routes now fail loud on malformed `tabs.json`/`workflows.json`/`presets.json` payloads (no silent default/empty remap), and `/api/options` now rejects out-of-range numeric values instead of silently clamping (aligned with `/api/options/validate`).
+- 2026-02-21: UI persistence routes now fail loud on malformed `tabs.json`/`workflows.json`/`presets.json` payloads (no silent fallback to defaults or empty objects), and `/api/options` now rejects out-of-range numeric values instead of silently clamping (aligned with `/api/options/validate`).
 - 2026-02-21: `run_api.py` checkbox startup normalization now canonicalizes persisted checkbox values to strict `bool` type (including `0/1` -> `False/True`) to prevent numeric-bool type drift in `settings_values.json`.
 - 2026-02-22: `routers/system.py` adds `POST /api/obliterate-vram` (quick-settings VRAM cleanup) with safe default behavior: internal runtime cleanup always runs, external process termination is opt-in via `external_kill_mode='all'`, and critical/process-self protections are enforced with structured report output for UI feedback.
 - 2026-02-22: `inference_gate.py` release semantics now track lock ownership per acquisition (thread-local marker) so gate release remains deterministic even if `CODEX_SINGLE_FLIGHT` changes between acquire/release.

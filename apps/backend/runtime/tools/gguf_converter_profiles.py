@@ -15,8 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_is_ltx2` (function): Detect whether a config.json describes an LTX2 transformer.
 - `_is_gemma3_tenc` (function): Detect whether a config.json describes a Gemma3 text encoder export.
 - `_build_llama_mapping` (function): Build a Llama HF→GGUF key mapping from the model config.
-- `_plan_flux` (function): Delegates Flux tensor planning to the tensor planner (supports key remaps and QKV packing).
-- `_plan_zimage` (function): Delegates ZImage tensor planning to the tensor planner (supports key remaps and QKV packing).
+- `_plan_flux` (function): Delegates Flux tensor planning to the tensor planner (supports layout key mapping and QKV packing).
+- `_plan_zimage` (function): Delegates ZImage tensor planning to the tensor planner (supports layout key mapping and QKV packing).
 - `_plan_wan22` (function): Delegates WAN22 tensor planning to the tensor planner (Diffusers → Comfy key mapping).
 - `_plan_ltx2` (function): Delegates LTX2 tensor planning to the tensor planner (Diffusers → Comfy key mapping).
 - `_plan_gemma3_tenc` (function): Delegates Gemma3 TE tensor planning to the tensor planner (prefix stripping).

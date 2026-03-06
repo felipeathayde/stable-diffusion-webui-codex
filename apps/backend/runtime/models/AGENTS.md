@@ -26,7 +26,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
   - Diffusers layout: `conv_in`, `down_blocks.*`, `mid_block.*`, `up_blocks.*`, `time_embedding.*` — converted per config (`num_res_blocks`, `channel_mult`, transformer depths) using the shared UNet conversion map (`unet_to_diffusers`).
 - Policy:
   - Strip wrappers like `model.diffusion_model.` before inspection.
-  - Build diffusers→LDM key map programmatically from the UNet config and remap tensors in place.
+  - Build diffusers→LDM keyspace lookup programmatically from the UNet config and load through source-key resolution.
   - Preserve optional leftovers (logged at DEBUG) and drop `logit_scale`-style noise.
   - Guard against missing essentials (`input_blocks.0.0.weight`, `time_embed.0.weight`, `out.2.weight`) by raising a `RuntimeError` with representative diffusers keys.
 
@@ -59,7 +59,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-06: Loader now supports `tenc_path` (string or ordered list) as a shorthand for text encoder overrides: paths are mapped onto `ModelSignature.text_encoders` in order and loaded via the existing `TextEncoderOverrideConfig` pipeline (fail-fast on count/alias mismatch).
 - 2026-01-06: Refreshed `loader.py` header block to document `tenc_path` shorthand semantics (doc-only change).
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `api.py`, and `types.py` (doc-only change; part of rollout).
-- 2026-01-08: Split state-dict key normalization helpers into `key_normalization.py` and reused them from `loader.py` (UNet remap + transformer prefix stripping).
+- 2026-01-08: Split state-dict key normalization helpers into `key_normalization.py` and reused them from `loader.py` (UNet keyspace resolution + transformer prefix stripping).
 - 2026-01-08: Moved text-encoder override definitions into `text_encoder_overrides.py`; loader now imports the shared config + resolver from that module.
 - 2026-01-14: Flux expected-family loads now use vendored HF metadata to build the signature (selecting `FLUX.1-dev` vs `FLUX.1-schnell` by guidance key presence), avoiding registry detection failures on prefixed Flux checkpoints.
 - 2026-01-18: `CheckpointRecord` now includes `core_only`, `core_only_reason` (e.g. `gguf_suffix`, `gguf_magic`), and optional `family_hint`; `/api/models` surfaces these so UIs stop guessing core-only status by suffix alone.
@@ -73,13 +73,13 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-02-08: Fixed Flux GGUF T5 loader unbound-local bug in `_load_huggingface_component`: `IntegratedT5` construction now always executes before `load_state_dict(...)` for both GGUF and non-GGUF paths.
 - 2026-02-09: `codex_loader(...)` now uses `torch.no_grad()` (not `torch.inference_mode()`), preventing inference-tensor parameters from being created during model assembly/load in long-lived WebUI processes.
 - 2026-02-09: Smart-offload TE load policy now keeps text-encoder load-on-conditioning-device semantics in the loader (no forced CPU staging at initial load). TE offload sequencing remains conditioning-owned: encoders are unloaded after embeddings are generated, while Smart Cache hit paths can skip TE execution entirely.
-- 2026-02-10: Removed ad-hoc T5 inline key normalization from `loader.py`; `_load_huggingface_component` now delegates T5 key-style remap to canonical state-dict module `apps/backend/runtime/state_dict/keymap_t5_text_encoder.py`.
+- 2026-02-10: Removed ad-hoc T5 inline key normalization from `loader.py`; `_load_huggingface_component` now delegates T5 key-style resolution to canonical state-dict module `apps/backend/runtime/state_dict/keymap_t5_text_encoder.py`.
 - 2026-02-10: `_parse_checkpoint` now applies SDXL checkpoint keymap normalization in auto-family parses when nested UNet label keys (`model.diffusion_model.label_emb.0.<idx>.*`) are detected, removing parser-side SDXL UNet key normalization dependency.
 - 2026-02-10: Structural conversion paths in runtime model helpers are globally policy-gated by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`: `transformers_convert` (fused `in_proj` split) and CLIP projection transpose now fail loud in `auto`, allowing conversion only with explicit `convert` opt-in.
 - 2026-02-11: `registry.py` cache schema is now versioned (`schema_version=2`) with canonical SHA layout metadata (`layout_by_sha`) for CLIP layout reuse (`qkv_layout` + `projection_orientation` + optional `source_style`), plus conflict/unknown-schema fail-loud guards.
 - 2026-02-11: `loader.py` CLIP paths are layout-aware and cache-first: AUTO consumes/persists SHA layout decisions, explicit SDXL QKV overrides bypass cache reads/writes, and projection module orientation (`linear` vs `matmul`) is selected at model-construction time (no AUTO tensor transpose/split/concat).
-- 2026-02-11: `clip_key_normalization.py` now delegates to canonical keymap ownership (`state_dict/keymap_sdxl_clip.py`) and returns resolved layout metadata via `normalize_codex_clip_state_dict_with_layout(...)`.
-- 2026-02-11: `_maybe_convert_sdxl_vae_state_dict` now preflights canonical SDXL mid-attention projection keys (`to_q/to_k/to_v/to_out.0`) immediately after keymap remap so lane/shape contract violations are raised explicitly before strict-load missing accounting.
+- 2026-02-11: `clip_key_normalization.py` now delegates to canonical keymap ownership (`state_dict/keymap_sdxl_clip.py`) and returns resolved layout metadata plus a lazy normalized lookup view via `normalize_codex_clip_state_dict_with_layout(...)`.
+- 2026-02-11: `_maybe_convert_sdxl_vae_state_dict` now preflights canonical SDXL mid-attention projection keys (`to_q/to_k/to_v/to_out.0`) immediately after keyspace resolution so lane/shape contract violations are raised explicitly before strict-load missing accounting.
 - 2026-02-11: SDXL VAE loader now detects canonical projection lane (`linear_2d` vs `conv1x1_4d`) and applies native 4D replacement modules (`_Conv1x1Projection`) on mid-block attentions for the conv lane, so 4D checkpoints load without keymap flattening.
 - 2026-02-11: Native 4D projection replacement accepts both plain `torch.nn.Linear` and Codex-op patched linear-like modules (inside `using_codex_operations`) to avoid loader-path type mismatch.
 - 2026-02-11: SDXL/SDXL refiner loader path no longer injects shift-factor sanitization; SDXL no-shift compliance is now enforced at source by native LDM VAE config emission (`AutoencoderKL_LDM` defaults to `shift_factor=None`).
@@ -91,3 +91,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-03-03: `registry.py` checkpoint discovery (`_iter_checkpoint_files`) no longer swallows `paths.json` resolution failures (fail-loud path config behavior) and now accepts file-level checkpoint entries in `*_ckpt` keys in addition to recursive directory roots.
 - 2026-03-04: `loader.py` startup parsing is now inspection-first for safetensors (`checkpoint_inspect_start|done`), with explicit non-safetensors materialization events (`checkpoint_materialize_start|done`) and no eager root-denoiser tensor materialization during safetensors planning.
 - 2026-03-05: `registry.py` discovery roots now include Flux.2 path keys (`flux2_ckpt`, `flux2_vae`) and `family_hint` now recognizes `models/flux2/*` prefix as `flux2`.
+- 2026-03-05: `loader.py` now supports the truthful FLUX.2 Klein 4B/base-4B slice: expected-family loads build vendored-HF signatures for `FLUX.2-klein-4B` / `FLUX.2-klein-base-4B`, parser-normalized core-only checkpoints load through `diffusers.Flux2Transformer2DModel`, external `Qwen3ForCausalLM` overrides reuse the native ZImage Qwen3-4B wrapper, `AutoencoderKLFlux2` is used for FLUX.2 VAEs, and diffusers repo detection rejects unsupported non-Klein / non-4B configs fail-loud.

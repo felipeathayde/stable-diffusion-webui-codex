@@ -13,7 +13,7 @@ Status: Active
 - `apps/backend/runtime/tools/gguf_converter_profiles.py` — Profile registry: resolves layout/planner/key mapping + per-model dtype policies.
 - `apps/backend/runtime/tools/gguf_converter_model_metadata.py` — Lists vendored model metadata (org/repo + supported components/config dirs) for the GGUF converter UI.
 - `apps/backend/runtime/tools/gguf_converter_float_groups.py` — Defines profile-scoped FP16/FP32 float dtype groups exposed as UI knobs.
-- `apps/backend/runtime/tools/gguf_converter_key_mapping.py` — Hugging Face → GGUF tensor-name remapping helpers (layer-indexed mappings).
+- `apps/backend/runtime/tools/gguf_converter_key_mapping.py` — Hugging Face → GGUF tensor-name mapping helpers (layer-indexed translations).
 - `apps/backend/runtime/tools/gguf_converter_safetensors_source.py` — SafeTensors source helpers (single-file + sharded index/dir).
 - `apps/backend/runtime/tools/safetensors_merge.py` — Merges safetensors sources (single file/index/directory) into one `.safetensors` output with typed progress.
 - `apps/backend/runtime/tools/gguf_converter_quantization.py` — Quantization selector + generic per-tensor shape/block compatibility rules.

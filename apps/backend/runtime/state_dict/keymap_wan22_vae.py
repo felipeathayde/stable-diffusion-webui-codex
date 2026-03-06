@@ -24,6 +24,7 @@ from typing import Any
 
 from apps.backend.runtime.state_dict.key_mapping import KeyMappingError, ResolvedKeyspace, strip_repeated_prefixes
 from apps.backend.runtime.state_dict.keymap_wan21_vae import resolve_wan21_vae_keyspace
+from apps.backend.runtime.state_dict.views import KeyspaceLookupView
 
 _WRAPPER_PREFIXES = (
     "module.",
@@ -113,16 +114,17 @@ _DECODER_UPSAMPLER_TO_UPSAMPLE_INDEX: dict[int, int] = {
 }
 
 
-def _normalize_state_dict(state_dict: MutableMapping[str, Any], *, detector_name: str) -> dict[str, Any]:
-    normalized: dict[str, Any] = {}
-    for key, value in state_dict.items():
+def _normalize_keyspace_mapping(state_dict: MutableMapping[str, Any], *, detector_name: str) -> dict[str, str]:
+    normalized_to_source: dict[str, str] = {}
+    for key in state_dict.keys():
         normalized_key = strip_repeated_prefixes(str(key), _WRAPPER_PREFIXES)
-        if normalized_key in normalized:
+        source_key = str(key)
+        if normalized_key in normalized_to_source:
             raise KeyMappingError(
                 f"{detector_name}: normalized key collision for key={normalized_key!r}."
             )
-        normalized[normalized_key] = value
-    return normalized
+        normalized_to_source[normalized_key] = source_key
+    return normalized_to_source
 
 
 def _map_encoder_down_block_key(key: str) -> str:
@@ -195,8 +197,8 @@ def _map_decoder_up_block_key(key: str) -> str:
 
 
 def resolve_wan22_vae_2d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
-    normalized = _normalize_state_dict(state_dict, detector_name="wan22_vae_2d_key_style")
-    keys = tuple(normalized.keys())
+    normalized_to_source = _normalize_keyspace_mapping(state_dict, detector_name="wan22_vae_2d_key_style")
+    keys = tuple(normalized_to_source.keys())
     keys_set = frozenset(keys)
 
     missing_required = [key for key in _WAN22_2D_REQUIRED_KEYS if key not in keys_set]
@@ -221,31 +223,32 @@ def resolve_wan22_vae_2d_keyspace(state_dict: MutableMapping[str, Any]) -> Resol
 
     return ResolvedKeyspace(
         style="ldm_2d",
-        canonical_to_source={key: key for key in normalized.keys()},
+        canonical_to_source=dict(normalized_to_source),
         metadata={
             "resolver": "wan22_vae_2d",
             "lane": "2d_native",
             "source_style": "ldm_2d",
         },
-        view=normalized,
+        view=KeyspaceLookupView(state_dict, normalized_to_source),
     )
 
 
 def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
-    normalized = _normalize_state_dict(state_dict, detector_name="wan22_vae_3d_key_style")
+    normalized_to_source = _normalize_keyspace_mapping(state_dict, detector_name="wan22_vae_3d_key_style")
+    normalized_view = KeyspaceLookupView(state_dict, normalized_to_source)
 
     has_codex = any(
         key.startswith("encoder.downsamples.")
         or key.startswith("decoder.upsamples.")
         or key in {"conv1.weight", "conv2.weight"}
-        for key in normalized.keys()
+        for key in normalized_to_source.keys()
     )
     has_diffusers = any(
         key.startswith("encoder.down_blocks.")
         or key.startswith("decoder.up_blocks.")
         or key.startswith("quant_conv.")
         or key.startswith("post_quant_conv.")
-        for key in normalized.keys()
+        for key in normalized_to_source.keys()
     )
 
     if has_codex and has_diffusers:
@@ -255,9 +258,8 @@ def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> Resol
         )
 
     if has_diffusers:
-        mapped: dict[str, Any] = {}
         mapped_to_source: dict[str, str] = {}
-        for key, value in normalized.items():
+        for key in normalized_to_source.keys():
             if key in _FIXED_DIFFUSERS_TO_CODEX_KEYS:
                 mapped_key = _FIXED_DIFFUSERS_TO_CODEX_KEYS[key]
             elif key.startswith("encoder.down_blocks."):
@@ -266,21 +268,21 @@ def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> Resol
                 mapped_key = _map_decoder_up_block_key(key)
             else:
                 mapped_key = key
-            if mapped_key in mapped:
+            if mapped_key in mapped_to_source:
                 raise KeyMappingError(
                     "wan22_vae_3d_key_style: resolver produced output collision "
                     f"for mapped key={mapped_key!r} (source key={key!r})."
                 )
-            mapped[mapped_key] = value
-            mapped_to_source[mapped_key] = key
+            mapped_to_source[mapped_key] = normalized_to_source[key]
 
-        validated = resolve_wan21_vae_keyspace(mapped)
+        validated = resolve_wan21_vae_keyspace(KeyspaceLookupView(state_dict, mapped_to_source))
+        canonical_to_source = {
+            canonical: mapped_to_source.get(source, source)
+            for canonical, source in validated.canonical_to_source.items()
+        }
         return ResolvedKeyspace(
             style="diffusers",
-            canonical_to_source={
-                canonical: mapped_to_source.get(source, source)
-                for canonical, source in validated.canonical_to_source.items()
-            },
+            canonical_to_source=canonical_to_source,
             metadata={
                 "resolver": "wan22_vae_3d",
                 "lane": "3d_native",
@@ -289,13 +291,17 @@ def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> Resol
                     validated.style.value if hasattr(validated.style, "value") else str(validated.style)
                 ),
             },
-            view=validated.view,
+            view=KeyspaceLookupView(state_dict, canonical_to_source),
         )
 
-    validated = resolve_wan21_vae_keyspace(normalized)
+    validated = resolve_wan21_vae_keyspace(normalized_view)
+    canonical_to_source = {
+        canonical: normalized_to_source.get(source, source)
+        for canonical, source in validated.canonical_to_source.items()
+    }
     return ResolvedKeyspace(
         style="codex",
-        canonical_to_source=dict(validated.canonical_to_source),
+        canonical_to_source=canonical_to_source,
         metadata={
             "resolver": "wan22_vae_3d",
             "lane": "3d_native",
@@ -304,7 +310,7 @@ def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> Resol
                 validated.style.value if hasattr(validated.style, "value") else str(validated.style)
             ),
         },
-        view=validated.view,
+        view=KeyspaceLookupView(state_dict, canonical_to_source),
     )
 
 

@@ -90,7 +90,7 @@ class ZImageTextEncoder(nn.Module):
         logger.info("Loading Qwen3 text encoder from GGUF: %s", gguf_path)
         
         # Import native Qwen3 implementation
-        from .qwen3 import Qwen3_4B, Qwen3Config, remap_gguf_keys
+        from .qwen3 import Qwen3_4B, Qwen3Config, resolve_qwen3_gguf_keyspace
         
         # Load GGUF state dict using our infrastructure
         from apps.backend.runtime.ops.operations import using_codex_operations
@@ -102,10 +102,10 @@ class ZImageTextEncoder(nn.Module):
             gguf_state_dict = load_gguf_state_dict(gguf_path)
             logger.info("Loaded %d tensors from GGUF", len(gguf_state_dict))
             
-            # Remap keys from GGUF format to our model format
-            logger.info("Remapping GGUF keys to native format...")
-            state_dict = remap_gguf_keys(gguf_state_dict, num_layers=36)
-            logger.info("Remapped to %d native keys", len(state_dict))
+            # Resolve GGUF keys into the native lookup keyspace without renaming tensors
+            logger.info("Resolving GGUF keyspace to native lookup view...")
+            state_dict = resolve_qwen3_gguf_keyspace(gguf_state_dict, num_layers=36)
+            logger.info("Resolved %d native lookup keys", len(state_dict))
             
             # Use Codex operations context to enable GGUF tensor support
             # This patches torch.nn.Linear to CodexOperationsGGUF.Linear which handles CodexParameter
@@ -173,7 +173,7 @@ class ZImageTextEncoder(nn.Module):
                 require_backbone_keys=True,
             )
             key_style = resolved.style
-            remapped_state_dict = resolved.view
+            resolved_state_dict = resolved.view
             style_label = key_style.value if hasattr(key_style, "value") else str(key_style)
             logger.debug("ZImage Qwen3 keymap style=%s", style_label)
 
@@ -186,7 +186,7 @@ class ZImageTextEncoder(nn.Module):
                 model = Qwen3_4B(config, dtype=torch_dtype)
 
                 # Load weights - native implementation has compatible key format
-                model.load_sd(remapped_state_dict)
+                model.load_sd(resolved_state_dict)
                 
                 # Move to target dtype
                 model.to(dtype=torch_dtype)

@@ -78,7 +78,7 @@ def convert_openclip_checkpoint(
         variant = detect_variant_from_state_dict(state_dict)
         spec = get_variant_spec(variant)
     prefix = prefix.rstrip(".")
-    remap_keys: Dict[str, str] = {
+    rename_map: Dict[str, str] = {
         f"{prefix}.class_embedding": "vision_model.embeddings.class_embedding",
         f"{prefix}.conv1.weight": "vision_model.embeddings.patch_embedding.weight",
         f"{prefix}.positional_embedding": "vision_model.embeddings.position_embedding.weight",
@@ -87,7 +87,7 @@ def convert_openclip_checkpoint(
         f"{prefix}.ln_pre.bias": "vision_model.pre_layrnorm.bias",
         f"{prefix}.ln_pre.weight": "vision_model.pre_layrnorm.weight",
     }
-    for source, target in remap_keys.items():
+    for source, target in rename_map.items():
         if source in state_dict:
             state_dict[target] = state_dict.pop(source)
     proj_key = f"{prefix}.proj"

@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: SDXL VAE key-style detection + remapping (LDM-style + DIFFUSERS legacy aliases → canonical diffusers AutoencoderKL).
-Normalizes common LDM layouts into diffusers keyspace and strips wrapper prefixes.
+Purpose: SDXL VAE key-style detection + keyspace resolution (LDM-style + DIFFUSERS legacy aliases → canonical diffusers AutoencoderKL).
+Resolves common LDM layouts into diffusers keyspace via lookup views and strips wrapper prefixes.
 Supports legacy mid-attention aliases under `mid.attn_1.*`, prefixed `mid.attn_1.to_*`, `mid.block_1.*`, and DIFFUSERS `mid_block.attentions.*.{query,key,value,proj_attn}.*`.
 Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
 Projection normalization is lane-based and explicit:
@@ -87,8 +87,8 @@ _DETECTOR = KeyStyleDetector(
 )
 
 
-class _SDXLVAERemapView(MutableMapping[str, _T]):
-    """Lazy remap view with SDXL VAE projection-lane validation.
+class _SDXLVAEKeyspaceView(MutableMapping[str, _T]):
+    """Lazy keyspace lookup view with SDXL VAE projection-lane validation.
 
     Canonical mid-attention projection keys accept either 2D linear weights
     (`[C_out, C_in]`) or native 1x1 Conv2d weights (`[C_out, C_in, 1, 1]`).
@@ -259,7 +259,7 @@ def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKe
     if unknown_non_weight:
         sample = sorted(set(unknown_non_weight))[:10]
         raise KeyMappingError(
-            "SDXL VAE key remap refuses unknown non-weight keys. "
+            "SDXL VAE keyspace resolver refuses unknown non-weight keys. "
             f"unknown_sample={sample}"
         )
 
@@ -466,7 +466,7 @@ def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKe
         if offenders:
             sample = sorted(offenders)[:10]
             raise KeyMappingError(
-                "SDXL VAE key remap produced non-canonical keys (mapping incomplete). "
+                "SDXL VAE keyspace resolver produced non-canonical keys (mapping incomplete). "
                 f"offenders_sample={sample}"
             )
 
@@ -474,7 +474,7 @@ def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKe
         if len(keys) > 64 and not any(k.startswith("encoder.down_blocks.") for k in keys):
             preview = ", ".join(sorted(keys)[:10])
             raise KeyMappingError(
-                "SDXL VAE key remap output is missing required encoder.down_blocks.* keys. "
+                "SDXL VAE keyspace resolver output is missing required encoder.down_blocks.* keys. "
                 f"sample_keys=[{preview}]"
             )
 
@@ -487,7 +487,7 @@ def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKe
         detector=_DETECTOR,
         normalize=_normalize,
         mappers=mappers,
-        view_factory=lambda base, mapping: _SDXLVAERemapView(base, mapping),
+        view_factory=lambda base, mapping: _SDXLVAEKeyspaceView(base, mapping),
         output_validator=_validate_output,
     )
     resolved.metadata.setdefault("resolver", "sdxl_vae")

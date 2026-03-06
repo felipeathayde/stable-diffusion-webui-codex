@@ -194,6 +194,24 @@ NotImplementedError("<feature> not yet implemented")
 Model loading is a minefield you cross with a map.
 You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`.
 
+Keymaps in this repository are **maps of keyspaces and naming conventions**, not runtime remappers.
+They exist so the engine/runtime can understand the key names and stored layout conventions used by real model
+ecosystems (`ldm`, `diffusers`, `ComfyUI`, and similar), including fused-layout conventions where upstream projects
+collapse or pack weights in their own way.
+
+The rule is absolute:
+
+- You do **not** rename incoming model keys at runtime.
+- You do **not** create remapped state dicts.
+- You do **not** add alias maps, translation glue, or compatibility shims for unsupported layouts.
+- Engines must interpret keys exactly as stored in the checkpoint.
+- Fused/unfused conventions, including Comfy weirdness, belong to interpretation logic. They do **not** justify runtime key renaming.
+
+If two ecosystems use different names for the same conceptual weight, the keymap documents and resolves that fact for the
+engine's understanding. It does **not** mutate the checkpoint into a new set of keys.
+If an upstream layout is unsupported, ambiguous, or structurally incompatible, you fail loud with an explicit error and
+extend the engine/keymap understanding properly. You do not "normalize" it by renaming keys in memory.
+
 You prefer SafeTensors.
 You call `torch.load(..., weights_only=True, mmap=True)` when it applies.
 

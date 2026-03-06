@@ -39,7 +39,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_blend_anchor_latent` (function): Blend previous chunk anchor latent window with base conditioning latent for chunk continuity without pixel-space decode.
 - `_assemble_svi2_condition_latents` (function): Build SVI 2.0 conditioning latents (`slot0=prev_tail`, `slot1..=anchor`).
 - `_assemble_svi2_pro_condition_latents` (function): Build SVI 2.0 Pro conditioning latents (`slot0=anchor`, `slot1=prev_tail`, `slot2..=zero`).
-- `_sample_chunk_stage_with_progress` (function): Run a chunk stage sampler and remap local progress into a global phase percent.
+- `_sample_chunk_stage_with_progress` (function): Run a chunk stage sampler and project local progress into a global phase percent.
 - `_resolve_stage_prompt_pairs` (function): Resolve high/low stage prompt+negative pairs (stage prompts required; negative falls back only when missing).
 - `_resolve_stage_text_embeddings` (function): Build stage-specific high/low embeddings from a single text-encoder load.
 - `_resolve_wan_fused_summary_fields_for_run` (function): Resolves fused attention-core summary fields (`attn_core`, `attn_core_source`, `attn_core_raw`) once from deterministic run intent (`resolve_effective_wan_fused_mode`).

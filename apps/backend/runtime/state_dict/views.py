@@ -7,12 +7,12 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Lightweight mapping views for state_dict handling.
-Provides prefix/filter/remap/cast views plus a SafeTensors-backed lazy dict used to stream state_dict preprocessing with configurable tensor device placement.
+Provides prefix/filter/keyspace-lookup/cast views plus a SafeTensors-backed lazy dict used to stream state_dict preprocessing with configurable tensor device placement.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyPrefixView` (class): Mapping view that exposes `base` keys under a fixed prefix without materializing values.
 - `FilterPrefixView` (class): Mapping view that filters keys by prefix and optionally re-prefixes them lazily.
-- `RemapKeysView` (class): Mapping view that remaps keys through a mapping dict (useful for on-the-fly state_dict key conversion).
+- `KeyspaceLookupView` (class): Mapping view that exposes one keyspace through source-key lookup without mutating the underlying state dict.
 - `CastOnGetView` (class): Mapping view that casts tensors/values on access (`__getitem__`) to a target dtype/device (no eager conversion).
 - `LazySafetensorsDict` (class): Lazy SafeTensors-backed state_dict; keeps a single handle and loads tensors on demand to the configured device (Windows: materializes on first access to avoid repeated opens).
 """
@@ -202,11 +202,11 @@ class FilterPrefixView(MutableMapping):
             return None
 
 
-class RemapKeysView(MutableMapping):
-    """Present a remapped keyspace over an underlying mapping lazily.
+class KeyspaceLookupView(MutableMapping):
+    """Present a resolved lookup keyspace over an underlying mapping lazily.
 
     - base: original mapping (e.g., LazySafetensorsDict)
-    - mapping: dict[new_key] -> old_key in the base mapping
+    - mapping: dict[presented_key] -> source_key in the base mapping
     - Does not materialize any tensor unless __getitem__ is called.
     """
 
@@ -576,5 +576,5 @@ __all__ = [
     "FilterPrefixView",
     "KeyPrefixView",
     "LazySafetensorsDict",
-    "RemapKeysView",
+    "KeyspaceLookupView",
 ]

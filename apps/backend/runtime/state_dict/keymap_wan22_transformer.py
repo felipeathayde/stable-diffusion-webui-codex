@@ -6,16 +6,10 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN22 transformer key-style detection + remapping (Diffusers/WAN-export/Codex).
-Normalizes multiple upstream key layouts into the canonical Codex WAN22 runtime layout and fails loud on unknown/ambiguous inputs.
-Also owns WAN22 request-key allowlists and legacy-key equivalence metadata used by generation routers, including img2vid temporal mode/window controls, no-stretch guide controls (`img2vid_image_scale` + crop offsets), optional `video_upscaling`, and canonical sampler keys (`*_sampler`, no legacy `*_sampling` aliases).
+Purpose: WAN22 transformer key-style detection + keyspace resolution (Diffusers/WAN-export/Codex).
+Resolves multiple upstream key layouts into the canonical Codex WAN22 runtime keyspace via lookup views and fails loud on unknown/ambiguous inputs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Wan22RequestKeys` (dataclass): Canonical WAN22 request-key allowlists for txt2vid/img2vid and WAN stage controls (including stage prompt/negative fields and optional `video_upscaling` key).
-- `WAN22_REQUEST_KEYS` (constant): Singleton request-key map used by WAN22 request validators.
-- `WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS` (constant): Explicit legacy request-key → canonical request-key map used for fail-loud alias rejection.
-- `canonical_wan22_request_key` (function): Resolve a request key into its canonical WAN22 key using `WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS`.
-- `legacy_wan22_request_key_alias_target` (function): Return canonical target for a legacy WAN22 alias key, or `None` when key is already canonical/unknown.
 - `resolve_wan22_lora_logical_key` (function): Maps WAN22 LoRA logical keys to canonical WAN22 transformer weight keys.
 - `resolve_wan22_transformer_keyspace` (function): Resolves WAN22 transformer keys into canonical keyspace (`ResolvedKeyspace`).
 """
@@ -23,10 +17,8 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from collections.abc import Mapping, MutableMapping, Sequence
-from types import MappingProxyType
-from typing import FrozenSet, TypeVar
+from typing import TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
     KeyMappingError,
@@ -129,166 +121,6 @@ _DETECTOR = KeyStyleDetector(
         ),
     ),
 )
-
-
-@dataclass(frozen=True)
-class Wan22RequestKeys:
-    """Canonical WAN22 request-key allowlists used by generation routers."""
-
-    DEVICE: FrozenSet[str] = frozenset({"device"})
-    REVISION: FrozenSet[str] = frozenset({"settings_revision"})
-    VIDEO_EXPORT: FrozenSet[str] = frozenset(
-        {
-            "video_return_frames",
-            "video_filename_prefix",
-            "video_format",
-            "video_pix_fmt",
-            "video_crf",
-            "video_loop_count",
-            "video_pingpong",
-            "video_save_metadata",
-            "video_save_output",
-            "video_trim_to_audio",
-        }
-    )
-    VIDEO_INTERPOLATION: FrozenSet[str] = frozenset({"video_interpolation"})
-    VIDEO_UPSCALING: FrozenSet[str] = frozenset({"video_upscaling"})
-    WAN_STAGE_CONTAINERS: FrozenSet[str] = frozenset({"wan_high", "wan_low"})
-    WAN_STAGE_ALLOWED: FrozenSet[str] = frozenset(
-        {
-            "model_sha",
-            "model_dir",
-            "prompt",
-            "negative_prompt",
-            "sampler",
-            "scheduler",
-            "steps",
-            "cfg_scale",
-            "seed",
-            "lightning",
-            "loras",
-            "lora_sha",
-            "lora_path",
-            "lora_weight",
-            "flow_shift",
-        }
-    )
-    WAN_ASSETS: FrozenSet[str] = frozenset(
-        {
-            "wan_format",
-            "wan_metadata_repo",
-            "wan_metadata_dir",
-            "wan_vae_sha",
-            "wan_tenc_sha",
-            "wan_vae_path",
-            "wan_text_encoder_path",
-            "wan_text_encoder_dir",
-        }
-    )
-    GGUF_RUNTIME: FrozenSet[str] = frozenset(
-        {
-            "gguf_offload",
-            "gguf_offload_level",
-            "gguf_sdpa_policy",
-            "gguf_attention_mode",
-            "gguf_attn_chunk",
-            "gguf_cache_policy",
-            "gguf_cache_limit_mb",
-            "gguf_log_mem_interval",
-            "gguf_te_device",
-        }
-    )
-    TXT2VID: FrozenSet[str] = frozenset(
-        {
-            "txt2vid_prompt",
-            "txt2vid_neg_prompt",
-            "txt2vid_width",
-            "txt2vid_height",
-            "txt2vid_steps",
-            "txt2vid_fps",
-            "txt2vid_num_frames",
-            "txt2vid_sampler",
-            "txt2vid_scheduler",
-            "txt2vid_seed",
-            "txt2vid_cfg_scale",
-            "txt2vid_styles",
-        }
-    )
-    IMG2VID: FrozenSet[str] = frozenset(
-        {
-            "img2vid_prompt",
-            "img2vid_neg_prompt",
-            "img2vid_width",
-            "img2vid_height",
-            "img2vid_steps",
-            "img2vid_fps",
-            "img2vid_num_frames",
-            "img2vid_sampler",
-            "img2vid_scheduler",
-            "img2vid_seed",
-            "img2vid_cfg_scale",
-            "img2vid_styles",
-            "img2vid_init_image",
-            "img2vid_chunk_frames",
-            "img2vid_overlap_frames",
-            "img2vid_anchor_alpha",
-            "img2vid_reset_anchor_to_base",
-            "img2vid_chunk_seed_mode",
-            "img2vid_chunk_buffer_mode",
-            "img2vid_mode",
-            "img2vid_window_frames",
-            "img2vid_window_stride",
-            "img2vid_window_commit_frames",
-            "img2vid_image_scale",
-            "img2vid_crop_offset_x",
-            "img2vid_crop_offset_y",
-        }
-    )
-
-    @property
-    def COMMON(self) -> FrozenSet[str]:
-        return (
-            self.DEVICE
-            | self.REVISION
-            | self.VIDEO_EXPORT
-            | self.VIDEO_INTERPOLATION
-            | self.VIDEO_UPSCALING
-            | self.WAN_STAGE_CONTAINERS
-            | self.WAN_ASSETS
-            | self.GGUF_RUNTIME
-        )
-
-    @property
-    def TXT2VID_ALL(self) -> FrozenSet[str]:
-        return self.COMMON | self.TXT2VID
-
-    @property
-    def IMG2VID_ALL(self) -> FrozenSet[str]:
-        return self.COMMON | self.IMG2VID
-
-
-WAN22_REQUEST_KEYS = Wan22RequestKeys()
-
-
-WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS: Mapping[str, str] = MappingProxyType(
-    {
-        "codex_device": "device",
-        "codex_diffusion_device": "device",
-        "wan_tokenizer_dir": "wan_metadata_dir",
-        "txt2vid_sampling": "txt2vid_sampler",
-        "img2vid_sampling": "img2vid_sampler",
-    }
-)
-
-
-def canonical_wan22_request_key(raw_key: str) -> str:
-    key = str(raw_key)
-    return WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS.get(key, key)
-
-
-def legacy_wan22_request_key_alias_target(raw_key: str) -> str | None:
-    key = str(raw_key)
-    return WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS.get(key)
 
 
 def resolve_wan22_lora_logical_key(logical_key: str) -> str | None:
@@ -471,15 +303,15 @@ def resolve_wan22_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> R
         if offenders:
             sample = sorted(offenders)[:10]
             raise KeyMappingError(
-                "WAN22 key remap produced non-canonical keys (mapping incomplete). "
+                "WAN22 keyspace resolver produced non-canonical keys (mapping incomplete). "
                 f"offenders_sample={sample}"
             )
 
-        # When loading a full model state dict, patch_embed is required (LoRA-key remaps may not include it).
+        # When loading a full model state dict, patch_embed is required (LoRA keyspace resolution may not include it).
         if len(keys) > 64 and not any(k.startswith("patch_embed.") for k in keys):
             preview = ", ".join(sorted(keys)[:10])
             raise KeyMappingError(
-                "WAN22 key remap output is missing required patch_embed.* keys. "
+                "WAN22 keyspace resolver output is missing required patch_embed.* keys. "
                 f"sample_keys=[{preview}]"
             )
 
@@ -501,11 +333,6 @@ def resolve_wan22_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> R
 
 
 __all__ = [
-    "Wan22RequestKeys",
-    "WAN22_REQUEST_KEYS",
-    "WAN22_LEGACY_REQUEST_KEY_EQUIVALENTS",
-    "canonical_wan22_request_key",
-    "legacy_wan22_request_key_alias_target",
     "resolve_wan22_lora_logical_key",
     "resolve_wan22_transformer_keyspace",
 ]

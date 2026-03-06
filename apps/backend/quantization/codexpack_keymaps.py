@@ -10,8 +10,8 @@ Purpose: CodexPack keymap identifier registry for runtime loaders.
 Defines stable `keymap_id` strings used by CodexPack GGUF manifests so loaders can validate and fail loud on unknown mappings.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1` (constant): Z-Image Base core GGUF identity keymap id (no remap).
-- `ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1` (constant): Z-Image Turbo core GGUF identity keymap id (no remap).
+- `ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1` (constant): Z-Image Base core GGUF identity-layout keymap id.
+- `ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1` (constant): Z-Image Turbo core GGUF identity-layout keymap id.
 - `SUPPORTED_CODEXPACK_KEYMAP_IDS` (constant): Frozen set of supported CodexPack keymap ids.
 - `is_supported_codexpack_keymap_id` (function): Returns True when a keymap id is supported.
 """

@@ -6,10 +6,10 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Canonical CLIP key-style detection + remapping (generic + SDXL wrappers) into Codex IntegratedCLIP state_dict layout.
+Purpose: Canonical CLIP key-style detection + keyspace resolution (generic + SDXL wrappers) into Codex IntegratedCLIP state_dict layout.
 Supports HF `text_model.*`, OpenCLIP legacy `transformer.resblocks.*`, and Codex-canonical `transformer.text_model.*` keys.
 Strips wrapper prefixes and normalizes known buffers/weights, failing loud on unknown non-weight keys. Exposes SDXL wrappers plus
-generic layout-detection/remap helpers used by loader/parser seams.
+generic layout-detection/keyspace helpers used by loader/parser seams.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `resolve_sdxl_clip_l_keyspace` (function): Keymap for SDXL base CLIP-L (`text_encoder`) into Codex IntegratedCLIP keys.

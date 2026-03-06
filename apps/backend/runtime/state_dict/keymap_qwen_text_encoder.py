@@ -30,7 +30,7 @@ from apps.backend.runtime.state_dict.key_mapping import (
     SentinelKind,
     strip_repeated_prefixes,
 )
-from apps.backend.runtime.state_dict.views import RemapKeysView
+from apps.backend.runtime.state_dict.views import KeyspaceLookupView
 
 _T = TypeVar("_T")
 
@@ -198,7 +198,7 @@ def resolve_qwen_text_encoder_keyspace(
             "allow_visual_aux": bool(allow_visual_aux),
             "require_backbone_keys": bool(require_backbone_keys),
         },
-        view=RemapKeysView(state_dict, canonical_to_source),
+        view=KeyspaceLookupView(state_dict, canonical_to_source),
     )
 
 

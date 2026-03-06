@@ -458,7 +458,7 @@ def _validate_qwen3_06b_header(*, header: Mapping[str, object], context: str) ->
             allow_visual_aux=False,
             require_backbone_keys=True,
         )
-        normalized_header: Mapping[str, object] = dict(resolved.view)
+        normalized_header: Mapping[str, object] = resolved.view
     except Exception as exc:  # noqa: BLE001 - surfaced as strict header validation context
         raise RuntimeError(f"Qwen3-0.6B header key mapping failed: {exc} ({context})") from exc
 

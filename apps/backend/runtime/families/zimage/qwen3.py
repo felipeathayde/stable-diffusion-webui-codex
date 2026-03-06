@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `Qwen3Model` (class): Core Qwen3 transformer stack (embeddings + blocks + forward).
 - `Qwen3_4B` (class): Convenience wrapper for the 4B variant (loads config, provides encode-style forward usage, strict load contract in `load_sd`).
 - `Qwen3_06B` (class): Convenience wrapper for the 0.6B variant (Anima text encoder; 1024-dim, 28 layers, strict load contract in `load_sd`).
-- `remap_gguf_keys` (function): Remaps GGUF state dict keys to this implementation’s expected parameter names.
+- `resolve_qwen3_gguf_keyspace` (function): Resolves GGUF tensor keys into this implementation’s lookup keyspace without materializing a renamed state dict.
 """
 
 from __future__ import annotations
@@ -38,8 +38,9 @@ from __future__ import annotations
 # - SwiGLU activation
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -466,7 +467,7 @@ class Qwen3_4B(nn.Module):
             intermediate = self.model.norm(intermediate)
         return hidden_states, intermediate
     
-    def load_sd(self, state_dict: dict) -> Tuple[List[str], List[str]]:
+    def load_sd(self, state_dict: Mapping[str, object]) -> Tuple[List[str], List[str]]:
         """Load state dict with keyspace resolution for GGUF compatibility.
         
         Returns:
@@ -551,7 +552,7 @@ class Qwen3_06B(nn.Module):
             intermediate = self.model.norm(intermediate)
         return hidden_states, intermediate
 
-    def load_sd(self, state_dict: dict) -> Tuple[List[str], List[str]]:
+    def load_sd(self, state_dict: Mapping[str, object]) -> Tuple[List[str], List[str]]:
         missing, unexpected = self.load_state_dict(state_dict, strict=False)
         if missing or unexpected:
             raise RuntimeError(
@@ -566,8 +567,11 @@ class Qwen3_06B(nn.Module):
 # GGUF Key Mapping
 # =============================================================================
 
-def remap_gguf_keys(gguf_state_dict: dict, num_layers: int = 36) -> dict:
-    """Remap llama.cpp-style GGUF tensor keys to this Qwen3 implementation’s expected parameter keys.
+def resolve_qwen3_gguf_keyspace(
+    gguf_state_dict: Mapping[str, object],
+    num_layers: int = 36,
+) -> Mapping[str, object]:
+    """Resolve llama.cpp-style GGUF tensor keys into this Qwen3 implementation’s lookup keyspace.
 
     This is strict by default: if the input looks like llama.cpp GGUF keys (`token_embd.weight`, `blk.N.*`), all keys must be understood.
     """
@@ -585,7 +589,7 @@ def remap_gguf_keys(gguf_state_dict: dict, num_layers: int = 36) -> dict:
     style = resolved.style
     style_label = style.value if hasattr(style, "value") else str(style)
     logger.debug("Qwen3 keyspace: detected style=%s", style_label)
-    return dict(resolved.view)
+    return resolved.view
 
 
 __all__ = [
@@ -593,5 +597,5 @@ __all__ = [
     "Qwen3_4B",
     "Qwen3_06B",
     "Qwen3Model",
-    "remap_gguf_keys",
+    "resolve_qwen3_gguf_keyspace",
 ]

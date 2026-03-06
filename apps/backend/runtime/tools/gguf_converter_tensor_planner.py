@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Tensor planning helpers for the GGUF converter.
-Plans tensor name remaps, quantization types, and storage byte shapes without loading full tensors.
+Plans tensor-name translation targets, quantization types, and storage byte shapes without loading full tensors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TensorPlan` (dataclass): Planned tensor conversion entry (name/shape/type + storage strategy).

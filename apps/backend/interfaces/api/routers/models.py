@@ -12,7 +12,7 @@ and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
 (`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, WAN22 animate engine ids, and
-Anima runtime-equivalent prompt preprocessing/max-length checks.
+Anima runtime-equivalent prompt preprocessing/max-length checks with the same slow Qwen tokenizer path used by the runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -116,6 +116,13 @@ def _load_tokenizer(tokenizer_dir: str) -> Any:
     return AutoTokenizer.from_pretrained(tokenizer_dir, local_files_only=True, use_fast=True)
 
 
+@lru_cache(maxsize=4)
+def _load_anima_qwen_tokenizer(tokenizer_dir: str) -> Any:
+    from apps.backend.runtime.families.anima.text_encoder import load_anima_qwen_tokenizer
+
+    return load_anima_qwen_tokenizer(tokenizer_dir)
+
+
 def _tokenize_len(tokenizer: Any, prompt: str) -> int:
     encoded = tokenizer([prompt], truncation=False, add_special_tokens=False, verbose=False)
     ids = encoded.get("input_ids")
@@ -159,7 +166,7 @@ def _resolve_anima_t5_max_length() -> int:
 
 
 def _clean_anima_prompt_text(prompt: str) -> str:
-    from apps.backend.runtime.text_processing.emphasis_parser import parse_prompt_attention
+    from apps.backend.runtime.text_processing.parsing import parse_prompt_attention
 
     parsed = parse_prompt_attention(str(prompt or ""), "Original")
     out: list[str] = []
@@ -174,7 +181,7 @@ def _clean_anima_prompt_text(prompt: str) -> str:
 def _count_anima_tokens(prompt: str) -> int:
     from apps.backend.runtime.families.anima.text_encoder import tokenize_t5_with_weights
 
-    qwen_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_qwen")))
+    qwen_tok = _load_anima_qwen_tokenizer(str(_resolve_tokenizer_path("anima_qwen")))
     t5_tok = _load_tokenizer(str(_resolve_tokenizer_path("anima_t5")))
     qwen_max = _resolve_anima_qwen_max_length()
     t5_max = _resolve_anima_t5_max_length()

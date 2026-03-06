@@ -154,36 +154,35 @@ def compile_conditions(cond):
         )
         return [result]
 
-    # Dict-based path: require keys and shapes
+    # Dict-based path: require cross-attn and validate optional extras.
     if not isinstance(cond, dict):
         raise TypeError(f"conditioning must be Tensor or dict; got {type(cond).__name__}")
     if 'crossattn' not in cond:
         raise ValueError("conditioning dict missing required key 'crossattn'")
-    if 'vector' not in cond:
-        raise ValueError("conditioning dict missing required key 'vector' (pooled/global embedding)")
 
     cross_attn = cond['crossattn']
-    pooled_output = cond['vector']
+    has_vector = 'vector' in cond
+    pooled_output = cond['vector'] if has_vector else None
 
     if not isinstance(cross_attn, torch.Tensor) or cross_attn.ndim != 3:
         raise ValueError(f"'crossattn' must be a 3D tensor (B,S,C); got {type(cross_attn).__name__} shape={getattr(cross_attn,'shape',None)}")
-    if not isinstance(pooled_output, torch.Tensor) or pooled_output.ndim != 2:
-        raise ValueError(f"'vector' must be a 2D tensor (B,V); got {type(pooled_output).__name__} shape={getattr(pooled_output,'shape',None)}")
-
-    if int(cross_attn.shape[0]) != int(pooled_output.shape[0]):
-        raise ValueError(
-            "conditioning batch mismatch: "
-            f"crossattn.B={int(cross_attn.shape[0])} vector.B={int(pooled_output.shape[0])}"
-        )
 
     result = dict(
         cross_attn=cross_attn,
-        pooled_output=pooled_output,
         model_conds=dict(
             c_crossattn=ConditionCrossAttn(cross_attn),
-            y=Condition(pooled_output),
         ),
     )
+    if has_vector:
+        if not isinstance(pooled_output, torch.Tensor) or pooled_output.ndim != 2:
+            raise ValueError(f"'vector' must be a 2D tensor (B,V); got {type(pooled_output).__name__} shape={getattr(pooled_output,'shape',None)}")
+        if int(cross_attn.shape[0]) != int(pooled_output.shape[0]):
+            raise ValueError(
+                "conditioning batch mismatch: "
+                f"crossattn.B={int(cross_attn.shape[0])} vector.B={int(pooled_output.shape[0])}"
+            )
+        result['pooled_output'] = pooled_output
+        result['model_conds']['y'] = Condition(pooled_output)
 
     if 'guidance' in cond:
         guidance = cond['guidance']
@@ -241,7 +240,8 @@ def compile_conditions(cond):
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
             "compiled conditions: cross_attn=%s pooled=%s",
-            tuple(cross_attn.shape), tuple(pooled_output.shape)
+            tuple(cross_attn.shape),
+            None if pooled_output is None else tuple(pooled_output.shape),
         )
     return [result]
 

@@ -15,6 +15,7 @@ No runtime downloads are allowed: tokenizers must be resolved from vendored `app
 Symbols (top-level; keep in sync; no ghosts):
 - `AnimaQwenTextEncoder` (class): Qwen3-0.6B encoder wrapper (native model + tokenizer).
 - `AnimaQwenTextProcessingEngine` (class): Thin adapter exposing `__call__`, `tokenize`, and `tokenize_with_weights`.
+- `load_anima_qwen_tokenizer` (function): Offline slow `Qwen2Tokenizer` loader for Anima prompt/token parity.
 - `load_anima_qwen3_06b_text_encoder` (function): Strict loader for Qwen3-0.6B weights (safetensors; sha-selected).
 - `load_anima_t5_tokenizer` (function): Offline T5 tokenizer loader (used for Anima dual-tokenization ids/weights).
 - `tokenize_qwen_with_weights` (function): Qwen tokenization helper with optional `return_word_ids` metadata parity.
@@ -27,7 +28,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -72,12 +73,14 @@ def _resolve_dir_candidates(*, env_var: str, explicit: str | None, candidates: I
     return normalized
 
 
-def _load_tokenizer_dir(*, env_var: str, explicit: str | None, candidates: Iterable[Path]) -> Any:
-    try:
-        from transformers import AutoTokenizer
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"transformers is required to load tokenizers ({env_var}).") from exc
-
+def _load_tokenizer_dir(
+    *,
+    env_var: str,
+    explicit: str | None,
+    candidates: Iterable[Path],
+    loader_name: str,
+    load_tokenizer: Callable[[str], Any],
+) -> Any:
     tried: list[str] = []
     errors: list[str] = []
     for p in _resolve_dir_candidates(env_var=env_var, explicit=explicit, candidates=candidates):
@@ -85,15 +88,15 @@ def _load_tokenizer_dir(*, env_var: str, explicit: str | None, candidates: Itera
         if not p.exists() or not p.is_dir():
             continue
         try:
-            tok = AutoTokenizer.from_pretrained(str(p), local_files_only=True, use_fast=True)
-            logger.info("Loaded tokenizer from %s (env=%s)", p, env_var)
+            tok = load_tokenizer(str(p))
+            logger.info("Loaded %s from %s (env=%s)", loader_name, p, env_var)
             return tok
         except Exception as exc:  # noqa: BLE001 - try next candidate
             errors.append(f"{p}: {type(exc).__name__}: {exc}")
 
     detail = "\n".join(errors) if errors else "<no load errors captured>"
     raise RuntimeError(
-        f"Failed to load an offline tokenizer for {env_var}. "
+        f"Failed to load an offline {loader_name} for {env_var}. "
         f"Set {env_var} or vendor the tokenizer under apps/backend/huggingface. "
         f"Tried: {tried}\nErrors:\n{detail}"
     )
@@ -281,11 +284,7 @@ class AnimaQwenTextEncoder(nn.Module):
         if self._tokenizer is not None:
             return self._tokenizer
         hint = self._tokenizer_path_hint
-        tok = _load_tokenizer_dir(
-            env_var="CODEX_ANIMA_QWEN_TOKENIZER_PATH",
-            explicit=hint,
-            candidates=_default_qwen_tokenizer_candidates(),
-        )
+        tok = load_anima_qwen_tokenizer(hint)
         self._tokenizer = tok
         return tok
 
@@ -549,11 +548,40 @@ def load_anima_qwen3_06b_text_encoder(
     return AnimaQwenTextEncoder(model=model)
 
 
+def load_anima_qwen_tokenizer(tokenizer_path: str | None = None) -> Any:
+    try:
+        from transformers import Qwen2Tokenizer
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("transformers.Qwen2Tokenizer is required to load the Anima Qwen tokenizer.") from exc
+
+    tok = _load_tokenizer_dir(
+        env_var="CODEX_ANIMA_QWEN_TOKENIZER_PATH",
+        explicit=tokenizer_path,
+        candidates=_default_qwen_tokenizer_candidates(),
+        loader_name="Anima Qwen tokenizer (slow Qwen2Tokenizer)",
+        load_tokenizer=lambda path: Qwen2Tokenizer.from_pretrained(path, local_files_only=True),
+    )
+    if not isinstance(tok, Qwen2Tokenizer):
+        raise RuntimeError(
+            f"Anima Qwen tokenizer loaded unexpected class {type(tok).__name__}; expected Qwen2Tokenizer."
+        )
+    if bool(getattr(tok, "is_fast", False)):
+        raise RuntimeError("Anima Qwen tokenizer must load through the slow Qwen2Tokenizer path, not a fast tokenizer.")
+    return tok
+
+
 def load_anima_t5_tokenizer(tokenizer_path: str | None = None) -> Any:
+    try:
+        from transformers import AutoTokenizer
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("transformers is required to load the Anima T5 tokenizer.") from exc
+
     tok = _load_tokenizer_dir(
         env_var="CODEX_ANIMA_T5_TOKENIZER_PATH",
         explicit=tokenizer_path,
         candidates=_default_t5_tokenizer_candidates(),
+        loader_name="Anima T5 tokenizer",
+        load_tokenizer=lambda path: AutoTokenizer.from_pretrained(path, local_files_only=True, use_fast=True),
     )
 
     token_count: int | None = None
@@ -646,6 +674,7 @@ def tokenize_t5_with_weights(
 __all__ = [
     "AnimaQwenTextEncoder",
     "AnimaQwenTextProcessingEngine",
+    "load_anima_qwen_tokenizer",
     "load_anima_qwen3_06b_text_encoder",
     "load_anima_t5_tokenizer",
     "tokenize_qwen_with_weights",

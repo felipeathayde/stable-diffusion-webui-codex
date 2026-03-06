@@ -195,7 +195,6 @@ class AnimaEngine(CodexDiffusionEngine):
             core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
             return {
                 "crossattn": cached["crossattn"].to(device=target_device, dtype=core_dtype),
-                "vector": cached["vector"].to(device=target_device, dtype=core_dtype),
                 "t5xxl_ids": cached["t5xxl_ids"].to(device=target_device, dtype=torch.long),
                 "t5xxl_weights": cached["t5xxl_weights"].to(device=target_device, dtype=core_dtype),
             }
@@ -214,11 +213,6 @@ class AnimaEngine(CodexDiffusionEngine):
 
             core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
             crossattn = crossattn.to(dtype=core_dtype)
-            vector = crossattn.mean(dim=1)
-            if vector.ndim != 2:
-                raise RuntimeError(
-                    f"Anima pooled vector has invalid shape: expected 2D (B,C), got {tuple(vector.shape)}"
-                )
 
             t5xxl_ids, t5xxl_weights = tokenize_t5_with_weights(
                 tokenizer=runtime.text.t5_tokenizer,
@@ -244,7 +238,6 @@ class AnimaEngine(CodexDiffusionEngine):
             target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
             cond = {
                 "crossattn": crossattn.to(device=target_device, dtype=core_dtype),
-                "vector": vector.to(device=target_device, dtype=core_dtype),
                 "t5xxl_ids": t5xxl_ids.to(device=target_device, dtype=torch.long),
                 "t5xxl_weights": t5xxl_weights.to(device=target_device, dtype=core_dtype),
             }

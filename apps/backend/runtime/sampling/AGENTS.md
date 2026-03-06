@@ -83,9 +83,9 @@ Status: Active
 - `compile_conditions(cond)` invariants:
   - `cond=None` → `None` (semântica preservada).
   - `cond` tensor → tratado como cross-attn (B,S,C); erro se `ndim!=3`.
-  - `cond` dict → deve conter `crossattn` (B,S,C) e `vector` (B,V); sem fallback.
+  - `cond` dict → deve conter `crossattn` (B,S,C); `vector` (B,V) é opcional e só deve ser compilado para `pooled_output`/`y` quando realmente presente.
   - `t5xxl_ids`/`t5xxl_weights` são opcionais, mas obrigatoriamente em par; ambos 2D (B,S), com batch alinhado a `crossattn`.
-  - Produz `model_conds` com chaves canônicas: `c_crossattn`, `y` e, quando aplicável, `c_concat`/`guidance`/`image_latents`/`t5xxl_ids`/`t5xxl_weights`.
+  - Produz `model_conds` com chaves canônicas: `c_crossattn` e, quando aplicável, `y`/`c_concat`/`guidance`/`image_latents`/`t5xxl_ids`/`t5xxl_weights`.
 
 ### Logging
 - DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.
@@ -96,7 +96,7 @@ Status: Active
 - Após a montagem (`cond_cat(c)`), validação obrigatória:
   - `'c_crossattn'` existe e é Tensor 3D.
   - Se `model.diffusion_model.num_classes` não é `None`, exigir `'y'` (Tensor 2D).
-- Alinhamento de `dtype/device` para `c_crossattn`, `y` e `c_concat` com o `input_x` antes do `apply_model`.
+- Alinhamento de `dtype/device` para `c_crossattn`, `y` (quando presente) e `c_concat` com o `input_x` antes do `apply_model`.
 
 ## Future Work (not yet ported)
 - Additional schedule families (e.g., EDM/FlowMatch variants) can be added as new `SchedulerName` values with explicit behavior.

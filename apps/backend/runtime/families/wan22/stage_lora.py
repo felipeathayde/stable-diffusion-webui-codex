@@ -452,19 +452,6 @@ def apply_wan22_stage_lora(
                     path=resolved_path,
                 )
             )
-        unsupported_i2v_branch_count = inspection.class_counts.get("unsupported_i2v_branch", 0)
-        if unsupported_i2v_branch_count > 0:
-            raise RuntimeError(
-                "WAN22 GGUF stage '{stage}': LoRA targets an unsupported WAN I2V image-conditioning branch "
-                f"(unsupported_i2v_branch={unsupported_i2v_branch_count}). "
-                "The current local WAN22 runtime/base GGUFs use the 36-channel concat I2V path and do not carry "
-                "separate image-branch parameters for these keys. "
-                "diagnostics={diagnostics} file={path}".format(
-                    stage=stage,
-                    diagnostics=diagnostics,
-                    path=resolved_path,
-                )
-            )
         if min_match_ratio > 0.0 and coverage < min_match_ratio:
             raise RuntimeError(
                 "WAN22 GGUF stage '{stage}': LoRA logical-key coverage below threshold "

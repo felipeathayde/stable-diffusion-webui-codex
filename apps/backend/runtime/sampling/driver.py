@@ -94,8 +94,9 @@ _GUIDANCE_ALLOWED_KEYS = {
     "renorm_cfg",
 }
 
-_COMFY_DENOISE_FULL_THRESHOLD = 0.9999
-_MAX_COMFY_DENOISE_STEPS = 10000
+_FULL_DENOISE_THRESHOLD = 0.9999
+_MAX_DENOISE_REBUILD_STEPS = 10000
+_ER_SDE_CONST_SNR_PERCENT_OFFSET = 1e-4
 
 
 def _read_env_text(name: str) -> str | None:
@@ -316,7 +317,7 @@ class CodexSampler:
             raise ValueError("denoise_strength must be in [0, 1]")
         return value
 
-    def _build_comfy_denoise_sigmas(
+    def _build_partial_denoise_sigmas(
         self,
         *,
         processing: Any,
@@ -326,18 +327,18 @@ class CodexSampler:
         steps: int,
         denoise_strength: float,
     ) -> torch.Tensor:
-        if denoise_strength > _COMFY_DENOISE_FULL_THRESHOLD:
+        if denoise_strength > _FULL_DENOISE_THRESHOLD:
             return active_context.sigmas.to(device=noise.device, dtype=torch.float32)
 
         new_steps = int(float(steps) / float(denoise_strength))
         if new_steps < 1:
             raise RuntimeError(
-                f"Comfy denoise schedule produced invalid new_steps={new_steps} from steps={steps} denoise={denoise_strength}"
+                f"Partial denoise schedule rebuild produced invalid new_steps={new_steps} from steps={steps} denoise={denoise_strength}"
             )
-        if new_steps > _MAX_COMFY_DENOISE_STEPS:
+        if new_steps > _MAX_DENOISE_REBUILD_STEPS:
             raise ValueError(
                 f"denoise_strength={denoise_strength} expands schedule to new_steps={new_steps}, "
-                f"above safety limit {_MAX_COMFY_DENOISE_STEPS}"
+                f"above safety limit {_MAX_DENOISE_REBUILD_STEPS}"
             )
         denoise_context = build_sampling_context(
             self.sd_model,
@@ -356,10 +357,10 @@ class CodexSampler:
         denoise_sigmas = denoise_context.sigmas.to(device=noise.device, dtype=torch.float32)
         required = int(steps) + 1
         if denoise_sigmas.ndim != 1:
-            raise RuntimeError(f"Comfy denoise schedule must be 1D; got shape={tuple(denoise_sigmas.shape)}")
+            raise RuntimeError(f"Partial denoise schedule must be 1D; got shape={tuple(denoise_sigmas.shape)}")
         if int(denoise_sigmas.numel()) < required:
             raise RuntimeError(
-                f"Comfy denoise schedule too short: got={int(denoise_sigmas.numel())} required={required} "
+                f"Partial denoise schedule too short: got={int(denoise_sigmas.numel())} required={required} "
                 f"(steps={steps} denoise={denoise_strength} new_steps={new_steps})"
             )
         tail = denoise_sigmas[-required:]
@@ -499,6 +500,9 @@ class CodexSampler:
             raise RuntimeError(f"ER-SDE expects a 1D sigma schedule, got shape={tuple(sigmas.shape)}")
         sigmas_fp32 = sigmas.to(dtype=torch.float32)
         if prediction_type == "const":
+            if int(sigmas_fp32.numel()) > 1 and float(sigmas_fp32[0]) >= 1.0:
+                sigmas_fp32 = sigmas_fp32.clone()
+                sigmas_fp32[0] = float(_ER_SDE_CONST_SNR_PERCENT_OFFSET)
             sigma_safe = sigmas_fp32.clamp(min=1e-6, max=1.0 - 1e-6)
             half_log_snr = -torch.logit(sigma_safe)
         else:
@@ -521,23 +525,23 @@ class CodexSampler:
             seed_value = int(getattr(processing, "seed", -1))
             if seed_value < 0:
                 raise RuntimeError(
-                    "Deterministic ancestral noise requires explicit per-sample seeds; processing is missing seeds."
+                    "Deterministic sampler step noise requires explicit per-sample seeds; processing is missing seeds."
                 )
             if batch_size != 1:
                 raise RuntimeError(
-                    "Deterministic ancestral noise requires per-sample seeds for batched runs; "
+                    "Deterministic sampler step noise requires per-sample seeds for batched runs; "
                     f"got batch_size={batch_size} with only processing.seed."
                 )
             seed_values = [seed_value]
         normalized = [int(value) for value in seed_values]
         if len(normalized) != batch_size:
             raise RuntimeError(
-                "Deterministic ancestral noise seed count mismatch: "
+                "Deterministic sampler step noise seed count mismatch: "
                 f"got seeds={len(normalized)} batch_size={batch_size}."
             )
         return normalized
 
-    def _build_seeded_ancestral_rng(
+    def _build_seeded_step_rng(
         self,
         *,
         processing: Any,
@@ -552,13 +556,13 @@ class CodexSampler:
             template_shape = tuple(int(dim) for dim in template_rng.shape)
             if template_shape != latent_shape:
                 raise RuntimeError(
-                    "processing.rng shape mismatch for deterministic ancestral noise: "
+                    "processing.rng shape mismatch for deterministic sampler step noise: "
                     f"rng_shape={template_shape} noise_shape={latent_shape}."
                 )
             seeds = [int(seed) for seed in template_rng.seeds]
             if len(seeds) != batch_size:
                 raise RuntimeError(
-                    "processing.rng seed count mismatch for deterministic ancestral noise: "
+                    "processing.rng seed count mismatch for deterministic sampler step noise: "
                     f"rng_seeds={len(seeds)} batch_size={batch_size}."
                 )
             subseeds = [int(seed) for seed in template_rng.subseeds]
@@ -591,17 +595,17 @@ class CodexSampler:
         initial_noise = step_rng.next()
         if tuple(initial_noise.shape) != tuple(noise.shape):
             raise RuntimeError(
-                "Deterministic ancestral noise bootstrap shape mismatch: "
+                "Deterministic sampler step noise bootstrap shape mismatch: "
                 f"bootstrap={tuple(initial_noise.shape)} noise={tuple(noise.shape)}."
             )
         return step_rng
 
     @staticmethod
-    def _next_seeded_ancestral_noise(step_rng: ImageRNG, reference: torch.Tensor) -> torch.Tensor:
+    def _next_seeded_step_noise(step_rng: ImageRNG, reference: torch.Tensor) -> torch.Tensor:
         sampled = step_rng.next()
         if tuple(sampled.shape) != tuple(reference.shape):
             raise RuntimeError(
-                "Deterministic ancestral noise shape mismatch: "
+                "Deterministic sampler step noise shape mismatch: "
                 f"sampled={tuple(sampled.shape)} reference={tuple(reference.shape)}."
             )
         return sampled.to(device=reference.device, dtype=reference.dtype)
@@ -742,7 +746,7 @@ class CodexSampler:
                 if normalized_denoise is None:
                     sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
                 else:
-                    sigmas = self._build_comfy_denoise_sigmas(
+                    sigmas = self._build_partial_denoise_sigmas(
                         processing=processing,
                         model=model,
                         active_context=active_context,
@@ -936,7 +940,7 @@ class CodexSampler:
                 er_sde_params: dict[str, Any] | None = None
                 er_sde_lambdas: torch.Tensor | None = None
                 er_sde_point_indices: torch.Tensor | None = None
-                ancestral_step_rng: ImageRNG | None = None
+                seeded_step_rng: ImageRNG | None = None
                 if sampler_kind is SamplerKind.ER_SDE:
                     er_sde_params = self._resolve_er_sde_runtime_params(er_sde_options)
                     er_sde_lambdas = self._compute_er_sde_lambdas(
@@ -949,15 +953,22 @@ class CodexSampler:
                         dtype=torch.float32,
                         device=x.device,
                     )
-                if sampler_kind is SamplerKind.EULER_A:
-                    ancestral_step_rng = self._build_seeded_ancestral_rng(
+                if sampler_kind in {SamplerKind.EULER_A, SamplerKind.ER_SDE}:
+                    seeded_step_rng = self._build_seeded_step_rng(
                         processing=processing,
                         active_context=active_context,
                         noise=base_noise,
                     )
                     for skip_index in range(start_idx):
-                        if float(sigmas[skip_index + 1]) > 0.0:
-                            ancestral_step_rng.next()
+                        sigma_skip_next = float(sigmas[skip_index + 1])
+                        if sigma_skip_next <= 0.0:
+                            continue
+                        if sampler_kind is SamplerKind.ER_SDE:
+                            if er_sde_params is None:
+                                raise RuntimeError("ER-SDE seeded noise RNG setup missing runtime parameters.")
+                            if float(er_sde_params["s_noise"]) <= 0.0:
+                                continue
+                        seeded_step_rng.next()
 
                 with profiler.profile_run(profile_name, meta=profile_meta):
                     for i in range(start_idx, steps):
@@ -1098,11 +1109,11 @@ class CodexSampler:
                                         renoise_coeff = max(renoise_sq, 0.0) ** 0.5
                                         sigma_down_i_ratio = sigma_down / sigma
                                         x = sigma_down_i_ratio * x + (1.0 - sigma_down_i_ratio) * denoised
-                                        if ancestral_step_rng is None:
+                                        if seeded_step_rng is None:
                                             raise RuntimeError("Euler ancestral RF/CONST missing deterministic noise RNG.")
                                         x = (
                                             (alpha_ip1 / alpha_down) * x
-                                            + self._next_seeded_ancestral_noise(ancestral_step_rng, x) * 1.0 * renoise_coeff
+                                            + self._next_seeded_step_noise(seeded_step_rng, x) * 1.0 * renoise_coeff
                                         )
                                 elif sigma_next <= 0.0:
                                     x = denoised
@@ -1111,9 +1122,9 @@ class CodexSampler:
                                     sigma_up = sigma_up_sq ** 0.5
                                     sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
                                     x = denoised + sigma_down * eps
-                                    if ancestral_step_rng is None:
+                                    if seeded_step_rng is None:
                                         raise RuntimeError("Euler ancestral missing deterministic noise RNG.")
-                                    noise = self._next_seeded_ancestral_noise(ancestral_step_rng, x)
+                                    noise = self._next_seeded_step_noise(seeded_step_rng, x)
                                     x = x + sigma_up * noise
                             elif sampler_kind is SamplerKind.DPM2M:
                                 # DPM-Solver++(2M) in log-sigma time (reference update form).
@@ -1295,9 +1306,11 @@ class CodexSampler:
                                             raise RuntimeError(
                                                 f"ER-SDE produced non-finite stochastic scale at step={step_index + 1}"
                                             )
+                                        if seeded_step_rng is None:
+                                            raise RuntimeError("ER-SDE missing deterministic noise RNG.")
                                         x = x + (
                                             alpha_t
-                                            * torch.randn_like(x)
+                                            * self._next_seeded_step_noise(seeded_step_rng, x)
                                             * s_noise
                                             * noise_scale
                                         )

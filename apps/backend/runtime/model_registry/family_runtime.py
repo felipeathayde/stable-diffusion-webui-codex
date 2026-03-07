@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Per-model-family runtime specification (capabilities + latent/normalization defaults).
 Defines UI-facing capability flags and runtime defaults per `ModelFamily` (latent channels, prediction kind, normalization hints),
 acting as the single source of truth for both backend assembly and frontend conditional UI (flow-shift is left unset when variant-specific).
-Includes Anima (`ModelFamily.ANIMA`) as a flow-based image family with fixed flow shift defaults (ComfyUI parity), and FLUX.2 as a
+Includes Anima (`ModelFamily.ANIMA`) as a flow-based image family with fixed flow shift defaults, and FLUX.2 as a
 32-channel flow family whose scheduler shift remains dynamic/variant-aware (`flow_shift=None` here; runtime owns the truthful bridge).
 Includes FLUX.2 (`ModelFamily.FLUX2`) for the truthful Klein 4B/base-4B slice (Qwen-only conditioning, AutoencoderKLFlux2 latent semantics).
 Includes explicit WAN22 family variants (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) with independent defaults.
@@ -496,7 +496,7 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         family=ModelFamily.ANIMA,
         latent_channels=16,
         latent_scale_factor=8,
-        # Anima uses ComfyUI WanVAE-style weights (`qwen_image_vae.safetensors`; 3D conv) in reference flows.
+        # Anima uses the WanVAE-style 3D-conv image VAE weights (`qwen_image_vae.safetensors`) in its reference asset bundle.
         vae_scaling_factor=1.0,
         vae_shift_factor=0.0,
         context_dim=1024,  # Qwen3 0.6B hidden size

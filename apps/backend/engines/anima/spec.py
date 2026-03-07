@@ -10,11 +10,11 @@ Purpose: Anima engine specification and runtime assembly (Cosmos Predict2 / Anim
 Assembles a Codex-native runtime from the parsed Anima core bundle, validates sha-selected external assets
 (Qwen3-0.6B text encoder + WanVAE-style VAE), and eagerly loads external text/vae/tokenizer components through canonical loaders.
 Produces a denoiser patcher suitable for the canonical txt2img/img2img pipelines (Option A).
-Sets Anima predictor defaults, including SIMPLE schedule mode selection for ComfyUI sigma-ladder parity.
+Sets Anima predictor defaults, including SIMPLE schedule mode selection for tail-downsample sigma-ladder parity.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_torch_dtype_label` (function): Convert canonical torch dtypes into runtime metadata labels (`fp16`/`bf16`/`fp32`).
-- `_predictor` (function): Build Anima predictor defaults (discrete-flow + ComfyUI SIMPLE schedule mode).
+- `_predictor` (function): Build Anima predictor defaults (discrete-flow + tail-downsample SIMPLE schedule mode).
 - `_load_external_text_encoder` (function): Load and validate Anima Qwen3-0.6B text encoder from external safetensors.
 - `_load_external_vae` (function): Load and validate Anima WAN VAE from external safetensors.
 - `_require_external_asset_path` (function): Require non-empty external asset option values.
@@ -46,7 +46,7 @@ from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.sampling_adapters.prediction import (
-    SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS,
+    SIMPLE_SCHEDULE_MODE_TAIL_DOWNSAMPLE_SIGMAS,
     PredictionDiscreteFlow,
 )
 
@@ -117,7 +117,7 @@ def _predictor(*, spec: AnimaEngineSpec) -> PredictionDiscreteFlow:
         shift=float(spec.flow_shift),
         multiplier=float(spec.flow_multiplier),
         timesteps=1000,
-        simple_schedule_mode=SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS,
+        simple_schedule_mode=SIMPLE_SCHEDULE_MODE_TAIL_DOWNSAMPLE_SIGMAS,
     )
 
 

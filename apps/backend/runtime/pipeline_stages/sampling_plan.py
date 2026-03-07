@@ -212,10 +212,10 @@ def apply_sampling_overrides(
         processing.scheduler = str(scheduler_raw)
         plan.scheduler_name = str(scheduler_raw)
         scheduler_changed = True
-    if sampler_changed and not scheduler_changed:
-        spec = get_sampler_spec(str(plan.sampler_name))
-        processing.scheduler = spec.default_scheduler
-        plan.scheduler_name = spec.default_scheduler
+    if sampler_changed or scheduler_changed:
+        normalized_scheduler = _normalize_scheduler_name(str(plan.sampler_name), str(plan.scheduler_name))
+        processing.scheduler = normalized_scheduler
+        plan.scheduler_name = normalized_scheduler
 
     try:
         if "cfg" in controls:

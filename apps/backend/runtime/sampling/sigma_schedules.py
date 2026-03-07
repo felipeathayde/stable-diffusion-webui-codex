@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Sigma schedule construction utilities for diffusion samplers.
 Defines canonical scheduler names and builds sigma schedules (Karras, exponential, DDIM, align-your-steps, etc.).
-SIMPLE schedules are predictor-aware and support explicit mode selection (legacy shifted-linspace vs Comfy-style sigma downsample).
+SIMPLE schedules are predictor-aware and support explicit mode selection (legacy shifted-linspace vs tail-downsample sigma selection).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SchedulerName` (enum): Canonical scheduler names for sigma schedule construction (strict, no silent fallback).
@@ -37,7 +37,7 @@ from enum import Enum
 from typing import Optional
 
 import torch
-from apps.backend.runtime.sampling_adapters.prediction import SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS
+from apps.backend.runtime.sampling_adapters.prediction import SIMPLE_SCHEDULE_MODE_TAIL_DOWNSAMPLE_SIGMAS
 
 
 class SchedulerName(str, Enum):
@@ -156,9 +156,9 @@ def _simple_schedule_from_predictor(
     """Predictor-ladder 'simple' schedule built via predictor sigma/timestep.
 
     Behavior depends on predictor configuration:
-    - If `predictor.simple_schedule_mode == "comfy_downsample_sigmas"`, build a ComfyUI-style ladder by downsampling
+    - If `predictor.simple_schedule_mode == "tail_downsample_sigmas"`, build a SIMPLE ladder by downsampling
       `predictor.sigmas` from the **end** and appending a terminal 0. This mode now fails loud when
-      `steps > len(predictor.sigmas)` because the Comfy-style downsample would otherwise duplicate the head sigma.
+      `steps > len(predictor.sigmas)` because tail downsampling beyond the base ladder would duplicate the head sigma.
     - Otherwise, use the legacy Codex behavior:
       - special-case `prediction_type="const"` for FlowMatch-style shifted linspace ladders,
       - else construct a linear ladder of timesteps and map via `predictor.sigma(t)`,
@@ -166,37 +166,37 @@ def _simple_schedule_from_predictor(
     """
 
     mode = getattr(predictor, "simple_schedule_mode", None)
-    if isinstance(mode, str) and mode.strip().lower() == SIMPLE_SCHEDULE_MODE_COMFY_DOWNSAMPLE_SIGMAS:
+    if isinstance(mode, str) and mode.strip().lower() == SIMPLE_SCHEDULE_MODE_TAIL_DOWNSAMPLE_SIGMAS:
         base_sigmas = getattr(predictor, "sigmas", None)
         if base_sigmas is None:
-            raise RuntimeError("predictor is missing sigmas ladder required for Comfy-style simple schedule")
+            raise RuntimeError("predictor is missing sigmas ladder required for tail-downsample simple schedule")
         steps_i = int(steps)
         if steps_i <= 0:
-            raise ValueError("steps must be >= 1 for Comfy-style simple schedule")
+            raise ValueError("steps must be >= 1 for tail-downsample simple schedule")
         sigmas = torch.as_tensor(base_sigmas, device=device, dtype=dtype)
         if sigmas.ndim != 1:
             raise RuntimeError(
-                "predictor.sigmas must be a 1D ladder for Comfy-style simple schedule; "
+                "predictor.sigmas must be a 1D ladder for tail-downsample simple schedule; "
                 f"got shape={tuple(sigmas.shape)}."
             )
         if sigmas.numel() == 0:
-            raise RuntimeError("predictor.sigmas is empty; cannot build Comfy-style simple sigma schedule")
+            raise RuntimeError("predictor.sigmas is empty; cannot build tail-downsample simple sigma schedule")
         if not torch.isfinite(sigmas).all().item():
-            raise RuntimeError("predictor.sigmas must contain only finite values for Comfy-style simple schedule.")
+            raise RuntimeError("predictor.sigmas must contain only finite values for tail-downsample simple schedule.")
         if (sigmas[1:] < sigmas[:-1]).any().item():
             raise RuntimeError(
                 "predictor.sigmas must be monotonically non-decreasing (sigma_min -> sigma_max) "
-                "for Comfy-style simple schedule."
+                "for tail-downsample simple schedule."
             )
         total = int(sigmas.numel())
         if steps_i > total:
             raise ValueError(
-                "Comfy-style simple sigma schedule requires steps <= len(predictor.sigmas); "
+                "Tail-downsample simple sigma schedule requires steps <= len(predictor.sigmas); "
                 f"got steps={steps_i} predictor_sigmas={total}. Downsampling beyond the base ladder "
                 "would duplicate the head sigma and break RF/CONST ancestral steps."
             )
-        # ComfyUI parity: `int(i * (len(sigmas) / steps))` for i in [0..steps-1] (non-negative),
-        # which is equivalent to floor(i * total / steps) == (i * total) // steps.
+        # The tail-downsample index formula uses `floor(i * total / steps)` for i in [0..steps-1],
+        # then selects from the ladder tail toward the head.
         indices = [total - 1 - ((i * total) // steps_i) for i in range(steps_i)]
         ladder = sigmas[torch.as_tensor(indices, device=device, dtype=torch.long)]
         return _append_zero(ladder, device=device, dtype=dtype)

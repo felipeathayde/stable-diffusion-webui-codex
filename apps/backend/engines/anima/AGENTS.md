@@ -18,7 +18,7 @@ Status: Draft
 - Capability exposure follows the Anima conditioning contract (`crossattn` + `t5xxl_ids/t5xxl_weights`; no synthesized pooled `vector`); keep `AnimaEngine.capabilities()` in sync with `runtime/model_registry/capabilities.py`.
 - Runtime device consistency checks normalize equivalent labels (`cuda` and `cuda:0`) before mismatch validation; only real device mismatches should fail, and missing `denoiser.load_device` fails loud.
 - Conditioning requires dual tokenization (Qwen embeddings + T5 ids/weights), per `.sangoi/research/models/hf-circlestone-labs-anima.md`.
-- 2026-02-08: `spec._predictor()` opts Anima into `simple_schedule_mode="comfy_downsample_sigmas"` so `scheduler=simple` follows ComfyUI-style downsample of `predictor.sigmas` (parity target), while other flow families keep their existing SIMPLE behavior.
+- 2026-02-08: `spec._predictor()` opts Anima into `simple_schedule_mode="tail_downsample_sigmas"` so `scheduler=simple` follows tail-downsample ladder selection over `predictor.sigmas`, while other flow families keep their existing SIMPLE behavior.
 - 2026-02-09: Anima conditioning entrypoints now use `torch.no_grad()` (not `torch.inference_mode()`) to avoid caching inference tensors across requests (version-counter faults).
 - 2026-02-23: `AnimaEngineRuntime.device` default now resolves from memory-manager mount-device authority (no hardcoded CPU default in runtime metadata).
 - 2026-03-03: `spec.assemble_anima_runtime(...)` now eagerly loads external Qwen3 text-encoder weights, WAN VAE weights, and T5 tokenizer through canonical loaders; qwen patcher now wraps the concrete loaded model.

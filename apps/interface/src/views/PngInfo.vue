@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: PNG info inspection view.
-Inspect uploaded PNG metadata, parse common infotext formats, and bridge extracted parameters into model tabs and workflow snapshots.
+Inspect uploaded PNG metadata, parse common infotext formats, and bridge extracted parameters into model tabs and workflow snapshots (including independent sampler/scheduler patching when each mapped value is recognized).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PngInfo` (component): PNG info route view component.
@@ -517,10 +517,8 @@ function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: bo
   if (p.clipSkip !== undefined) patch.clipSkip = p.clipSkip
   if (p.denoiseStrength !== undefined) patch.denoiseStrength = p.denoiseStrength
 
-  if (mappingResult.value.sampler && mappingResult.value.scheduler) {
-    patch.sampler = mappingResult.value.sampler
-    patch.scheduler = mappingResult.value.scheduler
-  }
+  if (mappingResult.value.sampler) patch.sampler = mappingResult.value.sampler
+  if (mappingResult.value.scheduler) patch.scheduler = mappingResult.value.scheduler
 
   if (options.mode === 'txt2img') {
     patch.useInitImage = false

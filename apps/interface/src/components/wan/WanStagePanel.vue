@@ -7,10 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN stage parameter panel (High/Low).
-Renders sampler/scheduler/steps/cfg/seed controls for a WAN stage and emits a `stage` patch to the parent view.
+Renders sampler/scheduler/steps/cfg/seed controls for a WAN stage, forwards optional sampler/scheduler recommendation lists into shared selectors, and emits a `stage` patch to the parent view.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanStagePanel` (component): High/Low stage panel for WAN generation parameters.
+- `recommendedSamplers` / `recommendedSchedulers` (props): Optional recommendation arrays forwarded into selector components.
 - `updateStage` (function): Emits a patch for the stage params (`update:stage`).
 - `randomizeSeed` (function): Stores the previous seed and sets seed to `-1` (random).
 - `reuseSeed` (function): Reuses the last non-random seed when available.

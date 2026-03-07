@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-03-06
+Last Review: 2026-03-07
 Status: Active
 
 ## Purpose
@@ -14,6 +14,7 @@ Status: Active
 - 2026-01-03: Added standardized file header block to `xyz.ts` (doc-only change; part of rollout).
 - 2026-01-29: Added PNG infotext parsing + sampler/scheduler mapping helpers (`pnginfo.ts`).
 - 2026-02-18: `pnginfo.ts` parser now tokenizes KV blocks safely (quoted/bracketed comma support), captures additional A1111-style fields (`RNG`, `Eta`, `NGMS`, `Version`, `Hires Module 1`), and supports legacy JSON `parameters` fallback parsing.
+- 2026-03-07: `pnginfo.ts` sampler/scheduler mapping no longer rewrites `normal -> simple`; import mapping now preserves individually recognized global sampler/scheduler values while still rejecting incompatible sampler->allowed_scheduler pairs.
 - 2026-02-03: XYZ axis ids for hires are now `hires_scale` / `hires_steps`.
 - 2026-02-08: XYZ keeps axis id `refiner_steps` for sweep compatibility, but the UI label now reflects swap-pointer semantics (`Swap at step`).
 - 2026-02-06: Added `engine_taxonomy.ts` as canonical frontend engine taxonomy mapping (tab-family aliases, request engine-id resolution, semantic-engine resolution, and centralized sampler/scheduler fallback defaults).

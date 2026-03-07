@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Hires (second pass) settings panel.
 Renders hires controls in a Basic Parameters-like row organization (sampler/scheduler/steps, scale/width/height,
-upscaler/cfg/denoise, tile controls with desktop row-alignment hooks and right-anchored presets, model selector, prompt overrides), plus optional second-pass swap-model settings.
+upscaler/cfg/denoise, tile controls with desktop row-alignment hooks and right-anchored presets, model selector, prompt overrides), backend recommendation-aware sampler/scheduler selector grouping, plus optional second-pass swap-model settings.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels. Uses the shared `WanSubHeader`
 title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `HiresSettingsCard` (component): Hires settings block for supported image tabs.
 - `toggle` (function): Toggles the hires enabled state.
 - `swapResize` (function): Swaps hires width/height overrides.
+- `recommendedSamplers` / `recommendedSchedulers` (const): Optional recommendation arrays forwarded into selector components.
 - `hideNegativePromptByCfg` (const): Hides the hires negative prompt field when effective hires CFG is `<= 1`.
 - `onMinTileChange` (function): Normalizes/clamps min-tile updates before emitting.
 -->
@@ -43,6 +44,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <SamplerSelector
           class="gc-col"
           :samplers="samplers"
+          :recommended-names="recommendedSamplers"
           :modelValue="samplerValue"
           label="Sampler"
           :allow-empty="false"
@@ -52,6 +54,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <SchedulerSelector
           class="gc-col"
           :schedulers="schedulers"
+          :recommended-names="recommendedSchedulers"
           :modelValue="schedulerValue"
           label="Scheduler"
           :allow-empty="false"
@@ -326,6 +329,8 @@ const props = defineProps<{
   supportsNegative?: boolean
   samplers?: SamplerInfo[]
   schedulers?: SchedulerInfo[]
+  recommendedSamplers?: string[] | null
+  recommendedSchedulers?: string[] | null
   sampler?: string
   scheduler?: string
   upscaler: string
@@ -375,6 +380,8 @@ const tilePresets = [128, 256, 512, 768] as const
 
 const samplers = computed(() => Array.isArray(props.samplers) ? props.samplers : [])
 const schedulers = computed(() => Array.isArray(props.schedulers) ? props.schedulers : [])
+const recommendedSamplers = computed(() => (Array.isArray(props.recommendedSamplers) ? props.recommendedSamplers : null))
+const recommendedSchedulers = computed(() => (Array.isArray(props.recommendedSchedulers) ? props.recommendedSchedulers : null))
 const samplerValue = computed(() => String(props.sampler || '').trim())
 const schedulerValue = computed(() => String(props.scheduler || '').trim())
 const cfgLabel = computed(() => String(props.cfgLabel || 'CFG'))

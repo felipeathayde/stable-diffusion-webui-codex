@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Img2img-focused Basic Parameters card with hires-like structure.
 Renders sampler/scheduler/steps, dimensions, resize-mode + upscaler controls, and seed/CFG with optional denoise
-for init-image mode without hires-only prompt/checkpoint swap controls, plus optional advanced CFG/APG controls
+for init-image mode without hires-only prompt/checkpoint swap controls, backend recommendation-aware sampler/scheduler selector grouping, plus optional advanced CFG/APG controls
 gated by per-engine capabilities.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -24,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onSeedChange` (function): Handles manual seed input changes and emits a normalized integer seed.
 - `onResizeModeChange` (function): Emits normalized resize-mode updates from the resize-type select.
 - `onUpscalerChange` (function): Emits upscaler selection updates.
+- `recommendedSamplers` / `recommendedSchedulers` (const): Optional recommendation arrays forwarded into selector components.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
 - `toggleGuidanceAdvanced` (function): Toggles Advanced guidance mode and auto-syncs APG/CFG trunc activation flags when supported.
 - `swapWH` (function): Swaps width/height while respecting min/max and step constraints.
@@ -37,6 +38,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <SamplerSelector
           class="gc-col"
           :samplers="samplers"
+          :recommended-names="recommendedSamplers"
           :modelValue="sampler"
           label="Sampler"
           :allow-empty="false"
@@ -46,6 +48,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <SchedulerSelector
           class="gc-col"
           :schedulers="schedulers"
+          :recommended-names="recommendedSchedulers"
           :modelValue="scheduler"
           label="Scheduler"
           :allow-empty="false"
@@ -492,6 +495,8 @@ const ADVANCED_GUIDANCE_TOOLTIPS = {
 const props = withDefaults(defineProps<{
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
+  recommendedSamplers?: string[] | null
+  recommendedSchedulers?: string[] | null
   upscalers?: UpscalerDefinition[]
   upscalersLoading?: boolean
   upscalersError?: string
@@ -603,6 +608,8 @@ const heightInputStep = computed(() => Number.isFinite(props.heightInputStep) ? 
 const minClipSkip = computed(() => Number.isFinite(props.minClipSkip) ? Math.trunc(Number(props.minClipSkip)) : 0)
 const maxClipSkip = computed(() => Number.isFinite(props.maxClipSkip) ? Math.trunc(Number(props.maxClipSkip)) : 12)
 const showClipSkip = computed(() => props.showClipSkip === true)
+const recommendedSamplers = computed(() => (Array.isArray(props.recommendedSamplers) ? props.recommendedSamplers : null))
+const recommendedSchedulers = computed(() => (Array.isArray(props.recommendedSchedulers) ? props.recommendedSchedulers : null))
 const guidanceAdvanced = computed(() => props.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED)
 const guidanceSupport = computed(() => props.guidanceSupport ?? null)
 const showGuidanceAdvancedToggle = computed(() => {

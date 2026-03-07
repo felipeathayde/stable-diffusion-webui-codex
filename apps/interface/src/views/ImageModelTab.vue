@@ -15,6 +15,8 @@ CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
 Also shares the global `min_tile` preference (tiled lower bound) with `/upscale`.
 Swap-model cards (global + second-pass) share the same capability-gated advanced guidance/APG state surface.
+Sampler/scheduler selectors always expose the full global catalog and consume backend recommendation lists for grouped option rendering
+(`Recommended` vs `Use at your own risk`) with inline technical warnings on out-of-recommendation selections.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
 Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), including dual progress bars (total pipeline + sampling steps), so errors are visible even when Prompt is off-screen.
@@ -61,6 +63,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `missingInpaintMask` (const): Derived guard flag used to disable generation when INPAINT is enabled without an applied mask.
 - `supportsImg2ImgMasking` (const): Truthful engine-level mask/inpaint support gate for img2img engines.
 - `hideNegativePrompt` (const): Hides the base Negative Prompt field when the active checkpoint/model does not support it or effective base CFG is `<= 1`.
+- `recommendedSamplers` / `recommendedSchedulers` (const): Sanitized recommendation lists passed into sampler/scheduler selectors.
 - `xyzSamplerChoices`/`xyzSchedulerChoices` (const): Sampler/scheduler names passed to embedded XYZ autofill (scheduler list is sampler-compatible).
 -->
 
@@ -122,6 +125,8 @@ Symbols (top-level; keep in sync; no ghosts):
             v-if="params.useInitImage"
             :samplers="filteredSamplers"
             :schedulers="filteredSchedulers"
+            :recommended-samplers="recommendedSamplers"
+            :recommended-schedulers="recommendedSchedulers"
             :upscalers="upscalers"
             :upscalersLoading="upscalersLoading"
             :upscalersError="upscalersError"
@@ -166,6 +171,8 @@ Symbols (top-level; keep in sync; no ghosts):
             v-else
             :samplers="filteredSamplers"
             :schedulers="filteredSchedulers"
+            :recommended-samplers="recommendedSamplers"
+            :recommended-schedulers="recommendedSchedulers"
             :sampler="params.sampler"
             :scheduler="params.scheduler"
             :steps="params.steps"
@@ -206,6 +213,8 @@ Symbols (top-level; keep in sync; no ghosts):
             :enabled="params.hires.enabled"
             :samplers="filteredSamplers"
             :schedulers="filteredHiresSchedulers"
+            :recommended-samplers="recommendedSamplers"
+            :recommended-schedulers="recommendedSchedulers"
             :sampler="hiresSampler"
             :scheduler="hiresScheduler"
             :denoise="params.hires.denoise"
@@ -820,18 +829,31 @@ const showGlobalRefiner = computed(() => {
   return surf.supports_refiner
 })
 
+function normalizeRecommendedList(values: string[] | null | undefined): string[] | null {
+  if (!Array.isArray(values)) return null
+  const normalized = Array.from(new Set(values
+    .map((value) => String(value || '').trim())
+    .filter((value) => value.length > 0)))
+  if (normalized.length === 0) return null
+  return normalized
+}
+
+const recommendedSamplers = computed(() =>
+  normalizeRecommendedList(engineSurface.value?.recommended_samplers),
+)
+
+const recommendedSchedulers = computed(() =>
+  normalizeRecommendedList(engineSurface.value?.recommended_schedulers),
+)
+
 const filteredSamplers = computed(() => {
-  const allowed = engineSurface.value?.samplers as string[] | null | undefined
-  if (!allowed || allowed.length === 0) return samplers.value
-  return samplers.value.filter(s => allowed.includes(s.name))
+  return samplers.value
 })
 
 const activeSamplerSpec = computed(() => samplers.value.find(s => s.name === params.value.sampler) ?? null)
 
 const filteredSchedulers = computed(() => {
   let list = schedulers.value
-  const allowed = engineSurface.value?.schedulers as string[] | null | undefined
-  if (allowed && allowed.length > 0) list = list.filter(s => allowed.includes(s.name))
   const allowedBySampler = activeSamplerSpec.value?.allowed_schedulers
   if (Array.isArray(allowedBySampler) && allowedBySampler.length > 0) {
     const set = new Set(allowedBySampler)
@@ -865,8 +887,6 @@ const hiresCfgValue = computed(() => {
 
 const filteredHiresSchedulers = computed(() => {
   let list = schedulers.value
-  const allowed = engineSurface.value?.schedulers as string[] | null | undefined
-  if (allowed && allowed.length > 0) list = list.filter((entry) => allowed.includes(entry.name))
   const spec = samplers.value.find((entry) => entry.name === hiresSampler.value)
   const allowedBySampler = spec?.allowed_schedulers
   if (Array.isArray(allowedBySampler) && allowedBySampler.length > 0) {

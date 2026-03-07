@@ -14,7 +14,7 @@ Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.
 Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), and supports optional multi-region inpaint passes via
 `img2img_mask_region_split`.
 Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope enforcement for sampler fields and
-prompt `<sampler:...>` control tags (Anima-only rollout).
+prompt `<sampler:...>` control tags (Anima-only rollout). General sampler choices are not hard-filtered by engine capability recommendation lists.
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
@@ -189,9 +189,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _WAN_PROMPT_LORA_TAG_RE = re.compile(r"<\s*lora\s*:", re.IGNORECASE)
     from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
-    _ANIMA_ALLOWED_SAMPLERS = tuple(ENGINE_SURFACES[SemanticEngine.ANIMA].samplers or ())
-    if not _ANIMA_ALLOWED_SAMPLERS:
-        raise RuntimeError("Anima capability surface must declare a non-empty sampler allowlist.")
     _NOISE_SOURCE_VALUES = tuple(member.value for member in NoiseSourceKind)
 
     def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
@@ -1696,17 +1693,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             ),
         )
 
-    def _validate_anima_sampler_allowlist(*, engine_key: str, sampler: str, field_name: str) -> None:
-        if engine_key != SemanticEngine.ANIMA.value:
-            return
-        if sampler in _ANIMA_ALLOWED_SAMPLERS:
-            return
-        allowed = ", ".join(_ANIMA_ALLOWED_SAMPLERS)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported sampler for engine 'anima' in '{field_name}': '{sampler}'. Allowed: {allowed}",
-        )
-
     def _validate_swap_at_step_pointer(*, pointer: int, total_steps: int, field_name: str) -> None:
         if total_steps < 2:
             raise HTTPException(
@@ -1726,11 +1712,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if not sampler:
                 continue
             _validate_er_sde_release_scope(
-                engine_key=engine_key,
-                sampler=sampler,
-                field_name=f"{field_name} (prompt <sampler:...> control)",
-            )
-            _validate_anima_sampler_allowlist(
                 engine_key=engine_key,
                 sampler=sampler,
                 field_name=f"{field_name} (prompt <sampler:...> control)",
@@ -2116,7 +2097,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             sampler=sampler_name,
             field_name="sampler",
         )
-        _validate_anima_sampler_allowlist(engine_key=engine_key, sampler=sampler_name, field_name="sampler")
         try:
             from apps.backend.runtime.sampling.registry import get_sampler_spec
             from apps.backend.runtime.sampling.context import SchedulerName
@@ -2260,11 +2240,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         sampler_name = _require_str_field(payload, "img2img_sampling")
         scheduler_name = _require_str_field(payload, "img2img_scheduler")
         _validate_er_sde_release_scope(
-            engine_key=engine_key,
-            sampler=sampler_name,
-            field_name="img2img_sampling",
-        )
-        _validate_anima_sampler_allowlist(
             engine_key=engine_key,
             sampler=sampler_name,
             field_name="img2img_sampling",
@@ -2507,11 +2482,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if hires_sampler is not None:
                 hires_cfg["sampler"] = hires_sampler
                 _validate_er_sde_release_scope(
-                    engine_key=engine_key,
-                    sampler=hires_sampler,
-                    field_name="extras.hires.sampler",
-                )
-                _validate_anima_sampler_allowlist(
                     engine_key=engine_key,
                     sampler=hires_sampler,
                     field_name="extras.hires.sampler",
@@ -2813,11 +2783,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
             if hr_sampler_name is not None:
                 _validate_er_sde_release_scope(
-                    engine_key=engine_key,
-                    sampler=hr_sampler_name,
-                    field_name="img2img_hires_sampling",
-                )
-                _validate_anima_sampler_allowlist(
                     engine_key=engine_key,
                     sampler=hr_sampler_name,
                     field_name="img2img_hires_sampling",

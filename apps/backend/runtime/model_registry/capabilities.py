@@ -9,14 +9,14 @@ Required Notice: see NOTICE
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
-`er sde` in the sampler allowlist. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
+`er sde` in the recommended sampler surface. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
 image-conditioned img2img with hires enabled only after the real backend continuation path landed; LoRA remains off.
 WAN semantic capabilities are bound to explicit WAN22 variant families via primary-family mapping.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
 - `GuidanceAdvancedSurface` (dataclass): Optional per-engine support map for advanced CFG/APG controls (`extras.guidance` keys).
-- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler allow-lists).
+- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler recommendations).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
@@ -87,9 +87,9 @@ class EngineParamSurface:
     supports_refiner: bool
     supports_lora: bool
     supports_controlnet: bool
-    # Optional: restrict UI to only these samplers/schedulers. None = allow all.
-    samplers: tuple[str, ...] | None = None
-    schedulers: tuple[str, ...] | None = None
+    # Optional: recommended sampler/scheduler lists for UI hinting.
+    recommended_samplers: tuple[str, ...] | None = None
+    recommended_schedulers: tuple[str, ...] | None = None
     # Optional: UI defaults for sampler/scheduler selection.
     default_sampler: str | None = None
     default_scheduler: str | None = None
@@ -149,8 +149,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
-        samplers=("euler", "euler a", "ddim", "dpm++ 2m"),
-        schedulers=("simple", "beta", "normal"),
+        recommended_samplers=("euler", "euler a", "ddim", "dpm++ 2m"),
+        recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
         default_scheduler="simple",
     ),
@@ -164,8 +164,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        samplers=("euler", "dpm++ 2m"),
-        schedulers=("simple",),
+        recommended_samplers=("euler", "dpm++ 2m"),
+        recommended_schedulers=("simple",),
         default_sampler="euler",
         default_scheduler="simple",
     ),
@@ -179,8 +179,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        samplers=("euler", "dpm++ 2m"),
-        schedulers=("simple",),
+        recommended_samplers=("euler", "dpm++ 2m"),
+        recommended_schedulers=("simple",),
         default_sampler="euler",
         default_scheduler="simple",
         guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
@@ -195,8 +195,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        samplers=("euler", "euler a", "dpm++ 2m", "er sde"),
-        schedulers=("simple", "beta", "normal", "exponential"),
+        recommended_samplers=("euler", "euler a", "dpm++ 2m", "er sde"),
+        recommended_schedulers=("simple", "beta", "normal", "exponential"),
         default_sampler="euler",
         default_scheduler="simple",
         guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
@@ -211,8 +211,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        samplers=("euler", "dpm++ 2m", "ddim"),
-        schedulers=("simple", "beta", "normal"),
+        recommended_samplers=("euler", "dpm++ 2m", "ddim"),
+        recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
         default_scheduler="simple",
     ),

@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-06
+Last Review: 2026-03-07
 Status: Active
 
 ## Purpose
@@ -58,6 +58,7 @@ Status: Active
 - 2026-01-03: Continued the header rollout across remaining core component modules (doc-only change; part of rollout).
 - 2026-01-06: `BasicParametersCard.vue` now defaults to explicit sampler/scheduler selection (no empty option) and selector components tolerate missing `label` by falling back to `name`.
 - 2026-01-06: Sampler/Scheduler selectors now default the empty-option label to “Select” (no `Automatic` placeholder); WAN stage panels still override with “Inherit”.
+- 2026-03-07: `SamplerSelector.vue` / `SchedulerSelector.vue` now consume optional backend recommendation lists, render grouped dropdown optgroups (`Recommended` vs `Use at your own risk`), and show direct warning text for out-of-recommendation selections; `BasicParametersCard.vue`, `Img2ImgBasicParametersCard.vue`, and `HiresSettingsCard.vue` pass recommendation arrays through from view-level capabilities.
 - 2026-01-21: WAN stage LoRA UI (`components/wan/WanStageLoraField.vue`) selects by sha (`loraSha`) and payload builders emit `lora_sha` (no stage `lora_path`).
 - 2026-02-01: `HiresSettingsCard.vue` now lists upscalers from `/api/upscalers` (stable ids: `latent:*` / `spandrel:*`) and reuses the shared tile controls + OOM fallback toggle (same as `/upscale`).
 - 2026-02-04: `HiresSettingsCard.vue` now also wires `min_tile` (global preference) into the shared tile controls; callers propagate it into hires payloads as `hires.tile.min_tile`.

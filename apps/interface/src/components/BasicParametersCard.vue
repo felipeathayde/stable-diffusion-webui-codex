@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Shared basic generation parameters card (sampler/scheduler/steps/seed/CFG/dimensions).
 Reusable card used across model tabs to edit common fields, with optional resolution presets, CLIP skip, init-image dimension sync, img2img denoise control,
-and optional advanced CFG/APG controls (gated per-engine by capabilities).
+backend recommendation-aware sampler/scheduler selector grouping, and optional advanced CFG/APG controls (gated per-engine by capabilities).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BasicParametersCard` (component): Basic params card SFC; wires selectors/sliders and emits `update:*` events plus seed actions/sync hooks.
@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onWidthDimensionChange` (function): Handles width updates and keeps height in sync when lock is enabled.
 - `onHeightDimensionChange` (function): Handles height updates and keeps width in sync when lock is enabled.
 - `onSeedChange` (function): Handles manual seed input changes and emits a normalized integer seed.
+- `recommendedSamplers` / `recommendedSchedulers` (const): Optional recommendation arrays forwarded into selector components.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
 - `toggleGuidanceAdvanced` (function): Toggles Advanced guidance mode and auto-syncs APG/CFG trunc activation flags when supported.
 - `swapWH` (function): Swaps width/height while respecting min/max and step constraints.
@@ -35,6 +36,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <SamplerSelector
           class="gc-col"
           :samplers="samplers"
+          :recommended-names="recommendedSamplers"
           :modelValue="sampler"
           :label="samplerLabel"
           :allow-empty="allowEmptySampler"
@@ -45,6 +47,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <SchedulerSelector
           class="gc-col"
           :schedulers="schedulers"
+          :recommended-names="recommendedSchedulers"
           :modelValue="scheduler"
           :label="schedulerLabel"
           :allow-empty="allowEmptyScheduler"
@@ -459,6 +462,8 @@ const ADVANCED_GUIDANCE_TOOLTIPS = {
 const props = withDefaults(defineProps<{
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
+  recommendedSamplers?: string[] | null
+  recommendedSchedulers?: string[] | null
   sampler: string
   scheduler: string
   steps: number
@@ -580,6 +585,8 @@ const emit = defineEmits<{
 
 const showCfg = computed(() => props.showCfg !== false)
 const showClipSkip = computed(() => props.showClipSkip === true)
+const recommendedSamplers = computed(() => (Array.isArray(props.recommendedSamplers) ? props.recommendedSamplers : null))
+const recommendedSchedulers = computed(() => (Array.isArray(props.recommendedSchedulers) ? props.recommendedSchedulers : null))
 
 const minSteps = computed(() => Number.isFinite(props.minSteps) ? Math.trunc(Number(props.minSteps)) : 1)
 const maxSteps = computed(() => Number.isFinite(props.maxSteps) ? Math.trunc(Number(props.maxSteps)) : 150)

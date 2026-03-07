@@ -39,7 +39,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ObliterateVramRequest` (interface): Request payload for `/api/obliterate-vram`.
 - `ObliterateVramResponse` (interface): `/api/obliterate-vram` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
-- `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
+- `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features, including recommended sampler/scheduler hint lists.
 - `GuidanceAdvancedCapabilities` (interface): Per-engine support map for advanced CFG/APG controls.
 - `FamilyCapabilities` (interface): Per-family capability flags from backend (`families`) used to gate prompt/clip controls.
 - `EngineDependencyCheckRow` (interface): One dependency-check row returned by backend readiness contract.
@@ -364,9 +364,9 @@ export interface EngineCapabilities {
   supports_refiner: boolean
   supports_lora: boolean
   supports_controlnet: boolean
-  // Optional: restrict UI to only these samplers/schedulers. Null/undefined = allow all.
-  samplers?: string[] | null
-  schedulers?: string[] | null
+  // Optional: backend recommendation lists for UI hinting.
+  recommended_samplers?: string[] | null
+  recommended_schedulers?: string[] | null
   default_sampler?: string | null
   default_scheduler?: string | null
   guidance_advanced?: GuidanceAdvancedCapabilities | null

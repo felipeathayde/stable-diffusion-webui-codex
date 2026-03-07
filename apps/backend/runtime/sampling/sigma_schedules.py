@@ -157,7 +157,8 @@ def _simple_schedule_from_predictor(
 
     Behavior depends on predictor configuration:
     - If `predictor.simple_schedule_mode == "comfy_downsample_sigmas"`, build a ComfyUI-style ladder by downsampling
-      `predictor.sigmas` from the **end** and appending a terminal 0.
+      `predictor.sigmas` from the **end** and appending a terminal 0. This mode now fails loud when
+      `steps > len(predictor.sigmas)` because the Comfy-style downsample would otherwise duplicate the head sigma.
     - Otherwise, use the legacy Codex behavior:
       - special-case `prediction_type="const"` for FlowMatch-style shifted linspace ladders,
       - else construct a linear ladder of timesteps and map via `predictor.sigma(t)`,
@@ -188,6 +189,12 @@ def _simple_schedule_from_predictor(
                 "for Comfy-style simple schedule."
             )
         total = int(sigmas.numel())
+        if steps_i > total:
+            raise ValueError(
+                "Comfy-style simple sigma schedule requires steps <= len(predictor.sigmas); "
+                f"got steps={steps_i} predictor_sigmas={total}. Downsampling beyond the base ladder "
+                "would duplicate the head sigma and break RF/CONST ancestral steps."
+            )
         # ComfyUI parity: `int(i * (len(sigmas) / steps))` for i in [0..steps-1] (non-negative),
         # which is equivalent to floor(i * total / steps) == (i * total) // steps.
         indices = [total - 1 - ((i * total) // steps_i) for i in range(steps_i)]

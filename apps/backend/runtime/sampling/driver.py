@@ -32,6 +32,7 @@ import os
 
 import torch
 
+from apps.backend.core.rng import ImageRNG, NoiseSettings
 from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 
@@ -505,6 +506,106 @@ class CodexSampler:
             half_log_snr = -torch.log(sigma_safe)
         return torch.exp(-half_log_snr)
 
+    @staticmethod
+    def _clone_noise_settings(settings: NoiseSettings) -> NoiseSettings:
+        return NoiseSettings(
+            source=settings.source,
+            eta_noise_seed_delta=int(settings.eta_noise_seed_delta or 0),
+            force_device=settings.force_device,
+        )
+
+    @staticmethod
+    def _resolve_processing_seed_list(processing: Any, *, batch_size: int) -> list[int]:
+        seed_values = list(getattr(processing, "all_seeds", []) or []) or list(getattr(processing, "seeds", []) or [])
+        if not seed_values:
+            seed_value = int(getattr(processing, "seed", -1))
+            if seed_value < 0:
+                raise RuntimeError(
+                    "Deterministic ancestral noise requires explicit per-sample seeds; processing is missing seeds."
+                )
+            if batch_size != 1:
+                raise RuntimeError(
+                    "Deterministic ancestral noise requires per-sample seeds for batched runs; "
+                    f"got batch_size={batch_size} with only processing.seed."
+                )
+            seed_values = [seed_value]
+        normalized = [int(value) for value in seed_values]
+        if len(normalized) != batch_size:
+            raise RuntimeError(
+                "Deterministic ancestral noise seed count mismatch: "
+                f"got seeds={len(normalized)} batch_size={batch_size}."
+            )
+        return normalized
+
+    def _build_seeded_ancestral_rng(
+        self,
+        *,
+        processing: Any,
+        active_context: SamplingContext,
+        noise: torch.Tensor,
+    ) -> ImageRNG:
+        batch_size = int(noise.shape[0])
+        latent_shape = tuple(int(dim) for dim in noise.shape[1:])
+        template_rng = getattr(processing, "rng", None)
+        rng_target_device = noise.device
+        if isinstance(template_rng, ImageRNG):
+            template_shape = tuple(int(dim) for dim in template_rng.shape)
+            if template_shape != latent_shape:
+                raise RuntimeError(
+                    "processing.rng shape mismatch for deterministic ancestral noise: "
+                    f"rng_shape={template_shape} noise_shape={latent_shape}."
+                )
+            seeds = [int(seed) for seed in template_rng.seeds]
+            if len(seeds) != batch_size:
+                raise RuntimeError(
+                    "processing.rng seed count mismatch for deterministic ancestral noise: "
+                    f"rng_seeds={len(seeds)} batch_size={batch_size}."
+                )
+            subseeds = [int(seed) for seed in template_rng.subseeds]
+            subseed_strength = float(template_rng.subseed_strength)
+            seed_resize_from_h = int(template_rng.seed_resize_from_h)
+            seed_resize_from_w = int(template_rng.seed_resize_from_w)
+            settings = self._clone_noise_settings(template_rng.settings)
+            rng_target_device = template_rng.device
+        else:
+            seeds = self._resolve_processing_seed_list(processing, batch_size=batch_size)
+            subseeds = [int(seed) for seed in (getattr(processing, "all_subseeds", []) or []) or (getattr(processing, "subseeds", []) or [])]
+            subseed_strength = float(getattr(processing, "subseed_strength", 0.0) or 0.0)
+            seed_resize_from_h = int(getattr(processing, "seed_resize_from_h", 0) or 0)
+            seed_resize_from_w = int(getattr(processing, "seed_resize_from_w", 0) or 0)
+            settings = self._clone_noise_settings(active_context.noise_settings)
+
+        # Clone the shared ImageRNG policy; `core.rng` drives determinism through
+        # `torch.Generator(...).manual_seed(...)` / Philox and applies `eta_noise_seed_delta`
+        # immediately after the initial latent noise draw.
+        step_rng = ImageRNG(
+            latent_shape,
+            seeds,
+            subseeds=subseeds,
+            subseed_strength=subseed_strength,
+            seed_resize_from_h=seed_resize_from_h,
+            seed_resize_from_w=seed_resize_from_w,
+            settings=settings,
+            device=rng_target_device,
+        )
+        initial_noise = step_rng.next()
+        if tuple(initial_noise.shape) != tuple(noise.shape):
+            raise RuntimeError(
+                "Deterministic ancestral noise bootstrap shape mismatch: "
+                f"bootstrap={tuple(initial_noise.shape)} noise={tuple(noise.shape)}."
+            )
+        return step_rng
+
+    @staticmethod
+    def _next_seeded_ancestral_noise(step_rng: ImageRNG, reference: torch.Tensor) -> torch.Tensor:
+        sampled = step_rng.next()
+        if tuple(sampled.shape) != tuple(reference.shape):
+            raise RuntimeError(
+                "Deterministic ancestral noise shape mismatch: "
+                f"sampled={tuple(sampled.shape)} reference={tuple(reference.shape)}."
+            )
+        return sampled.to(device=reference.device, dtype=reference.dtype)
+
     @torch.no_grad()
     def sample(
         self,
@@ -835,6 +936,7 @@ class CodexSampler:
                 er_sde_params: dict[str, Any] | None = None
                 er_sde_lambdas: torch.Tensor | None = None
                 er_sde_point_indices: torch.Tensor | None = None
+                ancestral_step_rng: ImageRNG | None = None
                 if sampler_kind is SamplerKind.ER_SDE:
                     er_sde_params = self._resolve_er_sde_runtime_params(er_sde_options)
                     er_sde_lambdas = self._compute_er_sde_lambdas(
@@ -847,6 +949,15 @@ class CodexSampler:
                         dtype=torch.float32,
                         device=x.device,
                     )
+                if sampler_kind is SamplerKind.EULER_A:
+                    ancestral_step_rng = self._build_seeded_ancestral_rng(
+                        processing=processing,
+                        active_context=active_context,
+                        noise=base_noise,
+                    )
+                    for skip_index in range(start_idx):
+                        if float(sigmas[skip_index + 1]) > 0.0:
+                            ancestral_step_rng.next()
 
                 with profiler.profile_run(profile_name, meta=profile_meta):
                     for i in range(start_idx, steps):
@@ -987,7 +1098,12 @@ class CodexSampler:
                                         renoise_coeff = max(renoise_sq, 0.0) ** 0.5
                                         sigma_down_i_ratio = sigma_down / sigma
                                         x = sigma_down_i_ratio * x + (1.0 - sigma_down_i_ratio) * denoised
-                                        x = (alpha_ip1 / alpha_down) * x + torch.randn_like(x) * 1.0 * renoise_coeff
+                                        if ancestral_step_rng is None:
+                                            raise RuntimeError("Euler ancestral RF/CONST missing deterministic noise RNG.")
+                                        x = (
+                                            (alpha_ip1 / alpha_down) * x
+                                            + self._next_seeded_ancestral_noise(ancestral_step_rng, x) * 1.0 * renoise_coeff
+                                        )
                                 elif sigma_next <= 0.0:
                                     x = denoised
                                 else:
@@ -995,7 +1111,9 @@ class CodexSampler:
                                     sigma_up = sigma_up_sq ** 0.5
                                     sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
                                     x = denoised + sigma_down * eps
-                                    noise = torch.randn_like(x)
+                                    if ancestral_step_rng is None:
+                                        raise RuntimeError("Euler ancestral missing deterministic noise RNG.")
+                                    noise = self._next_seeded_ancestral_noise(ancestral_step_rng, x)
                                     x = x + sigma_up * noise
                             elif sampler_kind is SamplerKind.DPM2M:
                                 # DPM-Solver++(2M) in log-sigma time (reference update form).

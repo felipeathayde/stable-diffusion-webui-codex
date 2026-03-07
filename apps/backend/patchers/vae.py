@@ -517,7 +517,7 @@ class VAE:
     def _decode_forward(self, samples: torch.Tensor, *, forward_dtype: torch.dtype) -> torch.Tensor:
         with self._autocast_context(forward_dtype):
             decoded_raw = self.first_stage_model.decode(samples.to(device=self.device, dtype=forward_dtype))
-        return _unwrap_decode_output(decoded_raw).to(self.output_device)
+        return _unwrap_decode_output(decoded_raw).to(self.output_device, dtype=torch.float32)
 
     def _encode_forward(
         self,
@@ -615,7 +615,7 @@ class VAE:
         output = torch.empty(
             (samples.shape[0], 3, output_height, output_width),
             device=self.output_device,
-            dtype=forward_dtype,
+            dtype=torch.float32,
         )
         windows = tuple(
             iter_vae_tile_windows(
@@ -782,7 +782,7 @@ class VAE:
             with torch.no_grad():
                 samples_cpu = samples_in.to(cpu_device, dtype=cpu_forward_dtype)
                 decoded_raw = self.first_stage_model.decode(samples_cpu)
-                decoded = _unwrap_decode_output(decoded_raw).to(self.output_device)
+                decoded = _unwrap_decode_output(decoded_raw).to(self.output_device, dtype=torch.float32)
                 pixel_samples = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
 
             return pixel_samples
@@ -917,7 +917,7 @@ class VAE:
                             round(samples_in.shape[3] * self.downscale_ratio),
                         ),
                         device=self.output_device,
-                        dtype=forward_dtype,
+                        dtype=torch.float32,
                     )
                     for batch_idx, x in enumerate(range(0, samples_in.shape[0], batch_number), start=1):
                         samples = samples_in[x:x + batch_number]

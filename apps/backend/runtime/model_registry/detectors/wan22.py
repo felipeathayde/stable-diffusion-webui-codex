@@ -182,7 +182,11 @@ def _detect_model_type(bundle: SignalBundle, prefix: str, in_channels: int) -> s
             return model_type
     if in_channels >= 48:
         return "ti2v"
-    if f"{prefix}img_emb.proj.0.bias" in bundle.state_dict:
+    # Local WAN22 I2V base checkpoints use the 36-channel concat surface
+    # (`lat16 + mask4 + img16 -> patch_embedding`) and do not store a separate
+    # `img_emb` branch. Older/upstream i2v checkpoints may still expose
+    # `img_emb.proj.*`, so keep that as an auxiliary positive signal.
+    if in_channels == 36 or f"{prefix}img_emb.proj.0.bias" in bundle.state_dict:
         return "i2v"
     return "t2v"
 

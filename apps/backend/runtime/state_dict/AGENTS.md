@@ -35,9 +35,11 @@ Notes:
 - 2026-02-11: Supersedes the SDXL VAE portion of the 2026-02-10 structural-policy note: SDXL VAE mid-attention projection lanes are now native (`linear_2d`/`conv1x1_4d`) and no longer use keymap flatten gating by `CODEX_WEIGHT_STRUCTURAL_CONVERSION`.
 - 2026-02-15: `views.LazySafetensorsDict` now explicitly documents device-targeted lazy loads (`device` controls produced tensor placement; no CPU-only assumption).
 - 2026-03-06: `views.py` now also exposes `ComputedKeyspaceView`, which mixes direct lookups with quantization-aware row concat/split/swap transforms for fused/unfused runtime keyspaces without mutating source checkpoints.
-- 2026-02-28: `keymap_wan22_transformer.py` now exposes `resolve_wan22_lora_logical_key(...)` as canonical WAN22 LoRA logical-key → transformer-weight mapping authority (supports codex and diffusers-style logical keys, optional `lora_unet_`/`lycoris_` wrappers).
+- 2026-02-28: `keymap_wan22_transformer.py` now exposes `resolve_wan22_lora_logical_key(...)` as canonical WAN22 LoRA logical-key → transformer target mapping authority.
+- 2026-03-07: `resolve_wan22_lora_logical_key(...)` now reuses the current WAN22 export/native vocabulary for stage-LoRA norms, top-level alias families, and modulation targets (`blocks.N.modulation` / `head.modulation`); keep WAN LoRA support inside this interpretation seam only—no runtime remap or compatibility shims elsewhere.
+- 2026-03-07: WAN22 LoRA logical-key coverage now also includes local norm families (`self_attn.norm_q/norm_k`, `cross_attn.norm_q/norm_k`, `norm3`) and WAN export/native top-level aliases (`patch_embedding|patch_embed`, `time_embedding|time_embed`, `time_projection|time_proj`, `text_embedding|text_embed`, `head.head|head`) without any runtime key renaming. Upstream image-branch families absent from the local WAN22 runtime remain explicitly unsupported at the stage-LoRA seam.
 - 2026-03-06: WAN video request allowlists were moved out of `keymap_wan22_transformer.py` into `apps/backend/interfaces/api/wan_video_request_keys.py`; the WAN22 keymap module now owns only transformer keyspace understanding and LoRA logical-key resolution.
 - 2026-03-03: Added strict generic Qwen text-encoder keymap (`keymap_qwen_text_encoder.py`) covering wrapped HF layouts and known auxiliary heads (`lm_head.*`, `visual.*`) while failing loud on unknown keyspaces.
 - 2026-03-06: Added family-scoped Flux / FLUX.2 / Z Image GGUF keyspace resolvers so native/source checkpoints can be interpreted through lazy lookup views (including fused/unfused tensor conventions) without materializing remapped state dicts.
 
-Last Review: 2026-03-06
+Last Review: 2026-03-07

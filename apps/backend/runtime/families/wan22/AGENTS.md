@@ -1,6 +1,7 @@
 <!-- tags: backend, runtime, wan22, gguf, streaming, transformer -->
 # apps/backend/runtime/families/wan22 Overview
 Status: Active
+Last Review: 2026-03-07
 
 ## Purpose
 - WAN 2.2 GGUF runtime components used by WAN engines.
@@ -24,3 +25,8 @@ Status: Active
 - Base `.gguf` artifacts are the supported root-path input; unsupported packed artifacts must fail loud.
 - `text_context.py` must keep tokenizer/model loading local-files-only and strict on device/key mismatches.
 - Stage and VAE placement remain owned by the memory manager.
+- `stage_lora.py` is a no-remap seam: it may interpret WAN22 LoRA logical keys through `keymap_wan22_transformer.py`, but it must not invent runtime state-dict remaps or alias shims outside that seam.
+- Current WAN22 stage-LoRA diagnostics must classify logical misses (`matched`, `resolver_none`, `resolved_target_missing`, `unsupported_i2v_branch`, `alias_collision`) and report unsupported tensor suffix families separately; the upstream I2V image branch (`k_img`, `v_img`, `norm_k_img`, `img_emb.proj.*`) stays explicitly unsupported in the local runtime.
+- `stage_lora.py` owns truthful stage-LoRA coverage diagnostics. It must distinguish local matcher gaps, missing local targets, and unsupported image-branch/suffix families instead of collapsing them into opaque partial-coverage noise.
+- The current local WAN22 runtime does not expose the upstream I2V image branch (`k_img`, `v_img`, `norm_k_img`, `img_emb`). Stage LoRA reporting must keep those families explicitly unsupported until the runtime model grows the real branch.
+- Unsupported I2V image-branch LoRAs must fail loud at stage-LoRA apply time. Partial application against the current 36-channel concat I2V base path is not acceptable.

@@ -7,8 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: LoRA tensor parsing into runtime patch specs (LoRA/LoHa/LoKr/GLORA/DIFF/SET).
-Parses adapter tensors into typed `PatchSpec` entries for the runtime adapter pipeline, supporting multiple LoRA conventions and optional metadata keys (alpha/dora_scale), and logs missing keys for diagnostics.
-Patch targets may be plain parameter names or `(parameter, offset)` tuples for slice patches (e.g. fused-QKV text encoders).
+Parses adapter tensors into typed `PatchSpec` entries for the runtime adapter pipeline, supporting multiple LoRA conventions,
+optional metadata keys (alpha/dora_scale), WAN modulation DIFF tensors (`*.diff_m` when the logical target is modulation),
+and logs missing keys for diagnostics. Patch targets may be plain parameter names or `(parameter, offset)` tuples for slice
+patches (e.g. fused-QKV text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_bias_target_for` (function): Derives a bias patch target from a weight patch target (preserving offset slices when present).
@@ -26,6 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, Iterable, List, Mapping, Tuple
 
 import torch
@@ -42,6 +45,7 @@ from apps.backend.runtime.adapters.lora.types import (
 )
 
 LOGGER = logging.getLogger(__name__)
+_RX_BLOCK_MODULATION_LOGICAL_KEY = re.compile(r"^blocks_(?P<idx>\d+)_modulation$")
 
 
 def _bias_target_for(target: PatchTarget) -> PatchTarget:
@@ -78,6 +82,17 @@ def _select_first_present(tensors: Mapping[str, torch.Tensor], names: Iterable[s
         if name in tensors:
             return name, tensors[name]
     return None, None
+
+
+def _modulation_tensor_name_candidates(logical_key: str) -> Tuple[str, ...]:
+    if logical_key in {"head.modulation", "head_modulation"}:
+        return ("head.diff_m",)
+    if logical_key.endswith(".modulation"):
+        return (f"{logical_key[:-len('.modulation')]}.diff_m",)
+    match = _RX_BLOCK_MODULATION_LOGICAL_KEY.match(logical_key)
+    if match:
+        return (f"blocks.{match.group('idx')}.diff_m",)
+    return ()
 
 
 def _extract_lora(
@@ -236,6 +251,12 @@ def _extract_diff(logical_key: str, target_param: PatchTarget, tensors: Mapping[
     if diff is not None:
         loaded.add(f"{logical_key}.diff")
         specs.append(make_spec(target_param, PatchKind.DIFF, DiffWeights(weight=diff)))
+    modulation_name, modulation_diff = _select_first_present(tensors, _modulation_tensor_name_candidates(logical_key))
+    if modulation_diff is not None:
+        if modulation_name is None:
+            raise RuntimeError(f"Internal error: missing tensor name for modulation diff on {logical_key!r}")
+        loaded.add(modulation_name)
+        specs.append(make_spec(target_param, PatchKind.DIFF, DiffWeights(weight=modulation_diff)))
     bias_key = f"{logical_key}.diff_b"
     if bias_key in tensors:
         bias_target = _bias_target_for(target_param)

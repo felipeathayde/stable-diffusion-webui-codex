@@ -33,6 +33,7 @@ Status: Draft
 - 2026-03-04: Detector `SignalBundle` now carries source-format hints (`safetensors|gguf`) and header-backed `shape_of(...)` usage, so safetensors signature detection avoids full `state_dict.values()` scans/materialization during startup planning.
 - 2026-03-05: Added `detectors/flux2.py` for the truthful FLUX.2 Klein 4B/base-4B core-only SafeTensors layout (`double_blocks.*`, `single_blocks.*`, `img_in.*`, `txt_in.*`, `single_stream_modulation.*`, `final_layer.*`); unsupported FLUX.2 variants (for example 9B) intentionally do not match.
 - 2026-03-06: FLUX.2 runtime/capability metadata is now a single truthful family entry: `latent_channels=32`, scalar-identity FLUX.2 VAE normalization, `patch_size=2`, `flow_shift=None`, `context_dim=7680`, and a semantic surface for the supported Klein 4B/base-4B slice (`supports_txt2img=true`, `supports_img2img=true`, `supports_hires=true`, `supports_lora=false`, samplers `euler|dpm++ 2m`, scheduler `simple`). This capability surface matches the live FLUX.2 slice: masked img2img/inpaint is active, partial denoise is supported, and hires is supported for unmasked runs.
+- 2026-03-07: WAN22 detector now recognizes the current local I2V base surface by `patch_embedding.weight` input channels (`C_in=36` for the 36-channel concat I2V path) instead of relying only on upstream `img_emb.proj.*` keys, which are absent from the current local WAN22 GGUF base artifacts.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

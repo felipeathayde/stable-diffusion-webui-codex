@@ -794,6 +794,11 @@ class CodexSampler:
                 t0 = _time.perf_counter()
 
                 sampler_kind = active_context.sampler_kind
+                prediction_type = getattr(active_context, "prediction_type", None)
+                if prediction_type is None:
+                    prediction_type = getattr(getattr(model, "predictor", None), "prediction_type", None)
+                if isinstance(prediction_type, str):
+                    prediction_type = prediction_type.lower()
                 profile_meta = {
                     "algorithm": self.algorithm,
                     "sampler_kind": sampler_kind.value,
@@ -958,7 +963,32 @@ class CodexSampler:
                             elif sampler_kind is SamplerKind.EULER_A:
                                 sigma = float(sigma)
                                 sigma_next = float(sigma_next)
-                                if sigma_next <= 0.0:
+                                if prediction_type == "const":
+                                    if sigma_next <= 0.0:
+                                        x = denoised
+                                    else:
+                                        if sigma <= 0.0:
+                                            raise RuntimeError(
+                                                "Euler ancestral RF/CONST requires sigma > 0 before the terminal step."
+                                            )
+                                        downstep_ratio = 1.0 + (sigma_next / sigma - 1.0) * 1.0
+                                        sigma_down = sigma_next * downstep_ratio
+                                        alpha_ip1 = 1.0 - sigma_next
+                                        alpha_down = 1.0 - sigma_down
+                                        if abs(alpha_down) <= 1e-12:
+                                            raise RuntimeError(
+                                                "Euler ancestral RF/CONST produced alpha_down=0; cannot compute renoise term."
+                                            )
+                                        renoise_sq = sigma_next**2 - sigma_down**2 * alpha_ip1**2 / alpha_down**2
+                                        if renoise_sq < -1e-12:
+                                            raise RuntimeError(
+                                                "Euler ancestral RF/CONST produced negative renoise variance."
+                                            )
+                                        renoise_coeff = max(renoise_sq, 0.0) ** 0.5
+                                        sigma_down_i_ratio = sigma_down / sigma
+                                        x = sigma_down_i_ratio * x + (1.0 - sigma_down_i_ratio) * denoised
+                                        x = (alpha_ip1 / alpha_down) * x + torch.randn_like(x) * 1.0 * renoise_coeff
+                                elif sigma_next <= 0.0:
                                     x = denoised
                                 else:
                                     sigma_up_sq = max(sigma_next**2 * (sigma**2 - sigma_next**2) / max(sigma**2, 1e-8), 0.0)

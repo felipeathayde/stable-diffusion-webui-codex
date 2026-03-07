@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-03-01
+Last Review: 2026-03-06
 Status: Active
 
 ## Purpose
@@ -75,6 +75,7 @@ Status: Active
 - 2026-02-25: `driver.py` now applies optional denoiser-adjacent hooks per step (`pre_denoiser_hook` before denoise, `post_denoiser_hook` after denoise), enabling Forge-style masked blending semantics in img2img while preserving existing post-step and post-sample hook contracts.
 - 2026-03-01: `block_progress.py` now defines shared block-progress keys/validator plus an optional Rich console controller (`RichBlockProgressController`) with block-focused display (`x/total self_attn [xblocks/s]`), and `driver.py` now wires this shared controller to model block callbacks (`codex_sampling_block_progress_callback`) instead of tqdm step bars while preserving backend-state block updates and strict callback payload validation.
 - 2026-03-02: `SamplingContext.enable_progress` now defaults to enabled (`CODEX_PROGRESS_BAR` default `true`), and `driver.py` now emits explicit `sampling.block_progress.console` telemetry (`enabled`, `env_flag`) when wiring the Rich block-progress controller.
+- 2026-03-06: `driver.py` now routes `euler a` through the ComfyUI RF/CONST update when the active flow predictor reports `prediction_type='const'`; non-const predictors keep the generic ancestral Euler path.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

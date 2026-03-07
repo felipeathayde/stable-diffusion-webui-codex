@@ -43,7 +43,7 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to Z-Image runtime facade/debug modules (doc-only change; part of rollout).
 - 2026-01-23: Centralized llama.cpp-style GGUF tensor-name keyspace resolution for Qwen3 in `apps/backend/runtime/state_dict/keymap_llama_gguf.py`; `qwen3.py:resolve_qwen3_gguf_keyspace` delegates and fails loud on unknown keys without materializing a renamed state dict.
 - 2026-01-30: Fixed Qwen3 causal+padding attention-mask construction (avoids `0 * -inf` NaNs) and removed always-on debug logs; deep diagnostics remain opt-in behind `CODEX_ZIMAGE_DEBUG_*`.
-- 2026-02-07: Updated Qwen3 attention-mask sentinel to a finite `finfo.min/4` value (ComfyUI parity); if Z-Image output quality regresses, re-check this mask behavior.
+- 2026-02-07: Updated Qwen3 attention-mask sentinel to a finite `finfo.min/4` value to keep the combined causal+padding mask numerically stable; if Z-Image output quality regresses, re-check this mask behavior.
 - 2026-02-10: Hardened strict-load behavior: ZImage transformer/text-encoder paths now fail loud on missing/unexpected keys (`model.py`, `qwen3.py`, `text_encoder.py`) instead of warning-only continuation.
 - 2026-02-20: `model.py` and `qwen3.py` attention lanes now route through runtime dispatcher helper `attention_function_pre_shaped(...)` with explicit PyTorch backend, removing direct family-level SDPA bypasses.
 - 2026-02-23: `text_encoder.py` device metadata fallback now resolves from memory-manager CPU device (`manager.cpu_device`) instead of constructing a local CPU literal when parameter iterators are empty.

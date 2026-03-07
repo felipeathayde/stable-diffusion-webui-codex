@@ -389,7 +389,7 @@ class WanSelfAttention(nn.Module):
         self.v = nn.Linear(dim, dim, bias=qkv_bias)
         self.o = nn.Linear(dim, dim, bias=True)
 
-        # Diffusers/Comfy WAN uses q/k RMSNorm across heads (dim = head_dim * heads).
+        # q/k RMSNorm is applied across the full packed head dimension (dim = head_dim * heads).
         self.norm_q = WanRMSNorm(dim)
         self.norm_k = WanRMSNorm(dim)
 
@@ -622,7 +622,7 @@ class WanCrossAttention(nn.Module):
         self.v = nn.Linear(context_dim, dim, bias=qkv_bias)
         self.o = nn.Linear(dim, dim, bias=True)
 
-        # Diffusers/Comfy WAN uses q/k RMSNorm across heads (dim = head_dim * heads).
+        # q/k RMSNorm is applied across the full packed head dimension (dim = head_dim * heads).
         self.norm_q = WanRMSNorm(dim)
         self.norm_k = WanRMSNorm(dim)
 
@@ -1088,7 +1088,7 @@ class WanTransformer2DModel(nn.Module):
         # Diffusers `Timesteps(..., downscale_freq_shift=0)` => denominator is `half_dim`.
         div_term = torch.exp(-math.log(10000.0) * freq / float(half))
         angles = t.to(dtype=torch.float32)[:, None] * div_term[None, :]
-        # Match Diffusers `Timesteps(..., flip_sin_to_cos=True)` and Comfy/WAN exports.
+        # Use cosine-first sinusoidal ordering on the timestep embedding.
         emb = torch.cat([torch.cos(angles), torch.sin(angles)], dim=1)
         if emb.shape[1] != base_dim:
             emb = torch.nn.functional.pad(emb, (0, base_dim - emb.shape[1]))
@@ -1261,7 +1261,7 @@ def resolve_wan22_gguf_keyspace(state_dict: Mapping[str, Any]) -> Mapping[str, A
 
     Supported input styles:
     - Diffusers-style keys (e.g. `condition_embedder.*`, `blocks.N.attn1/attn2.*`, `ffn.net.*`, `proj_out.*`).
-    - WAN export / Comfy-style keys (e.g. `patch_embedding.*`, `time_embedding.*`, `head.head.*`, `head.modulation`).
+    - WAN export-style keys (e.g. `patch_embedding.*`, `time_embedding.*`, `head.head.*`, `head.modulation`).
     - Codex-native keys (e.g. `patch_embed.*`, `time_embed.*`, `head.*`, `head_modulation`).
 
     This function is strict and fails loud on unknown/ambiguous layouts.

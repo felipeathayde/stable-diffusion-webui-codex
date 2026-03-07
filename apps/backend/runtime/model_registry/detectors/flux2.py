@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: FLUX.2 Klein 4B detector for core-only SafeTensors checkpoints.
-Matches the Comfy/Codex FLUX.2 single-file transformer layout (`double_blocks.*`, `single_blocks.*`, `img_in.*`, `txt_in.*`,
+Matches the runtime-export FLUX.2 single-file transformer layout (`double_blocks.*`, `single_blocks.*`, `img_in.*`, `txt_in.*`,
 `single_stream_modulation.*`, `final_layer.*`) and builds a strict `ModelSignature` from vendored
 `black-forest-labs/FLUX.2-klein-4B` / `FLUX.2-klein-base-4B` metadata. Only the truthful 4B/base-4B slice is supported;
 unsupported FLUX.2 variants (for example 9B) intentionally do not match.
@@ -86,7 +86,7 @@ class Flux2CoreDetector(ModelDetector):
         if prefix is None:
             return False
 
-        # This detector is intentionally limited to core-only Comfy/Codex checkpoints.
+        # This detector is intentionally limited to core-only runtime-export checkpoints.
         unsupported_prefixes = (
             "x_embedder.",
             "context_embedder.",

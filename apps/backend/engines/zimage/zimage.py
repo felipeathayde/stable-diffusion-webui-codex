@@ -35,6 +35,7 @@ from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.diagnostics.timeline import timeline_node
 from apps.backend.runtime.families.zimage.debug import env_flag, env_int, truncate_text
+from apps.backend.runtime.model_registry.specs import ModelFamily
 
 from .factory import CodexZImageFactory
 from .spec import ZImageEngineRuntime
@@ -61,6 +62,7 @@ class ZImageEngine(CodexDiffusionEngine):
     """Z Image engine (Turbo/Base variants)."""
 
     engine_id = "zimage"
+    expected_family = ModelFamily.ZIMAGE
 
     def __init__(self) -> None:
         super().__init__()

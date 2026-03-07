@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Tools API routes (GGUF conversion + SafeTensors merge + CodexPack v1 packing + file browser + PNG metadata inspection).
-Provides long-running conversion/packing/merge job tracking, filesystem browsing for file picker dialogs, and small utility endpoints used by the UI.
+Purpose: Tools API routes (GGUF conversion + SafeTensors merge + file browser + PNG metadata inspection).
+Provides long-running conversion/merge job tracking, filesystem browsing for file picker dialogs, and small utility endpoints used by the UI.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for tools endpoints.
@@ -42,7 +42,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
         VERIFYING = "verifying"
         MERGING_SAFETENSORS = "merging_safetensors"
         FINALIZING = "finalizing"
-        PACKING_CODEXPACK = "packing_codexpack"
         CANCELLING = "cancelling"
         CANCELLED = "cancelled"
         COMPLETE = "complete"
@@ -59,7 +58,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
             _ToolJobStatus.LOADING_WEIGHTS,
             _ToolJobStatus.MERGING_SAFETENSORS,
             _ToolJobStatus.FINALIZING,
-            _ToolJobStatus.PACKING_CODEXPACK,
             _ToolJobStatus.CANCELLING,
             _ToolJobStatus.CANCELLED,
             _ToolJobStatus.ERROR,
@@ -97,13 +95,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
             _ToolJobStatus.ERROR,
         },
         _ToolJobStatus.FINALIZING: {
-            _ToolJobStatus.PACKING_CODEXPACK,
-            _ToolJobStatus.CANCELLING,
-            _ToolJobStatus.COMPLETE,
-            _ToolJobStatus.CANCELLED,
-            _ToolJobStatus.ERROR,
-        },
-        _ToolJobStatus.PACKING_CODEXPACK: {
             _ToolJobStatus.CANCELLING,
             _ToolJobStatus.COMPLETE,
             _ToolJobStatus.CANCELLED,
@@ -116,7 +107,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
             _ToolJobStatus.VERIFYING,
             _ToolJobStatus.MERGING_SAFETENSORS,
             _ToolJobStatus.FINALIZING,
-            _ToolJobStatus.PACKING_CODEXPACK,
             _ToolJobStatus.COMPLETE,
             _ToolJobStatus.CANCELLED,
             _ToolJobStatus.ERROR,
@@ -150,11 +140,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
         final_path: Path
 
     @dataclass(slots=True)
-    class _CodexPackControl:
-        src_path: Path
-        final_path: Path
-
-    @dataclass(slots=True)
     class _SafetensorsMergeControl:
         source_path: Path
         tmp_path: Path
@@ -162,8 +147,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
     _gguf_conversion_jobs: Dict[str, _ToolJobState] = {}
     _gguf_conversion_controls: Dict[str, _GgufConversionControl] = {}
-    _codexpack_pack_jobs: Dict[str, _ToolJobState] = {}
-    _codexpack_pack_controls: Dict[str, _CodexPackControl] = {}
     _safetensors_merge_jobs: Dict[str, _ToolJobState] = {}
     _safetensors_merge_controls: Dict[str, _SafetensorsMergeControl] = {}
     _job_state_lock = threading.RLock()
@@ -217,9 +200,8 @@ def build_router(*, codex_root: Path) -> APIRouter:
         profile_ids: set[str] = set()
         for model in models:
             for comp in model.components:
-                for pid in (comp.profile_id, comp.profile_id_comfy, comp.profile_id_native):
-                    if pid:
-                        profile_ids.add(pid)
+                if comp.profile_id:
+                    profile_ids.add(comp.profile_id)
 
         float_groups: dict[str, Any] = {}
         for pid in sorted(profile_ids):
@@ -242,8 +224,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
                             "config_dir": c.config_dir,
                             "kind": c.kind,
                             "profile_id": c.profile_id,
-                            "profile_id_comfy": c.profile_id_comfy,
-                            "profile_id_native": c.profile_id_native,
                         }
                         for c in m.components
                     ],
@@ -269,6 +249,26 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
         job_id = str(uuid.uuid4())[:8]
 
+        allowed_payload_keys = {
+            "config_path",
+            "safetensors_path",
+            "output_path",
+            "overwrite",
+            "quantization",
+            "tensor_type_overrides",
+            "profile_id",
+            "float_group_overrides",
+            "precision_mode",
+        }
+        unknown_keys = sorted({str(key) for key in payload.keys() if str(key) not in allowed_payload_keys})
+        if unknown_keys:
+            allowed_msg = ", ".join(sorted(allowed_payload_keys))
+            unknown_msg = ", ".join(repr(key) for key in unknown_keys)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown /api/tools/convert-gguf payload key(s): {unknown_msg} (allowed: {allowed_msg})",
+            )
+
         # Validate paths
         config_path = payload.get("config_path", "")
         safetensors_path = payload.get("safetensors_path", "")
@@ -277,7 +277,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
             overwrite = parse_bool_value(payload.get("overwrite"), field="overwrite", default=False)
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        comfy_layout_raw = payload.get("comfy_layout", True)
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
         profile_id_raw = payload.get("profile_id", None)
@@ -295,21 +294,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
         final_path = Path(os.path.expanduser(str(output_path))).resolve()
 
-        if not isinstance(comfy_layout_raw, bool):
-            raise HTTPException(status_code=400, detail="comfy_layout must be a boolean when provided")
-        comfy_layout = bool(comfy_layout_raw)
-        if "codexpack_v1" in payload:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "codexpack_v1 has been removed from /api/tools/convert-gguf. "
-                    "Use /api/tools/codexpack/pack-v1 to pack an existing base GGUF."
-                ),
-            )
         if final_path.name.lower().endswith(".codexpack.gguf"):
             raise HTTPException(
                 status_code=400,
-                detail="Output path for /api/tools/convert-gguf must end with `.gguf` (base GGUF only).",
+                detail="Packed `.codexpack.gguf` outputs are unsupported on the root tools API. Use a base `.gguf` output path.",
             )
         if not final_path.name.lower().endswith(".gguf"):
             raise HTTPException(status_code=400, detail="Output path must end with `.gguf`.")
@@ -428,7 +416,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     output_path=str(ctrl.tmp_path),
                     profile_id=profile_id,
                     quantization=quant,
-                    comfy_layout=comfy_layout,
                     tensor_type_overrides=tensor_type_overrides,
                     float_group_overrides=float_group_overrides,
                     precision_mode=precision_mode,
@@ -634,137 +621,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
     async def get_merge_safetensors_status(job_id: str) -> Dict[str, Any]:
         with _job_state_lock:
             job = _safetensors_merge_jobs.get(job_id)
-            if job is None:
-                raise HTTPException(status_code=404, detail="Job not found")
-            return job.to_payload()
-
-    @router.post("/api/tools/codexpack/pack-v1")
-    async def pack_codexpack_v1(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        """Start a CodexPack v1 packing job from an existing base GGUF."""
-        from apps.backend.quantization.codexpack_keymaps import (
-            ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1,
-            ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1,
-        )
-        from apps.backend.runtime.checkpoint.io import read_gguf_metadata
-
-        src_gguf_path = str(payload.get("src_gguf_path") or "").strip()
-        output_path = str(payload.get("output_path") or "").strip()
-        try:
-            overwrite = parse_bool_value(payload.get("overwrite"), field="overwrite", default=False)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if not src_gguf_path or not output_path:
-            raise HTTPException(status_code=400, detail="Missing required paths")
-
-        src_path = Path(os.path.expanduser(src_gguf_path)).resolve()
-        if not src_path.is_file():
-            raise HTTPException(status_code=400, detail=f"GGUF not found: {src_path}")
-        if src_path.name.lower().endswith(".codexpack.gguf"):
-            raise HTTPException(status_code=400, detail="Refusing to pack an existing `*.codexpack.gguf` file.")
-
-        final_path = Path(os.path.expanduser(output_path)).resolve()
-        if not final_path.name.lower().endswith(".codexpack.gguf"):
-            raise HTTPException(status_code=400, detail="output_path must end with `.codexpack.gguf` for CodexPack v1.")
-        if final_path.exists() and not overwrite:
-            raise HTTPException(status_code=409, detail=f"Output file already exists: {final_path}")
-        if final_path.exists() and final_path.is_dir():
-            raise HTTPException(status_code=400, detail=f"Output path is a directory: {final_path}")
-
-        meta: dict[str, Any] = {}
-        try:
-            meta = read_gguf_metadata(str(src_path))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Failed to read GGUF metadata: {exc}") from exc
-
-        try:
-            comfy_layout = parse_bool_value(
-                meta.get("codex.converter.comfy_layout"),
-                field="metadata.codex.converter.comfy_layout",
-                default=False,
-            )
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        variant = str(meta.get("codex.zimage.variant") or "").strip().lower()
-        arch = str(meta.get("model.architecture") or "").strip().lower()
-        quant = str(meta.get("gguf.quantization") or "").strip().upper()
-
-        if arch != "zimage":
-            raise HTTPException(status_code=400, detail=f"CodexPack v1 packer expects a Z-Image GGUF; got model.architecture={arch!r}")
-        if not comfy_layout:
-            raise HTTPException(
-                status_code=400,
-                detail="CodexPack v1 requires a base GGUF created with Comfy Layout on (`codex.converter.comfy_layout=true`).",
-            )
-        if variant not in {"base", "turbo"}:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "CodexPack v1 requires codex.zimage.variant='base' or 'turbo' "
-                    f"(from GGUF metadata). Got {variant!r}."
-                ),
-            )
-        if quant != "Q4_K":
-            raise HTTPException(status_code=400, detail=f"CodexPack v1 requires gguf.quantization='Q4_K'; got {quant!r}.")
-
-        keymap_id = ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1 if variant == "turbo" else ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1
-
-        job_id = str(uuid.uuid4())[:8]
-        final_path.parent.mkdir(parents=True, exist_ok=True)
-        with _job_state_lock:
-            _codexpack_pack_jobs[job_id] = _ToolJobState(
-                status=_ToolJobStatus.PENDING,
-                progress=0.0,
-                current_tensor="",
-                error=None,
-                output_path=str(final_path),
-            )
-            _codexpack_pack_controls[job_id] = _CodexPackControl(
-                src_path=src_path,
-                final_path=final_path,
-            )
-
-        def run_pack() -> None:
-            try:
-                with _job_state_lock:
-                    job = _codexpack_pack_jobs[job_id]
-                    ctrl = _codexpack_pack_controls[job_id]
-                from apps.backend.runtime.tools.codexpack_packer import pack_gguf_to_codexpack_v1
-
-                with _job_state_lock:
-                    _set_job_state(job, status=_ToolJobStatus.PACKING_CODEXPACK, progress=1.0)
-
-                out_final = ctrl.final_path
-                out_tmp = _alloc_nonexistent_path(out_final.parent, prefix=f"{out_final.stem}.part-{job_id}-", suffix=out_final.suffix or ".gguf")
-                try:
-                    pack_gguf_to_codexpack_v1(
-                        str(ctrl.src_path),
-                        str(out_tmp),
-                        keymap_id=keymap_id,
-                    )
-                    os.replace(str(out_tmp), str(out_final))
-                finally:
-                    try:
-                        if out_tmp.exists():
-                            out_tmp.unlink()
-                    except Exception:
-                        pass
-
-                with _job_state_lock:
-                    _set_job_state(job, status=_ToolJobStatus.COMPLETE, progress=100.0)
-            except Exception as exc:
-                with _job_state_lock:
-                    job = _codexpack_pack_jobs[job_id]
-                    _set_job_state(job, status=_ToolJobStatus.ERROR, error=str(exc))
-
-        thread = threading.Thread(target=run_pack, daemon=True)
-        thread.start()
-
-        return {"job_id": job_id, "status": "started"}
-
-    @router.get("/api/tools/codexpack/pack-v1/{job_id}")
-    async def get_codexpack_pack_status(job_id: str) -> Dict[str, Any]:
-        with _job_state_lock:
-            job = _codexpack_pack_jobs.get(job_id)
             if job is None:
                 raise HTTPException(status_code=404, detail="Job not found")
             return job.to_payload()

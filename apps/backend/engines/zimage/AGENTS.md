@@ -41,3 +41,4 @@ Status: Active
 - 2026-02-18: sampling-path latent decode in `zimage.py` now loads/unloads VAE with the base canonical target (`self._vae_memory_target()`), avoiding wrapper-vs-patcher identity drift against shared engine unload cleanup.
 - 2026-02-23: Z-Image runtime metadata defaults no longer hardcode backend device literals in engine/spec surfaces; runtime device fallback now resolves from memory-manager mount-device authority.
 - 2026-02-23: `standalone_sampler.py::sample_zimage_diffusers_math(...)` no longer defaults `device=\"cuda\"`; unresolved device now resolves through memory-manager mount-device authority.
+- 2026-03-06: `ZImageEngine` now pins `expected_family=ModelFamily.ZIMAGE` so expected-family loads bypass stale generic detector assumptions and flow through the vendored-HF signature + family-scoped GGUF keyspace path directly.

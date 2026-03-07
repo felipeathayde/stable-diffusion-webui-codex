@@ -38,6 +38,7 @@ from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
 from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
+from apps.backend.runtime.ops.operations_gguf import is_packed_gguf_artifact
 from apps.backend.runtime.sampling_adapters.prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
@@ -309,17 +310,12 @@ def assemble_zimage_runtime(
     core_compute_raw = getattr(transformer, "computation_dtype", None)
     if not isinstance(core_compute_raw, torch.dtype):
         core_compute_raw = memory_management.manager.compute_dtype_for_role(DeviceRole.CORE)
-
-    from apps.backend.runtime.model_parser.quantization import detect_quantization_from_tensors
-
-    quant_hint = detect_quantization_from_tensors(transformer.parameters())
-    if getattr(quant_hint, "detail", None) == "parameter_codexpack" and core_compute_raw != torch.float16:
+    if any(is_packed_gguf_artifact(parameter) for parameter in transformer.parameters()):
         raise RuntimeError(
-            "CodexPack packed-kernel execution v1 requires fp16 activations. "
-            f"Set codex_core_compute_dtype=fp16 (QuickSettings → Overrides) or use a non-CodexPack GGUF. "
-            f"got core_compute_dtype={core_compute_raw}."
+            "Packed GGUF artifacts are not supported on the root runtime path. "
+            "Load the base `.gguf` artifact instead."
         )
-    
+
     _log_vram("AFTER get transformer")
     
     # Detect core-only checkpoints (no VAE or text encoder embedded in components).

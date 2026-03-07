@@ -49,7 +49,7 @@ See `AGENTS.md` and `.sangoi/reference/**` for authoritative contracts.
 ## Ambiguous Terms (Disambiguation)
 - `keymaps`:
   - Primary ownership: `apps/backend/runtime/state_dict/key_mapping.py`, `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`
-  - Secondary ownership: `apps/backend/quantization/codexpack_keymaps.py`, `apps/backend/runtime/tools/gguf_converter_key_mapping.py`
+  - Secondary ownership: `apps/backend/runtime/tools/gguf_converter_key_mapping.py`
 - `hires fix`:
   - Primary ownership: `apps/backend/runtime/pipeline_stages/hires_fix.py`
   - Secondary family implementation: `apps/backend/runtime/families/sd/hires_fix.py`
@@ -58,25 +58,25 @@ See `AGENTS.md` and `.sangoi/reference/**` for authoritative contracts.
   - Secondary lane integration: `apps/backend/runtime/families/wan22/vae_io.py`
 
 ## Backend Topology Snapshot (Tracked `.py`)
-Snapshot date: 2026-02-16
+Snapshot date: 2026-03-07
 
-- Total tracked backend Python files: **492**
+- Total tracked backend Python files: **507**
 - Canonical source for full grouped listing: `.sangoi/reports/tooling/backend-py-book-index.md`
 - Header snapshot source: `.sangoi/reports/tooling/apps-backend-file-header-blocks.md`
 
 | Subtree | `.py` files |
 |---|---:|
-| `runtime` | 285 |
-| `engines` | 48 |
+| `runtime` | 293 |
+| `engines` | 51 |
 | `patchers` | 32 |
-| `interfaces` | 31 |
-| `infra` | 22 |
-| `quantization` | 17 |
-| `core` | 15 |
+| `interfaces` | 32 |
+| `infra` | 24 |
+| `quantization` | 14 |
+| `core` | 16 |
 | `use_cases` | 12 |
-| `video` | 9 |
+| `video` | 11 |
 | `inventory` | 8 |
-| `services` | 6 |
+| `services` | 7 |
 | `types` | 4 |
 | `huggingface` | 2 |
 | `(root)` | 1 |
@@ -87,7 +87,6 @@ Snapshot date: 2026-02-16
 ### Keymaps
 - Canonical: `apps/backend/runtime/state_dict/key_mapping.py`
 - Canonical: `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`
-- Secondary: `apps/backend/quantization/codexpack_keymaps.py`
 - Secondary: `apps/backend/runtime/tools/gguf_converter_key_mapping.py`
 - Why: key-style detection/keyspace-resolution ownership for checkpoint, VAE, and text-encoder layouts.
 

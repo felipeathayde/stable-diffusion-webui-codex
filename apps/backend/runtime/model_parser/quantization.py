@@ -7,12 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Quantization detection and dtype validation for model-parser components.
-Detects GGUF quantization via `CodexParameter` / CodexPack markers and detects NF4/FP4 key markers for fail-loud reporting, and provides a
-strict validation helper to catch mis-detections where a component contains no floating-point tensors.
+Detects GGUF quantization via `CodexParameter` markers, rejects unsupported packed GGUF artifacts on the root path, detects NF4/FP4 key
+markers for fail-loud reporting, and provides a strict validation helper to catch mis-detections where a component contains no
+floating-point tensors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_mapping_source_format` (function): Resolves source-format hints from mapping/view chains (e.g., safetensors-backed views).
 - `_hint_to_torch_dtype` (function): Converts normalized dtype hints (`fp16|bf16|fp8_*`) to torch dtypes when available.
+- `_is_packed_gguf_artifact` (function): Returns True when a value still carries removed packed-artifact markers.
 - `detect_quantization_from_tensors` (function): Recursively scans tensors/mappings to infer quantization kind (GGUF/none).
 - `detect_state_dict_dtype` (function): Best-effort dtype / quantization hint for a state dict (returns a torch dtype or `"gguf"`).
 - `detect_quantization_from_component` (function): Infers quantization from one component mapping (prefers GGUF tensor markers).
@@ -27,7 +29,6 @@ from typing import Iterable
 
 import torch
 
-from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
 from apps.backend.quantization.tensor import CodexParameter
 from apps.backend.runtime.model_registry.specs import QuantizationHint, QuantizationKind
 from .errors import ValidationError
@@ -77,12 +78,16 @@ def _hint_to_torch_dtype(hint: str | None) -> torch.dtype | None:
     return hint_map.get(normalized)
 
 
+def _is_packed_gguf_artifact(value: object) -> bool:
+    return hasattr(value, "keymap_id") or hasattr(value, "kernel_id")
+
+
 def detect_quantization_from_tensors(tensors: Iterable[object]) -> QuantizationHint:
     for value in tensors:
         if isinstance(value, CodexParameter) and value.qtype is not None:
             return QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_gguf")
-        if isinstance(value, CodexPackLinearQ4KTilepackV1Parameter):
-            return QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_codexpack")
+        if _is_packed_gguf_artifact(value):
+            return QuantizationHint(kind=QuantizationKind.GGUF, detail="packed_artifact")
         if isinstance(value, Mapping):
             nested = detect_quantization_from_tensors(value.values())
             if nested.kind != QuantizationKind.NONE:
@@ -107,6 +112,11 @@ def detect_state_dict_dtype(state_dict: Mapping[str, object]) -> torch.dtype | s
     materialize = getattr(state_dict, "materialize", None)
     if callable(materialize):
         for value in state_dict.values():
+            if _is_packed_gguf_artifact(value):
+                raise RuntimeError(
+                    "Packed GGUF artifacts are not supported on the root loader path. "
+                    "Load the base `.gguf` artifact instead."
+                )
             if isinstance(value, torch.Tensor):
                 return value.dtype
         return torch.float32
@@ -115,8 +125,11 @@ def detect_state_dict_dtype(state_dict: Mapping[str, object]) -> torch.dtype | s
     for idx, value in enumerate(state_dict.values()):
         if isinstance(value, CodexParameter) and value.qtype is not None:
             return "gguf"
-        if isinstance(value, CodexPackLinearQ4KTilepackV1Parameter):
-            return "gguf"
+        if _is_packed_gguf_artifact(value):
+            raise RuntimeError(
+                "Packed GGUF artifacts are not supported on the root loader path. "
+                "Load the base `.gguf` artifact instead."
+            )
         if first_dtype is None and isinstance(value, torch.Tensor):
             first_dtype = value.dtype
         # Defensive cap: most GGUF dicts reveal themselves quickly.
@@ -148,6 +161,13 @@ def detect_quantization_from_component(component_state: Mapping[str, object]) ->
 
 
 def detect_quantization(context) -> QuantizationHint:
+    def _raise_packed_artifact(component_name: str) -> None:
+        raise ValidationError(
+            "Packed GGUF artifacts are not supported on the root parser path. "
+            "Load the base `.gguf` artifact instead.",
+            component=component_name,
+        )
+
     # Prefer GGUF/NF4/FP4 detection from components (UNet first).
     priority_order = ["unet", "transformer", "text_encoder", "text_encoder_2", "text_encoder_3"]
     seen = set()
@@ -156,6 +176,8 @@ def detect_quantization(context) -> QuantizationHint:
         if component is None:
             continue
         hint = detect_quantization_from_component(component.tensors)
+        if hint.detail == "packed_artifact":
+            _raise_packed_artifact(name)
         if hint.kind != QuantizationKind.NONE:
             return hint
         seen.add(name)
@@ -165,6 +187,8 @@ def detect_quantization(context) -> QuantizationHint:
         if name in seen:
             continue
         hint = detect_quantization_from_component(component.tensors)
+        if hint.detail == "packed_artifact":
+            _raise_packed_artifact(name)
         if hint.kind != QuantizationKind.NONE:
             return hint
     return QuantizationHint()
@@ -179,9 +203,12 @@ def validate_component_dtypes(context) -> None:
             if isinstance(value, CodexParameter) and value.qtype is not None:
                 has_floating = True
                 break
-            if isinstance(value, CodexPackLinearQ4KTilepackV1Parameter):
-                has_floating = True
-                break
+            if _is_packed_gguf_artifact(value):
+                raise ValidationError(
+                    "Packed GGUF artifacts are not supported on the root parser path. "
+                    "Load the base `.gguf` artifact instead.",
+                    component=name,
+                )
             if isinstance(value, torch.Tensor) and torch.is_floating_point(value):
                 has_floating = True
                 break

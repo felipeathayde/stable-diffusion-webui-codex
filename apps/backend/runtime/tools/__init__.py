@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Runtime tools facade exposing heavyweight offline-style utilities (GGUF conversion, SafeTensors merge, and CodexPack packing).
+Purpose: Runtime tools facade exposing heavyweight offline-style utilities (GGUF conversion and SafeTensors merge).
 Re-exports public runtime tool APIs used by `/api/tools/*` and CLI-like tooling.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -17,8 +17,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `SafetensorsMergeConfig` (class): Merge configuration for collapsing safetensors sources into one file.
 - `SafetensorsMergeProgress` (class): Progress callback payload emitted by the safetensors merge tool.
 - `merge_safetensors_source` (function): Merge a safetensors source (file/index/dir) into one `.safetensors` file.
-- `CodexPackPackError` (class): Raised when CodexPack packing fails.
-- `pack_gguf_to_codexpack_v1` (function): Convert a base GGUF into `*.codexpack.gguf` (packed Q4_K tilepack_v1).
 - `__all__` (constant): Export list for the tools facade.
 """
 
@@ -29,10 +27,8 @@ from .gguf_converter import (
     convert_safetensors_to_gguf,
 )
 from .safetensors_merge import SafetensorsMergeConfig, SafetensorsMergeProgress, merge_safetensors_source
-from .codexpack_packer import CodexPackPackError, pack_gguf_to_codexpack_v1
 
 __all__ = [
-    "CodexPackPackError",
     "ConversionConfig",
     "ConversionProgress",
     "QuantizationType",
@@ -40,5 +36,4 @@ __all__ = [
     "SafetensorsMergeProgress",
     "convert_safetensors_to_gguf",
     "merge_safetensors_source",
-    "pack_gguf_to_codexpack_v1",
 ]

@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: SDXL checkpoint wrapper/prefix keyspace resolver (Comfy/original SDXL layout).
+Purpose: SDXL checkpoint wrapper/prefix keyspace resolver (checkpoint-wrapper / original SDXL layout).
 Provides a strict, fail-loud resolver that canonicalizes common wrapper prefixes (DDP `module.`, duplicated `model.model.*`,
 `diffusion_model.*`, `vae.*`) and SDXL UNet nested label-embedding keys into canonical prefixes used by Codex detectors/parser plans.
 

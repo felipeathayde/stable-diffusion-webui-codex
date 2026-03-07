@@ -7,12 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Lightweight mapping views for state_dict handling.
-Provides prefix/filter/keyspace-lookup/cast views plus a SafeTensors-backed lazy dict used to stream state_dict preprocessing with configurable tensor device placement.
+Provides prefix/filter/keyspace-lookup/computed-keyspace/cast views plus a SafeTensors-backed lazy dict used to stream state_dict
+preprocessing with configurable tensor device placement.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyPrefixView` (class): Mapping view that exposes `base` keys under a fixed prefix without materializing values.
 - `FilterPrefixView` (class): Mapping view that filters keys by prefix and optionally re-prefixes them lazily.
 - `KeyspaceLookupView` (class): Mapping view that exposes one keyspace through source-key lookup without mutating the underlying state dict.
+- `ComputedKeyspaceView` (class): Mapping view that mixes direct source-key lookups with computed tensor transforms (e.g. fused/unfused QKV).
 - `CastOnGetView` (class): Mapping view that casts tensors/values on access (`__getitem__`) to a target dtype/device (no eager conversion).
 - `LazySafetensorsDict` (class): Lazy SafeTensors-backed state_dict; keeps a single handle and loads tensors on demand to the configured device (Windows: materializes on first access to avoid repeated opens).
 """
@@ -23,8 +25,9 @@ import sys
 import threading
 from collections.abc import MutableMapping
 from pathlib import Path
-from typing import Dict
+from typing import Callable, Dict
 
+import torch
 from safetensors.torch import safe_open
 
 
@@ -252,6 +255,168 @@ class KeyspaceLookupView(MutableMapping):
             yield k, self._base[self._map[k]]
 
     def shape_of(self, key: str):
+        shape_getter = getattr(self._base, "shape_of", None)
+        if not callable(shape_getter):
+            return None
+        source_key = self._map.get(key)
+        if source_key is None:
+            return None
+        try:
+            return shape_getter(source_key)
+        except Exception:
+            return None
+
+
+def _copy_parameter_like(reference: object, raw_data: torch.Tensor, *, logical_shape: tuple[int, ...]):
+    copy_with_data = getattr(reference, "copy_with_data", None)
+    if not callable(copy_with_data):
+        return raw_data
+    copied = copy_with_data(raw_data)
+    if hasattr(copied, "real_shape"):
+        try:
+            copied.real_shape = torch.Size(tuple(int(v) for v in logical_shape))
+        except Exception:
+            pass
+    return copied
+
+
+def _concat_tensor_rows(values: tuple[object, ...], *, logical_shape: tuple[int, ...]):
+    if not values:
+        raise RuntimeError("concat_dim0 requires at least one tensor")
+    if all(hasattr(value, "qtype") and getattr(value, "qtype", None) is not None for value in values):
+        qtypes = {getattr(value, "qtype", None) for value in values}
+        if len(qtypes) != 1:
+            raise RuntimeError("concat_dim0 cannot mix different GGUF quantization types")
+        raw = torch.cat(tuple(value.data for value in values), dim=0)
+        return _copy_parameter_like(values[0], raw, logical_shape=logical_shape)
+    tensors = []
+    for value in values:
+        if not isinstance(value, torch.Tensor):
+            raise RuntimeError(f"concat_dim0 expects tensor values, got {type(value).__name__}")
+        tensors.append(value)
+    return torch.cat(tuple(tensors), dim=0)
+
+
+def _split_tensor_rows(value: object, *, chunks: int, index: int, logical_shape: tuple[int, ...]):
+    if hasattr(value, "qtype") and getattr(value, "qtype", None) is not None:
+        parts = torch.chunk(value.data, chunks, dim=0)
+        return _copy_parameter_like(value, parts[index], logical_shape=logical_shape)
+    if not isinstance(value, torch.Tensor):
+        raise RuntimeError(f"split_dim0 expects a tensor value, got {type(value).__name__}")
+    return torch.chunk(value, chunks, dim=0)[index]
+
+
+def _swap_tensor_row_halves(value: object, *, logical_shape: tuple[int, ...]):
+    if hasattr(value, "qtype") and getattr(value, "qtype", None) is not None:
+        rows = int(value.data.shape[0])
+        if rows % 2 != 0:
+            raise RuntimeError(f"swap_dim0_halves requires an even row count, got {rows}")
+        half = rows // 2
+        swapped = torch.cat((value.data[half:], value.data[:half]), dim=0)
+        return _copy_parameter_like(value, swapped, logical_shape=logical_shape)
+    if not isinstance(value, torch.Tensor):
+        raise RuntimeError(f"swap_dim0_halves expects a tensor value, got {type(value).__name__}")
+    rows = int(value.shape[0])
+    if rows % 2 != 0:
+        raise RuntimeError(f"swap_dim0_halves requires an even row count, got {rows}")
+    half = rows // 2
+    return torch.cat((value[half:], value[:half]), dim=0)
+
+
+class ComputedKeyspaceView(MutableMapping):
+    """Present a mixed direct/computed lookup keyspace over an underlying mapping lazily.
+
+    - `mapping` exposes canonical keys that map directly to source keys in `base`.
+    - `computed` exposes canonical keys whose values are derived on access from one or
+      more source tensors (for example fused/unfused GGUF conventions).
+    - Computed values are not cached or materialized up-front.
+    """
+
+    def __init__(
+        self,
+        base: MutableMapping,
+        mapping: dict[str, str],
+        computed: dict[str, Callable[[], object]],
+        *,
+        computed_shapes: dict[str, tuple[int, ...]] | None = None,
+        computed_sources: dict[str, str] | None = None,
+    ):
+        self._base = base
+        self._map = dict(mapping)
+        self._computed = dict(computed)
+        self._computed_shapes = {
+            str(key): tuple(int(v) for v in shape)
+            for key, shape in (computed_shapes or {}).items()
+        }
+        self._computed_sources = dict(computed_sources or {})
+        self._keys = tuple(list(self._map.keys()) + [k for k in self._computed.keys() if k not in self._map])
+        _inherit_source_metadata(self, base)
+        header_shapes = getattr(base, "header_shapes", None)
+        if isinstance(header_shapes, dict):
+            mapped_shapes: Dict[str, tuple[int, ...]] = {}
+            for canonical_key, source_key in self._map.items():
+                shape = header_shapes.get(source_key)
+                if shape is not None:
+                    mapped_shapes[canonical_key] = shape
+            for canonical_key, shape in self._computed_shapes.items():
+                mapped_shapes[canonical_key] = shape
+            self.header_shapes = mapped_shapes
+
+    def __getitem__(self, k: str):
+        source_key = self._map.get(k)
+        if source_key is not None:
+            return self._base[source_key]
+        compute = self._computed.get(k)
+        if compute is None:
+            raise KeyError(k)
+        return compute()
+
+    def __setitem__(self, k: str, v):
+        source_key = self._map.get(k)
+        if source_key is None:
+            self._computed.pop(k, None)
+            self._computed_shapes.pop(k, None)
+            self._computed_sources.pop(k, None)
+            self._map[k] = k
+            if k not in self._keys:
+                self._keys = tuple(list(self._keys) + [k])
+            self._base[k] = v
+            return
+        self._base[source_key] = v
+
+    def __delitem__(self, k: str):
+        if k in self._computed:
+            del self._computed[k]
+            self._computed_shapes.pop(k, None)
+            self._computed_sources.pop(k, None)
+            self._keys = tuple(key for key in self._keys if key != k)
+            return
+        source_key = self._map.pop(k, None)
+        if source_key is None:
+            raise KeyError(k)
+        self._keys = tuple(key for key in self._keys if key != k)
+        if source_key in self._base:
+            del self._base[source_key]
+
+    def __iter__(self):
+        return iter(self._keys)
+
+    def __len__(self):
+        return len(self._keys)
+
+    def __contains__(self, k: object) -> bool:
+        return k in self._map or k in self._computed
+
+    def keys(self):
+        return list(self._keys)
+
+    def items(self):
+        for key in self._keys:
+            yield key, self[key]
+
+    def shape_of(self, key: str):
+        if key in self._computed_shapes:
+            return self._computed_shapes[key]
         shape_getter = getattr(self._base, "shape_of", None)
         if not callable(shape_getter):
             return None
@@ -573,6 +738,7 @@ class LazySafetensorsDict(MutableMapping):
 
 __all__ = [
     "CastOnGetView",
+    "ComputedKeyspaceView",
     "FilterPrefixView",
     "KeyPrefixView",
     "LazySafetensorsDict",

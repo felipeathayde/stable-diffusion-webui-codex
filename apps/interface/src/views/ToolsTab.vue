@@ -13,17 +13,16 @@ to pick source/weights/output paths without manual typing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ToolsTab` (component): Tools page SFC; owns GGUF + merger form state and the shared file browser modal.
-- `FloatDtypeGroup` (interface): Float dtype override group returned by `/api/tools/gguf-converter/presets`.
-- `GGUFConverterModelComponent` (interface): Convertible component entry (config dir + profile hints).
+- `GGUFConverterModelComponent` (interface): Convertible component entry (config dir + unified profile id).
 - `GGUFConverterModelMetadata` (interface): Vendored model metadata entry returned by `/api/tools/gguf-converter/presets`.
-- `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + precision mode + overwrite).
+- `GGUFForm` (interface): GGUF converter form state (model metadata + component + quant/mixed + precision mode + overwrite).
 - `SafetensorsMergeForm` (interface): Safetensors merge form state (source path + output path + overwrite).
 - `ToolJobStatus` (interface): Polled tools job status payload (status + progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
 - `BrowserMode` (type): Active file browser mode across GGUF + merger flows.
 - `formatComponentLabel` (function): Formats component options in the selector.
-- `loadModelMetadata` (function): Loads vendored model metadata + float groups for the selector.
+- `loadModelMetadata` (function): Loads vendored model metadata for the selector.
 - `startConversion` (function): Starts a conversion job and begins polling.
 - `cancelConversion` (function): Requests cancellation of the current conversion job (cooperative).
 - `pollStatus` (function): Polls job status and stops polling when complete/error/cancelled.
@@ -75,7 +74,7 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
 
           <div v-if="selectedModel" class="field">
-            <label class="label-muted">Denoiser</label>
+            <label class="label-muted">Component</label>
             <select class="select-md" v-model="ggufForm.componentId" :disabled="isConverting">
               <option v-for="c in selectedModel.components" :key="c.id" :value="c.id">{{ formatComponentLabel(c) }}</option>
             </select>
@@ -311,20 +310,12 @@ Symbols (top-level; keep in sync; no ghosts):
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import Modal from '../components/ui/Modal.vue'
 
-interface FloatDtypeGroup {
-  id: string
-  label: string
-  patterns: string[]
-}
-
 interface GGUFConverterModelComponent {
   id: string
   label: string
   config_dir: string
   kind: string
   profile_id: string | null
-  profile_id_comfy: string | null
-  profile_id_native: string | null
 }
 
 interface GGUFConverterModelMetadata {
@@ -375,7 +366,6 @@ interface BrowserData {
 type BrowserMode = 'gguf_safetensors' | 'gguf_output_dir' | 'merge_source' | 'merge_output_dir'
 
 const modelMetadata = ref<GGUFConverterModelMetadata[]>([])
-const floatGroupsByProfileId = ref<Record<string, FloatDtypeGroup[]>>({})
 const metadataLoading = ref(false)
 const metadataError = ref<string | null>(null)
 
@@ -417,24 +407,29 @@ const selectedComponent = computed(() => {
   return model.components.find((c) => c.id === ggufForm.value.componentId) ?? null
 })
 
-const effectiveProfileId = computed(() => {
-  const component = selectedComponent.value
-  if (component) {
-    if (component.profile_id) return component.profile_id
-    if (component.profile_id_comfy) return component.profile_id_comfy
-    if (component.profile_id_native) return component.profile_id_native
-  }
-  return null
-})
+const effectiveProfileId = computed(() => selectedComponent.value?.profile_id ?? null)
+
+function _titleizeWords(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .split(/[_-]+/)
+    .filter((part) => Boolean(part))
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
 
 function formatComponentLabel(component: GGUFConverterModelComponent): string {
   const kind = String(component.kind || '')
-  const base =
-    kind === 'flux_transformer' || kind === 'zimage_transformer' || kind === 'wan22_transformer'
-      ? 'Denoiser'
-      : kind || 'Component'
-  const suffix =
-    component.label && !['root', 'denoiser'].includes(component.label) ? ` (${component.label})` : ''
+  const baseByKind: Record<string, string> = {
+    flux_transformer: 'Denoiser',
+    zimage_transformer: 'Denoiser',
+    wan22_transformer: 'Denoiser',
+    ltx2_transformer: 'Denoiser',
+    gemma3_tenc: 'Text Encoder',
+  }
+  const base = baseByKind[kind] ?? _titleizeWords(kind || 'Component')
+  const label = _titleizeWords(component.label || '')
+  const suffix = label && !['Root', 'Denoiser', 'Text Encoder', base].includes(label) ? ` (${label})` : ''
   return `${base}${suffix}`
 }
 
@@ -596,10 +591,6 @@ async function loadModelMetadata() {
     const models = Array.isArray((data as any)?.models) ? ((data as any).models as GGUFConverterModelMetadata[]) : []
     modelMetadata.value = models
 
-    const fg = (data as any)?.float_groups
-    floatGroupsByProfileId.value =
-      fg && typeof fg === 'object' && !Array.isArray(fg) ? (fg as Record<string, FloatDtypeGroup[]>) : {}
-
     if (!ggufForm.value.modelId && models.length > 0) {
       ggufForm.value.modelId = models[0].id
       ggufForm.value.componentId = models[0].components[0]?.id || ''
@@ -608,7 +599,6 @@ async function loadModelMetadata() {
     metadataError.value = null
   } catch (e: any) {
     modelMetadata.value = []
-    floatGroupsByProfileId.value = {}
     metadataError.value = String(e?.message || e)
   } finally {
     metadataLoading.value = false
@@ -642,14 +632,13 @@ async function startConversion() {
   try {
     const component = selectedComponent.value
     if (!component) {
-      throw new Error('Select a vendored model + denoiser config first.')
+      throw new Error('Select a vendored model component first.')
     }
     const payload: Record<string, any> = {
       config_path: component.config_dir,
       safetensors_path: ggufForm.value.safetensorsPath,
       output_path: outputFullPath.value,
       overwrite: ggufForm.value.overwrite,
-      comfy_layout: true,
       quantization: effectiveQuantization.value,
     }
 

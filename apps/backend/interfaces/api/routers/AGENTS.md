@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-06
+Last Review: 2026-03-07
 Status: Active
 
 ## Purpose
@@ -15,7 +15,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/paths.py` — `apps/paths.json` endpoints.
 - `apps/backend/interfaces/api/routers/options.py` — options store read/update/validate endpoints.
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
-- `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + safetensors merge + CodexPack + file browser + PNG metadata endpoints.
+- `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + safetensors merge + file browser + PNG metadata endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
 - `apps/backend/interfaces/api/routers/supir.py` — SUPIR enhance endpoints (tasks + model diagnostics).
 - `apps/backend/interfaces/api/routers/upscale.py` — upscalers inventory + remote downloads + standalone upscaling endpoints.
@@ -26,7 +26,7 @@ Status: Active
 - 2026-02-28: `generation.py` img2vid API contract now accepts only `solo|sliding|svi2|svi2_pro`; unsupported mode values return fail-loud HTTP 400.
 - 2026-02-28: `generation.py` keeps `/api/vid2vid` route scaffolded but intentionally disabled (HTTP 501 + `NotImplementedError`) until the capability-driven router/runtime contract is finalized.
 - 2026-01-13: `tools.py` supports GGUF conversion cancellation (`POST /api/tools/convert-gguf/:job_id/cancel`) and an `overwrite` flag (default false; fails with 409 if the output path exists).
-- 2026-01-14: `tools.py` accepts a `comfy_layout` flag for GGUF conversion to control Flux/ZImage Comfy/Codex key-layout translation (default true).
+- 2026-03-07: `tools.py` `/api/tools/convert-gguf` accepts only the source/native converter contract (`config_path`, `safetensors_path`, `output_path`, `overwrite`, `quantization`, `tensor_type_overrides`, `profile_id`, `float_group_overrides`, `precision_mode`); unknown keys fail loud with HTTP 400.
 - 2026-01-13: `models.py` adds `/api/models/checkpoint-metadata` so the UI can fetch the full metadata modal payload without constructing it client-side.
 - 2026-01-18: `models.py` now includes backend `asset_contracts` in `/api/engines/capabilities` so the UI can gate required VAE/text encoder selection from a single contract source.
 - 2026-01-18: `generation.py` enforces image asset requirements via `apps/backend/core/contracts/asset_requirements.py` and keeps engine registration lazy (avoids torch-heavy startup for non-generation endpoints).
@@ -45,7 +45,7 @@ Status: Active
 - 2026-02-25: `generation.py` img2img mask-path defaults now align with ADetailer-like baseline (`img2img_inpainting_fill` default `1`, `img2img_inpaint_full_res_padding` default `32`) when mask payload omits explicit values.
 - 2026-02-27: `generation.py` img2img masking now supports Forge/A1111 “Only masked” semantics only (removed `img2img_inpaint_full_res`) and adds `img2img_mask_region_split` for ADetailer-style multi-region passes.
 - 2026-01-29: `tools.py` adds `POST /api/tools/pnginfo/analyze` to extract PNG text metadata for the `/pnginfo` UI (no file persistence).
-- 2026-01-29: `tools.py` CodexPack v1 output can be produced either as the primary output of `POST /api/tools/convert-gguf` (`codexpack_v1=true`; `output_path=*.codexpack.gguf`; base GGUF is temp-only and deleted on success) or from an existing base GGUF via `POST /api/tools/codexpack/pack-v1` (Z-Image Base/Turbo; `Q4_K`; Comfy Layout metadata required).
+- 2026-03-07: `tools.py` `POST /api/tools/convert-gguf` accepts base `.gguf` outputs only.
 - 2026-01-30: `tools.py` GGUF conversion jobs now set `job["error"]` before flipping `job["status"]="error"` to avoid clients observing an error state with a missing error message.
 - 2026-01-31: `generation.py` now delegates the txt2img/img2img task worker boilerplate (status/progress/result/end, engine options build, PNG encoding) to `apps/backend/interfaces/api/tasks/generation_tasks.py` to reduce drift and keep routers thin.
 - 2026-02-03: Generation request contract uses hires naming only: txt2img uses `extras.hires` and img2img uses `img2img_hires_*` for the second pass.
@@ -63,7 +63,7 @@ Status: Active
 - 2026-02-09: `tasks.py` now parses `/api/tasks/{task_id}/cancel` mode through typed `TaskCancelMode` parsing (invalid values return HTTP 400), and emits gap/result/error/end payload type literals via `TaskEventType` enum values (wire format preserved). `generation.py` worker cancel checks now compare against `TaskCancelMode.IMMEDIATE`.
 - 2026-02-10: `generation.py` now uses internal parser DTO seams for core txt2img/img2img normalization (`_Txt2ImgPayloadDTO`, `_Img2ImgCoreDTO` + parser helpers), keeping extras/hires/asset-contract flow unchanged while reducing dict-heavy parser blocks.
 - 2026-02-10: `generation.py` now extends parser DTO seams into active video modes (`_parse_txt2vid_core_dto`, `_parse_img2vid_core_dto`) while preserving WAN sha-only asset contracts and current request/task/SSE behavior (validated through video request-capture parity checks).
-- 2026-02-10: `tools.py` now enforces typed job lifecycle internals for GGUF/CodexPack jobs (`_ToolJobStatus`, `_ToolJobState`, typed controls + guarded transitions), while preserving status endpoint wire payload shape.
+- 2026-02-10: `tools.py` now enforces typed job lifecycle internals for async tools jobs (`_ToolJobStatus`, `_ToolJobState`, typed controls + guarded transitions), while preserving status endpoint wire payload shape.
 - 2026-02-11: `generation.py` now resolves `extras.vae_sha` through a VAE-only inventory helper (`resolve_vae_path_by_sha`) and returns HTTP 409 when a SHA maps to a non-VAE asset path, preventing Flux core-only VAE misselection from leaking into loader missing-key noise.
 - 2026-02-11: WAN video routes (`txt2vid`/`img2vid`) now resolve `wan_vae_sha` through VAE-only ownership (`resolve_vae_path_by_sha`) and normalize to a validated VAE bundle directory (`config.json` + weights file required), rejecting non-VAE SHA resolution and invalid bundles with HTTP 409 before runtime fallback loops.
 - 2026-02-11: WAN video routes (`txt2vid`/`img2vid`) now also accept file-based WAN VAE SHA resolution when config is available via sibling `config.json` or vendored metadata (`wan_metadata_dir/vae/config.json`), while keeping fail-loud 409 for missing config sources, missing bundle weights, and non-VAE SHA ownership violations.
@@ -105,12 +105,11 @@ Status: Active
 - 2026-02-21: `generation.py` WAN sampler fields (`txt2vid_sampler`, `img2vid_sampler`, `wan_high.sampler`, `wan_low.sampler`) now accept any non-empty sampler string at API parse time (known names are canonicalized when possible); WAN scheduler fields remain strict (`simple`).
 - 2026-02-21: `ui.py` now fails loud for malformed UI persistence payloads (`tabs.json`, `workflows.json`, `presets.json`) instead of silently coercing them to defaults/empty lists; workflow creation now requires explicit `type` and validates `params_snapshot` as object.
 - 2026-02-21: `ui.py` loaders now also enforce top-level object payloads before `.get(...)` access (tabs/workflows/presets/blocks), and `blocks.d` merge order is now sorted to keep override precedence deterministic.
-- 2026-02-21: `tools.py` CodexPack v1 metadata gate now parses `codex.converter.comfy_layout` with strict bool parsing (`parse_bool_value`) to avoid permissive `bool(\"false\") == True` layout bypass.
 - 2026-02-21: `options.py` no longer clamps out-of-range numeric values in `POST /api/options`; out-of-range values now reject with HTTP 400 to match `/api/options/validate` semantics.
 - 2026-02-21: `options.py` `/api/options/validate` now preserves specific checkbox rejection details (e.g., invalid bool literal) by catching `HTTPException` separately before generic fallback.
 - 2026-02-21: `generation.py` core DTO parsing for `img2img` and WAN video modes now uses strict field validators (`_require_int_field`/`_require_float_field`/`_require_str_field`) for payload numerics/strings, removing permissive `int(...)`/`float(...)` coercion paths (e.g. `bool -> 1/0`) in API request normalization.
 - 2026-02-21: `generation.py` img2img masked/hires integer controls (`img2img_inpainting_*`, `img2img_mask_blur*`, `img2img_hires_resize_*`, `img2img_hires_steps`) now also use strict integer validators instead of permissive `_p.as_int(...)`.
-- 2026-02-21: `tools.py` now parses `overwrite` via shared strict bool parsing for both GGUF conversion and CodexPack packing endpoints (no fail-open `bool(\"false\") == True` overwrite bypass).
+- 2026-02-21: `tools.py` now parses `overwrite` via shared strict bool parsing for GGUF conversion (no fail-open `bool(\"false\") == True` overwrite bypass).
 - 2026-02-21: `ui.py` blocks cache key now includes `blocks.d/*.json` mtimes (not only `blocks.json`), and tabs/workflows/presets loaders now convert JSON-store read failures into deterministic fail-loud HTTP 500 details.
 - 2026-02-22: `system.py` adds `POST /api/obliterate-vram` for fail-loud VRAM cleanup with safe defaults: runtime unload/empty-cache always runs, while external compute-process termination is **disabled by default** (`external_kill_mode='disabled'`) and only runs when explicitly requested (`'all'`), with guarded skips (`protected_pid`, `critical_process_name`) and structured status payload.
 - 2026-02-22: `generation.py` now validates `gguf_cache_policy`/`gguf_cache_limit_mb` fail-loud in video prepare paths (`txt2vid` + `img2vid`): invalid policy, non-integer/negative limits, missing-policy limit, and incompatible policy-limit combinations now return HTTP 400 synchronously.

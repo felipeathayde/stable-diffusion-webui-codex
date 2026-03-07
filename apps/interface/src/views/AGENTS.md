@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-06
+Last Review: 2026-03-07
 Status: Active
 
 ## Purpose
@@ -31,12 +31,12 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to view modules (doc-only change; part of rollout).
 - 2026-01-06: `ImageModelTab.vue` now filters schedulers by the selected sampler’s `allowed_schedulers` and auto-resets invalid scheduler selections to the sampler’s `default_scheduler`.
 - 2026-01-13: `ToolsTab.vue` GGUF converter supports cancellation and an Overwrite toggle (default off; fails if the output file exists).
-- 2026-03-02: `ToolsTab.vue` GGUF converter now runs with fixed Codex/Comfy export layout (`comfy_layout=true`) and no user-facing Comfy Layout toggle.
+- 2026-03-07: `ToolsTab.vue` GGUF converter emits source/native tensor names only, posts one `profile_id` per selected component, and no longer sends layout-selection payload fields.
 - 2026-01-14: `ToolsTab.vue` right-aligns GGUF converter action rows (Overwrite + Convert/Cancel).
 - 2026-01-16: `ToolsTab.vue` now uses vendored model metadata only and exposes a Mixed toggle with an FP16/FP32 choice (advanced overrides are hidden).
 - 2026-02-23: `ToolsTab.vue` mixed precision control now uses a dedicated `precision_mode` select (`Full BF16`, `Full FP16`, `Full FP32`, `FP16+FP32`, `BF16+FP32`) and sends `precision_mode` to `/api/tools/convert-gguf`.
-- 2026-01-16: `ToolsTab.vue` GGUF converter presets include WAN22 denoisers (selectable via vendored model metadata).
-- 2026-03-02: `ToolsTab.vue` removed the standalone `CodexPack v1 Packer` card from the Tools UI; Tools now exposes only the GGUF converter workflow.
+- 2026-03-07: `ToolsTab.vue` GGUF converter presets are component-based and can surface denoisers or text encoders from vendored model metadata with truthful labels.
+- 2026-03-07: `ToolsTab.vue` exposes only the GGUF converter and SafeTensors Merger workflows in the Tools UI.
 - 2026-03-05: `ToolsTab.vue` now adds a second `Safetensors Merger` card (`POST /api/tools/merge-safetensors` + polling on `/api/tools/merge-safetensors/{job_id}`) with source/output browse, overwrite toggle, deterministic directory-picked output naming (`<stem>-merged.safetensors`), a dedicated merge status block, and a source contract limited to `.safetensors`, `*.safetensors.index.json`, or a folder (no generic `.index.json` picker/filter copy).
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.
 - 2026-02-16: `WANTab.vue` now keeps optional stage `flowShift` in snapshots/history apply and in “Low follows High” sync state, preserving WAN distill shift overrides across reuse flows.

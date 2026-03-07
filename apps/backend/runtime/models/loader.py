@@ -7,13 +7,16 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
-Resolves TE/VAE overrides (`tenc_path` shorthand), normalizes state_dict layouts, and selects storage/compute dtypes (storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
+Resolves TE/VAE overrides (`tenc_path` shorthand), applies family-scoped keyspace interpretation where needed, and selects storage/compute dtypes
+(storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
 Includes core-only families (e.g., Anima) that are not diffusers repositories: the loader returns a minimal bundle and leaves external asset loading to engines.
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 WAN22 variants use explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) with no shared family alias bucket.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 key normalization to a canonical keymap module.
-FLUX.2 Klein 4B/base-4B expected-family loads use vendored HF metadata and the checkpoint parser converts the raw core-only Comfy/Codex layout into Diffusers `Flux2Transformer2DModel` keys before load; unsupported FLUX.2 variants/configs fail loud.
+FLUX.2 Klein 4B/base-4B expected-family loads use vendored HF metadata plus family-scoped keyspace resolution so native/source GGUF keys and
+legacy fused core slices land in the Diffusers `Flux2Transformer2DModel` lookup space without mutating the checkpoint; unsupported FLUX.2
+variants/configs fail loud.
 SDXL VAE conversion now preflights canonical projection keys after keyspace resolution so projection-lane shape violations surface explicitly (instead of collapsing into generic missing-key noise).
 GGUF smart-offload staging for large transformer classes now emits canonical INFO audit events via `backend.smart_offload`.
 Those staging events are tagged via the canonical `SmartOffloadAction.STAGE_LOAD` enum action.
@@ -40,6 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_validate_supported_flux2_transformer_config` (function): Validates that a FLUX.2 transformer config matches the supported Klein 4B/base-4B slice.
 - `_flux2_signature_from_vendored_hf` (function): Builds a FLUX.2 `ModelSignature` from vendored HF metadata for the supported 4B/base-4B slice.
 - `_requires_sdxl_checkpoint_keymap` (function): Determines whether SDXL checkpoint keymap normalization must run for a checkpoint parse call.
+- `_maybe_resolve_expected_family_keyspace` (function): Applies family-scoped GGUF/native keyspace interpretation for expected-family loads.
 - `_parse_checkpoint` (function): Parses one checkpoint (plus optional addons) into `ParsedCheckpoint` for bundle assembly.
 - `_build_diffusion_bundle` (function): Assembles a `DiffusionModelBundle` from a parsed checkpoint and loader options.
 - `_load_component_config` (function): Loads a component config dict from a diffusers component directory.
@@ -722,9 +726,9 @@ def _validate_supported_flux2_transformer_config(
 
 def _flux2_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
     suffix = Path(model_path).suffix.lower()
-    if suffix not in {".safetensors", ".safetensor"}:
+    if suffix not in {".safetensors", ".safetensor", ".gguf"}:
         raise RuntimeError(
-            "Unsupported FLUX.2 checkpoint format %r for %s. Only core-only SafeTensors checkpoints are supported."
+            "Unsupported FLUX.2 checkpoint format %r for %s. Only core-only SafeTensors or GGUF checkpoints are supported."
             % (suffix or "<none>", model_path)
         )
 
@@ -750,12 +754,16 @@ def _flux2_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
     double_layers = int(transformer_cfg["num_layers"])
     single_layers = int(transformer_cfg["num_single_layers"])
 
+    quantization = QuantizationHint()
+    if suffix == ".gguf":
+        quantization = QuantizationHint(kind=QuantizationKind.GGUF, detail="file_extension")
+
     return ModelSignature(
         family=ModelFamily.FLUX2,
         repo_hint=repo_hint,
         prediction=PredictionKind.FLOW,
         latent_format=LatentFormat.FLUX2,
-        quantization=QuantizationHint(),
+        quantization=quantization,
         core=CodexCoreSignature(
             architecture=CodexCoreArchitecture.FLOW_TRANSFORMER,
             channels_in=latent_channels,
@@ -811,6 +819,33 @@ def _requires_sdxl_checkpoint_keymap(
     return False
 
 
+def _maybe_resolve_expected_family_keyspace(
+    state_dict: Mapping[str, Any],
+    *,
+    inspection: CheckpointInspection,
+    expected_family: ModelFamily | None,
+) -> Mapping[str, Any]:
+    if expected_family is None:
+        return state_dict
+
+    if inspection.format == "gguf" and expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
+        from apps.backend.runtime.state_dict.keymap_flux_transformer import resolve_flux_transformer_keyspace
+
+        return resolve_flux_transformer_keyspace(state_dict).view
+
+    if expected_family is ModelFamily.FLUX2:
+        from apps.backend.runtime.state_dict.keymap_flux2_transformer import resolve_flux2_transformer_keyspace
+
+        return resolve_flux2_transformer_keyspace(state_dict).view
+
+    if inspection.format == "gguf" and expected_family is ModelFamily.ZIMAGE:
+        from apps.backend.runtime.state_dict.keymap_zimage_transformer import resolve_zimage_transformer_keyspace
+
+        return resolve_zimage_transformer_keyspace(state_dict).view
+
+    return state_dict
+
+
 def _parse_checkpoint(
     primary_path: str,
     additional_paths: list[str] | None,
@@ -819,6 +854,11 @@ def _parse_checkpoint(
 ) -> ParsedCheckpoint:
     primary_inspection = _inspect_checkpoint(primary_path)
     base_state = _load_state_dict(primary_path, inspection=primary_inspection)
+    base_state = _maybe_resolve_expected_family_keyspace(
+        base_state,
+        inspection=primary_inspection,
+        expected_family=expected_family,
+    )
     if _requires_sdxl_checkpoint_keymap(base_state, expected_family=expected_family):
         from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import resolve_sdxl_checkpoint_keyspace
 
@@ -846,6 +886,11 @@ def _parse_checkpoint(
         for extra in additional_paths:
             extra_inspection = _inspect_checkpoint(extra)
             extra_state = _load_state_dict(extra, inspection=extra_inspection)
+            extra_state = _maybe_resolve_expected_family_keyspace(
+                extra_state,
+                inspection=extra_inspection,
+                expected_family=expected_family,
+            )
             if _requires_sdxl_checkpoint_keymap(extra_state, expected_family=expected_family):
                 from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import resolve_sdxl_checkpoint_keyspace
 
@@ -2020,7 +2065,7 @@ def _load_huggingface_component(
         if storage_dtype == "gguf":
             LOGGER.debug("Using strict PyTorch load_state_dict for GGUF model")
             try:
-                model.load_state_dict(dict(state_dict), strict=True)
+                model.load_state_dict(state_dict, strict=True)
             except Exception as exc:
                 raise RuntimeError(
                     f"GGUF core load failed (strict): {core_label}. "

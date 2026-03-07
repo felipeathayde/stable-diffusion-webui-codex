@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: PNG Info infotext parsing + send-to mapping helpers.
 Parses common A1111/Forge-style `parameters` infotext into structured fields (including legacy JSON fallback) and maps sampler/scheduler
-strings into Codex canonical names.
+strings into Codex canonical names with truthful partial-mapping warnings when only one side is recognized.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedInfotext` (interface): Structured subset of parsed infotext fields.
@@ -668,11 +668,11 @@ export function mapSamplerScheduler(
   // Heuristic: when schedule type isn't present, it may be appended to sampler name
   // e.g. "DPM++ 2M Karras" → sampler="dpm++ 2m", scheduler="karras".
   if (scheduler === null && rawScheduler && normalizeComparable(rawScheduler) === 'automatic') {
-    warnings.push("Scheduler is 'Automatic' (not reproducible); leaving sampler/scheduler unchanged.")
+    warnings.push("Scheduler is 'Automatic' (not reproducible); leaving scheduler unchanged.")
   }
 
   if (scheduler === null && rawScheduler && normalizeComparable(rawScheduler) !== 'automatic') {
-    warnings.push(`Scheduler '${rawScheduler}' not recognized; leaving sampler/scheduler unchanged.`)
+    warnings.push(`Scheduler '${rawScheduler}' not recognized; leaving scheduler unchanged.`)
   }
 
   if ((sampler === null || scheduler === null) && rawSampler) {
@@ -692,7 +692,7 @@ export function mapSamplerScheduler(
   }
 
   if (sampler === null && rawSampler) {
-    warnings.push(`Sampler '${rawSampler}' not recognized; leaving sampler/scheduler unchanged.`)
+    warnings.push(`Sampler '${rawSampler}' not recognized; leaving sampler unchanged.`)
   }
 
   if (sampler && scheduler) {

@@ -43,6 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setVideo` (function): Applies partial updates to the video params in state (triggers dependent sync where needed).
 - `setHigh` (function): Applies partial updates to the high stage (and can drive low-stage sync when enabled).
 - `setLow` (function): Applies partial updates to the low stage.
+- `wanRecommendedSamplers` / `wanRecommendedSchedulers` (computed): Sanitized recommendation lists forwarded into WAN stage selectors when available.
 - `hideHighNegativePrompt`/`hideLowNegativePrompt` (const): Hide stage Negative Prompt fields when stage CFG is `<= 1`.
 - `syncLowFromHighIfNeeded` (function): Keeps low stage params aligned with high stage when the “low follows high” toggle is enabled.
 - `onLowFollowsHighChange` (function): Toggles low-follow behavior and applies an immediate sync.
@@ -474,6 +475,8 @@ Symbols (top-level; keep in sync; no ghosts):
               :stage="high"
               :samplers="samplers"
               :schedulers="schedulers"
+              :recommended-samplers="wanRecommendedSamplers"
+              :recommended-schedulers="wanRecommendedSchedulers"
               :disabled="isRunning"
               @update:stage="setHigh"
             />
@@ -502,6 +505,8 @@ Symbols (top-level; keep in sync; no ghosts):
                 :stage="low"
                 :samplers="samplers"
                 :schedulers="schedulers"
+                :recommended-samplers="wanRecommendedSamplers"
+                :recommended-schedulers="wanRecommendedSchedulers"
                 :disabled="isRunning || lowFollowsHigh"
                 @update:stage="setLow"
               />
@@ -1530,6 +1535,19 @@ const {
 const wanDependencyStatus = computed(() => engineCaps.getDependencyStatus('wan22'))
 const wanDependencyReady = computed(() => Boolean(wanDependencyStatus.value?.ready))
 const wanDependencyError = computed(() => engineCaps.firstDependencyError('wan22'))
+const wanEngineSurface = computed(() => engineCaps.get('wan22'))
+const wanRecommendedSamplers = computed(() => {
+  const values = wanEngineSurface.value?.recommended_samplers
+  if (!Array.isArray(values)) return null
+  const normalized = Array.from(new Set(values.map((value) => String(value || '').trim()).filter((value) => value.length > 0)))
+  return normalized.length > 0 ? normalized : null
+})
+const wanRecommendedSchedulers = computed(() => {
+  const values = wanEngineSurface.value?.recommended_schedulers
+  if (!Array.isArray(values)) return null
+  const normalized = Array.from(new Set(values.map((value) => String(value || '').trim()).filter((value) => value.length > 0)))
+  return normalized.length > 0 ? normalized : null
+})
 const canRunGeneration = computed(() => wanDependencyReady.value && canGenerate.value)
 const generateTitle = computed(() => {
   if (!wanDependencyReady.value) {

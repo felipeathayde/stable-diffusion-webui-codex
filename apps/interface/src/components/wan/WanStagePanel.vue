@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN stage parameter panel (High/Low).
-Renders sampler/scheduler/steps/cfg/seed controls for a WAN stage, forwards optional sampler/scheduler recommendation lists into shared selectors, and emits a `stage` patch to the parent view.
+Renders sampler/scheduler/steps/cfg/seed controls for a WAN stage, forwards optional sampler/scheduler recommendation lists into shared selectors, and preserves the same grouped recommendation/risk UI contract used by image tabs before emitting a `stage` patch to the parent view.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanStagePanel` (component): High/Low stage panel for WAN generation parameters.
@@ -27,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <SamplerSelector
         class="gc-col"
         :samplers="samplers"
+        :recommended-names="recommendedSamplers"
         :modelValue="stage.sampler"
         :label="samplerLabel"
         :allow-empty="true"
@@ -37,6 +38,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <SchedulerSelector
         class="gc-col"
         :schedulers="schedulers"
+        :recommended-names="recommendedSchedulers"
         :modelValue="stage.scheduler"
         :label="schedulerLabel"
         :allow-empty="true"
@@ -109,6 +111,8 @@ const props = withDefaults(defineProps<{
   stage: WanStageParams
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
+  recommendedSamplers?: string[] | null
+  recommendedSchedulers?: string[] | null
   showModelDir?: boolean
   embedded?: boolean
   disabled?: boolean

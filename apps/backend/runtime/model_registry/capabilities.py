@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine,
-with executable defaults and recommendation hints for the live surface.
+with executable defaults and recommendation hints for the live surface (for example SD15 `ddim`/`ddim` and WAN22 `uni-pc`/`simple` with
+recommendation hints `recommended_samplers=('uni-pc', 'euler', 'euler a')`, `recommended_schedulers=('simple',)`).
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
 `er sde` in the recommended sampler surface. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
 image-conditioned img2img with hires enabled only after the real backend continuation path landed; LoRA remains off.
@@ -122,7 +123,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
-        default_sampler="pndm",
+        default_sampler="ddim",
         default_scheduler="ddim",
         guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
     ),
@@ -227,6 +228,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,  # high/low LoRA slots in WAN22 panel
         supports_controlnet=False,
+        recommended_samplers=("uni-pc", "euler", "euler a"),
+        recommended_schedulers=("simple",),
         default_sampler="uni-pc",
         default_scheduler="simple",
     ),

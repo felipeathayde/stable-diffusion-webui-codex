@@ -80,9 +80,15 @@ def resolve_sampler_scheduler_override(
             return ""
         lowered = normalized.lower()
         if kind == "sampler" and lowered in {"use same sampler", "use same"}:
-            return ""
+            raise ValueError(
+                "sampler_override does not accept 'use same*' sentinels; "
+                "omit sampler_override or pass an empty string to inherit the base sampler."
+            )
         if kind == "scheduler" and lowered in {"use same scheduler", "use same"}:
-            return ""
+            raise ValueError(
+                "scheduler_override does not accept 'use same*' sentinels; "
+                "omit scheduler_override or pass an empty string to inherit the base scheduler."
+            )
         return normalized
 
     sampler_override_value = _normalize_override(sampler_override, kind="sampler")

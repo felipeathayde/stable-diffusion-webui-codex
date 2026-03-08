@@ -9,8 +9,7 @@ Required Notice: see NOTICE
 Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2vid/img2vid/vid2vid).
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
 handling unset sentinels and producing backend-ready payloads for `/api/*` requests with canonical WAN video keys (including `device` and `settings_revision`).
-WAN scheduler overrides are intentionally not emitted (runtime-managed scheduler contract on backend).
-Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image_scale` + crop offsets) with fail-loud validation.
+Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image_scale` + crop offsets) with fail-loud validation, and WAN scheduler fields are enforced as exact canonical `simple`.
 
 	Symbols (top-level; keep in sync; no ghosts):
 	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
@@ -32,7 +31,8 @@ Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts into the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes attention mode input to `global|sliding`.
-- `stageToPayload` (function): Converts a `WanStageInput` into the backend stage override object (drops unset fields).
+- `requireCanonicalWanScheduler` (function): Enforces exact canonical WAN scheduler value `simple` for WAN scheduler payload fields.
+- `stageToPayload` (function): Converts a `WanStageInput` into the backend stage override object with required canonical scheduler fields.
 - `isUnsetSentinel` (function): Detects UI sentinel values (e.g., “Automatic”/“Built-in”) that must not be sent as real asset paths.
 - `addWanAssets` (function): Injects selected WAN assets into the payload (skips unset/empty values).
 - `addWanOutput` (function): Injects output-related fields into the payload.
@@ -67,6 +67,7 @@ const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
 const WanAttentionModeEnum = z.enum(['global', 'sliding'])
 const Img2VidModeEnum = z.enum(['solo', 'sliding', 'svi2', 'svi2_pro'])
 const Img2VidChunkSeedModeEnum = z.enum(['fixed', 'increment', 'random'])
+const WAN_CANONICAL_SCHEDULER = 'simple' as const
 
 const WAN_DIM_STEP = 16
 const WAN_FRAMES_MIN = 9
@@ -140,6 +141,7 @@ const WanStageSchema = z
     prompt: z.string().min(1),
     negative_prompt: z.string().optional(),
     sampler: z.string().min(1).optional(),
+    scheduler: z.literal(WAN_CANONICAL_SCHEDULER),
     steps: z.number().int().min(1),
     cfg_scale: z.number(),
     seed: z.number().int().optional(),
@@ -195,6 +197,7 @@ export const WanTxt2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   txt2vid_fps: z.number().int().min(1).max(240),
   txt2vid_num_frames: WanFrameCountSchema,
   txt2vid_sampler: z.string().min(1).optional(),
+  txt2vid_scheduler: z.literal(WAN_CANONICAL_SCHEDULER),
   txt2vid_seed: z.number().int().optional(),
   txt2vid_cfg_scale: z.number().optional(),
 }).strict()
@@ -210,6 +213,7 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   img2vid_fps: z.number().int().min(1).max(240),
   img2vid_num_frames: WanFrameCountSchema,
   img2vid_sampler: z.string().min(1).optional(),
+  img2vid_scheduler: z.literal(WAN_CANONICAL_SCHEDULER),
   img2vid_seed: z.number().int().optional(),
   img2vid_cfg_scale: z.number().optional(),
   img2vid_init_image: z.string().min(1),
@@ -337,6 +341,7 @@ export const WanVid2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
   vid2vid_fps: z.number().int().min(1).max(240),
   vid2vid_num_frames: WanFrameCountSchema,
   vid2vid_sampler: z.string().min(1).optional(),
+  vid2vid_scheduler: z.literal(WAN_CANONICAL_SCHEDULER),
   vid2vid_seed: z.number().int().optional(),
   vid2vid_cfg_scale: z.number().optional(),
   vid2vid_strength: z.number().min(0).max(1).optional(),
@@ -365,7 +370,7 @@ export interface WanStageInput {
   prompt: string
   negativePrompt: string
   sampler: string
-  scheduler?: string
+  scheduler: string
   steps: number
   cfgScale: number
   seed: number
@@ -540,6 +545,20 @@ function normalizeGuideOffset(
   return numeric
 }
 
+function requireCanonicalWanScheduler(rawValue: unknown, fieldName: string): typeof WAN_CANONICAL_SCHEDULER {
+  const value = String(rawValue || '').trim()
+  if (!value) {
+    throw new Error(`${fieldName} must not be empty.`)
+  }
+  if (value !== value.toLowerCase()) {
+    throw new Error(`${fieldName} must be canonical lowercase, got '${value}'`)
+  }
+  if (value !== WAN_CANONICAL_SCHEDULER) {
+    throw new Error(`${fieldName} must be '${WAN_CANONICAL_SCHEDULER}', got '${value}'`)
+  }
+  return WAN_CANONICAL_SCHEDULER
+}
+
 function stageToPayload(stage: WanStageInput): Record<string, unknown> {
   const modelSha = String(stage.modelSha || '').trim().toLowerCase()
   if (!modelSha) {
@@ -568,6 +587,7 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
     }
     payload.sampler = sampler
   }
+  payload.scheduler = requireCanonicalWanScheduler(stage.scheduler, 'WAN stage scheduler')
   const rawLoras = Array.isArray(stage.loras) ? stage.loras : []
   const normalizedLoras = rawLoras.map((lora, index) => {
     const loraSha = String(lora?.sha || '').trim().toLowerCase()
@@ -735,6 +755,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.txt2vid_sampler = sampler
+  payload.txt2vid_scheduler = requireCanonicalWanScheduler(input.high.scheduler, 'WAN txt2vid scheduler')
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation, input.fps)
   addWanUpscaling(payload, input.upscaling)
@@ -787,6 +808,7 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.img2vid_sampler = sampler
+  payload.img2vid_scheduler = requireCanonicalWanScheduler(input.high.scheduler, 'WAN img2vid scheduler')
   const img2vidMode = normalizeImg2VidMode(input.img2vidMode)
   if (typeof input.anchorAlpha === 'number' && Number.isFinite(input.anchorAlpha)) {
     payload.img2vid_anchor_alpha = Math.min(1, Math.max(0, input.anchorAlpha))
@@ -869,6 +891,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
 
   const sampler = String(input.high.sampler || '').trim()
   if (sampler) payload.vid2vid_sampler = sampler
+  payload.vid2vid_scheduler = requireCanonicalWanScheduler(input.high.scheduler, 'WAN vid2vid scheduler')
   if (typeof input.startSeconds === 'number') payload.vid2vid_start_seconds = input.startSeconds
   if (typeof input.endSeconds === 'number') payload.vid2vid_end_seconds = input.endSeconds
   if (typeof input.maxFrames === 'number') payload.vid2vid_max_frames = input.maxFrames

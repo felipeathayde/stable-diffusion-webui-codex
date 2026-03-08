@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-07
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -56,7 +56,7 @@ Status: Active
 - 2026-02-05: `ui.py` tab allowlist now accepts `anima`; unknown/empty tab types are fail-loud (`400` for create payloads, `500` on invalid persisted `tabs.json` entries) instead of silent coercion to `sd15`.
 - 2026-03-05: `ui.py` tab/workflow allowlist now includes `flux2`; default tabs now seed `FLUX.2`, and create-tab default title normalization recognizes `flux2 -> FLUX.2`.
 - 2026-03-07: `generation.py` no longer hard-rejects Anima sampler choices from an engine-specific surface list; global sampler values now pass API parsing and strict compatibility validation remains sampler->allowed_scheduler.
-- 2026-03-08: `models.py` `/api/samplers` now reports executable support truthfully: supported rows are implementation-backed and must resolve complete registry metadata, while unsupported rows remain non-executable inventory only for callers that inspect the full response.
+- 2026-03-08: `models.py` `/api/samplers` now reports executable support truthfully without breaking raw response shape: supported rows are implementation-backed and must resolve complete registry metadata, while unsupported rows remain visible inventory with `supported=false`, `default_scheduler=null`, and `allowed_schedulers=[]`.
 - 2026-02-08: `generation.py` now parses `extras.er_sde` / `img2img_extras.er_sde` strictly (unknown-key rejection, solver normalization, numeric bounds/finite checks), enforces ER-SDE Anima-only release scope on base+hires sampler fields, and validates prompt `<sampler:...>` control tags against release scope.
 - 2026-02-08: `generation.py` hires parser hardening now keeps allowlist and consumed keys aligned for `extras.hires.distilled_cfg`, validates hires numeric fields (`denoise`, `scale`, `cfg`, `distilled_cfg`) via `_require_float_field`, and rejects non-finite values (`NaN`, `Infinity`) with fail-loud 400s.
 - 2026-02-08: `generation.py` swap-model contract now uses `switch_at_step` (global `extras.refiner` + nested `extras.hires.refiner`) with strict pointer validation (`1 <= switch_at_step < total_steps`) so SDXL model swap runs on a step pointer, not a refiner step-count.
@@ -103,7 +103,7 @@ Status: Active
 - 2026-02-21: `ui.py` now treats `blocks.d/*.json` override load/shape errors as fail-loud HTTP 500 (no swallow), and `PATCH /api/ui/tabs/{id}` `enabled` uses strict boolean parsing (no `bool("false")==True` coercion).
 - 2026-03-01: `ui.py` tab params sanitization now drops unsupported top-level keys during create/update and persisted-tab hydration (instead of 400 on unknown keys), writes sanitized values back to `tabs.json`, and migrates legacy image `highres` into canonical `hires` before persistence.
 - 2026-02-21: `generation.py` now validates optional `video_interpolation` payload objects (`enabled` required bool; optional `times` must be int>=2; optional `model` must be string) and forwards normalized values only, preventing silent interpolation enablement from permissive coercion.
-- 2026-03-08: `generation.py` now validates WAN sampler fields (`txt2vid_sampler`, `img2vid_sampler`, `wan_high.sampler`, `wan_low.sampler`) at API parse time against real WAN22 runtime lanes (`uni-pc` with metadata-compatible optional solver hint, `euler`, `euler a`), keeps WAN scheduler fields strict (`simple`), and resolves hires sampler/scheduler override compatibility fail-loud before the base pass starts.
+- `generation.py` validates WAN base + stage sampler/scheduler fields at API parse time (`txt2vid_*`, `img2vid_*`, `wan_high.*`, `wan_low.*`), keeps WAN scheduler values strict (`simple`), accepts only executable WAN sampler lanes (`uni-pc` with optional solver hint, `euler`, `euler a`), and fails loud on invalid/incompatible combinations (including `uni-pc bh2` and CFG++ labels).
 - 2026-02-21: `ui.py` now fails loud for malformed UI persistence payloads (`tabs.json`, `workflows.json`, `presets.json`) instead of silently coercing them to defaults/empty lists; workflow creation now requires explicit `type` and validates `params_snapshot` as object.
 - 2026-02-21: `ui.py` loaders now also enforce top-level object payloads before `.get(...)` access (tabs/workflows/presets/blocks), and `blocks.d` merge order is now sorted to keep override precedence deterministic.
 - 2026-02-21: `options.py` no longer clamps out-of-range numeric values in `POST /api/options`; out-of-range values now reject with HTTP 400 to match `/api/options/validate` semantics.

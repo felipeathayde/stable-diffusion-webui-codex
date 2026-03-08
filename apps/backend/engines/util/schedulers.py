@@ -7,8 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampler/scheduler mapping for diffusers pipelines.
-Maps UI-facing sampler/scheduler selections to a strict diffusers scheduler instance and fail-loudly rejects native-only sampler variants
-that this bridge does not implement (no silent fallbacks).
+Maps UI-facing sampler/scheduler selections to a strict diffusers scheduler instance for the bridge-supported sampler slice
+(`euler`, `euler a`, `heun`, `lms`, `ddim`, `dpm++ 2m`, `dpm++ 2m sde`, `dpm 2`, `dpm 2 ancestral`, `uni-pc`) and fail-loudly rejects
+native-only sampler variants that this bridge does not implement (no silent fallbacks).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `apply_sampler_scheduler` (function): Applies a sampler/scheduler selection to a pipeline and returns the effective outcome.
@@ -24,8 +25,8 @@ from apps.backend.types.samplers import SamplerKind, ApplyOutcome
 def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: str) -> ApplyOutcome:
     """Strict mapping of sampler/scheduler to Diffusers pipeline.
 
-    - Allowed: euler a, euler, ddim, dpm++ 2m, dpm++ 2m sde, plms, pndm, uni-pc.
-    - Explicitly rejected: `uni-pc bh2` (known native variant not implemented by this bridge).
+    - Allowed: euler a, euler, heun, lms, ddim, dpm++ 2m, dpm++ 2m sde, dpm 2, dpm 2 ancestral, uni-pc.
+    - Explicitly rejected: `uni-pc bh2` and `dpm++ 2s ancestral` (native variants not implemented by this bridge).
     - On invalid or failed application, raises with the root cause; no fallbacks.
     """
     wanted_sampler = sampler.value if isinstance(sampler, SamplerKind) else sampler
@@ -44,25 +45,34 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: s
             "Sampler 'uni-pc bh2' is not implemented in this scheduler bridge; "
             "use 'uni-pc' on this path."
         )
+    if kind is SamplerKind.DPM2S_ANCESTRAL:
+        raise ValueError(
+            "Sampler 'dpm++ 2s ancestral' is not implemented in this scheduler bridge; "
+            "use a native sampling runtime path."
+        )
 
     from diffusers import (
         EulerDiscreteScheduler,
         EulerAncestralDiscreteScheduler,
+        HeunDiscreteScheduler,
+        LMSDiscreteScheduler,
         DDIMScheduler,
         DPMSolverMultistepScheduler,
-        LMSDiscreteScheduler,
-        PNDMScheduler,
+        KDPM2DiscreteScheduler,
+        KDPM2AncestralDiscreteScheduler,
         UniPCMultistepScheduler,
     )
 
     allowed = {
         SamplerKind.EULER: EulerDiscreteScheduler,
         SamplerKind.EULER_A: EulerAncestralDiscreteScheduler,
+        SamplerKind.HEUN: HeunDiscreteScheduler,
+        SamplerKind.LMS: LMSDiscreteScheduler,
         SamplerKind.DDIM: DDIMScheduler,
         SamplerKind.DPM2M: DPMSolverMultistepScheduler,
         SamplerKind.DPM2M_SDE: DPMSolverMultistepScheduler,
-        SamplerKind.PLMS: LMSDiscreteScheduler,
-        SamplerKind.PNDM: PNDMScheduler,
+        SamplerKind.DPM2: KDPM2DiscreteScheduler,
+        SamplerKind.DPM2_ANCESTRAL: KDPM2AncestralDiscreteScheduler,
         SamplerKind.UNI_PC: UniPCMultistepScheduler,
     }
 

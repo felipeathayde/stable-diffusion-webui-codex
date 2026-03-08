@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: WAN22 GGUF run entrypoints (txt2vid/img2vid; batch + streaming).
 Orchestrates text context, per-stage sampling, ordered stage-LoRA application (`high/low.loras`), and VAE encode/decode (including file-VAE metadata config forwarding) while keeping GGUF support anchored in the shared quantization/ops layer.
 For img2vid, forwards no-stretch guide controls from `RunConfig` (`img2vid_image_scale` + crop offsets) into VAE init-image preprocessing so runtime framing matches UI projection.
+Shared scheduler resolution now requires explicit normalized stage scheduler values and fail-loud continuity checks before runtime scheduler construction.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_USE_CFG_SEED` (constant): Sentinel that distinguishes implicit cfg-seed usage from explicit random (`None`) override in chunked seeding.
@@ -472,9 +473,9 @@ def _parse_sampler(value: object | None) -> tuple[str | None, str | None]:
 
     if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
         return SamplerKind.UNI_PC.value, ("bh2" if sampler_kind is SamplerKind.UNI_PC_BH2 else None)
-    if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+    if sampler_kind is SamplerKind.EULER:
         return SamplerKind.EULER.value, None
-    if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+    if sampler_kind is SamplerKind.EULER_A:
         return SamplerKind.EULER_A.value, None
 
     raise RuntimeError(
@@ -547,12 +548,30 @@ def _resolve_shared_scheduler_spec(
     else:
         sampler_configured = resolved_lane
 
-    hi_scheduler_raw = scheduler_hi.strip() if isinstance(scheduler_hi, str) and scheduler_hi.strip() else None
-    lo_scheduler_raw = scheduler_lo.strip() if isinstance(scheduler_lo, str) and scheduler_lo.strip() else None
+    hi_scheduler_raw = (
+        scheduler_hi.strip().lower()
+        if isinstance(scheduler_hi, str) and scheduler_hi.strip()
+        else None
+    )
+    lo_scheduler_raw = (
+        scheduler_lo.strip().lower()
+        if isinstance(scheduler_lo, str) and scheduler_lo.strip()
+        else None
+    )
+    if hi_scheduler_raw is None and lo_scheduler_raw is None:
+        raise RuntimeError(
+            "WAN22 GGUF: shared scheduler resolution requires explicit stage scheduler values "
+            "(missing high/low scheduler after config normalization)."
+        )
+    for stage_name, scheduler_value in (("high", hi_scheduler_raw), ("low", lo_scheduler_raw)):
+        if scheduler_value is not None and scheduler_value != "simple":
+            raise RuntimeError(
+                f"WAN22 GGUF: {stage_name} scheduler must be 'simple', got {scheduler_value!r}."
+            )
     if (
         hi_scheduler_raw is not None
         and lo_scheduler_raw is not None
-        and hi_scheduler_raw.lower() != lo_scheduler_raw.lower()
+        and hi_scheduler_raw != lo_scheduler_raw
     ):
         raise RuntimeError(
             "WAN22 GGUF: high/low scheduler mismatch for shared scheduler continuity "

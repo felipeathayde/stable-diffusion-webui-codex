@@ -15,8 +15,7 @@ CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
 Also shares the global `min_tile` preference (tiled lower bound) with `/upscale`.
 Swap-model cards (global + second-pass) share the same capability-gated advanced guidance/APG state surface.
-Sampler/scheduler selectors always expose the full global catalog and consume backend recommendation lists for grouped option rendering
-(`Recommended` vs `Use at your own risk`) with inline technical warnings on out-of-recommendation selections.
+Sampler/scheduler selectors normalize current selections against the executable `/api/samplers` + `/api/schedulers` inventory, keep base sampler/scheduler real, and scrub invalid hires overrides while still using backend recommendation lists for grouped option rendering (`Recommended` vs `Use at your own risk`) with inline technical warnings on out-of-recommendation selections.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
 Run status in the RUN card is centralized via `RunProgressStatus` variants (progress/error/info/success/warning), including dual progress bars (total pipeline + sampling steps), so errors are visible even when Prompt is off-screen.
@@ -64,6 +63,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `supportsImg2ImgMasking` (const): Truthful engine-level mask/inpaint support gate for img2img engines.
 - `hideNegativePrompt` (const): Hides the base Negative Prompt field when the active checkpoint/model does not support it or effective base CFG is `<= 1`.
 - `recommendedSamplers` / `recommendedSchedulers` (const): Sanitized recommendation lists passed into sampler/scheduler selectors.
+- `resolveLiveSamplingDefaults` (function): Resolves executable sampler/scheduler defaults from backend capabilities plus per-family fallbacks.
+- `normalizeLiveSamplingSelection` (function): Normalizes sampler/scheduler pairs against the live executable catalog and sampler-allowed schedulers.
+- `normalizedBaseSampling` (const): Live-normalized base sampler/scheduler pair used by selector state and hires override cleanup.
 - `xyzSamplerChoices`/`xyzSchedulerChoices` (const): Sampler/scheduler names passed to embedded XYZ autofill (scheduler list is sampler-compatible).
 -->
 
@@ -511,7 +513,7 @@ import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import { useXyzStore } from '../stores/xyz'
-import { normalizeTabFamily, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
+import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
 import { normalizeImg2ImgResizeMode } from '../utils/img2img_resize'
 import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy } from '../utils/image_params'
@@ -846,11 +848,71 @@ const recommendedSchedulers = computed(() =>
   normalizeRecommendedList(engineSurface.value?.recommended_schedulers),
 )
 
+function resolveLiveSamplingDefaults(): { sampler: string; scheduler: string } {
+  const family = normalizeTabFamily(props.type)
+  if (!family || family === 'wan') {
+    return {
+      sampler: String(engineSurface.value?.default_sampler || '').trim(),
+      scheduler: String(engineSurface.value?.default_scheduler || '').trim(),
+    }
+  }
+  const fallback = fallbackSamplingDefaultsForTabFamily(family)
+  return engineCaps.resolveSamplingDefaults(resolvedEngineForMode.value, {
+    fallbackSampler: fallback.sampler,
+    fallbackScheduler: fallback.scheduler,
+  })
+}
+
+function normalizeLiveSamplingSelection(rawSampler: string, rawScheduler: string): { sampler: string; scheduler: string } | null {
+  const liveSamplers = samplers.value
+  const liveSchedulers = schedulers.value
+  if (liveSamplers.length === 0 || liveSchedulers.length === 0) return null
+
+  const defaults = resolveLiveSamplingDefaults()
+  const requestedSampler = String(rawSampler || '').trim()
+  const samplerSpec =
+    liveSamplers.find((entry) => entry.name === requestedSampler)
+    ?? liveSamplers.find((entry) => entry.name === defaults.sampler)
+    ?? liveSamplers[0]
+    ?? null
+  if (!samplerSpec) return null
+
+  const liveSchedulerNames = new Set(liveSchedulers.map((entry) => entry.name))
+  const declaredAllowed = Array.isArray(samplerSpec.allowed_schedulers) ? samplerSpec.allowed_schedulers : []
+  const allowedSchedulers =
+    declaredAllowed.length > 0
+      ? declaredAllowed.filter((entry) => liveSchedulerNames.has(entry))
+      : liveSchedulers.map((entry) => entry.name)
+  if (allowedSchedulers.length === 0) return null
+
+  const requestedScheduler = String(rawScheduler || '').trim()
+  const scheduler =
+    (requestedScheduler && allowedSchedulers.includes(requestedScheduler) ? requestedScheduler : '')
+    || (allowedSchedulers.includes(samplerSpec.default_scheduler) ? samplerSpec.default_scheduler : '')
+    || (allowedSchedulers.includes(defaults.scheduler) ? defaults.scheduler : '')
+    || allowedSchedulers[0]
+
+  return {
+    sampler: samplerSpec.name,
+    scheduler,
+  }
+}
+
 const filteredSamplers = computed(() => {
   return samplers.value
 })
 
-const activeSamplerSpec = computed(() => samplers.value.find(s => s.name === params.value.sampler) ?? null)
+const normalizedBaseSampling = computed(() =>
+  normalizeLiveSamplingSelection(params.value.sampler, params.value.scheduler),
+)
+
+const activeSamplerSpec = computed(() => {
+  const normalized = normalizedBaseSampling.value
+  if (normalized) {
+    return samplers.value.find((entry) => entry.name === normalized.sampler) ?? null
+  }
+  return samplers.value.find((entry) => entry.name === params.value.sampler) ?? null
+})
 
 const filteredSchedulers = computed(() => {
   let list = schedulers.value
@@ -863,12 +925,28 @@ const filteredSchedulers = computed(() => {
 })
 
 const hiresSampler = computed(() => {
+  const normalizedBase = normalizedBaseSampling.value
+  if (normalizedBase) {
+    const normalizedHires = normalizeLiveSamplingSelection(
+      String(params.value.hires.sampler || '').trim() || normalizedBase.sampler,
+      String(params.value.hires.scheduler || '').trim() || normalizedBase.scheduler,
+    )
+    if (normalizedHires) return normalizedHires.sampler
+  }
   const override = String(params.value.hires.sampler || '').trim()
   if (override) return override
   return params.value.sampler
 })
 
 const hiresScheduler = computed(() => {
+  const normalizedBase = normalizedBaseSampling.value
+  if (normalizedBase) {
+    const normalizedHires = normalizeLiveSamplingSelection(
+      String(params.value.hires.sampler || '').trim() || normalizedBase.sampler,
+      String(params.value.hires.scheduler || '').trim() || normalizedBase.scheduler,
+    )
+    if (normalizedHires) return normalizedHires.scheduler
+  }
   const override = String(params.value.hires.scheduler || '').trim()
   if (override) return override
   return params.value.scheduler
@@ -897,31 +975,49 @@ const filteredHiresSchedulers = computed(() => {
 })
 
 function onSamplerChange(value: string): void {
-  const spec = samplers.value.find(s => s.name === value)
-  const scheduler = params.value.scheduler
-  if (spec && Array.isArray(spec.allowed_schedulers) && spec.allowed_schedulers.length > 0) {
-    if (!spec.allowed_schedulers.includes(scheduler)) {
-      setParams({ sampler: value, scheduler: spec.default_scheduler })
-      return
-    }
+  const normalized = normalizeLiveSamplingSelection(value, params.value.scheduler)
+  if (!normalized) {
+    setParams({ sampler: value })
+    return
   }
-  setParams({ sampler: value })
+  setParams({
+    sampler: normalized.sampler,
+    scheduler: normalized.scheduler,
+  })
 }
 
 function onHiresSamplerChange(value: string): void {
-  const spec = samplers.value.find((entry) => entry.name === value)
-  const currentScheduler = hiresScheduler.value
-  if (spec && Array.isArray(spec.allowed_schedulers) && spec.allowed_schedulers.length > 0) {
-    if (!spec.allowed_schedulers.includes(currentScheduler)) {
-      setHires({ sampler: value, scheduler: spec.default_scheduler })
-      return
-    }
+  const normalizedBase = normalizedBaseSampling.value
+  if (!normalizedBase) {
+    setHires({ sampler: value })
+    return
   }
-  setHires({ sampler: value })
+  const normalized = normalizeLiveSamplingSelection(value, hiresScheduler.value)
+  if (!normalized) {
+    setHires({ sampler: value })
+    return
+  }
+  setHires({
+    sampler: normalized.sampler === normalizedBase.sampler ? '' : normalized.sampler,
+    scheduler: normalized.scheduler === normalizedBase.scheduler ? '' : normalized.scheduler,
+  })
 }
 
 function onHiresSchedulerChange(value: string): void {
-  setHires({ scheduler: value })
+  const normalizedBase = normalizedBaseSampling.value
+  if (!normalizedBase) {
+    setHires({ scheduler: value })
+    return
+  }
+  const normalized = normalizeLiveSamplingSelection(hiresSampler.value, value)
+  if (!normalized) {
+    setHires({ scheduler: value })
+    return
+  }
+  setHires({
+    sampler: normalized.sampler === normalizedBase.sampler ? '' : normalized.sampler,
+    scheduler: normalized.scheduler === normalizedBase.scheduler ? '' : normalized.scheduler,
+  })
 }
 
 function onHiresCfgChange(value: number): void {
@@ -933,12 +1029,54 @@ function onHiresCfgChange(value: number): void {
   setHires({ cfg: normalized, distilledCfg: undefined })
 }
 
-watch([() => params.value.sampler, () => params.value.scheduler, samplers], () => {
-  const spec = samplers.value.find(s => s.name === params.value.sampler)
-  if (!spec || !Array.isArray(spec.allowed_schedulers) || spec.allowed_schedulers.length === 0) return
-  if (spec.allowed_schedulers.includes(params.value.scheduler)) return
-  setParams({ scheduler: spec.default_scheduler })
+watch([() => params.value.sampler, () => params.value.scheduler, samplers, schedulers], () => {
+  const normalized = normalizeLiveSamplingSelection(params.value.sampler, params.value.scheduler)
+  if (!normalized) return
+  if (normalized.sampler === params.value.sampler && normalized.scheduler === params.value.scheduler) return
+  setParams({
+    sampler: normalized.sampler,
+    scheduler: normalized.scheduler,
+  })
 }, { immediate: true })
+
+watch(
+  [
+    () => params.value.sampler,
+    () => params.value.scheduler,
+    () => params.value.hires.sampler,
+    () => params.value.hires.scheduler,
+    samplers,
+    schedulers,
+  ],
+  () => {
+    const normalizedBase = normalizeLiveSamplingSelection(params.value.sampler, params.value.scheduler)
+    if (!normalizedBase) return
+
+    const rawHiresSampler = String(params.value.hires.sampler || '').trim()
+    const rawHiresScheduler = String(params.value.hires.scheduler || '').trim()
+    if (!rawHiresSampler && !rawHiresScheduler) return
+
+    const normalizedHires = normalizeLiveSamplingSelection(
+      rawHiresSampler || normalizedBase.sampler,
+      rawHiresScheduler || normalizedBase.scheduler,
+    )
+    if (!normalizedHires) return
+
+    const nextSamplerOverride = normalizedHires.sampler === normalizedBase.sampler ? '' : normalizedHires.sampler
+    const nextSchedulerOverride = normalizedHires.scheduler === normalizedBase.scheduler ? '' : normalizedHires.scheduler
+    if (
+      nextSamplerOverride === params.value.hires.sampler
+      && nextSchedulerOverride === params.value.hires.scheduler
+    ) {
+      return
+    }
+    setHires({
+      sampler: nextSamplerOverride,
+      scheduler: nextSchedulerOverride,
+    })
+  },
+  { immediate: true },
+)
 
 const promptText = computed({
   get: () => params.value.prompt,

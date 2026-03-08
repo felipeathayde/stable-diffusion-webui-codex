@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-03-06
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -38,7 +38,7 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to stores (doc-only change; part of rollout).
 - 2026-01-04: Flux family backend engine keys moved to `flux1*`; `chroma` is a first-class tab type mapped to `flux1_chroma` at request time.
 - 2026-01-18: `engine_capabilities.ts` now also caches backend-provided `asset_contracts` (base + core-only) from `/api/engines/capabilities`; image payload builders use these contracts (plus `models[].core_only`) to enforce required VAE/text encoder selection without duplicating per-engine policy in the UI.
-- 2026-01-06: Image tab defaults now use model_index-aligned canonical sampler/scheduler values (SD15: `pndm` + `ddim`; SDXL: `euler` + `euler_discrete`; flow: `euler` + `simple`) and normalization only fills blank/missing values (no alias/automatic shims).
+- 2026-01-06: Image tab defaults now use canonical sampler/scheduler values aligned to the live executable surface (SD15: `ddim` + `ddim`; SDXL: `euler` + `euler_discrete`; flow: `euler` + `simple`), and store-level normalization only fills blank/missing values (no alias/automatic shims).
 - 2026-01-25: `model_tabs.ts` image-tab defaults now set `clipSkip=0` (auto/default sentinel). Payload builders can still send explicit clip skip values; 0 resets to engine defaults.
 - 2026-01-27: `model_tabs.ts` WAN video params now include `returnFrames` (default false) to control whether frames are included in the final result payload (txt2vid/img2vid full frames; vid2vid preview frames).
 - 2026-01-28: `model_tabs.ts` Z-Image params now include `zimageTurbo` (default true) to persist the Turbo/Base variant selection per tab.
@@ -80,6 +80,7 @@ Status: Active
 - 2026-03-05: `model_tabs.ts` baseline required tab types now include `flux2`; `engine_config.ts` now exposes `flux2` defaults/capabilities, and `quicksettings.ts` now recognizes `flux2` in VAE-by-family and text-encoder root/prefix mappings (`flux2_tenc`).
 - 2026-03-06: FLUX.2 store semantics now match the backend Klein 4B / base-4B image slice: `engine_config.ts` exposes mixed task/cfg capabilities (txt2img + img2img; CFG + distilled-CFG), `model_tabs.ts` preserves init-image/mask state while still capping `flux2/*` text encoders to one selector without forcing img2img denoise to `1.0`, and `quicksettings.ts` now exports `resolveModelInfo(...)` + `resolveFlux2CheckpointVariant(...)` so views/composables can derive checkpoint-specific FLUX.2 guidance mode without adding request fields.
 - 2026-03-06: `xyz.ts` now derives FLUX.2 guidance mode from `quicksettings.resolveModelInfo(...)` + `resolveFlux2CheckpointVariant(...)` before building sweep payloads, and `engine_config.ts` aligns FLUX.2 default steps with the backend family runtime baseline (`20`).
+- 2026-03-08: `model_tabs.ts` WAN stage params persist `scheduler` on both stages (`high.scheduler` / `low.scheduler`); WAN defaults initialize stage scheduler to `simple`, WAN params normalization backfills empty scheduler values to `simple`, strips stale nested stage keys, and `load()` persists that migration through the standard tab params persistence path.
 - 2026-02-27: `model_tabs.ts` WAN `video` params removed obsolete output flags (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and migrated interpolation state to one `interpolationFps` field (`0` off, active values normalized as output-FPS targets mapped to backend interpolation times).
 - 2026-02-27: `model_tabs.ts` WAN `video.fps` default is now `15` (was `24`) to align initial WAN runs with the updated UI baseline.
 - 2026-02-27: `model_tabs.ts` WAN `video` params now include SeedVR2 upscaling controls (`upscaling*` fields) with strict normalization (`batch_size` as `4n+1`, noise scales clamped to `[0,1]`, color-correction enum validation).

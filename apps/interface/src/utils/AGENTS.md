@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-03-07
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -19,6 +19,7 @@ Status: Active
 - 2026-02-03: XYZ axis ids for hires are now `hires_scale` / `hires_steps`.
 - 2026-02-08: XYZ keeps axis id `refiner_steps` for sweep compatibility, but the UI label now reflects swap-pointer semantics (`Swap at step`).
 - 2026-02-06: Added `engine_taxonomy.ts` as canonical frontend engine taxonomy mapping (tab-family aliases, request engine-id resolution, semantic-engine resolution, and centralized sampler/scheduler fallback defaults).
+- 2026-03-08: `engine_taxonomy.ts` fallback sampling defaults keep `sd15` on live executable defaults (`ddim`/`ddim`).
 - 2026-02-07: Updated Anima fallback sampling defaults to `euler/simple` in `engine_taxonomy.ts`.
 - 2026-02-08: Added `image_params.ts` for pure img2img/inpaint normalization helpers (`normalizeMaskEnforcement`, `normalizeInpaintingFill`, `normalizeNonNegativeInt`) used by `ImageModelTab.vue`.
 - 2026-02-25: `image_params.normalizeMaskEnforcement(...)` now defaults unknown values to `per_step_clamp` (Forge-engine baseline), while preserving explicit `post_blend` as legacy opt-in.

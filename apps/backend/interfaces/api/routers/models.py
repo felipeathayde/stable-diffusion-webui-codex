@@ -12,7 +12,9 @@ surfaces, embeddings, and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
 (`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, WAN22 animate engine ids, and
-Anima runtime-equivalent prompt preprocessing/max-length checks with the same slow Qwen tokenizer path used by the runtime.
+Anima runtime-equivalent prompt preprocessing/max-length checks with the same slow Qwen tokenizer path used by the runtime. Raw `/api/samplers`
+inventory keeps unsupported rows visible with non-executable metadata (`supported=false`, `default_scheduler=null`, `allowed_schedulers=[]`),
+while supported rows must resolve complete executable registry metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -946,8 +948,8 @@ def build_router(
                 {
                     "name": entry["name"],
                     "supported": supported,
-                    "default_scheduler": spec.default_scheduler if spec else None,
-                    "allowed_schedulers": sorted(spec.allowed_schedulers) if spec else [],
+                    "default_scheduler": spec.default_scheduler if spec is not None else None,
+                    "allowed_schedulers": sorted(spec.allowed_schedulers) if spec is not None else [],
                 }
             )
         return {"samplers": samplers}

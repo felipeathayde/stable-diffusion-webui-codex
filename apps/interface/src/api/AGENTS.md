@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-07
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -22,13 +22,12 @@ Status: Active
   - `asset_contracts` (base + core-only; now includes `tenc_slots`/`tenc_slot_labels` for slot-accurate requirements)
   - `engine_id_to_semantic_engine` (explicit key-space mapping; required by frontend taxonomy resolution)
   - `dependency_checks` (backend-owned readiness rows per semantic engine; strict `ready === all(check.ok)` contract)
-- 2026-03-07: `types.ts` `EngineCapabilities` sampler/scheduler recommendation fields are now `recommended_samplers` / `recommended_schedulers` (old `samplers` / `schedulers` capability names removed).
-- 2026-01-06: `/api/samplers` DTO is now `{name,supported,default_scheduler,allowed_schedulers}`; `supported` means executable backend support and `client.ts::fetchSamplers()` filters out `supported=false` rows before UI selector use. WAN payload builders fail fast on non-canonical (uppercase) sampler/scheduler inputs.
+- 2026-03-07: `types.ts` `EngineCapabilities` sampler/scheduler recommendation fields are `recommended_samplers` / `recommended_schedulers`.
+- `/api/samplers` DTO is `{name,supported,default_scheduler,allowed_schedulers}`; `supported` means executable backend support and `client.ts::fetchSamplers()` filters out `supported=false` rows before UI selector use. WAN payload builders fail fast on non-canonical (uppercase) sampler inputs and reject any scheduler value other than exact canonical `simple`; emitted WAN scheduler fields remain explicit at both top level (`*_scheduler`) and stage level (`wan_high.scheduler` / `wan_low.scheduler`) for router/runtime validation.
 - 2025-12-16: WAN video client helpers include task-event/result handling with optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
 - 2026-01-27: WAN payload builders now optionally emit `video_return_frames` (default off) to control whether txt2vid/img2vid results include frames; vid2vid preview-frame behavior is historical while backend vid2vid remains disabled. Video export remains controlled via `video_save_output`.
 - 2026-02-15: Image/video payload contracts now always include `settings_revision`; per-request `smart_offload`/`smart_fallback`/`smart_cache` fields were removed (runtime flags remain `/api/options`-owned).
 - 2026-02-15: `client.ts` now caches `/api/options` revision and preserves structured HTTP error payloads (`status/detail/body`) so composables can handle stale-revision `409` conflicts.
-- 2026-02-16: `payloads_video.ts` no longer emits WAN scheduler overrides (`txt2vid_scheduler`/`img2vid_scheduler`/`vid2vid_scheduler` nor stage `scheduler`), aligning frontend payloads with WAN22 backend policy (scheduler is runtime-managed).
 - 2026-02-17: `payloads_video.ts` now normalizes WAN frame counts to the `4n+1` domain within `[9,401]`, emits `gguf_attention_mode` (`global|sliding`), and supports windowed img2vid temporal controls (`img2vid_window_*`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`).
 - 2026-02-21: `payloads_video.ts` stage payload schema now accepts stage-scoped prompt fields (`wan_high.prompt/negative_prompt`, `wan_low.prompt/negative_prompt`); top-level mode prompt fields are derived from the High stage prompt at build time (fail-loud when High prompt is empty).
 - 2026-02-21: `payloads_video.ts` img2vid temporal contract now requires `img2vid_mode` (`solo|sliding|svi2|svi2_pro`), with mode-scoped validation for window controls (`img2vid_window_frames/stride/commit_frames`) and fail-loud rejection of mode/field mismatches.

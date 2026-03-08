@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sigma schedule construction utilities for diffusion samplers.
-Defines canonical scheduler names and builds sigma schedules (Karras, exponential, DDIM, align-your-steps, etc.).
+Defines canonical scheduler names and builds sigma schedules (Karras, exponential, DDIM, beta, align-your-steps, etc.).
 SIMPLE schedules are predictor-aware and support explicit mode selection (legacy shifted-linspace vs tail-downsample sigma selection), and
 `linear_quadratic` now follows the parity-target piecewise shape with strict input guards.
 
@@ -21,7 +21,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_simple_schedule_from_predictor` (function): Builds a simple schedule from a predictor function.
 - `_sgm_uniform_schedule` (function): Builds an SGM-uniform schedule (SGM-style).
 - `_ddim_uniform_schedule` (function): Builds a DDIM-uniform schedule.
-- `_normal_schedule` (function): Builds a normal/beta-derived schedule (optionally SGM variant).
+- `_normal_schedule` (function): Builds a normal schedule (optionally SGM variant).
+- `_beta_continued_fraction` (function): Evaluate the continued-fraction form used by the regularized incomplete beta function.
+- `_regularized_incomplete_beta` (function): Evaluate the regularized incomplete beta CDF for scalar quantile inversion.
+- `_inverse_regularized_incomplete_beta` (function): Numerically invert the regularized incomplete beta CDF with bisection.
+- `_predictor_sigma_ladder` (function): Validates and returns predictor sigma ladders for ladder-backed schedulers.
 - `_beta_schedule` (function): Builds a beta schedule.
 - `_linear_quadratic_schedule` (function): Builds a linear-quadratic schedule.
 - `_kl_optimal_schedule` (function): Builds a KL-optimal schedule.
@@ -295,22 +299,202 @@ def _normal_schedule(steps: int, predictor, *, device: torch.device, dtype: torc
     return _append_zero(sigmas, device=device, dtype=dtype)
 
 
+def _beta_continued_fraction(
+    alpha: float,
+    beta: float,
+    x: float,
+    *,
+    max_iterations: int = 200,
+    epsilon: float = 3.0e-14,
+) -> float:
+    if not (0.0 < x < 1.0):
+        raise ValueError(f"Beta continued fraction requires x in (0, 1); got {x}.")
+    qab = alpha + beta
+    qap = alpha + 1.0
+    qam = alpha - 1.0
+
+    machine_min = 1.0e-30
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < machine_min:
+        d = machine_min
+    d = 1.0 / d
+    fraction = d
+
+    for iteration in range(1, max_iterations + 1):
+        m = float(iteration)
+        m2 = 2.0 * m
+
+        aa = m * (beta - m) * x / ((qam + m2) * (alpha + m2))
+        d = 1.0 + aa * d
+        if abs(d) < machine_min:
+            d = machine_min
+        c = 1.0 + aa / c
+        if abs(c) < machine_min:
+            c = machine_min
+        d = 1.0 / d
+        fraction *= d * c
+
+        aa = -(alpha + m) * (qab + m) * x / ((alpha + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < machine_min:
+            d = machine_min
+        c = 1.0 + aa / c
+        if abs(c) < machine_min:
+            c = machine_min
+        d = 1.0 / d
+        delta = d * c
+        fraction *= delta
+
+        if abs(delta - 1.0) <= epsilon:
+            return fraction
+
+    raise RuntimeError(
+        f"Beta continued fraction did not converge for alpha={alpha}, beta={beta}, x={x}."
+    )
+
+
+def _regularized_incomplete_beta(alpha: float, beta: float, x: float) -> float:
+    if not math.isfinite(alpha) or alpha <= 0.0:
+        raise ValueError(f"regularized incomplete beta requires alpha > 0; got {alpha}.")
+    if not math.isfinite(beta) or beta <= 0.0:
+        raise ValueError(f"regularized incomplete beta requires beta > 0; got {beta}.")
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+
+    log_front = (
+        math.lgamma(alpha + beta)
+        - math.lgamma(alpha)
+        - math.lgamma(beta)
+        + alpha * math.log(x)
+        + beta * math.log1p(-x)
+    )
+    front = math.exp(log_front)
+    threshold = (alpha + 1.0) / (alpha + beta + 2.0)
+    if x < threshold:
+        return front * _beta_continued_fraction(alpha, beta, x) / alpha
+    return 1.0 - front * _beta_continued_fraction(beta, alpha, 1.0 - x) / beta
+
+
+def _inverse_regularized_incomplete_beta(
+    probability: float,
+    alpha: float,
+    beta: float,
+    *,
+    iterations: int = 80,
+) -> float:
+    if probability <= 0.0:
+        return 0.0
+    if probability >= 1.0:
+        return 1.0
+
+    low = 0.0
+    high = 1.0
+    for _ in range(iterations):
+        midpoint = 0.5 * (low + high)
+        cdf_value = _regularized_incomplete_beta(alpha, beta, midpoint)
+        if cdf_value < probability:
+            low = midpoint
+        else:
+            high = midpoint
+    return 0.5 * (low + high)
+
+
+def _predictor_sigma_ladder(
+    predictor,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    schedule_label: str,
+) -> torch.Tensor:
+    sigmas_ladder = getattr(predictor, "sigmas", None)
+    if sigmas_ladder is None:
+        raise RuntimeError(f"predictor does not expose 'sigmas' needed for {schedule_label} scheduler")
+    sigmas_ladder = torch.as_tensor(sigmas_ladder, device=device, dtype=dtype)
+    if sigmas_ladder.ndim != 1:
+        raise RuntimeError(
+            f"predictor.sigmas for {schedule_label} scheduler must be 1D; got shape {tuple(sigmas_ladder.shape)}."
+        )
+    if sigmas_ladder.numel() < 2:
+        raise RuntimeError(
+            f"predictor.sigmas must expose at least two ladder entries for {schedule_label} scheduler."
+        )
+    if not bool(torch.all(torch.isfinite(sigmas_ladder))):
+        raise RuntimeError(
+            f"predictor.sigmas contains non-finite values; cannot build {schedule_label} schedule."
+        )
+    if bool(torch.any(sigmas_ladder[1:] < sigmas_ladder[:-1])):
+        raise RuntimeError(
+            f"predictor.sigmas must be monotonically non-decreasing (sigma_min -> sigma_max) for {schedule_label} scheduler."
+        )
+    return sigmas_ladder
+
+
 def _beta_schedule(
     steps: int,
-    sigma_min: float,
-    sigma_max: float,
+    predictor,
     *,
     device: torch.device,
     dtype: torch.dtype,
     alpha: float = 0.6,
     beta: float = 0.6,
 ) -> torch.Tensor:
-    # Using torch.distributions avoids scipy dependency
-    dist = torch.distributions.Beta(torch.as_tensor(alpha, device=device), torch.as_tensor(beta, device=device))
-    lin = torch.linspace(0, 1, steps, device=device, dtype=dtype)
-    timesteps = dist.icdf(lin.clamp(1e-6, 1 - 1e-6))
-    sigmas = sigma_min + (sigma_max - sigma_min) * (1 - timesteps)
-    return _append_zero(sigmas, device=device, dtype=dtype)
+    total_steps = int(steps)
+    if total_steps <= 0:
+        raise ValueError("beta scheduler requires steps >= 1.")
+    if not math.isfinite(alpha) or alpha <= 0.0:
+        raise ValueError(f"beta scheduler alpha must be finite and > 0; got {alpha}.")
+    if not math.isfinite(beta) or beta <= 0.0:
+        raise ValueError(f"beta scheduler beta must be finite and > 0; got {beta}.")
+    sigmas_ladder = _predictor_sigma_ladder(
+        predictor,
+        device=device,
+        dtype=dtype,
+        schedule_label="beta",
+    )
+
+    total_timesteps = int(sigmas_ladder.numel()) - 1
+    picked_timesteps: list[int] = []
+    last_timestep: int | None = None
+    for step_index in range(total_steps):
+        probability = 1.0 - (float(step_index) / float(total_steps))
+        quantile = _inverse_regularized_incomplete_beta(probability, alpha, beta)
+        if not math.isfinite(quantile):
+            raise RuntimeError(
+                f"Beta scheduler inverse CDF produced non-finite quantile at step {step_index}."
+            )
+        timestep = int(round(quantile * float(total_timesteps)))
+        timestep = max(0, min(total_timesteps, timestep))
+        if last_timestep is not None and timestep > last_timestep:
+            raise RuntimeError(
+                "beta scheduler produced a non-monotonic timestep ladder "
+                f"(prev={last_timestep}, current={timestep}, step_index={step_index})."
+            )
+        picked_timesteps.append(timestep)
+        last_timestep = timestep
+    if len(picked_timesteps) != total_steps:
+        raise RuntimeError(
+            "beta scheduler failed to produce the requested non-terminal step count "
+            f"(requested={total_steps}, produced={len(picked_timesteps)})."
+        )
+    index_tensor = torch.tensor(picked_timesteps, device=device, dtype=torch.long)
+    sigmas = sigmas_ladder.index_select(0, index_tensor).to(device=device, dtype=dtype)
+    if int(sigmas.numel()) != total_steps:
+        raise RuntimeError(
+            "beta scheduler picked sigma count does not match requested steps "
+            f"(requested={total_steps}, produced={int(sigmas.numel())})."
+        )
+    schedule = _append_zero(sigmas, device=device, dtype=dtype)
+    expected_total = total_steps + 1
+    if int(schedule.numel()) != expected_total:
+        raise RuntimeError(
+            "beta scheduler failed terminal-zero schedule length invariant "
+            f"(requested_non_terminal={total_steps}, expected_total={expected_total}, "
+            f"produced_total={int(schedule.numel())})."
+        )
+    return schedule
 
 
 def _linear_quadratic_schedule(
@@ -431,7 +615,9 @@ def build_sigma_schedule(
             raise RuntimeError("predictor required for normal scheduler")
         return _normal_schedule(steps, predictor, device=device, dtype=dtype, sgm=False)
     if kind is SchedulerName.BETA:
-        return _beta_schedule(steps, sigma_min, sigma_max, device=device, dtype=dtype)
+        if predictor is None:
+            raise RuntimeError("predictor required for beta scheduler")
+        return _beta_schedule(steps, predictor, device=device, dtype=dtype)
     if kind is SchedulerName.LINEAR_QUADRATIC:
         return _linear_quadratic_schedule(steps, sigma_min, sigma_max, device=device, dtype=dtype)
     if kind is SchedulerName.KL_OPTIMAL:

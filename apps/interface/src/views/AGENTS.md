@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-07
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -29,7 +29,7 @@ Status: Active
 - 2026-01-01: History cards now render as a single-row horizontal strip, and `WANTab.vue` reuses the shared `cdx-history-*` card layout for parity with image tabs.
 - 2026-01-01: Results empty states now reflect running tasks (“Starting inference…” / “Generating…”) and image tabs can show live preview frames inside `ResultViewer.vue` while sampling.
 - 2026-01-03: Added standardized file header blocks to view modules (doc-only change; part of rollout).
-- 2026-01-06: `ImageModelTab.vue` now filters schedulers by the selected sampler’s `allowed_schedulers` and auto-resets invalid scheduler selections to the sampler’s `default_scheduler`.
+- 2026-01-06: `ImageModelTab.vue` now normalizes live sampler/scheduler selections against the executable catalog (`/api/samplers` + `/api/schedulers`), keeping selected samplers real, enforcing sampler→allowed_scheduler compatibility, and scrubbing invalid hires overrides back to valid live combinations.
 - 2026-01-13: `ToolsTab.vue` GGUF converter supports cancellation and an Overwrite toggle (default off; fails if the output file exists).
 - 2026-03-07: `ToolsTab.vue` GGUF converter emits source/native tensor names only, posts one `profile_id` per selected component, and no longer sends layout-selection payload fields.
 - 2026-01-14: `ToolsTab.vue` right-aligns GGUF converter action rows (Overwrite + Convert/Cancel).
@@ -72,7 +72,8 @@ Status: Active
 - 2026-03-06: In `useInitImage` mode, `ImageModelTab.vue` renders `Img2ImgBasicParametersCard.vue` (hires-like layout with resize-type/upscaler gating) instead of the txt2img `BasicParametersCard.vue`; img2img payload wiring remains in `useGeneration(tabId)` and can now emit hires when the active engine supports it and masking is off.
 - 2026-03-06: `ImageModelTab.vue` now keeps the img2img denoise slider visible for FLUX.2 and no longer rewrites stored FLUX.2 denoise back to `1.0`.
 - 2026-03-07: `ImageModelTab.vue` sampler/scheduler selectors now keep the full global catalog visible, pass backend recommendation arrays to shared selector components for grouped dropdown rendering (`Recommended` vs `Use at your own risk`), and rely on selector-inline warning text when current choices are outside recommendations (while keeping hard sampler->allowed_scheduler compatibility guards).
-- 2026-03-07: `WANTab.vue` now forwards backend recommendation arrays into shared WAN stage selectors when available; WAN keeps the full sampler catalog visible while stage selectors render the same grouped recommendation UI as image tabs.
+- 2026-03-08: `WANTab.vue` forwards backend recommendation arrays into shared WAN stage selectors as hints (not allowlists), and WAN stage selectors use WAN-filtered inventories (`uni-pc|euler|euler a` samplers; `simple` scheduler) instead of the full global catalogs.
+- 2026-03-08: WAN stage scheduler selection is persisted through `model_tabs.ts` (`high.scheduler` / `low.scheduler`), so scheduler choices survive tab persistence/history reuse flows.
 - 2026-03-06: `Test.vue` now routes WAN txt2vid/img2vid runs through the shared `buildWanTxt2VidPayload(...)` / `buildWanImg2VidPayload(...)` builders, sends canonical `device` + `wan_high/wan_low.loras[]` + explicit `img2vid_mode`, uses metadata repo ids instead of metadata-dir wording, and keeps width/height input on a 16px WAN-safe grid.
 - 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.
 - 2026-02-20: `ImageModelTab.vue` and `WANTab.vue` History strips now render square 1:1 thumbnail cards (image fit/contain, no inline metadata text); clicking a card opens a details modal with organized run metadata (mode/time/status/task), prompt/negative prompt, params snapshot, and explicit Load/Apply/Copy actions.

@@ -11,8 +11,10 @@ Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, norm
 default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
 `img2imgUpscaler`) decoupled from backend hires dispatch. WAN video normalization persists no-stretch img2vid guide controls
-(`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization. FLUX.2 tabs keep the truthful Klein 4B / base-4B
-slice contract by capping `textEncoders` to one `flux2/*` Qwen selector without overriding shared img2img denoise state.
+(`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
+and backfills legacy non-`simple` persisted values through the normal tab-persistence queue without blocking tab hydration. FLUX.2 tabs keep
+the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one `flux2/*` Qwen selector without overriding shared img2img
+denoise state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -21,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
 - `WanStageLoraParams` (interface): UI WAN stage LoRA entry (`sha` + optional `weight`) for ordered stage `loras[]` payload wiring.
-- `WanStageParams` (interface): UI WAN stage params (high/low), including stage prompt/negative prompt, ordered `loras[]`, and optional explicit `flowShift`, used by video tabs and payload builders.
+- `WanStageParams` (interface): UI WAN stage params (high/low), including sampler/scheduler, stage prompt/negative prompt, ordered `loras[]`, and optional explicit `flowShift`, used by video tabs and payload builders.
 - `WanImg2VidMode` (type): WAN img2vid temporal mode discriminator (`solo|sliding|svi2|svi2_pro`).
 - `WanChunkSeedMode` (type): WAN sliding/SVI per-window seed strategy (`fixed|increment|random`).
 - `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + img2vid temporal controls + no-stretch guide controls (`img2vidImageScale` + crop offsets) + output/interpolation + SeedVR2 upscaling controls).
@@ -52,7 +54,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/window/attention controls) with `img2vidMode` as source of truth.
-- `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
+- `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params, enforcing canonical WAN stage scheduler `simple`.
+- `shouldPersistWanSchedulerBackfill` (function): Detects persisted WAN params with non-canonical High/Low scheduler values that must be migrated to `simple`.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler and mask-enforcement fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
@@ -396,7 +399,7 @@ function defaultParams<T extends BaseTabType>(
       prompt: '',
       negativePrompt: '',
       sampler: '',
-      scheduler: '',
+      scheduler: 'simple',
       steps: 30,
       cfgScale: 7,
       seed: -1,
@@ -931,21 +934,52 @@ function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): Tab
     )
   }
   const patch = migration.patch
-  const highPatch = asRecordObject(patch.high)
-  const lowPatch = asRecordObject(patch.low)
+  const normalizeWanStageParams = (stagePatch: unknown, stageDefaults: WanStageParams): WanStageParams => {
+    const stagePatchRecord = asRecordObject(stagePatch)
+    const merged: WanStageParams = {
+      ...stageDefaults,
+      ...(stagePatchRecord as Partial<WanStageParams>),
+    }
+    const scheduler = typeof merged.scheduler === 'string' ? merged.scheduler.trim().toLowerCase() : ''
+    merged.scheduler = scheduler === 'simple' ? scheduler : 'simple'
+    const normalizedStage: WanStageParams = {
+      modelDir: merged.modelDir,
+      prompt: merged.prompt,
+      negativePrompt: merged.negativePrompt,
+      sampler: merged.sampler,
+      scheduler: merged.scheduler,
+      steps: merged.steps,
+      cfgScale: merged.cfgScale,
+      seed: merged.seed,
+      loras: Array.isArray(merged.loras) ? merged.loras : stageDefaults.loras,
+    }
+    if (typeof merged.flowShift === 'number' && Number.isFinite(merged.flowShift)) {
+      normalizedStage.flowShift = merged.flowShift
+    }
+    return normalizedStage
+  }
   const videoPatch = asRecordObject(patch.video)
   const assetsPatch = asRecordObject(patch.assets)
   const normalizedVideo = normalizeWanVideoParams(videoPatch as Partial<WanVideoParams>, defaults.video)
   return {
     ...defaults,
-    high: { ...defaults.high, ...(highPatch as Partial<WanStageParams>) },
-    low: { ...defaults.low, ...(lowPatch as Partial<WanStageParams>) },
+    high: normalizeWanStageParams(patch.high, defaults.high),
+    low: normalizeWanStageParams(patch.low, defaults.low),
     video: normalizedVideo,
     assets: { ...defaults.assets, ...(assetsPatch as Partial<WanAssetsParams>) },
     lightx2v: normalizeBoolean(patch.lightx2v, defaults.lightx2v),
     lowFollowsHigh: normalizeBoolean(patch.lowFollowsHigh, defaults.lowFollowsHigh),
     schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
   }
+}
+
+function shouldPersistWanSchedulerBackfill(raw: unknown): boolean {
+  const patch = asRecordObject(raw)
+  const high = asRecordObject(patch.high)
+  const low = asRecordObject(patch.low)
+  const highScheduler = typeof high.scheduler === 'string' ? high.scheduler.trim().toLowerCase() : ''
+  const lowScheduler = typeof low.scheduler === 'string' ? low.scheduler.trim().toLowerCase() : ''
+  return highScheduler !== 'simple' || lowScheduler !== 'simple'
 }
 
 function normalizeGuidanceAdvancedParams(raw: unknown, defaults: GuidanceAdvancedParams): GuidanceAdvancedParams {
@@ -1500,7 +1534,24 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
         throw new ModelTabsStoreError('invalid_response', msg, { details: { response: res as unknown as Record<string, unknown> } })
       }
 
-      tabs.value = (res.tabs as unknown as BaseTab[]).map((tab) => normalizeTab(tab, defaultParamsForType))
+      const rawTabs = res.tabs as unknown[]
+      tabs.value = rawTabs.map((tab) => normalizeTab(tab as BaseTab, defaultParamsForType))
+      for (let index = 0; index < rawTabs.length; index += 1) {
+        const tab = tabs.value[index]
+        if (!tab || tab.type !== 'wan') continue
+        const rawTab = asRecordObject(rawTabs[index])
+        if (!shouldPersistWanSchedulerBackfill(rawTab.params)) continue
+        const params = tab.params as TabParamsByType['wan']
+        void updateParams<Record<string, unknown>>(tab.id, {
+          high: params.high,
+          low: params.low,
+        }).catch((error) => {
+          console.warn('[model_tabs] Failed to persist WAN scheduler migration backfill; continuing load.', {
+            tabId: tab.id,
+            error,
+          })
+        })
+      }
       tabs.value.sort((a, b) => a.order - b.order)
       activeId.value = (preferredActiveId && tabs.value.some(t => t.id === preferredActiveId)) ? preferredActiveId : (tabs.value[0]?.id ?? '')
       await ensureRequiredTabs(requiredTypes)

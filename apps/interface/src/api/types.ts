@@ -12,10 +12,12 @@ Add-path contracts expose explicit nullable `size_bytes` metadata (`number | nul
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`.
-- `SamplerInfo` (interface): Sampler metadata entry returned by `/api/samplers`.
+- `RawSamplerInfo` (interface): Raw sampler metadata entry returned by `/api/samplers` (unsupported rows may omit executable defaults).
+- `SamplerInfo` (interface): Executable sampler metadata entry used by frontend selector surfaces after client-side filtering.
 - `SchedulerInfo` (interface): Scheduler metadata entry returned by `/api/schedulers`.
 - `ModelsResponse` (interface): `/api/models` response shape.
-- `SamplersResponse` (interface): `/api/samplers` response shape.
+- `SamplersResponse` (interface): Raw `/api/samplers` response shape.
+- `SupportedSamplersResponse` (interface): Executable sampler response shape returned by `client.ts::fetchSamplers()`.
 - `SchedulersResponse` (interface): `/api/schedulers` response shape.
 - `OptionsResponse` (interface): `/api/options` response shape.
 - `OptionsUpdateResponse` (interface): `/api/options` update response shape.
@@ -98,6 +100,14 @@ export interface ModelInfo {
   family_hint?: string | null
 }
 
+export interface RawSamplerInfo {
+  name: string
+  label?: string
+  supported?: boolean
+  default_scheduler: string | null
+  allowed_schedulers: string[]
+}
+
 export interface SamplerInfo {
   name: string
   label?: string
@@ -142,6 +152,10 @@ export interface CheckpointMetadataResponse {
 }
 
 export interface SamplersResponse {
+  samplers: RawSamplerInfo[]
+}
+
+export interface SupportedSamplersResponse {
   samplers: SamplerInfo[]
 }
 

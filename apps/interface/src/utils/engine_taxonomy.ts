@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Canonical frontend engine/tab taxonomy helpers.
 Centralizes tab-family aliases, image request engine-id resolution, backend engine-id -> semantic-engine resolution, and sampler/scheduler
-fallback defaults so stores/composables stop duplicating mapping tables. FLUX.2 stays first-class in frontend taxonomy (no FLUX.1 aliasing).
+fallback defaults so stores/composables stop duplicating mapping tables. Fallback sampler/scheduler pairs must stay aligned to the live executable
+surface (for example SD15 now defaults to `ddim` / `ddim`). FLUX.2 stays first-class in frontend taxonomy (no FLUX.1 aliasing).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TabFamily` (type): Canonical model tab families used by the UI.
@@ -95,7 +96,7 @@ const ENGINE_ID_SET: ReadonlySet<string> = new Set<string>([
 ])
 
 const TAB_FAMILY_FALLBACK_SAMPLING: Readonly<Record<TabFamily, SamplingDefaults>> = Object.freeze({
-  sd15: { sampler: 'pndm', scheduler: 'ddim' },
+  sd15: { sampler: 'ddim', scheduler: 'ddim' },
   sdxl: { sampler: 'euler', scheduler: 'euler_discrete' },
   flux1: { sampler: 'euler', scheduler: 'simple' },
   flux2: { sampler: 'euler', scheduler: 'simple' },

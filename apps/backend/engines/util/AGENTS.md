@@ -1,7 +1,7 @@
 # apps/backend/engines/util Overview
 <!-- tags: backend, engines, util, adapters -->
 Date: 2025-10-28
-Last Review: 2026-02-27
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -20,4 +20,4 @@ Status: Active
 - 2026-02-08: `adapters._build_refiner_config` now uses swap-pointer semantics (`switch_at_step` → `RefinerConfig.swap_at_step`) instead of refiner step-count semantics.
 - 2026-02-21: `attention_backend.py` now sources defaults from runtime memory config and applies diffusers SDPA flags from effective attention policy (with explicit warning fallback when flash appears unavailable).
 - 2026-02-27: `adapters.build_img2img_processing(...)` now propagates `image_mask` and `round_image_mask` alongside `mask`/`mask_round` to keep masked img2img (inpaint) semantics consistent in hires/conditioning paths.
-- 2026-03-08: `schedulers.apply_sampler_scheduler(...)` now rejects `uni-pc bh2` explicitly with a bridge-capability error; only implemented sampler lanes are accepted for this scheduler bridge.
+- 2026-03-08: `schedulers.apply_sampler_scheduler(...)` now maps the bridge-supported sampler set (`euler`, `euler a`, `heun`, `lms`, `ddim`, `dpm++ 2m`, `dpm++ 2m sde`, `dpm 2`, `dpm 2 ancestral`, `uni-pc`) and rejects unsupported native-only lanes such as `uni-pc bh2` and `dpm++ 2s ancestral` explicitly with bridge-capability errors.

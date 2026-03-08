@@ -32,7 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `startModelInventoryRefreshTask` (function): Starts an async inventory refresh task (`/models/inventory/refresh/async`).
 - `refreshModelInventoryAsync` (function): Runs async inventory refresh task (`/models/inventory/refresh/async`) and resolves only on terminal SSE `end` with validated inventory payload.
 - `cacheModelInventorySnapshot` (function): Writes an inventory snapshot into the local API cache (`/models/inventory`).
-- `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
+- `fetchSamplers` (function): Fetches `/samplers`, preserves raw unsupported rows at the DTO boundary, and returns only supported entries after fail-loud metadata validation.
 - `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
 - `analyzePngInfo` (function): Extracts PNG text metadata for the PNG Info view (`POST /tools/pnginfo/analyze` multipart).
 - `fetchOptions` (function): Fetches runtime options (`/options`).
@@ -78,7 +78,10 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import type {
   ModelsResponse,
+  RawSamplerInfo,
+  SamplerInfo,
   SamplersResponse,
+  SupportedSamplersResponse,
   SchedulersResponse,
   OptionsResponse,
   OptionsUpdateResponse,
@@ -573,9 +576,30 @@ export function cacheModelInventorySnapshot(inv: InventoryResponse): void {
   _jsonCache.set('/models/inventory', inv)
 }
 
-export async function fetchSamplers(): Promise<SamplersResponse> {
+export async function fetchSamplers(): Promise<SupportedSamplersResponse> {
   const res = await requestJsonCached<SamplersResponse>('/samplers')
-  const supported = res.samplers.filter((sampler) => sampler.supported !== false)
+  const supported: SamplerInfo[] = res.samplers.flatMap((sampler) => {
+    if (sampler.supported === false) return []
+    const defaultScheduler = typeof sampler.default_scheduler === 'string' ? sampler.default_scheduler.trim() : ''
+    const allowedSchedulers = Array.isArray(sampler.allowed_schedulers)
+      ? sampler.allowed_schedulers.map((value) => String(value || '').trim()).filter((value) => value.length > 0)
+      : []
+    const name = String(sampler.name || '').trim() || '<unknown>'
+    if (!defaultScheduler) {
+      throw new Error(`/api/samplers returned supported sampler '${name}' without default_scheduler.`)
+    }
+    if (!allowedSchedulers.includes(defaultScheduler)) {
+      throw new Error(
+        `/api/samplers returned supported sampler '${name}' with default_scheduler '${defaultScheduler}' outside allowed_schedulers.`,
+      )
+    }
+    const normalized: SamplerInfo = {
+      ...sampler,
+      default_scheduler: defaultScheduler,
+      allowed_schedulers: allowedSchedulers,
+    }
+    return [normalized]
+  })
   return { samplers: supported }
 }
 

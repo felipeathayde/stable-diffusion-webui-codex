@@ -6,12 +6,13 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Sampler/scheduler option catalog (canonical names + defaults) for the WebUI/API surface.
-Defines the canonical sampler/scheduler names exposed to users, derives executable sampler support from the current runtime-backed implementation
-surface, and provides default scheduler selection rules used by the sampling driver and UI selectors.
+Purpose: Sampler/scheduler catalog and executable-support flags for the runtime/API surface.
+Defines the canonical sampler/scheduler inventory, derives executable sampler support from the current runtime-backed implementation
+surface (including native `ddpm`, `heunpp2`, `ipndm`, `ipndm v`, `deis`, `res multistep*`, `gradient estimation*`, `sa-solver*`, and `seeds*`), and provides default scheduler
+selection rules consumed by the sampling registry and API exposure layers.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `SAMPLER_OPTIONS` (constant): UI-facing sampler option table (canonical name + optional scheduler allowlists).
+- `SAMPLER_OPTIONS` (constant): Canonical sampler inventory table (canonical name + optional scheduler allowlists + executable support flag).
 - `SUPPORTED_SAMPLERS` (constant): Set of supported sampler canonical names.
 - `SCHEDULER_OPTIONS` (constant): UI-facing scheduler option table (canonical name only).
 - `SUPPORTED_SCHEDULERS` (constant): Set of supported scheduler canonical names.
@@ -26,38 +27,61 @@ from typing import Dict, List, Set
 SUPPORTED_SAMPLERS: Set[str] = {
     "euler",
     "euler a",
+    "euler cfg++",
+    "euler a cfg++",
+    "heun",
+    "heunpp2",
+    "lms",
     "ddim",
-    "plms",
-    "pndm",
+    "ddpm",
     "dpm++ 2m",
+    "dpm++ 2m cfg++",
     "dpm++ 2m sde",
+    "dpm++ 2s ancestral",
+    "dpm++ 2s ancestral cfg++",
+    "dpm 2",
+    "dpm 2 ancestral",
     "dpm fast",
+    "ipndm",
+    "ipndm v",
+    "deis",
+    "res multistep",
+    "res multistep cfg++",
+    "res multistep ancestral",
+    "res multistep ancestral cfg++",
+    "gradient estimation",
+    "gradient estimation cfg++",
+    "sa-solver",
+    "sa-solver pece",
+    "seeds 2",
+    "seeds 3",
     "uni-pc",
     "uni-pc bh2",
     "er sde",
+    "restart",
 }
 
 SAMPLER_OPTIONS: List[Dict[str, object]] = [
     {"name": "euler"},
     {"name": "euler a"},
-    {"name": "euler cfg++"},
-    {"name": "euler a cfg++"},
+    {"name": "euler cfg++", "schedulers": ["euler_discrete"]},
+    {"name": "euler a cfg++", "schedulers": ["euler_discrete"]},
     {"name": "heun"},
-    {"name": "heunpp2"},
+    {"name": "heunpp2", "schedulers": ["karras"]},
     {"name": "lms"},
     {"name": "ddim", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
     {"name": "ddim cfg++", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
     {"name": "plms", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
     {"name": "pndm", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
     {"name": "dpm++ 2m"},
-    {"name": "dpm++ 2m cfg++"},
-    {"name": "dpm++ 2m sde"},
+    {"name": "dpm++ 2m cfg++", "schedulers": ["karras"]},
+    {"name": "dpm++ 2m sde", "schedulers": ["exponential"]},
     {"name": "dpm++ 2m sde heun"},
     {"name": "dpm++ 2m sde gpu"},
     {"name": "dpm++ 2m sde heun gpu"},
     {"name": "dpm++ sde"},
     {"name": "dpm++ 2s ancestral"},
-    {"name": "dpm++ 2s ancestral cfg++"},
+    {"name": "dpm++ 2s ancestral cfg++", "schedulers": ["karras"]},
     {"name": "dpm++ 3m sde"},
     {"name": "dpm 2"},
     {"name": "dpm 2 ancestral"},
@@ -77,11 +101,11 @@ SAMPLER_OPTIONS: List[Dict[str, object]] = [
     {"name": "gradient estimation"},
     {"name": "gradient estimation cfg++"},
     {"name": "er sde"},
-    {"name": "seeds 2"},
-    {"name": "seeds 3"},
-    {"name": "sa-solver"},
-    {"name": "sa-solver pece"},
-    {"name": "restart"},
+    {"name": "seeds 2", "schedulers": ["karras"]},
+    {"name": "seeds 3", "schedulers": ["karras"]},
+    {"name": "sa-solver", "schedulers": ["karras"]},
+    {"name": "sa-solver pece", "schedulers": ["karras"]},
+    {"name": "restart", "schedulers": ["karras"]},
 ]
 
 for entry in SAMPLER_OPTIONS:
@@ -167,11 +191,9 @@ SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
     "dpm++ 2s ancestral": "karras",
     "dpm++ 2s ancestral cfg++": "karras",
     "dpm++ 3m sde": "exponential",
-    "dpm++ 3m sde gpu": "exponential",
     "dpm 2": "karras",
     "dpm 2 ancestral": "karras",
     "dpm fast": "karras",
-    "dpm adaptive": "karras",
     "uni-pc": "simple",
     "uni-pc bh2": "simple",
     "ddpm": "beta",

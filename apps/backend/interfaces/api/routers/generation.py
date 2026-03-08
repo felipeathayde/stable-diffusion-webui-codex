@@ -2453,12 +2453,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 ),
             ) from exc
 
-        if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+        if sampler_kind is SamplerKind.UNI_PC:
             return sampler_kind.value
-        if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
-            return SamplerKind.EULER.value
-        if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
-            return SamplerKind.EULER_A.value
+        if sampler_kind is SamplerKind.EULER:
+            return sampler_kind.value
+        if sampler_kind is SamplerKind.EULER_A:
+            return sampler_kind.value
 
         raise HTTPException(
             status_code=400,

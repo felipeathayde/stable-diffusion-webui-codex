@@ -9,9 +9,11 @@ Required Notice: see NOTICE
 Purpose: Sampling driver (native-only) for diffusion runtimes.
 Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
 while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`), including native ER-SDE stage updates,
-native `dpm fast` / `dpm adaptive` execution, dedicated `uni-pc bh2` predictor/corrector handling, strict runtime option validation
-(`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring (APG/rescale/trunc/renorm), and emits explicit runtime
-telemetry for console block-progress activation state.
+    native `heun` / `heunpp2` / `lms` / `ddpm` / `ipndm` / `ipndm v` / `deis` / `res multistep*` / `restart` / `gradient estimation` / `gradient estimation cfg++` /
+    `dpm++ 2m cfg++` / `sa-solver` / `sa-solver pece` / `seeds 2` / `seeds 3` / `dpm 2` / `dpm 2 ancestral` / `dpm++ 2s ancestral` / `dpm++ 2s ancestral cfg++` /
+    `dpm fast` execution, dedicated `uni-pc` / `uni-pc bh2`
+multistep predictor/corrector handling, strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring
+(APG/rescale/trunc/renorm), and emits explicit runtime telemetry for console block-progress activation state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
@@ -45,7 +47,25 @@ from .block_progress import (
 )
 from .condition import compile_conditions
 from .context import SamplingContext, build_sampling_context
+from .deis import build_deis_coefficients
+from .log_snr import (
+    ei_h_phi_2,
+    ei_h_phi_1,
+    half_log_snr_to_sigma,
+    offset_first_sigma_for_snr,
+    sigma_to_half_log_snr,
+)
 from .registry import get_sampler_spec
+from .sa_solver import (
+    SA_SOLVER_DEFAULT_CORRECTOR_ORDER,
+    SA_SOLVER_DEFAULT_ETA,
+    SA_SOLVER_DEFAULT_PREDICTOR_ORDER,
+    SA_SOLVER_DEFAULT_SIMPLE_ORDER_2,
+    SA_SOLVER_DEFAULT_S_NOISE,
+    compute_stochastic_adams_b_coeffs,
+    get_tau_interval_func,
+)
+from ..sampling_adapters.extra import RestartStepPlan, build_restart_step_plan
 from ...core.state import state as backend_state
 from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.memory import memory_management
@@ -54,6 +74,7 @@ from apps.backend.runtime.memory.smart_offload_invariants import enforce_smart_o
 from apps.backend.runtime.diagnostics.timeline import timeline
 from apps.backend.runtime.diagnostics.profiler import profiler
 from apps.backend.runtime.logging import emit_backend_event
+from apps.backend.patchers.base import set_model_options_post_cfg_function
 
 class _SamplingCancelled(Exception):
     """Signal that sampling was cancelled externally."""
@@ -65,12 +86,191 @@ def _raise_if_cancelled() -> None:
 
 
 
-_LMS_COEFFS = {
+_MAX_LMS_ORDER = 4
+_MAX_IPNDM_ORDER = 4
+
+_IPNDM_MULTISTEP_COEFFS: dict[int, tuple[float, ...]] = {
     1: (1.0,),
     2: (3.0 / 2.0, -1.0 / 2.0),
     3: (23.0 / 12.0, -16.0 / 12.0, 5.0 / 12.0),
     4: (55.0 / 24.0, -59.0 / 24.0, 37.0 / 24.0, -9.0 / 24.0),
 }
+
+
+def _poly_mul(poly_a: list[float], poly_b: list[float]) -> list[float]:
+    if not poly_a or not poly_b:
+        raise RuntimeError("Polynomial multiplication requires non-empty coefficient vectors.")
+    product = [0.0] * (len(poly_a) + len(poly_b) - 1)
+    for index_a, value_a in enumerate(poly_a):
+        for index_b, value_b in enumerate(poly_b):
+            product[index_a + index_b] += value_a * value_b
+    return product
+
+
+def _integrate_polynomial(coefficients: list[float], start: float, end: float) -> float:
+    if not math.isfinite(start) or not math.isfinite(end):
+        raise RuntimeError(f"Polynomial integration bounds must be finite (start={start}, end={end}).")
+    total = 0.0
+    for power, coefficient in enumerate(coefficients):
+        exponent = power + 1
+        total += coefficient * ((end**exponent) - (start**exponent)) / float(exponent)
+    return total
+
+
+def _compute_lms_coefficients(sigma_nodes: list[float], sigma_next: float) -> list[float]:
+    if not sigma_nodes:
+        raise RuntimeError("LMS coefficient construction requires at least one sigma node.")
+    if len(sigma_nodes) > _MAX_LMS_ORDER:
+        raise RuntimeError(
+            f"LMS coefficient construction supports at most {_MAX_LMS_ORDER} sigma nodes; got {len(sigma_nodes)}."
+        )
+    if not all(math.isfinite(node) for node in sigma_nodes):
+        raise RuntimeError(f"LMS coefficient construction received non-finite sigma nodes: {sigma_nodes}")
+    if not math.isfinite(sigma_next):
+        raise RuntimeError(f"LMS coefficient construction received non-finite sigma_next={sigma_next}.")
+
+    sigma_start = float(sigma_nodes[0])
+    coefficients: list[float] = []
+    for basis_index, sigma_basis in enumerate(sigma_nodes):
+        denominator = 1.0
+        basis_poly = [1.0]
+        for other_index, sigma_other in enumerate(sigma_nodes):
+            if other_index == basis_index:
+                continue
+            spacing = float(sigma_basis) - float(sigma_other)
+            if abs(spacing) <= 1e-12:
+                raise RuntimeError(
+                    "LMS coefficient construction encountered duplicate sigma nodes "
+                    f"(basis={sigma_basis}, other={sigma_other})."
+                )
+            denominator *= spacing
+            basis_poly = _poly_mul(basis_poly, [-float(sigma_other), 1.0])
+        normalized_basis = [value / denominator for value in basis_poly]
+        coefficients.append(_integrate_polynomial(normalized_basis, sigma_start, float(sigma_next)))
+    return coefficients
+
+
+def _compute_ipndm_derivative(eps_history: list[torch.Tensor]) -> torch.Tensor:
+    if not eps_history:
+        raise RuntimeError("IPNDM derivative construction requires at least one epsilon history entry.")
+    order = min(len(eps_history), _MAX_IPNDM_ORDER)
+    coeffs = _IPNDM_MULTISTEP_COEFFS.get(order)
+    if coeffs is None:
+        raise RuntimeError(f"IPNDM derivative construction received unsupported order={order}.")
+    history_terms = list(reversed(eps_history[-order:]))
+    return sum(coeff * term for coeff, term in zip(coeffs, history_terms))
+
+
+def _compute_ipndm_v_derivative(
+    sigmas_run: torch.Tensor,
+    local_step_index: int,
+    eps_history: list[torch.Tensor],
+) -> torch.Tensor:
+    if not eps_history:
+        raise RuntimeError("IPNDM-V derivative construction requires at least one epsilon history entry.")
+    if local_step_index < 0 or local_step_index + 1 >= int(sigmas_run.numel()):
+        raise RuntimeError(
+            "IPNDM-V derivative construction received an out-of-range local_step_index "
+            f"(local_step_index={local_step_index}, sigma_count={int(sigmas_run.numel())})."
+        )
+
+    def _step_delta(newer: float, older: float, *, label: str) -> float:
+        if not math.isfinite(newer) or not math.isfinite(older):
+            raise RuntimeError(
+                f"IPNDM-V derivative construction requires finite sigma nodes for {label} "
+                f"(newer={newer}, older={older})."
+            )
+        delta = newer - older
+        if abs(delta) <= 1e-12:
+            raise RuntimeError(
+                f"IPNDM-V derivative construction received a zero-width interval for {label} "
+                f"(newer={newer}, older={older})."
+            )
+        return delta
+
+    order = min(len(eps_history), _MAX_IPNDM_ORDER)
+    d_cur = eps_history[-1]
+    if order == 1:
+        return d_cur
+
+    t_cur = float(sigmas_run[local_step_index])
+    t_next = float(sigmas_run[local_step_index + 1])
+    h_n = _step_delta(t_next, t_cur, label="h_n")
+    t_prev_1 = float(sigmas_run[local_step_index - 1])
+    h_n_1 = _step_delta(t_cur, t_prev_1, label="h_n_1")
+
+    if order == 2:
+        coeff1 = (2.0 + (h_n / h_n_1)) / 2.0
+        coeff2 = -(h_n / h_n_1) / 2.0
+        return coeff1 * d_cur + coeff2 * eps_history[-2]
+
+    t_prev_2 = float(sigmas_run[local_step_index - 2])
+    h_n_2 = _step_delta(t_prev_1, t_prev_2, label="h_n_2")
+    temp1 = (1.0 - h_n / (3.0 * (h_n + h_n_1)) * (h_n * (h_n + h_n_1)) / (h_n_1 * (h_n_1 + h_n_2))) / 2.0
+    coeff1 = (2.0 + (h_n / h_n_1)) / 2.0 + temp1
+    coeff2 = -(h_n / h_n_1) / 2.0 - (1.0 + h_n_1 / h_n_2) * temp1
+    coeff3 = temp1 * h_n_1 / h_n_2
+    if order == 3:
+        return coeff1 * d_cur + coeff2 * eps_history[-2] + coeff3 * eps_history[-3]
+
+    t_prev_3 = float(sigmas_run[local_step_index - 3])
+    h_n_3 = _step_delta(t_prev_2, t_prev_3, label="h_n_3")
+    temp2 = (
+        (1.0 - h_n / (3.0 * (h_n + h_n_1))) / 2.0
+        + (1.0 - h_n / (2.0 * (h_n + h_n_1))) * h_n / (6.0 * (h_n + h_n_1 + h_n_2))
+    ) * (
+        h_n * (h_n + h_n_1) * (h_n + h_n_1 + h_n_2)
+    ) / (
+        h_n_1 * (h_n_1 + h_n_2) * (h_n_1 + h_n_2 + h_n_3)
+    )
+    coeff1 = (2.0 + (h_n / h_n_1)) / 2.0 + temp1 + temp2
+    coeff2 = -(h_n / h_n_1) / 2.0 - (1.0 + h_n_1 / h_n_2) * temp1 - (
+        1.0 + (h_n_1 / h_n_2) + (h_n_1 * (h_n_1 + h_n_2) / (h_n_2 * (h_n_2 + h_n_3)))
+    ) * temp2
+    coeff3 = temp1 * h_n_1 / h_n_2 + (
+        (h_n_1 / h_n_2)
+        + (h_n_1 * (h_n_1 + h_n_2) / (h_n_2 * (h_n_2 + h_n_3))) * (1.0 + h_n_2 / h_n_3)
+    ) * temp2
+    coeff4 = -temp2 * (h_n_1 * (h_n_1 + h_n_2) / (h_n_2 * (h_n_2 + h_n_3))) * h_n_1 / h_n_2
+    return coeff1 * d_cur + coeff2 * eps_history[-2] + coeff3 * eps_history[-3] + coeff4 * eps_history[-4]
+
+
+def _compute_ancestral_sigmas(sigma_from: float, sigma_to: float, *, eta: float = 1.0) -> tuple[float, float]:
+    if not math.isfinite(sigma_from) or not math.isfinite(sigma_to):
+        raise RuntimeError(
+            "Ancestral sigma conversion requires finite sigma values "
+            f"(sigma_from={sigma_from}, sigma_to={sigma_to})."
+        )
+    if sigma_from < 0.0 or sigma_to < 0.0:
+        raise RuntimeError(
+            "Ancestral sigma conversion requires non-negative sigma values "
+            f"(sigma_from={sigma_from}, sigma_to={sigma_to})."
+        )
+    if eta < 0.0:
+        raise RuntimeError(f"Ancestral sigma conversion requires eta >= 0; got {eta}.")
+    if sigma_to == 0.0 or eta == 0.0:
+        return float(sigma_to), 0.0
+    if sigma_from <= 0.0:
+        raise RuntimeError(
+            "Ancestral sigma conversion requires sigma_from > 0 when sigma_to > 0 "
+            f"(sigma_from={sigma_from}, sigma_to={sigma_to})."
+        )
+
+    variance_ratio = (sigma_to**2) * max((sigma_from**2) - (sigma_to**2), 0.0) / max(sigma_from**2, 1e-12)
+    if variance_ratio < -1e-12:
+        raise RuntimeError(
+            "Ancestral sigma conversion produced negative variance ratio "
+            f"(sigma_from={sigma_from}, sigma_to={sigma_to}, ratio={variance_ratio})."
+        )
+    sigma_up = min(float(sigma_to), float(eta) * math.sqrt(max(variance_ratio, 0.0)))
+    sigma_down_sq = (sigma_to**2) - (sigma_up**2)
+    if sigma_down_sq < -1e-12:
+        raise RuntimeError(
+            "Ancestral sigma conversion produced negative sigma_down^2 "
+            f"(sigma_from={sigma_from}, sigma_to={sigma_to}, sigma_up={sigma_up})."
+        )
+    sigma_down = math.sqrt(max(sigma_down_sq, 0.0))
+    return sigma_down, sigma_up
 
 
 class _PrecisionFallbackRequest(Exception):
@@ -98,6 +298,13 @@ _GUIDANCE_ALLOWED_KEYS = {
 _FULL_DENOISE_THRESHOLD = 0.9999
 _MAX_DENOISE_REBUILD_STEPS = 10000
 _ER_SDE_CONST_SNR_PERCENT_OFFSET = 1e-4
+_SEEDS_2_DEFAULT_ETA = 1.0
+_SEEDS_2_DEFAULT_S_NOISE = 1.0
+_SEEDS_2_DEFAULT_R = 0.5
+_SEEDS_3_DEFAULT_ETA = 1.0
+_SEEDS_3_DEFAULT_S_NOISE = 1.0
+_SEEDS_3_DEFAULT_R_1 = 1.0 / 3.0
+_SEEDS_3_DEFAULT_R_2 = 2.0 / 3.0
 
 
 def _read_env_text(name: str) -> str | None:
@@ -267,12 +474,12 @@ def _resolve_guidance_policy(processing: Any) -> dict[str, Any] | None:
     }
 
 class CodexSampler:
-    """Minimal native sampler for txt2img using an Euler ODE loop.
+    """Native sampler for diffusion runtimes with strict runtime contracts.
 
     - Uses the model's predictor to derive a sigma schedule from sigma_max→sigma_min.
     - Calls `sampling_function_inner` (CFG and condition assembly) each step.
     - Updates `backend_state` for progress reporting.
-    - No ancestral noise yet; samplers other than Euler will be added iteratively.
+    - Implements k-diffusion anchored sampler families and dedicated native solver variants.
     """
 
     def __init__(self, sd_model: Any, *, algorithm: str | None = None) -> None:
@@ -512,35 +719,73 @@ class CodexSampler:
         return torch.exp(-half_log_snr)
 
     @staticmethod
-    def _solve_uni_pc_bh2_corrector_rhos(*, rk: float, hh: float) -> tuple[float, float]:
-        if not math.isfinite(rk):
-            raise RuntimeError(f"UNI_PC_BH2 received non-finite rk={rk}")
+    def _resolve_uni_pc_bh_coefficients(
+        *,
+        order: int,
+        previous_rks: list[float],
+        hh: float,
+        variant: str,
+    ) -> tuple[float, list[float] | None, list[float]]:
+        if order <= 0:
+            raise RuntimeError(f"UNI_PC coefficient solve requires order >= 1; got {order}.")
         if not math.isfinite(hh):
-            raise RuntimeError(f"UNI_PC_BH2 received non-finite hh={hh}")
+            raise RuntimeError(f"UNI_PC coefficient solve received non-finite hh={hh}.")
         if abs(hh) <= 1e-12:
-            raise RuntimeError("UNI_PC_BH2 cannot solve corrector coefficients with hh≈0.")
-
-        b_h = math.expm1(hh)
-        if abs(b_h) <= 1e-12:
-            raise RuntimeError("UNI_PC_BH2 cannot solve corrector coefficients with B_h≈0.")
-
-        h_phi_k = (b_h / hh) - 1.0
-        b1 = h_phi_k / b_h
-        h_phi_k = (h_phi_k / hh) - 0.5
-        b2 = (2.0 * h_phi_k) / b_h
-
-        denominator = rk - 1.0
-        if abs(denominator) <= 1e-12:
-            raise RuntimeError("UNI_PC_BH2 cannot solve corrector coefficients with rk≈1.")
-
-        rho_prev = (b2 - b1) / denominator
-        rho_curr = b1 - rho_prev
-        if not math.isfinite(rho_prev) or not math.isfinite(rho_curr):
+            raise RuntimeError("UNI_PC coefficient solve cannot proceed with hh≈0.")
+        if variant not in {"bh1", "bh2"}:
+            raise RuntimeError(f"UNI_PC coefficient solve received unsupported variant={variant!r}.")
+        if len(previous_rks) != max(0, order - 1):
             raise RuntimeError(
-                "UNI_PC_BH2 corrector coefficients became non-finite "
-                f"(rk={rk}, hh={hh}, rho_prev={rho_prev}, rho_curr={rho_curr})."
+                "UNI_PC coefficient solve received inconsistent rk history "
+                f"(order={order}, previous_rks={previous_rks})."
             )
-        return rho_prev, rho_curr
+        for rk in previous_rks:
+            if not math.isfinite(rk):
+                raise RuntimeError(f"UNI_PC coefficient solve received non-finite rk={rk}.")
+
+        b_h = hh if variant == "bh1" else math.expm1(hh)
+        if abs(b_h) <= 1e-12:
+            raise RuntimeError("UNI_PC coefficient solve cannot proceed with B_h≈0.")
+
+        if order == 1:
+            return b_h, None, [0.5]
+
+        rks = [*previous_rks, 1.0]
+        h_phi_k = (math.expm1(hh) / hh) - 1.0
+        factorial_i = 1.0
+        rows: list[list[float]] = []
+        rhs: list[float] = []
+        for power in range(1, order + 1):
+            rows.append([rk ** (power - 1) for rk in rks])
+            rhs.append((h_phi_k * factorial_i) / b_h)
+            factorial_i *= float(power + 1)
+            h_phi_k = (h_phi_k / hh) - (1.0 / factorial_i)
+
+        matrix = torch.tensor(rows, dtype=torch.float64)
+        vector = torch.tensor(rhs, dtype=torch.float64)
+        try:
+            if order == 2:
+                predictor = [0.5]
+            else:
+                predictor = torch.linalg.solve(matrix[:-1, :-1], vector[:-1]).tolist()
+            corrector = torch.linalg.solve(matrix, vector).tolist()
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "UNI_PC coefficient solve failed "
+                f"(variant={variant}, order={order}, hh={hh}, previous_rks={previous_rks})."
+            ) from exc
+
+        if not all(math.isfinite(value) for value in predictor):
+            raise RuntimeError(
+                "UNI_PC predictor coefficients became non-finite "
+                f"(variant={variant}, order={order}, predictor={predictor})."
+            )
+        if not all(math.isfinite(value) for value in corrector):
+            raise RuntimeError(
+                "UNI_PC corrector coefficients became non-finite "
+                f"(variant={variant}, order={order}, corrector={corrector})."
+            )
+        return b_h, predictor, corrector
 
     @staticmethod
     def _clone_noise_settings(settings: NoiseSettings) -> NoiseSettings:
@@ -711,6 +956,26 @@ class CodexSampler:
             try:
                 allow_vae_resident = False
                 preview_interval = 0
+                res_multistep_cfg_pp_capture: torch.Tensor | None = None
+                res_multistep_cfg_pp_saved_post_cfg_functions: list[Any] | None = None
+                res_multistep_cfg_pp_disable_cfg1_missing = object()
+                res_multistep_cfg_pp_saved_disable_cfg1: Any = res_multistep_cfg_pp_disable_cfg1_missing
+                gradient_estimation_cfg_pp_capture: torch.Tensor | None = None
+                gradient_estimation_cfg_pp_saved_post_cfg_functions: list[Any] | None = None
+                gradient_estimation_cfg_pp_disable_cfg1_missing = object()
+                gradient_estimation_cfg_pp_saved_disable_cfg1: Any = gradient_estimation_cfg_pp_disable_cfg1_missing
+                euler_cfg_pp_capture: torch.Tensor | None = None
+                euler_cfg_pp_saved_post_cfg_functions: list[Any] | None = None
+                euler_cfg_pp_disable_cfg1_missing = object()
+                euler_cfg_pp_saved_disable_cfg1: Any = euler_cfg_pp_disable_cfg1_missing
+                dpm2m_cfg_pp_capture: torch.Tensor | None = None
+                dpm2m_cfg_pp_saved_post_cfg_functions: list[Any] | None = None
+                dpm2m_cfg_pp_disable_cfg1_missing = object()
+                dpm2m_cfg_pp_saved_disable_cfg1: Any = dpm2m_cfg_pp_disable_cfg1_missing
+                dpm2s_ancestral_cfg_pp_capture: torch.Tensor | None = None
+                dpm2s_ancestral_cfg_pp_saved_post_cfg_functions: list[Any] | None = None
+                dpm2s_ancestral_cfg_pp_disable_cfg1_missing = object()
+                dpm2s_ancestral_cfg_pp_saved_disable_cfg1: Any = dpm2s_ancestral_cfg_pp_disable_cfg1_missing
                 try:
                     if base_context is not None:
                         preview_interval = max(0, int(getattr(base_context, "preview_interval", 0) or 0))
@@ -746,6 +1011,15 @@ class CodexSampler:
                 sampling_prepare(denoiser, noise)
                 prepared = True
 
+                discard_penultimate_sigma = spec.kind in {
+                    SamplerKind.DPM2,
+                    SamplerKind.DPM2_ANCESTRAL,
+                    SamplerKind.UNI_PC,
+                    SamplerKind.UNI_PC_BH2,
+                }
+                requested_steps = int(steps)
+                schedule_steps = requested_steps + 1 if discard_penultimate_sigma else requested_steps
+
                 scheduler_name = getattr(processing, "scheduler", None)
                 if scheduler_name in (None, ""):
                     scheduler_name = spec.default_scheduler
@@ -761,7 +1035,7 @@ class CodexSampler:
                         self.sd_model,
                         sampler_name=self.algorithm,
                         scheduler_name=scheduler_name,
-                        steps=steps,
+                        steps=schedule_steps,
                         noise_source=getattr(processing, "noise_source", None),
                         eta_noise_seed_delta=int(getattr(processing, "eta_noise_seed_delta", 0) or 0),
                         height=(int(getattr(processing, "height", 0) or 0) or None),
@@ -774,7 +1048,7 @@ class CodexSampler:
 
                 # Keep sigma ladder in fp32 for numeric stability; casting to bf16/fp16
                 # quantizes the schedule and can produce severe quality regressions.
-                steps = int(active_context.steps)
+                schedule_steps = int(active_context.steps)
                 if normalized_denoise is None:
                     sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
                 else:
@@ -783,16 +1057,45 @@ class CodexSampler:
                         model=model,
                         active_context=active_context,
                         noise=noise,
-                        steps=steps,
+                        steps=schedule_steps,
                         denoise_strength=normalized_denoise,
                     )
 
                 if sigmas.ndim != 1 or int(sigmas.numel()) < 2:
                     raise RuntimeError(f"sigma schedule must be 1D with at least 2 entries; got shape={tuple(sigmas.shape)}")
-                if int(sigmas.numel()) != steps + 1:
+                sigma_count = int(sigmas.numel())
+                if sigma_count > schedule_steps + 1:
                     raise RuntimeError(
-                        f"sigma schedule length mismatch: got {int(sigmas.numel())}, expected {steps + 1} (steps={steps})"
+                        "sigma schedule length unexpectedly exceeds requested build length: "
+                        f"got {sigma_count}, max_expected {schedule_steps + 1} (schedule_steps={schedule_steps})."
                     )
+                if discard_penultimate_sigma:
+                    if sigma_count < 3:
+                        raise RuntimeError(
+                            f"Discard-penultimate samplers require at least 3 sigma entries; got {sigma_count}."
+                        )
+                    sigmas = torch.cat([sigmas[:-2], sigmas[-1:]])
+                sigma_count = int(sigmas.numel())
+                effective_steps = sigma_count - 1
+                if effective_steps <= 0:
+                    raise RuntimeError(
+                        f"sigma schedule must expose at least one denoise step; got sigma_count={sigma_count}."
+                    )
+                ddpm_beta_dedup = (
+                    active_context.sampler_kind is SamplerKind.DDPM and active_context.scheduler_name == "beta"
+                )
+                if effective_steps != requested_steps:
+                    if not ddpm_beta_dedup:
+                        raise RuntimeError(
+                            "post-adjust sigma schedule length mismatch: "
+                            f"got {sigma_count}, expected {requested_steps + 1} (requested_steps={requested_steps})."
+                        )
+                    if effective_steps > requested_steps:
+                        raise RuntimeError(
+                            "beta scheduler produced more steps than requested for ddpm: "
+                            f"requested_steps={requested_steps}, effective_steps={effective_steps}."
+                        )
+                steps = effective_steps
 
                 if self._log_sigmas or self._log_enabled:
                     schedule_first = float(sigmas[0]) if len(sigmas) > 0 else float("nan")
@@ -813,6 +1116,15 @@ class CodexSampler:
                 start_idx = int(start_at_step or 0)
                 start_idx = max(0, min(start_idx, steps - 1))
                 sigmas_run = sigmas[start_idx:]
+                restart_step_plan: list[RestartStepPlan] | None = None
+                if active_context.sampler_kind is SamplerKind.RESTART:
+                    if active_context.scheduler_name != "karras":
+                        raise RuntimeError(
+                            f"Restart requires scheduler 'karras'; got {active_context.scheduler_name!r}."
+                        )
+                    restart_step_plan = build_restart_step_plan(sigmas_run)
+                    if not restart_step_plan:
+                        raise RuntimeError("Restart planner produced an empty execution plan.")
                 if init_latent is not None:
                     x = init_latent + float(sigmas_run[0]) * noise
                 else:
@@ -867,7 +1179,7 @@ class CodexSampler:
                             for entry in compiled_uncond:
                                 entry["model_conds"]["c_concat"] = Condition(image_conditioning)
 
-                run_total_steps = steps - start_idx
+                run_total_steps = len(restart_step_plan) if restart_step_plan is not None else steps - start_idx
                 guidance_policy = _resolve_guidance_policy(processing)
                 if guidance_policy is None:
                     denoiser.model_options.pop(_GUIDANCE_POLICY_KEY, None)
@@ -966,15 +1278,50 @@ class CodexSampler:
 
                 old_denoised: Optional[torch.Tensor] = None
                 old_denoised_d: Optional[torch.Tensor] = None
+                gradient_estimation_prev_d: Optional[torch.Tensor] = None
                 t_prev: float | None = None
                 h_prev: float | None = None
                 eps_history: List[torch.Tensor] = []
-                uni_pc_bh2_prev_denoised: torch.Tensor | None = None
-                uni_pc_bh2_prev_lambda: float | None = None
+                deis_coefficients: tuple[tuple[float, ...], ...] | None = None
+                res_multistep_old_sigma_down: float | None = None
+                uni_pc_history_denoised: list[torch.Tensor] = []
+                uni_pc_history_lambdas: list[float] = []
+                uni_pc_order_cap = 1
                 er_sde_params: dict[str, Any] | None = None
                 er_sde_lambdas: torch.Tensor | None = None
                 er_sde_point_indices: torch.Tensor | None = None
+                sa_solver_sigmas: torch.Tensor | None = None
+                sa_solver_lambdas: torch.Tensor | None = None
+                sa_solver_tau_func: Callable[[float | torch.Tensor], float] | None = None
+                sa_solver_pred_list: list[torch.Tensor] = []
+                sa_solver_prev_noise: torch.Tensor | None = None
+                sa_solver_prev_h = 0.0
+                sa_solver_prev_tau_t = 0.0
+                sa_solver_predictor_order = SA_SOLVER_DEFAULT_PREDICTOR_ORDER
+                sa_solver_corrector_order = SA_SOLVER_DEFAULT_CORRECTOR_ORDER
+                sa_solver_s_noise = SA_SOLVER_DEFAULT_S_NOISE
+                sa_solver_simple_order_2 = SA_SOLVER_DEFAULT_SIMPLE_ORDER_2
+                sa_solver_use_pece = sampler_kind is SamplerKind.SA_SOLVER_PECE
+                sa_solver_lower_order_to_end = False
+                seeds2_sigmas: torch.Tensor | None = None
+                seeds2_lambdas: torch.Tensor | None = None
+                seeds2_eta = _SEEDS_2_DEFAULT_ETA
+                seeds2_s_noise = _SEEDS_2_DEFAULT_S_NOISE
+                seeds2_r = _SEEDS_2_DEFAULT_R
+                seeds3_sigmas: torch.Tensor | None = None
+                seeds3_lambdas: torch.Tensor | None = None
+                seeds3_eta = _SEEDS_3_DEFAULT_ETA
+                seeds3_s_noise = _SEEDS_3_DEFAULT_S_NOISE
+                seeds3_r_1 = _SEEDS_3_DEFAULT_R_1
+                seeds3_r_2 = _SEEDS_3_DEFAULT_R_2
+                dpm2m_sde_sigmas: torch.Tensor | None = None
+                dpm2m_sde_lambdas: torch.Tensor | None = None
+                dpm2m_sde_eta = 1.0
+                dpm2m_sde_s_noise = 1.0
+                lms_sigmas_run: list[float] | None = None
                 seeded_step_rng: ImageRNG | None = None
+                if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+                    uni_pc_order_cap = max(1, min(3, int(sigmas_run.numel()) - 2))
                 if sampler_kind is SamplerKind.ER_SDE:
                     er_sde_params = self._resolve_er_sde_runtime_params(er_sde_options)
                     er_sde_lambdas = self._compute_er_sde_lambdas(
@@ -987,7 +1334,300 @@ class CodexSampler:
                         dtype=torch.float32,
                         device=x.device,
                     )
-                if sampler_kind in {SamplerKind.EULER_A, SamplerKind.ER_SDE}:
+                if sampler_kind is SamplerKind.DPM2M_SDE:
+                    if active_context.scheduler_name != "exponential":
+                        raise RuntimeError(
+                            f"DPM++ 2M SDE currently requires scheduler 'exponential'; got {active_context.scheduler_name!r}."
+                        )
+                    if not math.isfinite(dpm2m_sde_eta) or dpm2m_sde_eta < 0.0:
+                        raise RuntimeError(
+                            f"DPM++ 2M SDE default eta must be finite and >= 0; got {dpm2m_sde_eta!r}."
+                        )
+                    if not math.isfinite(dpm2m_sde_s_noise) or dpm2m_sde_s_noise < 0.0:
+                        raise RuntimeError(
+                            f"DPM++ 2M SDE default s_noise must be finite and >= 0; got {dpm2m_sde_s_noise!r}."
+                        )
+                    predictor = getattr(model, "predictor", None)
+                    dpm2m_sde_sigmas = offset_first_sigma_for_snr(
+                        sigmas_run,
+                        prediction_type=prediction_type,
+                        predictor=predictor,
+                    )
+                    dpm2m_sde_lambdas = sigma_to_half_log_snr(
+                        dpm2m_sde_sigmas,
+                        prediction_type=prediction_type,
+                    )
+                if sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
+                    if active_context.scheduler_name != "karras":
+                        raise RuntimeError(
+                            f"SA-Solver currently requires scheduler 'karras'; got {active_context.scheduler_name!r}."
+                        )
+                    predictor = getattr(model, "predictor", None)
+                    if predictor is None:
+                        raise RuntimeError(
+                            "SA-Solver requires model.predictor to construct the default tau interval."
+                        )
+                    sa_solver_sigmas = offset_first_sigma_for_snr(
+                        sigmas_run,
+                        prediction_type=prediction_type,
+                        predictor=predictor,
+                    )
+                    sa_solver_lambdas = sigma_to_half_log_snr(
+                        sa_solver_sigmas,
+                        prediction_type=prediction_type,
+                    )
+                    percent_to_sigma = getattr(predictor, "percent_to_sigma", None)
+                    if not callable(percent_to_sigma):
+                        raise RuntimeError(
+                            "SA-Solver requires predictor.percent_to_sigma(...) to construct the default tau interval."
+                        )
+                    start_sigma = float(percent_to_sigma(0.2))
+                    end_sigma = float(percent_to_sigma(0.8))
+                    sa_solver_tau_func = get_tau_interval_func(
+                        start_sigma,
+                        end_sigma,
+                        eta=SA_SOLVER_DEFAULT_ETA,
+                    )
+                    sa_solver_lower_order_to_end = bool(float(sa_solver_sigmas[-1]) == 0.0)
+                if sampler_kind is SamplerKind.SEEDS_2:
+                    if active_context.scheduler_name != "karras":
+                        raise RuntimeError(
+                            f"SEEDS-2 currently requires scheduler 'karras'; got {active_context.scheduler_name!r}."
+                        )
+                    if not math.isfinite(seeds2_eta) or seeds2_eta < 0.0:
+                        raise RuntimeError(f"SEEDS-2 default eta must be finite and >= 0; got {seeds2_eta!r}.")
+                    if not math.isfinite(seeds2_s_noise) or seeds2_s_noise < 0.0:
+                        raise RuntimeError(
+                            f"SEEDS-2 default s_noise must be finite and >= 0; got {seeds2_s_noise!r}."
+                        )
+                    if not math.isfinite(seeds2_r) or not (0.0 < seeds2_r <= 1.0):
+                        raise RuntimeError(f"SEEDS-2 default r must be finite and in (0, 1]; got {seeds2_r!r}.")
+                    predictor = getattr(model, "predictor", None)
+                    seeds2_sigmas = offset_first_sigma_for_snr(
+                        sigmas_run,
+                        prediction_type=prediction_type,
+                        predictor=predictor,
+                    )
+                    seeds2_lambdas = sigma_to_half_log_snr(
+                        seeds2_sigmas,
+                        prediction_type=prediction_type,
+                    )
+                if sampler_kind is SamplerKind.SEEDS_3:
+                    if active_context.scheduler_name != "karras":
+                        raise RuntimeError(
+                            f"SEEDS-3 currently requires scheduler 'karras'; got {active_context.scheduler_name!r}."
+                        )
+                    if not math.isfinite(seeds3_eta) or seeds3_eta < 0.0:
+                        raise RuntimeError(f"SEEDS-3 default eta must be finite and >= 0; got {seeds3_eta!r}.")
+                    if not math.isfinite(seeds3_s_noise) or seeds3_s_noise < 0.0:
+                        raise RuntimeError(
+                            f"SEEDS-3 default s_noise must be finite and >= 0; got {seeds3_s_noise!r}."
+                        )
+                    if not math.isfinite(seeds3_r_1) or not (0.0 < seeds3_r_1 < 1.0):
+                        raise RuntimeError(
+                            f"SEEDS-3 default r_1 must be finite and in (0, 1); got {seeds3_r_1!r}."
+                        )
+                    if not math.isfinite(seeds3_r_2) or not (0.0 < seeds3_r_2 <= 1.0):
+                        raise RuntimeError(
+                            f"SEEDS-3 default r_2 must be finite and in (0, 1]; got {seeds3_r_2!r}."
+                        )
+                    if not (seeds3_r_1 < seeds3_r_2):
+                        raise RuntimeError(
+                            f"SEEDS-3 default ratios must satisfy r_1 < r_2; got r_1={seeds3_r_1!r} r_2={seeds3_r_2!r}."
+                        )
+                    predictor = getattr(model, "predictor", None)
+                    seeds3_sigmas = offset_first_sigma_for_snr(
+                        sigmas_run,
+                        prediction_type=prediction_type,
+                        predictor=predictor,
+                    )
+                    seeds3_lambdas = sigma_to_half_log_snr(
+                        seeds3_sigmas,
+                        prediction_type=prediction_type,
+                    )
+                if sampler_kind is SamplerKind.LMS:
+                    lms_sigmas_run = [float(value) for value in sigmas_run.detach().cpu().tolist()]
+                if sampler_kind is SamplerKind.DEIS:
+                    deis_coefficients = build_deis_coefficients(sigmas_run, max_order=3)
+                if sampler_kind in {
+                    SamplerKind.RES_MULTISTEP_CFG_PP,
+                    SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+                }:
+                    res_multistep_cfg_pp_saved_post_cfg_functions = list(
+                        denoiser.model_options.get("sampler_post_cfg_function", [])
+                    )
+                    res_multistep_cfg_pp_saved_disable_cfg1 = denoiser.model_options.get(
+                        "disable_cfg1_optimization",
+                        res_multistep_cfg_pp_disable_cfg1_missing,
+                    )
+
+                    def _capture_res_multistep_cfg_pp(args: Mapping[str, Any]) -> torch.Tensor:
+                        nonlocal res_multistep_cfg_pp_capture
+                        denoised_payload = args.get("denoised")
+                        if not isinstance(denoised_payload, torch.Tensor):
+                            raise RuntimeError(
+                                "Residual multistep cfg++ post-CFG hook requires tensor `denoised` output."
+                            )
+                        uncond_denoised = args.get("uncond_denoised")
+                        if not isinstance(uncond_denoised, torch.Tensor):
+                            raise RuntimeError(
+                                "Residual multistep cfg++ requires tensor `uncond_denoised` capture from sampler post-CFG hook."
+                            )
+                        res_multistep_cfg_pp_capture = uncond_denoised
+                        return denoised_payload
+
+                    denoiser.model_options["sampler_post_cfg_function"] = list(
+                        res_multistep_cfg_pp_saved_post_cfg_functions
+                    )
+                    set_model_options_post_cfg_function(
+                        denoiser.model_options,
+                        _capture_res_multistep_cfg_pp,
+                        disable_cfg1_optimization=True,
+                    )
+                if sampler_kind is SamplerKind.GRADIENT_ESTIMATION_CFG_PP:
+                    gradient_estimation_cfg_pp_saved_post_cfg_functions = list(
+                        denoiser.model_options.get("sampler_post_cfg_function", [])
+                    )
+                    gradient_estimation_cfg_pp_saved_disable_cfg1 = denoiser.model_options.get(
+                        "disable_cfg1_optimization",
+                        gradient_estimation_cfg_pp_disable_cfg1_missing,
+                    )
+
+                    def _capture_gradient_estimation_cfg_pp(args: Mapping[str, Any]) -> torch.Tensor:
+                        nonlocal gradient_estimation_cfg_pp_capture
+                        denoised_payload = args.get("denoised")
+                        if not isinstance(denoised_payload, torch.Tensor):
+                            raise RuntimeError(
+                                "Gradient estimation cfg++ post-CFG hook requires tensor `denoised` output."
+                            )
+                        uncond_denoised = args.get("uncond_denoised")
+                        if not isinstance(uncond_denoised, torch.Tensor):
+                            raise RuntimeError(
+                                "Gradient estimation cfg++ requires tensor `uncond_denoised` capture from sampler post-CFG hook."
+                            )
+                        gradient_estimation_cfg_pp_capture = uncond_denoised
+                        return denoised_payload
+
+                    denoiser.model_options["sampler_post_cfg_function"] = list(
+                        gradient_estimation_cfg_pp_saved_post_cfg_functions
+                    )
+                    set_model_options_post_cfg_function(
+                        denoiser.model_options,
+                        _capture_gradient_estimation_cfg_pp,
+                        disable_cfg1_optimization=True,
+                    )
+                if sampler_kind in {SamplerKind.EULER_CFG_PP, SamplerKind.EULER_A_CFG_PP}:
+                    euler_cfg_pp_saved_post_cfg_functions = list(
+                        denoiser.model_options.get("sampler_post_cfg_function", [])
+                    )
+                    euler_cfg_pp_saved_disable_cfg1 = denoiser.model_options.get(
+                        "disable_cfg1_optimization",
+                        euler_cfg_pp_disable_cfg1_missing,
+                    )
+
+                    def _capture_euler_cfg_pp(args: Mapping[str, Any]) -> torch.Tensor:
+                        nonlocal euler_cfg_pp_capture
+                        denoised_payload = args.get("denoised")
+                        if not isinstance(denoised_payload, torch.Tensor):
+                            raise RuntimeError(
+                                "Euler cfg++ post-CFG hook requires tensor `denoised` output."
+                            )
+                        uncond_denoised = args.get("uncond_denoised")
+                        if not isinstance(uncond_denoised, torch.Tensor):
+                            raise RuntimeError(
+                                "Euler cfg++ requires tensor `uncond_denoised` capture from sampler post-CFG hook."
+                            )
+                        euler_cfg_pp_capture = uncond_denoised
+                        return denoised_payload
+
+                    denoiser.model_options["sampler_post_cfg_function"] = list(
+                        euler_cfg_pp_saved_post_cfg_functions
+                    )
+                    set_model_options_post_cfg_function(
+                        denoiser.model_options,
+                        _capture_euler_cfg_pp,
+                        disable_cfg1_optimization=True,
+                    )
+                if sampler_kind is SamplerKind.DPM2M_CFG_PP:
+                    dpm2m_cfg_pp_saved_post_cfg_functions = list(
+                        denoiser.model_options.get("sampler_post_cfg_function", [])
+                    )
+                    dpm2m_cfg_pp_saved_disable_cfg1 = denoiser.model_options.get(
+                        "disable_cfg1_optimization",
+                        dpm2m_cfg_pp_disable_cfg1_missing,
+                    )
+
+                    def _capture_dpm2m_cfg_pp(args: Mapping[str, Any]) -> torch.Tensor:
+                        nonlocal dpm2m_cfg_pp_capture
+                        denoised_payload = args.get("denoised")
+                        if not isinstance(denoised_payload, torch.Tensor):
+                            raise RuntimeError(
+                                "DPM++ 2M cfg++ post-CFG hook requires tensor `denoised` output."
+                            )
+                        uncond_denoised = args.get("uncond_denoised")
+                        if not isinstance(uncond_denoised, torch.Tensor):
+                            raise RuntimeError(
+                                "DPM++ 2M cfg++ requires tensor `uncond_denoised` capture from sampler post-CFG hook."
+                            )
+                        dpm2m_cfg_pp_capture = uncond_denoised
+                        return denoised_payload
+
+                    denoiser.model_options["sampler_post_cfg_function"] = list(
+                        dpm2m_cfg_pp_saved_post_cfg_functions
+                    )
+                    set_model_options_post_cfg_function(
+                        denoiser.model_options,
+                        _capture_dpm2m_cfg_pp,
+                        disable_cfg1_optimization=True,
+                    )
+                if sampler_kind is SamplerKind.DPM2S_ANCESTRAL_CFG_PP:
+                    dpm2s_ancestral_cfg_pp_saved_post_cfg_functions = list(
+                        denoiser.model_options.get("sampler_post_cfg_function", [])
+                    )
+                    dpm2s_ancestral_cfg_pp_saved_disable_cfg1 = denoiser.model_options.get(
+                        "disable_cfg1_optimization",
+                        dpm2s_ancestral_cfg_pp_disable_cfg1_missing,
+                    )
+
+                    def _capture_dpm2s_ancestral_cfg_pp(args: Mapping[str, Any]) -> torch.Tensor:
+                        nonlocal dpm2s_ancestral_cfg_pp_capture
+                        denoised_payload = args.get("denoised")
+                        if not isinstance(denoised_payload, torch.Tensor):
+                            raise RuntimeError(
+                                "DPM++ 2S ancestral cfg++ post-CFG hook requires tensor `denoised` output."
+                            )
+                        uncond_denoised = args.get("uncond_denoised")
+                        if not isinstance(uncond_denoised, torch.Tensor):
+                            raise RuntimeError(
+                                "DPM++ 2S ancestral cfg++ requires tensor `uncond_denoised` capture from sampler post-CFG hook."
+                            )
+                        dpm2s_ancestral_cfg_pp_capture = uncond_denoised
+                        return denoised_payload
+
+                    denoiser.model_options["sampler_post_cfg_function"] = list(
+                        dpm2s_ancestral_cfg_pp_saved_post_cfg_functions
+                    )
+                    set_model_options_post_cfg_function(
+                        denoiser.model_options,
+                        _capture_dpm2s_ancestral_cfg_pp,
+                        disable_cfg1_optimization=True,
+                    )
+                if sampler_kind in {
+                    SamplerKind.EULER_A,
+                    SamplerKind.EULER_A_CFG_PP,
+                    SamplerKind.DDPM,
+                    SamplerKind.ER_SDE,
+                    SamplerKind.DPM2M_SDE,
+                    SamplerKind.DPM2_ANCESTRAL,
+                    SamplerKind.DPM2S_ANCESTRAL,
+                    SamplerKind.DPM2S_ANCESTRAL_CFG_PP,
+                    SamplerKind.RES_MULTISTEP_ANCESTRAL,
+                    SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+                    SamplerKind.SA_SOLVER,
+                    SamplerKind.SA_SOLVER_PECE,
+                    SamplerKind.SEEDS_2,
+                    SamplerKind.SEEDS_3,
+                }:
                     seeded_step_rng = self._build_seeded_step_rng(
                         processing=processing,
                         active_context=active_context,
@@ -997,11 +1637,46 @@ class CodexSampler:
                         sigma_skip_next = float(sigmas[skip_index + 1])
                         if sigma_skip_next <= 0.0:
                             continue
+                        if sampler_kind is SamplerKind.DPM2M_SDE:
+                            if dpm2m_sde_lambdas is None:
+                                raise RuntimeError("DPM++ 2M SDE seeded noise RNG setup missing half-logSNR state.")
+                            if dpm2m_sde_eta <= 0.0 or dpm2m_sde_s_noise <= 0.0:
+                                continue
+                            lambda_skip_s = float(dpm2m_sde_lambdas[skip_index])
+                            lambda_skip_t = float(dpm2m_sde_lambdas[skip_index + 1])
+                            h_skip = lambda_skip_t - lambda_skip_s
+                            if not math.isfinite(h_skip) or h_skip <= 0.0:
+                                raise RuntimeError(
+                                    "DPM++ 2M SDE skip-burn produced an invalid half-logSNR step size "
+                                    f"h={h_skip} at skip_index={skip_index}."
+                                )
+                            noise_scale_sq = -math.expm1(-2.0 * h_skip * dpm2m_sde_eta)
+                            if noise_scale_sq < -1e-8:
+                                raise RuntimeError(
+                                    "DPM++ 2M SDE skip-burn produced a negative stochastic noise scale "
+                                    f"({noise_scale_sq}) at skip_index={skip_index}."
+                                )
+                            if noise_scale_sq <= 0.0:
+                                continue
                         if sampler_kind is SamplerKind.ER_SDE:
                             if er_sde_params is None:
                                 raise RuntimeError("ER-SDE seeded noise RNG setup missing runtime parameters.")
                             if float(er_sde_params["s_noise"]) <= 0.0:
                                 continue
+                        if sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
+                            if sa_solver_tau_func is None:
+                                raise RuntimeError("SA-Solver seeded noise RNG setup missing tau interval function.")
+                            if float(sa_solver_tau_func(sigma_skip_next)) <= 0.0:
+                                continue
+                        if sampler_kind is SamplerKind.SEEDS_2:
+                            if seeds2_s_noise <= 0.0:
+                                continue
+                            seeded_step_rng.next()
+                        if sampler_kind is SamplerKind.SEEDS_3:
+                            if seeds3_s_noise <= 0.0:
+                                continue
+                            seeded_step_rng.next()
+                            seeded_step_rng.next()
                         seeded_step_rng.next()
 
                 def _dpm_sigma_from_time(time_value: torch.Tensor) -> torch.Tensor:
@@ -1041,6 +1716,20 @@ class CodexSampler:
                             "DPM solver sigma bounds must be finite "
                             f"(sigma_max={sigma_max_value}, sigma_min={sigma_min_value})."
                         )
+
+                def _cfg_pp_alpha_from_sigma(sigma_value: float) -> float:
+                    if not math.isfinite(sigma_value) or sigma_value < 0.0:
+                        raise RuntimeError(f"CFG++ alpha requires a finite non-negative sigma; got {sigma_value!r}.")
+                    if prediction_type == "const":
+                        sigma_safe = min(max(sigma_value, 1e-6), 1.0 - 1e-6)
+                        alpha_value = 1.0 - sigma_safe
+                    else:
+                        alpha_value = 1.0
+                    if not math.isfinite(alpha_value) or alpha_value <= 0.0:
+                        raise RuntimeError(
+                            f"CFG++ alpha projection produced an invalid value {alpha_value!r} for sigma={sigma_value!r}."
+                        )
+                    return alpha_value
                     if sigma_max_value <= 0.0 or sigma_min_value <= 0.0:
                         raise RuntimeError(
                             "DPM solver sigma bounds must be > 0 "
@@ -1776,18 +2465,71 @@ class CodexSampler:
                         )
                     return latent_state, start_time
 
+                def _run_native_restart(
+                    latent_state: torch.Tensor,
+                    *,
+                    start_time: float,
+                ) -> tuple[torch.Tensor, float]:
+                    if restart_step_plan is None:
+                        raise RuntimeError("Restart runner missing execution plan.")
+                    restart_s_noise = 1.0
+                    restart_step_rng: ImageRNG | None = None
+                    if any(step.renoise_scale > 0.0 for step in restart_step_plan):
+                        restart_step_rng = self._build_seeded_step_rng(
+                            processing=processing,
+                            active_context=active_context,
+                            noise=base_noise,
+                        )
+                    for current_step, step_plan in enumerate(restart_step_plan, start=1):
+                        if backend_state.should_stop:
+                            raise _SamplingCancelled("cancelled")
+                        if step_plan.renoise_scale > 0.0:
+                            if restart_step_rng is None:
+                                raise RuntimeError(
+                                    "Restart execution planned renoise events without a deterministic step RNG."
+                                )
+                            restart_noise = self._next_seeded_step_noise(restart_step_rng, latent_state)
+                            latent_state = latent_state + restart_noise * restart_s_noise * step_plan.renoise_scale
+                        model_input, denoised_output, epsilon_output = _dpm_eval_eps(
+                            latent_state,
+                            sigma_value=step_plan.sigma_current,
+                            current_step=current_step,
+                            step_total=run_total_steps,
+                        )
+                        sigma_delta = step_plan.sigma_next - step_plan.sigma_current
+                        if step_plan.sigma_next == 0.0:
+                            latent_state = model_input + sigma_delta * epsilon_output
+                        else:
+                            euler_state = model_input + sigma_delta * epsilon_output
+                            _, _, epsilon_candidate = _dpm_eval_eps(
+                                euler_state,
+                                sigma_value=step_plan.sigma_next,
+                                current_step=current_step,
+                                step_total=run_total_steps,
+                            )
+                            latent_state = model_input + 0.5 * sigma_delta * (epsilon_output + epsilon_candidate)
+                        start_time = _dpm_emit_step_callbacks(
+                            latent_state=latent_state,
+                            denoised_state=denoised_output,
+                            current_step=current_step,
+                            sigma_current=step_plan.sigma_current,
+                            sigma_next=step_plan.sigma_next,
+                            step_start_time=start_time,
+                        )
+                    return latent_state, start_time
+
                 with profiler.profile_run(profile_name, meta=profile_meta):
                     for i in range(start_idx, steps):
                         if backend_state.should_stop:
                             raise _SamplingCancelled("cancelled")
                         step_index = i - start_idx
-                        if sampler_kind in {SamplerKind.DPM_FAST, SamplerKind.DPM_ADAPTIVE}:
+                        if sampler_kind in {SamplerKind.DPM_FAST, SamplerKind.RESTART}:
                             if step_index != 0:
                                 break
                             if sampler_kind is SamplerKind.DPM_FAST:
                                 x, t0 = _run_native_dpm_fast(x, start_time=t0)
                             else:
-                                x, t0 = _run_native_dpm_adaptive(x, start_time=t0)
+                                x, t0 = _run_native_restart(x, start_time=t0)
                             break
                         backend_state.reset_sampling_blocks()
                         if guidance_policy is not None:
@@ -1795,6 +2537,34 @@ class CodexSampler:
                         with profiler.section(f"sampling.step/{step_index + 1}"):
                             sigma = sigmas[i]
                             sigma_next = sigmas[i + 1]
+                            if sampler_kind is SamplerKind.SEEDS_2:
+                                if seeds2_sigmas is None:
+                                    raise RuntimeError("SEEDS-2 missing adjusted sigma schedule.")
+                                sigma = seeds2_sigmas[step_index]
+                                sigma_next = seeds2_sigmas[step_index + 1]
+                            if sampler_kind is SamplerKind.SEEDS_3:
+                                if seeds3_sigmas is None:
+                                    raise RuntimeError("SEEDS-3 missing adjusted sigma schedule.")
+                                sigma = seeds3_sigmas[step_index]
+                                sigma_next = seeds3_sigmas[step_index + 1]
+                            if sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
+                                if sa_solver_sigmas is None:
+                                    raise RuntimeError("SA-Solver missing adjusted sigma schedule.")
+                                sigma = sa_solver_sigmas[step_index]
+                                sigma_next = sa_solver_sigmas[step_index + 1]
+                            if sampler_kind in {
+                                SamplerKind.RES_MULTISTEP_CFG_PP,
+                                SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+                            }:
+                                res_multistep_cfg_pp_capture = None
+                            if sampler_kind is SamplerKind.GRADIENT_ESTIMATION_CFG_PP:
+                                gradient_estimation_cfg_pp_capture = None
+                            if sampler_kind in {SamplerKind.EULER_CFG_PP, SamplerKind.EULER_A_CFG_PP}:
+                                euler_cfg_pp_capture = None
+                            if sampler_kind is SamplerKind.DPM2M_CFG_PP:
+                                dpm2m_cfg_pp_capture = None
+                            if sampler_kind is SamplerKind.DPM2S_ANCESTRAL_CFG_PP:
+                                dpm2s_ancestral_cfg_pp_capture = None
                             sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=torch.float32)
                             current_step = step_index + 1
 
@@ -1868,7 +2638,20 @@ class CodexSampler:
                                         f"{tuple(denoised.shape)}; expected {tuple(x.shape)}"
                                     )
 
-                            eps = (x - denoised) / max(float(sigma), 1e-8)
+                            eps_source = denoised
+                            if sampler_kind is SamplerKind.GRADIENT_ESTIMATION_CFG_PP:
+                                if gradient_estimation_cfg_pp_capture is None:
+                                    raise RuntimeError(
+                                        "Gradient estimation cfg++ requires uncond_denoised capture, "
+                                        "but the sampler post-CFG hook did not run."
+                                    )
+                                if tuple(gradient_estimation_cfg_pp_capture.shape) != tuple(x.shape):
+                                    raise RuntimeError(
+                                        "Gradient estimation cfg++ captured unexpected uncond_denoised shape "
+                                        f"{tuple(gradient_estimation_cfg_pp_capture.shape)}; expected {tuple(x.shape)}"
+                                    )
+                                eps_source = gradient_estimation_cfg_pp_capture
+                            eps = (x - eps_source) / max(float(sigma), 1e-8)
                             if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):
                                 reason = f"NaN detected at sampling step {i + 1}"
                                 self._logger.warning(
@@ -1894,8 +2677,81 @@ class CodexSampler:
                             if len(eps_history) > 4:
                                 eps_history.pop(0)
 
+                            def _evaluate_step_candidate(
+                                x_candidate: torch.Tensor,
+                                *,
+                                sigma_candidate: float,
+                            ) -> tuple[torch.Tensor, torch.Tensor]:
+                                sigma_candidate_batch = torch.full(
+                                    (x.shape[0],),
+                                    sigma_candidate,
+                                    device=x.device,
+                                    dtype=torch.float32,
+                                )
+                                candidate_input = x_candidate
+                                if pre_denoiser_hook is not None:
+                                    candidate_input = pre_denoiser_hook(
+                                        candidate_input,
+                                        sigma_candidate_batch,
+                                        current_step,
+                                        run_total_steps,
+                                    )
+                                    if not isinstance(candidate_input, torch.Tensor):
+                                        raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                                    if tuple(candidate_input.shape) != tuple(x.shape):
+                                        raise RuntimeError(
+                                            "pre_denoiser_hook returned unexpected shape "
+                                            f"{tuple(candidate_input.shape)}; expected {tuple(x.shape)}"
+                                        )
+                                denoised_candidate = sampling_function_inner(
+                                    model,
+                                    candidate_input,
+                                    sigma_candidate_batch,
+                                    compiled_uncond,
+                                    compiled_cond,
+                                    cfg_scale,
+                                    denoiser.model_options,
+                                    seed=None,
+                                    return_full=False,
+                                )
+                                if post_denoiser_hook is not None:
+                                    denoised_candidate = post_denoiser_hook(
+                                        denoised_candidate,
+                                        sigma_candidate_batch,
+                                        current_step,
+                                        run_total_steps,
+                                    )
+                                    if not isinstance(denoised_candidate, torch.Tensor):
+                                        raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                                    if tuple(denoised_candidate.shape) != tuple(candidate_input.shape):
+                                        raise RuntimeError(
+                                            "post_denoiser_hook returned unexpected shape "
+                                            f"{tuple(denoised_candidate.shape)}; expected {tuple(candidate_input.shape)}"
+                                        )
+                                return candidate_input, denoised_candidate
+
                             if sampler_kind is SamplerKind.EULER:
                                 x = x - (float(sigma) - float(sigma_next)) * eps
+                            elif sampler_kind is SamplerKind.EULER_CFG_PP:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if euler_cfg_pp_capture is None:
+                                    raise RuntimeError(
+                                        "Euler cfg++ requires uncond_denoised capture, "
+                                        "but the sampler post-CFG hook did not run."
+                                    )
+                                if tuple(euler_cfg_pp_capture.shape) != tuple(x.shape):
+                                    raise RuntimeError(
+                                        "Euler cfg++ captured unexpected uncond_denoised shape "
+                                        f"{tuple(euler_cfg_pp_capture.shape)}; expected {tuple(x.shape)}"
+                                    )
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                else:
+                                    alpha_s = _cfg_pp_alpha_from_sigma(sigma_f)
+                                    alpha_t = _cfg_pp_alpha_from_sigma(sigma_next_f)
+                                    d = (x - alpha_s * euler_cfg_pp_capture) / max(sigma_f, 1e-8)
+                                    x = alpha_t * denoised + sigma_next_f * d
                             elif sampler_kind is SamplerKind.EULER_A:
                                 sigma = float(sigma)
                                 sigma_next = float(sigma_next)
@@ -1940,6 +2796,580 @@ class CodexSampler:
                                         raise RuntimeError("Euler ancestral missing deterministic noise RNG.")
                                     noise = self._next_seeded_step_noise(seeded_step_rng, x)
                                     x = x + sigma_up * noise
+                            elif sampler_kind is SamplerKind.EULER_A_CFG_PP:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if euler_cfg_pp_capture is None:
+                                    raise RuntimeError(
+                                        "Euler ancestral cfg++ requires uncond_denoised capture, "
+                                        "but the sampler post-CFG hook did not run."
+                                    )
+                                if tuple(euler_cfg_pp_capture.shape) != tuple(x.shape):
+                                    raise RuntimeError(
+                                        "Euler ancestral cfg++ captured unexpected uncond_denoised shape "
+                                        f"{tuple(euler_cfg_pp_capture.shape)}; expected {tuple(x.shape)}"
+                                    )
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                else:
+                                    alpha_s = _cfg_pp_alpha_from_sigma(sigma_f)
+                                    alpha_t = _cfg_pp_alpha_from_sigma(sigma_next_f)
+                                    d = (x - alpha_s * euler_cfg_pp_capture) / max(sigma_f, 1e-8)
+                                    sigma_down_ratio, sigma_up_ratio = _compute_ancestral_sigmas(
+                                        sigma_f / alpha_s,
+                                        sigma_next_f / alpha_t,
+                                        eta=1.0,
+                                    )
+                                    sigma_down = alpha_t * sigma_down_ratio
+                                    x = alpha_t * denoised + sigma_down * d
+                                    if seeded_step_rng is None:
+                                        raise RuntimeError("Euler ancestral cfg++ missing deterministic noise RNG.")
+                                    x = x + alpha_t * self._next_seeded_step_noise(seeded_step_rng, x) * sigma_up_ratio
+                            elif sampler_kind is SamplerKind.HEUN:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                dt = sigma_next_f - sigma_f
+                                if sigma_next_f <= 0.0:
+                                    x = x + eps * dt
+                                else:
+                                    x_2 = x + eps * dt
+                                    x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                        x_2,
+                                        sigma_candidate=sigma_next_f,
+                                    )
+                                    d_2 = (x_2_eval - denoised_2) / max(sigma_next_f, 1e-8)
+                                    x = x + 0.5 * (eps + d_2) * dt
+                            elif sampler_kind is SamplerKind.HEUNPP2:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                local_step_index = i - start_idx
+                                final_step_index = int(sigmas_run.numel()) - 1
+                                if final_step_index < 1:
+                                    raise RuntimeError("HEUNPP2 requires at least one sigma transition.")
+                                if sigma_f <= 0.0:
+                                    raise RuntimeError(
+                                        f"HEUNPP2 requires a strictly positive current sigma; got sigma={sigma_f}."
+                                    )
+                                dt = sigma_next_f - sigma_f
+                                if local_step_index + 1 == final_step_index:
+                                    x = x + eps * dt
+                                elif local_step_index + 2 == final_step_index:
+                                    if sigma_next_f <= 0.0:
+                                        raise RuntimeError(
+                                            "HEUNPP2 penultimate step requires a positive intermediate sigma before the terminal zero."
+                                        )
+                                    x_2 = x + eps * dt
+                                    x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                        x_2,
+                                        sigma_candidate=sigma_next_f,
+                                    )
+                                    d_2 = (x_2_eval - denoised_2) / max(sigma_next_f, 1e-8)
+                                    weight_scale = 2.0 * float(sigmas_run[0])
+                                    if not math.isfinite(weight_scale) or weight_scale <= 0.0:
+                                        raise RuntimeError(
+                                            f"HEUNPP2 produced invalid penultimate weight scale {weight_scale}."
+                                        )
+                                    w_2 = sigma_next_f / weight_scale
+                                    w_1 = 1.0 - w_2
+                                    x = x + (w_1 * eps + w_2 * d_2) * dt
+                                else:
+                                    sigma_next_next_f = float(sigmas_run[local_step_index + 2])
+                                    if sigma_next_f <= 0.0 or sigma_next_next_f <= 0.0:
+                                        raise RuntimeError(
+                                            "HEUNPP2 ordinary steps require two positive lookahead sigmas before the terminal zero "
+                                            f"(sigma_next={sigma_next_f}, sigma_next_next={sigma_next_next_f})."
+                                        )
+                                    x_2 = x + eps * dt
+                                    x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                        x_2,
+                                        sigma_candidate=sigma_next_f,
+                                    )
+                                    d_2 = (x_2_eval - denoised_2) / max(sigma_next_f, 1e-8)
+                                    dt_2 = sigma_next_next_f - sigma_next_f
+                                    x_3 = x_2 + d_2 * dt_2
+                                    x_3_eval, denoised_3 = _evaluate_step_candidate(
+                                        x_3,
+                                        sigma_candidate=sigma_next_next_f,
+                                    )
+                                    d_3 = (x_3_eval - denoised_3) / max(sigma_next_next_f, 1e-8)
+                                    weight_scale = 3.0 * float(sigmas_run[0])
+                                    if not math.isfinite(weight_scale) or weight_scale <= 0.0:
+                                        raise RuntimeError(
+                                            f"HEUNPP2 produced invalid ordinary-step weight scale {weight_scale}."
+                                        )
+                                    w_2 = sigma_next_f / weight_scale
+                                    w_3 = sigma_next_next_f / weight_scale
+                                    w_1 = 1.0 - w_2 - w_3
+                                    x = x + (w_1 * eps + w_2 * d_2 + w_3 * d_3) * dt
+                            elif sampler_kind is SamplerKind.LMS:
+                                if lms_sigmas_run is None:
+                                    raise RuntimeError("LMS sigma ladder cache is not initialized.")
+                                local_step_index = i - start_idx
+                                current_order = min(local_step_index + 1, _MAX_LMS_ORDER)
+                                sigma_nodes = [
+                                    float(lms_sigmas_run[local_step_index - offset]) for offset in range(current_order)
+                                ]
+                                sigma_target = float(lms_sigmas_run[local_step_index + 1])
+                                coeffs = _compute_lms_coefficients(sigma_nodes, sigma_target)
+                                derivatives = list(reversed(eps_history[-current_order:]))
+                                x = x + sum(coeff * derivative for coeff, derivative in zip(coeffs, derivatives))
+                            elif sampler_kind is SamplerKind.IPNDM:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                else:
+                                    x = x + (sigma_next_f - sigma_f) * _compute_ipndm_derivative(eps_history)
+                            elif sampler_kind is SamplerKind.IPNDM_V:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                else:
+                                    local_step_index = i - start_idx
+                                    x = x + (sigma_next_f - sigma_f) * _compute_ipndm_v_derivative(
+                                        sigmas_run,
+                                        local_step_index,
+                                        eps_history,
+                                    )
+                            elif sampler_kind is SamplerKind.DEIS:
+                                if deis_coefficients is None:
+                                    raise RuntimeError("DEIS coefficient cache is not initialized.")
+                                local_step_index = i - start_idx
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                order = min(3, local_step_index + 1)
+                                if sigma_next_f <= 0.0:
+                                    order = 1
+                                if order == 1:
+                                    x = x + (sigma_next_f - sigma_f) * eps
+                                else:
+                                    coeffs = deis_coefficients[local_step_index]
+                                    if len(coeffs) != order:
+                                        raise RuntimeError(
+                                            "DEIS coefficient order mismatch "
+                                            f"(step={local_step_index}, expected={order}, got={len(coeffs)})."
+                                        )
+                                    history_terms: list[torch.Tensor] = [eps]
+                                    history_terms.extend(reversed(eps_history[:-1]))
+                                    x = x + sum(coeff * term for coeff, term in zip(coeffs, history_terms))
+                            elif sampler_kind in {
+                                SamplerKind.RES_MULTISTEP,
+                                SamplerKind.RES_MULTISTEP_CFG_PP,
+                                SamplerKind.RES_MULTISTEP_ANCESTRAL,
+                                SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+                            }:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                res_multistep_cfg_pp = sampler_kind in {
+                                    SamplerKind.RES_MULTISTEP_CFG_PP,
+                                    SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+                                }
+                                res_multistep_eta = 1.0 if sampler_kind in {
+                                    SamplerKind.RES_MULTISTEP_ANCESTRAL,
+                                    SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+                                } else 0.0
+                                sigma_down, sigma_up = _compute_ancestral_sigmas(
+                                    sigma_f,
+                                    sigma_next_f,
+                                    eta=res_multistep_eta,
+                                )
+                                if sigma_down <= 0.0 or old_denoised is None or res_multistep_old_sigma_down is None:
+                                    if res_multistep_cfg_pp:
+                                        if res_multistep_cfg_pp_capture is None:
+                                            raise RuntimeError(
+                                                "Residual multistep cfg++ requires uncond_denoised capture, "
+                                                "but the sampler post-CFG hook did not run."
+                                            )
+                                        if tuple(res_multistep_cfg_pp_capture.shape) != tuple(x.shape):
+                                            raise RuntimeError(
+                                                "Residual multistep cfg++ captured unexpected uncond_denoised shape "
+                                                f"{tuple(res_multistep_cfg_pp_capture.shape)}; expected {tuple(x.shape)}"
+                                            )
+                                        uncond_eps = (x - res_multistep_cfg_pp_capture) / max(sigma_f, 1e-8)
+                                        x = denoised + uncond_eps * sigma_down
+                                    else:
+                                        x = x + (sigma_down - sigma_f) * eps
+                                else:
+                                    previous_sigma = float(sigmas[i - 1])
+                                    if sigma_f <= 0.0 or res_multistep_old_sigma_down <= 0.0 or previous_sigma <= 0.0:
+                                        raise RuntimeError(
+                                            "Residual multistep second-order update requires strictly positive "
+                                            f"sigmas (sigma={sigma_f}, old_sigma_down={res_multistep_old_sigma_down}, previous_sigma={previous_sigma})."
+                                        )
+                                    t = -math.log(sigma_f)
+                                    t_old = -math.log(res_multistep_old_sigma_down)
+                                    t_next = -math.log(sigma_down)
+                                    t_prev_local = -math.log(previous_sigma)
+                                    h = t_next - t
+                                    if abs(h) <= 1e-12:
+                                        raise RuntimeError(
+                                            "Residual multistep second-order update received degenerate step size "
+                                            f"(sigma={sigma_f}, sigma_down={sigma_down})."
+                                        )
+                                    c2 = (t_prev_local - t_old) / h
+                                    phi_arg = -h
+                                    phi1_val = math.expm1(phi_arg) / phi_arg if abs(phi_arg) > 1e-12 else 1.0
+                                    phi2_val = (phi1_val - 1.0) / phi_arg if abs(phi_arg) > 1e-12 else 0.5
+                                    if abs(c2) <= 1e-12 or not math.isfinite(c2):
+                                        b1 = 0.0
+                                        b2 = 0.0
+                                    else:
+                                        b1 = phi1_val - (phi2_val / c2)
+                                        b2 = phi2_val / c2
+                                        if not math.isfinite(b1):
+                                            b1 = 0.0
+                                        if not math.isfinite(b2):
+                                            b2 = 0.0
+                                    if res_multistep_cfg_pp:
+                                        if res_multistep_cfg_pp_capture is None:
+                                            raise RuntimeError(
+                                                "Residual multistep cfg++ requires uncond_denoised capture, "
+                                                "but the sampler post-CFG hook did not run."
+                                            )
+                                        if tuple(res_multistep_cfg_pp_capture.shape) != tuple(x.shape):
+                                            raise RuntimeError(
+                                                "Residual multistep cfg++ captured unexpected uncond_denoised shape "
+                                                f"{tuple(res_multistep_cfg_pp_capture.shape)}; expected {tuple(x.shape)}"
+                                            )
+                                        x = x + (denoised - res_multistep_cfg_pp_capture)
+                                        x = math.exp(-h) * x + h * (
+                                            b1 * res_multistep_cfg_pp_capture + b2 * old_denoised
+                                        )
+                                    else:
+                                        x = math.exp(-h) * x + h * (b1 * denoised + b2 * old_denoised)
+                                if sigma_next_f > 0.0 and sigma_up > 0.0:
+                                    if seeded_step_rng is None:
+                                        raise RuntimeError(
+                                            "Residual multistep ancestral variants require deterministic step noise RNG."
+                                        )
+                                    x = x + self._next_seeded_step_noise(seeded_step_rng, x) * sigma_up
+                                if res_multistep_cfg_pp:
+                                    if res_multistep_cfg_pp_capture is None:
+                                        raise RuntimeError(
+                                            "Residual multistep cfg++ requires uncond_denoised capture, "
+                                            "but the sampler post-CFG hook did not run."
+                                        )
+                                    old_denoised = res_multistep_cfg_pp_capture.detach()
+                                else:
+                                    old_denoised = denoised.detach()
+                                res_multistep_old_sigma_down = sigma_down
+                            elif sampler_kind in {
+                                SamplerKind.GRADIENT_ESTIMATION,
+                                SamplerKind.GRADIENT_ESTIMATION_CFG_PP,
+                            }:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                dt = sigma_next_f - sigma_f
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                else:
+                                    if sampler_kind is SamplerKind.GRADIENT_ESTIMATION_CFG_PP:
+                                        x = denoised + eps * sigma_next_f
+                                    else:
+                                        x = x + eps * dt
+                                    if gradient_estimation_prev_d is not None:
+                                        x = x + (eps - gradient_estimation_prev_d) * dt
+                                gradient_estimation_prev_d = eps.detach()
+                            elif sampler_kind is SamplerKind.DDPM:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "DDPM requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f <= 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "DDPM requires a strictly positive current sigma and a non-negative next sigma "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                sigma_tensor = torch.as_tensor(sigma_f, device=x.device, dtype=x.dtype)
+                                sigma_next_tensor = torch.as_tensor(sigma_next_f, device=x.device, dtype=x.dtype)
+                                alpha_cumprod = 1.0 / ((sigma_tensor * sigma_tensor) + 1.0)
+                                alpha_cumprod_prev = 1.0 / ((sigma_next_tensor * sigma_next_tensor) + 1.0)
+                                alpha_cumprod_value = float(alpha_cumprod.item())
+                                alpha_cumprod_prev_value = float(alpha_cumprod_prev.item())
+                                if (
+                                    not math.isfinite(alpha_cumprod_value)
+                                    or not math.isfinite(alpha_cumprod_prev_value)
+                                    or alpha_cumprod_value <= 0.0
+                                    or alpha_cumprod_prev_value <= 0.0
+                                ):
+                                    raise RuntimeError(
+                                        "DDPM produced invalid alpha_cumprod values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                alpha = alpha_cumprod / alpha_cumprod_prev
+                                alpha_value = float(alpha.item())
+                                if not math.isfinite(alpha_value) or alpha_value <= 0.0:
+                                    raise RuntimeError(
+                                        "DDPM produced invalid alpha ratio "
+                                        f"(alpha_cumprod={alpha_cumprod_value}, alpha_cumprod_prev={alpha_cumprod_prev_value})."
+                                    )
+                                one_minus_alpha_cumprod = 1.0 - alpha_cumprod
+                                one_minus_alpha_cumprod_value = float(one_minus_alpha_cumprod.item())
+                                if one_minus_alpha_cumprod_value <= 0.0 or not math.isfinite(one_minus_alpha_cumprod_value):
+                                    raise RuntimeError(
+                                        "DDPM produced non-positive 1-alpha_cumprod denominator "
+                                        f"(alpha_cumprod={alpha_cumprod_value})."
+                                    )
+                                mean = torch.sqrt(1.0 / alpha) * (
+                                    x / torch.sqrt(1.0 + sigma_tensor * sigma_tensor)
+                                    - (1.0 - alpha) * eps / torch.sqrt(one_minus_alpha_cumprod)
+                                )
+                                if sigma_next_f > 0.0:
+                                    variance = (1.0 - alpha) * (1.0 - alpha_cumprod_prev) / one_minus_alpha_cumprod
+                                    variance_value = float(variance.item())
+                                    if not math.isfinite(variance_value) or variance_value < -1e-12:
+                                        raise RuntimeError(
+                                            "DDPM produced negative variance "
+                                            f"(alpha={alpha_value}, alpha_cumprod={alpha_cumprod_value}, "
+                                            f"alpha_cumprod_prev={alpha_cumprod_prev_value})."
+                                        )
+                                    if seeded_step_rng is None:
+                                        raise RuntimeError("DDPM missing deterministic noise RNG.")
+                                    mean = (
+                                        mean
+                                        + self._next_seeded_step_noise(seeded_step_rng, x)
+                                        * torch.sqrt(torch.clamp(variance, min=0.0))
+                                    )
+                                    x = mean * torch.sqrt(1.0 + sigma_next_tensor * sigma_next_tensor)
+                                else:
+                                    x = mean
+                            elif sampler_kind is SamplerKind.DPM2:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if sigma_next_f <= 0.0:
+                                    x = x + eps * (sigma_next_f - sigma_f)
+                                else:
+                                    sigma_mid = math.exp((math.log(max(sigma_f, 1e-12)) + math.log(max(sigma_next_f, 1e-12))) * 0.5)
+                                    x_2 = x + eps * (sigma_mid - sigma_f)
+                                    x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                        x_2,
+                                        sigma_candidate=sigma_mid,
+                                    )
+                                    d_2 = (x_2_eval - denoised_2) / max(sigma_mid, 1e-8)
+                                    x = x + d_2 * (sigma_next_f - sigma_f)
+                            elif sampler_kind is SamplerKind.DPM2_ANCESTRAL:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if prediction_type == "const":
+                                    if sigma_next_f <= 0.0:
+                                        x = x + eps * (sigma_next_f - sigma_f)
+                                    else:
+                                        if sigma_f <= 0.0:
+                                            raise RuntimeError(
+                                                "DPM2 ancestral RF/CONST requires sigma > 0 before the terminal step."
+                                            )
+                                        downstep_ratio = 1.0 + (sigma_next_f / sigma_f - 1.0) * 1.0
+                                        sigma_down = sigma_next_f * downstep_ratio
+                                        alpha_ip1 = 1.0 - sigma_next_f
+                                        alpha_down = 1.0 - sigma_down
+                                        if abs(alpha_down) <= 1e-12:
+                                            raise RuntimeError(
+                                                "DPM2 ancestral RF/CONST produced alpha_down=0; cannot compute renoise term."
+                                            )
+                                        renoise_sq = sigma_next_f**2 - sigma_down**2 * alpha_ip1**2 / alpha_down**2
+                                        if renoise_sq < -1e-12:
+                                            raise RuntimeError(
+                                                "DPM2 ancestral RF/CONST produced negative renoise variance."
+                                            )
+                                        if sigma_down <= 0.0:
+                                            x = x + eps * (sigma_down - sigma_f)
+                                        else:
+                                            sigma_mid = math.exp(
+                                                (math.log(max(sigma_f, 1e-12)) + math.log(max(sigma_down, 1e-12))) * 0.5
+                                            )
+                                            x_2 = x + eps * (sigma_mid - sigma_f)
+                                            x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                                x_2,
+                                                sigma_candidate=sigma_mid,
+                                            )
+                                            d_2 = (x_2_eval - denoised_2) / max(sigma_mid, 1e-8)
+                                            x = x + d_2 * (sigma_down - sigma_f)
+                                            if seeded_step_rng is None:
+                                                raise RuntimeError("DPM2 ancestral RF/CONST missing deterministic noise RNG.")
+                                            x = (
+                                                (alpha_ip1 / alpha_down) * x
+                                                + self._next_seeded_step_noise(seeded_step_rng, x)
+                                                * math.sqrt(max(renoise_sq, 0.0))
+                                            )
+                                else:
+                                    sigma_down, sigma_up = _compute_ancestral_sigmas(sigma_f, sigma_next_f, eta=1.0)
+                                    if sigma_down <= 0.0:
+                                        x = x + eps * (sigma_down - sigma_f)
+                                    else:
+                                        sigma_mid = math.exp((math.log(max(sigma_f, 1e-12)) + math.log(max(sigma_down, 1e-12))) * 0.5)
+                                        x_2 = x + eps * (sigma_mid - sigma_f)
+                                        x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                            x_2,
+                                            sigma_candidate=sigma_mid,
+                                        )
+                                        d_2 = (x_2_eval - denoised_2) / max(sigma_mid, 1e-8)
+                                        x = x + d_2 * (sigma_down - sigma_f)
+                                        if sigma_next_f > 0.0:
+                                            if seeded_step_rng is None:
+                                                raise RuntimeError("DPM2 ancestral missing deterministic noise RNG.")
+                                            x = x + self._next_seeded_step_noise(seeded_step_rng, x) * sigma_up
+                            elif sampler_kind is SamplerKind.DPM2S_ANCESTRAL:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if prediction_type == "const":
+                                    if sigma_next_f <= 0.0:
+                                        x = x + eps * (sigma_next_f - sigma_f)
+                                    else:
+                                        if sigma_f <= 0.0:
+                                            raise RuntimeError(
+                                                "DPM++ 2S ancestral RF/CONST requires sigma > 0 before the terminal step."
+                                            )
+                                        downstep_ratio = 1.0 + (sigma_next_f / sigma_f - 1.0) * 1.0
+                                        sigma_down = sigma_next_f * downstep_ratio
+                                        alpha_ip1 = 1.0 - sigma_next_f
+                                        alpha_down = 1.0 - sigma_down
+                                        if abs(alpha_down) <= 1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 2S ancestral RF/CONST produced alpha_down=0; cannot compute renoise term."
+                                            )
+                                        renoise_sq = sigma_next_f**2 - sigma_down**2 * alpha_ip1**2 / alpha_down**2
+                                        if renoise_sq < -1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 2S ancestral RF/CONST produced negative renoise variance."
+                                            )
+                                        if math.isclose(sigma_f, 1.0):
+                                            sigma_s = 1.0 - _ER_SDE_CONST_SNR_PERCENT_OFFSET
+                                        else:
+                                            lambda_i = math.log(max(1.0 - sigma_f, 1e-12) / max(sigma_f, 1e-12))
+                                            lambda_down = math.log(max(1.0 - sigma_down, 1e-12) / max(sigma_down, 1e-12))
+                                            sigma_s = 1.0 / (math.exp(lambda_i + 0.5 * (lambda_down - lambda_i)) + 1.0)
+                                        u = (sigma_s / sigma_f) * x + (1.0 - sigma_s / sigma_f) * denoised
+                                        u_eval, denoised_2 = _evaluate_step_candidate(
+                                            u,
+                                            sigma_candidate=sigma_s,
+                                        )
+                                        x = (sigma_down / sigma_f) * x + (1.0 - sigma_down / sigma_f) * denoised_2
+                                        if seeded_step_rng is None:
+                                            raise RuntimeError("DPM++ 2S ancestral RF/CONST missing deterministic noise RNG.")
+                                        x = (
+                                            (alpha_ip1 / alpha_down) * x
+                                            + self._next_seeded_step_noise(seeded_step_rng, x) * math.sqrt(max(renoise_sq, 0.0))
+                                        )
+                                else:
+                                    sigma_down, sigma_up = _compute_ancestral_sigmas(sigma_f, sigma_next_f, eta=1.0)
+                                    if sigma_down <= 0.0:
+                                        x = x + eps * (sigma_down - sigma_f)
+                                    else:
+                                        t = -math.log(max(sigma_f, 1e-12))
+                                        t_next = -math.log(max(sigma_down, 1e-12))
+                                        h = t_next - t
+                                        sigma_s = math.exp(-(t + 0.5 * h))
+                                        x_2 = (sigma_s / sigma_f) * x - math.expm1(-0.5 * h) * denoised
+                                        x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                            x_2,
+                                            sigma_candidate=sigma_s,
+                                        )
+                                        x = (sigma_down / sigma_f) * x - math.expm1(-h) * denoised_2
+                                        if sigma_next_f > 0.0:
+                                            if seeded_step_rng is None:
+                                                raise RuntimeError("DPM++ 2S ancestral missing deterministic noise RNG.")
+                                            x = x + self._next_seeded_step_noise(seeded_step_rng, x) * sigma_up
+                            elif sampler_kind is SamplerKind.DPM2S_ANCESTRAL_CFG_PP:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if dpm2s_ancestral_cfg_pp_capture is None:
+                                    raise RuntimeError(
+                                        "DPM++ 2S ancestral cfg++ requires uncond_denoised capture, "
+                                        "but the sampler post-CFG hook did not run."
+                                    )
+                                if tuple(dpm2s_ancestral_cfg_pp_capture.shape) != tuple(x.shape):
+                                    raise RuntimeError(
+                                        "DPM++ 2S ancestral cfg++ captured unexpected uncond_denoised shape "
+                                        f"{tuple(dpm2s_ancestral_cfg_pp_capture.shape)}; expected {tuple(x.shape)}"
+                                    )
+                                uncond_denoised = dpm2s_ancestral_cfg_pp_capture
+                                if prediction_type == "const":
+                                    if sigma_next_f <= 0.0:
+                                        x = denoised
+                                    else:
+                                        if sigma_f <= 0.0:
+                                            raise RuntimeError(
+                                                "DPM++ 2S ancestral cfg++ RF/CONST requires sigma > 0 before the terminal step."
+                                            )
+                                        downstep_ratio = 1.0 + (sigma_next_f / sigma_f - 1.0) * 1.0
+                                        sigma_down = sigma_next_f * downstep_ratio
+                                        alpha_ip1 = 1.0 - sigma_next_f
+                                        alpha_down = 1.0 - sigma_down
+                                        if abs(alpha_down) <= 1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 2S ancestral cfg++ RF/CONST produced alpha_down=0; cannot compute renoise term."
+                                            )
+                                        renoise_sq = sigma_next_f**2 - sigma_down**2 * alpha_ip1**2 / alpha_down**2
+                                        if renoise_sq < -1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 2S ancestral cfg++ RF/CONST produced negative renoise variance."
+                                            )
+                                        if sigma_down <= 0.0:
+                                            d_uncond = (x - uncond_denoised) / max(sigma_f, 1e-8)
+                                            x = denoised + d_uncond * sigma_down
+                                        else:
+                                            if math.isclose(sigma_f, 1.0):
+                                                sigma_s = 1.0 - _ER_SDE_CONST_SNR_PERCENT_OFFSET
+                                            else:
+                                                lambda_bounds = sigma_to_half_log_snr(
+                                                    torch.tensor(
+                                                        [sigma_f, sigma_down],
+                                                        dtype=torch.float32,
+                                                        device=x.device,
+                                                    ),
+                                                    prediction_type=prediction_type,
+                                                )
+                                                lambda_mid = lambda_bounds[0] + 0.5 * (
+                                                    lambda_bounds[1] - lambda_bounds[0]
+                                                )
+                                                sigma_mid_tensor = half_log_snr_to_sigma(
+                                                    lambda_mid.reshape(1),
+                                                    prediction_type=prediction_type,
+                                                )
+                                                sigma_s = float(sigma_mid_tensor[0].item())
+                                            x_shifted = x + (denoised - uncond_denoised)
+                                            u = (sigma_s / sigma_f) * x_shifted + (1.0 - sigma_s / sigma_f) * denoised
+                                            u_eval, denoised_2 = _evaluate_step_candidate(
+                                                u,
+                                                sigma_candidate=sigma_s,
+                                            )
+                                            x = (sigma_down / sigma_f) * x_shifted + (1.0 - sigma_down / sigma_f) * denoised_2
+                                            if seeded_step_rng is None:
+                                                raise RuntimeError(
+                                                    "DPM++ 2S ancestral cfg++ RF/CONST missing deterministic noise RNG."
+                                                )
+                                            x = (
+                                                (alpha_ip1 / alpha_down) * x
+                                                + self._next_seeded_step_noise(seeded_step_rng, x)
+                                                * math.sqrt(max(renoise_sq, 0.0))
+                                            )
+                                else:
+                                    sigma_down, sigma_up = _compute_ancestral_sigmas(sigma_f, sigma_next_f, eta=1.0)
+                                    if sigma_down <= 0.0:
+                                        d_uncond = (x - uncond_denoised) / max(sigma_f, 1e-8)
+                                        x = denoised + d_uncond * sigma_down
+                                    else:
+                                        t = -math.log(max(sigma_f, 1e-12))
+                                        t_next = -math.log(max(sigma_down, 1e-12))
+                                        h = t_next - t
+                                        sigma_s = math.exp(-(t + 0.5 * h))
+                                        x_shifted = x + (denoised - uncond_denoised)
+                                        x_2 = (sigma_s / sigma_f) * x_shifted - math.expm1(-0.5 * h) * denoised
+                                        x_2_eval, denoised_2 = _evaluate_step_candidate(
+                                            x_2,
+                                            sigma_candidate=sigma_s,
+                                        )
+                                        x = (sigma_down / sigma_f) * x_shifted - math.expm1(-h) * denoised_2
+                                        if sigma_next_f > 0.0:
+                                            if seeded_step_rng is None:
+                                                raise RuntimeError(
+                                                    "DPM++ 2S ancestral cfg++ missing deterministic noise RNG."
+                                                )
+                                            x = x + self._next_seeded_step_noise(seeded_step_rng, x) * sigma_up
                             elif sampler_kind is SamplerKind.DPM2M:
                                 # DPM-Solver++(2M) in log-sigma time (reference update form).
                                 sigma_f = float(sigma)
@@ -1961,33 +3391,119 @@ class CodexSampler:
                                         x = (sigma_next_f / sigma_f) * x - math.expm1(-h) * denoised_d
                                     old_denoised = denoised.detach()
                                     t_prev = t
-                            elif sampler_kind is SamplerKind.DPM2M_SDE:
-                                # DPM-Solver++(2M) SDE (midpoint) in log-sigma time.
-                                # This is a conservative native approximation (no BrownianTree),
-                                # but matches the core update form.
+                            elif sampler_kind is SamplerKind.DPM2M_CFG_PP:
                                 sigma_f = float(sigma)
                                 sigma_next_f = float(sigma_next)
+                                if dpm2m_cfg_pp_capture is None:
+                                    raise RuntimeError(
+                                        "DPM++ 2M cfg++ requires uncond_denoised capture, "
+                                        "but the sampler post-CFG hook did not run."
+                                    )
+                                if tuple(dpm2m_cfg_pp_capture.shape) != tuple(x.shape):
+                                    raise RuntimeError(
+                                        "DPM++ 2M cfg++ captured unexpected uncond_denoised shape "
+                                        f"{tuple(dpm2m_cfg_pp_capture.shape)}; expected {tuple(x.shape)}"
+                                    )
                                 if sigma_next_f <= 0.0:
+                                    x = denoised
+                                    old_denoised = dpm2m_cfg_pp_capture.detach()
+                                    t_prev = None
+                                else:
+                                    t = -math.log(max(sigma_f, 1e-12))
+                                    t_next = -math.log(max(sigma_next_f, 1e-12))
+                                    h = t_next - t
+                                    exp_neg_h = math.exp(-h)
+                                    if old_denoised is None or t_prev is None:
+                                        denoised_mix = -exp_neg_h * dpm2m_cfg_pp_capture
+                                    else:
+                                        h_last = t - t_prev
+                                        r = h_last / h if abs(h) > 1e-12 else 1.0
+                                        denoised_mix = (
+                                            -exp_neg_h * dpm2m_cfg_pp_capture
+                                            - math.expm1(-h) * (1.0 / (2.0 * r)) * (denoised - old_denoised)
+                                        )
+                                    x = denoised + denoised_mix + exp_neg_h * x
+                                    old_denoised = dpm2m_cfg_pp_capture.detach()
+                                    t_prev = t
+                            elif sampler_kind is SamplerKind.DPM2M_SDE:
+                                if dpm2m_sde_sigmas is None or dpm2m_sde_lambdas is None:
+                                    raise RuntimeError("DPM++ 2M SDE missing initialized half-logSNR runtime state.")
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "DPM++ 2M SDE requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f <= 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "DPM++ 2M SDE requires a strictly positive current sigma and a non-negative next sigma "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_next_f == 0.0:
                                     x = denoised
                                     old_denoised = denoised.detach()
                                     h_prev = None
                                 else:
-                                    t = -math.log(max(sigma_f, 1e-12))
-                                    s = -math.log(max(sigma_next_f, 1e-12))
-                                    h = s - t
-                                    eta = 1.0
-                                    s_noise = 1.0
-                                    eta_h = eta * h
-                                    phi = -math.expm1(-h - eta_h)  # 1 - exp(-h-eta*h)
-                                    x = (sigma_next_f / sigma_f) * math.exp(-eta_h) * x + phi * denoised
+                                    lambda_s = dpm2m_sde_lambdas[step_index]
+                                    lambda_t = dpm2m_sde_lambdas[step_index + 1]
+                                    h = lambda_t - lambda_s
+                                    h_f = float(h)
+                                    if not math.isfinite(h_f) or h_f <= 0.0:
+                                        raise RuntimeError(
+                                            "DPM++ 2M SDE produced an invalid half-logSNR step size "
+                                            f"h={h_f} at step={step_index + 1}."
+                                        )
+                                    h_eta = h * (dpm2m_sde_eta + 1.0)
+                                    alpha_t = dpm2m_sde_sigmas[step_index + 1] * lambda_t.exp()
+                                    alpha_t_f = float(alpha_t)
+                                    if not math.isfinite(alpha_t_f) or alpha_t_f <= 0.0:
+                                        raise RuntimeError(
+                                            "DPM++ 2M SDE produced an invalid alpha_t value "
+                                            f"alpha_t={alpha_t_f} at step={step_index + 1}."
+                                        )
+                                    phi_1 = -ei_h_phi_1(-h_eta)
+                                    if not bool(torch.isfinite(phi_1)):
+                                        raise RuntimeError(
+                                            f"DPM++ 2M SDE produced a non-finite phi_1 value at step={step_index + 1}."
+                                        )
+                                    x = (sigma_next_f / sigma_f) * math.exp(-h_f * dpm2m_sde_eta) * x + alpha_t * phi_1 * denoised
                                     if old_denoised is not None and h_prev is not None:
-                                        r = h_prev / h if abs(h) > 1e-12 else 1.0
-                                        x = x + 0.5 * phi * (1.0 / r) * (denoised - old_denoised)
-                                    if eta != 0.0:
-                                        noise_scale = sigma_next_f * math.sqrt(max(-math.expm1(-2.0 * eta_h), 0.0)) * s_noise
-                                        x = x + torch.randn_like(x) * noise_scale
+                                        if not math.isfinite(h_prev) or abs(h_prev) <= 1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 2M SDE correction term requires a finite non-zero previous step size "
+                                                f"(h_prev={h_prev}) at step={step_index + 1}."
+                                            )
+                                        r = h_prev / h_f
+                                        if not math.isfinite(r) or abs(r) <= 1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 2M SDE correction term produced an invalid step ratio "
+                                                f"r={r} at step={step_index + 1}."
+                                            )
+                                        x = x + 0.5 * alpha_t * phi_1 * (1.0 / r) * (denoised - old_denoised)
+                                    if dpm2m_sde_eta > 0.0 and dpm2m_sde_s_noise > 0.0:
+                                        noise_scale_sq = -math.expm1(-2.0 * h_f * dpm2m_sde_eta)
+                                        if noise_scale_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "DPM++ 2M SDE produced a negative stochastic noise scale "
+                                                f"({noise_scale_sq}) at step={step_index + 1}."
+                                            )
+                                        noise_scale = math.sqrt(max(noise_scale_sq, 0.0))
+                                        if not math.isfinite(noise_scale):
+                                            raise RuntimeError(
+                                                f"DPM++ 2M SDE produced a non-finite stochastic scale at step={step_index + 1}."
+                                            )
+                                        if noise_scale > 0.0:
+                                            if seeded_step_rng is None:
+                                                raise RuntimeError("DPM++ 2M SDE missing deterministic noise RNG.")
+                                            x = x + (
+                                                self._next_seeded_step_noise(seeded_step_rng, x)
+                                                * sigma_next_f
+                                                * noise_scale
+                                                * dpm2m_sde_s_noise
+                                            )
                                     old_denoised = denoised.detach()
-                                    h_prev = h
+                                    h_prev = h_f
                             elif sampler_kind is SamplerKind.ER_SDE:
                                 if er_sde_params is None or er_sde_lambdas is None or er_sde_point_indices is None:
                                     raise RuntimeError("ER-SDE runtime state is not initialized")
@@ -2129,160 +3645,600 @@ class CodexSampler:
                                             * noise_scale
                                         )
                                     old_denoised = denoised.detach()
-                            elif sampler_kind is SamplerKind.DDIM:
-                                x = denoised + float(sigma_next) * eps
-                            elif sampler_kind in (SamplerKind.PLMS, SamplerKind.PNDM):
-                                order = min(len(eps_history), 4)
-                                coeffs = _LMS_COEFFS[order]
-                                derivative = torch.zeros_like(x)
-                                for idx_coeff, coeff in enumerate(coeffs):
-                                    derivative = derivative + coeff * eps_history[-(idx_coeff + 1)]
-                                delta = float(sigma) - float(sigma_next)
-                                x = x - delta * derivative
-                            elif sampler_kind is SamplerKind.UNI_PC:
-                                delta = float(sigma) - float(sigma_next)
-                                x_pred = x - delta * eps
-                                sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
-                                if pre_denoiser_hook is not None:
-                                    x_pred = pre_denoiser_hook(x_pred, sigma_next_batch, current_step, run_total_steps)
-                                    if not isinstance(x_pred, torch.Tensor):
-                                        raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
-                                    if tuple(x_pred.shape) != tuple(x.shape):
-                                        raise RuntimeError(
-                                            "pre_denoiser_hook returned unexpected shape "
-                                            f"{tuple(x_pred.shape)}; expected {tuple(x.shape)}"
-                                        )
-                                denoised_next = sampling_function_inner(
-                                    model,
-                                    x_pred,
-                                    sigma_next_batch,
-                                    compiled_uncond,
-                                    compiled_cond,
-                                    cfg_scale,
-                                    denoiser.model_options,
-                                    seed=None,
-                                    return_full=False,
-                                )
-                                if post_denoiser_hook is not None:
-                                    denoised_next = post_denoiser_hook(denoised_next, sigma_next_batch, current_step, run_total_steps)
-                                    if not isinstance(denoised_next, torch.Tensor):
-                                        raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
-                                    if tuple(denoised_next.shape) != tuple(x_pred.shape):
-                                        raise RuntimeError(
-                                            "post_denoiser_hook returned unexpected shape "
-                                            f"{tuple(denoised_next.shape)}; expected {tuple(x_pred.shape)}"
-                                        )
-                                eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
-                                x = x - delta * 0.5 * (eps + eps_next)
-                            elif sampler_kind is SamplerKind.UNI_PC_BH2:
+                            elif sampler_kind is SamplerKind.SEEDS_2:
+                                if seeds2_sigmas is None or seeds2_lambdas is None:
+                                    raise RuntimeError("SEEDS-2 missing initialized half-logSNR runtime state.")
                                 sigma_f = float(sigma)
                                 sigma_next_f = float(sigma_next)
                                 if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
                                     raise RuntimeError(
-                                        "UNI_PC_BH2 requires finite sigma values "
+                                        "SEEDS-2 requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f <= 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "SEEDS-2 requires a strictly positive current sigma and a non-negative next sigma "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_next_f == 0.0:
+                                    x = denoised
+                                else:
+                                    lambda_s = seeds2_lambdas[step_index]
+                                    lambda_t = seeds2_lambdas[step_index + 1]
+                                    h = lambda_t - lambda_s
+                                    h_f = float(h)
+                                    if not math.isfinite(h_f) or h_f <= 0.0:
+                                        raise RuntimeError(
+                                            f"SEEDS-2 produced invalid half-logSNR step size h={h_f} at step={step_index + 1}."
+                                        )
+                                    h_eta = h * (seeds2_eta + 1.0)
+                                    lambda_s_1 = torch.lerp(lambda_s, lambda_t, seeds2_r)
+                                    sigma_s_1 = half_log_snr_to_sigma(
+                                        lambda_s_1,
+                                        prediction_type=prediction_type,
+                                    )
+                                    sigma_s_1_f = float(sigma_s_1)
+                                    if not math.isfinite(sigma_s_1_f) or sigma_s_1_f <= 0.0:
+                                        raise RuntimeError(
+                                            f"SEEDS-2 produced invalid intermediate sigma {sigma_s_1_f} at step={step_index + 1}."
+                                        )
+                                    alpha_s_1 = sigma_s_1 * lambda_s_1.exp()
+                                    alpha_t = seeds2_sigmas[step_index + 1] * lambda_t.exp()
+                                    if not bool(torch.isfinite(alpha_s_1)) or not bool(torch.isfinite(alpha_t)):
+                                        raise RuntimeError(
+                                            f"SEEDS-2 produced non-finite alpha values at step={step_index + 1}."
+                                        )
+
+                                    x_2 = (
+                                        (sigma_s_1_f / sigma_f) * math.exp(-seeds2_r * h_f * seeds2_eta) * x
+                                    ) - (alpha_s_1 * ei_h_phi_1(-seeds2_r * h_eta) * denoised)
+                                    if seeds2_s_noise > 0.0:
+                                        if seeded_step_rng is None:
+                                            raise RuntimeError("SEEDS-2 missing deterministic noise RNG.")
+                                        noise_scale_1_sq = -math.expm1(-2.0 * seeds2_r * h_f * seeds2_eta)
+                                        if noise_scale_1_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "SEEDS-2 produced a negative first stochastic noise scale "
+                                                f"({noise_scale_1_sq}) at step={step_index + 1}."
+                                            )
+                                        sde_noise = (
+                                            math.sqrt(max(noise_scale_1_sq, 0.0))
+                                            * self._next_seeded_step_noise(seeded_step_rng, x)
+                                        )
+                                        x_2 = x_2 + sde_noise * sigma_s_1_f * seeds2_s_noise
+                                    else:
+                                        sde_noise = None
+
+                                    _, denoised_2, _ = _dpm_eval_eps(
+                                        x_2,
+                                        sigma_value=sigma_s_1_f,
+                                        current_step=current_step,
+                                        step_total=run_total_steps,
+                                    )
+
+                                    denoised_d = torch.lerp(
+                                        denoised,
+                                        denoised_2,
+                                        1.0 / (2.0 * seeds2_r),
+                                    )
+                                    x = (
+                                        (sigma_next_f / sigma_f) * math.exp(-h_f * seeds2_eta) * x
+                                    ) - (alpha_t * ei_h_phi_1(-h_eta) * denoised_d)
+                                    if seeds2_s_noise > 0.0:
+                                        if seeded_step_rng is None or sde_noise is None:
+                                            raise RuntimeError("SEEDS-2 stochastic path lost deterministic noise state.")
+                                        segment_factor = (seeds2_r - 1.0) * h_f * seeds2_eta
+                                        noise_scale_2_sq = -math.expm1(2.0 * segment_factor)
+                                        if noise_scale_2_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "SEEDS-2 produced a negative second stochastic noise scale "
+                                                f"({noise_scale_2_sq}) at step={step_index + 1}."
+                                            )
+                                        sde_noise = (
+                                            sde_noise * math.exp(segment_factor)
+                                            + math.sqrt(max(noise_scale_2_sq, 0.0))
+                                            * self._next_seeded_step_noise(seeded_step_rng, x)
+                                        )
+                                        x = x + sde_noise * sigma_next_f * seeds2_s_noise
+                            elif sampler_kind is SamplerKind.SEEDS_3:
+                                if seeds3_sigmas is None or seeds3_lambdas is None:
+                                    raise RuntimeError("SEEDS-3 missing initialized half-logSNR runtime state.")
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "SEEDS-3 requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f <= 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "SEEDS-3 requires a strictly positive current sigma and a non-negative next sigma "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_next_f == 0.0:
+                                    x = denoised
+                                else:
+                                    lambda_s = seeds3_lambdas[step_index]
+                                    lambda_t = seeds3_lambdas[step_index + 1]
+                                    h = lambda_t - lambda_s
+                                    h_f = float(h)
+                                    if not math.isfinite(h_f) or h_f <= 0.0:
+                                        raise RuntimeError(
+                                            f"SEEDS-3 produced invalid half-logSNR step size h={h_f} at step={step_index + 1}."
+                                        )
+                                    h_eta = h * (seeds3_eta + 1.0)
+                                    lambda_s_1 = torch.lerp(lambda_s, lambda_t, seeds3_r_1)
+                                    lambda_s_2 = torch.lerp(lambda_s, lambda_t, seeds3_r_2)
+                                    sigma_s_1 = half_log_snr_to_sigma(
+                                        lambda_s_1,
+                                        prediction_type=prediction_type,
+                                    )
+                                    sigma_s_2 = half_log_snr_to_sigma(
+                                        lambda_s_2,
+                                        prediction_type=prediction_type,
+                                    )
+                                    sigma_s_1_f = float(sigma_s_1)
+                                    sigma_s_2_f = float(sigma_s_2)
+                                    if not math.isfinite(sigma_s_1_f) or sigma_s_1_f <= 0.0:
+                                        raise RuntimeError(
+                                            f"SEEDS-3 produced invalid first intermediate sigma {sigma_s_1_f} at step={step_index + 1}."
+                                        )
+                                    if not math.isfinite(sigma_s_2_f) or sigma_s_2_f <= 0.0:
+                                        raise RuntimeError(
+                                            f"SEEDS-3 produced invalid second intermediate sigma {sigma_s_2_f} at step={step_index + 1}."
+                                        )
+                                    alpha_s_1 = sigma_s_1 * lambda_s_1.exp()
+                                    alpha_s_2 = sigma_s_2 * lambda_s_2.exp()
+                                    alpha_t = seeds3_sigmas[step_index + 1] * lambda_t.exp()
+                                    if not bool(torch.isfinite(alpha_s_1)) or not bool(torch.isfinite(alpha_s_2)) or not bool(torch.isfinite(alpha_t)):
+                                        raise RuntimeError(
+                                            f"SEEDS-3 produced non-finite alpha values at step={step_index + 1}."
+                                        )
+
+                                    x_2 = (
+                                        (sigma_s_1_f / sigma_f) * math.exp(-seeds3_r_1 * h_f * seeds3_eta) * x
+                                    ) - (alpha_s_1 * ei_h_phi_1(-seeds3_r_1 * h_eta) * denoised)
+                                    if seeds3_s_noise > 0.0:
+                                        if seeded_step_rng is None:
+                                            raise RuntimeError("SEEDS-3 missing deterministic noise RNG.")
+                                        noise_scale_1_sq = -math.expm1(-2.0 * seeds3_r_1 * h_f * seeds3_eta)
+                                        if noise_scale_1_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "SEEDS-3 produced a negative first stochastic noise scale "
+                                                f"({noise_scale_1_sq}) at step={step_index + 1}."
+                                            )
+                                        sde_noise = (
+                                            math.sqrt(max(noise_scale_1_sq, 0.0))
+                                            * self._next_seeded_step_noise(seeded_step_rng, x)
+                                        )
+                                        x_2 = x_2 + sde_noise * sigma_s_1_f * seeds3_s_noise
+                                    else:
+                                        sde_noise = None
+
+                                    _, denoised_2, _ = _dpm_eval_eps(
+                                        x_2,
+                                        sigma_value=sigma_s_1_f,
+                                        current_step=current_step,
+                                        step_total=run_total_steps,
+                                    )
+
+                                    a3_2 = (seeds3_r_2 / seeds3_r_1) * ei_h_phi_2(-seeds3_r_2 * h_eta)
+                                    a3_1 = ei_h_phi_1(-seeds3_r_2 * h_eta) - a3_2
+                                    x_3 = (
+                                        (sigma_s_2_f / sigma_f) * math.exp(-seeds3_r_2 * h_f * seeds3_eta) * x
+                                    ) - (alpha_s_2 * (a3_1 * denoised + a3_2 * denoised_2))
+                                    if seeds3_s_noise > 0.0:
+                                        if seeded_step_rng is None or sde_noise is None:
+                                            raise RuntimeError("SEEDS-3 stochastic path lost deterministic noise state.")
+                                        segment_factor = (seeds3_r_1 - seeds3_r_2) * h_f * seeds3_eta
+                                        noise_scale_2_sq = -math.expm1(2.0 * segment_factor)
+                                        if noise_scale_2_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "SEEDS-3 produced a negative second stochastic noise scale "
+                                                f"({noise_scale_2_sq}) at step={step_index + 1}."
+                                            )
+                                        sde_noise = (
+                                            sde_noise * math.exp(segment_factor)
+                                            + math.sqrt(max(noise_scale_2_sq, 0.0))
+                                            * self._next_seeded_step_noise(seeded_step_rng, x)
+                                        )
+                                        x_3 = x_3 + sde_noise * sigma_s_2_f * seeds3_s_noise
+
+                                    _, denoised_3, _ = _dpm_eval_eps(
+                                        x_3,
+                                        sigma_value=sigma_s_2_f,
+                                        current_step=current_step,
+                                        step_total=run_total_steps,
+                                    )
+
+                                    b3 = ei_h_phi_2(-h_eta) / seeds3_r_2
+                                    b1 = ei_h_phi_1(-h_eta) - b3
+                                    x = (
+                                        (sigma_next_f / sigma_f) * math.exp(-h_f * seeds3_eta) * x
+                                    ) - (alpha_t * (b1 * denoised + b3 * denoised_3))
+                                    if seeds3_s_noise > 0.0:
+                                        if seeded_step_rng is None or sde_noise is None:
+                                            raise RuntimeError("SEEDS-3 stochastic path lost deterministic noise state.")
+                                        segment_factor = (seeds3_r_2 - 1.0) * h_f * seeds3_eta
+                                        noise_scale_3_sq = -math.expm1(2.0 * segment_factor)
+                                        if noise_scale_3_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "SEEDS-3 produced a negative third stochastic noise scale "
+                                                f"({noise_scale_3_sq}) at step={step_index + 1}."
+                                            )
+                                        sde_noise = (
+                                            sde_noise * math.exp(segment_factor)
+                                            + math.sqrt(max(noise_scale_3_sq, 0.0))
+                                            * self._next_seeded_step_noise(seeded_step_rng, x)
+                                        )
+                                        x = x + sde_noise * sigma_next_f * seeds3_s_noise
+                            elif sampler_kind is SamplerKind.DDIM:
+                                x = denoised + float(sigma_next) * eps
+                            elif sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
+                                if (
+                                    sa_solver_sigmas is None
+                                    or sa_solver_lambdas is None
+                                    or sa_solver_tau_func is None
+                                ):
+                                    raise RuntimeError("SA-Solver missing initialized runtime state.")
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "SA-Solver requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f <= 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "SA-Solver requires a strictly positive current sigma and a non-negative next sigma "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                max_used_order = max(sa_solver_predictor_order, sa_solver_corrector_order)
+                                sa_solver_pred_list.append(denoised.detach())
+                                sa_solver_pred_list = sa_solver_pred_list[-max_used_order:]
+                                predictor_order_used = min(sa_solver_predictor_order, len(sa_solver_pred_list))
+                                if step_index == 0 or (sigma_next_f == 0.0 and not sa_solver_use_pece):
+                                    corrector_order_used = 0
+                                else:
+                                    corrector_order_used = min(
+                                        sa_solver_corrector_order,
+                                        len(sa_solver_pred_list),
+                                    )
+                                if sa_solver_lower_order_to_end:
+                                    predictor_order_used = min(
+                                        predictor_order_used,
+                                        int(sa_solver_sigmas.numel()) - 2 - step_index,
+                                    )
+                                    corrector_order_used = min(
+                                        corrector_order_used,
+                                        int(sa_solver_sigmas.numel()) - 1 - step_index,
+                                    )
+
+                                x_current = x
+                                if corrector_order_used > 0:
+                                    prev_sigma_f = float(sa_solver_sigmas[step_index - 1])
+                                    if prev_sigma_f <= 0.0:
+                                        raise RuntimeError(
+                                            "SA-Solver corrector requires a strictly positive previous sigma "
+                                            f"(prev_sigma={prev_sigma_f})."
+                                        )
+                                    curr_lambdas = sa_solver_lambdas[
+                                        step_index - corrector_order_used + 1 : step_index + 1
+                                    ]
+                                    if int(curr_lambdas.numel()) != corrector_order_used:
+                                        raise RuntimeError(
+                                            "SA-Solver corrector history window mismatch "
+                                            f"(expected={corrector_order_used}, actual={int(curr_lambdas.numel())})."
+                                        )
+                                    b_coeffs = compute_stochastic_adams_b_coeffs(
+                                        sa_solver_sigmas[step_index],
+                                        curr_lambdas,
+                                        sa_solver_lambdas[step_index - 1],
+                                        sa_solver_lambdas[step_index],
+                                        sa_solver_prev_tau_t,
+                                        simple_order_2=sa_solver_simple_order_2,
+                                        is_corrector_step=True,
+                                    )
+                                    pred_mat = torch.stack(
+                                        sa_solver_pred_list[-corrector_order_used:],
+                                        dim=1,
+                                    )
+                                    corr_res = torch.tensordot(
+                                        pred_mat,
+                                        b_coeffs.to(device=pred_mat.device, dtype=pred_mat.dtype),
+                                        dims=([1], [0]),
+                                    )
+                                    x_current = (
+                                        (sigma_f / prev_sigma_f)
+                                        * math.exp(-(sa_solver_prev_tau_t**2) * sa_solver_prev_h)
+                                        * x
+                                    ) + corr_res
+                                    if sa_solver_prev_tau_t > 0.0 and sa_solver_s_noise > 0.0:
+                                        if sa_solver_prev_noise is None:
+                                            raise RuntimeError(
+                                                "SA-Solver corrector expected cached predictor noise from the previous step."
+                                            )
+                                        x_current = x_current + sa_solver_prev_noise
+                                    if sa_solver_use_pece:
+                                        corrected_state = x_current
+                                        if pre_denoiser_hook is not None:
+                                            corrected_state = pre_denoiser_hook(
+                                                corrected_state,
+                                                sigma_batch,
+                                                current_step,
+                                                run_total_steps,
+                                            )
+                                            if not isinstance(corrected_state, torch.Tensor):
+                                                raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                                            if tuple(corrected_state.shape) != tuple(x.shape):
+                                                raise RuntimeError(
+                                                    "pre_denoiser_hook returned unexpected shape "
+                                                    f"{tuple(corrected_state.shape)}; expected {tuple(x.shape)}"
+                                                )
+                                        denoised = sampling_function_inner(
+                                            model,
+                                            corrected_state,
+                                            sigma_batch,
+                                            compiled_uncond,
+                                            compiled_cond,
+                                            cfg_scale,
+                                            denoiser.model_options,
+                                            seed=None,
+                                            return_full=False,
+                                        )
+                                        if post_denoiser_hook is not None:
+                                            denoised = post_denoiser_hook(
+                                                denoised,
+                                                sigma_batch,
+                                                current_step,
+                                                run_total_steps,
+                                            )
+                                            if not isinstance(denoised, torch.Tensor):
+                                                raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                                            if tuple(denoised.shape) != tuple(corrected_state.shape):
+                                                raise RuntimeError(
+                                                    "post_denoiser_hook returned unexpected shape "
+                                                    f"{tuple(denoised.shape)}; expected {tuple(corrected_state.shape)}"
+                                                )
+                                        if strict and torch.isnan(denoised).any():
+                                            reason = f"NaN detected at sampling step {i + 1}"
+                                            self._logger.warning(
+                                                "NaN encountered at step %d with dtype=%s; attempting precision fallback.",
+                                                i + 1,
+                                                str(getattr(model, "computation_dtype", x.dtype)),
+                                            )
+                                            next_dtype = memory_management.manager.report_precision_failure(
+                                                DeviceRole.CORE,
+                                                location=f"sampler.step_{i + 1}",
+                                                reason=reason,
+                                            )
+                                            if next_dtype is None:
+                                                hint = memory_management.manager.precision_hint(DeviceRole.CORE)
+                                                raise RuntimeError(
+                                                    f"Diffusion core produced NaNs at step {i + 1} on {noise.device} "
+                                                    f"with dtype {getattr(model, 'computation_dtype', x.dtype)}. {hint}"
+                                                )
+                                            self._rebind_unet_precision(next_dtype)
+                                            retry = True
+                                            raise _PrecisionFallbackRequest
+                                        sa_solver_pred_list[-1] = denoised.detach()
+
+                                if sigma_next_f == 0.0:
+                                    x = denoised
+                                    sa_solver_prev_noise = None
+                                    sa_solver_prev_h = 0.0
+                                    sa_solver_prev_tau_t = 0.0
+                                else:
+                                    tau_t = float(sa_solver_tau_func(sigma_next_f))
+                                    if not math.isfinite(tau_t) or tau_t < 0.0:
+                                        raise RuntimeError(
+                                            f"SA-Solver produced invalid tau_t={tau_t} at step={step_index + 1}."
+                                        )
+                                    if predictor_order_used <= 0:
+                                        raise RuntimeError(
+                                            "SA-Solver predictor requires at least one history entry before the next sigma step."
+                                        )
+                                    curr_lambdas = sa_solver_lambdas[
+                                        step_index - predictor_order_used + 1 : step_index + 1
+                                    ]
+                                    if int(curr_lambdas.numel()) != predictor_order_used:
+                                        raise RuntimeError(
+                                            "SA-Solver predictor history window mismatch "
+                                            f"(expected={predictor_order_used}, actual={int(curr_lambdas.numel())})."
+                                        )
+                                    b_coeffs = compute_stochastic_adams_b_coeffs(
+                                        sa_solver_sigmas[step_index + 1],
+                                        curr_lambdas,
+                                        sa_solver_lambdas[step_index],
+                                        sa_solver_lambdas[step_index + 1],
+                                        tau_t,
+                                        simple_order_2=sa_solver_simple_order_2,
+                                        is_corrector_step=False,
+                                    )
+                                    pred_mat = torch.stack(
+                                        sa_solver_pred_list[-predictor_order_used:],
+                                        dim=1,
+                                    )
+                                    pred_res = torch.tensordot(
+                                        pred_mat,
+                                        b_coeffs.to(device=pred_mat.device, dtype=pred_mat.dtype),
+                                        dims=([1], [0]),
+                                    )
+                                    sa_solver_prev_h = float(
+                                        sa_solver_lambdas[step_index + 1] - sa_solver_lambdas[step_index]
+                                    )
+                                    if not math.isfinite(sa_solver_prev_h) or sa_solver_prev_h <= 0.0:
+                                        raise RuntimeError(
+                                            f"SA-Solver produced invalid step size h={sa_solver_prev_h} at step={step_index + 1}."
+                                        )
+                                    x = (
+                                        (sigma_next_f / sigma_f)
+                                        * math.exp(-(tau_t**2) * sa_solver_prev_h)
+                                        * x_current
+                                    ) + pred_res
+                                    if tau_t > 0.0 and sa_solver_s_noise > 0.0:
+                                        if seeded_step_rng is None:
+                                            raise RuntimeError("SA-Solver missing deterministic noise RNG.")
+                                        noise_scale_sq = -math.expm1(-2.0 * (tau_t**2) * sa_solver_prev_h)
+                                        if noise_scale_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "SA-Solver produced a negative stochastic noise scale "
+                                                f"({noise_scale_sq}) at step={step_index + 1}."
+                                            )
+                                        noise_scale = math.sqrt(max(noise_scale_sq, 0.0))
+                                        sa_solver_prev_noise = (
+                                            self._next_seeded_step_noise(seeded_step_rng, x)
+                                            * sigma_next_f
+                                            * noise_scale
+                                            * sa_solver_s_noise
+                                        )
+                                        x = x + sa_solver_prev_noise
+                                    else:
+                                        sa_solver_prev_noise = None
+                                    sa_solver_prev_tau_t = tau_t
+                            elif sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "UNI_PC requires finite sigma values "
                                         f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
                                     )
                                 if sigma_f < 0.0 or sigma_next_f < 0.0:
                                     raise RuntimeError(
-                                        "UNI_PC_BH2 requires non-negative sigmas "
+                                        "UNI_PC requires non-negative sigmas "
                                         f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
                                     )
+                                variant = "bh1" if sampler_kind is SamplerKind.UNI_PC else "bh2"
                                 if sigma_f == 0.0:
                                     if sigma_next_f > 0.0:
                                         raise RuntimeError(
-                                            "UNI_PC_BH2 encountered non-monotonic zero-to-positive sigma transition "
+                                            "UNI_PC encountered non-monotonic zero-to-positive sigma transition "
                                             f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
                                         )
                                     # SIMPLE/CONST flow ladders may end with a supported double-zero tail.
                                     # Treat the preterminal zero step as a terminal no-op.
                                     x = denoised
-                                    uni_pc_bh2_prev_denoised = denoised.detach()
-                                    uni_pc_bh2_prev_lambda = None
+                                    uni_pc_history_denoised = []
+                                    uni_pc_history_lambdas = []
                                 else:
-                                    sigma_ratio = sigma_next_f / sigma_f
+                                    sigma_solver_next = 1e-3 if sigma_next_f == 0.0 else sigma_next_f
+                                    sigma_ratio = sigma_solver_next / sigma_f
                                     if not math.isfinite(sigma_ratio):
                                         raise RuntimeError(
-                                            f"UNI_PC_BH2 produced non-finite sigma ratio: sigma={sigma_f}, sigma_next={sigma_next_f}"
+                                            f"UNI_PC produced non-finite sigma ratio: sigma={sigma_f}, sigma_next={sigma_next_f}"
                                         )
 
                                     lambda_s = -math.log(max(sigma_f, 1e-12))
-                                    lambda_t = -math.log(max(sigma_next_f, 1e-12))
+                                    lambda_t = -math.log(max(sigma_solver_next, 1e-12))
                                     h = lambda_t - lambda_s
                                     hh = -h
                                     if not math.isfinite(hh):
                                         raise RuntimeError(
-                                            f"UNI_PC_BH2 produced non-finite hh from sigma={sigma_f}, sigma_next={sigma_next_f}"
+                                            f"UNI_PC produced non-finite hh from sigma={sigma_f}, sigma_next={sigma_next_f}"
                                         )
-                                    b_h = math.expm1(hh)
+                                    current_history_denoised = [*uni_pc_history_denoised, denoised.detach()]
+                                    current_history_lambdas = [*uni_pc_history_lambdas, lambda_s]
+                                    local_step_index = i - start_idx
+                                    remaining_active_steps = max(1, run_total_steps - local_step_index)
+                                    step_order = min(
+                                        uni_pc_order_cap,
+                                        len(current_history_denoised),
+                                        remaining_active_steps,
+                                    )
+                                    history_denoised = current_history_denoised[-step_order:]
+                                    history_lambdas = current_history_lambdas[-step_order:]
+                                    previous_rks: list[float] = []
+                                    d1_terms: list[torch.Tensor] = []
+                                    for history_index in range(1, step_order):
+                                        lambda_prev = history_lambdas[-(history_index + 1)]
+                                        rk = (lambda_prev - lambda_s) / h
+                                        if not math.isfinite(rk):
+                                            raise RuntimeError(
+                                                "UNI_PC produced non-finite rk "
+                                                f"(variant={variant}, lambda_prev={lambda_prev}, lambda_s={lambda_s}, h={h})."
+                                            )
+                                        if abs(rk) <= 1e-12:
+                                            raise RuntimeError(
+                                                "UNI_PC encountered degenerate rk≈0 "
+                                                f"(variant={variant}, lambda_prev={lambda_prev}, lambda_s={lambda_s}, h={h})."
+                                            )
+                                        previous_rks.append(rk)
+                                        d1_terms.append((history_denoised[-(history_index + 1)] - denoised) / rk)
+
+                                    b_h, predictor_coeffs, corrector_coeffs = self._resolve_uni_pc_bh_coefficients(
+                                        order=step_order,
+                                        previous_rks=previous_rks,
+                                        hh=hh,
+                                        variant=variant,
+                                    )
                                     if not math.isfinite(b_h):
                                         raise RuntimeError(
-                                            f"UNI_PC_BH2 produced non-finite B_h from hh={hh}"
+                                            f"UNI_PC produced non-finite B_h from hh={hh}."
                                         )
 
                                     x_base = sigma_ratio * x + (1.0 - sigma_ratio) * denoised
-                                    d1_prev: torch.Tensor | None = None
-                                    rk: float | None = None
-                                    can_use_order2 = (
-                                        uni_pc_bh2_prev_denoised is not None
-                                        and uni_pc_bh2_prev_lambda is not None
-                                        and abs(h) > 1e-12
-                                    )
-                                    if can_use_order2:
-                                        rk_candidate = (float(uni_pc_bh2_prev_lambda) - lambda_s) / h
-                                        if not math.isfinite(rk_candidate):
-                                            raise RuntimeError(
-                                                "UNI_PC_BH2 produced non-finite rk for order-2 update "
-                                                f"(prev_lambda={uni_pc_bh2_prev_lambda}, lambda_s={lambda_s}, h={h})."
-                                            )
-                                        if abs(rk_candidate) > 1e-12 and abs(rk_candidate - 1.0) > 1e-12:
-                                            rk = rk_candidate
-                                            d1_prev = (uni_pc_bh2_prev_denoised - denoised) / rk
 
                                     x_pred = x_base
-                                    if d1_prev is not None:
-                                        # BH2 predictor coefficient path (Comfy parity target): rho_p=0.5.
-                                        x_pred = x_base - b_h * 0.5 * d1_prev
+                                    if predictor_coeffs is not None and d1_terms:
+                                        predictor_residual = sum(
+                                            coeff * term for coeff, term in zip(predictor_coeffs, d1_terms)
+                                        )
+                                        x_pred = x_base - b_h * predictor_residual
 
-                                    sigma_next_batch = torch.full((x.shape[0],), sigma_next_f, device=x.device, dtype=torch.float32)
-                                    if pre_denoiser_hook is not None:
-                                        x_pred = pre_denoiser_hook(x_pred, sigma_next_batch, current_step, run_total_steps)
-                                        if not isinstance(x_pred, torch.Tensor):
-                                            raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
-                                        if tuple(x_pred.shape) != tuple(x.shape):
-                                            raise RuntimeError(
-                                                "pre_denoiser_hook returned unexpected shape "
-                                                f"{tuple(x_pred.shape)}; expected {tuple(x.shape)}"
-                                            )
-                                    denoised_next = sampling_function_inner(
-                                        model,
-                                        x_pred,
-                                        sigma_next_batch,
-                                        compiled_uncond,
-                                        compiled_cond,
-                                        cfg_scale,
-                                        denoiser.model_options,
-                                        seed=None,
-                                        return_full=False,
-                                    )
-                                    if post_denoiser_hook is not None:
-                                        denoised_next = post_denoiser_hook(denoised_next, sigma_next_batch, current_step, run_total_steps)
-                                        if not isinstance(denoised_next, torch.Tensor):
-                                            raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
-                                        if tuple(denoised_next.shape) != tuple(x_pred.shape):
-                                            raise RuntimeError(
-                                                "post_denoiser_hook returned unexpected shape "
-                                                f"{tuple(denoised_next.shape)}; expected {tuple(x_pred.shape)}"
-                                            )
-                                    d1_t = denoised_next - denoised
-                                    if d1_prev is not None and rk is not None:
-                                        rho_prev, rho_curr = self._solve_uni_pc_bh2_corrector_rhos(rk=rk, hh=hh)
-                                        correction = rho_prev * d1_prev + rho_curr * d1_t
+                                    if current_step >= run_total_steps:
+                                        x = x_pred
                                     else:
-                                        # BH2 order-1 corrector uses rho=0.5.
-                                        correction = 0.5 * d1_t
-                                    x = x_base - b_h * correction
-                                    uni_pc_bh2_prev_denoised = denoised.detach()
-                                    uni_pc_bh2_prev_lambda = lambda_s
+                                        sigma_next_batch = torch.full(
+                                            (x.shape[0],),
+                                            sigma_solver_next,
+                                            device=x.device,
+                                            dtype=torch.float32,
+                                        )
+                                        if pre_denoiser_hook is not None:
+                                            x_pred = pre_denoiser_hook(x_pred, sigma_next_batch, current_step, run_total_steps)
+                                            if not isinstance(x_pred, torch.Tensor):
+                                                raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                                            if tuple(x_pred.shape) != tuple(x.shape):
+                                                raise RuntimeError(
+                                                    "pre_denoiser_hook returned unexpected shape "
+                                                    f"{tuple(x_pred.shape)}; expected {tuple(x.shape)}"
+                                                )
+                                        denoised_next = sampling_function_inner(
+                                            model,
+                                            x_pred,
+                                            sigma_next_batch,
+                                            compiled_uncond,
+                                            compiled_cond,
+                                            cfg_scale,
+                                            denoiser.model_options,
+                                            seed=None,
+                                            return_full=False,
+                                        )
+                                        if post_denoiser_hook is not None:
+                                            denoised_next = post_denoiser_hook(
+                                                denoised_next,
+                                                sigma_next_batch,
+                                                current_step,
+                                                run_total_steps,
+                                            )
+                                            if not isinstance(denoised_next, torch.Tensor):
+                                                raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                                            if tuple(denoised_next.shape) != tuple(x_pred.shape):
+                                                raise RuntimeError(
+                                                    "post_denoiser_hook returned unexpected shape "
+                                                    f"{tuple(denoised_next.shape)}; expected {tuple(x_pred.shape)}"
+                                                )
+                                        d1_t = denoised_next - denoised
+                                        if len(corrector_coeffs) == 1:
+                                            correction = corrector_coeffs[0] * d1_t
+                                        else:
+                                            correction = sum(
+                                                coeff * term for coeff, term in zip(corrector_coeffs[:-1], d1_terms)
+                                            ) + corrector_coeffs[-1] * d1_t
+                                        x = x_base - b_h * correction
+                                    uni_pc_history_denoised = current_history_denoised[-2:]
+                                    uni_pc_history_lambdas = current_history_lambdas[-2:]
                             else:
                                 raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
 
@@ -2348,6 +4304,61 @@ class CodexSampler:
                 denoiser.model_options.pop(_GUIDANCE_TOTAL_STEPS_KEY, None)
                 denoiser.model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
                 denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
+                if res_multistep_cfg_pp_saved_post_cfg_functions is not None:
+                    if res_multistep_cfg_pp_saved_post_cfg_functions:
+                        denoiser.model_options["sampler_post_cfg_function"] = list(
+                            res_multistep_cfg_pp_saved_post_cfg_functions
+                        )
+                    else:
+                        denoiser.model_options.pop("sampler_post_cfg_function", None)
+                    if res_multistep_cfg_pp_saved_disable_cfg1 is res_multistep_cfg_pp_disable_cfg1_missing:
+                        denoiser.model_options.pop("disable_cfg1_optimization", None)
+                    else:
+                        denoiser.model_options["disable_cfg1_optimization"] = res_multistep_cfg_pp_saved_disable_cfg1
+                if gradient_estimation_cfg_pp_saved_post_cfg_functions is not None:
+                    if gradient_estimation_cfg_pp_saved_post_cfg_functions:
+                        denoiser.model_options["sampler_post_cfg_function"] = list(
+                            gradient_estimation_cfg_pp_saved_post_cfg_functions
+                        )
+                    else:
+                        denoiser.model_options.pop("sampler_post_cfg_function", None)
+                    if gradient_estimation_cfg_pp_saved_disable_cfg1 is gradient_estimation_cfg_pp_disable_cfg1_missing:
+                        denoiser.model_options.pop("disable_cfg1_optimization", None)
+                    else:
+                        denoiser.model_options["disable_cfg1_optimization"] = gradient_estimation_cfg_pp_saved_disable_cfg1
+                if euler_cfg_pp_saved_post_cfg_functions is not None:
+                    if euler_cfg_pp_saved_post_cfg_functions:
+                        denoiser.model_options["sampler_post_cfg_function"] = list(
+                            euler_cfg_pp_saved_post_cfg_functions
+                        )
+                    else:
+                        denoiser.model_options.pop("sampler_post_cfg_function", None)
+                    if euler_cfg_pp_saved_disable_cfg1 is euler_cfg_pp_disable_cfg1_missing:
+                        denoiser.model_options.pop("disable_cfg1_optimization", None)
+                    else:
+                        denoiser.model_options["disable_cfg1_optimization"] = euler_cfg_pp_saved_disable_cfg1
+                if dpm2m_cfg_pp_saved_post_cfg_functions is not None:
+                    if dpm2m_cfg_pp_saved_post_cfg_functions:
+                        denoiser.model_options["sampler_post_cfg_function"] = list(
+                            dpm2m_cfg_pp_saved_post_cfg_functions
+                        )
+                    else:
+                        denoiser.model_options.pop("sampler_post_cfg_function", None)
+                    if dpm2m_cfg_pp_saved_disable_cfg1 is dpm2m_cfg_pp_disable_cfg1_missing:
+                        denoiser.model_options.pop("disable_cfg1_optimization", None)
+                    else:
+                        denoiser.model_options["disable_cfg1_optimization"] = dpm2m_cfg_pp_saved_disable_cfg1
+                if dpm2s_ancestral_cfg_pp_saved_post_cfg_functions is not None:
+                    if dpm2s_ancestral_cfg_pp_saved_post_cfg_functions:
+                        denoiser.model_options["sampler_post_cfg_function"] = list(
+                            dpm2s_ancestral_cfg_pp_saved_post_cfg_functions
+                        )
+                    else:
+                        denoiser.model_options.pop("sampler_post_cfg_function", None)
+                    if dpm2s_ancestral_cfg_pp_saved_disable_cfg1 is dpm2s_ancestral_cfg_pp_disable_cfg1_missing:
+                        denoiser.model_options.pop("disable_cfg1_optimization", None)
+                    else:
+                        denoiser.model_options["disable_cfg1_optimization"] = dpm2s_ancestral_cfg_pp_saved_disable_cfg1
                 transformer_options = denoiser.model_options.get("transformer_options", None)
                 if isinstance(transformer_options, dict):
                     transformer_options.pop(BLOCK_PROGRESS_CALLBACK_KEY, None)

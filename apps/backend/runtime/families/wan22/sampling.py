@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
-Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks, I2V conditioning channels are cached once per stage loop to avoid redundant per-step buffer copies, and scheduler aliases/sampler overrides are validated fail-loud against real WAN22 runtime lanes (UniPC metadata lane and experimental FlowMatch-Euler lanes).
+Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks, I2V conditioning channels are cached once per stage loop to avoid redundant per-step buffer copies, and scheduler aliases/sampler overrides are validated fail-loud against the real WAN22 runtime lanes (`uni-pc`, `euler`, `euler a`) without collapsing cfg++ labels into plain Euler paths.
 Per-step compute runs under `torch.inference_mode()` to reduce overhead (model assembly/load stays outside inference mode); block-progress callback wiring is strict/mandatory and must be provided through `transformer_options` by the WAN unified progress adapter.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
-- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`); scheduler overrides stay strict, sampler overrides must resolve to a real WAN22 lane, and effective sampler metadata can be returned for run reporting.
+- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`); scheduler overrides stay strict, sampler overrides must resolve to a real WAN22 lane, cfg++ sampler labels are rejected instead of remapped, and effective sampler metadata can be returned for run reporting.
 - `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
 - `_assert_finite_tensor` (function): Fail-loud finite check helper with stage/step context and numeric summaries.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
@@ -230,9 +230,9 @@ def make_scheduler(
                 sampler_lane = SamplerKind.UNI_PC.value
                 if sampler_kind is SamplerKind.UNI_PC_BH2:
                     sampler_solver_hint = "bh2"
-            elif sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+            elif sampler_kind is SamplerKind.EULER:
                 sampler_lane = SamplerKind.EULER.value
-            elif sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+            elif sampler_kind is SamplerKind.EULER_A:
                 sampler_lane = SamplerKind.EULER_A.value
             else:
                 raise RuntimeError(

@@ -14,7 +14,7 @@ Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled
 Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card so the zoom overlay can visualize and edit generation-frame projection.
 In img2vid mode, the shared init-image card is presented directly as `Img2Vid Parameters` without an extra wrapper header row.
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
-Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `flowShift` in history/sync flows,
+Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `scheduler` + `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
 payload parsing/LoRA SHA resolution is handled in `useVideoGeneration`.
 Temporal Loom reset-anchor control is rendered as a compact content-width toggle button, and upscaling controls keep the same experimental badge treatment as Temporal Loom.
@@ -43,6 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setVideo` (function): Applies partial updates to the video params in state (triggers dependent sync where needed).
 - `setHigh` (function): Applies partial updates to the high stage (and can drive low-stage sync when enabled).
 - `setLow` (function): Applies partial updates to the low stage.
+- `wanStageSamplers` / `wanStageSchedulers` (computed): WAN-filtered sampler/scheduler inventories used by WAN stage selectors.
 - `wanRecommendedSamplers` / `wanRecommendedSchedulers` (computed): Sanitized recommendation lists forwarded into WAN stage selectors when available.
 - `hideHighNegativePrompt`/`hideLowNegativePrompt` (const): Hide stage Negative Prompt fields when stage CFG is `<= 1`.
 - `syncLowFromHighIfNeeded` (function): Keeps low stage params aligned with high stage when the “low follows high” toggle is enabled.
@@ -473,8 +474,8 @@ Symbols (top-level; keep in sync; no ghosts):
               title="High Noise"
               embedded
               :stage="high"
-              :samplers="samplers"
-              :schedulers="schedulers"
+              :samplers="wanStageSamplers"
+              :schedulers="wanStageSchedulers"
               :recommended-samplers="wanRecommendedSamplers"
               :recommended-schedulers="wanRecommendedSchedulers"
               :disabled="isRunning"
@@ -503,8 +504,8 @@ Symbols (top-level; keep in sync; no ghosts):
                 title="Low Noise"
                 embedded
                 :stage="low"
-                :samplers="samplers"
-                :schedulers="schedulers"
+                :samplers="wanStageSamplers"
+                :schedulers="wanStageSchedulers"
                 :recommended-samplers="wanRecommendedSamplers"
                 :recommended-schedulers="wanRecommendedSchedulers"
                 :disabled="isRunning || lowFollowsHigh"
@@ -782,10 +783,7 @@ const schedulers = ref<SchedulerInfo[]>([])
 onMounted(() => {
   bootstrap
     .runRequired('Failed to initialize WAN tab controls', async () => {
-      const [samp, sched] = await Promise.all([
-        fetchSamplers(),
-        fetchSchedulers(),
-      ])
+      const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
       samplers.value = samp.samplers
       schedulers.value = sched.schedulers
     })
@@ -803,7 +801,7 @@ const wanParams = computed<TabByType<'wan'>['params'] | null>(() => tab.value?.p
 const lightx2v = computed<boolean>(() => Boolean(wanParams.value?.lightx2v))
 
 function defaultStage(): WanStageParams {
-  return { modelDir: '', prompt: '', negativePrompt: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loras: [], flowShift: undefined }
+  return { modelDir: '', prompt: '', negativePrompt: '', sampler: '', scheduler: 'simple', steps: 30, cfgScale: 7, seed: -1, loras: [], flowShift: undefined }
 }
 function defaultVideo(): WanVideoParams {
   return {
@@ -1536,16 +1534,31 @@ const wanDependencyStatus = computed(() => engineCaps.getDependencyStatus('wan22
 const wanDependencyReady = computed(() => Boolean(wanDependencyStatus.value?.ready))
 const wanDependencyError = computed(() => engineCaps.firstDependencyError('wan22'))
 const wanEngineSurface = computed(() => engineCaps.get('wan22'))
+const wanStageSamplers = computed(() => {
+  const allowed = new Set(['uni-pc', 'euler', 'euler a'])
+  return samplers.value.filter((entry) => allowed.has(String(entry.name || '').trim()))
+})
+const wanStageSchedulers = computed(() => {
+  return schedulers.value.filter((entry) => String(entry.name || '').trim() === 'simple')
+})
 const wanRecommendedSamplers = computed(() => {
+  const available = new Set(wanStageSamplers.value.map((entry) => entry.name))
   const values = wanEngineSurface.value?.recommended_samplers
-  if (!Array.isArray(values)) return null
-  const normalized = Array.from(new Set(values.map((value) => String(value || '').trim()).filter((value) => value.length > 0)))
+  const fallback = wanStageSamplers.value.map((entry) => entry.name)
+  const source = Array.isArray(values) && values.length > 0 ? values : fallback
+  const normalized = Array.from(
+    new Set(source.map((value) => String(value || '').trim()).filter((value) => value.length > 0 && available.has(value))),
+  )
   return normalized.length > 0 ? normalized : null
 })
 const wanRecommendedSchedulers = computed(() => {
+  const available = new Set(wanStageSchedulers.value.map((entry) => entry.name))
   const values = wanEngineSurface.value?.recommended_schedulers
-  if (!Array.isArray(values)) return null
-  const normalized = Array.from(new Set(values.map((value) => String(value || '').trim()).filter((value) => value.length > 0)))
+  const fallback = wanStageSchedulers.value.map((entry) => entry.name)
+  const source = Array.isArray(values) && values.length > 0 ? values : fallback
+  const normalized = Array.from(
+    new Set(source.map((value) => String(value || '').trim()).filter((value) => value.length > 0 && available.has(value))),
+  )
   return normalized.length > 0 ? normalized : null
 })
 const canRunGeneration = computed(() => wanDependencyReady.value && canGenerate.value)
@@ -2166,7 +2179,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     prompt: String(nextHighPrompt || ''),
     negativePrompt: String(nextHighNegative || ''),
     sampler: String(hi.sampler || ''),
-    scheduler: String(hi.scheduler || ''),
+    scheduler: typeof hi.scheduler === 'string' && hi.scheduler.trim() ? hi.scheduler.trim() : high.value.scheduler,
     steps: Number(hi.steps) || high.value.steps,
     cfgScale: Number(hi.cfgScale) || high.value.cfgScale,
     seed: typeof hi.seed === 'number' && Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
@@ -2179,14 +2192,13 @@ function applyHistory(item: VideoRunHistoryItem): void {
     prompt: String(nextLowPrompt || ''),
     negativePrompt: String(nextLowNegative || ''),
     sampler: String(lo.sampler || ''),
-    scheduler: String(lo.scheduler || ''),
+    scheduler: typeof lo.scheduler === 'string' && lo.scheduler.trim() ? lo.scheduler.trim() : low.value.scheduler,
     steps: Number(lo.steps) || low.value.steps,
     cfgScale: Number(lo.cfgScale) || low.value.cfgScale,
     seed: typeof lo.seed === 'number' && Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
     loras: nextLowLoras,
     flowShift: typeof lo.flowShift === 'number' && Number.isFinite(lo.flowShift) ? Number(lo.flowShift) : low.value.flowShift,
   })
-
   toast('Applied params from history.')
 }
 

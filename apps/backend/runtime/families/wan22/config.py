@@ -10,7 +10,8 @@ Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
 geometry validation (e.g. `height/width % 16 == 0`), metadata-derived sampler/scheduler defaults, and strict WAN VAE
 config-source contract checks (bundle dir or file+config), plus strict `gguf_sdpa_policy` validation and WAN scheduler contract validation.
-Also parses no-stretch img2vid guide controls (`img2vid_image_scale` + normalized crop offsets) into run config.
+Also parses no-stretch img2vid guide controls (`img2vid_image_scale` + normalized crop offsets) into run config and resolves explicit stage
+scheduler values before shared runtime scheduler continuity checks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -240,11 +241,11 @@ def _normalize_wan22_sampler_value(
             "Supported WAN22 sampler lanes: 'uni-pc' (optional solver hint), 'euler', 'euler a'."
         ) from exc
 
-    if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+    if sampler_kind is SamplerKind.UNI_PC:
         return sampler_kind.value
-    if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+    if sampler_kind is SamplerKind.EULER:
         return SamplerKind.EULER.value
-    if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+    if sampler_kind is SamplerKind.EULER_A:
         return SamplerKind.EULER_A.value
 
     raise RuntimeError(
@@ -961,6 +962,17 @@ def build_wan22_gguf_run_config(
             "WAN22 GGUF: 'gguf_cache_limit_mb' must be omitted or 0 when cache policy is 'none'/'off'."
         )
 
+    resolved_high_scheduler = str(hi_scheduler or scheduler_fallback).strip().lower()
+    resolved_low_scheduler = str(lo_scheduler or scheduler_fallback).strip().lower()
+    if not resolved_high_scheduler:
+        raise RuntimeError(
+            "WAN22 GGUF: failed to resolve wan_high.scheduler from stage/request/metadata defaults."
+        )
+    if not resolved_low_scheduler:
+        raise RuntimeError(
+            "WAN22 GGUF: failed to resolve wan_low.scheduler from stage/request/metadata defaults."
+        )
+
     return RunConfig(
         width=width,
         height=height,
@@ -999,7 +1011,7 @@ def build_wan22_gguf_run_config(
             prompt=hi_prompt,
             negative_prompt=hi_negative_prompt,
             sampler=str(hi_sampler or sampler_fallback),
-            scheduler=str(hi_scheduler or scheduler_fallback),
+            scheduler=resolved_high_scheduler,
             steps=max(1, int(hi_steps)),
             cfg_scale=hi_cfg,
             flow_shift=float(hi_flow_shift),
@@ -1010,7 +1022,7 @@ def build_wan22_gguf_run_config(
             prompt=lo_prompt,
             negative_prompt=lo_negative_prompt,
             sampler=str(lo_sampler or sampler_fallback),
-            scheduler=str(lo_scheduler or scheduler_fallback),
+            scheduler=resolved_low_scheduler,
             steps=max(1, int(lo_steps)),
             cfg_scale=lo_cfg,
             flow_shift=float(lo_flow_shift),

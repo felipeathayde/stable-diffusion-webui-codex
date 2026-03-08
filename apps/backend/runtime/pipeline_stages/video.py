@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared helpers for Codex video generation pipelines.
-Builds `VideoPlan`/`VideoResult`, applies LoRAs, configures sampler/scheduler, and assembles export metadata.
+Builds `VideoPlan`/`VideoResult`, applies LoRAs, configures sampler/scheduler, explicitly rejects native-only sampler variants unsupported
+by the diffusers video bridge, and assembles export metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger used by video pipeline helpers.
@@ -105,9 +106,15 @@ def configure_sampler(component: Any, plan: VideoPlan, logger_: logging.Logger |
 
     sampler_name = plan.sampler_name or "euler"
     scheduler_name = plan.scheduler_name or "simple"
+    sampler_kind = SamplerKind.from_string(sampler_name)
+    if sampler_kind is SamplerKind.UNI_PC_BH2:
+        raise RuntimeError(
+            "Video scheduler bridge does not implement sampler 'uni-pc bh2'; "
+            "use 'uni-pc' for this execution path."
+        )
     outcome = apply_sampler_scheduler(
         component,
-        SamplerKind.from_string(sampler_name),
+        sampler_kind,
         scheduler_name,
     )
     for warning in outcome.warnings:

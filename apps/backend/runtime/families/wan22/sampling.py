@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF sampling helpers (geometry + scheduler + per-stage sampling loops).
-Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks, I2V conditioning channels are cached once per stage loop to avoid redundant per-step buffer copies, and scheduler aliases are rejected fail-loud while unsupported sampler overrides are logged and ignored by metadata-driven scheduler construction, except for experimental FlowMatch-Euler sampler lanes.
+Builds patch geometry, prepares per-stage latent tensors, and runs the stage sampling loop (generator yields progress events); CFG execution uses sequential cond/uncond passes to lower VRAM peaks, I2V conditioning channels are cached once per stage loop to avoid redundant per-step buffer copies, and scheduler aliases/sampler overrides are validated fail-loud against real WAN22 runtime lanes (UniPC metadata lane and experimental FlowMatch-Euler lanes).
 Per-step compute runs under `torch.inference_mode()` to reduce overhead (model assembly/load stays outside inference mode); block-progress callback wiring is strict/mandatory and must be provided through `transformer_options` by the WAN unified progress adapter.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
-- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`); scheduler overrides stay strict while sampler overrides route either to the UniPC metadata lane or experimental FlowMatch-Euler lanes.
+- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`); scheduler overrides stay strict, sampler overrides must resolve to a real WAN22 lane, and effective sampler metadata can be returned for run reporting.
 - `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
 - `_assert_finite_tensor` (function): Fail-loud finite check helper with stage/step context and numeric summaries.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import math
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
@@ -134,6 +135,7 @@ def make_scheduler(
     flow_shift: float,
     sampler: Optional[str] = None,
     scheduler: Optional[str] = None,
+    return_effective_sampler: bool = False,
 ):
     """Instantiate the WAN22 scheduler from vendored metadata (Diffusers-free).
 
@@ -199,80 +201,102 @@ def make_scheduler(
         build_wan_unipc_flow_scheduler,
     )
 
-    sampler_kind: SamplerKind | None = None
+    sampler_lane: str = SamplerKind.UNI_PC.value
+    sampler_solver_hint: str | None = None
     if raw_sampler:
-        try:
-            sampler_kind = SamplerKind.from_string(raw_sampler)
-        except Exception:
-            sampler_kind = None
+        parts = raw_sampler.split()
+        sampler_name = parts[0]
+        if sampler_name == SamplerKind.UNI_PC.value:
+            if len(parts) > 2:
+                raise RuntimeError(
+                    f"WAN22 GGUF: sampler override must be 'uni-pc' or 'uni-pc <solver_hint>', got {sampler!r}."
+                )
+            if len(parts) == 2:
+                sampler_solver_hint = parts[1]
+                if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", str(sampler_solver_hint)) is None:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: invalid UniPC solver hint in sampler override {sampler!r}; "
+                        "use lowercase [a-z0-9._-] tokens only."
+                    )
+        else:
+            try:
+                sampler_kind = SamplerKind.from_string(raw_sampler)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"WAN22 GGUF: unsupported sampler override {sampler!r}. "
+                    "Supported WAN22 sampler lanes: 'uni-pc' (optional solver hint), 'euler', 'euler a'."
+                ) from exc
+            if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+                sampler_lane = SamplerKind.UNI_PC.value
+                if sampler_kind is SamplerKind.UNI_PC_BH2:
+                    sampler_solver_hint = "bh2"
+            elif sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+                sampler_lane = SamplerKind.EULER.value
+            elif sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+                sampler_lane = SamplerKind.EULER_A.value
+            else:
+                raise RuntimeError(
+                    f"WAN22 GGUF: unsupported sampler override {sampler!r}. "
+                    "Supported WAN22 sampler lanes: 'uni-pc' (optional solver hint), 'euler', 'euler a'."
+                )
 
-    if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+    if sampler_lane == SamplerKind.EULER.value:
         logging.getLogger("backend.runtime.wan22.sampling").warning(
             "WAN22 GGUF: sampler=%r routed to experimental FlowMatch-Euler scheduler lane.",
             sampler,
         )
-        return build_wan_flow_match_euler_scheduler(
+        scheduler_obj = build_wan_flow_match_euler_scheduler(
             steps=max(1, int(steps)),
             vendor_dir=vendor_dir,
             flow_shift=float(flow_shift),
             stochastic_sampling=False,
         )
+        if return_effective_sampler:
+            return scheduler_obj, SamplerKind.EULER.value
+        return scheduler_obj
 
-    if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+    if sampler_lane == SamplerKind.EULER_A.value:
         logging.getLogger("backend.runtime.wan22.sampling").warning(
             "WAN22 GGUF: sampler=%r routed to experimental FlowMatch-Euler stochastic scheduler lane.",
             sampler,
         )
-        return build_wan_flow_match_euler_scheduler(
+        scheduler_obj = build_wan_flow_match_euler_scheduler(
             steps=max(1, int(steps)),
             vendor_dir=vendor_dir,
             flow_shift=float(flow_shift),
             stochastic_sampling=True,
         )
-
-    # Parse sampler hints for metadata UniPC lane. Non-Euler unsupported names remain accepted but ignored.
-    if raw_sampler and class_name == "UniPCMultistepScheduler":
-        parts = raw_sampler.split()
-        sampler_name = parts[0] if parts else ""
-        sampler_solver = parts[1] if len(parts) >= 2 else None
-        if sampler_name == "uni-pc":
-            config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
-            if sampler_solver is not None:
-                if config_solver is None:
-                    logging.getLogger("backend.runtime.wan22.sampling").warning(
-                        "WAN22 GGUF: sampler=%r requested solver_type=%r, but metadata has no solver_type; using metadata defaults.",
-                        sampler,
-                        sampler_solver,
-                    )
-                elif sampler_solver != config_solver:
-                    logging.getLogger("backend.runtime.wan22.sampling").warning(
-                        "WAN22 GGUF: sampler=%r solver_type mismatch (requested=%r metadata=%r); using metadata defaults.",
-                        sampler,
-                        sampler_solver,
-                        config_solver,
-                    )
-        else:
-            logging.getLogger("backend.runtime.wan22.sampling").warning(
-                "WAN22 GGUF: sampler override %r is accepted but ignored; runtime scheduler remains metadata-driven UniPC.",
-                sampler,
-            )
-    elif raw_sampler:
-        logging.getLogger("backend.runtime.wan22.sampling").warning(
-            "WAN22 GGUF: sampler override %r is accepted but ignored for metadata scheduler %r.",
-            sampler,
-            class_name,
-        )
+        if return_effective_sampler:
+            return scheduler_obj, SamplerKind.EULER_A.value
+        return scheduler_obj
 
     if class_name != "UniPCMultistepScheduler":
         raise RuntimeError(
             f"WAN22 GGUF: unsupported metadata scheduler {class_name!r} in {config_path}; expected UniPCMultistepScheduler."
         )
 
-    return build_wan_unipc_flow_scheduler(
+    config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
+    if sampler_solver_hint is not None:
+        if config_solver is None:
+            raise RuntimeError(
+                "WAN22 GGUF: sampler override requests UniPC solver hint "
+                f"{sampler_solver_hint!r}, but metadata scheduler has no solver_type."
+            )
+        if sampler_solver_hint != config_solver:
+            raise RuntimeError(
+                "WAN22 GGUF: sampler override UniPC solver hint mismatch "
+                f"(requested={sampler_solver_hint!r} metadata={config_solver!r})."
+            )
+
+    scheduler_obj = build_wan_unipc_flow_scheduler(
         steps=max(1, int(steps)),
         vendor_dir=vendor_dir,
         flow_shift=float(flow_shift),
     )
+    effective_sampler = SamplerKind.UNI_PC.value if config_solver is None else f"{SamplerKind.UNI_PC.value} {config_solver}"
+    if return_effective_sampler:
+        return scheduler_obj, effective_sampler
+    return scheduler_obj
 
 
 def resolve_init_noise_sigma(scheduler: Any) -> float:

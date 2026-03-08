@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampler/scheduler option catalog (canonical names + defaults) for the WebUI/API surface.
-Defines the canonical sampler/scheduler names exposed to users, plus default scheduler selection rules used by the sampling driver and UI selectors.
+Defines the canonical sampler/scheduler names exposed to users, derives executable sampler support from the current runtime-backed implementation
+surface, and provides default scheduler selection rules used by the sampling driver and UI selectors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SAMPLER_OPTIONS` (constant): UI-facing sampler option table (canonical name + optional scheduler allowlists).
@@ -22,54 +23,69 @@ from __future__ import annotations
 from typing import Dict, List, Set
 
 
+SUPPORTED_SAMPLERS: Set[str] = {
+    "euler",
+    "euler a",
+    "ddim",
+    "plms",
+    "pndm",
+    "dpm++ 2m",
+    "dpm++ 2m sde",
+    "dpm fast",
+    "uni-pc",
+    "uni-pc bh2",
+    "er sde",
+}
+
 SAMPLER_OPTIONS: List[Dict[str, object]] = [
-    {"name": "euler", "supported": True},
-    {"name": "euler a", "supported": True},
-    {"name": "euler cfg++", "supported": True},
-    {"name": "euler a cfg++", "supported": True},
-    {"name": "heun", "supported": True},
-    {"name": "heunpp2", "supported": True},
-    {"name": "lms", "supported": True},
-    {"name": "ddim", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "ddim cfg++", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "plms", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "pndm", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "dpm++ 2m", "supported": True},
-    {"name": "dpm++ 2m cfg++", "supported": True},
-    {"name": "dpm++ 2m sde", "supported": True},
-    {"name": "dpm++ 2m sde heun", "supported": True},
-    {"name": "dpm++ 2m sde gpu", "supported": True},
-    {"name": "dpm++ 2m sde heun gpu", "supported": True},
-    {"name": "dpm++ sde", "supported": True},
-    {"name": "dpm++ 2s ancestral", "supported": True},
-    {"name": "dpm++ 2s ancestral cfg++", "supported": True},
-    {"name": "dpm++ 3m sde", "supported": True},
-    {"name": "dpm 2", "supported": True},
-    {"name": "dpm 2 ancestral", "supported": True},
-    {"name": "dpm fast", "supported": True},
-    {"name": "dpm adaptive", "supported": True},
-    {"name": "uni-pc", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "uni-pc bh2", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "ddpm", "supported": True},
-    {"name": "lcm", "supported": True},
-    {"name": "ipndm", "supported": True},
-    {"name": "ipndm v", "supported": True},
-    {"name": "deis", "supported": True},
-    {"name": "res multistep", "supported": True},
-    {"name": "res multistep cfg++", "supported": True},
-    {"name": "res multistep ancestral", "supported": True},
-    {"name": "res multistep ancestral cfg++", "supported": True},
-    {"name": "gradient estimation", "supported": True},
-    {"name": "gradient estimation cfg++", "supported": True},
-    {"name": "er sde", "supported": True},
-    {"name": "seeds 2", "supported": True},
-    {"name": "seeds 3", "supported": True},
-    {"name": "sa-solver", "supported": True},
-    {"name": "sa-solver pece", "supported": True},
-    {"name": "restart", "supported": True},
+    {"name": "euler"},
+    {"name": "euler a"},
+    {"name": "euler cfg++"},
+    {"name": "euler a cfg++"},
+    {"name": "heun"},
+    {"name": "heunpp2"},
+    {"name": "lms"},
+    {"name": "ddim", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "ddim cfg++", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "plms", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "pndm", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "dpm++ 2m"},
+    {"name": "dpm++ 2m cfg++"},
+    {"name": "dpm++ 2m sde"},
+    {"name": "dpm++ 2m sde heun"},
+    {"name": "dpm++ 2m sde gpu"},
+    {"name": "dpm++ 2m sde heun gpu"},
+    {"name": "dpm++ sde"},
+    {"name": "dpm++ 2s ancestral"},
+    {"name": "dpm++ 2s ancestral cfg++"},
+    {"name": "dpm++ 3m sde"},
+    {"name": "dpm 2"},
+    {"name": "dpm 2 ancestral"},
+    {"name": "dpm fast"},
+    {"name": "dpm adaptive"},
+    {"name": "uni-pc", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "uni-pc bh2", "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "ddpm"},
+    {"name": "lcm"},
+    {"name": "ipndm"},
+    {"name": "ipndm v"},
+    {"name": "deis"},
+    {"name": "res multistep"},
+    {"name": "res multistep cfg++"},
+    {"name": "res multistep ancestral"},
+    {"name": "res multistep ancestral cfg++"},
+    {"name": "gradient estimation"},
+    {"name": "gradient estimation cfg++"},
+    {"name": "er sde"},
+    {"name": "seeds 2"},
+    {"name": "seeds 3"},
+    {"name": "sa-solver"},
+    {"name": "sa-solver pece"},
+    {"name": "restart"},
 ]
 
-SUPPORTED_SAMPLERS: Set[str] = {entry["name"] for entry in SAMPLER_OPTIONS if entry.get("supported", True)}
+for entry in SAMPLER_OPTIONS:
+    entry["supported"] = str(entry["name"]) in SUPPORTED_SAMPLERS
 
 SCHEDULER_OPTIONS: List[Dict[str, object]] = [
     {"name": "uniform", "supported": True},

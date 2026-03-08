@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Sigma schedule construction utilities for diffusion samplers.
 Defines canonical scheduler names and builds sigma schedules (Karras, exponential, DDIM, align-your-steps, etc.).
-SIMPLE schedules are predictor-aware and support explicit mode selection (legacy shifted-linspace vs tail-downsample sigma selection).
+SIMPLE schedules are predictor-aware and support explicit mode selection (legacy shifted-linspace vs tail-downsample sigma selection), and
+`linear_quadratic` now follows the parity-target piecewise shape with strict input guards.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SchedulerName` (enum): Canonical scheduler names for sigma schedule construction (strict, no silent fallback).
@@ -325,19 +326,29 @@ def _linear_quadratic_schedule(
     if steps == 1:
         sigmas = torch.tensor([sigma_max], device=device, dtype=dtype)
         return _append_zero(sigmas, device=device, dtype=dtype)
+    if not math.isfinite(threshold_noise):
+        raise ValueError("threshold_noise must be finite for linear_quadratic schedule")
     if linear_steps is None:
         linear_steps = steps // 2
-    linear = torch.linspace(0, threshold_noise, linear_steps, device=device, dtype=dtype)
-    threshold_noise_step_diff = linear_steps - threshold_noise * steps
-    quadratic_steps = steps - linear_steps
-    quadratic_coef = threshold_noise_step_diff / max(quadratic_steps ** 2, 1e-6)
-    linear_coef = threshold_noise / max(linear_steps, 1e-6) - 2 * threshold_noise_step_diff / max(quadratic_steps ** 2, 1e-6)
-    const = quadratic_coef * (linear_steps ** 2)
-    quadratic = quadratic_coef * torch.arange(linear_steps, steps, device=device, dtype=dtype) ** 2 + linear_coef * torch.arange(linear_steps, steps, device=device, dtype=dtype) + const
-    sigma_schedule = torch.cat([linear, quadratic, torch.tensor([threshold_noise], device=device, dtype=dtype)])
-    sigma_schedule = (1.0 - sigma_schedule).clamp(min=0.0)
-    sigmas = sigma_schedule * sigma_max
-    return _append_zero(sigmas[:steps], device=device, dtype=dtype)
+    linear_steps_int = int(linear_steps)
+    if linear_steps_int <= 0:
+        raise ValueError("linear_steps must be >= 1 for linear_quadratic schedule")
+    if linear_steps_int >= steps:
+        raise ValueError("linear_steps must be < steps for linear_quadratic schedule")
+    quadratic_steps = steps - linear_steps_int
+    linear_indices = torch.arange(linear_steps_int, device=device, dtype=dtype)
+    linear = linear_indices * (float(threshold_noise) / float(linear_steps_int))
+    threshold_noise_step_diff = float(linear_steps_int) - float(threshold_noise) * float(steps)
+    quadratic_coef = threshold_noise_step_diff / (float(linear_steps_int) * float(quadratic_steps**2))
+    linear_coef = float(threshold_noise) / float(linear_steps_int) - 2.0 * threshold_noise_step_diff / float(
+        quadratic_steps**2
+    )
+    const = quadratic_coef * float(linear_steps_int**2)
+    quadratic_indices = torch.arange(linear_steps_int, steps, device=device, dtype=dtype)
+    quadratic = quadratic_coef * quadratic_indices.pow(2) + linear_coef * quadratic_indices + const
+    sigma_schedule = 1.0 - torch.cat([linear, quadratic])
+    sigmas = sigma_schedule * float(sigma_max)
+    return _append_zero(sigmas, device=device, dtype=dtype)
 
 
 def _kl_optimal_schedule(steps: int, sigma_min: float, sigma_max: float, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:

@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
-Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
+Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine,
+with executable defaults and recommendation hints for the live surface.
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
 `er sde` in the recommended sampler surface. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
 image-conditioned img2img with hires enabled only after the real backend continuation path landed; LoRA remains off.
@@ -149,7 +150,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
-        recommended_samplers=("euler", "euler a", "ddim", "dpm++ 2m"),
+        recommended_samplers=("euler", "euler a", "dpm++ 2m"),
         recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
         default_scheduler="simple",
@@ -211,7 +212,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        recommended_samplers=("euler", "dpm++ 2m", "ddim"),
+        recommended_samplers=("euler", "dpm++ 2m"),
         recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
         default_scheduler="simple",
@@ -239,8 +240,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        default_sampler="ddpm",
-        default_scheduler="beta",
+        default_sampler=None,
+        default_scheduler=None,
     ),
     # SVD (Stable Video Diffusion): image-to-video only today.
     SemanticEngine.SVD: EngineParamSurface(

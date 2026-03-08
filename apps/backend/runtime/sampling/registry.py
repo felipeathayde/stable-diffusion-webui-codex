@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Sampler registry helpers mapping UI/API sampler names to validated sampler specifications.
-Enforces scheduler compatibility before sampling context creation.
+Purpose: Sampler registry helpers mapping UI/API sampler names to validated executable sampler specifications.
+Enforces scheduler compatibility before sampling context creation and excludes sampler rows that are not currently executable.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SamplerSpec` (dataclass): Canonical sampler specification (kind, default scheduler, allowed schedulers).
@@ -47,6 +47,8 @@ def _build_specs() -> Dict[str, SamplerSpec]:
     specs: Dict[str, SamplerSpec] = {}
 
     for entry in SAMPLER_OPTIONS:
+        if not bool(entry.get("supported", True)):
+            continue
         name = str(entry["name"])
         raw_allowed: Iterable[str] = entry.get("schedulers", SUPPORTED_SCHEDULERS)
         allowed_canonical: Set[str] = set()

@@ -8,9 +8,10 @@ Required Notice: see NOTICE
 
 Purpose: Sampling driver (native-only) for diffusion runtimes.
 Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
-while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`), including native ER-SDE stage updates
-with strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring (APG/rescale/trunc/renorm),
-and emits explicit runtime telemetry for console block-progress activation state.
+while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`), including native ER-SDE stage updates,
+native `dpm fast` / `dpm adaptive` execution, dedicated `uni-pc bh2` predictor/corrector handling, strict runtime option validation
+(`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring (APG/rescale/trunc/renorm), and emits explicit runtime
+telemetry for console block-progress activation state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
@@ -511,6 +512,37 @@ class CodexSampler:
         return torch.exp(-half_log_snr)
 
     @staticmethod
+    def _solve_uni_pc_bh2_corrector_rhos(*, rk: float, hh: float) -> tuple[float, float]:
+        if not math.isfinite(rk):
+            raise RuntimeError(f"UNI_PC_BH2 received non-finite rk={rk}")
+        if not math.isfinite(hh):
+            raise RuntimeError(f"UNI_PC_BH2 received non-finite hh={hh}")
+        if abs(hh) <= 1e-12:
+            raise RuntimeError("UNI_PC_BH2 cannot solve corrector coefficients with hh≈0.")
+
+        b_h = math.expm1(hh)
+        if abs(b_h) <= 1e-12:
+            raise RuntimeError("UNI_PC_BH2 cannot solve corrector coefficients with B_h≈0.")
+
+        h_phi_k = (b_h / hh) - 1.0
+        b1 = h_phi_k / b_h
+        h_phi_k = (h_phi_k / hh) - 0.5
+        b2 = (2.0 * h_phi_k) / b_h
+
+        denominator = rk - 1.0
+        if abs(denominator) <= 1e-12:
+            raise RuntimeError("UNI_PC_BH2 cannot solve corrector coefficients with rk≈1.")
+
+        rho_prev = (b2 - b1) / denominator
+        rho_curr = b1 - rho_prev
+        if not math.isfinite(rho_prev) or not math.isfinite(rho_curr):
+            raise RuntimeError(
+                "UNI_PC_BH2 corrector coefficients became non-finite "
+                f"(rk={rk}, hh={hh}, rho_prev={rho_prev}, rho_curr={rho_curr})."
+            )
+        return rho_prev, rho_curr
+
+    @staticmethod
     def _clone_noise_settings(settings: NoiseSettings) -> NoiseSettings:
         return NoiseSettings(
             source=settings.source,
@@ -937,6 +969,8 @@ class CodexSampler:
                 t_prev: float | None = None
                 h_prev: float | None = None
                 eps_history: List[torch.Tensor] = []
+                uni_pc_bh2_prev_denoised: torch.Tensor | None = None
+                uni_pc_bh2_prev_lambda: float | None = None
                 er_sde_params: dict[str, Any] | None = None
                 er_sde_lambdas: torch.Tensor | None = None
                 er_sde_point_indices: torch.Tensor | None = None
@@ -970,11 +1004,791 @@ class CodexSampler:
                                 continue
                         seeded_step_rng.next()
 
+                def _dpm_sigma_from_time(time_value: torch.Tensor) -> torch.Tensor:
+                    return torch.exp(-time_value)
+
+                def _dpm_time_from_sigma(sigma_value: torch.Tensor) -> torch.Tensor:
+                    if not bool(torch.all(torch.isfinite(sigma_value))):
+                        raise RuntimeError(
+                            "DPM solver received non-finite sigma values while converting to log-time."
+                        )
+                    if bool(torch.any(sigma_value <= 0.0)):
+                        raise RuntimeError(
+                            "DPM solver requires strictly positive sigmas while converting to log-time."
+                        )
+                    return -torch.log(sigma_value)
+
+                def _dpm_select_solver_sigma_bounds() -> tuple[float, float]:
+                    if sigmas_run.ndim != 1:
+                        raise RuntimeError(
+                            f"DPM solver expects a 1D sigma schedule; got shape={tuple(sigmas_run.shape)}."
+                        )
+                    sigma_count = int(sigmas_run.numel())
+                    if sigma_count < 2:
+                        raise RuntimeError(
+                            "DPM solver requires at least two sigma entries (start and end)."
+                        )
+                    sigma_max_value = float(sigmas_run[0])
+                    positive_indices = torch.nonzero(sigmas_run > 0.0, as_tuple=False).flatten()
+                    if int(positive_indices.numel()) <= 0:
+                        raise RuntimeError(
+                            "DPM solver requires at least one strictly-positive sigma entry "
+                            "in the active schedule."
+                        )
+                    sigma_min_value = float(sigmas_run[int(positive_indices[-1].item())])
+                    if not math.isfinite(sigma_max_value) or not math.isfinite(sigma_min_value):
+                        raise RuntimeError(
+                            "DPM solver sigma bounds must be finite "
+                            f"(sigma_max={sigma_max_value}, sigma_min={sigma_min_value})."
+                        )
+                    if sigma_max_value <= 0.0 or sigma_min_value <= 0.0:
+                        raise RuntimeError(
+                            "DPM solver sigma bounds must be > 0 "
+                            f"(sigma_max={sigma_max_value}, sigma_min={sigma_min_value})."
+                        )
+                    if sigma_max_value < sigma_min_value:
+                        raise RuntimeError(
+                            "DPM solver requires a descending sigma interval "
+                            f"(sigma_max={sigma_max_value}, sigma_min={sigma_min_value})."
+                        )
+                    return sigma_min_value, sigma_max_value
+
+                def _dpm_eval_eps(
+                    latent_state: torch.Tensor,
+                    *,
+                    sigma_value: float,
+                    current_step: int,
+                    step_total: int,
+                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                    nonlocal retry
+                    if not math.isfinite(sigma_value) or sigma_value <= 0.0:
+                        raise RuntimeError(
+                            "DPM solver denoiser call requires a finite positive sigma "
+                            f"(got {sigma_value})."
+                        )
+                    sigma_batch = torch.full(
+                        (latent_state.shape[0],),
+                        sigma_value,
+                        device=latent_state.device,
+                        dtype=torch.float32,
+                    )
+                    if guidance_policy is not None:
+                        denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = max(
+                            0,
+                            min(current_step - 1, max(step_total - 1, 0)),
+                        )
+                    model_input = latent_state
+                    if pre_denoiser_hook is not None:
+                        model_input = pre_denoiser_hook(model_input, sigma_batch, current_step, step_total)
+                        if not isinstance(model_input, torch.Tensor):
+                            raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                        if tuple(model_input.shape) != tuple(noise.shape):
+                            raise RuntimeError(
+                                "pre_denoiser_hook returned unexpected shape "
+                                f"{tuple(model_input.shape)}; expected {tuple(noise.shape)}"
+                            )
+                    denoised_output = sampling_function_inner(
+                        model,
+                        model_input,
+                        sigma_batch,
+                        compiled_uncond,
+                        compiled_cond,
+                        cfg_scale,
+                        denoiser.model_options,
+                        seed=None,
+                        return_full=False,
+                    )
+                    if post_denoiser_hook is not None:
+                        denoised_output = post_denoiser_hook(
+                            denoised_output,
+                            sigma_batch,
+                            current_step,
+                            step_total,
+                        )
+                        if not isinstance(denoised_output, torch.Tensor):
+                            raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                        if tuple(denoised_output.shape) != tuple(model_input.shape):
+                            raise RuntimeError(
+                                "post_denoiser_hook returned unexpected shape "
+                                f"{tuple(denoised_output.shape)}; expected {tuple(model_input.shape)}"
+                            )
+                    epsilon_output = (model_input - denoised_output) / max(sigma_value, 1e-8)
+                    if strict and (torch.isnan(epsilon_output).any() or torch.isnan(denoised_output).any()):
+                        reason = f"NaN detected at sampling step {current_step}"
+                        self._logger.warning(
+                            "NaN encountered at step %d with dtype=%s; attempting precision fallback.",
+                            current_step,
+                            str(getattr(model, "computation_dtype", model_input.dtype)),
+                        )
+                        next_dtype = memory_management.manager.report_precision_failure(
+                            DeviceRole.CORE,
+                            location=f"sampler.step_{current_step}",
+                            reason=reason,
+                        )
+                        if next_dtype is None:
+                            hint = memory_management.manager.precision_hint(DeviceRole.CORE)
+                            raise RuntimeError(
+                                "Diffusion core produced NaNs at "
+                                f"step {current_step} on {noise.device} with dtype "
+                                f"{getattr(model, 'computation_dtype', model_input.dtype)}. {hint}"
+                            )
+                        self._rebind_unet_precision(next_dtype)
+                        retry = True
+                        raise _PrecisionFallbackRequest
+                    return model_input, denoised_output, epsilon_output
+
+                def _dpm_emit_step_callbacks(
+                    *,
+                    latent_state: torch.Tensor,
+                    denoised_state: torch.Tensor,
+                    current_step: int,
+                    sigma_current: float,
+                    sigma_next: float,
+                    step_start_time: float,
+                ) -> float:
+                    if post_step_hook is not None:
+                        post_step_hook(latent_state, current_step, run_total_steps)
+                    if preview_callback is not None and (
+                        (preview_interval > 0 and (current_step % preview_interval == 0))
+                        or current_step >= run_total_steps
+                    ):
+                        try:
+                            preview_callback(denoised_state.detach(), current_step, run_total_steps)
+                        except Exception:
+                            pass
+                    if self._log_enabled and (
+                        current_step == 1
+                        or current_step == run_total_steps
+                        or current_step % max(1, run_total_steps // 5) == 0
+                    ):
+                        self._emit_event(
+                            "sampling.step",
+                            step=current_step,
+                            total_steps=run_total_steps,
+                            sigma=sigma_current,
+                            sigma_next=sigma_next,
+                            norm_x=float(latent_state.norm().item()),
+                            norm_den=float(denoised_state.norm().item()),
+                            dt_ms=(_time.perf_counter() - step_start_time) * 1000.0,
+                        )
+                        step_start_time = _time.perf_counter()
+                    backend_state.tick(sampling_step=max(1, min(current_step, run_total_steps)))
+                    backend_state.reset_sampling_blocks()
+                    profiler.step()
+                    return step_start_time
+
+                def _dpm_cached_eps(
+                    cache: dict[str, dict[str, torch.Tensor]],
+                    *,
+                    cache_key: str,
+                    latent_state: torch.Tensor,
+                    time_value: torch.Tensor,
+                    current_step: int,
+                    step_total: int,
+                ) -> dict[str, torch.Tensor]:
+                    cached_payload = cache.get(cache_key)
+                    if cached_payload is not None:
+                        return cached_payload
+                    sigma_value = float(_dpm_sigma_from_time(time_value).item())
+                    model_input, denoised_output, epsilon_output = _dpm_eval_eps(
+                        latent_state,
+                        sigma_value=sigma_value,
+                        current_step=current_step,
+                        step_total=step_total,
+                    )
+                    payload = {
+                        "model_input": model_input,
+                        "denoised": denoised_output,
+                        "epsilon": epsilon_output,
+                    }
+                    cache[cache_key] = payload
+                    return payload
+
+                def _dpm_solver_step_1(
+                    latent_state: torch.Tensor,
+                    *,
+                    time_current: torch.Tensor,
+                    time_next: torch.Tensor,
+                    eps_cache: dict[str, dict[str, torch.Tensor]],
+                    current_step: int,
+                    step_total: int,
+                ) -> torch.Tensor:
+                    step_delta = float((time_next - time_current).item())
+                    step_multiplier = math.expm1(step_delta)
+                    sigma_next_value = float(_dpm_sigma_from_time(time_next).item())
+                    eps_payload = _dpm_cached_eps(
+                        eps_cache,
+                        cache_key="epsilon",
+                        latent_state=latent_state,
+                        time_value=time_current,
+                        current_step=current_step,
+                        step_total=step_total,
+                    )
+                    state_base = eps_payload["model_input"]
+                    epsilon_base = eps_payload["epsilon"]
+                    return state_base - sigma_next_value * step_multiplier * epsilon_base
+
+                def _dpm_solver_step_2(
+                    latent_state: torch.Tensor,
+                    *,
+                    time_current: torch.Tensor,
+                    time_next: torch.Tensor,
+                    stage_ratio: float,
+                    eps_cache: dict[str, dict[str, torch.Tensor]],
+                    current_step: int,
+                    step_total: int,
+                ) -> torch.Tensor:
+                    if stage_ratio == 0.0:
+                        raise RuntimeError("DPM solver step-2 received stage_ratio=0.")
+                    step_delta = float((time_next - time_current).item())
+                    if abs(step_delta) <= 1e-12:
+                        return latent_state
+                    sigma_next_value = float(_dpm_sigma_from_time(time_next).item())
+                    eps_payload = _dpm_cached_eps(
+                        eps_cache,
+                        cache_key="epsilon",
+                        latent_state=latent_state,
+                        time_value=time_current,
+                        current_step=current_step,
+                        step_total=step_total,
+                    )
+                    state_base = eps_payload["model_input"]
+                    epsilon_base = eps_payload["epsilon"]
+                    stage_time = time_current + stage_ratio * (time_next - time_current)
+                    stage_multiplier = math.expm1(stage_ratio * step_delta)
+                    stage_sigma = float(_dpm_sigma_from_time(stage_time).item())
+                    state_stage = state_base - stage_sigma * stage_multiplier * epsilon_base
+                    eps_stage_payload = _dpm_cached_eps(
+                        eps_cache,
+                        cache_key="epsilon_stage_1",
+                        latent_state=state_stage,
+                        time_value=stage_time,
+                        current_step=current_step,
+                        step_total=step_total,
+                    )
+                    epsilon_stage = eps_stage_payload["epsilon"]
+                    base_multiplier = math.expm1(step_delta)
+                    return (
+                        state_base
+                        - sigma_next_value * base_multiplier * epsilon_base
+                        - sigma_next_value
+                        / (2.0 * stage_ratio)
+                        * base_multiplier
+                        * (epsilon_stage - epsilon_base)
+                    )
+
+                def _dpm_solver_step_3(
+                    latent_state: torch.Tensor,
+                    *,
+                    time_current: torch.Tensor,
+                    time_next: torch.Tensor,
+                    stage_ratio_1: float,
+                    stage_ratio_2: float,
+                    eps_cache: dict[str, dict[str, torch.Tensor]],
+                    current_step: int,
+                    step_total: int,
+                ) -> torch.Tensor:
+                    if stage_ratio_1 == 0.0 or stage_ratio_2 == 0.0:
+                        raise RuntimeError("DPM solver step-3 received zero stage ratio.")
+                    step_delta = float((time_next - time_current).item())
+                    if abs(step_delta) <= 1e-12:
+                        return latent_state
+                    sigma_next_value = float(_dpm_sigma_from_time(time_next).item())
+                    eps_payload = _dpm_cached_eps(
+                        eps_cache,
+                        cache_key="epsilon",
+                        latent_state=latent_state,
+                        time_value=time_current,
+                        current_step=current_step,
+                        step_total=step_total,
+                    )
+                    state_base = eps_payload["model_input"]
+                    epsilon_base = eps_payload["epsilon"]
+
+                    stage_time_1 = time_current + stage_ratio_1 * (time_next - time_current)
+                    stage_multiplier_1 = math.expm1(stage_ratio_1 * step_delta)
+                    stage_sigma_1 = float(_dpm_sigma_from_time(stage_time_1).item())
+                    state_stage_1 = state_base - stage_sigma_1 * stage_multiplier_1 * epsilon_base
+                    eps_stage_1_payload = _dpm_cached_eps(
+                        eps_cache,
+                        cache_key="epsilon_stage_1",
+                        latent_state=state_stage_1,
+                        time_value=stage_time_1,
+                        current_step=current_step,
+                        step_total=step_total,
+                    )
+                    epsilon_stage_1 = eps_stage_1_payload["epsilon"]
+
+                    stage_time_2 = time_current + stage_ratio_2 * (time_next - time_current)
+                    stage_multiplier_2 = math.expm1(stage_ratio_2 * step_delta)
+                    stage_sigma_2 = float(_dpm_sigma_from_time(stage_time_2).item())
+                    denominator = stage_ratio_2 * step_delta
+                    if abs(denominator) <= 1e-12:
+                        raise RuntimeError(
+                            "DPM solver step-3 encountered a collapsed stage denominator "
+                            f"(ratio={stage_ratio_2}, delta={step_delta})."
+                        )
+                    stage_correction = (
+                        (stage_multiplier_2 / denominator) - 1.0
+                    )
+                    state_stage_2 = (
+                        state_base
+                        - stage_sigma_2 * stage_multiplier_2 * epsilon_base
+                        - stage_sigma_2
+                        * (stage_ratio_2 / stage_ratio_1)
+                        * stage_correction
+                        * (epsilon_stage_1 - epsilon_base)
+                    )
+                    eps_stage_2_payload = _dpm_cached_eps(
+                        eps_cache,
+                        cache_key="epsilon_stage_2",
+                        latent_state=state_stage_2,
+                        time_value=stage_time_2,
+                        current_step=current_step,
+                        step_total=step_total,
+                    )
+                    epsilon_stage_2 = eps_stage_2_payload["epsilon"]
+                    base_expm1 = math.expm1(step_delta)
+                    slope_correction = (base_expm1 / step_delta) - 1.0
+                    return (
+                        state_base
+                        - sigma_next_value * base_expm1 * epsilon_base
+                        - sigma_next_value
+                        / stage_ratio_2
+                        * slope_correction
+                        * (epsilon_stage_2 - epsilon_base)
+                    )
+
+                def _run_native_dpm_fast(latent_state: torch.Tensor, *, start_time: float) -> tuple[torch.Tensor, float]:
+                    solver_eta = 0.0
+                    solver_s_noise = 1.0
+                    sigma_min_value, sigma_max_value = _dpm_select_solver_sigma_bounds()
+                    step_budget = int(run_total_steps)
+                    if step_budget < 1:
+                        raise RuntimeError("DPM fast requires run_total_steps >= 1.")
+
+                    time_start = float(
+                        _dpm_time_from_sigma(
+                            torch.tensor(sigma_max_value, dtype=torch.float32, device=latent_state.device)
+                        ).item()
+                    )
+                    time_end = float(
+                        _dpm_time_from_sigma(
+                            torch.tensor(sigma_min_value, dtype=torch.float32, device=latent_state.device)
+                        ).item()
+                    )
+                    macro_steps = math.floor(step_budget / 3) + 1
+                    time_schedule = torch.linspace(
+                        time_start,
+                        time_end,
+                        macro_steps + 1,
+                        dtype=torch.float32,
+                        device=latent_state.device,
+                    )
+                    if step_budget % 3 == 0:
+                        solver_orders = [3] * (macro_steps - 2) + [2, 1]
+                    else:
+                        solver_orders = [3] * (macro_steps - 1) + [step_budget % 3]
+                    if len(solver_orders) != macro_steps:
+                        raise RuntimeError(
+                            "DPM fast internal order plan mismatch "
+                            f"(orders={len(solver_orders)} macro_steps={macro_steps})."
+                        )
+
+                    progress_cursor = 0
+                    for macro_index, solver_order in enumerate(solver_orders):
+                        if backend_state.should_stop:
+                            raise _SamplingCancelled("cancelled")
+                        time_current = time_schedule[macro_index]
+                        time_next = time_schedule[macro_index + 1]
+                        time_next_solver = time_next
+                        sigma_up = 0.0
+
+                        if solver_eta != 0.0:
+                            sigma_current_value = float(_dpm_sigma_from_time(time_current).item())
+                            sigma_next_value = float(_dpm_sigma_from_time(time_next).item())
+                            sigma_down_value = sigma_next_value
+                            sigma_up = min(
+                                sigma_next_value,
+                                solver_eta
+                                * math.sqrt(
+                                    max(
+                                        sigma_next_value**2
+                                        * max(sigma_current_value**2 - sigma_next_value**2, 0.0)
+                                        / max(sigma_current_value**2, 1e-8),
+                                        0.0,
+                                    )
+                                ),
+                            )
+                            sigma_down_squared = sigma_next_value**2 - sigma_up**2
+                            if sigma_down_squared < 0.0:
+                                raise RuntimeError(
+                                    "DPM fast produced negative sigma_down^2 "
+                                    f"(sigma_current={sigma_current_value}, sigma_next={sigma_next_value}, sigma_up={sigma_up})."
+                                )
+                            sigma_down_value = math.sqrt(sigma_down_squared)
+                            time_next_solver = torch.minimum(
+                                time_schedule[-1],
+                                _dpm_time_from_sigma(
+                                    torch.tensor(
+                                        sigma_down_value,
+                                        dtype=torch.float32,
+                                        device=latent_state.device,
+                                    )
+                                ),
+                            )
+                            sigma_next_solver = float(_dpm_sigma_from_time(time_next_solver).item())
+                            sigma_up_sq = sigma_next_value**2 - sigma_next_solver**2
+                            if sigma_up_sq < -1e-8:
+                                raise RuntimeError(
+                                    "DPM fast produced negative sigma_up^2 after time conversion "
+                                    f"(sigma_next={sigma_next_value}, sigma_next_solver={sigma_next_solver})."
+                                )
+                            sigma_up = math.sqrt(max(sigma_up_sq, 0.0))
+
+                        eps_cache: dict[str, dict[str, torch.Tensor]] = {}
+                        callback_step = max(1, min(progress_cursor + 1, run_total_steps))
+                        callback_payload = _dpm_cached_eps(
+                            eps_cache,
+                            cache_key="epsilon",
+                            latent_state=latent_state,
+                            time_value=time_current,
+                            current_step=callback_step,
+                            step_total=run_total_steps,
+                        )
+                        callback_denoised = callback_payload["denoised"]
+
+                        if solver_order == 1:
+                            latent_state = _dpm_solver_step_1(
+                                latent_state,
+                                time_current=time_current,
+                                time_next=time_next_solver,
+                                eps_cache=eps_cache,
+                                current_step=callback_step,
+                                step_total=run_total_steps,
+                            )
+                        elif solver_order == 2:
+                            latent_state = _dpm_solver_step_2(
+                                latent_state,
+                                time_current=time_current,
+                                time_next=time_next_solver,
+                                stage_ratio=0.5,
+                                eps_cache=eps_cache,
+                                current_step=callback_step,
+                                step_total=run_total_steps,
+                            )
+                        elif solver_order == 3:
+                            latent_state = _dpm_solver_step_3(
+                                latent_state,
+                                time_current=time_current,
+                                time_next=time_next_solver,
+                                stage_ratio_1=1.0 / 3.0,
+                                stage_ratio_2=2.0 / 3.0,
+                                eps_cache=eps_cache,
+                                current_step=callback_step,
+                                step_total=run_total_steps,
+                            )
+                        else:
+                            raise RuntimeError(f"DPM fast produced unsupported solver order={solver_order}.")
+
+                        if sigma_up != 0.0:
+                            raise RuntimeError(
+                                "DPM fast stochastic eta path is unsupported without explicit deterministic noise contract."
+                            )
+                        if solver_s_noise < 0.0:
+                            raise RuntimeError(f"DPM fast received invalid s_noise={solver_s_noise}.")
+                        progress_cursor = min(run_total_steps, progress_cursor + int(solver_order))
+                        sigma_current_event = float(_dpm_sigma_from_time(time_current).item())
+                        sigma_next_event = float(_dpm_sigma_from_time(time_next).item())
+                        start_time = _dpm_emit_step_callbacks(
+                            latent_state=latent_state,
+                            denoised_state=callback_denoised,
+                            current_step=max(1, progress_cursor),
+                            sigma_current=sigma_current_event,
+                            sigma_next=sigma_next_event,
+                            step_start_time=start_time,
+                        )
+
+                    return latent_state, start_time
+
+                def _run_native_dpm_adaptive(
+                    latent_state: torch.Tensor,
+                    *,
+                    start_time: float,
+                ) -> tuple[torch.Tensor, float]:
+                    solver_order = 3
+                    solver_rtol = 0.05
+                    solver_atol = 0.0078
+                    solver_h_init = 0.05
+                    solver_pcoeff = 0.0
+                    solver_icoeff = 1.0
+                    solver_dcoeff = 0.0
+                    solver_accept_safety = 0.81
+                    solver_eta = 0.0
+                    solver_s_noise = 1.0
+
+                    sigma_min_value, sigma_max_value = _dpm_select_solver_sigma_bounds()
+                    time_start = float(
+                        _dpm_time_from_sigma(
+                            torch.tensor(sigma_max_value, dtype=torch.float32, device=latent_state.device)
+                        ).item()
+                    )
+                    time_end = float(
+                        _dpm_time_from_sigma(
+                            torch.tensor(sigma_min_value, dtype=torch.float32, device=latent_state.device)
+                        ).item()
+                    )
+                    forward_direction = time_end > time_start
+                    if not forward_direction and solver_eta != 0.0:
+                        raise RuntimeError("DPM adaptive requires eta=0 for reverse sampling.")
+                    step_size = abs(float(solver_h_init)) * (1.0 if forward_direction else -1.0)
+                    if not math.isfinite(step_size) or step_size == 0.0:
+                        raise RuntimeError(
+                            "DPM adaptive requires a finite non-zero initial step size "
+                            f"(h_init={solver_h_init})."
+                        )
+                    if solver_order not in {2, 3}:
+                        raise RuntimeError(f"DPM adaptive requires solver_order in {{2,3}}; got {solver_order}.")
+                    if solver_rtol <= 0.0 or solver_atol <= 0.0:
+                        raise RuntimeError(
+                            "DPM adaptive requires positive tolerances "
+                            f"(rtol={solver_rtol}, atol={solver_atol})."
+                        )
+                    if solver_accept_safety <= 0.0:
+                        raise RuntimeError(
+                            "DPM adaptive requires accept_safety > 0 "
+                            f"(got {solver_accept_safety})."
+                        )
+                    if solver_s_noise < 0.0:
+                        raise RuntimeError(f"DPM adaptive received invalid s_noise={solver_s_noise}.")
+
+                    pid_weight_1 = (solver_pcoeff + solver_icoeff + solver_dcoeff) / float(solver_order)
+                    pid_weight_2 = -(solver_pcoeff + 2.0 * solver_dcoeff) / float(solver_order)
+                    pid_weight_3 = solver_dcoeff / float(solver_order)
+                    pid_errors: list[float] = []
+                    pid_epsilon = 1e-8
+
+                    def _pid_limiter(raw_factor: float) -> float:
+                        return 1.0 + math.atan(raw_factor - 1.0)
+
+                    def _pid_propose_step(error_value: float) -> bool:
+                        nonlocal step_size
+                        if not math.isfinite(error_value) or error_value < 0.0:
+                            raise RuntimeError(
+                                f"DPM adaptive received invalid error estimate: {error_value}."
+                            )
+                        inverse_error = 1.0 / (error_value + pid_epsilon)
+                        if not pid_errors:
+                            pid_errors.extend([inverse_error, inverse_error, inverse_error])
+                        pid_errors[0] = inverse_error
+                        raw_factor = (
+                            pid_errors[0] ** pid_weight_1
+                            * pid_errors[1] ** pid_weight_2
+                            * pid_errors[2] ** pid_weight_3
+                        )
+                        limited_factor = _pid_limiter(raw_factor)
+                        if not math.isfinite(limited_factor) or limited_factor <= 0.0:
+                            raise RuntimeError(
+                                f"DPM adaptive PID produced invalid step factor: {limited_factor}."
+                            )
+                        accept_step = limited_factor >= solver_accept_safety
+                        if accept_step:
+                            pid_errors[2] = pid_errors[1]
+                            pid_errors[1] = pid_errors[0]
+                        step_size *= limited_factor
+                        if not math.isfinite(step_size) or step_size == 0.0:
+                            raise RuntimeError(
+                                f"DPM adaptive PID produced invalid next step size: {step_size}."
+                            )
+                        return accept_step
+
+                    current_time = time_start
+                    previous_low_order_state = latent_state
+                    accepted_steps = 0
+                    iteration_count = 0
+                    max_iterations = max(64, run_total_steps * 32)
+
+                    while (
+                        current_time < time_end - 1e-5
+                        if forward_direction
+                        else current_time > time_end + 1e-5
+                    ):
+                        iteration_count += 1
+                        if iteration_count > max_iterations:
+                            raise RuntimeError(
+                                "DPM adaptive exceeded the iteration safety limit "
+                                f"(iterations={iteration_count}, max={max_iterations})."
+                            )
+                        if backend_state.should_stop:
+                            raise _SamplingCancelled("cancelled")
+
+                        proposed_time = (
+                            min(time_end, current_time + step_size)
+                            if forward_direction
+                            else max(time_end, current_time + step_size)
+                        )
+                        time_current = torch.tensor(
+                            current_time,
+                            dtype=torch.float32,
+                            device=latent_state.device,
+                        )
+                        time_next = torch.tensor(
+                            proposed_time,
+                            dtype=torch.float32,
+                            device=latent_state.device,
+                        )
+                        time_next_solver = time_next
+                        sigma_up = 0.0
+
+                        if solver_eta != 0.0:
+                            sigma_current_value = float(_dpm_sigma_from_time(time_current).item())
+                            sigma_next_value = float(_dpm_sigma_from_time(time_next).item())
+                            sigma_down_value = sigma_next_value
+                            sigma_up = min(
+                                sigma_next_value,
+                                solver_eta
+                                * math.sqrt(
+                                    max(
+                                        sigma_next_value**2
+                                        * max(sigma_current_value**2 - sigma_next_value**2, 0.0)
+                                        / max(sigma_current_value**2, 1e-8),
+                                        0.0,
+                                    )
+                                ),
+                            )
+                            sigma_down_squared = sigma_next_value**2 - sigma_up**2
+                            if sigma_down_squared < 0.0:
+                                raise RuntimeError(
+                                    "DPM adaptive produced negative sigma_down^2 "
+                                    f"(sigma_current={sigma_current_value}, sigma_next={sigma_next_value}, sigma_up={sigma_up})."
+                                )
+                            sigma_down_value = math.sqrt(sigma_down_squared)
+                            time_next_solver = torch.minimum(
+                                torch.tensor(time_end, dtype=torch.float32, device=latent_state.device),
+                                _dpm_time_from_sigma(
+                                    torch.tensor(
+                                        sigma_down_value,
+                                        dtype=torch.float32,
+                                        device=latent_state.device,
+                                    )
+                                ),
+                            )
+                            sigma_next_solver = float(_dpm_sigma_from_time(time_next_solver).item())
+                            sigma_up_sq = sigma_next_value**2 - sigma_next_solver**2
+                            if sigma_up_sq < -1e-8:
+                                raise RuntimeError(
+                                    "DPM adaptive produced negative sigma_up^2 after time conversion "
+                                    f"(sigma_next={sigma_next_value}, sigma_next_solver={sigma_next_solver})."
+                                )
+                            sigma_up = math.sqrt(max(sigma_up_sq, 0.0))
+
+                        eps_cache: dict[str, dict[str, torch.Tensor]] = {}
+                        callback_step = max(1, min(accepted_steps + 1, run_total_steps))
+                        callback_payload = _dpm_cached_eps(
+                            eps_cache,
+                            cache_key="epsilon",
+                            latent_state=latent_state,
+                            time_value=time_current,
+                            current_step=callback_step,
+                            step_total=run_total_steps,
+                        )
+                        callback_denoised = callback_payload["denoised"]
+
+                        if solver_order == 2:
+                            low_order_state = _dpm_solver_step_1(
+                                latent_state,
+                                time_current=time_current,
+                                time_next=time_next_solver,
+                                eps_cache=eps_cache,
+                                current_step=callback_step,
+                                step_total=run_total_steps,
+                            )
+                            high_order_state = _dpm_solver_step_2(
+                                latent_state,
+                                time_current=time_current,
+                                time_next=time_next_solver,
+                                stage_ratio=0.5,
+                                eps_cache=eps_cache,
+                                current_step=callback_step,
+                                step_total=run_total_steps,
+                            )
+                        else:
+                            low_order_state = _dpm_solver_step_2(
+                                latent_state,
+                                time_current=time_current,
+                                time_next=time_next_solver,
+                                stage_ratio=1.0 / 3.0,
+                                eps_cache=eps_cache,
+                                current_step=callback_step,
+                                step_total=run_total_steps,
+                            )
+                            high_order_state = _dpm_solver_step_3(
+                                latent_state,
+                                time_current=time_current,
+                                time_next=time_next_solver,
+                                stage_ratio_1=1.0 / 3.0,
+                                stage_ratio_2=2.0 / 3.0,
+                                eps_cache=eps_cache,
+                                current_step=callback_step,
+                                step_total=run_total_steps,
+                            )
+
+                        atol_tensor = torch.full_like(low_order_state, solver_atol)
+                        error_denominator = torch.maximum(
+                            atol_tensor,
+                            solver_rtol * torch.maximum(low_order_state.abs(), previous_low_order_state.abs()),
+                        )
+                        if bool(torch.any(error_denominator <= 0.0)):
+                            raise RuntimeError("DPM adaptive produced non-positive error denominator.")
+                        error_tensor = torch.linalg.norm((low_order_state - high_order_state) / error_denominator)
+                        error_value = float(error_tensor.item()) / math.sqrt(float(latent_state.numel()))
+                        accept_step = _pid_propose_step(error_value)
+
+                        if accept_step:
+                            previous_low_order_state = low_order_state
+                            latent_state = high_order_state
+                            if sigma_up != 0.0:
+                                raise RuntimeError(
+                                    "DPM adaptive stochastic eta path is unsupported without explicit deterministic noise contract."
+                                )
+                            current_time = proposed_time
+                            accepted_steps += 1
+                            sigma_current_event = float(_dpm_sigma_from_time(time_current).item())
+                            sigma_next_event = float(_dpm_sigma_from_time(time_next).item())
+                            start_time = _dpm_emit_step_callbacks(
+                                latent_state=latent_state,
+                                denoised_state=callback_denoised,
+                                current_step=max(1, min(accepted_steps, run_total_steps)),
+                                sigma_current=sigma_current_event,
+                                sigma_next=sigma_next_event,
+                                step_start_time=start_time,
+                            )
+
+                    if accepted_steps == 0 and run_total_steps > 0:
+                        sigma_terminal = float(sigmas_run[min(1, len(sigmas_run) - 1)])
+                        start_time = _dpm_emit_step_callbacks(
+                            latent_state=latent_state,
+                            denoised_state=latent_state,
+                            current_step=run_total_steps,
+                            sigma_current=float(sigmas_run[0]),
+                            sigma_next=sigma_terminal,
+                            step_start_time=start_time,
+                        )
+                    return latent_state, start_time
+
                 with profiler.profile_run(profile_name, meta=profile_meta):
                     for i in range(start_idx, steps):
                         if backend_state.should_stop:
                             raise _SamplingCancelled("cancelled")
                         step_index = i - start_idx
+                        if sampler_kind in {SamplerKind.DPM_FAST, SamplerKind.DPM_ADAPTIVE}:
+                            if step_index != 0:
+                                break
+                            if sampler_kind is SamplerKind.DPM_FAST:
+                                x, t0 = _run_native_dpm_fast(x, start_time=t0)
+                            else:
+                                x, t0 = _run_native_dpm_adaptive(x, start_time=t0)
+                            break
                         backend_state.reset_sampling_blocks()
                         if guidance_policy is not None:
                             denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = step_index
@@ -1361,41 +2175,114 @@ class CodexSampler:
                                 eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
                                 x = x - delta * 0.5 * (eps + eps_next)
                             elif sampler_kind is SamplerKind.UNI_PC_BH2:
-                                # Reuse the UniPC two-stage update as a BH2 variant placeholder.
-                                delta = float(sigma) - float(sigma_next)
-                                x_pred = x - delta * eps
-                                sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
-                                if pre_denoiser_hook is not None:
-                                    x_pred = pre_denoiser_hook(x_pred, sigma_next_batch, current_step, run_total_steps)
-                                    if not isinstance(x_pred, torch.Tensor):
-                                        raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
-                                    if tuple(x_pred.shape) != tuple(x.shape):
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "UNI_PC_BH2 requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f < 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "UNI_PC_BH2 requires non-negative sigmas "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f == 0.0:
+                                    if sigma_next_f > 0.0:
                                         raise RuntimeError(
-                                            "pre_denoiser_hook returned unexpected shape "
-                                            f"{tuple(x_pred.shape)}; expected {tuple(x.shape)}"
+                                            "UNI_PC_BH2 encountered non-monotonic zero-to-positive sigma transition "
+                                            f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
                                         )
-                                denoised_next = sampling_function_inner(
-                                    model,
-                                    x_pred,
-                                    sigma_next_batch,
-                                    compiled_uncond,
-                                    compiled_cond,
-                                    cfg_scale,
-                                    denoiser.model_options,
-                                    seed=None,
-                                    return_full=False,
-                                )
-                                if post_denoiser_hook is not None:
-                                    denoised_next = post_denoiser_hook(denoised_next, sigma_next_batch, current_step, run_total_steps)
-                                    if not isinstance(denoised_next, torch.Tensor):
-                                        raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
-                                    if tuple(denoised_next.shape) != tuple(x_pred.shape):
+                                    # SIMPLE/CONST flow ladders may end with a supported double-zero tail.
+                                    # Treat the preterminal zero step as a terminal no-op.
+                                    x = denoised
+                                    uni_pc_bh2_prev_denoised = denoised.detach()
+                                    uni_pc_bh2_prev_lambda = None
+                                else:
+                                    sigma_ratio = sigma_next_f / sigma_f
+                                    if not math.isfinite(sigma_ratio):
                                         raise RuntimeError(
-                                            "post_denoiser_hook returned unexpected shape "
-                                            f"{tuple(denoised_next.shape)}; expected {tuple(x_pred.shape)}"
+                                            f"UNI_PC_BH2 produced non-finite sigma ratio: sigma={sigma_f}, sigma_next={sigma_next_f}"
                                         )
-                                eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
-                                x = x - delta * 0.5 * (eps + eps_next)
+
+                                    lambda_s = -math.log(max(sigma_f, 1e-12))
+                                    lambda_t = -math.log(max(sigma_next_f, 1e-12))
+                                    h = lambda_t - lambda_s
+                                    hh = -h
+                                    if not math.isfinite(hh):
+                                        raise RuntimeError(
+                                            f"UNI_PC_BH2 produced non-finite hh from sigma={sigma_f}, sigma_next={sigma_next_f}"
+                                        )
+                                    b_h = math.expm1(hh)
+                                    if not math.isfinite(b_h):
+                                        raise RuntimeError(
+                                            f"UNI_PC_BH2 produced non-finite B_h from hh={hh}"
+                                        )
+
+                                    x_base = sigma_ratio * x + (1.0 - sigma_ratio) * denoised
+                                    d1_prev: torch.Tensor | None = None
+                                    rk: float | None = None
+                                    can_use_order2 = (
+                                        uni_pc_bh2_prev_denoised is not None
+                                        and uni_pc_bh2_prev_lambda is not None
+                                        and abs(h) > 1e-12
+                                    )
+                                    if can_use_order2:
+                                        rk_candidate = (float(uni_pc_bh2_prev_lambda) - lambda_s) / h
+                                        if not math.isfinite(rk_candidate):
+                                            raise RuntimeError(
+                                                "UNI_PC_BH2 produced non-finite rk for order-2 update "
+                                                f"(prev_lambda={uni_pc_bh2_prev_lambda}, lambda_s={lambda_s}, h={h})."
+                                            )
+                                        if abs(rk_candidate) > 1e-12 and abs(rk_candidate - 1.0) > 1e-12:
+                                            rk = rk_candidate
+                                            d1_prev = (uni_pc_bh2_prev_denoised - denoised) / rk
+
+                                    x_pred = x_base
+                                    if d1_prev is not None:
+                                        # BH2 predictor coefficient path (Comfy parity target): rho_p=0.5.
+                                        x_pred = x_base - b_h * 0.5 * d1_prev
+
+                                    sigma_next_batch = torch.full((x.shape[0],), sigma_next_f, device=x.device, dtype=torch.float32)
+                                    if pre_denoiser_hook is not None:
+                                        x_pred = pre_denoiser_hook(x_pred, sigma_next_batch, current_step, run_total_steps)
+                                        if not isinstance(x_pred, torch.Tensor):
+                                            raise RuntimeError("pre_denoiser_hook must return a torch.Tensor")
+                                        if tuple(x_pred.shape) != tuple(x.shape):
+                                            raise RuntimeError(
+                                                "pre_denoiser_hook returned unexpected shape "
+                                                f"{tuple(x_pred.shape)}; expected {tuple(x.shape)}"
+                                            )
+                                    denoised_next = sampling_function_inner(
+                                        model,
+                                        x_pred,
+                                        sigma_next_batch,
+                                        compiled_uncond,
+                                        compiled_cond,
+                                        cfg_scale,
+                                        denoiser.model_options,
+                                        seed=None,
+                                        return_full=False,
+                                    )
+                                    if post_denoiser_hook is not None:
+                                        denoised_next = post_denoiser_hook(denoised_next, sigma_next_batch, current_step, run_total_steps)
+                                        if not isinstance(denoised_next, torch.Tensor):
+                                            raise RuntimeError("post_denoiser_hook must return a torch.Tensor")
+                                        if tuple(denoised_next.shape) != tuple(x_pred.shape):
+                                            raise RuntimeError(
+                                                "post_denoiser_hook returned unexpected shape "
+                                                f"{tuple(denoised_next.shape)}; expected {tuple(x_pred.shape)}"
+                                            )
+                                    d1_t = denoised_next - denoised
+                                    if d1_prev is not None and rk is not None:
+                                        rho_prev, rho_curr = self._solve_uni_pc_bh2_corrector_rhos(rk=rk, hh=hh)
+                                        correction = rho_prev * d1_prev + rho_curr * d1_t
+                                    else:
+                                        # BH2 order-1 corrector uses rho=0.5.
+                                        correction = 0.5 * d1_t
+                                    x = x_base - b_h * correction
+                                    uni_pc_bh2_prev_denoised = denoised.detach()
+                                    uni_pc_bh2_prev_lambda = lambda_s
                             else:
                                 raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
 

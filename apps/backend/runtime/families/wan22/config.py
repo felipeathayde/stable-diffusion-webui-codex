@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
 - `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
 - `_coerce_bool` (function): Best-effort coercion of optional values to `bool` (returns `None` on failure).
-- `_normalize_wan22_sampler_value` (function): Canonicalizes WAN22 sampler strings when known and preserves unknown sampler strings for runtime handling.
+- `_normalize_wan22_sampler_value` (function): Validates WAN22 sampler overrides against real runtime lanes, canonicalizes accepted values, and can enforce metadata-compatible UniPC solver hints.
 - `_normalize_wan22_scheduler_value` (function): Validates/canonicalizes WAN22 scheduler values (`simple`) fail-loud.
 - `as_torch_dtype` (function): Parses dtype strings into torch dtypes (with validation).
 - `resolve_device_name` (function): Normalizes device names (`cuda`/`cpu`/etc) into runtime-compatible values.
@@ -191,18 +191,66 @@ def _coerce_bool(value: Any) -> Optional[bool]:
     return None
 
 
-def _normalize_wan22_sampler_value(*, field_name: str, value: Any) -> str:
+def _normalize_wan22_sampler_value(
+    *,
+    field_name: str,
+    value: Any,
+    expected_unipc_solver_hint: str | None = None,
+) -> str:
     if not isinstance(value, str):
         raise RuntimeError(f"WAN22 GGUF: {field_name} must be a string, got: {value!r}")
     normalized = value.strip().lower()
     if not normalized:
         raise RuntimeError(f"WAN22 GGUF: {field_name} must not be empty when provided.")
-    try:
-        from apps.backend.types.samplers import SamplerKind
+    from apps.backend.types.samplers import SamplerKind
 
-        return SamplerKind.from_string(normalized).value
-    except Exception:
-        return normalized
+    parts = normalized.split()
+    sampler_name = parts[0]
+    solver_hint = parts[1] if len(parts) == 2 else None
+
+    if sampler_name == SamplerKind.UNI_PC.value:
+        if len(parts) > 2:
+            raise RuntimeError(
+                f"WAN22 GGUF: {field_name} must be 'uni-pc' or 'uni-pc <solver_hint>', got: {value!r}"
+            )
+        if solver_hint is None:
+            return SamplerKind.UNI_PC.value
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", solver_hint) is None:
+            raise RuntimeError(
+                f"WAN22 GGUF: {field_name} has invalid UniPC solver hint {solver_hint!r}; "
+                "use lowercase [a-z0-9._-] tokens only."
+            )
+        if expected_unipc_solver_hint is None:
+            raise RuntimeError(
+                f"WAN22 GGUF: {field_name} solver hint {solver_hint!r} is unsupported; "
+                "metadata scheduler has no solver_type."
+            )
+        if solver_hint != expected_unipc_solver_hint:
+            raise RuntimeError(
+                f"WAN22 GGUF: {field_name} solver hint mismatch "
+                f"(requested={solver_hint!r} metadata={expected_unipc_solver_hint!r})."
+            )
+        return f"{SamplerKind.UNI_PC.value} {solver_hint}"
+
+    try:
+        sampler_kind = SamplerKind.from_string(normalized)
+    except Exception as exc:
+        raise RuntimeError(
+            f"WAN22 GGUF: unsupported {field_name}={value!r}. "
+            "Supported WAN22 sampler lanes: 'uni-pc' (optional solver hint), 'euler', 'euler a'."
+        ) from exc
+
+    if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+        return sampler_kind.value
+    if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+        return SamplerKind.EULER.value
+    if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+        return SamplerKind.EULER_A.value
+
+    raise RuntimeError(
+        f"WAN22 GGUF: unsupported {field_name}={value!r}. "
+        "Supported WAN22 sampler lanes: 'uni-pc' (optional solver hint), 'euler', 'euler a'."
+    )
 
 
 def _normalize_wan22_scheduler_value(*, field_name: str, value: Any) -> str:
@@ -494,6 +542,72 @@ def build_wan22_gguf_run_config(
         default_steps_high = int(hi_steps)
         default_steps_low = int(total_steps - hi_steps)
 
+    def _metadata_sampler_scheduler_defaults() -> tuple[str, str]:
+        scheduler_dir = os.path.join(vendor_dir, "scheduler")
+        config_path = None
+        for filename in ("scheduler_config.json", "config.json"):
+            candidate = os.path.join(scheduler_dir, filename)
+            if os.path.isfile(candidate):
+                config_path = candidate
+                break
+        if not config_path:
+            raise RuntimeError(
+                "WAN22 GGUF: missing scheduler config under metadata dir "
+                f"(expected '{os.path.join(scheduler_dir, 'scheduler_config.json')}' "
+                f"or '{os.path.join(scheduler_dir, 'config.json')}')."
+            )
+        try:
+            scheduler_config = json.loads(open(config_path, encoding="utf-8").read())
+        except Exception as exc:  # noqa: BLE001 - strict decode
+            raise RuntimeError(f"WAN22 GGUF: invalid scheduler config JSON: {config_path}: {exc}") from exc
+        if not isinstance(scheduler_config, dict):
+            raise RuntimeError(f"WAN22 GGUF: scheduler config must be a JSON object: {config_path}")
+        class_name = str(scheduler_config.get("_class_name") or "").strip()
+        if class_name == "UniPCMultistepScheduler":
+            raw_solver_type = scheduler_config.get("solver_type")
+            if raw_solver_type is None:
+                return ("uni-pc", "simple")
+            if not isinstance(raw_solver_type, str):
+                raise RuntimeError(
+                    "WAN22 GGUF: scheduler config solver_type must be a string when provided "
+                    f"(path={config_path} value={raw_solver_type!r})."
+                )
+            solver_type = raw_solver_type.strip().lower()
+            if not solver_type:
+                return ("uni-pc", "simple")
+            return (f"uni-pc {solver_type}", "simple")
+        if not class_name:
+            raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
+        raise RuntimeError(
+            f"WAN22 GGUF: unsupported metadata scheduler {class_name!r} in {config_path}; "
+            "expected UniPCMultistepScheduler."
+        )
+
+    metadata_sampler_default, metadata_scheduler_default = _metadata_sampler_scheduler_defaults()
+
+    raw_metadata_sampler_parts = str(metadata_sampler_default).strip().lower().split()
+    metadata_default_unipc_solver_hint = (
+        raw_metadata_sampler_parts[1]
+        if len(raw_metadata_sampler_parts) == 2 and raw_metadata_sampler_parts[0] == "uni-pc"
+        else None
+    )
+
+    metadata_sampler_default = _normalize_wan22_sampler_value(
+        field_name="metadata.scheduler_config.sampler_default",
+        value=metadata_sampler_default,
+        expected_unipc_solver_hint=metadata_default_unipc_solver_hint,
+    )
+    metadata_scheduler_default = _normalize_wan22_scheduler_value(
+        field_name="metadata.scheduler_config.scheduler_default",
+        value=metadata_scheduler_default,
+    )
+    metadata_sampler_parts = str(metadata_sampler_default).strip().lower().split()
+    metadata_unipc_solver_hint = (
+        metadata_sampler_parts[1]
+        if len(metadata_sampler_parts) == 2 and metadata_sampler_parts[0] == "uni-pc"
+        else None
+    )
+
     def _stage_opts(
         raw: dict | None,
         *,
@@ -549,7 +663,11 @@ def build_wan22_gguf_run_config(
         if raw_sampler is None:
             sampler = None
         else:
-            sampler = _normalize_wan22_sampler_value(field_name=f"{stage}.sampler", value=raw_sampler)
+            sampler = _normalize_wan22_sampler_value(
+                field_name=f"{stage}.sampler",
+                value=raw_sampler,
+                expected_unipc_solver_hint=metadata_unipc_solver_hint,
+            )
 
         raw_scheduler = raw.get("scheduler")
         if raw_scheduler is None:
@@ -671,51 +789,15 @@ def build_wan22_gguf_run_config(
     if hi_seed is not None:
         seed = hi_seed
 
-    def _metadata_sampler_scheduler_defaults() -> tuple[str, str]:
-        scheduler_dir = os.path.join(vendor_dir, "scheduler")
-        config_path = None
-        for filename in ("scheduler_config.json", "config.json"):
-            candidate = os.path.join(scheduler_dir, filename)
-            if os.path.isfile(candidate):
-                config_path = candidate
-                break
-        if not config_path:
-            raise RuntimeError(
-                "WAN22 GGUF: missing scheduler config under metadata dir "
-                f"(expected '{os.path.join(scheduler_dir, 'scheduler_config.json')}' "
-                f"or '{os.path.join(scheduler_dir, 'config.json')}')."
-            )
-        try:
-            scheduler_config = json.loads(open(config_path, encoding="utf-8").read())
-        except Exception as exc:  # noqa: BLE001 - strict decode
-            raise RuntimeError(f"WAN22 GGUF: invalid scheduler config JSON: {config_path}: {exc}") from exc
-        if not isinstance(scheduler_config, dict):
-            raise RuntimeError(f"WAN22 GGUF: scheduler config must be a JSON object: {config_path}")
-        class_name = str(scheduler_config.get("_class_name") or "").strip()
-        if class_name == "UniPCMultistepScheduler":
-            return ("uni-pc", "simple")
-        if not class_name:
-            raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
-        raise RuntimeError(
-            f"WAN22 GGUF: unsupported metadata scheduler {class_name!r} in {config_path}; "
-            "expected UniPCMultistepScheduler."
-        )
-
-    metadata_sampler_default, metadata_scheduler_default = _metadata_sampler_scheduler_defaults()
-
-    metadata_sampler_default = _normalize_wan22_sampler_value(
-        field_name="metadata.scheduler_config.sampler_default",
-        value=metadata_sampler_default,
-    )
-    metadata_scheduler_default = _normalize_wan22_scheduler_value(
-        field_name="metadata.scheduler_config.scheduler_default",
-        value=metadata_scheduler_default,
-    )
     request_sampler = getattr(request, "sampler", None)
     if request_sampler is None:
         sampler_fallback = metadata_sampler_default
     else:
-        sampler_fallback = _normalize_wan22_sampler_value(field_name="request.sampler", value=request_sampler)
+        sampler_fallback = _normalize_wan22_sampler_value(
+            field_name="request.sampler",
+            value=request_sampler,
+            expected_unipc_solver_hint=metadata_unipc_solver_hint,
+        )
     request_scheduler = getattr(request, "scheduler", None)
     if request_scheduler is None:
         scheduler_fallback = metadata_scheduler_default

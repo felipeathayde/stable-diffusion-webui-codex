@@ -10,7 +10,7 @@ Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
 Contains request parsing and payload validation (including hires tile config via `extras.hires.tile` / `img2img_hires_tile`, Z-Image Turbo/Base
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
-Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`).
+Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
 Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), and supports optional multi-region inpaint passes via
 `img2img_mask_region_split`.
 Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope enforcement for sampler fields and
@@ -26,7 +26,7 @@ resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
 FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
-WAN sampler fields accept any non-empty string at API parse-time (known names canonicalized when possible); scheduler fields remain strict (`simple`) for WAN22 requests.
+WAN sampler fields are strict at API parse-time: values must resolve to real WAN22 runtime lanes (`uni-pc` with metadata-compatible optional solver hint, `euler`, or `euler a`); scheduler fields remain strict (`simple`) for WAN22 requests.
 Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|sliding|svi2|svi2_pro`) with mode-scoped validation for chunk/window fields,
 and no-stretch guide controls (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) are parsed into WAN extras for runtime preprocessing.
 Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
@@ -496,6 +496,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             normalized_loras.append({"sha": lora_sha, "weight": lora_weight})
         return _merge_wan_stage_loras(normalized_loras)
 
+    def _reject_legacy_wan_stage_lora_keys(*, stage_key: str, stage_raw: Mapping[str, Any]) -> None:
+        legacy_messages = {
+            "lora_path": f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.loras'",
+            "lora_sha": f"'{stage_key}.lora_sha' is unsupported; use '{stage_key}.loras'",
+            "lora_weight": f"'{stage_key}.lora_weight' is unsupported; use '{stage_key}.loras'",
+        }
+        for key, detail in legacy_messages.items():
+            if stage_raw.get(key) not in (None, ""):
+                raise HTTPException(status_code=400, detail=detail)
+
 
     def _require_bool_field(payload: Dict[str, Any], key: str) -> bool:
         if key not in payload:
@@ -946,7 +956,21 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         class_name = str(config_raw.get("_class_name") or "").strip()
         if class_name == "UniPCMultistepScheduler":
-            return ("uni-pc", "simple")
+            raw_solver_type = config_raw.get("solver_type")
+            if raw_solver_type is None:
+                return ("uni-pc", "simple")
+            if not isinstance(raw_solver_type, str):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "WAN metadata scheduler config solver_type must be a string when provided: "
+                        f"{config_path}: {raw_solver_type!r}"
+                    ),
+                )
+            solver_type = raw_solver_type.strip().lower()
+            if not solver_type:
+                return ("uni-pc", "simple")
+            return (f"uni-pc {solver_type}", "simple")
         if not class_name:
             raise HTTPException(
                 status_code=409,
@@ -1681,6 +1705,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=f"'{field_name}' must not be empty")
         return sampler
 
+    def _parse_optional_scheduler_field(*, value: object, field_name: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be a string")
+        scheduler = value.strip()
+        if not scheduler:
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must not be empty")
+        return scheduler
+
     def _validate_er_sde_release_scope(*, engine_key: str, sampler: str, field_name: str) -> None:
         if str(sampler).strip().lower() != "er sde":
             return
@@ -1716,6 +1750,43 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 sampler=sampler,
                 field_name=f"{field_name} (prompt <sampler:...> control)",
             )
+
+    def _resolve_hires_sampler_scheduler_override(
+        *,
+        base_sampler: str,
+        base_scheduler: str,
+        sampler_override: str | None,
+        scheduler_override: str | None,
+        sampler_field_name: str,
+        scheduler_field_name: str,
+    ) -> tuple[str, str]:
+        from apps.backend.runtime.pipeline_stages.sampling_plan import resolve_sampler_scheduler_override
+
+        try:
+            return resolve_sampler_scheduler_override(
+                base_sampler=base_sampler,
+                base_scheduler=base_scheduler,
+                sampler_override=sampler_override,
+                scheduler_override=scheduler_override,
+            )
+        except (TypeError, ValueError) as exc:
+            message = str(exc).strip() or "invalid hires sampler/scheduler override"
+            lower = message.lower()
+            if "not supported for sampler" in lower:
+                detail = (
+                    f"Incompatible hires sampler/scheduler override: {message}. "
+                    f"Check '{sampler_field_name}' and '{scheduler_field_name}'."
+                )
+            elif "scheduler" in lower:
+                detail = f"Invalid '{scheduler_field_name}': {message}"
+            elif "sampler" in lower:
+                detail = f"Invalid '{sampler_field_name}': {message}"
+            else:
+                detail = (
+                    "Invalid hires sampler/scheduler override "
+                    f"for '{sampler_field_name}' and '{scheduler_field_name}': {message}"
+                )
+            raise HTTPException(status_code=400, detail=detail) from exc
 
     def _is_gguf_checkpoint(_models_api: Any, model_ref: object) -> bool:
         raw = str(model_ref or "").strip()
@@ -2304,7 +2375,21 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             ensd_raw=ensd_raw,
         )
 
-    def _validate_wan22_sampler_field(*, field_name: str, value: str) -> str:
+    def _extract_wan22_unipc_solver_hint(sampler_value: str | None) -> str | None:
+        normalized = str(sampler_value or "").strip().lower()
+        if not normalized:
+            return None
+        parts = normalized.split()
+        if len(parts) == 2 and parts[0] == "uni-pc":
+            return parts[1]
+        return None
+
+    def _validate_wan22_sampler_field(
+        *,
+        field_name: str,
+        value: str,
+        expected_unipc_solver_hint: str | None = None,
+    ) -> str:
         if not isinstance(value, str):
             raise HTTPException(
                 status_code=400,
@@ -2316,12 +2401,72 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=f"'{field_name}' must not be empty when provided.",
             )
-        try:
-            from apps.backend.types.samplers import SamplerKind
+        from apps.backend.types.samplers import SamplerKind
 
-            return SamplerKind.from_string(normalized).value
-        except Exception:
-            return normalized
+        parts = normalized.split()
+        sampler_name = parts[0]
+        solver_hint = parts[1] if len(parts) == 2 else None
+
+        if sampler_name == SamplerKind.UNI_PC.value:
+            if len(parts) > 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{field_name}' must be 'uni-pc' or 'uni-pc <solver_hint>'; got {value!r}.",
+                )
+            if solver_hint is None:
+                return SamplerKind.UNI_PC.value
+            if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", solver_hint) is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{field_name}' has invalid UniPC solver hint {solver_hint!r}; "
+                        "use lowercase [a-z0-9._-] tokens only."
+                    ),
+                )
+            if expected_unipc_solver_hint is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{field_name}' solver hint {solver_hint!r} is unsupported by WAN metadata; "
+                        "metadata scheduler has no solver_type."
+                    ),
+                )
+            if solver_hint != expected_unipc_solver_hint:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{field_name}' solver hint {solver_hint!r} does not match "
+                        f"WAN metadata solver_type {expected_unipc_solver_hint!r}."
+                    ),
+                )
+            return f"{SamplerKind.UNI_PC.value} {solver_hint}"
+
+        try:
+            sampler_kind = SamplerKind.from_string(normalized)
+        except Exception as exc:
+            _router_log.warning("%s sampler validation failed: %s", field_name, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{field_name}' must resolve to a WAN22 sampler lane "
+                    "('uni-pc' with optional solver hint, 'euler', or 'euler a')."
+                ),
+            ) from exc
+
+        if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+            return sampler_kind.value
+        if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+            return SamplerKind.EULER.value
+        if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+            return SamplerKind.EULER_A.value
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{field_name}' must resolve to a WAN22 sampler lane "
+                "('uni-pc' with optional solver hint, 'euler', or 'euler a')."
+            ),
+        )
 
     def _validate_wan22_scheduler_field(*, field_name: str, value: str) -> str:
         try:
@@ -2352,6 +2497,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         default_frames: int,
         default_sampler: str,
         default_scheduler: str,
+        expected_unipc_solver_hint: str | None,
         default_seed: int,
         default_cfg_scale: float,
     ) -> _VideoCoreDTO:
@@ -2387,7 +2533,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
         sampler_name = _require_str_field(payload, sampler_key) if sampler_key in payload else str(default_sampler)
         scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else str(default_scheduler)
-        sampler_name = _validate_wan22_sampler_field(field_name=sampler_key, value=sampler_name)
+        sampler_name = _validate_wan22_sampler_field(
+            field_name=sampler_key,
+            value=sampler_name,
+            expected_unipc_solver_hint=expected_unipc_solver_hint,
+        )
         scheduler_name = _validate_wan22_scheduler_field(field_name=scheduler_key, value=scheduler_name)
         seed_val = _require_int_field(payload, seed_key) if seed_key in payload else int(default_seed)
         guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else float(default_cfg_scale)
@@ -2411,6 +2561,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         *,
         default_sampler: str = "uni-pc",
         default_scheduler: str = "simple",
+        expected_unipc_solver_hint: str | None = None,
     ) -> _VideoCoreDTO:
         _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
         _reject_unknown_keys(payload, _TXT2VID_ALLOWED_KEYS, "txt2vid")
@@ -2424,6 +2575,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_frames=17,
             default_sampler=default_sampler,
             default_scheduler=default_scheduler,
+            expected_unipc_solver_hint=expected_unipc_solver_hint,
             default_seed=-1,
             default_cfg_scale=7.0,
         )
@@ -2433,6 +2585,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         *,
         default_sampler: str = "uni-pc",
         default_scheduler: str = "simple",
+        expected_unipc_solver_hint: str | None = None,
     ) -> _VideoCoreDTO:
         _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
         _reject_unknown_keys(payload, _IMG2VID_ALLOWED_KEYS, "img2vid")
@@ -2446,6 +2599,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_frames=17,
             default_sampler=default_sampler,
             default_scheduler=default_scheduler,
+            expected_unipc_solver_hint=expected_unipc_solver_hint,
             default_seed=-1,
             default_cfg_scale=7.0,
         )
@@ -2486,6 +2640,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     sampler=hires_sampler,
                     field_name="extras.hires.sampler",
                 )
+            hires_scheduler = _parse_optional_scheduler_field(
+                value=hires_cfg.get("scheduler"),
+                field_name="extras.hires.scheduler",
+            )
+            if hires_sampler is not None or hires_scheduler is not None:
+                resolved_hires_sampler, resolved_hires_scheduler = _resolve_hires_sampler_scheduler_override(
+                    base_sampler=str(sampler_name),
+                    base_scheduler=str(scheduler_name),
+                    sampler_override=hires_sampler,
+                    scheduler_override=hires_scheduler,
+                    sampler_field_name="extras.hires.sampler",
+                    scheduler_field_name="extras.hires.scheduler",
+                )
+                if hires_sampler is not None:
+                    hires_cfg["sampler"] = resolved_hires_sampler
+                hires_cfg["scheduler"] = resolved_hires_scheduler
             hires_refiner_cfg = hires_cfg.get("refiner")
             if isinstance(hires_refiner_cfg, dict):
                 hires_total_steps = int(hires_cfg.get("steps") or 0)
@@ -2787,12 +2957,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     sampler=hr_sampler_name,
                     field_name="img2img_hires_sampling",
                 )
-            hr_scheduler = payload.get("img2img_hires_scheduler")
-            if hr_scheduler is not None:
-                if not isinstance(hr_scheduler, str):
-                    raise HTTPException(status_code=400, detail="'img2img_hires_scheduler' must be a string")
-                if not hr_scheduler.strip():
-                    raise HTTPException(status_code=400, detail="'img2img_hires_scheduler' must not be empty")
+            hr_scheduler = _parse_optional_scheduler_field(
+                value=payload.get("img2img_hires_scheduler"),
+                field_name="img2img_hires_scheduler",
+            )
+            if hr_sampler_name is not None or hr_scheduler is not None:
+                resolved_hr_sampler, resolved_hr_scheduler = _resolve_hires_sampler_scheduler_override(
+                    base_sampler=str(sampler_name),
+                    base_scheduler=str(scheduler_name),
+                    sampler_override=hr_sampler_name,
+                    scheduler_override=hr_scheduler,
+                    sampler_field_name="img2img_hires_sampling",
+                    scheduler_field_name="img2img_hires_scheduler",
+                )
+                if hr_sampler_name is not None:
+                    hr_sampler_name = resolved_hr_sampler
+                hr_scheduler = resolved_hr_scheduler
             hires_data = {
                 "enable": True,
                 "scale": _require_float_field(payload, 'img2img_hires_scale') if 'img2img_hires_scale' in payload else 1.0,
@@ -2803,7 +2983,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "upscaler": payload.get('img2img_hires_upscaler', 'Latent'),
                 "tile": hr_tile,
                 "hr_sampler_name": hr_sampler_name,
-                "hr_scheduler": hr_scheduler.strip() if isinstance(hr_scheduler, str) and hr_scheduler.strip() else None,
+                "hr_scheduler": hr_scheduler,
                 "hr_prompt": payload.get('img2img_hires_prompt', ''),
                 "hr_negative_prompt": payload.get('img2img_hires_neg_prompt', ''),
                 "hr_cfg": _require_float_field(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
@@ -3020,10 +3200,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         wan_metadata_dir = _resolve_wan_metadata_dir(payload)
         default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
+        expected_unipc_solver_hint = _extract_wan22_unipc_solver_hint(default_sampler)
         parsed = _parse_txt2vid_core_dto(
             payload,
             default_sampler=default_sampler,
             default_scheduler=default_scheduler,
+            expected_unipc_solver_hint=expected_unipc_solver_hint,
         )
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
@@ -3096,6 +3278,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raw = payload.get(stage_key)
             if not isinstance(raw, dict):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
+            _reject_legacy_wan_stage_lora_keys(stage_key=stage_key, stage_raw=raw)
             _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
@@ -3144,6 +3327,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     out["sampler"] = _validate_wan22_sampler_field(
                         field_name=f"{stage_key}.sampler",
                         value=stage_sampler,
+                        expected_unipc_solver_hint=expected_unipc_solver_hint,
                     )
                 else:
                     out.pop("sampler", None)
@@ -3268,10 +3452,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         wan_metadata_dir = _resolve_wan_metadata_dir(payload)
         default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
+        expected_unipc_solver_hint = _extract_wan22_unipc_solver_hint(default_sampler)
         parsed = _parse_img2vid_core_dto(
             payload,
             default_sampler=default_sampler,
             default_scheduler=default_scheduler,
+            expected_unipc_solver_hint=expected_unipc_solver_hint,
         )
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
@@ -3346,6 +3532,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raw = payload.get(stage_key)
             if not isinstance(raw, dict):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
+            _reject_legacy_wan_stage_lora_keys(stage_key=stage_key, stage_raw=raw)
             _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
@@ -3394,6 +3581,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     out["sampler"] = _validate_wan22_sampler_field(
                         field_name=f"{stage_key}.sampler",
                         value=stage_sampler,
+                        expected_unipc_solver_hint=expected_unipc_solver_hint,
                     )
                 else:
                     out.pop("sampler", None)
@@ -3721,6 +3909,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     def _normalize_wan_stage_payload_strict(stage: object, *, field: str) -> object:
         if not isinstance(stage, dict):
             return stage
+        _reject_legacy_wan_stage_lora_keys(stage_key=field, stage_raw=stage)
         out: dict[str, object] = dict(stage)
         if not isinstance(out.get("prompt"), str):
             raise HTTPException(status_code=400, detail=f"'{field}.prompt' is required and must be a string")

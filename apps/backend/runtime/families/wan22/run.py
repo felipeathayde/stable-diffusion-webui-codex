@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_stage_transition_barrier` (function): Enforce a deterministic memory barrier between heavyweight stage transitions (release/sync/cache-gc/log) without altering mount policy.
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
-- `_parse_sampler` (function): Parse WAN sampler strings into `(name, solver_hint)` while tolerating non-UniPC multi-token inputs.
+- `_parse_sampler` (function): Parse WAN sampler strings into strict WAN22 runtime lanes `(lane, solver_hint)` with fail-loud validation.
 - `_ResolvedSharedSchedulerSpec` (dataclass): Frozen shared scheduler spec (validated/normalized flow_shift + sampler/scheduler + total_steps) reused across scheduler instantiations.
 - `_resolve_shared_scheduler_spec` (function): Validate/normalize high+low scheduler inputs into a frozen shared scheduler spec with fail-loud continuity checks.
 - `_build_shared_scheduler_from_spec` (function): Instantiate a scheduler from a previously resolved shared scheduler spec.
@@ -442,20 +442,53 @@ def _parse_sampler(value: object | None) -> tuple[str | None, str | None]:
     raw = value.strip().lower()
     if not raw:
         return None, None
+
+    from apps.backend.types.samplers import SamplerKind
+
     parts = raw.split()
-    if len(parts) == 1:
-        return parts[0], None
-    if parts[0] == "uni-pc":
-        return parts[0], parts[1]
-    return parts[0], None
+    sampler_name = parts[0]
+    if sampler_name == SamplerKind.UNI_PC.value:
+        if len(parts) > 2:
+            raise RuntimeError(
+                f"WAN22 GGUF: sampler must be 'uni-pc' or 'uni-pc <solver_hint>', got {value!r}."
+            )
+        if len(parts) == 1:
+            return SamplerKind.UNI_PC.value, None
+        solver_hint = parts[1]
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", solver_hint) is None:
+            raise RuntimeError(
+                f"WAN22 GGUF: invalid UniPC solver hint {solver_hint!r} in sampler {value!r}; "
+                "use lowercase [a-z0-9._-] tokens only."
+            )
+        return SamplerKind.UNI_PC.value, solver_hint
+
+    try:
+        sampler_kind = SamplerKind.from_string(raw)
+    except Exception as exc:
+        raise RuntimeError(
+            f"WAN22 GGUF: unsupported sampler {value!r}. "
+            "Supported WAN22 sampler lanes: 'uni-pc' (optional solver hint), 'euler', 'euler a'."
+        ) from exc
+
+    if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
+        return SamplerKind.UNI_PC.value, ("bh2" if sampler_kind is SamplerKind.UNI_PC_BH2 else None)
+    if sampler_kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
+        return SamplerKind.EULER.value, None
+    if sampler_kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
+        return SamplerKind.EULER_A.value, None
+
+    raise RuntimeError(
+        f"WAN22 GGUF: unsupported sampler {value!r}. "
+        "Supported WAN22 sampler lanes: 'uni-pc' (optional solver hint), 'euler', 'euler a'."
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class _ResolvedSharedSchedulerSpec:
     total_steps: int
     flow_shift: float
-    sampler: str | None
-    scheduler: str | None
+    sampler_configured: str | None
+    scheduler_configured: str | None
 
 
 def _resolve_shared_scheduler_spec(
@@ -475,15 +508,13 @@ def _resolve_shared_scheduler_spec(
             f"High={flow_shift_hi} Low={flow_shift_lo}. Schedule must be continuous."
         )
 
-    from apps.backend.types.samplers import SamplerKind
-
     hi_sampler_raw = sampler_hi.strip() if isinstance(sampler_hi, str) and sampler_hi.strip() else None
     lo_sampler_raw = sampler_lo.strip() if isinstance(sampler_lo, str) and sampler_lo.strip() else None
 
-    hi_name, hi_solver = _parse_sampler(hi_sampler_raw)
-    lo_name, lo_solver = _parse_sampler(lo_sampler_raw)
-    hi_is_unipc = hi_name == "uni-pc"
-    lo_is_unipc = lo_name == "uni-pc"
+    hi_lane, hi_solver = _parse_sampler(hi_sampler_raw)
+    lo_lane, lo_solver = _parse_sampler(lo_sampler_raw)
+    hi_is_unipc = hi_lane == "uni-pc"
+    lo_is_unipc = lo_lane == "uni-pc"
 
     if hi_is_unipc and lo_is_unipc and hi_solver and lo_solver and hi_solver != lo_solver:
         raise RuntimeError(
@@ -503,49 +534,18 @@ def _resolve_shared_scheduler_spec(
     if scheduler_lo is not None and not isinstance(scheduler_lo, str):
         raise RuntimeError(f"WAN22 GGUF: low scheduler must be a string when provided, got {scheduler_lo!r}.")
 
-    def _sampler_lane(raw: str | None) -> str | None:
-        if raw is None:
-            return None
-        raw_norm = str(raw).strip().lower()
-        if raw_norm.startswith("uni-pc"):
-            return "uni-pc"
-        try:
-            kind = SamplerKind.from_string(raw_norm)
-        except Exception:
-            return "metadata"
-        if kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
-            return "uni-pc"
-        if kind in {SamplerKind.EULER, SamplerKind.EULER_CFG_PP}:
-            return "euler"
-        if kind in {SamplerKind.EULER_A, SamplerKind.EULER_A_CFG_PP}:
-            return "euler-a"
-        return "metadata"
-
-    hi_lane = _sampler_lane(hi_sampler_raw)
-    lo_lane = _sampler_lane(lo_sampler_raw)
     if hi_lane and lo_lane and hi_lane != lo_lane:
         raise RuntimeError(
             "WAN22 GGUF: high/low sampler lane mismatch for shared scheduler continuity "
             f"(high={sampler_hi!r} lane={hi_lane!r}, low={sampler_lo!r} lane={lo_lane!r})."
         )
-    if (
-        hi_lane == "metadata"
-        and lo_lane == "metadata"
-        and hi_sampler_raw is not None
-        and lo_sampler_raw is not None
-        and hi_sampler_raw.lower() != lo_sampler_raw.lower()
-    ):
-        raise RuntimeError(
-            "WAN22 GGUF: high/low sampler mismatch for unsupported sampler lanes "
-            f"(high={sampler_hi!r}, low={sampler_lo!r}). Use the same sampler for both stages."
-        )
 
     resolved_lane = hi_lane or lo_lane
     if resolved_lane == "uni-pc":
         solver = hi_solver or lo_solver
-        sampler_eff = f"uni-pc {solver}" if solver else "uni-pc"
+        sampler_configured = f"uni-pc {solver}" if solver else "uni-pc"
     else:
-        sampler_eff = hi_sampler_raw or lo_sampler_raw
+        sampler_configured = resolved_lane
 
     hi_scheduler_raw = scheduler_hi.strip() if isinstance(scheduler_hi, str) and scheduler_hi.strip() else None
     lo_scheduler_raw = scheduler_lo.strip() if isinstance(scheduler_lo, str) and scheduler_lo.strip() else None
@@ -562,19 +562,21 @@ def _resolve_shared_scheduler_spec(
     return _ResolvedSharedSchedulerSpec(
         total_steps=int(total_steps),
         flow_shift=float(flow_shift_hi),
-        sampler=sampler_eff,
-        scheduler=(hi_scheduler_raw or lo_scheduler_raw),
+        sampler_configured=sampler_configured,
+        scheduler_configured=(hi_scheduler_raw or lo_scheduler_raw),
     )
 
 
 def _build_shared_scheduler_from_spec(cfg: RunConfig, *, spec: _ResolvedSharedSchedulerSpec):
-    return make_scheduler(
+    scheduler_obj, effective_sampler = make_scheduler(
         int(spec.total_steps),
         metadata_dir=str(cfg.metadata_dir or ""),
         flow_shift=float(spec.flow_shift),
-        sampler=spec.sampler,
-        scheduler=spec.scheduler,
-    ), int(spec.total_steps)
+        sampler=spec.sampler_configured,
+        scheduler=spec.scheduler_configured,
+        return_effective_sampler=True,
+    )
+    return scheduler_obj, int(spec.total_steps), spec.sampler_configured, str(effective_sampler)
 
 
 def _build_shared_scheduler(
@@ -1360,7 +1362,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
         flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
-        scheduler, total_steps = _build_shared_scheduler(
+        scheduler, total_steps, sampler_configured, sampler_effective = _build_shared_scheduler(
             cfg,
             steps_hi=steps_hi,
             steps_lo=steps_lo,
@@ -1371,11 +1373,19 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             flow_shift_hi=flow_shift_hi_value,
             flow_shift_lo=flow_shift_lo_value,
         )
-        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
         log.info(
-            "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
+            "[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d sampler_configured=%s sampler_effective=%s",
+            total_steps,
             steps_hi,
-            sampler_hi,
+            steps_lo,
+            sampler_configured,
+            sampler_effective,
+        )
+        log.info(
+            "[wan22.gguf] HIGH: steps=%s sampler_effective=%s sampler_configured=%s scheduler=%s cfg_scale=%s seed=%s",
+            steps_hi,
+            sampler_effective,
+            sampler_configured,
             sched_hi,
             (getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
             cfg.seed,
@@ -1396,7 +1406,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_hi,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_hi,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -1459,9 +1469,10 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
             )
         log.info(
-            "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s",
+            "[wan22.gguf] LOW: steps=%s sampler_effective=%s sampler_configured=%s scheduler=%s cfg_scale=%s",
             steps_lo,
-            sampler_lo,
+            sampler_effective,
+            sampler_configured,
             sched_lo,
             (getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
         )
@@ -1483,7 +1494,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_lo,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_lo,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -1635,7 +1646,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
         flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
-        scheduler, total_steps = _build_shared_scheduler(
+        scheduler, total_steps, sampler_configured, sampler_effective = _build_shared_scheduler(
             cfg,
             steps_hi=steps_hi,
             steps_lo=steps_lo,
@@ -1646,7 +1657,14 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
             flow_shift_hi=flow_shift_hi_value,
             flow_shift_lo=flow_shift_lo_value,
         )
-        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+        log.info(
+            "[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d sampler_configured=%s sampler_effective=%s",
+            total_steps,
+            steps_hi,
+            steps_lo,
+            sampler_configured,
+            sampler_effective,
+        )
 
         memory_management.manager.load_model(hi_mm)
         high_progress_adapter = _WanUnifiedBlockProgressAdapter(stage_name="high")
@@ -1663,7 +1681,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_hi,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_hi,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -1736,7 +1754,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_lo,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_lo,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -1954,7 +1972,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
         flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
-        scheduler, total_steps = _build_shared_scheduler(
+        scheduler, total_steps, sampler_configured, sampler_effective = _build_shared_scheduler(
             cfg,
             steps_hi=steps_hi,
             steps_lo=steps_lo,
@@ -1965,7 +1983,14 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             flow_shift_hi=flow_shift_hi_value,
             flow_shift_lo=flow_shift_lo_value,
         )
-        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+        log.info(
+            "[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d sampler_configured=%s sampler_effective=%s",
+            total_steps,
+            steps_hi,
+            steps_lo,
+            sampler_configured,
+            sampler_effective,
+        )
 
         seed_hi = _build_i2v_seed_state(
             cfg=cfg,
@@ -1998,7 +2023,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_hi,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_hi,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -2073,7 +2098,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_lo,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_lo,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -2266,7 +2291,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
         flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
-        scheduler, total_steps = _build_shared_scheduler(
+        scheduler, total_steps, sampler_configured, sampler_effective = _build_shared_scheduler(
             cfg,
             steps_hi=steps_hi,
             steps_lo=steps_lo,
@@ -2277,7 +2302,14 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
             flow_shift_hi=flow_shift_hi_value,
             flow_shift_lo=flow_shift_lo_value,
         )
-        log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+        log.info(
+            "[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d sampler_configured=%s sampler_effective=%s",
+            total_steps,
+            steps_hi,
+            steps_lo,
+            sampler_configured,
+            sampler_effective,
+        )
 
         seed_hi = _build_i2v_seed_state(
             cfg=cfg,
@@ -2310,7 +2342,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_hi,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_hi,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -2385,7 +2417,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
                 device=dev,
                 dtype=dt,
                 logger=log,
-                sampler_name=sampler_lo,
+                sampler_name=sampler_effective,
                 scheduler_name=sched_lo,
                 metadata_dir=cfg.metadata_dir,
                 scheduler_obj=scheduler,
@@ -2693,7 +2725,15 @@ def stream_img2vid_chunked(
         flow_shift_lo=flow_shift_lo_value,
     )
     total_steps = int(shared_scheduler_spec.total_steps)
-    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+    _, _, sampler_configured, sampler_effective = _build_shared_scheduler_from_spec(cfg, spec=shared_scheduler_spec)
+    log.info(
+        "[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d sampler_configured=%s sampler_effective=%s",
+        total_steps,
+        steps_hi,
+        steps_lo,
+        sampler_configured,
+        sampler_effective,
+    )
 
     def _resolve_hybrid_mode(*, estimated_total_mb: float) -> str:
         if chunk_buffer_mode_value == "hybrid":
@@ -2830,7 +2870,7 @@ def stream_img2vid_chunked(
                     chunk_condition = chunk_condition_buffer
 
             chunk_seed = _resolve_chunk_seed(getattr(cfg, "seed", None), chunk_index=chunk_index, mode=chunk_seed_mode)
-            chunk_scheduler, _ = _build_shared_scheduler_from_spec(cfg, spec=shared_scheduler_spec)
+            chunk_scheduler, _, _, _ = _build_shared_scheduler_from_spec(cfg, spec=shared_scheduler_spec)
 
             chunk_pct_span = float(chunk_sampling_span_pct) / float(len(chunk_starts))
             chunk_pct_start = 5.0 + (chunk_pct_span * float(chunk_index))
@@ -2881,7 +2921,7 @@ def stream_img2vid_chunked(
                     device=dev,
                     dtype=dt,
                     logger=log,
-                    sampler_name=sampler_hi,
+                    sampler_name=sampler_effective,
                     scheduler_name=sched_hi,
                     metadata_dir=cfg.metadata_dir,
                     scheduler_obj=chunk_scheduler,
@@ -2967,7 +3007,7 @@ def stream_img2vid_chunked(
                     device=dev,
                     dtype=dt,
                     logger=log,
-                    sampler_name=sampler_lo,
+                    sampler_name=sampler_effective,
                     scheduler_name=sched_lo,
                     metadata_dir=cfg.metadata_dir,
                     scheduler_obj=chunk_scheduler,

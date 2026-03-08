@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Model and asset inventory API routes.
-Exposes checkpoints, inventories (sync + async refresh task start), path scan/add helpers (with file size metadata), samplers/schedulers, embeddings,
-and engine capabilities.
+Exposes checkpoints, inventories (sync + async refresh task start), path scan/add helpers (with file size metadata), executable sampler/scheduler
+surfaces, embeddings, and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
 (`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, WAN22 animate engine ids, and
@@ -932,17 +932,20 @@ def build_router(
 
         samplers = []
         for entry in SAMPLER_OPTIONS:
-            if not entry.get("supported", True):
-                continue
+            supported = bool(entry.get("supported", True))
             spec = None
-            try:
-                spec = get_sampler_spec(entry["name"])
-            except Exception:
-                pass
+            if supported:
+                try:
+                    spec = get_sampler_spec(str(entry["name"]))
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"/api/samplers metadata drift for supported sampler {entry['name']!r}: {exc}",
+                    ) from exc
             samplers.append(
                 {
                     "name": entry["name"],
-                    "supported": bool(entry.get("supported", True)),
+                    "supported": supported,
                     "default_scheduler": spec.default_scheduler if spec else None,
                     "allowed_schedulers": sorted(spec.allowed_schedulers) if spec else [],
                 }

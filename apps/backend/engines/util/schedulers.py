@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampler/scheduler mapping for diffusers pipelines.
-Maps UI-facing sampler/scheduler selections to a strict diffusers scheduler instance (no silent fallbacks).
+Maps UI-facing sampler/scheduler selections to a strict diffusers scheduler instance and fail-loudly rejects native-only sampler variants
+that this bridge does not implement (no silent fallbacks).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `apply_sampler_scheduler` (function): Applies a sampler/scheduler selection to a pipeline and returns the effective outcome.
@@ -24,6 +25,7 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: s
     """Strict mapping of sampler/scheduler to Diffusers pipeline.
 
     - Allowed: euler a, euler, ddim, dpm++ 2m, dpm++ 2m sde, plms, pndm, uni-pc.
+    - Explicitly rejected: `uni-pc bh2` (known native variant not implemented by this bridge).
     - On invalid or failed application, raises with the root cause; no fallbacks.
     """
     wanted_sampler = sampler.value if isinstance(sampler, SamplerKind) else sampler
@@ -35,6 +37,13 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: s
     eff_sampler = wanted_sampler
     eff_scheduler = wanted_scheduler
     warnings: List[str] = []
+
+    kind = SamplerKind.from_string(wanted_sampler)
+    if kind is SamplerKind.UNI_PC_BH2:
+        raise ValueError(
+            "Sampler 'uni-pc bh2' is not implemented in this scheduler bridge; "
+            "use 'uni-pc' on this path."
+        )
 
     from diffusers import (
         EulerDiscreteScheduler,
@@ -56,8 +65,6 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: s
         SamplerKind.PNDM: PNDMScheduler,
         SamplerKind.UNI_PC: UniPCMultistepScheduler,
     }
-
-    kind = SamplerKind.from_string(wanted_sampler)
 
     target_cls = allowed.get(kind)
     if target_cls is None:

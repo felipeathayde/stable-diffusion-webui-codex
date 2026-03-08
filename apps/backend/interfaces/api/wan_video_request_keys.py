@@ -7,8 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Backend API-owned WAN video request-key contracts for strict route validation.
-Defines the shared top-level/stage allowlists consumed by generation routers for txt2vid/img2vid unknown-key rejection,
-and exposes the legacy alias mapping used to fail loud on removed WAN request keys before task dispatch.
+Defines the shared top-level/stage allowlists consumed by generation routers for txt2vid/img2vid unknown-key rejection, keeps WAN stage payloads on the
+canonical `loras[]` contract (no legacy single-field stage LoRA keys), and exposes the legacy alias mapping used to fail loud on removed WAN request keys
+before task dispatch.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoRequestKeys` (dataclass): Canonical WAN video request-key allowlists for txt2vid/img2vid and WAN stage controls.
@@ -61,9 +62,6 @@ class WanVideoRequestKeys:
             "seed",
             "lightning",
             "loras",
-            "lora_sha",
-            "lora_path",
-            "lora_weight",
             "flow_shift",
         }
     )

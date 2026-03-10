@@ -1,7 +1,7 @@
 # apps/backend/engines/flux2 Overview
 <!-- tags: backend, engines, flux2, qwen3 -->
-Date: 2026-03-06
-Last Review: 2026-03-06
+Date: 2026-03-08
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -15,6 +15,8 @@ Status: Active
 - `apps/backend/engines/flux2/__init__.py` — Package marker only.
 
 ## Notes
+- 2026-03-08: `img2img.py` now preserves truthful open-ended sampling progress for native samplers without an honest bounded total (for example `dpm adaptive`) by emitting `percent=None`, `total_steps=None`, and non-fake sampling/decode metadata instead of coercing unknown totals to integers.
+- 2026-03-09: `img2img.py` hires path now applies hires-prompt sampler/scheduler and width/height controls before explicit hires request overrides, and records effective hires sampler/scheduler/steps/denoise/size metadata for the shared img2img response surface.
 - Loader/parser already own FLUX.2 checkpoint detection + component loading; engine code must reuse the resolved bundle instead of inventing new loading paths.
 - The active FLUX.2 backend seam is **txt2img + image-conditioned img2img/inpaint** for Klein 4B/base-4B:
   - `supports_img2img=true`

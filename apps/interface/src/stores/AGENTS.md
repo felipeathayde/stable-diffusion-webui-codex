@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-03-08
+Last Review: 2026-03-09
 Status: Active
 
 ## Purpose
@@ -80,7 +80,8 @@ Status: Active
 - 2026-03-05: `model_tabs.ts` baseline required tab types now include `flux2`; `engine_config.ts` now exposes `flux2` defaults/capabilities, and `quicksettings.ts` now recognizes `flux2` in VAE-by-family and text-encoder root/prefix mappings (`flux2_tenc`).
 - 2026-03-06: FLUX.2 store semantics now match the backend Klein 4B / base-4B image slice: `engine_config.ts` exposes mixed task/cfg capabilities (txt2img + img2img; CFG + distilled-CFG), `model_tabs.ts` preserves init-image/mask state while still capping `flux2/*` text encoders to one selector without forcing img2img denoise to `1.0`, and `quicksettings.ts` now exports `resolveModelInfo(...)` + `resolveFlux2CheckpointVariant(...)` so views/composables can derive checkpoint-specific FLUX.2 guidance mode without adding request fields.
 - 2026-03-06: `xyz.ts` now derives FLUX.2 guidance mode from `quicksettings.resolveModelInfo(...)` + `resolveFlux2CheckpointVariant(...)` before building sweep payloads, and `engine_config.ts` aligns FLUX.2 default steps with the backend family runtime baseline (`20`).
-- 2026-03-08: `model_tabs.ts` WAN stage params persist `scheduler` on both stages (`high.scheduler` / `low.scheduler`); WAN defaults initialize stage scheduler to `simple`, WAN params normalization backfills empty scheduler values to `simple`, strips stale nested stage keys, and `load()` persists that migration through the standard tab params persistence path.
+- 2026-03-08: `model_tabs.ts` WAN stage params persist both `sampler` and `scheduler` on both stages (`high.*` / `low.*`); WAN defaults initialize stage sampler/scheduler to `uni-pc bh2` + `simple`, WAN params normalization backfills blank sampler and non-`simple` scheduler values, strips stale nested stage keys, and `load()` persists that migration through the standard tab params persistence path.
+- 2026-03-09: `engine_capabilities.ts` now validates/preserves family sampling lists (`supported_samplers`, `supported_schedulers`, `excluded_samplers`, `excluded_schedulers`) and exports shared family-aware sampler/scheduler filtering + normalization helpers for image-tab, PNG import, and XYZ surfaces.
 - 2026-02-27: `model_tabs.ts` WAN `video` params removed obsolete output flags (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and migrated interpolation state to one `interpolationFps` field (`0` off, active values normalized as output-FPS targets mapped to backend interpolation times).
 - 2026-02-27: `model_tabs.ts` WAN `video.fps` default is now `15` (was `24`) to align initial WAN runs with the updated UI baseline.
 - 2026-02-27: `model_tabs.ts` WAN `video` params now include SeedVR2 upscaling controls (`upscaling*` fields) with strict normalization (`batch_size` as `4n+1`, noise scales clamped to `[0,1]`, color-correction enum validation).

@@ -8,13 +8,17 @@ Required Notice: see NOTICE
 
 Purpose: Pinia store for backend engine capability gating.
 Fetches `/api/engines/capabilities` and exposes cached capability + family + asset-contract + backend-owned dependency-check maps so views/components can gate
-UI features, required asset selection, family-specific behavior, and readiness indicators from a single contract surface.
+UI features, required asset selection, family-specific behavior, readiness indicators, and family-scoped sampler/scheduler filtering from a single contract surface.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `asEngineDependencyCheckRow` (function): Validates/coerces one dependency-check row from unknown payload data.
 - `asEngineDependencyStatus` (function): Validates/coerces one dependency status payload per semantic engine.
 - `parseDependencyChecks` (function): Parses strict `dependency_checks` map from capabilities response.
 - `parseEngineIdToSemanticMap` (function): Parses strict `engine_id_to_semantic_engine` map from capabilities response.
+- `filterSamplersForFamilyCapabilities` (function): Applies family `supported_samplers`/`excluded_samplers` constraints to executable sampler rows.
+- `filterSchedulersForFamilyCapabilities` (function): Applies family `supported_schedulers`/`excluded_schedulers` constraints to executable scheduler rows.
+- `filterSchedulersForSampler` (function): Filters scheduler rows by sampler `allowed_schedulers` compatibility.
+- `normalizeSamplerSchedulerSelection` (function): Resolves a valid sampler/scheduler pair against executable catalogs + family + sampler compatibility constraints.
 - `parseFamilyCapabilities` (function): Parses strict `families` capability map from capabilities response.
 - `useEngineCapabilitiesStore` (store): Pinia store exposing engine capabilities, load state, and lookup helpers.
 */
@@ -29,6 +33,8 @@ import type {
   FamilyCapabilities,
   EngineDependencyStatus,
   EngineDependencyCheckRow,
+  SamplerInfo,
+  SchedulerInfo,
 } from '../api/types'
 import { fetchEngineCapabilities } from '../api/client'
 import {
@@ -39,6 +45,142 @@ import {
 } from '../utils/engine_taxonomy'
 
 const CAPABILITIES_CONTRACT_ERROR_PREFIX = "Invalid '/api/engines/capabilities' response:"
+
+type FamilySamplingListKey =
+  | 'supported_samplers'
+  | 'supported_schedulers'
+  | 'excluded_samplers'
+  | 'excluded_schedulers'
+
+function toUniqueNonEmptyStrings(values: Array<string | null | undefined>): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const rawValue of values) {
+    const value = String(rawValue || '').trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    out.push(value)
+  }
+  return out
+}
+
+function parseFamilySamplingList(
+  row: Record<string, unknown>,
+  family: string,
+  field: FamilySamplingListKey,
+): string[] | null | undefined {
+  const raw = row[field]
+  if (typeof raw === 'undefined') return undefined
+  if (raw === null) return null
+  if (!Array.isArray(raw)) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} family capability '${family}' has non-array '${field}'.`)
+  }
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const [index, entry] of raw.entries()) {
+    if (typeof entry !== 'string') {
+      throw new Error(
+        `${CAPABILITIES_CONTRACT_ERROR_PREFIX} family capability '${family}' has non-string '${field}[${index}]'.`,
+      )
+    }
+    const value = entry.trim()
+    if (!value) {
+      throw new Error(
+        `${CAPABILITIES_CONTRACT_ERROR_PREFIX} family capability '${family}' has empty '${field}[${index}]'.`,
+      )
+    }
+    if (seen.has(value)) continue
+    seen.add(value)
+    normalized.push(value)
+  }
+  return normalized
+}
+
+function capabilitySet(values: string[] | null | undefined): Set<string> | null {
+  if (!Array.isArray(values)) return null
+  return new Set(values)
+}
+
+export function filterSamplersForFamilyCapabilities(
+  samplers: SamplerInfo[],
+  familyCapabilities: FamilyCapabilities | null | undefined,
+): SamplerInfo[] {
+  const supported = capabilitySet(familyCapabilities?.supported_samplers)
+  const excluded = capabilitySet(familyCapabilities?.excluded_samplers)
+  return samplers.filter((entry) => {
+    if (supported && !supported.has(entry.name)) return false
+    if (excluded && excluded.has(entry.name)) return false
+    return true
+  })
+}
+
+export function filterSchedulersForFamilyCapabilities(
+  schedulers: SchedulerInfo[],
+  familyCapabilities: FamilyCapabilities | null | undefined,
+): SchedulerInfo[] {
+  const supported = capabilitySet(familyCapabilities?.supported_schedulers)
+  const excluded = capabilitySet(familyCapabilities?.excluded_schedulers)
+  return schedulers.filter((entry) => {
+    if (supported && !supported.has(entry.name)) return false
+    if (excluded && excluded.has(entry.name)) return false
+    return true
+  })
+}
+
+export function filterSchedulersForSampler(
+  schedulers: SchedulerInfo[],
+  sampler: SamplerInfo | null | undefined,
+): SchedulerInfo[] {
+  if (!sampler) return schedulers.slice()
+  const allowed = Array.isArray(sampler.allowed_schedulers)
+    ? sampler.allowed_schedulers.map((entry) => String(entry || '').trim()).filter((entry) => entry.length > 0)
+    : []
+  if (allowed.length === 0) return schedulers.slice()
+  const allowedSet = new Set(allowed)
+  return schedulers.filter((entry) => allowedSet.has(entry.name))
+}
+
+export function normalizeSamplerSchedulerSelection(opts: {
+  samplers: SamplerInfo[]
+  schedulers: SchedulerInfo[]
+  familyCapabilities: FamilyCapabilities | null | undefined
+  sampler: string | null | undefined
+  scheduler: string | null | undefined
+  preferredSamplers?: Array<string | null | undefined>
+  preferredSchedulers?: Array<string | null | undefined>
+}): { sampler: string; scheduler: string } | null {
+  const familySamplers = filterSamplersForFamilyCapabilities(opts.samplers, opts.familyCapabilities)
+  const familySchedulers = filterSchedulersForFamilyCapabilities(opts.schedulers, opts.familyCapabilities)
+  if (familySamplers.length === 0 || familySchedulers.length === 0) return null
+
+  const samplerByName = new Map(familySamplers.map((entry) => [entry.name, entry]))
+  const samplerCandidates = toUniqueNonEmptyStrings([
+    opts.sampler,
+    ...(opts.preferredSamplers ?? []),
+    ...familySamplers.map((entry) => entry.name),
+  ])
+
+  for (const candidateSampler of samplerCandidates) {
+    const samplerSpec = samplerByName.get(candidateSampler)
+    if (!samplerSpec) continue
+    const allowedSchedulers = filterSchedulersForSampler(familySchedulers, samplerSpec)
+    if (allowedSchedulers.length === 0) continue
+    const allowedSchedulerSet = new Set(allowedSchedulers.map((entry) => entry.name))
+    const schedulerCandidates = toUniqueNonEmptyStrings([
+      opts.scheduler,
+      ...(opts.preferredSchedulers ?? []),
+      samplerSpec.default_scheduler,
+      ...allowedSchedulers.map((entry) => entry.name),
+    ])
+    const scheduler = schedulerCandidates.find((candidate) => allowedSchedulerSet.has(candidate))
+    if (!scheduler) continue
+    return {
+      sampler: samplerSpec.name,
+      scheduler,
+    }
+  }
+  return null
+}
 
 function asEngineDependencyCheckRow(
   value: unknown,
@@ -141,6 +283,10 @@ function parseFamilyCapabilities(payload: unknown): Record<string, FamilyCapabil
     const row = value as Record<string, unknown>
     const supportsNegative = row.supports_negative_prompt
     const showsClipSkip = row.shows_clip_skip
+    const supportedSamplers = parseFamilySamplingList(row, family, 'supported_samplers')
+    const supportedSchedulers = parseFamilySamplingList(row, family, 'supported_schedulers')
+    const excludedSamplers = parseFamilySamplingList(row, family, 'excluded_samplers')
+    const excludedSchedulers = parseFamilySamplingList(row, family, 'excluded_schedulers')
     if (typeof supportsNegative !== 'boolean') {
       throw new Error(
         `${CAPABILITIES_CONTRACT_ERROR_PREFIX} family capability '${family}' has non-boolean 'supports_negative_prompt'.`,
@@ -154,6 +300,10 @@ function parseFamilyCapabilities(payload: unknown): Record<string, FamilyCapabil
     out[family] = {
       supports_negative_prompt: supportsNegative,
       shows_clip_skip: showsClipSkip,
+      supported_samplers: supportedSamplers,
+      supported_schedulers: supportedSchedulers,
+      excluded_samplers: excludedSamplers,
+      excluded_schedulers: excludedSchedulers,
     }
   }
   return out

@@ -14,7 +14,7 @@ Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled
 Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card so the zoom overlay can visualize and edit generation-frame projection.
 In img2vid mode, the shared init-image card is presented directly as `Img2Vid Parameters` without an extra wrapper header row.
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
-Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `scheduler` + `flowShift` in history/sync flows,
+Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `sampler`/`scheduler` + `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
 payload parsing/LoRA SHA resolution is handled in `useVideoGeneration`.
 Temporal Loom reset-anchor control is rendered as a compact content-width toggle button, and upscaling controls keep the same experimental badge treatment as Temporal Loom.
@@ -43,7 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setVideo` (function): Applies partial updates to the video params in state (triggers dependent sync where needed).
 - `setHigh` (function): Applies partial updates to the high stage (and can drive low-stage sync when enabled).
 - `setLow` (function): Applies partial updates to the low stage.
-- `wanStageSamplers` / `wanStageSchedulers` (computed): WAN-filtered sampler/scheduler inventories used by WAN stage selectors.
+- `wanStageSamplers` / `wanStageSchedulers` (computed): WAN-filtered sampler/scheduler inventories used by WAN stage selectors (`uni-pc*` + `euler` lanes, `simple` scheduler only).
 - `wanRecommendedSamplers` / `wanRecommendedSchedulers` (computed): Sanitized recommendation lists forwarded into WAN stage selectors when available.
 - `hideHighNegativePrompt`/`hideLowNegativePrompt` (const): Hide stage Negative Prompt fields when stage CFG is `<= 1`.
 - `syncLowFromHighIfNeeded` (function): Keeps low stage params aligned with high stage when the “low follows high” toggle is enabled.
@@ -801,7 +801,7 @@ const wanParams = computed<TabByType<'wan'>['params'] | null>(() => tab.value?.p
 const lightx2v = computed<boolean>(() => Boolean(wanParams.value?.lightx2v))
 
 function defaultStage(): WanStageParams {
-  return { modelDir: '', prompt: '', negativePrompt: '', sampler: '', scheduler: 'simple', steps: 30, cfgScale: 7, seed: -1, loras: [], flowShift: undefined }
+  return { modelDir: '', prompt: '', negativePrompt: '', sampler: 'uni-pc bh2', scheduler: 'simple', steps: 30, cfgScale: 7, seed: -1, loras: [], flowShift: undefined }
 }
 function defaultVideo(): WanVideoParams {
   return {
@@ -1535,8 +1535,13 @@ const wanDependencyReady = computed(() => Boolean(wanDependencyStatus.value?.rea
 const wanDependencyError = computed(() => engineCaps.firstDependencyError('wan22'))
 const wanEngineSurface = computed(() => engineCaps.get('wan22'))
 const wanStageSamplers = computed(() => {
-  const allowed = new Set(['uni-pc', 'euler', 'euler a'])
-  return samplers.value.filter((entry) => allowed.has(String(entry.name || '').trim()))
+  const allowedExact = new Set(['euler', 'euler a'])
+  return samplers.value.filter((entry) => {
+    const normalizedName = String(entry.name || '').trim().toLowerCase()
+    if (!normalizedName) return false
+    if (normalizedName.startsWith('uni-pc')) return true
+    return allowedExact.has(normalizedName)
+  })
 })
 const wanStageSchedulers = computed(() => {
   return schedulers.value.filter((entry) => String(entry.name || '').trim() === 'simple')

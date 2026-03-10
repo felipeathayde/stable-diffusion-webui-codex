@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-03-08
+Last Review: 2026-03-09
 Status: Active
 
 ## Purpose
@@ -27,8 +27,10 @@ Status: Active
   - `SamplerSpec` dataclass and `get_sampler_spec(name)` for canonical sampler/scheduler compatibility resolution.
 - `driver.py`
   - `CodexSampler` native runtime driver.
-  - Runs native lanes including `ddpm` with deterministic driver-owned `ImageRNG` stochastic draws.
+  - Runs native lanes including `ddpm` and `dpm++ sde` with deterministic driver-owned `ImageRNG` stochastic draws.
   - Handles progress/cancellation/preview hooks under the driver contract.
+- `interval_noise.py`
+  - Nested-interval normalized-noise helper used by base `dpm++ sde` to reproduce Brownian-style interval covariance from driver-owned iid draws.
 - `__init__.py`
   - Import-light public surface for sampler/scheduler catalog exports.
 
@@ -51,9 +53,21 @@ Status: Active
   - Public scheduler exposure is intentionally narrowed to `karras` until broader parity is proven.
 - `dpm++ 2m sde` seam:
   - Base `dpm++ 2m sde` executes natively in `driver.py` with prediction-type-aware half-logSNR recurrence.
+  - `dpm++ 2m sde heun` reuses the same native runtime state with the upstream Heun correction term instead of the midpoint correction.
+  - `dpm++ 2m sde gpu` and `dpm++ 2m sde heun gpu` are explicit native labels backed by the same deterministic interval-noise core as their non-GPU counterparts; this runtime does not expose a separate BrownianTree CPU/GPU split.
   - Stochastic renoise is driver-owned and deterministic (`ImageRNG` seeded-step draws); ambient randomness is not used.
   - Partial-denoise resume burn is deterministic and consumes one draw per skipped positive interval (none for terminal `sigma_next == 0`).
   - Public scheduler exposure is intentionally narrowed to `exponential`.
+- `dpm++ 3m sde` seam:
+  - `dpm++ 3m sde` executes natively in `driver.py` as its own three-history SDE branch.
+  - The lane reuses the model-sampling-aware half-logSNR seam and driver-owned deterministic `ImageRNG` noise; it is not an alias of `dpm++ 2m sde`.
+  - Public scheduler exposure is intentionally narrowed to `exponential`.
+- `dpm++ sde` seam:
+  - Base `dpm++ sde` executes natively in `driver.py`.
+  - The lane uses prediction-type-aware half-logSNR drift math plus deterministic driver-owned nested interval noise derived from `ImageRNG` draws instead of `torchsde`.
+  - Each positive step consumes two deterministic draws to compose the `[sigma_start, sigma_mid]` and `[sigma_start, sigma_end]` normalized interval noises; partial-run skip-burn consumes the same draw count.
+  - Terminal `sigma_next == 0` follows the Comfy parity target and returns `x = denoised`.
+  - Public scheduler exposure is intentionally narrowed to `karras`.
 - `euler cfg++` / `euler a cfg++` seam:
   - `euler cfg++` and `euler a cfg++` execute natively in `driver.py`.
   - Both lanes use the driver post-CFG hook to capture `uncond_denoised`; `euler a cfg++` also uses driver-owned deterministic `ImageRNG` noise.
@@ -63,10 +77,14 @@ Status: Active
   - The lane captures `uncond_denoised` through the sampler post-CFG hook and uses a dedicated CFG++ ancestral recurrence instead of aliasing plain `dpm++ 2s ancestral`.
   - Stochastic renoise uses driver-owned deterministic `ImageRNG`; RF/CONST midpoint projection uses the shared half-logSNR helper seam.
   - Public scheduler exposure is intentionally narrowed to `karras` until broader parity is proven.
-- Inventory-only sampler rows:
-  - Raw `/api/samplers` inventory may still list unsupported rows with `supported=false`.
-  - Rows absent from `SamplerKind` are intentionally non-executable and must fail at parse/spec resolution instead of reaching the native driver.
-  - Current inventory-only examples include `ddim cfg++`, `dpm adaptive`, `dpm++ 2m sde heun`, `dpm++ 2m sde gpu`, `dpm++ 2m sde heun gpu`, `dpm++ sde`, `dpm++ 3m sde`, and `lcm`.
+- `dpm adaptive` seam:
+  - `dpm adaptive` executes natively in `driver.py`.
+  - The lane reports open-ended progress truthfully: adaptive sampling does not publish a fake fixed total-step count, and image progress surfaces emit `percent=None` / `total_steps=None` when the accepted-step count is still unbounded.
+  - Guidance `cfg_trunc_ratio` is explicitly unsupported for `dpm adaptive` because it requires an honest total-step contract; stochastic adaptive (`eta != 0`) also remains fail-loud pending a deterministic noise contract.
+  - Public scheduler exposure is intentionally narrowed to `karras`.
+- Sampler inventory surface:
+  - Raw `/api/samplers` inventory is current-only and lists executable rows from the runtime-backed sampler catalog.
+  - Rows absent from `SamplerKind` and the sampler catalog remain non-executable and fail at parse/spec resolution instead of reaching the native driver.
 - Driver-owned stochastic determinism:
   - Native stochastic lanes use seeded `ImageRNG` through the driver.
   - No ambient randomness in native stochastic update paths.

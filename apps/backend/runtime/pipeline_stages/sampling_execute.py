@@ -122,9 +122,9 @@ def execute_sampling(
     init_latent: torch.Tensor | None = None,
     start_at_step: int | None = None,
     denoise_strength: float | None = None,
-    pre_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor] | None = None,
-    post_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor] | None = None,
-    post_step_hook: Callable[[torch.Tensor, int, int], None] | None = None,
+    pre_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor] | None = None,
+    post_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor] | None = None,
+    post_step_hook: Callable[[torch.Tensor, int, int | None], None] | None = None,
     post_sample_hook: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     """Execute the sampler using the provided configuration."""
@@ -179,7 +179,7 @@ def execute_sampling(
     debug_factors = debug_preview_factors_enabled()
     preview_emitted = False
 
-    def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
+    def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int | None) -> None:
         nonlocal preview_emitted
         if preview_interval <= 0:
             return

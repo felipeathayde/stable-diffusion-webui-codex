@@ -115,12 +115,7 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
         distilled_value = payload.get("distilled_cfg", default_distilled)
 
     sampler_name = payload.get("hr_sampler_name")
-    if sampler_name is None:
-        sampler_name = payload.get("sampler")
-
     scheduler = payload.get("hr_scheduler")
-    if scheduler is None:
-        scheduler = payload.get("scheduler")
 
     modules_raw = payload.get("hr_additional_modules")
     if modules_raw is None:

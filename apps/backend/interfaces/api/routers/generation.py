@@ -14,7 +14,10 @@ Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.
 Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), and supports optional multi-region inpaint passes via
 `img2img_mask_region_split`.
 Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope enforcement for sampler fields and
-prompt `<sampler:...>` control tags (Anima-only rollout). General sampler choices are not hard-filtered by engine capability recommendation lists.
+prompt `<sampler:...>` control tags (Anima-only rollout). Hires prompt sampler controls are release-scope validated at parse-time, while hires
+runtime applies hires-prompt sampler/scheduler and size controls before explicit hires request overrides are resolved. Image-request sampler/scheduler
+validation also enforces family-scoped `supported_*` / `excluded_*` capability contracts (base pair, hires overrides, and hires prompt controls)
+without promoting recommendation hints into allowlists.
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
@@ -184,6 +187,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     }
     _PROMPT_SAMPLER_CONTROL_RE = re.compile(
         r"<\s*sampler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
+        re.IGNORECASE,
+    )
+    _PROMPT_SCHEDULER_CONTROL_RE = re.compile(
+        r"<\s*scheduler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
         re.IGNORECASE,
     )
     _WAN_PROMPT_LORA_TAG_RE = re.compile(r"<\s*lora\s*:", re.IGNORECASE)
@@ -1612,8 +1619,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "resize_y": height,
                 "hr_checkpoint_name": "Use same checkpoint",
                 "hr_additional_modules": [],
-                "hr_sampler_name": "Use same sampler",
-                "hr_scheduler": "Use same scheduler",
+                "hr_sampler_name": None,
+                "hr_scheduler": None,
                 "hr_prompt": "",
                 "hr_negative_prompt": "",
                 "hr_cfg": fallback_cfg,
@@ -1631,8 +1638,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             "resize_y": cfg["resize_y"],
             "hr_checkpoint_name": cfg.get("checkpoint") or "Use same checkpoint",
             "hr_additional_modules": cfg.get("modules") or [],
-            "hr_sampler_name": cfg.get("sampler") or "Use same sampler",
-            "hr_scheduler": cfg.get("scheduler") or "Use same scheduler",
+            "hr_sampler_name": cfg.get("sampler"),
+            "hr_scheduler": cfg.get("scheduler"),
             "hr_prompt": cfg.get("prompt") or "",
             "hr_negative_prompt": cfg.get("negative_prompt") or "",
             "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
@@ -1693,6 +1700,154 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         raise HTTPException(
             status_code=400,
             detail=f"Engine '{engine_key}' does not support route '{route_label}'.",
+        )
+
+    def _resolve_image_family_capability_contract(
+        engine_key: str,
+    ) -> tuple[str | None, Mapping[str, object] | None]:
+        from apps.backend.runtime.model_registry.capabilities import (
+            _ENGINE_ID_PRIMARY_FAMILY,
+            serialize_family_capabilities,
+        )
+
+        normalized_engine = str(engine_key or "").strip()
+        if normalized_engine == "":
+            return None, None
+        family = _ENGINE_ID_PRIMARY_FAMILY.get(normalized_engine)
+        if family is None:
+            return None, None
+        family_capabilities = serialize_family_capabilities()
+        capability_contract = family_capabilities.get(family.value)
+        if isinstance(capability_contract, Mapping):
+            return family.value, capability_contract
+        return family.value, None
+
+    def _normalize_capability_name_list(value: object) -> list[str]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            if not isinstance(raw, str):
+                continue
+            name = raw.strip()
+            if not name:
+                continue
+            lowered = name.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(name)
+        return normalized
+
+    def _enforce_family_sampler_scheduler_support(
+        *,
+        engine_key: str,
+        family_name: str | None,
+        family_capability: Mapping[str, object] | None,
+        sampler_name: str,
+        scheduler_name: str,
+        sampler_field_name: str,
+        scheduler_field_name: str,
+    ) -> None:
+        if family_capability is None:
+            return
+        family_label = family_name or "unknown"
+
+        supported_samplers = _normalize_capability_name_list(family_capability.get("supported_samplers"))
+        supported_schedulers = _normalize_capability_name_list(family_capability.get("supported_schedulers"))
+        excluded_samplers = _normalize_capability_name_list(family_capability.get("excluded_samplers"))
+        excluded_schedulers = _normalize_capability_name_list(family_capability.get("excluded_schedulers"))
+
+        sampler_normalized = str(sampler_name).strip().lower()
+        scheduler_normalized = str(scheduler_name).strip().lower()
+        supported_sampler_set = {name.lower() for name in supported_samplers}
+        supported_scheduler_set = {name.lower() for name in supported_schedulers}
+        excluded_sampler_set = {name.lower() for name in excluded_samplers}
+        excluded_scheduler_set = {name.lower() for name in excluded_schedulers}
+
+        if supported_sampler_set and sampler_normalized not in supported_sampler_set:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported sampler '{sampler_name}' for '{sampler_field_name}' "
+                    f"(engine='{engine_key}', family='{family_label}'). "
+                    f"Supported samplers: {supported_samplers}"
+                ),
+            )
+        if sampler_normalized in excluded_sampler_set:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported sampler '{sampler_name}' for '{sampler_field_name}' "
+                    f"(engine='{engine_key}', family='{family_label}'): sampler is excluded."
+                ),
+            )
+        if supported_scheduler_set and scheduler_normalized not in supported_scheduler_set:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported scheduler '{scheduler_name}' for '{scheduler_field_name}' "
+                    f"(engine='{engine_key}', family='{family_label}'). "
+                    f"Supported schedulers: {supported_schedulers}"
+                ),
+            )
+        if scheduler_normalized in excluded_scheduler_set:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported scheduler '{scheduler_name}' for '{scheduler_field_name}' "
+                    f"(engine='{engine_key}', family='{family_label}'): scheduler is excluded."
+                ),
+            )
+
+    def _validate_hires_prompt_family_sampling_controls(
+        *,
+        engine_key: str,
+        prompt: str,
+        field_name: str,
+        base_sampler: str,
+        base_scheduler: str,
+        family_name: str | None,
+        family_capability: Mapping[str, object] | None,
+    ) -> None:
+        if family_capability is None:
+            return
+
+        prompt_sampler_control: str | None = None
+        for match in _PROMPT_SAMPLER_CONTROL_RE.finditer(prompt):
+            sampler_value = str(match.group(1) or "").strip()
+            if sampler_value:
+                prompt_sampler_control = sampler_value
+
+        prompt_scheduler_control: str | None = None
+        for match in _PROMPT_SCHEDULER_CONTROL_RE.finditer(prompt):
+            scheduler_value = str(match.group(1) or "").strip()
+            if scheduler_value:
+                prompt_scheduler_control = scheduler_value
+
+        if prompt_sampler_control is None and prompt_scheduler_control is None:
+            return
+
+        effective_sampler = prompt_sampler_control or str(base_sampler or "").strip()
+        effective_scheduler = prompt_scheduler_control or str(base_scheduler or "").strip()
+        if not effective_sampler or not effective_scheduler:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Unable to resolve hires prompt sampler/scheduler controls for '{field_name}' "
+                    f"(engine='{engine_key}')."
+                ),
+            )
+
+        _enforce_family_sampler_scheduler_support(
+            engine_key=engine_key,
+            family_name=family_name,
+            family_capability=family_capability,
+            sampler_name=effective_sampler,
+            scheduler_name=effective_scheduler,
+            sampler_field_name=f"{field_name} (prompt <sampler:...> control)",
+            scheduler_field_name=f"{field_name} (prompt <scheduler:...> control)",
         )
 
     def _parse_optional_sampler_field(*, value: object, field_name: str) -> str | None:
@@ -2609,6 +2764,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         model_override = payload.get('model')
         parsed = _parse_txt2img_payload_dto(payload)
         engine_key = parsed.engine_key
+        family_name, family_capability = _resolve_image_family_capability_contract(engine_key)
         engine_id = engine_key
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
@@ -2619,6 +2775,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         distilled_cfg_scale = parsed.distilled_cfg_scale
         sampler_name = parsed.sampler_name
         scheduler_name = parsed.scheduler_name
+        _enforce_family_sampler_scheduler_support(
+            engine_key=engine_key,
+            family_name=family_name,
+            family_capability=family_capability,
+            sampler_name=str(sampler_name),
+            scheduler_name=str(scheduler_name),
+            sampler_field_name="sampler",
+            scheduler_field_name="scheduler",
+        )
         seed_val = parsed.seed
         clip_skip = parsed.clip_skip
 
@@ -2631,6 +2796,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 engine_key=engine_key,
                 prompt=hires_prompt,
                 field_name="extras.hires.prompt",
+            )
+            _validate_hires_prompt_family_sampling_controls(
+                engine_key=engine_key,
+                prompt=hires_prompt,
+                field_name="extras.hires.prompt",
+                base_sampler=str(sampler_name),
+                base_scheduler=str(scheduler_name),
+                family_name=family_name,
+                family_capability=family_capability,
             )
             hires_sampler = _parse_optional_sampler_field(value=hires_cfg.get("sampler"), field_name="extras.hires.sampler")
             if hires_sampler is not None:
@@ -2656,6 +2830,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if hires_sampler is not None:
                     hires_cfg["sampler"] = resolved_hires_sampler
                 hires_cfg["scheduler"] = resolved_hires_scheduler
+                _enforce_family_sampler_scheduler_support(
+                    engine_key=engine_key,
+                    family_name=family_name,
+                    family_capability=family_capability,
+                    sampler_name=str(resolved_hires_sampler),
+                    scheduler_name=str(resolved_hires_scheduler),
+                    sampler_field_name="extras.hires.sampler",
+                    scheduler_field_name="extras.hires.scheduler",
+                )
             hires_refiner_cfg = hires_cfg.get("refiner")
             if isinstance(hires_refiner_cfg, dict):
                 hires_total_steps = int(hires_cfg.get("steps") or 0)
@@ -2903,6 +3086,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         height_val = core.height
         sampler_name = core.sampler_name
         scheduler_name = core.scheduler_name
+        family_name, family_capability = _resolve_image_family_capability_contract(engine_key)
+        _enforce_family_sampler_scheduler_support(
+            engine_key=engine_key,
+            family_name=family_name,
+            family_capability=family_capability,
+            sampler_name=str(sampler_name),
+            scheduler_name=str(scheduler_name),
+            sampler_field_name="img2img_sampling",
+            scheduler_field_name="img2img_scheduler",
+        )
         seed_val = core.seed
         clip_skip = core.clip_skip
         noise_source = core.noise_source
@@ -2973,6 +3166,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if hr_sampler_name is not None:
                     hr_sampler_name = resolved_hr_sampler
                 hr_scheduler = resolved_hr_scheduler
+                _enforce_family_sampler_scheduler_support(
+                    engine_key=engine_key,
+                    family_name=family_name,
+                    family_capability=family_capability,
+                    sampler_name=str(resolved_hr_sampler),
+                    scheduler_name=str(resolved_hr_scheduler),
+                    sampler_field_name="img2img_hires_sampling",
+                    scheduler_field_name="img2img_hires_scheduler",
+                )
             hires_data = {
                 "enable": True,
                 "scale": _require_float_field(payload, 'img2img_hires_scale') if 'img2img_hires_scale' in payload else 1.0,
@@ -2993,6 +3195,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 engine_key=engine_key,
                 prompt=str(hires_data.get("hr_prompt") or ""),
                 field_name="img2img_hires_prompt",
+            )
+            _validate_hires_prompt_family_sampling_controls(
+                engine_key=engine_key,
+                prompt=str(hires_data.get("hr_prompt") or ""),
+                field_name="img2img_hires_prompt",
+                base_sampler=str(sampler_name),
+                base_scheduler=str(scheduler_name),
+                family_name=family_name,
+                family_capability=family_capability,
             )
         else:
             hires_data = {"enable": False}

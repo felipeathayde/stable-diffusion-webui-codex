@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-03-02
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -16,6 +16,7 @@ Status: Active
 ## Notes
 - 2026-02-28: `img2vid.py` removed runtime `chunk` mode routing; accepted temporal modes are now `solo|sliding|svi2|svi2_pro`, and `img2vid_mode='chunk'` fails loud.
 - 2026-03-06: `txt2img_pipeline/runner.py` and `img2img.py` hires second-pass now consume family-dispatched hires prep outputs and support non-SD image families (`flux1`, `flux1_chroma`, `zimage`, `anima`) plus Kontext-specific `image_latents` continuation (`init_latent=None`). The dedicated FLUX.2 engine seam reuses the same hires-prep dispatcher but keeps its second-pass continuation local. `_build_hires_plan(...)` still fails loud when engine capability surface declares `supports_hires=false`.
+- 2026-03-09: image hires second-pass paths now apply hires-prompt sampler/scheduler and width/height controls after parse-time release-scope/family validation, record hires-effective execution details in `info.effective_hires_sampling`, and keep top-level image `info` fields aligned with the base processing object.
 - Introduza novos use cases sempre que uma combinação de tarefa + modo precisar de orquestração própria; mantenha a lógica focalizada em preparar entradas, chamar engines e relatar progresso, delegando detalhes de modelo para `engines/` ou `runtime/`.
 - Quando adicionar um novo use case, espelhe o padrão existente e registre com o orquestrador e os contratos de API.
 - 2026-01-22: `txt2img.py` now includes a canonical event wrapper (`run_txt2img`) used by engines to keep mode orchestration in the use-case layer (Option A).
@@ -63,4 +64,5 @@ Status: Active
 - 2026-03-02: `img2img.py` now preflights `_build_hires_plan(...)` before base sampling in both classic and Kontext paths (fail-fast on unsupported hires/capability config), and Kontext/image-latents sampling callsites now explicitly disable txt2img conditioning fallback to prevent accidental `c_concat` injection when `image_conditioning=None` is intentional.
 - 2026-03-02: `_image_streaming._iter_sampling_progress(...)` now streams phase-aware snapshots (sampling + VAE `encode`/`decode` blocks), and `run_txt2img`/`run_img2img` now emit progress metadata for a second “total” bar (`data.total_phase`, `data.total_percent`, `data.phase_step`, `data.phase_total_steps`) while preserving existing sampling-step semantics.
 - 2026-03-02: `run_txt2img`/`run_img2img` now report sampling `data.phase_step`/`data.phase_total_steps` in **block units** (`completed_steps*blocks_per_step + intra_step_blocks` over `steps*blocks_per_step`) so the top “total” bar counter renders denoiser totals as `x/total_blocks` (e.g., `32x70`) instead of step counts.
+- 2026-03-08: image progress wrappers now preserve truthful open-ended sampling for adaptive runs: `_image_streaming._iter_sampling_progress(...)` can carry unknown sampling totals, and `run_txt2img` / `run_img2img` emit `percent=None`, `total_steps=None`, and non-fake sampling messages when the sampler does not have an honest fixed total-step contract.
 - 2026-03-04: WAN video GGUF progress mappers (`txt2vid.py::_yield_wan22_gguf_progress`, `img2vid.py::_yield_wan22_gguf_progress`) now preserve runtime coarse/fine diagnostics in `ProgressEvent.data` (`progress_adapter`, `progress_granularity`, `coarse_reason`) and forward optional runtime progress messages instead of dropping non-core payload fields.

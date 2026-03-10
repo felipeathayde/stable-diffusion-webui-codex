@@ -10,7 +10,7 @@ Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional
 Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata, with fail-loud conditioning guards that avoid embedding raw prompt text in raised errors.
 Conditioning smart-cache entries are keyed by model/load identity plus wrapped prompt metadata and stored detached on CPU to avoid stale hits and cross-request GPU pinning.
 The hires stage delegates family-dispatched init preparation and continuation semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
-When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
+When configured, the hires second pass applies hires-prompt sampler/scheduler + dimension controls and then resolves explicit hires request overrides by deriving a dedicated `SamplingPlan` for the hires pass.
 First-pass base decode before hires is now upscaler-aware (`latent:*` skips decode; pixel upscalers decode).
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 
@@ -902,19 +902,51 @@ class Txt2ImgPipelineRunner:
             processing.negative_prompts = hires_prompt_context.negative_prompts
             processing.width = target_width
             processing.height = target_height
+            apply_dimension_overrides(processing, hires_prompt_context.controls)
+            effective_target_width = int(processing.width)
+            effective_target_height = int(processing.height)
             processing.guidance_scale = float(hires_cfg.cfg or processing.guidance_scale)
             processing.cfg_scale = processing.guidance_scale
             processing.steps = int(steps)
+            hires_prompt_sampling_controls: dict[str, object] = {}
+            if "sampler" in hires_prompt_context.controls:
+                hires_prompt_sampling_controls["sampler"] = hires_prompt_context.controls["sampler"]
+            if "scheduler" in hires_prompt_context.controls:
+                hires_prompt_sampling_controls["scheduler"] = hires_prompt_context.controls["scheduler"]
+            hires_runtime_plan = replace(
+                state.sampling_plan,
+                steps=int(processing.steps),
+                guidance_scale=float(processing.guidance_scale),
+            )
+            if hires_prompt_sampling_controls:
+                hires_runtime_plan = apply_sampling_overrides(
+                    processing,
+                    hires_prompt_sampling_controls,
+                    hires_runtime_plan,
+                )
             hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
-                base_sampler=str(state.sampling_plan.sampler_name or ""),
-                base_scheduler=str(state.sampling_plan.scheduler_name or ""),
+                base_sampler=str(hires_runtime_plan.sampler_name or ""),
+                base_scheduler=str(hires_runtime_plan.scheduler_name or ""),
                 sampler_override=getattr(hires_cfg, "sampler_name", None),
                 scheduler_override=getattr(hires_cfg, "scheduler", None),
             )
             processing.sampler_name = hires_sampler
             processing.scheduler = hires_scheduler
             processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
+            processing._codex_effective_hires_sampling = {
+                "sampler": hires_sampler,
+                "scheduler": hires_scheduler,
+                "steps": int(steps),
+                "denoise": float(denoise),
+                "width": int(effective_target_width),
+                "height": int(effective_target_height),
+            }
             processing.prepare_prompt_data()
+            effective_hires_plan_cfg = replace(
+                hires_plan_cfg,
+                target_width=int(effective_target_width),
+                target_height=int(effective_target_height),
+            )
 
             telemetry = resolve_pipeline_telemetry_context(
                 processing,
@@ -940,8 +972,8 @@ class Txt2ImgPipelineRunner:
                 engine_id=engine_id,
                 strategy=hires_strategy,
                 upscaler_id=hires_plan_cfg.upscaler_id,
-                target_width=target_width,
-                target_height=target_height,
+                target_width=effective_target_width,
+                target_height=effective_target_height,
                 steps=steps,
                 denoise=denoise,
                 sampler=hires_sampler,
@@ -952,8 +984,8 @@ class Txt2ImgPipelineRunner:
             self._logger.info(
                 "[hires] transition base_to_hires upscaler=%s target=%dx%d steps=%d denoise=%.4f sampler=%s scheduler=%s base_samples=%s base_decoded=%s",
                 hires_plan_cfg.upscaler_id,
-                target_width,
-                target_height,
+                effective_target_width,
+                effective_target_height,
                 steps,
                 denoise,
                 hires_sampler,
@@ -966,7 +998,7 @@ class Txt2ImgPipelineRunner:
                 processing,
                 base_samples=base_result.samples,
                 base_decoded=base_result.decoded,
-                hires_plan=hires_plan_cfg,
+                hires_plan=effective_hires_plan_cfg,
                 tile=getattr(hires_cfg, "tile", None),
             )
             latents = hires_inputs.latents
@@ -1024,7 +1056,7 @@ class Txt2ImgPipelineRunner:
             )
 
             hires_plan = replace(
-                state.sampling_plan,
+                hires_runtime_plan,
                 sampler_name=hires_sampler,
                 scheduler_name=hires_scheduler,
                 steps=int(processing.steps),

@@ -12,9 +12,9 @@ default parameter shapes per tab type (image vs WAN video) using engine defaults
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
 `img2imgUpscaler`) decoupled from backend hires dispatch. WAN video normalization persists no-stretch img2vid guide controls
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
-and backfills legacy non-`simple` persisted values through the normal tab-persistence queue without blocking tab hydration. FLUX.2 tabs keep
-the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one `flux2/*` Qwen selector without overriding shared img2img
-denoise state.
+backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both scheduler/sampler backfills through the normal tab-persistence
+queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
+`flux2/*` Qwen selector without overriding shared img2img denoise state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -55,7 +55,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts to the `4n+1` domain.
 - `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/window/attention controls) with `img2vidMode` as source of truth.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params, enforcing canonical WAN stage scheduler `simple`.
-- `shouldPersistWanSchedulerBackfill` (function): Detects persisted WAN params with non-canonical High/Low scheduler values that must be migrated to `simple`.
+- `shouldPersistWanStageSamplingBackfill` (function): Detects persisted WAN params requiring High/Low stage sampler/scheduler migration (`sampler='uni-pc bh2'`, `scheduler='simple'`).
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler and mask-enforcement fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
@@ -398,7 +398,7 @@ function defaultParams<T extends BaseTabType>(
       modelDir: '',
       prompt: '',
       negativePrompt: '',
-      sampler: '',
+      sampler: 'uni-pc bh2',
       scheduler: 'simple',
       steps: 30,
       cfgScale: 7,
@@ -940,6 +940,8 @@ function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): Tab
       ...stageDefaults,
       ...(stagePatchRecord as Partial<WanStageParams>),
     }
+    const sampler = typeof merged.sampler === 'string' ? merged.sampler.trim() : ''
+    merged.sampler = sampler || stageDefaults.sampler
     const scheduler = typeof merged.scheduler === 'string' ? merged.scheduler.trim().toLowerCase() : ''
     merged.scheduler = scheduler === 'simple' ? scheduler : 'simple'
     const normalizedStage: WanStageParams = {
@@ -973,13 +975,17 @@ function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): Tab
   }
 }
 
-function shouldPersistWanSchedulerBackfill(raw: unknown): boolean {
+function shouldPersistWanStageSamplingBackfill(raw: unknown): boolean {
   const patch = asRecordObject(raw)
   const high = asRecordObject(patch.high)
   const low = asRecordObject(patch.low)
+  const highSampler = typeof high.sampler === 'string' ? high.sampler.trim() : ''
+  const lowSampler = typeof low.sampler === 'string' ? low.sampler.trim() : ''
   const highScheduler = typeof high.scheduler === 'string' ? high.scheduler.trim().toLowerCase() : ''
   const lowScheduler = typeof low.scheduler === 'string' ? low.scheduler.trim().toLowerCase() : ''
-  return highScheduler !== 'simple' || lowScheduler !== 'simple'
+  const needsSamplerBackfill = highSampler.length === 0 || lowSampler.length === 0
+  const needsSchedulerBackfill = highScheduler !== 'simple' || lowScheduler !== 'simple'
+  return needsSamplerBackfill || needsSchedulerBackfill
 }
 
 function normalizeGuidanceAdvancedParams(raw: unknown, defaults: GuidanceAdvancedParams): GuidanceAdvancedParams {
@@ -1540,13 +1546,13 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
         const tab = tabs.value[index]
         if (!tab || tab.type !== 'wan') continue
         const rawTab = asRecordObject(rawTabs[index])
-        if (!shouldPersistWanSchedulerBackfill(rawTab.params)) continue
+        if (!shouldPersistWanStageSamplingBackfill(rawTab.params)) continue
         const params = tab.params as TabParamsByType['wan']
         void updateParams<Record<string, unknown>>(tab.id, {
           high: params.high,
           low: params.low,
         }).catch((error) => {
-          console.warn('[model_tabs] Failed to persist WAN scheduler migration backfill; continuing load.', {
+          console.warn('[model_tabs] Failed to persist WAN stage sampler/scheduler migration backfill; continuing load.', {
             tabId: tab.id,
             error,
           })

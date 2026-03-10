@@ -7,13 +7,15 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Prompt parsing and prompt-derived overrides for pipeline processing objects.
-Builds a `PromptContext` (cleaned prompts, negative prompts, LoRA tags, controls) and applies it onto a processing object.
+Builds a `PromptContext` (cleaned prompts, negative prompts, LoRA tags, controls), applies it onto a processing object, and exposes fail-loud
+helpers for paths that intentionally reject prompt-derived controls.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_lora_overrides` (function): Normalize `override_settings.lora_path` into deterministic `LoraSelection` entries.
 - `build_prompt_context` (function): Parse prompts/negative prompts and return a `PromptContext` (includes extra-nets tags).
 - `apply_prompt_context` (function): Apply a `PromptContext` onto a processing object (prompts + clip-skip controls).
 - `apply_dimension_overrides` (function): Apply prompt-derived width/height controls onto the processing object.
+- `reject_prompt_controls` (function): Fail loud when a pipeline path does not support prompt-derived control tags.
 """
 
 from __future__ import annotations
@@ -133,3 +135,14 @@ def apply_dimension_overrides(processing: Any, controls: Mapping[str, Any]) -> N
         if height % 8 != 0 or height < 8 or height > 8192:
             raise ValueError("Invalid <height>: must be multiple of 8 and in [8,8192]")
         processing.height = height
+
+
+def reject_prompt_controls(controls: Mapping[str, Any], *, context: str) -> None:
+    """Fail loud when prompt-control tags are present in an unsupported path."""
+    if not controls:
+        return
+    control_names = ", ".join(sorted(str(key) for key in controls.keys()))
+    raise ValueError(
+        f"{context} does not support prompt control tags ({control_names}). "
+        "Use explicit request fields instead."
+    )

@@ -1,6 +1,6 @@
 # apps/backend/core Overview
 Date: 2025-10-28
-Last Review: 2026-02-28
+Last Review: 2026-03-08
 Status: Active
 
 ## Purpose
@@ -52,3 +52,4 @@ Status: Active
 - 2026-02-24: `InferenceOrchestrator.run(...)` now enforces a VRAM cleanup barrier between model unload/load transitions (`engine.unload()` -> `_purge_vram(...)` -> `engine.load(...)`) when reloading an already-loaded engine.
 - 2026-02-28: `InferenceOrchestrator._purge_vram(...)` removed the optional `operations_gguf.clear_cache` import/call path; cleanup now relies on orchestrator unload + memory-manager unload/soft-empty + GC + CUDA cache release.
 - 2026-03-02: `BackendState` now tracks VAE phase progress (`vae_phase`, `vae_block_index`, `vae_block_total`) with explicit snapshot/update helpers so image use-cases can stream encode/decode block progress alongside sampling.
+- 2026-03-08: `BackendState.sampling_steps` may now be unknown (`None`) for open-ended native samplers such as `dpm adaptive`; progress consumers must treat missing totals as an honest unbounded-progress signal instead of coercing them to zero.

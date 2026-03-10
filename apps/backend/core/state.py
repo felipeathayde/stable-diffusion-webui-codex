@@ -32,7 +32,7 @@ class BackendState:
 
     job_count: int = 0
     job_no: int = 0
-    sampling_steps: int = 0
+    sampling_steps: int | None = 0
     sampling_step: int = 0
     sampling_block_total: int = 0
     sampling_block_index: int = 0
@@ -54,11 +54,11 @@ class BackendState:
 
     _lock: threading.Lock = threading.Lock()
 
-    def start(self, job_count: int, sampling_steps: int) -> None:
+    def start(self, job_count: int, sampling_steps: int | None) -> None:
         with self._lock:
             self.job_count = int(job_count)
             self.job_no = 0
-            self.sampling_steps = int(sampling_steps)
+            self.sampling_steps = None if sampling_steps is None else int(sampling_steps)
             self.sampling_step = 0
             self.sampling_block_total = 0
             self.sampling_block_index = 0
@@ -218,11 +218,11 @@ class BackendState:
             if sampling_step is not None:
                 self.sampling_step = int(sampling_step)
 
-    def sampling_snapshot(self) -> tuple[int, int, int, int]:
+    def sampling_snapshot(self) -> tuple[int, int | None, int, int]:
         with self._lock:
             return (
                 int(self.sampling_step),
-                int(self.sampling_steps),
+                None if self.sampling_steps is None else int(self.sampling_steps),
                 int(self.sampling_block_index),
                 int(self.sampling_block_total),
             )

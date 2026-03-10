@@ -194,6 +194,9 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
                     mode_info["hires"] = getattr(proc, "hires", None).as_dict()
                 except Exception:  # noqa: BLE001
                     pass
+                effective_hires_sampling = getattr(proc, "_codex_effective_hires_sampling", None)
+                if isinstance(effective_hires_sampling, dict) and effective_hires_sampling:
+                    mode_info["effective_hires_sampling"] = dict(effective_hires_sampling)
 
             info = _build_common_info(
                 engine_id=engine.engine_id,
@@ -248,48 +251,54 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
                 else int(sampling_block_total_hint)
             )
             has_block_progress = 0 < sampling_block_index < sampling_block_total
-            completed_units = float(sampling_step)
-            if has_block_progress:
-                completed_units += float(sampling_block_index) / float(sampling_block_total)
-            sampling_ratio = (
-                min(float(sampling_total), completed_units) / float(sampling_total)
-                if sampling_total > 0
-                else 0.0
-            )
-            progress_percent = sampling_ratio * 100.0
-            pct = max(5.0, min(99.0, progress_percent))
-            total_percent = max(0.0, min(99.0, sampling_weight * sampling_ratio))
-            phase_step_blocks = int(phase_step)
-            phase_total_blocks = int(phase_total)
-            if effective_sampling_block_total > 0 and sampling_total > 0:
-                completed_sampling_steps = max(0, min(int(sampling_step), int(sampling_total)))
-                intra_step_blocks = max(0, min(int(sampling_block_index), int(effective_sampling_block_total)))
-                phase_total_blocks = int(sampling_total) * int(effective_sampling_block_total)
-                phase_step_blocks = min(
-                    int(phase_total_blocks),
-                    (int(completed_sampling_steps) * int(effective_sampling_block_total)) + int(intra_step_blocks),
-                )
-            if has_block_progress:
-                message = (
-                    f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
-                    f"(block {sampling_block_index}/{sampling_block_total})"
-                )
+            if sampling_total is not None and sampling_total > 0:
+                completed_units = float(sampling_step)
+                if has_block_progress:
+                    completed_units += float(sampling_block_index) / float(sampling_block_total)
+                sampling_ratio = min(float(sampling_total), completed_units) / float(sampling_total)
+                progress_percent = sampling_ratio * 100.0
+                pct = max(5.0, min(99.0, progress_percent))
+                total_percent = max(0.0, min(99.0, sampling_weight * sampling_ratio))
+                phase_step_blocks = int(phase_step)
+                phase_total_blocks = int(phase_total)
+                if effective_sampling_block_total > 0:
+                    completed_sampling_steps = max(0, min(int(sampling_step), int(sampling_total)))
+                    intra_step_blocks = max(0, min(int(sampling_block_index), int(effective_sampling_block_total)))
+                    phase_total_blocks = int(sampling_total) * int(effective_sampling_block_total)
+                    phase_step_blocks = min(
+                        int(phase_total_blocks),
+                        (int(completed_sampling_steps) * int(effective_sampling_block_total)) + int(intra_step_blocks),
+                    )
+                if has_block_progress:
+                    message = (
+                        f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
+                        f"(block {sampling_block_index}/{sampling_block_total})"
+                    )
+                else:
+                    message = f"Sampling step {sampling_step}/{sampling_total}"
             else:
-                message = f"Sampling step {sampling_step}/{sampling_total}"
+                pct = None
+                total_percent = None
+                phase_step_blocks = None
+                phase_total_blocks = None
+                if has_block_progress:
+                    message = f"Sampling step {sampling_step} (block {sampling_block_index}/{sampling_block_total})"
+                else:
+                    message = f"Sampling step {sampling_step}"
             yield ProgressEvent(
                 stage="sampling",
                 percent=pct,
                 step=sampling_step,
-                total_steps=sampling_total,
+                total_steps=(sampling_total if sampling_total is not None and sampling_total > 0 else None),
                 eta_seconds=phase_eta,
                 message=message,
                 data={
                     "block_index": int(sampling_block_index),
                     "block_total": int(sampling_block_total),
                     "total_phase": "sampling",
-                    "total_percent": float(total_percent),
-                    "phase_step": int(phase_step_blocks),
-                    "phase_total_steps": int(phase_total_blocks),
+                    "total_percent": (float(total_percent) if total_percent is not None else None),
+                    "phase_step": (int(phase_step_blocks) if phase_step_blocks is not None else None),
+                    "phase_total_steps": (int(phase_total_blocks) if phase_total_blocks is not None else None),
                     "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
                 },
             )
@@ -301,8 +310,12 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
                 if phase_total > 0
                 else 0.0
             )
-            total_percent = min(100.0, sampling_weight + (decode_weight * decode_ratio))
-            sampling_terminal_step = int(sampling_total) if sampling_total > 0 else None
+            total_percent = (
+                min(100.0, sampling_weight + (decode_weight * decode_ratio))
+                if sampling_total is not None and sampling_total > 0
+                else None
+            )
+            sampling_terminal_step = int(sampling_total) if sampling_total is not None and sampling_total > 0 else None
             yield ProgressEvent(
                 stage="decoding",
                 percent=100.0 if sampling_terminal_step is not None else None,
@@ -314,12 +327,14 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
                     "block_index": int(phase_block_index),
                     "block_total": int(phase_block_total),
                     "total_phase": "decode",
-                    "total_percent": float(total_percent),
+                    "total_percent": (float(total_percent) if total_percent is not None else None),
                     "phase_step": int(phase_step),
                     "phase_total_steps": int(phase_total),
                     "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
                     "sampling_step": int(sampling_step),
-                    "sampling_total_steps": int(sampling_total),
+                    "sampling_total_steps": (
+                        int(sampling_total) if sampling_total is not None and sampling_total > 0 else None
+                    ),
                 },
             )
 

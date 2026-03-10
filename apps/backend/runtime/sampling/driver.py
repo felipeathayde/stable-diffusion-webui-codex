@@ -11,7 +11,8 @@ Selects sampler implementations from specs, compiles conditioning, handles cance
 while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`), including native ER-SDE stage updates,
     native `heun` / `heunpp2` / `lms` / `ddpm` / `ipndm` / `ipndm v` / `deis` / `res multistep*` / `restart` / `gradient estimation` / `gradient estimation cfg++` /
     `dpm++ 2m cfg++` / `sa-solver` / `sa-solver pece` / `seeds 2` / `seeds 3` / `dpm 2` / `dpm 2 ancestral` / `dpm++ 2s ancestral` / `dpm++ 2s ancestral cfg++` /
-    `dpm fast` execution, dedicated `uni-pc` / `uni-pc bh2`
+    `dpm fast` execution, dedicated `dpm++ sde` / `dpm++ 2m sde` / `dpm++ 2m sde heun` / `dpm++ 2m sde gpu` / `dpm++ 2m sde heun gpu` / `dpm++ 3m sde`,
+and dedicated `uni-pc` / `uni-pc bh2`
 multistep predictor/corrector handling, strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring
 (APG/rescale/trunc/renorm), and emits explicit runtime telemetry for console block-progress activation state.
 
@@ -48,6 +49,7 @@ from .block_progress import (
 from .condition import compile_conditions
 from .context import SamplingContext, build_sampling_context
 from .deis import build_deis_coefficients
+from .interval_noise import compose_nested_interval_noises
 from .log_snr import (
     ei_h_phi_2,
     ei_h_phi_1,
@@ -305,6 +307,9 @@ _SEEDS_3_DEFAULT_ETA = 1.0
 _SEEDS_3_DEFAULT_S_NOISE = 1.0
 _SEEDS_3_DEFAULT_R_1 = 1.0 / 3.0
 _SEEDS_3_DEFAULT_R_2 = 2.0 / 3.0
+_DPMPP_SDE_DEFAULT_ETA = 1.0
+_DPMPP_SDE_DEFAULT_S_NOISE = 1.0
+_DPMPP_SDE_DEFAULT_R = 0.5
 
 
 def _read_env_text(name: str) -> str | None:
@@ -899,10 +904,10 @@ class CodexSampler:
         init_latent: Optional[torch.Tensor] = None,
         start_at_step: int | None = None,
         denoise_strength: float | None = None,
-        pre_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor]] = None,
-        post_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor]] = None,
-        preview_callback: Optional[Callable[[torch.Tensor, int, int], None]] = None,
-        post_step_hook: Optional[Callable[[torch.Tensor, int, int], None]] = None,
+        pre_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
+        post_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
+        preview_callback: Optional[Callable[[torch.Tensor, int, int | None], None]] = None,
+        post_step_hook: Optional[Callable[[torch.Tensor, int, int | None], None]] = None,
         post_sample_hook: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         context: SamplingContext | None = None,
         er_sde_options: Any = None,
@@ -1179,7 +1184,9 @@ class CodexSampler:
                             for entry in compiled_uncond:
                                 entry["model_conds"]["c_concat"] = Condition(image_conditioning)
 
+                sampler_kind = active_context.sampler_kind
                 run_total_steps = len(restart_step_plan) if restart_step_plan is not None else steps - start_idx
+                reported_total_steps: int | None = None if sampler_kind is SamplerKind.DPM_ADAPTIVE else run_total_steps
                 guidance_policy = _resolve_guidance_policy(processing)
                 if guidance_policy is None:
                     denoiser.model_options.pop(_GUIDANCE_POLICY_KEY, None)
@@ -1188,8 +1195,16 @@ class CodexSampler:
                     denoiser.model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
                     denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
                 else:
+                    if sampler_kind is SamplerKind.DPM_ADAPTIVE and guidance_policy.get("cfg_trunc_ratio") is not None:
+                        raise RuntimeError(
+                            "Sampler 'dpm adaptive' does not support guidance cfg_trunc_ratio because "
+                            "adaptive runs do not have an honest fixed total-step contract."
+                        )
                     denoiser.model_options[_GUIDANCE_POLICY_KEY] = guidance_policy
-                    denoiser.model_options[_GUIDANCE_TOTAL_STEPS_KEY] = run_total_steps
+                    if reported_total_steps is None:
+                        denoiser.model_options.pop(_GUIDANCE_TOTAL_STEPS_KEY, None)
+                    else:
+                        denoiser.model_options[_GUIDANCE_TOTAL_STEPS_KEY] = reported_total_steps
                     denoiser.model_options.pop(_GUIDANCE_WARNED_SAMPLER_CFG_KEY, None)
                     self._emit_event(
                         "guidance.policy",
@@ -1200,7 +1215,7 @@ class CodexSampler:
                         apg_rescale=float(guidance_policy.get("apg_rescale", 0.0) or 0.0),
                         renorm_cfg=float(guidance_policy.get("renorm_cfg", 0.0) or 0.0),
                     )
-                backend_state.start(job_count=1, sampling_steps=run_total_steps)
+                backend_state.start(job_count=1, sampling_steps=reported_total_steps)
                 state_started = True
                 transformer_options = denoiser.model_options.get("transformer_options", None)
                 if not isinstance(transformer_options, dict):
@@ -1242,7 +1257,6 @@ class CodexSampler:
                 preview_interval = active_context.preview_interval
                 t0 = _time.perf_counter()
 
-                sampler_kind = active_context.sampler_kind
                 prediction_type = getattr(active_context, "prediction_type", None)
                 if prediction_type is None:
                     prediction_type = getattr(getattr(model, "predictor", None), "prediction_type", None)
@@ -1252,7 +1266,8 @@ class CodexSampler:
                     "algorithm": self.algorithm,
                     "sampler_kind": sampler_kind.value,
                     "scheduler": active_context.scheduler_name,
-                    "steps": run_total_steps,
+                    "steps": reported_total_steps,
+                    "requested_steps": run_total_steps,
                     "cfg_scale": float(cfg_scale),
                     "device": str(noise.device),
                     "noise_dtype": str(noise.dtype),
@@ -1277,10 +1292,12 @@ class CodexSampler:
                     )
 
                 old_denoised: Optional[torch.Tensor] = None
+                older_denoised: Optional[torch.Tensor] = None
                 old_denoised_d: Optional[torch.Tensor] = None
                 gradient_estimation_prev_d: Optional[torch.Tensor] = None
                 t_prev: float | None = None
                 h_prev: float | None = None
+                h_prev_2: float | None = None
                 eps_history: List[torch.Tensor] = []
                 deis_coefficients: tuple[tuple[float, ...], ...] | None = None
                 res_multistep_old_sigma_down: float | None = None
@@ -1314,10 +1331,19 @@ class CodexSampler:
                 seeds3_s_noise = _SEEDS_3_DEFAULT_S_NOISE
                 seeds3_r_1 = _SEEDS_3_DEFAULT_R_1
                 seeds3_r_2 = _SEEDS_3_DEFAULT_R_2
+                dpm_sde_sigmas: torch.Tensor | None = None
+                dpm_sde_lambdas: torch.Tensor | None = None
+                dpm_sde_eta = _DPMPP_SDE_DEFAULT_ETA
+                dpm_sde_s_noise = _DPMPP_SDE_DEFAULT_S_NOISE
+                dpm_sde_r = _DPMPP_SDE_DEFAULT_R
                 dpm2m_sde_sigmas: torch.Tensor | None = None
                 dpm2m_sde_lambdas: torch.Tensor | None = None
                 dpm2m_sde_eta = 1.0
                 dpm2m_sde_s_noise = 1.0
+                dpm3m_sde_sigmas: torch.Tensor | None = None
+                dpm3m_sde_lambdas: torch.Tensor | None = None
+                dpm3m_sde_eta = 1.0
+                dpm3m_sde_s_noise = 1.0
                 lms_sigmas_run: list[float] | None = None
                 seeded_step_rng: ImageRNG | None = None
                 if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
@@ -1334,7 +1360,39 @@ class CodexSampler:
                         dtype=torch.float32,
                         device=x.device,
                     )
-                if sampler_kind is SamplerKind.DPM2M_SDE:
+                if sampler_kind is SamplerKind.DPMPP_SDE:
+                    if active_context.scheduler_name != "karras":
+                        raise RuntimeError(
+                            f"DPM++ SDE currently requires scheduler 'karras'; got {active_context.scheduler_name!r}."
+                        )
+                    if not math.isfinite(dpm_sde_eta) or dpm_sde_eta < 0.0:
+                        raise RuntimeError(
+                            f"DPM++ SDE default eta must be finite and >= 0; got {dpm_sde_eta!r}."
+                        )
+                    if not math.isfinite(dpm_sde_s_noise) or dpm_sde_s_noise < 0.0:
+                        raise RuntimeError(
+                            f"DPM++ SDE default s_noise must be finite and >= 0; got {dpm_sde_s_noise!r}."
+                        )
+                    if not math.isfinite(dpm_sde_r) or not (0.0 < dpm_sde_r < 1.0):
+                        raise RuntimeError(
+                            f"DPM++ SDE midpoint ratio must be finite and inside (0, 1); got {dpm_sde_r!r}."
+                        )
+                    predictor = getattr(model, "predictor", None)
+                    dpm_sde_sigmas = offset_first_sigma_for_snr(
+                        sigmas_run,
+                        prediction_type=prediction_type,
+                        predictor=predictor,
+                    )
+                    dpm_sde_lambdas = sigma_to_half_log_snr(
+                        dpm_sde_sigmas,
+                        prediction_type=prediction_type,
+                    )
+                if sampler_kind in {
+                    SamplerKind.DPM2M_SDE,
+                    SamplerKind.DPM2M_SDE_HEUN,
+                    SamplerKind.DPM2M_SDE_GPU,
+                    SamplerKind.DPM2M_SDE_HEUN_GPU,
+                }:
                     if active_context.scheduler_name != "exponential":
                         raise RuntimeError(
                             f"DPM++ 2M SDE currently requires scheduler 'exponential'; got {active_context.scheduler_name!r}."
@@ -1355,6 +1413,29 @@ class CodexSampler:
                     )
                     dpm2m_sde_lambdas = sigma_to_half_log_snr(
                         dpm2m_sde_sigmas,
+                        prediction_type=prediction_type,
+                    )
+                if sampler_kind is SamplerKind.DPM3M_SDE:
+                    if active_context.scheduler_name != "exponential":
+                        raise RuntimeError(
+                            f"DPM++ 3M SDE currently requires scheduler 'exponential'; got {active_context.scheduler_name!r}."
+                        )
+                    if not math.isfinite(dpm3m_sde_eta) or dpm3m_sde_eta < 0.0:
+                        raise RuntimeError(
+                            f"DPM++ 3M SDE default eta must be finite and >= 0; got {dpm3m_sde_eta!r}."
+                        )
+                    if not math.isfinite(dpm3m_sde_s_noise) or dpm3m_sde_s_noise < 0.0:
+                        raise RuntimeError(
+                            f"DPM++ 3M SDE default s_noise must be finite and >= 0; got {dpm3m_sde_s_noise!r}."
+                        )
+                    predictor = getattr(model, "predictor", None)
+                    dpm3m_sde_sigmas = offset_first_sigma_for_snr(
+                        sigmas_run,
+                        prediction_type=prediction_type,
+                        predictor=predictor,
+                    )
+                    dpm3m_sde_lambdas = sigma_to_half_log_snr(
+                        dpm3m_sde_sigmas,
                         prediction_type=prediction_type,
                     )
                 if sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
@@ -1617,7 +1698,12 @@ class CodexSampler:
                     SamplerKind.EULER_A_CFG_PP,
                     SamplerKind.DDPM,
                     SamplerKind.ER_SDE,
+                    SamplerKind.DPMPP_SDE,
                     SamplerKind.DPM2M_SDE,
+                    SamplerKind.DPM2M_SDE_HEUN,
+                    SamplerKind.DPM2M_SDE_GPU,
+                    SamplerKind.DPM2M_SDE_HEUN_GPU,
+                    SamplerKind.DPM3M_SDE,
                     SamplerKind.DPM2_ANCESTRAL,
                     SamplerKind.DPM2S_ANCESTRAL,
                     SamplerKind.DPM2S_ANCESTRAL_CFG_PP,
@@ -1637,7 +1723,12 @@ class CodexSampler:
                         sigma_skip_next = float(sigmas[skip_index + 1])
                         if sigma_skip_next <= 0.0:
                             continue
-                        if sampler_kind is SamplerKind.DPM2M_SDE:
+                        if sampler_kind in {
+                            SamplerKind.DPM2M_SDE,
+                            SamplerKind.DPM2M_SDE_HEUN,
+                            SamplerKind.DPM2M_SDE_GPU,
+                            SamplerKind.DPM2M_SDE_HEUN_GPU,
+                        }:
                             if dpm2m_sde_lambdas is None:
                                 raise RuntimeError("DPM++ 2M SDE seeded noise RNG setup missing half-logSNR state.")
                             if dpm2m_sde_eta <= 0.0 or dpm2m_sde_s_noise <= 0.0:
@@ -1654,6 +1745,31 @@ class CodexSampler:
                             if noise_scale_sq < -1e-8:
                                 raise RuntimeError(
                                     "DPM++ 2M SDE skip-burn produced a negative stochastic noise scale "
+                                    f"({noise_scale_sq}) at skip_index={skip_index}."
+                                )
+                            if noise_scale_sq <= 0.0:
+                                continue
+                        if sampler_kind is SamplerKind.DPMPP_SDE:
+                            if dpm_sde_eta <= 0.0 or dpm_sde_s_noise <= 0.0:
+                                continue
+                            seeded_step_rng.next()
+                        if sampler_kind is SamplerKind.DPM3M_SDE:
+                            if dpm3m_sde_lambdas is None:
+                                raise RuntimeError("DPM++ 3M SDE seeded noise RNG setup missing half-logSNR state.")
+                            if dpm3m_sde_eta <= 0.0 or dpm3m_sde_s_noise <= 0.0:
+                                continue
+                            lambda_skip_s = float(dpm3m_sde_lambdas[skip_index])
+                            lambda_skip_t = float(dpm3m_sde_lambdas[skip_index + 1])
+                            h_skip = lambda_skip_t - lambda_skip_s
+                            if not math.isfinite(h_skip) or h_skip <= 0.0:
+                                raise RuntimeError(
+                                    "DPM++ 3M SDE skip-burn produced an invalid half-logSNR step size "
+                                    f"h={h_skip} at skip_index={skip_index}."
+                                )
+                            noise_scale_sq = -math.expm1(-2.0 * h_skip * dpm3m_sde_eta)
+                            if noise_scale_sq < -1e-8:
+                                raise RuntimeError(
+                                    "DPM++ 3M SDE skip-burn produced a negative stochastic noise scale "
                                     f"({noise_scale_sq}) at skip_index={skip_index}."
                                 )
                             if noise_scale_sq <= 0.0:
@@ -1747,7 +1863,7 @@ class CodexSampler:
                     *,
                     sigma_value: float,
                     current_step: int,
-                    step_total: int,
+                    step_total: int | None,
                 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                     nonlocal retry
                     if not math.isfinite(sigma_value) or sigma_value <= 0.0:
@@ -1762,10 +1878,11 @@ class CodexSampler:
                         dtype=torch.float32,
                     )
                     if guidance_policy is not None:
-                        denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = max(
-                            0,
-                            min(current_step - 1, max(step_total - 1, 0)),
-                        )
+                        denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = max(0, current_step - 1)
+                        if step_total is None:
+                            denoiser.model_options.pop(_GUIDANCE_TOTAL_STEPS_KEY, None)
+                        else:
+                            denoiser.model_options[_GUIDANCE_TOTAL_STEPS_KEY] = step_total
                     model_input = latent_state
                     if pre_denoiser_hook is not None:
                         model_input = pre_denoiser_hook(model_input, sigma_batch, current_step, step_total)
@@ -1836,24 +1953,25 @@ class CodexSampler:
                     step_start_time: float,
                 ) -> float:
                     if post_step_hook is not None:
-                        post_step_hook(latent_state, current_step, run_total_steps)
+                        post_step_hook(latent_state, current_step, reported_total_steps)
                     if preview_callback is not None and (
                         (preview_interval > 0 and (current_step % preview_interval == 0))
-                        or current_step >= run_total_steps
+                        or (reported_total_steps is not None and current_step >= reported_total_steps)
                     ):
                         try:
-                            preview_callback(denoised_state.detach(), current_step, run_total_steps)
+                            preview_callback(denoised_state.detach(), current_step, reported_total_steps)
                         except Exception:
                             pass
+                    log_interval = max(1, reported_total_steps // 5) if reported_total_steps is not None else 5
                     if self._log_enabled and (
                         current_step == 1
-                        or current_step == run_total_steps
-                        or current_step % max(1, run_total_steps // 5) == 0
+                        or (reported_total_steps is not None and current_step == reported_total_steps)
+                        or current_step % log_interval == 0
                     ):
                         self._emit_event(
                             "sampling.step",
                             step=current_step,
-                            total_steps=run_total_steps,
+                            total_steps=reported_total_steps,
                             sigma=sigma_current,
                             sigma_next=sigma_next,
                             norm_x=float(latent_state.norm().item()),
@@ -1861,7 +1979,13 @@ class CodexSampler:
                             dt_ms=(_time.perf_counter() - step_start_time) * 1000.0,
                         )
                         step_start_time = _time.perf_counter()
-                    backend_state.tick(sampling_step=max(1, min(current_step, run_total_steps)))
+                    backend_state.tick(
+                        sampling_step=(
+                            max(1, min(current_step, reported_total_steps))
+                            if reported_total_steps is not None
+                            else max(1, current_step)
+                        )
+                    )
                     backend_state.reset_sampling_blocks()
                     profiler.step()
                     return step_start_time
@@ -1873,7 +1997,7 @@ class CodexSampler:
                     latent_state: torch.Tensor,
                     time_value: torch.Tensor,
                     current_step: int,
-                    step_total: int,
+                    step_total: int | None,
                 ) -> dict[str, torch.Tensor]:
                     cached_payload = cache.get(cache_key)
                     if cached_payload is not None:
@@ -1900,7 +2024,7 @@ class CodexSampler:
                     time_next: torch.Tensor,
                     eps_cache: dict[str, dict[str, torch.Tensor]],
                     current_step: int,
-                    step_total: int,
+                    step_total: int | None,
                 ) -> torch.Tensor:
                     step_delta = float((time_next - time_current).item())
                     step_multiplier = math.expm1(step_delta)
@@ -1925,7 +2049,7 @@ class CodexSampler:
                     stage_ratio: float,
                     eps_cache: dict[str, dict[str, torch.Tensor]],
                     current_step: int,
-                    step_total: int,
+                    step_total: int | None,
                 ) -> torch.Tensor:
                     if stage_ratio == 0.0:
                         raise RuntimeError("DPM solver step-2 received stage_ratio=0.")
@@ -1975,7 +2099,7 @@ class CodexSampler:
                     stage_ratio_2: float,
                     eps_cache: dict[str, dict[str, torch.Tensor]],
                     current_step: int,
-                    step_total: int,
+                    step_total: int | None,
                 ) -> torch.Tensor:
                     if stage_ratio_1 == 0.0 or stage_ratio_2 == 0.0:
                         raise RuntimeError("DPM solver step-3 received zero stage ratio.")
@@ -2295,7 +2419,11 @@ class CodexSampler:
                     previous_low_order_state = latent_state
                     accepted_steps = 0
                     iteration_count = 0
-                    max_iterations = max(64, run_total_steps * 32)
+                    estimated_iterations = max(
+                        1,
+                        int(math.ceil(abs(time_end - current_time) / max(abs(step_size), 1e-8))),
+                    )
+                    max_iterations = max(64, estimated_iterations * 64)
 
                     while (
                         current_time < time_end - 1e-5
@@ -2372,14 +2500,14 @@ class CodexSampler:
                             sigma_up = math.sqrt(max(sigma_up_sq, 0.0))
 
                         eps_cache: dict[str, dict[str, torch.Tensor]] = {}
-                        callback_step = max(1, min(accepted_steps + 1, run_total_steps))
+                        callback_step = max(1, accepted_steps + 1)
                         callback_payload = _dpm_cached_eps(
                             eps_cache,
                             cache_key="epsilon",
                             latent_state=latent_state,
                             time_value=time_current,
                             current_step=callback_step,
-                            step_total=run_total_steps,
+                            step_total=reported_total_steps,
                         )
                         callback_denoised = callback_payload["denoised"]
 
@@ -2390,7 +2518,7 @@ class CodexSampler:
                                 time_next=time_next_solver,
                                 eps_cache=eps_cache,
                                 current_step=callback_step,
-                                step_total=run_total_steps,
+                                step_total=reported_total_steps,
                             )
                             high_order_state = _dpm_solver_step_2(
                                 latent_state,
@@ -2399,7 +2527,7 @@ class CodexSampler:
                                 stage_ratio=0.5,
                                 eps_cache=eps_cache,
                                 current_step=callback_step,
-                                step_total=run_total_steps,
+                                step_total=reported_total_steps,
                             )
                         else:
                             low_order_state = _dpm_solver_step_2(
@@ -2409,7 +2537,7 @@ class CodexSampler:
                                 stage_ratio=1.0 / 3.0,
                                 eps_cache=eps_cache,
                                 current_step=callback_step,
-                                step_total=run_total_steps,
+                                step_total=reported_total_steps,
                             )
                             high_order_state = _dpm_solver_step_3(
                                 latent_state,
@@ -2419,7 +2547,7 @@ class CodexSampler:
                                 stage_ratio_2=2.0 / 3.0,
                                 eps_cache=eps_cache,
                                 current_step=callback_step,
-                                step_total=run_total_steps,
+                                step_total=reported_total_steps,
                             )
 
                         atol_tensor = torch.full_like(low_order_state, solver_atol)
@@ -2447,18 +2575,18 @@ class CodexSampler:
                             start_time = _dpm_emit_step_callbacks(
                                 latent_state=latent_state,
                                 denoised_state=callback_denoised,
-                                current_step=max(1, min(accepted_steps, run_total_steps)),
+                                current_step=max(1, accepted_steps),
                                 sigma_current=sigma_current_event,
                                 sigma_next=sigma_next_event,
                                 step_start_time=start_time,
                             )
 
-                    if accepted_steps == 0 and run_total_steps > 0:
+                    if accepted_steps == 0:
                         sigma_terminal = float(sigmas_run[min(1, len(sigmas_run) - 1)])
                         start_time = _dpm_emit_step_callbacks(
                             latent_state=latent_state,
                             denoised_state=latent_state,
-                            current_step=run_total_steps,
+                            current_step=1,
                             sigma_current=float(sigmas_run[0]),
                             sigma_next=sigma_terminal,
                             step_start_time=start_time,
@@ -2523,11 +2651,13 @@ class CodexSampler:
                         if backend_state.should_stop:
                             raise _SamplingCancelled("cancelled")
                         step_index = i - start_idx
-                        if sampler_kind in {SamplerKind.DPM_FAST, SamplerKind.RESTART}:
+                        if sampler_kind in {SamplerKind.DPM_FAST, SamplerKind.DPM_ADAPTIVE, SamplerKind.RESTART}:
                             if step_index != 0:
                                 break
                             if sampler_kind is SamplerKind.DPM_FAST:
                                 x, t0 = _run_native_dpm_fast(x, start_time=t0)
+                            elif sampler_kind is SamplerKind.DPM_ADAPTIVE:
+                                x, t0 = _run_native_dpm_adaptive(x, start_time=t0)
                             else:
                                 x, t0 = _run_native_restart(x, start_time=t0)
                             break
@@ -2552,6 +2682,16 @@ class CodexSampler:
                                     raise RuntimeError("SA-Solver missing adjusted sigma schedule.")
                                 sigma = sa_solver_sigmas[step_index]
                                 sigma_next = sa_solver_sigmas[step_index + 1]
+                            if sampler_kind is SamplerKind.DPMPP_SDE:
+                                if dpm_sde_sigmas is None:
+                                    raise RuntimeError("DPM++ SDE missing adjusted sigma schedule.")
+                                sigma = dpm_sde_sigmas[step_index]
+                                sigma_next = dpm_sde_sigmas[step_index + 1]
+                            if sampler_kind is SamplerKind.DPM3M_SDE:
+                                if dpm3m_sde_sigmas is None:
+                                    raise RuntimeError("DPM++ 3M SDE missing adjusted sigma schedule.")
+                                sigma = dpm3m_sde_sigmas[step_index]
+                                sigma_next = dpm3m_sde_sigmas[step_index + 1]
                             if sampler_kind in {
                                 SamplerKind.RES_MULTISTEP_CFG_PP,
                                 SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
@@ -3425,7 +3565,143 @@ class CodexSampler:
                                     x = denoised + denoised_mix + exp_neg_h * x
                                     old_denoised = dpm2m_cfg_pp_capture.detach()
                                     t_prev = t
-                            elif sampler_kind is SamplerKind.DPM2M_SDE:
+                            elif sampler_kind is SamplerKind.DPMPP_SDE:
+                                if dpm_sde_sigmas is None or dpm_sde_lambdas is None:
+                                    raise RuntimeError("DPM++ SDE missing initialized half-logSNR runtime state.")
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "DPM++ SDE requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f <= 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "DPM++ SDE requires a strictly positive current sigma and a non-negative next sigma "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_next_f == 0.0:
+                                    x = denoised
+                                else:
+                                    lambda_s = dpm_sde_lambdas[step_index]
+                                    lambda_t = dpm_sde_lambdas[step_index + 1]
+                                    h = lambda_t - lambda_s
+                                    h_f = float(h)
+                                    if not math.isfinite(h_f) or h_f <= 0.0:
+                                        raise RuntimeError(
+                                            "DPM++ SDE produced an invalid half-logSNR step size "
+                                            f"h={h_f} at step={step_index + 1}."
+                                        )
+                                    lambda_mid = lambda_s + h * dpm_sde_r
+                                    sigma_mid = half_log_snr_to_sigma(
+                                        lambda_mid.reshape(1),
+                                        prediction_type=prediction_type,
+                                    )[0]
+                                    sigma_mid_f = float(sigma_mid)
+                                    if not math.isfinite(sigma_mid_f) or sigma_mid_f <= 0.0:
+                                        raise RuntimeError(
+                                            "DPM++ SDE produced an invalid midpoint sigma "
+                                            f"(sigma_mid={sigma_mid_f}) at step={step_index + 1}."
+                                        )
+                                    alpha_s = sigma * lambda_s.exp()
+                                    alpha_mid = sigma_mid * lambda_mid.exp()
+                                    alpha_t = sigma_next * lambda_t.exp()
+                                    alpha_s_f = float(alpha_s)
+                                    alpha_mid_f = float(alpha_mid)
+                                    alpha_t_f = float(alpha_t)
+                                    if (
+                                        not math.isfinite(alpha_s_f)
+                                        or not math.isfinite(alpha_mid_f)
+                                        or not math.isfinite(alpha_t_f)
+                                        or alpha_s_f <= 0.0
+                                        or alpha_mid_f <= 0.0
+                                        or alpha_t_f <= 0.0
+                                    ):
+                                        raise RuntimeError(
+                                            "DPM++ SDE produced non-positive alpha values "
+                                            f"(alpha_s={alpha_s_f}, alpha_mid={alpha_mid_f}, alpha_t={alpha_t_f}) "
+                                            f"at step={step_index + 1}."
+                                        )
+
+                                    lambda_s_f = float(lambda_s)
+                                    lambda_t_f = float(lambda_t)
+                                    lambda_mid_f = float(lambda_mid)
+                                    sigma_down_mid, sigma_up_mid = _compute_ancestral_sigmas(
+                                        math.exp(-lambda_s_f),
+                                        math.exp(-lambda_mid_f),
+                                        eta=dpm_sde_eta,
+                                    )
+                                    sigma_down_end, sigma_up_end = _compute_ancestral_sigmas(
+                                        math.exp(-lambda_s_f),
+                                        math.exp(-lambda_t_f),
+                                        eta=dpm_sde_eta,
+                                    )
+                                    if sigma_down_mid <= 0.0 or sigma_down_end <= 0.0:
+                                        raise RuntimeError(
+                                            "DPM++ SDE produced non-positive ancestral sigma_down values "
+                                            f"(mid={sigma_down_mid}, end={sigma_down_end}) at step={step_index + 1}."
+                                        )
+                                    h_mid = -math.log(sigma_down_mid) - lambda_s_f
+                                    h_end = -math.log(sigma_down_end) - lambda_s_f
+                                    if (
+                                        not math.isfinite(h_mid)
+                                        or not math.isfinite(h_end)
+                                        or h_mid <= 0.0
+                                        or h_end <= 0.0
+                                    ):
+                                        raise RuntimeError(
+                                            "DPM++ SDE produced invalid projected half-logSNR step sizes "
+                                            f"(h_mid={h_mid}, h_end={h_end}) at step={step_index + 1}."
+                                        )
+                                    x_2 = (
+                                        (alpha_mid_f / alpha_s_f) * math.exp(-h_mid) * x
+                                    ) - (alpha_mid * math.expm1(-h_mid) * denoised)
+
+                                    interval_noise_end: torch.Tensor | None = None
+                                    if dpm_sde_eta > 0.0 and dpm_sde_s_noise > 0.0:
+                                        if seeded_step_rng is None:
+                                            raise RuntimeError("DPM++ SDE missing deterministic noise RNG.")
+                                        interval_noise_mid, interval_noise_end = compose_nested_interval_noises(
+                                            interval_start=sigma_f,
+                                            interval_mid=sigma_mid_f,
+                                            interval_end=sigma_next_f,
+                                            first_draw=self._next_seeded_step_noise(seeded_step_rng, x),
+                                            second_draw=self._next_seeded_step_noise(seeded_step_rng, x),
+                                        )
+                                        x_2 = x_2 + (
+                                            alpha_mid
+                                            * interval_noise_mid
+                                            * dpm_sde_s_noise
+                                            * sigma_up_mid
+                                        )
+
+                                    _, denoised_2, _ = _dpm_eval_eps(
+                                        x_2,
+                                        sigma_value=sigma_mid_f,
+                                        current_step=current_step,
+                                        step_total=run_total_steps,
+                                    )
+                                    denoised_d = torch.lerp(
+                                        denoised,
+                                        denoised_2,
+                                        1.0 / (2.0 * dpm_sde_r),
+                                    )
+                                    x = (
+                                        (alpha_t_f / alpha_s_f) * math.exp(-h_end) * x
+                                    ) - (alpha_t * math.expm1(-h_end) * denoised_d)
+                                    if interval_noise_end is not None:
+                                        x = x + (
+                                            alpha_t
+                                            * interval_noise_end
+                                            * dpm_sde_s_noise
+                                            * sigma_up_end
+                                        )
+                            elif sampler_kind in {
+                                SamplerKind.DPM2M_SDE,
+                                SamplerKind.DPM2M_SDE_HEUN,
+                                SamplerKind.DPM2M_SDE_GPU,
+                                SamplerKind.DPM2M_SDE_HEUN_GPU,
+                            }:
                                 if dpm2m_sde_sigmas is None or dpm2m_sde_lambdas is None:
                                     raise RuntimeError("DPM++ 2M SDE missing initialized half-logSNR runtime state.")
                                 sigma_f = float(sigma)
@@ -3480,7 +3756,25 @@ class CodexSampler:
                                                 "DPM++ 2M SDE correction term produced an invalid step ratio "
                                                 f"r={r} at step={step_index + 1}."
                                             )
-                                        x = x + 0.5 * alpha_t * phi_1 * (1.0 / r) * (denoised - old_denoised)
+                                        if sampler_kind in {
+                                            SamplerKind.DPM2M_SDE_HEUN,
+                                            SamplerKind.DPM2M_SDE_HEUN_GPU,
+                                        }:
+                                            h_eta_f = float(h_eta)
+                                            if not math.isfinite(h_eta_f) or abs(h_eta_f) <= 1e-12:
+                                                raise RuntimeError(
+                                                    "DPM++ 2M SDE Heun correction requires a finite non-zero stochastic step size "
+                                                    f"(h_eta={h_eta_f}) at step={step_index + 1}."
+                                                )
+                                            correction_weight = (phi_1 / (-h_eta)) + 1.0
+                                        else:
+                                            correction_weight = 0.5 * phi_1
+                                        if not bool(torch.isfinite(correction_weight)):
+                                            raise RuntimeError(
+                                                "DPM++ 2M SDE correction term produced a non-finite correction weight "
+                                                f"at step={step_index + 1}."
+                                            )
+                                        x = x + alpha_t * correction_weight * (1.0 / r) * (denoised - old_denoised)
                                     if dpm2m_sde_eta > 0.0 and dpm2m_sde_s_noise > 0.0:
                                         noise_scale_sq = -math.expm1(-2.0 * h_f * dpm2m_sde_eta)
                                         if noise_scale_sq < -1e-8:
@@ -3504,6 +3798,130 @@ class CodexSampler:
                                             )
                                     old_denoised = denoised.detach()
                                     h_prev = h_f
+                            elif sampler_kind is SamplerKind.DPM3M_SDE:
+                                if dpm3m_sde_sigmas is None or dpm3m_sde_lambdas is None:
+                                    raise RuntimeError("DPM++ 3M SDE missing initialized half-logSNR runtime state.")
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if not math.isfinite(sigma_f) or not math.isfinite(sigma_next_f):
+                                    raise RuntimeError(
+                                        "DPM++ 3M SDE requires finite sigma values "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_f <= 0.0 or sigma_next_f < 0.0:
+                                    raise RuntimeError(
+                                        "DPM++ 3M SDE requires a strictly positive current sigma and a non-negative next sigma "
+                                        f"(sigma={sigma_f}, sigma_next={sigma_next_f})."
+                                    )
+                                if sigma_next_f == 0.0:
+                                    x = denoised
+                                else:
+                                    lambda_s = dpm3m_sde_lambdas[step_index]
+                                    lambda_t = dpm3m_sde_lambdas[step_index + 1]
+                                    h = lambda_t - lambda_s
+                                    h_f = float(h)
+                                    if not math.isfinite(h_f) or h_f <= 0.0:
+                                        raise RuntimeError(
+                                            "DPM++ 3M SDE produced an invalid half-logSNR step size "
+                                            f"h={h_f} at step={step_index + 1}."
+                                        )
+                                    h_eta = h * (dpm3m_sde_eta + 1.0)
+                                    alpha_t = dpm3m_sde_sigmas[step_index + 1] * lambda_t.exp()
+                                    alpha_t_f = float(alpha_t)
+                                    if not math.isfinite(alpha_t_f) or alpha_t_f <= 0.0:
+                                        raise RuntimeError(
+                                            "DPM++ 3M SDE produced an invalid alpha_t value "
+                                            f"alpha_t={alpha_t_f} at step={step_index + 1}."
+                                        )
+                                    x = (
+                                        (sigma_next_f / sigma_f) * math.exp(-h_f * dpm3m_sde_eta) * x
+                                    ) + alpha_t * (-h_eta).expm1().neg() * denoised
+                                    h_eta_f = float(h_eta)
+                                    if not math.isfinite(h_eta_f) or abs(h_eta_f) <= 1e-12:
+                                        raise RuntimeError(
+                                            "DPM++ 3M SDE requires a finite non-zero stochastic step size "
+                                            f"(h_eta={h_eta_f}) at step={step_index + 1}."
+                                        )
+                                    phi_2 = h_eta.neg().expm1() / h_eta + 1.0
+                                    if not bool(torch.isfinite(phi_2)):
+                                        raise RuntimeError(
+                                            f"DPM++ 3M SDE produced a non-finite phi_2 value at step={step_index + 1}."
+                                        )
+                                    if older_denoised is not None and old_denoised is not None and h_prev is not None and h_prev_2 is not None:
+                                        if (
+                                            not math.isfinite(h_prev)
+                                            or abs(h_prev) <= 1e-12
+                                            or not math.isfinite(h_prev_2)
+                                            or abs(h_prev_2) <= 1e-12
+                                        ):
+                                            raise RuntimeError(
+                                                "DPM++ 3M SDE correction requires finite non-zero previous step sizes "
+                                                f"(h_prev={h_prev}, h_prev_2={h_prev_2}) at step={step_index + 1}."
+                                            )
+                                        r0 = h_prev / h_f
+                                        r1 = h_prev_2 / h_f
+                                        sum_r = r0 + r1
+                                        if (
+                                            not math.isfinite(r0)
+                                            or abs(r0) <= 1e-12
+                                            or not math.isfinite(r1)
+                                            or abs(r1) <= 1e-12
+                                            or not math.isfinite(sum_r)
+                                            or abs(sum_r) <= 1e-12
+                                        ):
+                                            raise RuntimeError(
+                                                "DPM++ 3M SDE correction produced invalid step ratios "
+                                                f"(r0={r0}, r1={r1}) at step={step_index + 1}."
+                                            )
+                                        d1_0 = (denoised - old_denoised) / r0
+                                        d1_1 = (old_denoised - older_denoised) / r1
+                                        d1 = d1_0 + (d1_0 - d1_1) * r0 / sum_r
+                                        d2 = (d1_0 - d1_1) / sum_r
+                                        phi_3 = (phi_2 / h_eta) - 0.5
+                                        if not bool(torch.isfinite(phi_3)):
+                                            raise RuntimeError(
+                                                f"DPM++ 3M SDE produced a non-finite phi_3 value at step={step_index + 1}."
+                                            )
+                                        x = x + (alpha_t * phi_2) * d1 - (alpha_t * phi_3) * d2
+                                    elif old_denoised is not None and h_prev is not None:
+                                        if not math.isfinite(h_prev) or abs(h_prev) <= 1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 3M SDE warm-start correction requires a finite non-zero previous step size "
+                                                f"(h_prev={h_prev}) at step={step_index + 1}."
+                                            )
+                                        r = h_prev / h_f
+                                        if not math.isfinite(r) or abs(r) <= 1e-12:
+                                            raise RuntimeError(
+                                                "DPM++ 3M SDE warm-start correction produced an invalid step ratio "
+                                                f"r={r} at step={step_index + 1}."
+                                            )
+                                        d = (denoised - old_denoised) / r
+                                        x = x + (alpha_t * phi_2) * d
+                                    if dpm3m_sde_eta > 0.0 and dpm3m_sde_s_noise > 0.0:
+                                        noise_scale_sq = -math.expm1(-2.0 * h_f * dpm3m_sde_eta)
+                                        if noise_scale_sq < -1e-8:
+                                            raise RuntimeError(
+                                                "DPM++ 3M SDE produced a negative stochastic noise scale "
+                                                f"({noise_scale_sq}) at step={step_index + 1}."
+                                            )
+                                        noise_scale = math.sqrt(max(noise_scale_sq, 0.0))
+                                        if not math.isfinite(noise_scale):
+                                            raise RuntimeError(
+                                                f"DPM++ 3M SDE produced a non-finite stochastic scale at step={step_index + 1}."
+                                            )
+                                        if noise_scale > 0.0:
+                                            if seeded_step_rng is None:
+                                                raise RuntimeError("DPM++ 3M SDE missing deterministic noise RNG.")
+                                            x = x + (
+                                                self._next_seeded_step_noise(seeded_step_rng, x)
+                                                * sigma_next_f
+                                                * noise_scale
+                                                * dpm3m_sde_s_noise
+                                            )
+                                    h_prev_2 = h_prev
+                                    h_prev = h_f
+                                older_denoised = old_denoised
+                                old_denoised = denoised.detach()
                             elif sampler_kind is SamplerKind.ER_SDE:
                                 if er_sde_params is None or er_sde_lambdas is None or er_sde_point_indices is None:
                                     raise RuntimeError("ER-SDE runtime state is not initialized")

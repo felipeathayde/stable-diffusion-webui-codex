@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Sampler/scheduler mapping for diffusers pipelines.
 Maps UI-facing sampler/scheduler selections to a strict diffusers scheduler instance for the bridge-supported sampler slice
-(`euler`, `euler a`, `heun`, `lms`, `ddim`, `dpm++ 2m`, `dpm++ 2m sde`, `dpm 2`, `dpm 2 ancestral`, `uni-pc`) and fail-loudly rejects
+(`euler`, `euler a`, `heun`, `lms`, `ddim`, `dpm++ 2m`, `dpm++ 2m sde`, `dpm++ 2m sde heun`, `dpm 2`, `dpm 2 ancestral`, `uni-pc`) and fail-loudly rejects
 native-only sampler variants that this bridge does not implement (no silent fallbacks).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -25,7 +25,7 @@ from apps.backend.types.samplers import SamplerKind, ApplyOutcome
 def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: str) -> ApplyOutcome:
     """Strict mapping of sampler/scheduler to Diffusers pipeline.
 
-    - Allowed: euler a, euler, heun, lms, ddim, dpm++ 2m, dpm++ 2m sde, dpm 2, dpm 2 ancestral, uni-pc.
+    - Allowed: euler a, euler, heun, lms, ddim, dpm++ 2m, dpm++ 2m sde, dpm++ 2m sde heun, dpm 2, dpm 2 ancestral, uni-pc.
     - Explicitly rejected: `uni-pc bh2` and `dpm++ 2s ancestral` (native variants not implemented by this bridge).
     - On invalid or failed application, raises with the root cause; no fallbacks.
     """
@@ -71,6 +71,7 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: s
         SamplerKind.DDIM: DDIMScheduler,
         SamplerKind.DPM2M: DPMSolverMultistepScheduler,
         SamplerKind.DPM2M_SDE: DPMSolverMultistepScheduler,
+        SamplerKind.DPM2M_SDE_HEUN: DPMSolverMultistepScheduler,
         SamplerKind.DPM2: KDPM2DiscreteScheduler,
         SamplerKind.DPM2_ANCESTRAL: KDPM2AncestralDiscreteScheduler,
         SamplerKind.UNI_PC: UniPCMultistepScheduler,
@@ -83,13 +84,26 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: s
     # Rebuild scheduler from config to preserve sigmas/timesteps defaults
     conf = getattr(pipe, "scheduler", None)
     conf = getattr(conf, "config", None)
+    scheduler_overrides = {}
+    if kind in {SamplerKind.DPM2M_SDE, SamplerKind.DPM2M_SDE_HEUN}:
+        if wanted_scheduler != "exponential":
+            raise ValueError(
+                f"Sampler '{wanted_sampler}' requires scheduler 'exponential'; got '{wanted_scheduler}'."
+            )
+        scheduler_overrides = {
+            "algorithm_type": "sde-dpmsolver++",
+            "solver_order": 2,
+            "solver_type": "heun" if kind is SamplerKind.DPM2M_SDE_HEUN else "midpoint",
+            "use_exponential_sigmas": True,
+            "use_karras_sigmas": False,
+        }
     if conf is not None:
-        pipe.scheduler = target_cls.from_config(conf)
+        pipe.scheduler = target_cls.from_config(conf, **scheduler_overrides)
     else:
-        pipe.scheduler = target_cls()
+        pipe.scheduler = target_cls(**scheduler_overrides)
 
     # Heuristics for options
-    if isinstance(pipe.scheduler, DPMSolverMultistepScheduler):
+    if isinstance(pipe.scheduler, DPMSolverMultistepScheduler) and not scheduler_overrides:
         pipe.scheduler.config.setdefault("use_karras_sigmas", True)
     if isinstance(pipe.scheduler, (EulerDiscreteScheduler, EulerAncestralDiscreteScheduler)):
         # trailing spacing is more compatible with SD style

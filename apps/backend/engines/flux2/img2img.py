@@ -12,7 +12,8 @@ or Flux Kontext semantics. This wrapper keeps the existing event/progress envelo
 to match `Flux2KleinPipeline(image=...)`, and reuses the shared masked bundle/full-res composite path when FLUX.2 inpaint
 is requested instead of pretending SD-family `image_conditioning` semantics apply directly. Partial denoise now uses
 clean `image_latents` plus sampler-native continuation from `init_latent`, and unmasked hires reuses shared hires prep
-while keeping masked hires fail-loud.
+while keeping masked hires fail-loud; hires-prompt sampler/scheduler + dimension controls are applied before explicit
+hires request overrides.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_flux2_sampling_inputs` (function): Resolves noise/init-latent/denoise args for FLUX.2 continuation sampling.
@@ -269,6 +270,9 @@ def _run_flux2_hires_pass(
         processing.negative_prompts = hi_prompt_context.negative_prompts
         processing.width = target_width
         processing.height = target_height
+        apply_dimension_overrides(processing, hi_prompt_context.controls)
+        effective_target_width = int(processing.width)
+        effective_target_height = int(processing.height)
         processing.guidance_scale = float(hi_cfg.cfg or processing.guidance_scale)
         processing.distilled_guidance_scale = float(
             getattr(hi_cfg, "distilled_cfg", getattr(processing, "distilled_guidance_scale", 3.5))
@@ -277,25 +281,54 @@ def _run_flux2_hires_pass(
         processing.cfg_scale = processing.guidance_scale
         processing.steps = int(steps)
         processing.denoising_strength = denoise
+        hires_prompt_sampling_controls: dict[str, object] = {}
+        if "sampler" in hi_prompt_context.controls:
+            hires_prompt_sampling_controls["sampler"] = hi_prompt_context.controls["sampler"]
+        if "scheduler" in hi_prompt_context.controls:
+            hires_prompt_sampling_controls["scheduler"] = hi_prompt_context.controls["scheduler"]
+        hires_runtime_plan = replace(
+            plan,
+            steps=int(processing.steps),
+            guidance_scale=float(processing.guidance_scale),
+        )
+        if hires_prompt_sampling_controls:
+            hires_runtime_plan = apply_sampling_overrides(
+                processing,
+                hires_prompt_sampling_controls,
+                hires_runtime_plan,
+            )
         hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
-            base_sampler=str(plan.sampler_name or ""),
-            base_scheduler=str(plan.scheduler_name or ""),
+            base_sampler=str(hires_runtime_plan.sampler_name or ""),
+            base_scheduler=str(hires_runtime_plan.scheduler_name or ""),
             sampler_override=getattr(hi_cfg, "sampler_name", None),
             scheduler_override=getattr(hi_cfg, "scheduler", None),
         )
         processing.sampler_name = hires_sampler
         processing.scheduler = hires_scheduler
         processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
+        processing._codex_effective_hires_sampling = {
+            "sampler": hires_sampler,
+            "scheduler": hires_scheduler,
+            "steps": int(steps),
+            "denoise": float(denoise),
+            "width": int(effective_target_width),
+            "height": int(effective_target_height),
+        }
         request_contract = getattr(getattr(processing, "sd_model", None), "_apply_runtime_request_contract", None)
         if callable(request_contract):
             request_contract(processing)
         processing.prepare_prompt_data()
+        effective_hires_plan = replace(
+            hires_plan,
+            target_width=int(effective_target_width),
+            target_height=int(effective_target_height),
+        )
 
         hires_inputs = prepare_hires_latents_and_conditioning(
             processing,
             base_samples=base_samples,
             base_decoded=None,
-            hires_plan=hires_plan,
+            hires_plan=effective_hires_plan,
             tile=getattr(hi_cfg, "tile", None),
         )
         if hires_inputs.continuation_mode not in {"image_latents", "image_latents_denoise"}:
@@ -329,7 +362,7 @@ def _run_flux2_hires_pass(
             hires_payload.unconditional["image_latents"] = hires_inputs.latents
 
         hr_plan = replace(
-            plan,
+            hires_runtime_plan,
             sampler_name=hires_sampler,
             scheduler_name=hires_scheduler,
             steps=int(processing.steps),
@@ -609,6 +642,14 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
                 "img2img_mode": img2img_mode,
                 "denoise_strength": _read_denoise_strength(proc, default=1.0),
             }
+            if bool(getattr(getattr(proc, "hires", None), "enabled", False)):
+                try:
+                    mode_info["hires"] = getattr(proc, "hires", None).as_dict()
+                except Exception:  # noqa: BLE001
+                    pass
+                effective_hires_sampling = getattr(proc, "_codex_effective_hires_sampling", None)
+                if isinstance(effective_hires_sampling, dict) and effective_hires_sampling:
+                    mode_info["effective_hires_sampling"] = dict(effective_hires_sampling)
 
             info = _build_common_info(
                 engine_id=engine.engine_id,
@@ -659,7 +700,7 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
                 if phase_total > 0
                 else 0.0
             )
-            total_percent = encode_weight * encode_ratio
+            total_percent = encode_weight * encode_ratio if sampling_total is not None and sampling_total > 0 else None
             yield ProgressEvent(
                 stage="encoding",
                 percent=None,
@@ -671,7 +712,7 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
                     "block_index": int(phase_block_index),
                     "block_total": int(phase_block_total),
                     "total_phase": "encode",
-                    "total_percent": float(total_percent),
+                    "total_percent": (float(total_percent) if total_percent is not None else None),
                     "phase_step": int(phase_step),
                     "phase_total_steps": int(phase_total),
                     "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
@@ -689,48 +730,54 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
                 else int(sampling_block_total_hint)
             )
             has_block_progress = 0 < sampling_block_index < sampling_block_total
-            completed_units = float(sampling_step)
-            if has_block_progress:
-                completed_units += float(sampling_block_index) / float(sampling_block_total)
-            sampling_ratio = (
-                min(float(sampling_total), completed_units) / float(sampling_total)
-                if sampling_total > 0
-                else 0.0
-            )
-            progress_percent = sampling_ratio * 100.0
-            pct = max(5.0, min(99.0, progress_percent))
-            total_percent = encode_weight + (sampling_weight * sampling_ratio)
-            phase_step_blocks = int(phase_step)
-            phase_total_blocks = int(phase_total)
-            if effective_sampling_block_total > 0 and sampling_total > 0:
-                completed_sampling_steps = max(0, min(int(sampling_step), int(sampling_total)))
-                intra_step_blocks = max(0, min(int(sampling_block_index), int(effective_sampling_block_total)))
-                phase_total_blocks = int(sampling_total) * int(effective_sampling_block_total)
-                phase_step_blocks = min(
-                    int(phase_total_blocks),
-                    (int(completed_sampling_steps) * int(effective_sampling_block_total)) + int(intra_step_blocks),
-                )
-            if has_block_progress:
-                message = (
-                    f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
-                    f"(block {sampling_block_index}/{sampling_block_total})"
-                )
+            if sampling_total is not None and sampling_total > 0:
+                completed_units = float(sampling_step)
+                if has_block_progress:
+                    completed_units += float(sampling_block_index) / float(sampling_block_total)
+                sampling_ratio = min(float(sampling_total), completed_units) / float(sampling_total)
+                progress_percent = sampling_ratio * 100.0
+                pct = max(5.0, min(99.0, progress_percent))
+                total_percent = encode_weight + (sampling_weight * sampling_ratio)
+                phase_step_blocks = int(phase_step)
+                phase_total_blocks = int(phase_total)
+                if effective_sampling_block_total > 0:
+                    completed_sampling_steps = max(0, min(int(sampling_step), int(sampling_total)))
+                    intra_step_blocks = max(0, min(int(sampling_block_index), int(effective_sampling_block_total)))
+                    phase_total_blocks = int(sampling_total) * int(effective_sampling_block_total)
+                    phase_step_blocks = min(
+                        int(phase_total_blocks),
+                        (int(completed_sampling_steps) * int(effective_sampling_block_total)) + int(intra_step_blocks),
+                    )
+                if has_block_progress:
+                    message = (
+                        f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
+                        f"(block {sampling_block_index}/{sampling_block_total})"
+                    )
+                else:
+                    message = f"Sampling step {sampling_step}/{sampling_total}"
             else:
-                message = f"Sampling step {sampling_step}/{sampling_total}"
+                pct = None
+                total_percent = None
+                phase_step_blocks = None
+                phase_total_blocks = None
+                if has_block_progress:
+                    message = f"Sampling step {sampling_step} (block {sampling_block_index}/{sampling_block_total})"
+                else:
+                    message = f"Sampling step {sampling_step}"
             yield ProgressEvent(
                 stage="sampling",
                 percent=pct,
                 step=sampling_step,
-                total_steps=sampling_total,
+                total_steps=(sampling_total if sampling_total is not None and sampling_total > 0 else None),
                 eta_seconds=phase_eta,
                 message=message,
                 data={
                     "block_index": int(sampling_block_index),
                     "block_total": int(sampling_block_total),
                     "total_phase": "sampling",
-                    "total_percent": float(total_percent),
-                    "phase_step": int(phase_step_blocks),
-                    "phase_total_steps": int(phase_total_blocks),
+                    "total_percent": (float(total_percent) if total_percent is not None else None),
+                    "phase_step": (int(phase_step_blocks) if phase_step_blocks is not None else None),
+                    "phase_total_steps": (int(phase_total_blocks) if phase_total_blocks is not None else None),
                     "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
                     "img2img_mode": img2img_mode,
                     **(
@@ -749,8 +796,12 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
                 if phase_total > 0
                 else 0.0
             )
-            total_percent = min(100.0, encode_weight + sampling_weight + (decode_weight * decode_ratio))
-            sampling_terminal_step = int(sampling_total) if sampling_total > 0 else None
+            total_percent = (
+                min(100.0, encode_weight + sampling_weight + (decode_weight * decode_ratio))
+                if sampling_total is not None and sampling_total > 0
+                else None
+            )
+            sampling_terminal_step = int(sampling_total) if sampling_total is not None and sampling_total > 0 else None
             yield ProgressEvent(
                 stage="decoding",
                 percent=100.0 if sampling_terminal_step is not None else None,
@@ -762,12 +813,14 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
                     "block_index": int(phase_block_index),
                     "block_total": int(phase_block_total),
                     "total_phase": "decode",
-                    "total_percent": float(total_percent),
+                    "total_percent": (float(total_percent) if total_percent is not None else None),
                     "phase_step": int(phase_step),
                     "phase_total_steps": int(phase_total),
                     "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
                     "sampling_step": int(sampling_step),
-                    "sampling_total_steps": int(sampling_total),
+                    "sampling_total_steps": (
+                        int(sampling_total) if sampling_total is not None and sampling_total > 0 else None
+                    ),
                     "img2img_mode": img2img_mode,
                 },
             )

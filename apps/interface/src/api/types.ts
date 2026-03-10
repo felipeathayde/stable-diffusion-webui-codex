@@ -43,7 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `VersionResponse` (interface): `/api/version` response shape.
 - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features, including recommended sampler/scheduler hint lists.
 - `GuidanceAdvancedCapabilities` (interface): Per-engine support map for advanced CFG/APG controls.
-- `FamilyCapabilities` (interface): Per-family capability flags from backend (`families`) used to gate prompt/clip controls.
+- `FamilyCapabilities` (interface): Per-family capability flags from backend (`families`) used to gate prompt/clip controls and optional sampler/scheduler support/exclusion lists.
 - `EngineDependencyCheckRow` (interface): One dependency-check row returned by backend readiness contract.
 - `EngineDependencyStatus` (interface): Aggregated dependency status (`ready + checks`) for one semantic engine.
 - `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
@@ -401,6 +401,10 @@ export interface GuidanceAdvancedCapabilities {
 export interface FamilyCapabilities {
   supports_negative_prompt: boolean
   shows_clip_skip: boolean
+  supported_samplers?: string[] | null
+  supported_schedulers?: string[] | null
+  excluded_samplers?: string[] | null
+  excluded_schedulers?: string[] | null
 }
 
 export interface EngineDependencyCheckRow {

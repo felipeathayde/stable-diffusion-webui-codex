@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-08
+Last Review: 2026-03-09
 Status: Active
 
 ## Purpose
@@ -23,6 +23,7 @@ Status: Active
   - `engine_id_to_semantic_engine` (explicit key-space mapping; required by frontend taxonomy resolution)
   - `dependency_checks` (backend-owned readiness rows per semantic engine; strict `ready === all(check.ok)` contract)
 - 2026-03-07: `types.ts` `EngineCapabilities` sampler/scheduler recommendation fields are `recommended_samplers` / `recommended_schedulers`.
+- 2026-03-09: `types.ts` `FamilyCapabilities` now preserves optional family-scoped sampling filters from `/api/engines/capabilities` (`supported_samplers`, `supported_schedulers`, `excluded_samplers`, `excluded_schedulers`) for frontend family-aware sampler/scheduler gating.
 - `/api/samplers` DTO is `{name,supported,default_scheduler,allowed_schedulers}`; `supported` means executable backend support and `client.ts::fetchSamplers()` filters out `supported=false` rows before UI selector use. WAN payload builders fail fast on non-canonical (uppercase) sampler inputs and reject any scheduler value other than exact canonical `simple`; emitted WAN scheduler fields remain explicit at both top level (`*_scheduler`) and stage level (`wan_high.scheduler` / `wan_low.scheduler`) for router/runtime validation.
 - 2025-12-16: WAN video client helpers include task-event/result handling with optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
 - 2026-01-27: WAN payload builders now optionally emit `video_return_frames` (default off) to control whether txt2vid/img2vid results include frames; vid2vid preview-frame behavior is historical while backend vid2vid remains disabled. Video export remains controlled via `video_save_output`.

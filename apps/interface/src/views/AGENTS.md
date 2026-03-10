@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-08
+Last Review: 2026-03-09
 Status: Active
 
 ## Purpose
@@ -48,6 +48,7 @@ Status: Active
 - 2026-01-27: `WANTab.vue` supports video-first WAN results (exported video shown even when frames are omitted); when `Return frames` is disabled and a video exists, the frames viewer empty state shows “Frames not returned” with a hint.
 - 2026-01-28: `ImageModelTab.vue` treats Z-Image as Turbo/Base variant-dependent: toolbar/CFG labels and negative-prompt support follow the per-tab Turbo toggle.
 - 2026-01-29: `PngInfo.vue` now uses a Codex-native dropzone, extracts PNG text metadata, parses infotext, and supports “Save snapshot” (Workflows) + “Send to” (tab + mode).
+- 2026-03-09: `PngInfo.vue` now resolves sampler/scheduler imports through family-aware capability filters; when target-family sampling capabilities are unavailable, sampler/scheduler patching is skipped (checkpoint/prompt/size fields still apply).
 - 2026-02-18: `PngInfo.vue` header actions now use a local layout container (no shared `results-actions` coupling), and loaded PNG previews expose a clear `✕` action that resets preview/analysis/infotext state without triggering the dropzone picker.
 - 2026-02-01: `Upscale.vue` now wires the standalone `/upscale` workspace to the backend (`/api/upscalers`, `/api/upscale`) with SSE task streaming, tile presets, an explicit OOM fallback toggle (persisted), and an HF-backed download modal.
 - 2026-02-03: `Upscale.vue` download modal renders curated manifest metadata (arch/scale/license/sha256/tags/notes) vs “Other files” and surfaces manifest validation issues; raw manifest JSON is now behind a hamburger (☰) action.
@@ -71,8 +72,8 @@ Status: Active
 - 2026-02-17: `ImageModelTab.vue` init-image controls now use PNG-Info-style dropzone handling (thumbnail preview + click-to-zoom full-screen).
 - 2026-03-06: In `useInitImage` mode, `ImageModelTab.vue` renders `Img2ImgBasicParametersCard.vue` (hires-like layout with resize-type/upscaler gating) instead of the txt2img `BasicParametersCard.vue`; img2img payload wiring remains in `useGeneration(tabId)` and can now emit hires when the active engine supports it and masking is off.
 - 2026-03-06: `ImageModelTab.vue` now keeps the img2img denoise slider visible for FLUX.2 and no longer rewrites stored FLUX.2 denoise back to `1.0`.
-- 2026-03-07: `ImageModelTab.vue` sampler/scheduler selectors now keep the full global catalog visible, pass backend recommendation arrays to shared selector components for grouped dropdown rendering (`Recommended` vs `Use at your own risk`), and rely on selector-inline warning text when current choices are outside recommendations (while keeping hard sampler->allowed_scheduler compatibility guards).
-- 2026-03-08: `WANTab.vue` forwards backend recommendation arrays into shared WAN stage selectors as hints (not allowlists), and WAN stage selectors use WAN-filtered inventories (`uni-pc|euler|euler a` samplers; `simple` scheduler) instead of the full global catalogs.
+- 2026-03-07: `ImageModelTab.vue` sampler/scheduler selectors now keep backend recommendation arrays as hints (`Recommended` vs `Use at your own risk`) while enforcing hard executable constraints (`sampler -> allowed_schedulers`) and family capability constraints (`supported_*` / `excluded_*`) for base/hires/XYZ sampling selections.
+- 2026-03-08: `WANTab.vue` forwards backend recommendation arrays into shared WAN stage selectors as hints (not allowlists), and WAN stage selectors use WAN-filtered inventories (`uni-pc*`, `euler`, `euler a` samplers; `simple` scheduler) instead of the full global catalogs.
 - 2026-03-08: WAN stage scheduler selection is persisted through `model_tabs.ts` (`high.scheduler` / `low.scheduler`), so scheduler choices survive tab persistence/history reuse flows.
 - 2026-03-06: `Test.vue` now routes WAN txt2vid/img2vid runs through the shared `buildWanTxt2VidPayload(...)` / `buildWanImg2VidPayload(...)` builders, sends canonical `device` + `wan_high/wan_low.loras[]` + explicit `img2vid_mode`, uses metadata repo ids instead of metadata-dir wording, and keeps width/height input on a 16px WAN-safe grid.
 - 2026-02-18: `ImageModelTab.vue` now wires `guidanceAdvanced` state into both basic-parameter cards and gates CFG Advanced/APG controls with backend `engineSurface.guidance_advanced`; profile load/save also persists the advanced-guidance block.

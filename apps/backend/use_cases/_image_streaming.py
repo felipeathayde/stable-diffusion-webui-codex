@@ -260,7 +260,7 @@ def _iter_sampling_progress(
     done: "threading.Event",
     outcome: _WorkerOutcome | None = None,
     poll_interval_s: float = 0.12,
-) -> Iterator[tuple[str, int, int, int, int, float | None, int, int, int, int]]:
+) -> Iterator[tuple[str, int, int | None, int, int, float | None, int, int | None, int, int]]:
     import time
 
     from apps.backend.core.state import state as backend_state
@@ -272,7 +272,7 @@ def _iter_sampling_progress(
         return phase in {"encode", "decode"} and block_total > 0 and block_index > 0
 
     t0 = time.perf_counter()
-    last_snapshot = (-1, -1, -1, -1)
+    last_snapshot: tuple[int, int | None, int, int] = (-1, None, -1, -1)
     last_vae_snapshot = ("", -1, -1)
     vae_phase_started_at: dict[str, float] = {}
     while True:
@@ -282,11 +282,12 @@ def _iter_sampling_progress(
                 step, total, block_index, block_total = snapshot()
             else:
                 step = int(getattr(backend_state, "sampling_step", 0) or 0)
-                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
+                raw_total = getattr(backend_state, "sampling_steps", None)
+                total = None if raw_total is None else int(raw_total)
                 block_index = int(getattr(backend_state, "sampling_block_index", 0) or 0)
                 block_total = int(getattr(backend_state, "sampling_block_total", 0) or 0)
         except Exception:  # noqa: BLE001
-            step, total, block_index, block_total = 0, 0, 0, 0
+            step, total, block_index, block_total = 0, None, 0, 0
 
         try:
             vae_snapshot = getattr(backend_state, "vae_progress_snapshot", None)
@@ -305,8 +306,8 @@ def _iter_sampling_progress(
             vae_block_index = 0
             vae_block_total = 0
 
-        total = max(0, int(total))
-        step = max(0, min(int(step), total if total > 0 else int(step)))
+        total = None if total is None else max(0, int(total))
+        step = max(0, min(int(step), total if total is not None and total > 0 else int(step)))
         block_total = max(0, int(block_total))
         block_index = max(0, int(block_index))
         if block_total > 0:
@@ -317,7 +318,12 @@ def _iter_sampling_progress(
             vae_block_index = min(vae_block_index, vae_block_total)
 
         done_now = done.is_set()
-        at_full_block_boundary = block_total > 0 and block_index >= block_total and step < total
+        at_full_block_boundary = (
+            total is not None
+            and block_total > 0
+            and block_index >= block_total
+            and step < total
+        )
         worker_succeeded = bool(done_now and outcome is not None and outcome.success and outcome.error is None)
 
         emit_step = step
@@ -334,8 +340,7 @@ def _iter_sampling_progress(
 
         current_snapshot = (emit_step, total, emit_block_index, emit_block_total)
         should_emit = (
-            total > 0
-            and (emit_step > 0 or emit_block_index > 0 or done_now)
+            (emit_step > 0 or emit_block_index > 0 or done_now)
             and current_snapshot != last_snapshot
         )
         if should_emit:
@@ -343,12 +348,15 @@ def _iter_sampling_progress(
             completed_units = float(emit_step)
             if _has_block_progress(block_index=emit_block_index, block_total=emit_block_total):
                 completed_units += float(emit_block_index) / float(emit_block_total)
-            completed_units = min(float(total), completed_units)
-            eta = (
-                (elapsed * (float(total) - completed_units) / completed_units)
-                if completed_units > 0.0
-                else None
-            )
+            if total is not None:
+                completed_units = min(float(total), completed_units)
+                eta = (
+                    (elapsed * (float(total) - completed_units) / completed_units)
+                    if completed_units > 0.0
+                    else None
+                )
+            else:
+                eta = None
             yield (
                 "sampling",
                 emit_step,

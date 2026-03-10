@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: PNG info inspection view.
-Inspect uploaded PNG metadata, parse common infotext formats, and bridge extracted parameters into model tabs and workflow snapshots (including independent sampler/scheduler patching when each mapped value is recognized).
+Inspect uploaded PNG metadata, parse common infotext formats, and bridge extracted parameters into model tabs and workflow snapshots
+(including family-aware sampler/scheduler patching that never applies family-invalid values).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PngInfo` (component): PNG info route view component.
@@ -241,9 +242,15 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { analyzePngInfo, fetchModelInventory, fetchSamplers, fetchSchedulers } from '../api/client'
 import type { InventoryResponse, PngInfoAnalyzeResponse, SamplerInfo, SchedulerInfo } from '../api/types'
 import { useResultsCard } from '../composables/useResultsCard'
+import {
+  filterSamplersForFamilyCapabilities,
+  filterSchedulersForFamilyCapabilities,
+  useEngineCapabilitiesStore,
+} from '../stores/engine_capabilities'
 import { useModelTabsStore } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useWorkflowsStore } from '../stores/workflows'
+import { resolveImageRequestEngineId, type TabFamily } from '../utils/engine_taxonomy'
 import { mapCheckpointTitle, mapSamplerScheduler, parseComfyPromptJson, parseInfotext, type ParsedInfotext } from '../utils/pnginfo'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import Dropzone from '../components/ui/Dropzone.vue'
@@ -254,6 +261,7 @@ type TargetMode = 'txt2img' | 'img2img'
 const tabs = useModelTabsStore()
 const workflows = useWorkflowsStore()
 const quicksettings = useQuicksettingsStore()
+const engineCaps = useEngineCapabilitiesStore()
 const { notice, toast } = useResultsCard()
 
 const selectedFile = ref<File | null>(null)
@@ -275,6 +283,21 @@ const compatibleTabs = computed(() => tabs.orderedTabs.filter(t => t.type !== 'w
 const targetTabId = ref('')
 const targetTab = computed(() => compatibleTabs.value.find(t => t.id === targetTabId.value) || null)
 const targetMode = ref<TargetMode>('txt2img')
+const targetTabFamily = computed<TabFamily | null>(() => {
+  const type = targetTab.value?.type
+  if (!type || type === 'wan' || type === 'anima') return null
+  return type
+})
+const targetSamplingEngineId = computed(() => {
+  const family = targetTabFamily.value
+  if (!family) return null
+  return resolveImageRequestEngineId(family, targetMode.value === 'img2img')
+})
+const targetFamilyCapabilities = computed(() => {
+  const engineId = targetSamplingEngineId.value
+  if (!engineId) return null
+  return engineCaps.getFamilyForEngine(engineId)
+})
 
 const parsedResult = computed(() => parseInfotext(infotext.value))
 const parsed = computed<ParsedInfotext>(() => parsedResult.value.parsed)
@@ -307,9 +330,29 @@ const resolvedVae = computed<VaeResolution>(() => {
 const resolvedVaeLabel = computed(() => resolvedVae.value.label || '')
 const vaeWarnings = computed(() => resolvedVae.value.warnings)
 
-const mappingResult = computed(() =>
-  mapSamplerScheduler(parsed.value.sampler, parsed.value.scheduler, samplers.value, schedulers.value),
-)
+const samplingMapSamplers = computed<SamplerInfo[]>(() => {
+  if (!targetTabFamily.value) return samplers.value
+  if (!targetFamilyCapabilities.value) return []
+  return filterSamplersForFamilyCapabilities(samplers.value, targetFamilyCapabilities.value)
+})
+const samplingMapSchedulers = computed<SchedulerInfo[]>(() => {
+  if (!targetTabFamily.value) return schedulers.value
+  if (!targetFamilyCapabilities.value) return []
+  return filterSchedulersForFamilyCapabilities(schedulers.value, targetFamilyCapabilities.value)
+})
+const samplingMappingCapabilityWarning = computed(() => {
+  if (!targetTabFamily.value) return ''
+  if (targetFamilyCapabilities.value) return ''
+  const engineId = targetSamplingEngineId.value
+  if (!engineId) return ''
+  return `Family sampling capabilities for '${engineId}' are unavailable; sampler/scheduler import is skipped.`
+})
+const mappingResult = computed(() => {
+  if (targetTabFamily.value && !targetFamilyCapabilities.value) {
+    return { warnings: [] as string[] }
+  }
+  return mapSamplerScheduler(parsed.value.sampler, parsed.value.scheduler, samplingMapSamplers.value, samplingMapSchedulers.value)
+})
 const mappedSampler = computed(() => mappingResult.value.sampler || '')
 const mappedScheduler = computed(() => mappingResult.value.scheduler || '')
 const mappingWarnings = computed(() => mappingResult.value.warnings)
@@ -324,6 +367,7 @@ const allWarnings = computed(() => [
   ...parseWarnings.value,
   ...checkpointWarnings.value,
   ...vaeWarnings.value,
+  ...(samplingMappingCapabilityWarning.value ? [samplingMappingCapabilityWarning.value] : []),
   ...mappingWarnings.value,
   ...comfyWarnings.value,
 ])
@@ -517,8 +561,11 @@ function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: bo
   if (p.clipSkip !== undefined) patch.clipSkip = p.clipSkip
   if (p.denoiseStrength !== undefined) patch.denoiseStrength = p.denoiseStrength
 
-  if (mappingResult.value.sampler) patch.sampler = mappingResult.value.sampler
-  if (mappingResult.value.scheduler) patch.scheduler = mappingResult.value.scheduler
+  const canApplySamplingPatch = !targetTabFamily.value || Boolean(targetFamilyCapabilities.value)
+  if (canApplySamplingPatch) {
+    if (mappingResult.value.sampler) patch.sampler = mappingResult.value.sampler
+    if (mappingResult.value.scheduler) patch.scheduler = mappingResult.value.scheduler
+  }
 
   if (options.mode === 'txt2img') {
     patch.useInitImage = false
@@ -608,6 +655,9 @@ onMounted(async () => {
   try { await tabs.load() } catch {}
   try { await quicksettings.init() } catch (err) {
     initWarnings.value.push(`QuickSettings: failed to initialize (${err instanceof Error ? err.message : String(err)}).`)
+  }
+  try { await engineCaps.init() } catch (err) {
+    initWarnings.value.push(`Capabilities: failed to initialize (${err instanceof Error ? err.message : String(err)}).`)
   }
   try { inventory.value = await fetchModelInventory() } catch (err) {
     initWarnings.value.push(`Inventory: failed to load (${err instanceof Error ? err.message : String(err)}).`)

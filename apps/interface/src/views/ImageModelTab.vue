@@ -64,9 +64,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `hideNegativePrompt` (const): Hides the base Negative Prompt field when the active checkpoint/model does not support it or effective base CFG is `<= 1`.
 - `recommendedSamplers` / `recommendedSchedulers` (const): Sanitized recommendation lists passed into sampler/scheduler selectors.
 - `resolveLiveSamplingDefaults` (function): Resolves executable sampler/scheduler defaults from backend capabilities plus per-family fallbacks.
-- `normalizeLiveSamplingSelection` (function): Normalizes sampler/scheduler pairs against the live executable catalog and sampler-allowed schedulers.
+- `normalizeLiveSamplingSelection` (function): Normalizes sampler/scheduler pairs against live executable catalog, family capability constraints, and sampler-allowed schedulers.
 - `normalizedBaseSampling` (const): Live-normalized base sampler/scheduler pair used by selector state and hires override cleanup.
 - `xyzSamplerChoices`/`xyzSchedulerChoices` (const): Sampler/scheduler names passed to embedded XYZ autofill (scheduler list is sampler-compatible).
+- `normalizeXyzSamplingAxisText` (function): Scrubs XYZ sampler/scheduler axis values to current family-compatible choices.
 -->
 
 <template>
@@ -507,7 +508,13 @@ import {
   type TabByType,
 } from '../stores/model_tabs'
 import { getEngineConfig, getEngineDefaults } from '../stores/engine_config'
-import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import {
+  filterSamplersForFamilyCapabilities,
+  filterSchedulersForFamilyCapabilities,
+  filterSchedulersForSampler,
+  normalizeSamplerSchedulerSelection,
+  useEngineCapabilitiesStore,
+} from '../stores/engine_capabilities'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
@@ -743,6 +750,8 @@ const supportsImg2Img = computed(() => {
 const canGenerateForCurrentMode = computed(() =>
   dependencyReady.value
   && Boolean(familyCapabilities.value)
+  && filteredSamplers.value.length > 0
+  && filteredSchedulers.value.length > 0
   && (params.value.useInitImage ? supportsImg2Img.value : supportsTxt2Img.value),
 )
 const generateDisabledReason = computed(() => {
@@ -751,6 +760,8 @@ const generateDisabledReason = computed(() => {
   if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
   if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (!familyCapabilities.value) return `Family capabilities for '${resolvedEngineForMode.value}' are not loaded.`
+  if (filteredSamplers.value.length === 0) return `${engineConfig.value.label} has no family-compatible samplers available.`
+  if (filteredSchedulers.value.length === 0) return `${engineConfig.value.label} has no family-compatible schedulers available.`
   if (params.value.useInitImage && !supportsImg2Img.value) return `${engineConfig.value.label} does not support img2img.`
   if (!params.value.useInitImage && !supportsTxt2Img.value) return `${engineConfig.value.label} does not support txt2img.`
   return ''
@@ -774,7 +785,7 @@ const missingInpaintMask = computed(() =>
 const runGenerateDisabled = computed(() => {
   if (isRunBusy.value) return true
   if (xyzStore.enabled) {
-    return !(dependencyReady.value && Boolean(familyCapabilities.value) && supportsTxt2Img.value)
+    return !(dependencyReady.value && Boolean(familyCapabilities.value) && supportsTxt2Img.value && filteredSamplers.value.length > 0 && filteredSchedulers.value.length > 0)
   }
   if (missingInpaintMask.value) return true
   return !canGenerateForCurrentMode.value
@@ -789,6 +800,8 @@ const runGenerateTitle = computed(() => {
   if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
   if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (!familyCapabilities.value) return `Family capabilities for '${resolvedEngineForMode.value}' are not loaded.`
+  if (filteredSamplers.value.length === 0) return `${engineConfig.value.label} has no family-compatible samplers available.`
+  if (filteredSchedulers.value.length === 0) return `${engineConfig.value.label} has no family-compatible schedulers available.`
   if (!supportsTxt2Img.value) return `${engineConfig.value.label} does not support txt2img.`
   return ''
 })
@@ -864,42 +877,20 @@ function resolveLiveSamplingDefaults(): { sampler: string; scheduler: string } {
 }
 
 function normalizeLiveSamplingSelection(rawSampler: string, rawScheduler: string): { sampler: string; scheduler: string } | null {
-  const liveSamplers = samplers.value
-  const liveSchedulers = schedulers.value
-  if (liveSamplers.length === 0 || liveSchedulers.length === 0) return null
-
   const defaults = resolveLiveSamplingDefaults()
-  const requestedSampler = String(rawSampler || '').trim()
-  const samplerSpec =
-    liveSamplers.find((entry) => entry.name === requestedSampler)
-    ?? liveSamplers.find((entry) => entry.name === defaults.sampler)
-    ?? liveSamplers[0]
-    ?? null
-  if (!samplerSpec) return null
-
-  const liveSchedulerNames = new Set(liveSchedulers.map((entry) => entry.name))
-  const declaredAllowed = Array.isArray(samplerSpec.allowed_schedulers) ? samplerSpec.allowed_schedulers : []
-  const allowedSchedulers =
-    declaredAllowed.length > 0
-      ? declaredAllowed.filter((entry) => liveSchedulerNames.has(entry))
-      : liveSchedulers.map((entry) => entry.name)
-  if (allowedSchedulers.length === 0) return null
-
-  const requestedScheduler = String(rawScheduler || '').trim()
-  const scheduler =
-    (requestedScheduler && allowedSchedulers.includes(requestedScheduler) ? requestedScheduler : '')
-    || (allowedSchedulers.includes(samplerSpec.default_scheduler) ? samplerSpec.default_scheduler : '')
-    || (allowedSchedulers.includes(defaults.scheduler) ? defaults.scheduler : '')
-    || allowedSchedulers[0]
-
-  return {
-    sampler: samplerSpec.name,
-    scheduler,
-  }
+  return normalizeSamplerSchedulerSelection({
+    samplers: samplers.value,
+    schedulers: schedulers.value,
+    familyCapabilities: familyCapabilities.value,
+    sampler: rawSampler,
+    scheduler: rawScheduler,
+    preferredSamplers: [defaults.sampler],
+    preferredSchedulers: [defaults.scheduler],
+  })
 }
 
 const filteredSamplers = computed(() => {
-  return samplers.value
+  return filterSamplersForFamilyCapabilities(samplers.value, familyCapabilities.value)
 })
 
 const normalizedBaseSampling = computed(() =>
@@ -909,19 +900,14 @@ const normalizedBaseSampling = computed(() =>
 const activeSamplerSpec = computed(() => {
   const normalized = normalizedBaseSampling.value
   if (normalized) {
-    return samplers.value.find((entry) => entry.name === normalized.sampler) ?? null
+    return filteredSamplers.value.find((entry) => entry.name === normalized.sampler) ?? null
   }
-  return samplers.value.find((entry) => entry.name === params.value.sampler) ?? null
+  return filteredSamplers.value.find((entry) => entry.name === params.value.sampler) ?? null
 })
 
 const filteredSchedulers = computed(() => {
-  let list = schedulers.value
-  const allowedBySampler = activeSamplerSpec.value?.allowed_schedulers
-  if (Array.isArray(allowedBySampler) && allowedBySampler.length > 0) {
-    const set = new Set(allowedBySampler)
-    list = list.filter(s => set.has(s.name))
-  }
-  return list
+  const familyScoped = filterSchedulersForFamilyCapabilities(schedulers.value, familyCapabilities.value)
+  return filterSchedulersForSampler(familyScoped, activeSamplerSpec.value)
 })
 
 const hiresSampler = computed(() => {
@@ -964,15 +950,24 @@ const hiresCfgValue = computed(() => {
 })
 
 const filteredHiresSchedulers = computed(() => {
-  let list = schedulers.value
-  const spec = samplers.value.find((entry) => entry.name === hiresSampler.value)
-  const allowedBySampler = spec?.allowed_schedulers
-  if (Array.isArray(allowedBySampler) && allowedBySampler.length > 0) {
-    const allowedSet = new Set(allowedBySampler)
-    list = list.filter((entry) => allowedSet.has(entry.name))
-  }
-  return list
+  const familyScoped = filterSchedulersForFamilyCapabilities(schedulers.value, familyCapabilities.value)
+  const spec = filteredSamplers.value.find((entry) => entry.name === hiresSampler.value) ?? null
+  return filterSchedulersForSampler(familyScoped, spec)
 })
+
+function normalizeXyzSamplingAxisText(axisParam: string, axisValuesText: string): string {
+  if (axisParam !== 'sampler' && axisParam !== 'scheduler') return axisValuesText
+  const choices = axisParam === 'sampler' ? xyzSamplerChoices.value : xyzSchedulerChoices.value
+  if (choices.length === 0) return ''
+  const allowed = new Set(choices)
+  const values = String(axisValuesText || '')
+    .split(/[\n\r,]+/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && allowed.has(entry))
+  const deduped = Array.from(new Set(values))
+  const normalizedValues = deduped.length > 0 ? deduped : [choices[0]]
+  return normalizedValues.join(', ')
+}
 
 function onSamplerChange(value: string): void {
   const normalized = normalizeLiveSamplingSelection(value, params.value.scheduler)
@@ -1029,7 +1024,7 @@ function onHiresCfgChange(value: number): void {
   setHires({ cfg: normalized, distilledCfg: undefined })
 }
 
-watch([() => params.value.sampler, () => params.value.scheduler, samplers, schedulers], () => {
+watch([() => params.value.sampler, () => params.value.scheduler, samplers, schedulers, familyCapabilities], () => {
   const normalized = normalizeLiveSamplingSelection(params.value.sampler, params.value.scheduler)
   if (!normalized) return
   if (normalized.sampler === params.value.sampler && normalized.scheduler === params.value.scheduler) return
@@ -1047,6 +1042,7 @@ watch(
     () => params.value.hires.scheduler,
     samplers,
     schedulers,
+    familyCapabilities,
   ],
   () => {
     const normalizedBase = normalizeLiveSamplingSelection(params.value.sampler, params.value.scheduler)
@@ -1074,6 +1070,36 @@ watch(
       sampler: nextSamplerOverride,
       scheduler: nextSchedulerOverride,
     })
+  },
+  { immediate: true },
+)
+
+watch(
+  [() => xyzStore.xParam, () => xyzStore.xValuesText, xyzSamplerChoices, xyzSchedulerChoices],
+  () => {
+    const normalized = normalizeXyzSamplingAxisText(xyzStore.xParam, xyzStore.xValuesText)
+    if (normalized === xyzStore.xValuesText) return
+    xyzStore.xValuesText = normalized
+  },
+  { immediate: true },
+)
+
+watch(
+  [() => xyzStore.yParam, () => xyzStore.yValuesText, xyzSamplerChoices, xyzSchedulerChoices],
+  () => {
+    const normalized = normalizeXyzSamplingAxisText(xyzStore.yParam, xyzStore.yValuesText)
+    if (normalized === xyzStore.yValuesText) return
+    xyzStore.yValuesText = normalized
+  },
+  { immediate: true },
+)
+
+watch(
+  [() => xyzStore.zParam, () => xyzStore.zValuesText, xyzSamplerChoices, xyzSchedulerChoices],
+  () => {
+    const normalized = normalizeXyzSamplingAxisText(xyzStore.zParam, xyzStore.zValuesText)
+    if (normalized === xyzStore.zValuesText) return
+    xyzStore.zValuesText = normalized
   },
   { immediate: true },
 )

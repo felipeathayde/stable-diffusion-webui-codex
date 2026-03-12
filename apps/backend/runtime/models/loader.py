@@ -105,6 +105,7 @@ from apps.backend.runtime.memory.smart_offload import (
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.quantization import detect_state_dict_dtype
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
+from apps.backend.runtime.families.ltx2.loader import build_ltx2_bundle_metadata, prepare_ltx2_bundle_inputs
 from apps.backend.runtime.model_registry.errors import ModelRegistryError
 from apps.backend.runtime.model_registry.loader import detect_from_state_dict as registry_detect
 from apps.backend.runtime.model_registry.specs import (
@@ -207,6 +208,7 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "sd20": ModelFamily.SD20,
     "sd15": ModelFamily.SD15,
     "anima": ModelFamily.ANIMA,
+    "ltx2": ModelFamily.LTX2,
     "wan22_5b": ModelFamily.WAN22_5B,
     "wan22_14b": ModelFamily.WAN22_14B,
     "wan22_14b_animate": ModelFamily.WAN22_ANIMATE,
@@ -218,6 +220,7 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.FLUX: "flux1",
     ModelFamily.FLUX_KONTEXT: "flux1_kontext",
     ModelFamily.FLUX2: "flux2",
+    ModelFamily.LTX2: "ltx2",
     ModelFamily.SD35: "sd35",
     ModelFamily.SD3: "sd35",
     ModelFamily.CHROMA: "flux1_chroma",
@@ -2277,6 +2280,31 @@ def codex_loader(
                 "tenc_path": resolved_tenc_path,
                 "vae_path": resolved_vae_path,
             },
+        )
+
+    if parsed.signature.family is ModelFamily.LTX2:
+        if te_override_cfg is None:
+            raise RuntimeError(
+                "LTX2 checkpoint requires an external text encoder (Gemma3-12B; sha-selected). "
+                "Provide one via request extras.tenc_sha so the API can pass a valid tenc_path."
+            )
+        ltx2_inputs = prepare_ltx2_bundle_inputs(
+            model_ref=sd_path,
+            estimated_config=config,
+            signature=parsed.signature,
+            text_encoder_override_paths=te_override_paths,
+            backend_root=_BACKEND_ROOT,
+        )
+        metadata = build_ltx2_bundle_metadata(ltx2_inputs)
+        metadata["tenc_override_paths"] = dict(te_override_paths)
+        return _build_diffusion_bundle(
+            model_ref=sd_path,
+            family=parsed.signature.family,
+            estimated_config=config,
+            components=component_states,
+            signature=parsed.signature,
+            source="state_dict",
+            metadata=metadata,
         )
 
     repo_name = config.repo_id

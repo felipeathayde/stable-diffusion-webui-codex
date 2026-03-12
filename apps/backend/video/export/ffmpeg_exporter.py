@@ -122,6 +122,7 @@ class VideoExportResult:
     reason: str | None = None
     fps: int | None = None
     frame_count: int | None = None
+    has_audio: bool = False
 
 
 def export_video(
@@ -149,6 +150,17 @@ def export_video(
 
     fps_i = int(fps) if int(fps) > 0 else 24
     ext, codec_kind = _format_to_container(str(opts.get("format") or "video/h264-mp4"))
+    normalized_audio_source = (
+        str(audio_source_path).strip()
+        if isinstance(audio_source_path, str) and audio_source_path.strip()
+        else None
+    )
+    if normalized_audio_source and ext not in {"mp4", "webm"}:
+        raise VideoExportError(
+            f"Audio mux requires mp4 or webm output; got '{ext}'."
+        )
+    if normalized_audio_source and not os.path.isfile(normalized_audio_source):
+        raise VideoExportError(f"audio_source_path '{normalized_audio_source}' does not exist.")
 
     prefix = _sanitize_filename_prefix(str(opts.get("filename_prefix") or task or "video"))
     date_dir = datetime.now().strftime("%Y-%m-%d")
@@ -201,9 +213,9 @@ def export_video(
     # Base encode command.
     cmd: list[str] = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-framerate", str(fps_i), "-i", str(frames_dir / "frame_%06d.png")]
 
-    include_audio = bool(audio_source_path) and (ext in {"mp4", "webm"})
+    include_audio = bool(normalized_audio_source)
     if include_audio:
-        cmd += ["-i", str(audio_source_path)]
+        cmd += ["-i", normalized_audio_source]
 
     if ext == "gif":
         # High-quality GIF using palettegen/paletteuse.
@@ -312,4 +324,5 @@ def export_video(
         mime=mime,
         fps=fps_i,
         frame_count=len(frames_list),
+        has_audio=include_audio,
     )

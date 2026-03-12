@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-08
+Last Review: 2026-03-11
 Status: Active
 
 ## Purpose
@@ -46,6 +46,7 @@ Status: Active
 - 2026-02-27: `generation.py` img2img masking now supports Forge/A1111 “Only masked” semantics only (removed `img2img_inpaint_full_res`) and adds `img2img_mask_region_split` for ADetailer-style multi-region passes.
 - 2026-01-29: `tools.py` adds `POST /api/tools/pnginfo/analyze` to extract PNG text metadata for the `/pnginfo` UI (no file persistence).
 - 2026-03-07: `tools.py` `POST /api/tools/convert-gguf` accepts base `.gguf` outputs only.
+- 2026-03-11: `generation.py` video routes now have a backend-only non-WAN admission lane: explicit video `engine` ids fall back to registered engine task capabilities when no semantic UI surface exists, `txt2vid`/`img2vid` accept generic top-level asset selectors (`model`, `model_sha`, `vae_sha`, `tenc_sha`, `lora_sha`) for non-WAN engines, and explicit non-WAN video requests now fail loud at request time when the selected checkpoint's detector-backed family does not match the engine `expected_family`. Legacy WAN payload ownership still applies when `engine` is omitted or resolves to a WAN22 variant.
 - 2026-01-30: `tools.py` GGUF conversion jobs now set `job["error"]` before flipping `job["status"]="error"` to avoid clients observing an error state with a missing error message.
 - 2026-01-31: `generation.py` now delegates the txt2img/img2img task worker boilerplate (status/progress/result/end, engine options build, PNG encoding) to `apps/backend/interfaces/api/tasks/generation_tasks.py` to reduce drift and keep routers thin.
 - 2026-02-03: Generation request contract uses hires naming only: txt2img uses `extras.hires` and img2img uses `img2img_hires_*` for the second pass.

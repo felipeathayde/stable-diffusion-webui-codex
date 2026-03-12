@@ -1,6 +1,6 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
-Last Review: 2026-02-22
+Last Review: 2026-03-11
 Status: Active
 
 ## Purpose
@@ -38,6 +38,7 @@ Status: Active
 - 2026-02-18: `base.py` engine lifecycle logs now emit via global runtime event emitter (`emit_backend_event`) for a single backend event emission path.
 - 2026-02-18: `base.py` now canonicalizes patcher-backed memory-manager targets (`component.patcher` when present, else component) across first-stage VAE encode/decode and engine-level unload cleanup (denoiser, VAE, clipvision, and text-encoders fallback when `patcher is None`), preventing wrapper-vs-patcher record splits.
 - 2026-02-21: `BaseVideoEngine._maybe_export_video(...)` now parses `save_output` strictly (`parse_bool_value`) and fails loud on export errors (raises `VideoExportError` instead of returning `{saved:false}` fallback metadata).
+- 2026-03-11: `BaseVideoEngine._maybe_export_video(...)` now accepts optional `audio_source_path` for mux-capable video exports and returns truthful `has_audio` metadata from the exporter result.
 - 2026-02-22: `CodexDiffusionEngine.decode_first_stage(...)` now preserves denoiser residency whenever the denoiser is already loaded by loading VAE+denoiser as a keep-loaded set; this prevents preview-time VAE loads from unloading the active denoiser mid-sampling (Anima `llm_adapter` embedding CPU/CUDA mismatch path).
 - 2026-01-31: `CodexDiffusionEngine` improvements:
   - `__init__` accepts an optional `logger=` to avoid subclass logger collisions and keep per-engine log namespaces consistent.

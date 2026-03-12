@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Load and normalize the `apps/paths.json` backend paths config.
-Provides cached accessors for model asset roots (checkpoints/text encoders/VAEs/LoRAs) and expands repo-relative paths into absolute paths.
+Provides cached accessors for model asset roots (checkpoints/text encoders/VAEs/LoRAs/connectors) and expands repo-relative paths into absolute paths.
 Also provides roots for global modules such as upscalers.
-Known per-family model keys include SD1.5, SDXL, Flux.1, Flux.2, Anima, WAN22, and ZImage roots.
+Known per-family model keys include SD1.5, SDXL, Flux.1, Flux.2, Anima, WAN22, LTX2, and ZImage roots.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_MODEL_DIR_KEYS` (constant): Keys in `apps/paths.json` whose missing repo-relative directories are created best-effort.
@@ -69,6 +69,12 @@ _MODEL_DIR_KEYS: tuple[str, ...] = (
     "wan22_tenc",
     "wan22_vae",
     "wan22_loras",
+    # LTX2
+    "ltx2_ckpt",
+    "ltx2_tenc",
+    "ltx2_vae",
+    "ltx2_connectors",
+    "ltx2_loras",
     # Z Image
     "zimage_ckpt",
     "zimage_tenc",

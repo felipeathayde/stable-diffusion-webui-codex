@@ -1032,7 +1032,7 @@ def run_vid2vid(
             interpolation_options=vfi_options,
             interpolation_meta=vfi_opts,
             base_video_meta=base_video_meta,
-            audio_input=bool(has_audio),
+            audio_source_kind="input" if has_audio else "none",
             final_frame_count=len(frames_out),
         )
 

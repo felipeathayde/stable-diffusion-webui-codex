@@ -71,6 +71,21 @@
   "wan22_loras": [
     "models/wan22-loras"
   ],
+  "ltx2_ckpt": [
+    "models/ltx2"
+  ],
+  "ltx2_tenc": [
+    "models/ltx2-tenc"
+  ],
+  "ltx2_vae": [
+    "models/ltx2-vae"
+  ],
+  "ltx2_connectors": [
+    "models/ltx2-connectors"
+  ],
+  "ltx2_loras": [
+    "models/ltx2-loras"
+  ],
   "zimage_ckpt": [
     "models/zimage"
   ],

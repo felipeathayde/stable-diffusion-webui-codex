@@ -1,7 +1,7 @@
 # apps/backend/engines Overview
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
-Last Review: 2026-03-06
+Last Review: 2026-03-11
 Status: Active
 
 ## Purpose
@@ -9,7 +9,7 @@ Status: Active
 
 ## Subdirectories
 - `common/` — Shared base classes/helpers used by multiple engines.
-- `sd/`, `flux/`, `flux2/`, `wan22/`, `zimage/`, `anima/` — Model-specific engine implementations and components (Flux family includes Chroma + Kontext variants; `flux2/` is the separate Klein 4B/base-4B seam).
+- `sd/`, `flux/`, `flux2/`, `ltx2/`, `wan22/`, `zimage/`, `anima/` — Model-specific engine implementations and components (Flux family includes Chroma + Kontext variants; `flux2/` is the separate Klein 4B/base-4B seam).
 - `util/` — Utility helpers for schedulers, attention mapping, etc.
 
 ## Key Files
@@ -36,6 +36,7 @@ Status: Active
 - 2026-02-08: Engine adapters now map swap-model pointer semantics using `switch_at_step` (`RefinerConfig.swap_at_step`) for both global and hires nested refiner config.
 - 2026-02-28: `AnimaEngine` is an implemented runtime-backed engine (`apps/backend/engines/anima/anima.py`) and is registered by default (`registration.register_anima` / `register_default_engines`); it is no longer a stub facade.
 - 2026-03-06: Added the dedicated `flux2/` engine package plus default registration key `flux2`. The FLUX.2 seam is separate from Flux.1/Chroma/Kontext, uses one Qwen3-4B text encoder, owns its AutoencoderKLFlux2 latent encode/decode contract locally, and now exposes txt2img plus dedicated image-conditioned img2img on the registered engine path: masked img2img/inpaint remains active, partial-denoise img2img is wired, unmasked hires img2img is wired, and masked hires still fails loud.
+- 2026-03-11: Added the dedicated `ltx2/` engine package plus default registration key `ltx2`. `Ltx2Engine(BaseVideoEngine)` carries the loader-produced typed LTX2 bundle contract, advertises `txt2vid` / `img2vid`, and assembles the native-only runtime through the family-owned LTX2 seam; canonical video use-cases still own telemetry/postprocess/export and consume `Ltx2RunResult`.
 - 2026-02-17: WAN22 canonical registration now maps `wan22_14b` to a dedicated GGUF 14B lane (`Wan2214BEngine`) with no inheritance from `wan22_5b`, preventing 14B dispatch from collapsing into 5B behavior.
 - 2026-02-20: WAN22 14B lane is now single-key only (`wan22_14b`); explicit `wan22_14b_native` registration was removed.
 - 2026-02-20: WAN22 animate lane key renamed to `wan22_14b_animate` (old `wan22_animate_14b` removed).

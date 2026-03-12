@@ -1,7 +1,7 @@
 # apps/backend/core/contracts Overview
 <!-- tags: backend, core, contracts, assets, drift -->
 Date: 2026-01-18
-Last Review: 2026-02-20
+Last Review: 2026-03-11
 Status: Active
 
 ## Purpose
@@ -19,3 +19,4 @@ Status: Active
 - 2026-02-16: WAN22 video engines now have explicit per-engine owners/contracts (`wan22_5b`, `wan22_14b`, `wan22_14b_animate`) with no owner alias fallback across model variants.
 - 2026-02-20: Removed `wan22_14b_native` owner alias; stale engine id usage now fails loud at contract lookup.
 - 2026-02-21: Semantic `wan22` contract owner baseline is now `wan22_14b` (instead of `wan22_5b`) to avoid stale 5B-default drift in semantic-only capability/contract surfaces.
+- 2026-03-11: Added backend-only LTX2 asset contract owner `ltx2` with a required external `gemma3_12b` text encoder slot; header-only slot classification now recognizes Gemma3-12B safetensors/GGUF assets by embed-dim/arch metadata and stays fail-loud for unknown LLM layouts.

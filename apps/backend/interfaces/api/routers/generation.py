@@ -171,6 +171,33 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     }
     _TXT2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.TXT2VID_ALL)
     _IMG2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.IMG2VID_ALL)
+    _VIDEO_GENERIC_SELECTOR_KEYS = {"engine", "model", "model_sha", "vae_sha", "tenc_sha", "lora_sha"}
+    _VIDEO_GENERIC_COMMON_ALLOWED_KEYS = (
+        set(WAN_VIDEO_REQUEST_KEYS.DEVICE)
+        | set(WAN_VIDEO_REQUEST_KEYS.REVISION)
+        | set(WAN_VIDEO_REQUEST_KEYS.VIDEO_EXPORT)
+        | set(WAN_VIDEO_REQUEST_KEYS.VIDEO_INTERPOLATION)
+        | set(WAN_VIDEO_REQUEST_KEYS.VIDEO_UPSCALING)
+        | set(WAN_VIDEO_REQUEST_KEYS.GGUF_RUNTIME)
+        | _VIDEO_GENERIC_SELECTOR_KEYS
+    )
+    _TXT2VID_GENERIC_ALLOWED_KEYS = _VIDEO_GENERIC_COMMON_ALLOWED_KEYS | set(WAN_VIDEO_REQUEST_KEYS.TXT2VID)
+    _IMG2VID_GENERIC_CORE_KEYS = {
+        "img2vid_prompt",
+        "img2vid_neg_prompt",
+        "img2vid_width",
+        "img2vid_height",
+        "img2vid_steps",
+        "img2vid_fps",
+        "img2vid_num_frames",
+        "img2vid_sampler",
+        "img2vid_scheduler",
+        "img2vid_seed",
+        "img2vid_cfg_scale",
+        "img2vid_styles",
+        "img2vid_init_image",
+    }
+    _IMG2VID_GENERIC_ALLOWED_KEYS = _VIDEO_GENERIC_COMMON_ALLOWED_KEYS | _IMG2VID_GENERIC_CORE_KEYS
     _WAN_STAGE_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
@@ -629,6 +656,34 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 f"{raw_value!r} (expected 'auto', 'cpu', 'cuda', or 'cuda:<index>')."
             ),
         )
+
+    def _apply_gguf_video_runtime_controls_from_payload(*, payload: Mapping[str, Any], extras: Dict[str, Any]) -> None:
+        for key in (
+            "gguf_offload",
+            "gguf_offload_level",
+            "gguf_sdpa_policy",
+            "gguf_attention_mode",
+            "gguf_attn_chunk",
+            "gguf_cache_policy",
+            "gguf_cache_limit_mb",
+            "gguf_log_mem_interval",
+            "gguf_te_device",
+        ):
+            if key in payload and payload.get(key) is not None:
+                extras[key] = payload.get(key)
+        if 'gguf_attention_mode' in extras:
+            attn_mode = str(extras.get('gguf_attention_mode') or '').strip().lower()
+            if attn_mode not in {'global', 'sliding'}:
+                raise HTTPException(status_code=400, detail=f"Invalid gguf_attention_mode: {extras.get('gguf_attention_mode')!r}")
+            extras['gguf_attention_mode'] = attn_mode
+        if 'gguf_sdpa_policy' in extras:
+            sdpa_policy = str(extras.get('gguf_sdpa_policy') or '').strip().lower()
+            if sdpa_policy not in {'auto', 'mem_efficient', 'flash', 'math'}:
+                raise HTTPException(status_code=400, detail=f"Invalid gguf_sdpa_policy: {extras.get('gguf_sdpa_policy')!r}")
+            extras['gguf_sdpa_policy'] = sdpa_policy
+        _normalize_gguf_runtime_controls(extras)
+        _normalize_gguf_te_device(extras)
+        _normalize_gguf_cache_controls(extras)
 
     def _optional_video_interpolation_field(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if "video_interpolation" not in payload:
@@ -1545,10 +1600,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             resolved = record.filename
             extras["model_path"] = record.filename
 
+        model_sha_field = f"{field_prefix}.model_sha" if field_prefix else "model_sha"
         if not isinstance(resolved, str) or not resolved.strip():
             raise HTTPException(
                 status_code=400,
-                detail=f"Missing model selection: provide 'model' or '{field_prefix}.model_sha'",
+                detail=f"Missing model selection: provide 'model' or '{model_sha_field}'",
             )
 
         return resolved.strip()
@@ -1567,6 +1623,120 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             models_api=models_api,
         )
         return models_api.find_checkpoint(resolved_model_ref)
+
+    def _checkpoint_record_label(record: Any) -> str:
+        title = str(getattr(record, "title", "") or "").strip()
+        if title:
+            return title
+        filename = str(getattr(record, "filename", "") or "").strip()
+        if filename:
+            return Path(filename).name or filename
+        return "<unknown>"
+
+    def _expected_family_for_engine(engine_key: str):
+        from apps.backend.core.registry import registry as _engine_registry
+        from apps.backend.runtime.model_registry.specs import ModelFamily
+
+        normalized_engine = str(engine_key or "").strip().lower()
+        if not normalized_engine:
+            raise HTTPException(status_code=400, detail="Missing engine key for checkpoint family validation.")
+        try:
+            descriptor = _engine_registry.get_descriptor(normalized_engine)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Unknown engine key: {normalized_engine}") from exc
+        expected_family = getattr(descriptor.cls, "expected_family", None)
+        if expected_family is None:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Engine '{normalized_engine}' does not declare expected_family and "
+                    "cannot validate the selected checkpoint."
+                ),
+            )
+        if not isinstance(expected_family, ModelFamily):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Engine '{normalized_engine}' declares an invalid expected_family contract.",
+            )
+        return expected_family
+
+    def _detect_checkpoint_family_for_record(record: Any):
+        from apps.backend.runtime.checkpoint.io import load_torch_file
+        from apps.backend.runtime.model_registry import detectors as _registered_model_detectors  # noqa: F401
+        from apps.backend.runtime.model_registry.errors import AmbiguousModelError, UnknownModelError
+        from apps.backend.runtime.model_registry.loader import detect_from_state_dict
+        from apps.backend.runtime.model_registry.specs import ModelFamily
+
+        del _registered_model_detectors
+
+        checkpoint_file = str(getattr(record, "filename", "") or "").strip()
+        if not checkpoint_file:
+            raise HTTPException(status_code=409, detail="Selected checkpoint record is missing a checkpoint filename.")
+
+        cache_key = (
+            checkpoint_file,
+            str(getattr(record, "sha256", "") or "").strip().lower() or None,
+            float(getattr(record, "updated_at", None)) if getattr(record, "updated_at", None) is not None else None,
+        )
+        with _CHECKPOINT_FAMILY_PROBE_CACHE_LOCK:
+            cached_family = _CHECKPOINT_FAMILY_PROBE_CACHE.get(cache_key)
+        if cached_family:
+            try:
+                return ModelFamily(cached_family)
+            except Exception:
+                pass
+
+        checkpoint_label = _checkpoint_record_label(record)
+        try:
+            state_dict = load_torch_file(checkpoint_file, device="cpu")
+            signature = detect_from_state_dict(state_dict)
+        except UnknownModelError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Selected checkpoint '{checkpoint_label}' could not be identified for "
+                    "engine family validation."
+                ),
+            ) from exc
+        except AmbiguousModelError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Selected checkpoint '{checkpoint_label}' matched multiple model families "
+                    "and cannot be used for engine family validation."
+                ),
+            ) from exc
+        except Exception as exc:
+            _router_log.warning("checkpoint family probe failed for '%s': %s", checkpoint_file, exc)
+            raise HTTPException(
+                status_code=409,
+                detail=public_http_error_detail(
+                    exc,
+                    fallback=f"Failed to inspect selected checkpoint '{checkpoint_label}' for family validation.",
+                ),
+            ) from exc
+
+        with _CHECKPOINT_FAMILY_PROBE_CACHE_LOCK:
+            _CHECKPOINT_FAMILY_PROBE_CACHE[cache_key] = signature.family.value
+        return signature.family
+
+    def _validate_explicit_engine_checkpoint_family(
+        *,
+        engine_key: str,
+        checkpoint_record: Any,
+    ) -> None:
+        expected_family = _expected_family_for_engine(engine_key)
+        detected_family = _detect_checkpoint_family_for_record(checkpoint_record)
+        if detected_family is expected_family:
+            return
+        checkpoint_label = _checkpoint_record_label(checkpoint_record)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Selected checkpoint '{checkpoint_label}' is family '{detected_family.value}', "
+                f"but engine '{engine_key}' requires '{expected_family.value}'."
+            ),
+        )
 
     def _resolve_flux2_guidance_mode_for_request(
         *,
@@ -1668,6 +1838,46 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Unknown engine key: {key}") from exc
 
+    _VIDEO_ENGINE_TASK_BY_ROUTE_MODE: dict[GenerationRouteMode, TaskType] = {
+        GenerationRouteMode.TXT2IMG: TaskType.TXT2IMG,
+        GenerationRouteMode.IMG2IMG: TaskType.IMG2IMG,
+        GenerationRouteMode.TXT2VID: TaskType.TXT2VID,
+        GenerationRouteMode.IMG2VID: TaskType.IMG2VID,
+    }
+    _WAN_VIDEO_ENGINE_KEYS = {"wan22_5b", "wan22_14b", "wan22_14b_animate"}
+    _CHECKPOINT_FAMILY_PROBE_CACHE: dict[tuple[str, str | None, float | None], str] = {}
+    _CHECKPOINT_FAMILY_PROBE_CACHE_LOCK = threading.Lock()
+
+    def _supports_route_via_registered_engine(*, engine_key: str, route_mode: GenerationRouteMode) -> bool:
+        from apps.backend.core.exceptions import EngineNotFoundError
+        from apps.backend.core.registry import registry as _engine_registry
+
+        task = _VIDEO_ENGINE_TASK_BY_ROUTE_MODE.get(route_mode)
+        if task is None:
+            return False
+        try:
+            engine = _engine_registry.create(engine_key)
+        except EngineNotFoundError:
+            return False
+        except Exception as exc:
+            _router_log.exception("engine capability instantiation failed for '%s'", engine_key)
+            raise HTTPException(
+                status_code=500,
+                detail=public_http_error_detail(exc, fallback=f"Engine capability introspection failed for '{engine_key}'"),
+            ) from exc
+        try:
+            return bool(engine.capabilities().supports(task))
+        except Exception as exc:
+            _router_log.exception("engine capability lookup failed for '%s'", engine_key)
+            raise HTTPException(
+                status_code=500,
+                detail=public_http_error_detail(exc, fallback=f"Engine capability lookup failed for '{engine_key}'"),
+            ) from exc
+
+    def _is_legacy_or_wan_video_route_engine(engine_key: str) -> bool:
+        normalized = str(engine_key or "").strip().lower()
+        return normalized == "" or normalized in _WAN_VIDEO_ENGINE_KEYS
+
     def _validate_route_engine_capability(
         payload: Mapping[str, Any],
         *,
@@ -1679,13 +1889,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         engine_key = _canonical_engine_key(raw_engine)
         if not engine_key:
             return
-        try:
-            semantic_engine = semantic_engine_for_engine_id(engine_key)
-        except KeyError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown engine id for route capability validation: {engine_key!r}",
-            ) from exc
         capability_attr, route_label = {
             GenerationRouteMode.TXT2IMG: ("supports_txt2img", "txt2img"),
             GenerationRouteMode.IMG2IMG: ("supports_img2img", "img2img"),
@@ -1694,6 +1897,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         }.get(route_mode, ("", ""))
         if not capability_attr:
             return
+        try:
+            semantic_engine = semantic_engine_for_engine_id(engine_key)
+        except KeyError:
+            if _supports_route_via_registered_engine(engine_key=engine_key, route_mode=route_mode):
+                return
+            raise HTTPException(
+                status_code=400,
+                detail=f"Engine '{engine_key}' does not support route '{route_label}'.",
+            ) from None
         surface = ENGINE_SURFACES[semantic_engine]
         if getattr(surface, capability_attr):
             return
@@ -2007,6 +2219,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             return f"Engine '{engine_id}' requires exactly 1 text encoder ({kind}) via '{field_label}'"
         return f"Engine '{engine_id}' requires exactly {count} text encoders ({kind}) via '{field_label}'"
 
+    def _asset_field_label(*, field_prefix: str, field_name: str) -> str:
+        prefix = str(field_prefix or "").strip().strip(".")
+        if not prefix:
+            return field_name
+        return f"{prefix}.{field_name}"
+
     def _apply_asset_contract_to_extras(
         *,
         engine_id: str,
@@ -2017,18 +2235,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         resolve_vae_path_by_sha,  # type: ignore[no-untyped-def]
         models_api: Any,
     ) -> None:
+        vae_field = _asset_field_label(field_prefix=field_prefix, field_name="vae_sha")
+        tenc_field = _asset_field_label(field_prefix=field_prefix, field_name="tenc_sha")
+        lora_field = _asset_field_label(field_prefix=field_prefix, field_name="lora_sha")
+        text_encoder_override_field = _asset_field_label(field_prefix=field_prefix, field_name="text_encoder_override")
+        path_scope = f"{field_prefix}.*_path" if field_prefix else "*_path"
+        sha_scope = f"{field_prefix}.*_sha" if field_prefix else "*_sha"
+
         if "vae_path" in extras or "tenc_path" in extras:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"{field_prefix} must not include raw '*_path' fields; use sha256 via '{field_prefix}.*_sha'"
-                ),
+                detail=f"Payload must not include raw '{path_scope}' fields; use sha256 via '{sha_scope}'",
             )
 
         if engine_id in ("flux1", "flux1_kontext") and "text_encoder_override" in extras:
             raise HTTPException(
                 status_code=400,
-                detail=f"Do not send {field_prefix}.text_encoder_override for Flux.1; use {field_prefix}.tenc_sha only.",
+                detail=f"Do not send {text_encoder_override_field} for Flux.1; use {tenc_field} only.",
             )
 
         is_core_only = _is_gguf_checkpoint(models_api, checkpoint_ref)
@@ -2043,10 +2266,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     fallback=f"Asset contract resolution failed for engine '{engine_id}'",
                 ),
             ) from exc
-
-        vae_field = f"{field_prefix}.vae_sha"
-        tenc_field = f"{field_prefix}.tenc_sha"
-        lora_field = f"{field_prefix}.lora_sha"
 
         vae_sha = _normalize_sha_field(extras.get("vae_sha"), field_label=vae_field)
         tenc_shas = _normalize_sha_list_field(extras.get("tenc_sha"), field_label=tenc_field)
@@ -2759,6 +2978,47 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_cfg_scale=7.0,
         )
 
+    def _parse_generic_txt2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+        _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
+        _reject_unknown_keys(payload, _TXT2VID_GENERIC_ALLOWED_KEYS, "txt2vid")
+        return _parse_video_core_dto(
+            payload,
+            task_prefix='txt2vid',
+            default_width=768,
+            default_height=432,
+            default_steps=30,
+            default_fps=24,
+            default_frames=17,
+            default_sampler="uni-pc",
+            default_scheduler="simple",
+            expected_unipc_solver_hint=None,
+            default_seed=-1,
+            default_cfg_scale=7.0,
+        )
+
+    def _parse_generic_img2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+        _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
+        _reject_unknown_keys(payload, _IMG2VID_GENERIC_ALLOWED_KEYS, "img2vid")
+        return _parse_video_core_dto(
+            payload,
+            task_prefix='img2vid',
+            default_width=768,
+            default_height=432,
+            default_steps=30,
+            default_fps=24,
+            default_frames=17,
+            default_sampler="uni-pc",
+            default_scheduler="simple",
+            expected_unipc_solver_hint=None,
+            default_seed=-1,
+            default_cfg_scale=7.0,
+        )
+
+    def _copy_generic_video_asset_selector_fields(*, payload: Mapping[str, Any], extras: Dict[str, Any]) -> None:
+        for key in ("model_sha", "vae_sha", "tenc_sha", "lora_sha"):
+            if key in payload and payload.get(key) is not None:
+                extras[key] = payload.get(key)
+
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         model_override = payload.get('model')
@@ -3409,15 +3669,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
-        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
-        default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
-        expected_unipc_solver_hint = _extract_wan22_unipc_solver_hint(default_sampler)
-        parsed = _parse_txt2vid_core_dto(
-            payload,
-            default_sampler=default_sampler,
-            default_scheduler=default_scheduler,
-            expected_unipc_solver_hint=expected_unipc_solver_hint,
-        )
+        video_engine_key = _canonical_engine_key(payload.get("engine")) if payload.get("engine") is not None else ""
+        use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
+        wan_metadata_dir: str | None = None
+        expected_unipc_solver_hint: str | None = None
+        if use_generic_video_route:
+            parsed = _parse_generic_txt2vid_core_dto(payload)
+        else:
+            wan_metadata_dir = _resolve_wan_metadata_dir(payload)
+            default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
+            expected_unipc_solver_hint = _extract_wan22_unipc_solver_hint(default_sampler)
+            parsed = _parse_txt2vid_core_dto(
+                payload,
+                default_sampler=default_sampler,
+                default_scheduler=default_scheduler,
+                expected_unipc_solver_hint=expected_unipc_solver_hint,
+            )
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
         width_val = parsed.width
@@ -3479,6 +3746,62 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         video_upscaling = _optional_video_upscaling_field(payload)
         if video_upscaling is not None:
             extras["video_upscaling"] = video_upscaling
+        if use_generic_video_route:
+            from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
+            from apps.backend.runtime.models import api as _models_api
+
+            _copy_generic_video_asset_selector_fields(payload=payload, extras=extras)
+            model_ref = _resolve_model_ref_from_sha_or_name(
+                model_override=payload.get("model"),
+                extras=extras,
+                field_prefix="",
+                models_api=_models_api,
+            )
+            checkpoint_record = _models_api.find_checkpoint(model_ref)
+            if checkpoint_record is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Selected checkpoint not found for engine '{video_engine_key}': {model_ref}",
+                )
+            _validate_explicit_engine_checkpoint_family(
+                engine_key=video_engine_key,
+                checkpoint_record=checkpoint_record,
+            )
+            _apply_asset_contract_to_extras(
+                engine_id=video_engine_key,
+                checkpoint_ref=model_ref,
+                extras=extras,
+                field_prefix="",
+                resolve_asset_by_sha=resolve_asset_by_sha,
+                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+                models_api=_models_api,
+            )
+            _apply_gguf_video_runtime_controls_from_payload(payload=payload, extras=extras)
+            smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
+            req = Txt2VidRequest(
+                task=TaskType.TXT2VID,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width_val,
+                height=height_val,
+                steps=steps_val,
+                fps=fps_val,
+                num_frames=frames_val,
+                sampler=sampler_name,
+                scheduler=scheduler_name,
+                seed=seed_val,
+                guidance_scale=cfg_val,
+                video_options=video_options,
+                extras=extras,
+                smart_offload=smart_offload,
+                smart_fallback=smart_fallback,
+                smart_cache=smart_cache,
+                settings_revision=settings_revision,
+                metadata={
+                    "styles": payload.get('txt2vid_styles', []),
+                },
+            )
+            return req, video_engine_key, model_ref
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 
@@ -3661,15 +3984,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
-        wan_metadata_dir = _resolve_wan_metadata_dir(payload)
-        default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
-        expected_unipc_solver_hint = _extract_wan22_unipc_solver_hint(default_sampler)
-        parsed = _parse_img2vid_core_dto(
-            payload,
-            default_sampler=default_sampler,
-            default_scheduler=default_scheduler,
-            expected_unipc_solver_hint=expected_unipc_solver_hint,
-        )
+        video_engine_key = _canonical_engine_key(payload.get("engine")) if payload.get("engine") is not None else ""
+        use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
+        wan_metadata_dir: str | None = None
+        expected_unipc_solver_hint: str | None = None
+        if use_generic_video_route:
+            parsed = _parse_generic_img2vid_core_dto(payload)
+        else:
+            wan_metadata_dir = _resolve_wan_metadata_dir(payload)
+            default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
+            expected_unipc_solver_hint = _extract_wan22_unipc_solver_hint(default_sampler)
+            parsed = _parse_img2vid_core_dto(
+                payload,
+                default_sampler=default_sampler,
+                default_scheduler=default_scheduler,
+                expected_unipc_solver_hint=expected_unipc_solver_hint,
+            )
         prompt = parsed.prompt
         negative_prompt = parsed.negative_prompt
         width_val = parsed.width
@@ -3733,6 +4063,63 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         video_upscaling = _optional_video_upscaling_field(payload)
         if video_upscaling is not None:
             extras["video_upscaling"] = video_upscaling
+        if use_generic_video_route:
+            from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
+            from apps.backend.runtime.models import api as _models_api
+
+            _copy_generic_video_asset_selector_fields(payload=payload, extras=extras)
+            model_ref = _resolve_model_ref_from_sha_or_name(
+                model_override=payload.get("model"),
+                extras=extras,
+                field_prefix="",
+                models_api=_models_api,
+            )
+            checkpoint_record = _models_api.find_checkpoint(model_ref)
+            if checkpoint_record is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Selected checkpoint not found for engine '{video_engine_key}': {model_ref}",
+                )
+            _validate_explicit_engine_checkpoint_family(
+                engine_key=video_engine_key,
+                checkpoint_record=checkpoint_record,
+            )
+            _apply_asset_contract_to_extras(
+                engine_id=video_engine_key,
+                checkpoint_ref=model_ref,
+                extras=extras,
+                field_prefix="",
+                resolve_asset_by_sha=resolve_asset_by_sha,
+                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+                models_api=_models_api,
+            )
+            _apply_gguf_video_runtime_controls_from_payload(payload=payload, extras=extras)
+            smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
+            req = Img2VidRequest(
+                task=TaskType.IMG2VID,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                init_image=init_image,
+                width=width_val,
+                height=height_val,
+                steps=steps_val,
+                fps=fps_val,
+                num_frames=frames_val,
+                sampler=sampler_name,
+                scheduler=scheduler_name,
+                seed=seed_val,
+                guidance_scale=cfg_val,
+                video_options=video_options,
+                extras=extras,
+                smart_offload=smart_offload,
+                smart_fallback=smart_fallback,
+                smart_cache=smart_cache,
+                settings_revision=settings_revision,
+                metadata={
+                    "styles": payload.get('img2vid_styles', []),
+                },
+            )
+            return req, video_engine_key, model_ref
         # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
 

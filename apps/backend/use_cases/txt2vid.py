@@ -6,15 +6,20 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Txt2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
-Configures sampler settings, applies LoRAs, runs the selected execution path, applies shared SeedVR2 upscaling/interpolation stages when requested, exports the
-resulting video, and yields progress/result events.
-Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when provided and falls back to request negative only when missing.
+Purpose: Canonical txt2vid orchestration for backend video engines.
+Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native backend-only LTX2 branch), applies
+shared SeedVR2 upscaling/interpolation stages when requested, exports the resulting video, and yields
+progress/result events.
+WAN22 Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when
+provided and falls back to request negative only when missing. The native LTX2 branch consumes a local
+`Ltx2RunResult` (`frames + AudioExportAsset + metadata`) and owns cleanup of generated temp audio after export.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_pipeline_telemetry_scope` (function): Creates a mutable task-scoped telemetry context owner for txt2vid run/stage events.
 - `_emit_pipeline_event` (function): Emits canonical structured pipeline telemetry events (`pipeline.*`) for txt2vid.
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
+- `_cleanup_owned_audio_asset` (function): Deletes owned temporary generated-audio artifacts after LTX2 export completes or fails.
+- `_run_ltx2_txt2vid` (function): Runs the native backend-only LTX2 txt2vid branch and threads generated audio through the shared export seam.
 - `_run_pipeline` (function): Runs a Diffusers txt2vid pipeline and returns generated frames.
 - `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
@@ -23,6 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Mapping
@@ -37,6 +43,7 @@ from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.processing.datatypes import VideoPlan
 from apps.backend.runtime.pipeline_stages.hires_fix import resolve_pipeline_telemetry_context
 from apps.backend.runtime.pipeline_stages.video import (
+    AudioExportAsset,
     apply_engine_loras,
     apply_video_interpolation,
     apply_video_upscaling,
@@ -154,6 +161,231 @@ def _build_result_payload(
     return payload
 
 
+def _cleanup_owned_audio_asset(audio_asset: AudioExportAsset | None, *, logger: Any, task: str) -> None:
+    if audio_asset is None or not audio_asset.owned_temp:
+        return
+    path = str(audio_asset.path or "").strip()
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        return
+    except Exception as exc:
+        if logger is not None:
+            logger.warning("%s: failed to remove owned temp audio asset '%s': %s", task, path, exc)
+
+
+def _run_ltx2_txt2vid(
+    *,
+    engine: Any,
+    comp: Any,
+    request: Txt2VidRequest,
+    plan: VideoPlan,
+    start: float,
+    logger: Any,
+    telemetry_scope: Any,
+) -> Iterator[InferenceEvent]:
+    from apps.backend.runtime.families.ltx2.runtime import Ltx2RunResult
+
+    @dataclass(frozen=True)
+    class _SamplerOutcome:
+        sampler_in: str | None
+        scheduler_in: str | None
+        sampler_effective: str | None
+        scheduler_effective: str | None
+        warnings: tuple[str, ...] = ()
+
+    audio_asset: AudioExportAsset | None = None
+    try:
+        apply_engine_loras(engine, logger)
+
+        yield ProgressEvent(stage="run", percent=5.0, message="Running LTX2 txt2vid")
+        runtime_result = comp.run_txt2vid(request=request, plan=plan)
+        if not isinstance(runtime_result, Ltx2RunResult):
+            raise RuntimeError(
+                "LTX2 txt2vid runtime must return `Ltx2RunResult`; "
+                f"got {type(runtime_result).__name__}."
+            )
+
+        frames = list(runtime_result.frames)
+        audio_asset = runtime_result.audio_asset
+        runtime_meta = dict(runtime_result.metadata)
+        audio_source_kind = "generated" if audio_asset is not None else "none"
+
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="generation.complete",
+            stage_name="generation",
+            backend="ltx2",
+            frame_count=int(len(frames)),
+            has_audio=bool(audio_asset is not None),
+        )
+
+        upscaling_options = read_video_upscaling_options(plan.extras)
+        vfi_options = read_video_interpolation_options(plan.extras)
+        base_video_options = prepare_base_snapshot_video_options(
+            getattr(request, "video_options", None),
+            task="txt2vid",
+            upscaling_options=upscaling_options,
+            interpolation_options=vfi_options,
+        )
+        base_video_meta: Any = None
+        if base_video_options is not None:
+            base_video_meta = export_video(
+                engine,
+                frames,
+                plan,
+                base_video_options,
+                task="txt2vid",
+                audio_asset=audio_asset,
+            )
+            if isinstance(base_video_meta, Mapping):
+                base_rel_path = str(base_video_meta.get("rel_path") or "").strip()
+                if base_rel_path and logger is not None:
+                    logger.info(
+                        "txt2vid: base snapshot exported before post-process: %s",
+                        base_rel_path,
+                    )
+
+        if upscaling_options is not None and upscaling_options.enabled:
+            yield ProgressEvent(stage="upscale", percent=1.0, message="Upscaling frames (SeedVR2)")
+        frames, upscaling_opts = apply_video_upscaling(
+            frames,
+            options=upscaling_options,
+            logger_=logger,
+            component_device=getattr(comp, "device", None),
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="upscaling.complete",
+            stage_name="upscaling",
+            backend="ltx2",
+            upscaling_enabled=bool(upscaling_options is not None and upscaling_options.enabled),
+            frame_count=int(len(frames)),
+        )
+        if frames:
+            first_size = getattr(frames[0], "size", None)
+            if isinstance(first_size, tuple) and len(first_size) == 2:
+                plan.width = int(first_size[0])
+                plan.height = int(first_size[1])
+
+        if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
+            yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
+        frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
+        plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="interpolation.complete",
+            stage_name="interpolation",
+            backend="ltx2",
+            interpolation_enabled=bool(vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1),
+            output_fps=int(plan.fps),
+            frame_count=int(len(frames)),
+        )
+
+        video_meta = export_video(
+            engine,
+            frames,
+            plan,
+            getattr(request, "video_options", None),
+            task="txt2vid",
+            audio_asset=audio_asset,
+        )
+        video_saved = parse_bool_value(
+            video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
+            field="video_meta.saved",
+            default=False,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="export.complete",
+            stage_name="export",
+            backend="ltx2",
+            video_saved=video_saved,
+            final_frame_count=int(len(frames)),
+            has_audio=bool(audio_asset is not None),
+        )
+
+        extra_meta: dict[str, Any] = dict(plan.extras)
+        if runtime_meta:
+            extra_meta["ltx2_runtime"] = runtime_meta
+        if upscaling_opts is not None:
+            extra_meta["video_upscaling"] = upscaling_opts
+        if vfi_opts is not None:
+            extra_meta["video_interpolation"] = vfi_opts
+        if base_video_meta is not None:
+            extra_meta["video_base_snapshot"] = base_video_meta
+        extra_meta["video_request_vs_effective_snapshot"] = build_video_request_effective_snapshot(
+            request=request,
+            plan=plan,
+            video_meta=video_meta,
+            upscaling_options=upscaling_options,
+            upscaling_meta=upscaling_opts,
+            interpolation_options=vfi_options,
+            interpolation_meta=vfi_opts,
+            base_video_meta=base_video_meta,
+            audio_source_kind=audio_source_kind,
+            final_frame_count=len(frames),
+        )
+
+        sampler_effective = str(
+            runtime_meta.get("sampler_effective")
+            or runtime_meta.get("sampler")
+            or getattr(request, "sampler", None)
+            or ""
+        ).strip() or None
+        scheduler_effective = str(
+            runtime_meta.get("scheduler_effective")
+            or runtime_meta.get("scheduler")
+            or getattr(request, "scheduler", None)
+            or ""
+        ).strip() or None
+
+        elapsed = time.perf_counter() - start
+        result = build_video_result(
+            engine,
+            frames,
+            plan,
+            _SamplerOutcome(
+                sampler_in=getattr(request, "sampler", None),
+                scheduler_in=getattr(request, "scheduler", None),
+                sampler_effective=sampler_effective,
+                scheduler_effective=scheduler_effective,
+            ),
+            elapsed=elapsed,
+            task="txt2vid",
+            extra=extra_meta,
+            video_meta=video_meta,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.run.complete",
+            stage="run.complete",
+            backend="ltx2",
+            total_pipeline_ms=max(0.0, float(elapsed) * 1000.0),
+            final_frame_count=int(len(frames)),
+            video_saved=video_saved,
+            has_audio=bool(audio_asset is not None),
+        )
+
+        yield ResultEvent(
+            payload=_build_result_payload(
+                engine=engine,
+                result=result,
+                plan=plan,
+                request=request,
+                video_meta=video_meta,
+            )
+        )
+    finally:
+        _cleanup_owned_audio_asset(audio_asset, logger=logger, task="txt2vid")
+
+
 def _run_pipeline(
     pipe: Any,
     plan: VideoPlan,
@@ -260,8 +492,13 @@ def run_txt2vid(
     telemetry_scope = _build_pipeline_telemetry_scope(mode="txt2vid")
     plan = build_video_plan(request)
     start = time.perf_counter()
-    pipe = getattr(comp, "pipeline", None)
-    backend_variant = "gguf" if pipe is None else "diffusers"
+    engine_id = str(getattr(engine, "engine_id", "") or "").strip().lower()
+    if engine_id == "ltx2":
+        pipe = None
+        backend_variant = "ltx2"
+    else:
+        pipe = getattr(comp, "pipeline", None)
+        backend_variant = "gguf" if pipe is None else "diffusers"
 
     _emit_pipeline_event(
         telemetry_scope,
@@ -286,6 +523,18 @@ def run_txt2vid(
     )
 
     yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid")
+
+    if engine_id == "ltx2":
+        yield from _run_ltx2_txt2vid(
+            engine=engine,
+            comp=comp,
+            request=request,
+            plan=plan,
+            start=start,
+            logger=logger,
+            telemetry_scope=telemetry_scope,
+        )
+        return
 
     if pipe is None:
         from apps.backend.runtime.families.wan22.config import build_wan22_gguf_run_config
@@ -431,7 +680,7 @@ def run_txt2vid(
             interpolation_options=vfi_options,
             interpolation_meta=vfi_opts,
             base_video_meta=base_video_meta,
-            audio_input=False,
+            audio_source_kind="none",
             final_frame_count=len(frames),
         )
         if cfg.low is not None:
@@ -610,7 +859,7 @@ def run_txt2vid(
         interpolation_options=vfi_options,
         interpolation_meta=vfi_opts,
         base_video_meta=base_video_meta,
-        audio_input=False,
+        audio_source_kind="none",
         final_frame_count=len(frames),
     )
 

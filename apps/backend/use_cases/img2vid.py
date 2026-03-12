@@ -6,16 +6,22 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
-Runs high/low stages, configures sampler settings, applies LoRAs, runs shared SeedVR2 upscaling/interpolation stages when requested, exports video, and yields
-progress/result events.
-Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and `extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when missing.
-Temporal routing requires explicit `extras.img2vid_mode` (`solo|sliding|svi2|svi2_pro`) and rejects implicit mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity while SVI modes default to incremented per-window seeding, and result metadata includes frame-count diagnostics across generation/interpolation/export stages.
+Purpose: Canonical img2vid orchestration for backend video engines.
+Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native backend-only LTX2 branch), applies
+shared SeedVR2 upscaling/interpolation stages when requested, exports video, and yields progress/result events.
+WAN22 Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and
+`extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when
+missing. Temporal routing requires explicit `extras.img2vid_mode` (`solo|sliding|svi2|svi2_pro`) and rejects implicit
+mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity while SVI modes default to incremented
+per-window seeding. The native LTX2 branch consumes a local `Ltx2RunResult` (`frames + AudioExportAsset + metadata`)
+and owns cleanup of generated temp audio after export.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_pipeline_telemetry_scope` (function): Creates a mutable task-scoped telemetry context owner for img2vid run/stage events.
 - `_emit_pipeline_event` (function): Emits canonical structured pipeline telemetry events (`pipeline.*`) for img2vid.
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
+- `_cleanup_owned_audio_asset` (function): Deletes owned temporary generated-audio artifacts after LTX2 export completes or fails.
+- `_run_ltx2_img2vid` (function): Runs the native backend-only LTX2 img2vid branch and threads generated audio through the shared export seam.
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
 - `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
@@ -40,6 +46,7 @@ from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.processing.datatypes import VideoPlan
 from apps.backend.runtime.pipeline_stages.hires_fix import resolve_pipeline_telemetry_context
 from apps.backend.runtime.pipeline_stages.video import (
+    AudioExportAsset,
     apply_engine_loras,
     apply_video_interpolation,
     apply_video_upscaling,
@@ -155,6 +162,249 @@ def _build_result_payload(
             "mime": video_meta.get("mime"),
         }
     return payload
+
+
+def _cleanup_owned_audio_asset(audio_asset: AudioExportAsset | None, *, logger: Any, task: str) -> None:
+    if audio_asset is None or not audio_asset.owned_temp:
+        return
+    path = str(audio_asset.path or "").strip()
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        return
+    except Exception as exc:
+        if logger is not None:
+            logger.warning("%s: failed to remove owned temp audio asset '%s': %s", task, path, exc)
+
+
+def _run_ltx2_img2vid(
+    *,
+    engine: Any,
+    comp: Any,
+    request: Img2VidRequest,
+    plan: VideoPlan,
+    start: float,
+    logger: Any,
+    telemetry_scope: Any,
+) -> Iterator[InferenceEvent]:
+    from apps.backend.runtime.families.ltx2.runtime import Ltx2RunResult
+
+    @dataclass(frozen=True)
+    class _SamplerOutcome:
+        sampler_in: str | None
+        scheduler_in: str | None
+        sampler_effective: str | None
+        scheduler_effective: str | None
+        warnings: tuple[str, ...] = ()
+
+    audio_asset: AudioExportAsset | None = None
+    try:
+        apply_engine_loras(engine, logger)
+
+        yield ProgressEvent(stage="run", percent=5.0, message="Running LTX2 img2vid")
+        runtime_result = comp.run_img2vid(request=request, plan=plan)
+        if not isinstance(runtime_result, Ltx2RunResult):
+            raise RuntimeError(
+                "LTX2 img2vid runtime must return `Ltx2RunResult`; "
+                f"got {type(runtime_result).__name__}."
+            )
+
+        frames = list(runtime_result.frames)
+        audio_asset = runtime_result.audio_asset
+        runtime_meta = dict(runtime_result.metadata)
+        audio_source_kind = "generated" if audio_asset is not None else "none"
+        generated_frame_count = int(len(frames))
+
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="generation.complete",
+            stage_name="generation",
+            backend="ltx2",
+            low_stage_enabled=False,
+            frame_count=generated_frame_count,
+            has_audio=bool(audio_asset is not None),
+        )
+
+        extras = dict(plan.extras) if isinstance(plan.extras, dict) else {}
+        upscaling_options = read_video_upscaling_options(extras)
+        vfi_options = read_video_interpolation_options(extras)
+        base_video_options = prepare_base_snapshot_video_options(
+            getattr(request, "video_options", None),
+            task="img2vid",
+            upscaling_options=upscaling_options,
+            interpolation_options=vfi_options,
+        )
+        base_video_meta: Any = None
+        if base_video_options is not None:
+            base_video_meta = export_video(
+                engine,
+                frames,
+                plan,
+                base_video_options,
+                task="img2vid",
+                audio_asset=audio_asset,
+            )
+            if isinstance(base_video_meta, Mapping):
+                base_rel_path = str(base_video_meta.get("rel_path") or "").strip()
+                if base_rel_path and logger is not None:
+                    logger.info(
+                        "img2vid: base snapshot exported before post-process: %s",
+                        base_rel_path,
+                    )
+
+        if upscaling_options is not None and upscaling_options.enabled:
+            yield ProgressEvent(stage="upscale", percent=1.0, message="Upscaling frames (SeedVR2)")
+        frames, upscaling_opts = apply_video_upscaling(
+            frames,
+            options=upscaling_options,
+            logger_=logger,
+            component_device=getattr(comp, "device", None),
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="upscaling.complete",
+            stage_name="upscaling",
+            backend="ltx2",
+            upscaling_enabled=bool(upscaling_options is not None and upscaling_options.enabled),
+            frame_count=int(len(frames)),
+        )
+        if frames:
+            first_size = getattr(frames[0], "size", None)
+            if isinstance(first_size, tuple) and len(first_size) == 2:
+                plan.width = int(first_size[0])
+                plan.height = int(first_size[1])
+
+        if vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1:
+            yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
+        frames, vfi_opts = apply_video_interpolation(frames, options=vfi_options, logger_=logger)
+        interpolated_frame_count = int(len(frames))
+        plan.fps = resolve_video_output_fps(plan.fps, vfi_opts)
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="interpolation.complete",
+            stage_name="interpolation",
+            backend="ltx2",
+            interpolation_enabled=bool(vfi_options is not None and vfi_options.enabled and (vfi_options.times or 0) > 1),
+            output_fps=int(plan.fps),
+            frame_count=interpolated_frame_count,
+        )
+
+        video_meta = export_video(
+            engine,
+            frames,
+            plan,
+            getattr(request, "video_options", None),
+            task="img2vid",
+            audio_asset=audio_asset,
+        )
+        video_saved = parse_bool_value(
+            video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
+            field="video_meta.saved",
+            default=False,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.stage.complete",
+            stage="export.complete",
+            stage_name="export",
+            backend="ltx2",
+            video_saved=video_saved,
+            final_frame_count=int(len(frames)),
+            has_audio=bool(audio_asset is not None),
+        )
+        export_frame_count: int | None = None
+        if isinstance(video_meta, Mapping):
+            raw_export_frame_count = video_meta.get("frames", video_meta.get("frame_count"))
+            if raw_export_frame_count is not None:
+                try:
+                    export_frame_count = int(raw_export_frame_count)
+                except Exception:
+                    export_frame_count = None
+
+        extra_meta: dict[str, Any] = dict(extras)
+        if runtime_meta:
+            extra_meta["ltx2_runtime"] = runtime_meta
+        if upscaling_opts is not None:
+            extra_meta["video_upscaling"] = upscaling_opts
+        if vfi_opts is not None:
+            extra_meta["video_interpolation"] = vfi_opts
+        if base_video_meta is not None:
+            extra_meta["video_base_snapshot"] = base_video_meta
+        extra_meta["video_request_vs_effective_snapshot"] = build_video_request_effective_snapshot(
+            request=request,
+            plan=plan,
+            video_meta=video_meta,
+            upscaling_options=upscaling_options,
+            upscaling_meta=upscaling_opts,
+            interpolation_options=vfi_options,
+            interpolation_meta=vfi_opts,
+            base_video_meta=base_video_meta,
+            audio_source_kind=audio_source_kind,
+            final_frame_count=len(frames),
+        )
+        extra_meta["frame_counts"] = {
+            "requested": int(getattr(request, "num_frames", plan.frames) or plan.frames),
+            "generated": generated_frame_count,
+            "after_interpolation": interpolated_frame_count,
+            "after_export": (int(export_frame_count) if export_frame_count is not None else None),
+        }
+
+        sampler_effective = str(
+            runtime_meta.get("sampler_effective")
+            or runtime_meta.get("sampler")
+            or getattr(request, "sampler", None)
+            or ""
+        ).strip() or None
+        scheduler_effective = str(
+            runtime_meta.get("scheduler_effective")
+            or runtime_meta.get("scheduler")
+            or getattr(request, "scheduler", None)
+            or ""
+        ).strip() or None
+
+        elapsed = time.perf_counter() - start
+        result = build_video_result(
+            engine,
+            frames,
+            plan,
+            _SamplerOutcome(
+                sampler_in=getattr(request, "sampler", None),
+                scheduler_in=getattr(request, "scheduler", None),
+                sampler_effective=sampler_effective,
+                scheduler_effective=scheduler_effective,
+            ),
+            elapsed=elapsed,
+            task="img2vid",
+            extra=extra_meta,
+            video_meta=video_meta,
+        )
+        _emit_pipeline_event(
+            telemetry_scope,
+            "pipeline.run.complete",
+            stage="run.complete",
+            backend="ltx2",
+            total_pipeline_ms=max(0.0, float(elapsed) * 1000.0),
+            final_frame_count=int(len(frames)),
+            video_saved=video_saved,
+            has_audio=bool(audio_asset is not None),
+        )
+
+        yield ResultEvent(
+            payload=_build_result_payload(
+                engine=engine,
+                result=result,
+                plan=plan,
+                request=request,
+                video_meta=video_meta,
+            )
+        )
+    finally:
+        _cleanup_owned_audio_asset(audio_asset, logger=logger, task="img2vid")
 
 
 def _run_stage(
@@ -459,10 +709,17 @@ def run_img2vid(
 
     plan = build_video_plan(request)
     start = time.perf_counter()
-    pipe = getattr(comp, "pipeline", None)
-    high_model = getattr(comp, "pipeline_high", None)
-    low_model = getattr(comp, "pipeline_low", None)
-    backend_variant = "gguf" if (pipe is None and high_model is None and low_model is None) else "diffusers"
+    engine_id = str(getattr(engine, "engine_id", "") or "").strip().lower()
+    if engine_id == "ltx2":
+        pipe = None
+        high_model = None
+        low_model = None
+        backend_variant = "ltx2"
+    else:
+        pipe = getattr(comp, "pipeline", None)
+        high_model = getattr(comp, "pipeline_high", None)
+        low_model = getattr(comp, "pipeline_low", None)
+        backend_variant = "gguf" if (pipe is None and high_model is None and low_model is None) else "diffusers"
     _emit_pipeline_event(
         telemetry_scope,
         "pipeline.run.start",
@@ -486,6 +743,18 @@ def run_img2vid(
     )
 
     yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid")
+
+    if engine_id == "ltx2":
+        yield from _run_ltx2_img2vid(
+            engine=engine,
+            comp=comp,
+            request=request,
+            plan=plan,
+            start=start,
+            logger=logger,
+            telemetry_scope=telemetry_scope,
+        )
+        return
 
     if pipe is None and high_model is None and low_model is None:
         from apps.backend.runtime.families.wan22.config import build_wan22_gguf_run_config
@@ -847,7 +1116,7 @@ def run_img2vid(
             interpolation_options=vfi_options,
             interpolation_meta=vfi_opts,
             base_video_meta=base_video_meta,
-            audio_input=False,
+            audio_source_kind="none",
             final_frame_count=len(frames),
         )
         extra_meta["frame_counts"] = {
@@ -1088,7 +1357,7 @@ def run_img2vid(
         interpolation_options=vfi_options,
         interpolation_meta=vfi_opts,
         base_video_meta=base_video_meta,
-        audio_input=False,
+        audio_source_kind="none",
         final_frame_count=len(frames),
     )
     if outcome_lo is not None:

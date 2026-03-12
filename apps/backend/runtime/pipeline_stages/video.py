@@ -12,6 +12,7 @@ by the diffusers video bridge, and assembles export metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger used by video pipeline helpers.
+- `AudioExportAsset` (dataclass): Pre-export audio asset descriptor used by shared video export helpers.
 - `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
@@ -22,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolve_video_output_fps` (function): Computes output fps from request/base fps and interpolation metadata.
 - `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
 - `prepare_base_snapshot_video_options` (function): Builds a fail-loud snapshot export options payload for base-video persistence before post-processing.
-- `build_video_request_effective_snapshot` (function): Builds an immutable request-vs-effective execution snapshot for WAN video metadata.
+- `build_video_request_effective_snapshot` (function): Builds an immutable request-vs-effective execution snapshot for shared backend video metadata.
 - `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
 - `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
 - `__all__` (constant): Explicit export list for the module.
@@ -30,6 +31,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from typing import Any, Mapping, Sequence
 
@@ -43,6 +45,16 @@ from apps.backend.video.upscaling.seedvr2 import run_seedvr2_upscaling
 
 logger = logging.getLogger(__name__)
 _VIDEO_UPSCALING_COLOR_CORRECTIONS = {"lab", "wavelet", "wavelet_adaptive", "hsv", "adain", "none"}
+
+
+@dataclass(slots=True, frozen=True)
+class AudioExportAsset:
+    """Pre-export audio asset descriptor for mux-capable video workflows."""
+
+    path: str
+    owned_temp: bool
+    sample_rate_hz: int | None = None
+    channels: int | None = None
 
 
 def build_video_plan(request: Any) -> VideoPlan:
@@ -331,12 +343,25 @@ def resolve_video_output_fps(base_fps: int, interpolation_meta: Mapping[str, Any
     return fps_base * times
 
 
-def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_options: Any, *, task: str) -> Any:
+def export_video(
+    engine: Any,
+    frames: Sequence[Any],
+    plan: VideoPlan,
+    video_options: Any,
+    *,
+    task: str,
+    audio_asset: AudioExportAsset | None = None,
+) -> Any:
     save_output = parse_bool_value(
         video_options.get("save_output") if isinstance(video_options, Mapping) else None,
         field="video_options.save_output",
         default=False,
     )
+    normalized_audio_source = str(audio_asset.path).strip() if audio_asset is not None else ""
+    if normalized_audio_source and not save_output:
+        raise RuntimeError(
+            f"{task}: audio-bearing video result requires video_options.save_output=true to preserve audio output."
+        )
     if not hasattr(engine, "_maybe_export_video"):
         if save_output:
             raise RuntimeError(
@@ -344,7 +369,13 @@ def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_opti
             )
         return None
 
-    video_meta = engine._maybe_export_video(frames, fps=plan.fps, options=video_options, task=task)  # type: ignore[attr-defined]
+    video_meta = engine._maybe_export_video(  # type: ignore[attr-defined]
+        frames,
+        fps=plan.fps,
+        options=video_options,
+        task=task,
+        audio_source_path=normalized_audio_source,
+    )
     if save_output:
         saved = parse_bool_value(
             video_meta.get("saved") if isinstance(video_meta, Mapping) else None,
@@ -422,6 +453,7 @@ def _normalized_export_meta(meta: Any) -> dict[str, Any] | None:
             "reason": getattr(meta, "reason", None),
             "fps": getattr(meta, "fps", None),
             "frames": getattr(meta, "frame_count", None),
+            "has_audio": getattr(meta, "has_audio", None),
         }
     if payload.get("frames") is None and payload.get("frame_count") is not None:
         payload["frames"] = payload.get("frame_count")
@@ -446,10 +478,16 @@ def build_video_request_effective_snapshot(
     interpolation_options: VideoInterpolationOptions | None,
     interpolation_meta: Mapping[str, Any] | None,
     base_video_meta: Any = None,
-    audio_input: bool = False,
+    audio_source_kind: str = "none",
     final_frame_count: int,
 ) -> dict[str, Any]:
-    """Build an immutable snapshot of requested vs effective WAN video execution settings."""
+    """Build an immutable snapshot of requested vs effective shared video execution settings."""
+
+    normalized_audio_source_kind = str(audio_source_kind or "none").strip().lower() or "none"
+    if normalized_audio_source_kind not in {"none", "input", "generated"}:
+        raise RuntimeError(
+            "audio_source_kind must be 'none', 'input', or 'generated'."
+        )
 
     raw_video_options = getattr(request, "video_options", None)
     video_options: dict[str, Any] = dict(raw_video_options) if isinstance(raw_video_options, Mapping) else {}
@@ -539,7 +577,7 @@ def build_video_request_effective_snapshot(
         requested_trim_to_audio
         and requested_save_output
         and video_saved
-        and audio_input
+        and normalized_audio_source_kind != "none"
         and _container_supports_audio(format_effective)
     )
     save_metadata_effective = bool(
@@ -578,9 +616,18 @@ def build_video_request_effective_snapshot(
             "fps": int(getattr(request, "fps", plan.fps) or plan.fps),
             "frames": int(getattr(request, "num_frames", final_frame_count) or final_frame_count),
         },
-        "audio_input": bool(audio_input),
+        "audio_source_kind": normalized_audio_source_kind,
     }
 
+    effective_has_audio = bool(
+        video_saved
+        and _container_supports_audio(format_effective)
+        and parse_bool_value(
+            _export_meta_field(video_meta, key="has_audio"),
+            field="video_meta.has_audio",
+            default=False,
+        )
+    )
     effective_snapshot = {
         "video_options": {
             "format": format_effective,
@@ -611,6 +658,8 @@ def build_video_request_effective_snapshot(
             "fps": int(plan.fps),
             "frames": int(final_frame_count),
         },
+        "audio_source_kind": normalized_audio_source_kind if effective_has_audio else "none",
+        "has_audio": effective_has_audio,
     }
 
     toggle_effective_map = {
@@ -645,6 +694,10 @@ def build_video_request_effective_snapshot(
         "video_base_snapshot": {
             "requested": requested_base_snapshot,
             "effective": base_snapshot_saved,
+        },
+        "video_audio_output": {
+            "requested": normalized_audio_source_kind != "none",
+            "effective": effective_has_audio,
         },
     }
 
@@ -724,6 +777,7 @@ def build_video_result(
 
 
 __all__ = [
+    "AudioExportAsset",
     "apply_engine_loras",
     "build_video_plan",
     "configure_sampler",

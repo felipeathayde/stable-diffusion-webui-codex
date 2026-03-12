@@ -41,3 +41,4 @@ Status: Active
 - 2025-12-29: Repo-root resolution across backend + launchers is now strict and `CODEX_ROOT`-anchored (no `__file__`/CWD fallbacks); launch via `run-webui.{bat,sh}` or set `CODEX_ROOT` explicitly.
 - 2026-01-03: Added standardized file header docstrings to the remaining low-core `apps/` entrypoints (`__init__.py`, `backend/__init__.py`, and WebUI entrypoints/config) (doc-only change; part of rollout).
 - 2026-02-05: Added Anima model roots to `apps/paths.json` (`anima_ckpt`, `anima_tenc`, `anima_vae`, `anima_loras`) to mirror existing per-family directory conventions.
+- 2026-03-12: Added LTX2 model roots to `apps/paths.json` (`ltx2_ckpt`, `ltx2_tenc`, `ltx2_vae`, `ltx2_connectors`, `ltx2_loras`) so the backend provisions repo-local `models/ltx2*` folders for the current GGUF+side-asset intake lane.

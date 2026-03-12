@@ -25,4 +25,5 @@ Status: Active
 - 2026-02-23: `args.py` now defaults offload authority to CPU when `--offload-device`/`CODEX_OFFLOAD_DEVICE` is unset or `auto`; invalid unresolved offload backend states now fail loud in `build_runtime_memory_config(...)` instead of silently mirroring main-device backend.
 - 2026-02-23: `args.py` now validates `--cuda-malloc` against allocator env contract: strict mode fails loud unless `PYTORCH_CUDA_ALLOC_CONF` resolves to `backend:cudaMallocAsync` (including malformed/multiple backend entry detection).
 - 2026-03-05: `paths.py` model-root provisioning now includes Flux.2 keys (`flux2_ckpt`, `flux2_tenc`, `flux2_vae`, `flux2_loras`) alongside existing families.
+- 2026-03-12: `paths.py` model-root provisioning now includes LTX2 keys (`ltx2_ckpt`, `ltx2_tenc`, `ltx2_vae`, `ltx2_connectors`, `ltx2_loras`) so repo-relative `models/ltx2*` folders are created with the same startup path-seam used by other families.
 - Keep this folder focused on config/bootstrap contracts; runtime execution logic belongs outside `infra/config`.

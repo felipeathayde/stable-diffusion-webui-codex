@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-03-05
+Last Review: 2026-03-11
 Status: Active
 
 ## Scope
@@ -93,3 +93,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-03-05: `registry.py` discovery roots now include Flux.2 path keys (`flux2_ckpt`, `flux2_vae`) and `family_hint` now recognizes `models/flux2/*` prefix as `flux2`.
 - 2026-03-05: `loader.py` now supports the truthful FLUX.2 Klein 4B/base-4B slice: expected-family loads build vendored-HF signatures for `FLUX.2-klein-4B` / `FLUX.2-klein-base-4B`, parser-normalized core-only checkpoints load through `diffusers.Flux2Transformer2DModel`, external `Qwen3ForCausalLM` overrides reuse the native ZImage Qwen3-4B wrapper, `AutoencoderKLFlux2` is used for FLUX.2 VAEs, and diffusers repo detection rejects unsupported non-Klein / non-4B configs fail-loud.
 - 2026-03-06: `_parse_checkpoint(...)` now applies family-scoped GGUF keyspace interpretation for expected-family Flux / FLUX.2 / Z Image loads before parser execution, so native/source keys (and supported fused legacy slices) are presented through lazy lookup views instead of remapped dicts. The GGUF core load path also passes mappings directly to `nn.Module.load_state_dict(...)` instead of materializing `dict(state_dict)`.
+- 2026-03-11: `loader.py` now turns `ModelFamily.LTX2` parser output into a typed minimal bundle-planning contract (parser-owned `transformer` / `connectors` / `vae` / `audio_vae` / `vocoder` + exactly one external `gemma3_12b` asset + vendored tokenizer/config metadata). Engine registration/runtime execution still lands separately; generic diffusers component assembly remains forbidden for LTX2.

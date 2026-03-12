@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-03-08
+Last Review: 2026-03-11
 Status: Active
 
 ## Purpose
@@ -66,3 +66,5 @@ Status: Active
 - 2026-03-02: `run_txt2img`/`run_img2img` now report sampling `data.phase_step`/`data.phase_total_steps` in **block units** (`completed_steps*blocks_per_step + intra_step_blocks` over `steps*blocks_per_step`) so the top “total” bar counter renders denoiser totals as `x/total_blocks` (e.g., `32x70`) instead of step counts.
 - 2026-03-08: image progress wrappers now preserve truthful open-ended sampling for adaptive runs: `_image_streaming._iter_sampling_progress(...)` can carry unknown sampling totals, and `run_txt2img` / `run_img2img` emit `percent=None`, `total_steps=None`, and non-fake sampling messages when the sampler does not have an honest fixed total-step contract.
 - 2026-03-04: WAN video GGUF progress mappers (`txt2vid.py::_yield_wan22_gguf_progress`, `img2vid.py::_yield_wan22_gguf_progress`) now preserve runtime coarse/fine diagnostics in `ProgressEvent.data` (`progress_adapter`, `progress_granularity`, `coarse_reason`) and forward optional runtime progress messages instead of dropping non-core payload fields.
+- 2026-03-11: Shared video execution snapshots now use `audio_source_kind` (`none|input|generated`) instead of `audio_input`; `vid2vid.py` reports source-audio passthrough via that shared field.
+- 2026-03-11: `txt2vid.py` / `img2vid.py` now own explicit staged LTX2 branches before WAN-specific routing. Those branches consume a family-local `Ltx2RunResult` (`frames + AudioExportAsset + metadata`), pass generated audio through the shared export seam, clean owned temp audio in the use-case layer, and now report the actual fixed LTX2 sampler/scheduler contract from the dedicated family runtime instead of echoing request defaults.

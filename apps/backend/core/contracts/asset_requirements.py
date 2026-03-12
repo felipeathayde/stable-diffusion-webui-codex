@@ -38,6 +38,7 @@ class TextEncoderKind(str, Enum):
     CLIP_T5 = "clip+t5"
     T5 = "t5"
     QWEN = "qwen"
+    GEMMA = "gemma"
     SD3 = "sd3"
 
 
@@ -54,6 +55,8 @@ def format_text_encoder_kind_label(kind: TextEncoderKind) -> str:
         return "T5"
     if kind is TextEncoderKind.QWEN:
         return "Qwen"
+    if kind is TextEncoderKind.GEMMA:
+        return "Gemma"
     if kind is TextEncoderKind.SD3:
         return "SD3 (CLIP-L + CLIP-G + T5)"
     return str(kind.value)
@@ -215,6 +218,17 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
         sha_only=True,
         notes="External-assets-first: requires WAN VAE + 1 T5 text encoder via sha selection.",
     ),
+    "ltx2": EngineAssetContract(
+        requires_vae=False,
+        tenc_slots=("gemma3_12b",),
+        tenc_slot_labels=("Gemma3-12B",),
+        tenc_kind=TextEncoderKind.GEMMA,
+        sha_only=True,
+        notes=(
+            "Monolithic LTX2 checkpoint bundles transformer/connectors/video-audio decoders; "
+            "requires exactly 1 external Gemma3-12B text encoder via sha selection."
+        ),
+    ),
     "svd": EngineAssetContract(
         requires_vae=False,
         tenc_slots=(),
@@ -255,6 +269,7 @@ _CONTRACT_OWNER_BY_ENGINE_ID: dict[str, str] = {
     "wan22_5b": "wan22_5b",
     "wan22_14b": "wan22_14b",
     "wan22_14b_animate": "wan22_14b_animate",
+    "ltx2": "ltx2",
     "svd": "svd",
     "hunyuan_video": "hunyuan_video",
 }
@@ -320,6 +335,7 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
         "wan22_5b",
         "wan22_14b",
         "wan22_14b_animate",
+        "ltx2",
         "svd",
         "hunyuan_video",
     ):

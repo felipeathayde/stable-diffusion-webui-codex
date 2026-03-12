@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-03-08
+Last Review: 2026-03-11
 Status: Draft
 
 ## Purpose
@@ -9,7 +9,7 @@ Status: Draft
 
 ## Current Status
 - Core dataclasses/enums (now `CodexCoreSignature`/`CodexCoreArchitecture`) in place with manifest-driven metadata harvesting.
-- Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), FLUX.2 Klein 4B/base-4B core-only SafeTensors, AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, Qwen Image, and Anima (Cosmos Predict2 core `net.*` format).
+- Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), FLUX.2 Klein 4B/base-4B core-only SafeTensors, LTX2 monolithic combined checkpoints, AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, Qwen Image, and Anima (Cosmos Predict2 core `net.*` format).
 - `capabilities.py` defines `SemanticEngine` and an `EngineParamSurface` describing which high-level UI parameter sections (txt2img/img2img/video/hires/refiner/LoRA/ControlNet) are expected to be used for each semantic engine tag; exposed to the API for frontend gating.
 - 2025-12-14: `ModelSignature` gained a legacy `unet` alias for `core`, keeping older call sites working while the new contract stays `signature.core`.
 - 2025-12-14: Qwen Image detector reintroduced (`detectors/qwen_image.py`) and enums extended (`ModelFamily.QWEN_IMAGE`, `LatentFormat.QWEN_IMAGE`).
@@ -36,6 +36,7 @@ Status: Draft
 - 2026-03-07: `EngineParamSurface` sampler/scheduler capability fields were renamed to `recommended_samplers` / `recommended_schedulers`; these fields are UI recommendation hints (not engine-level filtering lists). Defaults and recommendations must still stay executable and scheduler-compatible for the live engine path.
 - 2026-03-08: WAN22 semantic capabilities expose recommendation hints as `recommended_samplers=('uni-pc bh2', 'uni-pc', 'euler', 'euler a')` and `recommended_schedulers=('simple',)`, with defaults `default_sampler='uni-pc bh2'` and `default_scheduler='simple'`.
 - 2026-03-07: WAN22 detector now recognizes the current local I2V base surface by `patch_embedding.weight` input channels (`C_in=36` for the 36-channel concat I2V path) instead of relying only on upstream `img_emb.proj.*` keys, which are absent from the current local WAN22 GGUF base artifacts.
+- 2026-03-11: Added strict monolithic LTX2 detection (`detectors/ltx2.py`) and parser dispatch/planner support (`model_parser/families/ltx2.py`) for the backend-only bring-up slice. The detector now accepts connector evidence only under `model.diffusion_model.*`, keeps checkpoint provenance truthful (`repo_hint=None` when filepath evidence is absent), and stays unadvertised until runtime support exists.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

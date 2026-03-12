@@ -176,22 +176,21 @@ wheels = [
 
 [[package]]
 name = "diffusers"
-version = "0.36.0"
+version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
     { name = "httpx" },
     { name = "huggingface-hub" },
-    { name = "importlib-metadata" },
     { name = "numpy" },
     { name = "pillow" },
     { name = "regex" },
     { name = "requests" },
     { name = "safetensors" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/45/ccb2e2180ddf475a0f931dac6a50346310e4c464ce3cccb8a65d1fc1e16d/diffusers-0.36.0.tar.gz", hash = "sha256:a9cde8721b415bde6a678f2d02abb85396487e1b0e0d2b4abb462d14a9825ab0", size = 3795088, upload-time = "2025-12-08T10:14:34.255Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/53/96fdb99d8cfb090d7dd5a3642490844f0d0b9686dc06d0fbff0044941f5f/diffusers-0.37.0.tar.gz", hash = "sha256:3b22b3de1434351620adce1ac5abf1240315b6ce06a41c6d8f458819d8b35d78", size = 3841253, upload-time = "2026-03-05T17:43:30.927Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/50/281f92cb1f83854dbd79b6e958b3bc5018607e2542971d41604ba7a14b2f/diffusers-0.36.0-py3-none-any.whl", hash = "sha256:525d42abc74bfc3b2db594999961295c054b48ef40a11724dacf50e6abd1af98", size = 4597884, upload-time = "2025-12-08T10:14:31.979Z" },
+    { url = "https://files.pythonhosted.org/packages/06/a7/c53f294f34d9e1584388721b3d7aa024ea1ac46e86d0c302fc3db40ed960/diffusers-0.37.0-py3-none-any.whl", hash = "sha256:fd25471712cf2e56fe4a0ff6d300fd8a7ef5f472212528084b053ebec0304a90", size = 4647627, upload-time = "2026-03-05T17:43:28.724Z" },
 ]
 
 [[package]]
@@ -1488,7 +1487,7 @@ requires-dist = [
     { name = "accelerate", specifier = "==1.10.1" },
     { name = "ccvfi", specifier = "==0.0.3" },
     { name = "colorama", marker = "sys_platform == 'win32'", specifier = "==0.4.6" },
-    { name = "diffusers", specifier = "==0.36.0" },
+    { name = "diffusers", specifier = "==0.37.0" },
     { name = "einops", specifier = "==0.8.1" },
     { name = "fastapi", specifier = "==0.121.0" },
     { name = "ffmpeg-downloader", specifier = "==0.4.1" },

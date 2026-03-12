@@ -68,7 +68,7 @@ def load_torch_file(ckpt, safe_load=True, device=None):
     checkpoint_path = str(ckpt)
     suffix = os.path.splitext(checkpoint_path)[1].lower()
 
-    if suffix == ".safetensors":
+    if suffix in {".safetensor", ".safetensors"}:
         return LazySafetensorsDict(checkpoint_path, device=str(device))
     if suffix == ".gguf":
         return _load_gguf_state_dict(checkpoint_path, device=device)

@@ -11,7 +11,7 @@ Loads lists from `/api/*`, persists option changes via `/api/options`, and maint
 resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options,
 and caches the current `/api/options` revision for generation payload contracts (`settings_revision`).
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
-sanitized so `tenc_sha` resolution remains deterministic across families (including Anima). VAE state defaults to canonical `built-in`
+sanitized so `tenc_sha` resolution remains deterministic across families (including Anima and LTX2). VAE state defaults to canonical `built-in`
 when no persisted value exists, request preflight can enforce fail-loud non-empty selection via `requireVaeSelection`, and LoRA SHA mappings
 are refreshed through the store-owned inventory flow (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`). FLUX.2 override persistence
 stays truthful to the current Klein 4B / base-4B slice by keeping at most one `flux2/*` Qwen selector.
@@ -46,7 +46,7 @@ const VAE_BY_FAMILY_STORAGE_KEY = 'codex.quicksettings.vae_by_family'
 const VAE_BY_FAMILY_OPTION_KEY = 'codex_vae_by_family'
 const DEFAULT_VAE_SELECTION = 'built-in'
 const NONE_VAE_SELECTION = 'none'
-const VAE_FAMILIES = ['sd15', 'sdxl', 'flux1', 'flux2', 'chroma', 'zimage', 'anima'] as const
+const VAE_FAMILIES = ['sd15', 'sdxl', 'flux1', 'flux2', 'chroma', 'zimage', 'anima', 'ltx2'] as const
 type VaeFamily = (typeof VAE_FAMILIES)[number]
 
 const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
@@ -55,11 +55,12 @@ const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
   ['flux1', 'flux1_tenc'],
   ['flux2', 'flux2_tenc'],
   ['anima', 'anima_tenc'],
+  ['ltx2', 'ltx2_tenc'],
   ['wan22', 'wan22_tenc'],
   ['zimage', 'zimage_tenc'],
 ]
 
-const TEXT_ENCODER_PREFIXES = ['sd15', 'sdxl', 'flux1', 'flux2', 'anima', 'chroma', 'wan22', 'zimage']
+const TEXT_ENCODER_PREFIXES = ['sd15', 'sdxl', 'flux1', 'flux2', 'anima', 'chroma', 'ltx2', 'wan22', 'zimage']
 const FLUX2_UNSUPPORTED_VARIANT_MARKERS = [
   'flux.2-klein-base-9b',
   'flux2-klein-base-9b',

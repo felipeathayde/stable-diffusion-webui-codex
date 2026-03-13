@@ -279,13 +279,13 @@ const workflowBusy = ref(false)
 const sendBusy = ref(false)
 const lastSentTabId = ref<string>('')
 
-const compatibleTabs = computed(() => tabs.orderedTabs.filter(t => t.type !== 'wan' && t.type !== 'anima'))
+const compatibleTabs = computed(() => tabs.orderedTabs.filter(t => t.type !== 'wan' && t.type !== 'anima' && t.type !== 'ltx2'))
 const targetTabId = ref('')
 const targetTab = computed(() => compatibleTabs.value.find(t => t.id === targetTabId.value) || null)
 const targetMode = ref<TargetMode>('txt2img')
 const targetTabFamily = computed<TabFamily | null>(() => {
   const type = targetTab.value?.type
-  if (!type || type === 'wan' || type === 'anima') return null
+  if (!type || type === 'wan' || type === 'anima' || type === 'ltx2') return null
   return type
 })
 const targetSamplingEngineId = computed(() => {
@@ -675,7 +675,7 @@ onMounted(async () => {
 watch([compatibleTabs, () => tabs.activeTab], () => {
   if (targetTabId.value && compatibleTabs.value.some(t => t.id === targetTabId.value)) return
   const active = tabs.activeTab
-  if (active && active.type !== 'wan') {
+  if (active && active.type !== 'wan' && active.type !== 'ltx2') {
     targetTabId.value = active.id
     return
   }

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Model tabs management view.
-Lists model tabs and provides actions to create/open/duplicate/remove tabs (including Anima tabs when supported).
+Lists model tabs and provides actions to create/open/duplicate/remove tabs (including capability-gated Anima/LTX2 tabs when supported).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelsList` (component): View for managing model tabs.
@@ -25,6 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <option value="flux2">FLUX.2</option>
             <option value="zimage">Z Image</option>
             <option v-if="showAnimaOption" value="anima">Anima</option>
+            <option v-if="showLtx2Option" value="ltx2">LTX 2.3</option>
             <option value="wan">WAN 2.2</option>
           </select>
           <button class="btn btn-sm btn-primary" type="button" @click="createTab">New Tab</button>
@@ -75,11 +76,17 @@ Symbols (top-level; keep in sync; no ghosts):
 
 const tabs = computed(() => store.orderedTabs)
 const showAnimaOption = computed(() => Boolean(engineCaps.get('anima')))
+const showLtx2Option = computed(() => Boolean(engineCaps.get('ltx2')))
 
 async function createTab(): Promise<void> {
   try {
     if (newType.value === 'anima' && !showAnimaOption.value) {
       const msg = "Cannot create Anima tab: '/api/engines/capabilities' does not expose 'anima'."
+      console.error(`[ModelsList] ${msg}`)
+      throw new Error(msg)
+    }
+    if (newType.value === 'ltx2' && !showLtx2Option.value) {
+      const msg = "Cannot create LTX 2.3 tab: '/api/engines/capabilities' does not expose 'ltx2'."
       console.error(`[ModelsList] ${msg}`)
       throw new Error(msg)
     }

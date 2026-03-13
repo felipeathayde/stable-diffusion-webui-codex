@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-03-08
+Last Review: 2026-03-12
 Status: Active
 
 ## Purpose
@@ -29,4 +29,5 @@ Status: Active
 - 2026-02-28: `wan_img2vid_temporal.ts` removed `chunk` from `WanImg2VidMode`; normalization is now fail-loud for `img2vid_mode='chunk'` and any unsupported value (`solo|sliding|svi2|svi2_pro` only).
 - 2026-03-01: Added `wan_img2vid_frame_projection.ts` as the canonical WAN no-stretch frame-projection helper (free `imageScale > 0` + normalized crop offsets), including deterministic crop rect, slack bounds for drag clamping, and scaled-dimension metadata for init-image zoom overlays.
 - 2026-03-05: `engine_taxonomy.ts` now includes first-class `flux2` semantic/request ids (no `flux1`/`flux1_kontext` alias), matching the backend FLUX.2 Klein 4B / base-4B slice, and `model_family_filters.ts` maps `flux2` to `flux2_ckpt` roots.
+- 2026-03-12: `engine_taxonomy.ts` now includes first-class `ltx2` tab/semantic/request ids with fallback sampling defaults `euler/simple`; `resolveImageRequestEngineId(...)` explicitly rejects `ltx2` because image routes are not valid for the LTX video lane, and `model_family_filters.ts` maps `ltx2` to `ltx2_ckpt`/`ltx2_vae` style roots plus `ltx` filename fallbacks.
 - 2026-03-06: `engine_taxonomy.ts` now also exports `supportsImg2ImgMaskingForEngineId(...)` as the shared frontend truth source for engines that expose init-image img2img but still reject mask/inpaint semantics (`flux1_kontext` remains blocked; `flux2` is now allowed after backend support landed).

@@ -20,10 +20,12 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from apps.backend.core.contracts.asset_requirements import (
+    contract_for_core_only,
     contract_for_engine,
     contract_owner_for_semantic_engine,
 )
@@ -80,6 +82,7 @@ _CHECKPOINT_REQUIRED_ENGINES: frozenset[str] = frozenset(
         "chroma",
         "zimage",
         "anima",
+        "ltx2",
         "svd",
         "hunyuan_video",
     }
@@ -96,6 +99,7 @@ _CHECKPOINT_ROOT_KEYS_BY_ENGINE: dict[str, tuple[str, ...]] = {
     "zimage": ("zimage_ckpt",),
     "anima": ("anima_ckpt",),
     "wan22": ("wan22_ckpt",),
+    "ltx2": ("ltx2_ckpt",),
 }
 
 _CHECKPOINT_FAMILY_HINTS_BY_ENGINE: dict[str, tuple[str, ...]] = {
@@ -107,6 +111,7 @@ _CHECKPOINT_FAMILY_HINTS_BY_ENGINE: dict[str, tuple[str, ...]] = {
     "zimage": ("zimage",),
     "anima": ("anima",),
     "wan22": ("wan22",),
+    "ltx2": ("ltx2",),
 }
 
 _VAE_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
@@ -117,6 +122,7 @@ _VAE_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
     "wan22_5b": ("wan22_vae",),
     "wan22_14b": ("wan22_vae",),
     "wan22_14b_animate": ("wan22_vae",),
+    "ltx2": ("ltx2_vae",),
 }
 
 _TEXT_ENCODER_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
@@ -127,6 +133,7 @@ _TEXT_ENCODER_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
     "wan22_5b": ("wan22_tenc",),
     "wan22_14b": ("wan22_tenc",),
     "wan22_14b_animate": ("wan22_tenc",),
+    "ltx2": ("ltx2_tenc",),
 }
 
 
@@ -187,14 +194,21 @@ def _count_assets_in_roots(value: object, roots: list[str]) -> int:
     return count
 
 
+def _normalized_root_path(raw: object) -> str:
+    text = os.path.expanduser(str(raw or "").strip())
+    if not text:
+        return ""
+    try:
+        return str(Path(text).resolve(strict=False))
+    except Exception:
+        return text
+
+
 def _roots_for_keys(keys: tuple[str, ...]) -> list[str]:
     roots: list[str] = []
     for key in keys:
         for raw in get_paths_for(key):
-            try:
-                resolved = str(Path(raw).resolve())
-            except Exception:
-                resolved = str(raw or "").strip()
+            resolved = _normalized_root_path(raw)
             if resolved and resolved not in roots:
                 roots.append(resolved)
     return roots
@@ -248,6 +262,114 @@ def _checkpoint_count(model_api: Any) -> int:
     return 0
 
 
+def _records_for_semantic_engine(model_api: Any, semantic_engine: str) -> list[Any]:
+    records = model_api.list_checkpoints(refresh=False)
+    if not isinstance(records, list):
+        return []
+
+    family_hints = tuple(str(value).strip().lower() for value in _CHECKPOINT_FAMILY_HINTS_BY_ENGINE.get(semantic_engine, ()))
+    if family_hints:
+        scoped_by_family = []
+        for record in records:
+            hint = str(getattr(record, "family_hint", "") or "").strip().lower()
+            if hint in family_hints:
+                scoped_by_family.append(record)
+        if scoped_by_family:
+            return scoped_by_family
+
+    root_keys = _CHECKPOINT_ROOT_KEYS_BY_ENGINE.get(semantic_engine, ())
+    roots = _roots_for_keys(root_keys)
+    if not roots:
+        return list(records)
+
+    scoped: list[Any] = []
+    for record in records:
+        path = str(getattr(record, "filename", "") or "").strip()
+        if _path_in_roots(path, roots):
+            scoped.append(record)
+    return scoped
+
+
+def _count_named_files_in_roots(
+    *,
+    roots: list[str],
+    name_fragments: tuple[str, ...],
+) -> int:
+    lowered_fragments = tuple(fragment.strip().lower() for fragment in name_fragments if fragment.strip())
+    if not lowered_fragments:
+        return 0
+    count = 0
+    seen: set[str] = set()
+    for raw_root in roots:
+        root = Path(raw_root)
+        if not root.exists():
+            continue
+        candidates: list[Path] = []
+        if root.is_file():
+            candidates.append(root)
+        elif root.is_dir():
+            try:
+                candidates.extend(sorted(root.rglob("*"), key=lambda item: str(item).lower()))
+            except Exception:
+                continue
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            resolved = str(candidate.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            lowered_name = candidate.name.lower()
+            if any(fragment in lowered_name for fragment in lowered_fragments):
+                count += 1
+    return count
+
+
+_SIDE_ASSET_SUFFIXES: tuple[str, ...] = (".safetensor", ".safetensors", ".pt", ".bin")
+
+
+def _resolve_named_side_assets_in_roots(
+    *,
+    roots: list[str],
+    required_name_fragment: str,
+) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    fragment = required_name_fragment.strip().lower()
+    if not fragment:
+        return candidates
+
+    for raw_root in roots:
+        root = Path(raw_root)
+        if root.is_file():
+            lower_name = root.name.lower()
+            if root.suffix.lower() in _SIDE_ASSET_SUFFIXES and fragment in lower_name:
+                resolved = str(root.resolve())
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(resolved)
+            continue
+        if not root.is_dir():
+            continue
+        try:
+            files = sorted(root.rglob("*"), key=lambda item: str(item).lower())
+        except Exception:
+            continue
+        for path in files:
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in _SIDE_ASSET_SUFFIXES:
+                continue
+            if fragment not in path.name.lower():
+                continue
+            resolved = str(path.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            candidates.append(resolved)
+    return candidates
+
+
 def build_engine_dependency_checks(
     *,
     engine_capabilities: Mapping[str, Mapping[str, object]],
@@ -271,8 +393,8 @@ def build_engine_dependency_checks(
     text_encoder_slots = _text_encoder_slots(inventory.get("text_encoders"))
     wan_model_count = _count_list_entries(inventory.get("wan22"))
     wan_metadata_count = _count_wan_metadata_repos(inventory.get("metadata"))
-    wan_tenc_roots = [str(Path(p).resolve()) for p in get_paths_for("wan22_tenc")]
-    wan_vae_roots = [str(Path(p).resolve()) for p in get_paths_for("wan22_vae")]
+    wan_tenc_roots = _roots_for_keys(("wan22_tenc",))
+    wan_vae_roots = _roots_for_keys(("wan22_vae",))
     wan_text_encoder_count = _count_assets_in_roots(inventory.get("text_encoders"), wan_tenc_roots)
     wan_vae_count = _count_assets_in_roots(inventory.get("vaes"), wan_vae_roots)
 
@@ -289,8 +411,12 @@ def build_engine_dependency_checks(
             )
         )
 
+        scoped_records = _records_for_semantic_engine(model_api, semantic_engine)
+        checkpoint_count = len(scoped_records)
+        has_core_only_checkpoints = any(bool(getattr(record, "core_only", False)) for record in scoped_records)
+        has_monolithic_checkpoints = any(not bool(getattr(record, "core_only", False)) for record in scoped_records)
+
         if semantic_engine in _CHECKPOINT_REQUIRED_ENGINES:
-            checkpoint_count = _count_checkpoints_for_engine(model_api, semantic_engine)
             has_checkpoint = checkpoint_count > 0
             checks.append(
                 DependencyCheckRow(
@@ -310,6 +436,44 @@ def build_engine_dependency_checks(
 
         contract_engine = contract_owner_for_semantic_engine(semantic_engine)
         contract = contract_for_engine(contract_engine)
+        if semantic_engine == "ltx2":
+            if has_core_only_checkpoints and not has_monolithic_checkpoints:
+                contract = contract_for_core_only(contract_engine)
+            if checkpoint_count > 0:
+                if has_core_only_checkpoints and has_monolithic_checkpoints:
+                    checks.append(
+                        DependencyCheckRow(
+                            id="checkpoint_mix",
+                            label="Checkpoint Mix",
+                            ok=True,
+                            message=(
+                                "Mixed LTX2 inventory discovered: all LTX2 checkpoints still require the external Gemma3 text "
+                                "encoder, while core-only GGUF checkpoints additionally require the external video VAE, embeddings "
+                                "connectors, and the audio bundle."
+                            ),
+                        )
+                    )
+                elif has_core_only_checkpoints:
+                    checks.append(
+                        DependencyCheckRow(
+                            id="checkpoint_mix",
+                            label="Checkpoint Mix",
+                            ok=True,
+                            message=(
+                                "Only core-only LTX2 GGUF checkpoints are currently discovered. External video VAE, Gemma3 text "
+                                "encoder, embeddings connectors, and the audio bundle are required for generation."
+                            ),
+                        )
+                    )
+                else:
+                    checks.append(
+                        DependencyCheckRow(
+                            id="checkpoint_mix",
+                            label="Checkpoint Mix",
+                            ok=True,
+                            message="Only monolithic LTX2 checkpoints are currently discovered.",
+                        )
+                    )
         scoped_vae_roots = _roots_for_keys(_VAE_ROOT_KEYS_BY_CONTRACT_OWNER.get(contract_engine, ()))
         scoped_tenc_roots = _roots_for_keys(_TEXT_ENCODER_ROOT_KEYS_BY_CONTRACT_OWNER.get(contract_engine, ()))
         scoped_vae_count = (
@@ -384,6 +548,60 @@ def build_engine_dependency_checks(
                         ),
                     )
                 )
+
+        if semantic_engine == "ltx2" and has_core_only_checkpoints:
+            connectors_roots = _roots_for_keys(("ltx2_connectors",))
+            connectors_matches = _resolve_named_side_assets_in_roots(
+                roots=connectors_roots,
+                required_name_fragment="embeddings_connectors",
+            )
+            connectors_count = len(connectors_matches)
+            has_connectors = connectors_count == 1
+            checks.append(
+                DependencyCheckRow(
+                    id="connectors_inventory",
+                    label="Embeddings Connectors",
+                    ok=has_connectors,
+                    message=(
+                        f"Exactly one LTX embeddings connectors file discovered: {connectors_matches[0]}."
+                        if connectors_count == 1
+                        else (
+                            "No LTX embeddings connectors discovered. Configure `ltx2_connectors` roots and refresh inventory."
+                            if connectors_count == 0
+                            else (
+                                "Multiple LTX embeddings connectors files discovered. Keep exactly one file containing "
+                                f"'embeddings_connectors' under `ltx2_connectors`: {connectors_matches!r}"
+                            )
+                        )
+                    ),
+                )
+            )
+
+            audio_bundle_matches = _resolve_named_side_assets_in_roots(
+                roots=scoped_vae_roots,
+                required_name_fragment="audio_vae",
+            )
+            audio_bundle_count = len(audio_bundle_matches)
+            has_audio_bundle = audio_bundle_count == 1
+            checks.append(
+                DependencyCheckRow(
+                    id="audio_bundle_inventory",
+                    label="Audio Bundle",
+                    ok=has_audio_bundle,
+                    message=(
+                        f"Exactly one LTX audio bundle discovered: {audio_bundle_matches[0]}."
+                        if audio_bundle_count == 1
+                        else (
+                            "No LTX audio bundle discovered. Configure `ltx2_vae` roots and refresh inventory."
+                            if audio_bundle_count == 0
+                            else (
+                                "Multiple LTX audio bundle files discovered. Keep exactly one file containing "
+                                f"'audio_vae' under `ltx2_vae`: {audio_bundle_matches!r}"
+                            )
+                        )
+                    ),
+                )
+            )
 
         if semantic_engine == "wan22":
             has_wan_models = wan_model_count > 0

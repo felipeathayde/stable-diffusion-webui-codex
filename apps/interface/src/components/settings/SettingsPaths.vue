@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Settings panel for model search paths (`/api/paths`).
-Edits engine-specific checkpoint/VAE/LoRA/text-encoder roots (`sd15/sdxl/flux1/flux2/anima/wan22`) and persists them via the backend paths API,
+Edits engine-specific checkpoint/VAE/LoRA/text-encoder/connectors roots (`sd15/sdxl/flux1/flux2/anima/ltx2/wan22`) and persists them via the backend paths API,
 using `PathList` to manage per-key lists.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -130,6 +130,32 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <div class="panel-section">
+      <h3 class="label-muted">LTX 2.3</h3>
+      <div class="space-y-2">
+        <div>
+          <label class="label-muted">Checkpoints</label>
+          <PathList v-model="paths.ltx2.ckpt" />
+        </div>
+        <div>
+          <label class="label-muted">VAE</label>
+          <PathList v-model="paths.ltx2.vae" />
+        </div>
+        <div>
+          <label class="label-muted">Connectors</label>
+          <PathList v-model="paths.ltx2.connectors" />
+        </div>
+        <div>
+          <label class="label-muted">LoRA</label>
+          <PathList v-model="paths.ltx2.loras" />
+        </div>
+        <div>
+          <label class="label-muted">Text Encoders</label>
+          <PathList v-model="paths.ltx2.tenc" />
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
       <h3 class="label-muted">WAN22</h3>
       <div class="space-y-2">
         <div>
@@ -163,18 +189,19 @@ import { onMounted, reactive } from 'vue'
 import { fetchPaths, updatePaths } from '../../api/client'
 import PathList from './widgets/PathList.vue'
 
-type EngineId = 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'anima' | 'wan22'
-type EnginePaths = { ckpt: string[]; vae: string[]; loras: string[]; tenc: string[] }
+type EngineId = 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'anima' | 'ltx2' | 'wan22'
+type EnginePaths = { ckpt: string[]; vae: string[]; loras: string[]; tenc: string[]; connectors: string[] }
 type EnginePathsState = Record<EngineId, EnginePaths>
 type RawPaths = Record<string, string[]>
 
 const paths = reactive<EnginePathsState>({
-  sd15: { ckpt: [], vae: [], loras: [], tenc: [] },
-  sdxl: { ckpt: [], vae: [], loras: [], tenc: [] },
-  flux1: { ckpt: [], vae: [], loras: [], tenc: [] },
-  flux2: { ckpt: [], vae: [], loras: [], tenc: [] },
-  anima: { ckpt: [], vae: [], loras: [], tenc: [] },
-  wan22: { ckpt: [], vae: [], loras: [], tenc: [] },
+  sd15: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
+  sdxl: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
+  flux1: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
+  flux2: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
+  anima: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
+  ltx2: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
+  wan22: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
 })
 
 const rawPaths = reactive<RawPaths>({})
@@ -221,11 +248,19 @@ async function reload(): Promise<void> {
     paths.anima.vae = getList(loaded, 'anima_vae')
     paths.anima.loras = getList(loaded, 'anima_loras')
     paths.anima.tenc = getList(loaded, 'anima_tenc')
+    paths.anima.connectors = []
+
+    paths.ltx2.ckpt = getList(loaded, 'ltx2_ckpt')
+    paths.ltx2.vae = getList(loaded, 'ltx2_vae')
+    paths.ltx2.loras = getList(loaded, 'ltx2_loras')
+    paths.ltx2.tenc = getList(loaded, 'ltx2_tenc')
+    paths.ltx2.connectors = getList(loaded, 'ltx2_connectors')
 
     paths.wan22.ckpt = getList(loaded, 'wan22_ckpt')
     paths.wan22.vae = getList(loaded, 'wan22_vae')
     paths.wan22.loras = getList(loaded, 'wan22_loras')
     paths.wan22.tenc = getList(loaded, 'wan22_tenc')
+    paths.wan22.connectors = []
   } catch {
     // Keep existing state on failure; errors are surfaced elsewhere.
   }
@@ -264,6 +299,12 @@ async function save(): Promise<void> {
   next.anima_vae = [...paths.anima.vae]
   next.anima_loras = [...paths.anima.loras]
   next.anima_tenc = [...paths.anima.tenc]
+
+  next.ltx2_ckpt = [...paths.ltx2.ckpt]
+  next.ltx2_vae = [...paths.ltx2.vae]
+  next.ltx2_loras = [...paths.ltx2.loras]
+  next.ltx2_tenc = [...paths.ltx2.tenc]
+  next.ltx2_connectors = [...paths.ltx2.connectors]
 
   next.wan22_ckpt = [...paths.wan22.ckpt]
   next.wan22_vae = [...paths.wan22.vae]

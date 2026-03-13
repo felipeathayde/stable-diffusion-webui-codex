@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-03-09
+Last Review: 2026-03-12
 Status: Active
 
 ## Purpose
@@ -38,6 +38,8 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to stores (doc-only change; part of rollout).
 - 2026-01-04: Flux family backend engine keys moved to `flux1*`; `chroma` is a first-class tab type mapped to `flux1_chroma` at request time.
 - 2026-01-18: `engine_capabilities.ts` now also caches backend-provided `asset_contracts` (base + core-only) from `/api/engines/capabilities`; image payload builders use these contracts (plus `models[].core_only`) to enforce required VAE/text encoder selection without duplicating per-engine policy in the UI.
+- 2026-03-12: `engine_capabilities.ts` / `engine_config.ts` / `model_tabs.ts` now include `ltx2` as a first-class video tab family: capabilities can require `ltx2` tabs dynamically, `engine_config.ts` exposes LTX defaults/tasks, and `model_tabs.ts` persists a dedicated `LtxTabParams` contract (`checkpoint`, `vae`, `textEncoder`, mode/prompt/video params) instead of reusing image or WAN param shapes.
+- 2026-03-12: `quicksettings.ts` now recognizes `ltx2` VAE/text-encoder roots (`ltx2_vae`, `ltx2_tenc`) and keeps text-encoder SHA resolution deterministic for LTX generic-video requests.
 - 2026-01-06: Image tab defaults now use canonical sampler/scheduler values aligned to the live executable surface (SD15: `ddim` + `ddim`; SDXL: `euler` + `euler_discrete`; flow: `euler` + `simple`), and store-level normalization only fills blank/missing values (no alias/automatic shims).
 - 2026-01-25: `model_tabs.ts` image-tab defaults now set `clipSkip=0` (auto/default sentinel). Payload builders can still send explicit clip skip values; 0 resets to engine defaults.
 - 2026-01-27: `model_tabs.ts` WAN video params now include `returnFrames` (default false) to control whether frames are included in the final result payload (txt2vid/img2vid full frames; vid2vid preview frames).

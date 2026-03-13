@@ -52,6 +52,7 @@ class SemanticEngine(str, Enum):
     ANIMA = "anima"
     CHROMA = "chroma"
     WAN22 = "wan22"
+    LTX2 = "ltx2"
     HUNYUAN_VIDEO = "hunyuan_video"
     SVD = "svd"
 
@@ -233,6 +234,21 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         default_sampler="uni-pc bh2",
         default_scheduler="simple",
     ),
+    # LTX2 distilled/core-only video workflows (txt2vid/img2vid).
+    SemanticEngine.LTX2: EngineParamSurface(
+        supports_txt2img=False,
+        supports_img2img=False,
+        supports_txt2vid=True,
+        supports_img2vid=True,
+        supports_hires=False,
+        supports_refiner=False,
+        supports_lora=False,
+        supports_controlnet=False,
+        recommended_samplers=("euler", "uni-pc"),
+        recommended_schedulers=("simple",),
+        default_sampler="euler",
+        default_scheduler="simple",
+    ),
     # Hunyuan Video: video-only workflows.
     SemanticEngine.HUNYUAN_VIDEO: EngineParamSurface(
         supports_txt2img=False,
@@ -275,6 +291,7 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "wan22_5b": SemanticEngine.WAN22,
     "wan22_14b": SemanticEngine.WAN22,
     "wan22_14b_animate": SemanticEngine.WAN22,
+    "ltx2": SemanticEngine.LTX2,
     "svd": SemanticEngine.SVD,
     "hunyuan_video": SemanticEngine.HUNYUAN_VIDEO,
 }
@@ -295,6 +312,7 @@ _ENGINE_ID_PRIMARY_FAMILY: Dict[str, ModelFamily] = {
     "wan22_5b": ModelFamily.WAN22_5B,
     "wan22_14b": ModelFamily.WAN22_14B,
     "wan22_14b_animate": ModelFamily.WAN22_ANIMATE,
+    "ltx2": ModelFamily.LTX2,
     "hunyuan_video": ModelFamily.HUNYUAN,
     "svd": ModelFamily.SVD,
 }

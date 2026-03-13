@@ -24,11 +24,12 @@ function normalizePath(path: string): string {
 
 export function enginePrefixForFamily(
   family: TabFamily,
-): 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'wan22' | 'zimage' | 'anima' {
+): 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'wan22' | 'zimage' | 'anima' | 'ltx2' {
   if (family === 'wan') return 'wan22'
   if (family === 'chroma') return 'flux1'
   if (family === 'flux2') return 'flux2'
   if (family === 'anima') return 'anima'
+  if (family === 'ltx2') return 'ltx2'
   return family
 }
 
@@ -70,6 +71,7 @@ export function modelMatchesFamily(
   if (family === 'flux1') return false
   if (family === 'chroma') return title.includes('chroma') || filename.includes('chroma')
   if (family === 'wan') return title.includes('wan') || filename.includes('wan')
+  if (family === 'ltx2') return title.includes('ltx') || filename.includes('ltx')
   if (family === 'zimage') {
     return (
       title.includes('zimage') ||

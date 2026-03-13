@@ -1,14 +1,14 @@
 # apps/interface/src/components/quicksettings Overview
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
-Last Review: 2026-03-06
+Last Review: 2026-03-12
 Status: Active
 
 ## Purpose
 - Compact engine/paths/performance controls rendered in the main header (`QuickSettingsBar.vue`), backed by the global `quicksettings` store.
 
 ## Key Files
-- `QuickSettingsBase.vue` — Generic quicksettings (checkpoint, VAE, optional text encoder) for SD15/SDXL/Anima model tabs; mode toggles are rendered by `QuickSettingsBar.vue`.
+- `QuickSettingsBase.vue` — Generic quicksettings (checkpoint, VAE, optional text encoder) for non-WAN model tabs, including the dedicated LTX branch in `QuickSettingsBar.vue`; mode toggles are rendered by `QuickSettingsBar.vue`.
 - `QuickSettingsPerf.vue` — Performance toggles shared across engines (Smart Offload/Fallback/Cache/Core Streaming) rendered in the Advanced nested area.
 - `QuickSettingsWan.vue` — WAN22-specific quicksettings (Mode preset selector + `LightX2V` toggle button, high/low model dirs, text encoder/VAE selectors, plus a Refresh button).
 - `QuickSettingsFlux.vue` / `QuickSettingsFlux2.vue` / `QuickSettingsZImage.vue` / `QuickSettingsChroma.vue` — FLUX.1 / FLUX.2 Klein / ZImage / Chroma checkpoint-VAE-text-encoder selectors (advanced controls are rendered by `QuickSettingsBar.vue`).
@@ -16,6 +16,8 @@ Status: Active
 ## Notes
 - `QuickSettingsBase` stays presentational and engine-agnostic; engine-specific filtering and labels (e.g. Flux-family dual TE layout, WAN-only selectors) live in `QuickSettingsBar.vue`.
 - `QuickSettingsBar.vue` renders a main row for engine selectors and a collapsible Advanced nested area (Smart toggles + GPU VRAM / Attention Backend / Overrides), with a left-side handle button.
+- 2026-03-12: `QuickSettingsBar.vue` now treats `ltx2` as its own non-image video family: the LTX branch binds checkpoint/VAE/text encoder directly to `tab.params.{checkpoint,vae,textEncoder}`, filters text encoders through `ltx2_tenc`, keeps the TE selector visible even for non-core-only checkpoints, and leaves IMG2IMG/INPAINT image toggles disabled for the LTX lane.
+- 2026-03-12: `QuickSettingsBase.vue` now supports optional text-encoder metadata and add-path buttons through `showTextEncoderActions` + `addTencPath`, reused by the LTX branch.
 - `QuickSettingsPerf` uses toggle buttons (`.qs-toggle-btn`) for Smart Offload/Fallback/Cache/Core Streaming (no legacy switches).
 - 2026-02-22: `QuickSettingsPerf.vue` adds an `Obliterate VRAM` action button (disabled while running), emitted to `QuickSettingsBar.vue` for backend-triggered VRAM cleanup (`POST /api/obliterate-vram`) with safe default external mode (`disabled`).
 - Text encoder dropdowns display a compact label (`family/basename`) even when `/api/paths` or the inventory return long absolute paths; the full value is still posted back in the `<option value>`.

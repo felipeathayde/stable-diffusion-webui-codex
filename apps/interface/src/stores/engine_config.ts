@@ -12,7 +12,7 @@ Variant-dependent engines (for example Z-Image Turbo/Base and FLUX.2 Klein disti
 in views/payload builders, not by these static flags.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `EngineType` (type): Known engine identifiers used by the UI config (includes `flux2` and `anima`).
+- `EngineType` (type): Known engine identifiers used by the UI config (includes `flux2`, `anima`, and `ltx2`).
 - `TaskType` (type): Supported task identifiers (txt2img/img2img/txt2vid/img2vid).
 - `EngineCapabilities` (interface): Capability flags used to gate UI controls (CFG/negative prompt/etc.).
 - `EngineDefaults` (interface): Default generation parameters (width/height/steps/cfg/etc.).
@@ -33,6 +33,7 @@ export type EngineType =
   | 'zimage' 
   | 'chroma'
   | 'anima'
+  | 'ltx2'
   | 'wan22_14b' 
   | 'wan22_5b'
 
@@ -197,6 +198,24 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       height: 1024,
       steps: 30,
       cfg: 4,
+    },
+  },
+
+  ltx2: {
+    id: 'ltx2',
+    label: 'LTX 2.3',
+    capabilities: {
+      tasks: ['txt2vid', 'img2vid'],
+      usesCfg: true,
+      usesDistilledCfg: false,
+      usesNegativePrompt: true,
+      isVideoEngine: true,
+    },
+    defaults: {
+      width: 768,
+      height: 512,
+      steps: 3,
+      cfg: 1,
     },
   },
   

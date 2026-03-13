@@ -1,14 +1,15 @@
 <!-- tags: frontend, settings, paths -->
 # apps/interface/src/components/settings Overview
 Date: 2025-12-04
-Last Review: 2026-03-05
+Last Review: 2026-03-12
 Status: Active
 
 ## Purpose
 - Settings panels for the Codex WebUI (paths, advanced options) that are shared across engine tabs.
 
 ## Notes
-- `SettingsPaths.vue` surfaces engine-specific search roots for models/VAEs/LoRAs/Text Encoders by wiring directly to `apps/paths.json` keys (`sd15_*`, `sdxl_*`, `flux1_*`, `flux2_*`, `anima_*`, `wan22_*`) via `/api/paths`.
+- `SettingsPaths.vue` surfaces engine-specific search roots for models/VAEs/LoRAs/Text Encoders by wiring directly to `apps/paths.json` keys (`sd15_*`, `sdxl_*`, `flux1_*`, `flux2_*`, `anima_*`, `ltx2_*`, `wan22_*`) via `/api/paths`.
+- 2026-03-12: `SettingsPaths.vue` now includes an `LTX 2.3` section covering `ltx2_ckpt`, `ltx2_vae`, `ltx2_connectors`, `ltx2_loras`, and `ltx2_tenc`.
 - Keep the UI layout compatible with other settings panels (use `panel-section`, `label-muted`, and shared widgets such as `PathList.vue`).
 - When extending settings here, keep DTOs in sync with `apps/interface/src/api/types.ts` and backend routes under `apps/backend/interfaces/api/run_api.py`.
 - 2025-12-22: `SettingsForm.vue` no longer uses a Vue SFC `<style scoped>` block; it relies on `apps/interface/src/styles/components/settings-form.css` and uses shared primitives (`select-md`, `slider`, `caption`).

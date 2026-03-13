@@ -285,6 +285,7 @@ _CONTRACT_OWNER_BY_SEMANTIC_ENGINE: dict[str, str] = {
     "zimage": "zimage",
     "anima": "anima",
     "wan22": "wan22_14b",
+    "ltx2": "ltx2",
     "svd": "svd",
     "hunyuan_video": "hunyuan_video",
 }

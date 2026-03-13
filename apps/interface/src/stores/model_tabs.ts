@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the WebUI.
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
-default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
+default parameter shapes per tab type (image vs WAN/LTX video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
 `img2imgUpscaler`) decoupled from backend hires dispatch. WAN video normalization persists no-stretch img2vid guide controls
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
@@ -18,7 +18,7 @@ queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / b
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
-- `ImageTabType` (type): Image-only tab type discriminator (`BaseTabType` without `wan`).
+- `ImageTabType` (type): Image-only tab type discriminator (`BaseTabType` without video tab types).
 - `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
@@ -45,7 +45,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultImageParamsForType` (function): Returns canonical image-tab defaults for a specific image tab type.
 - `normalizeTabType` (function): Validates/coerces raw type values into `BaseTabType`.
 - `BASE_REQUIRED_TYPES` (const): Baseline tab types always auto-created by the UI store.
-- `requiredTypesFromCapabilities` (function): Derives required tab types from backend capability map (adds `anima` only when exposed).
+- `requiredTypesFromCapabilities` (function): Derives required tab types from backend capability map (adds capability-exposed `ltx2`/`anima` tabs).
 - `asRecordObject` (function): Narrowing helper that normalizes unknown values into plain records for merge-safe processing.
 - `isPlainRecord` (function): Validates object values as plain record payloads (no arrays/class instances) for patch serialization safety.
 - `PersistSerializationPhase` (type): Serialization boundary phases used by params persistence snapshots and rollback.
@@ -85,7 +85,7 @@ import {
 import { normalizeWanImg2VidImageScale } from '../utils/wan_img2vid_frame_projection'
 
 export type BaseTabType = ApiTab['type']
-export type ImageTabType = Exclude<BaseTabType, 'wan'>
+export type ImageTabType = Exclude<BaseTabType, 'wan' | 'ltx2'>
 
 export interface BaseTabMeta {
   createdAt: string
@@ -193,6 +193,32 @@ export interface WanAssetsParams {
   vae: string
 }
 
+export type LtxGenerationMode = 'txt2vid' | 'img2vid'
+
+export interface LtxTabParams {
+  schemaVersion: number
+  mode: LtxGenerationMode
+  prompt: string
+  negativePrompt: string
+  width: number
+  height: number
+  fps: number
+  frames: number
+  steps: number
+  cfgScale: number
+  sampler: string
+  scheduler: string
+  seed: number
+  checkpoint: string
+  vae: string
+  textEncoder: string
+  useInitImage: boolean
+  initImageData: string
+  initImageName: string
+  denoiseStrength: number
+  videoReturnFrames: boolean
+}
+
 export type WanTabParams = Record<string, unknown> & {
   schemaVersion: number
   high: WanStageParams
@@ -287,6 +313,7 @@ export type TabParamsByType = {
   zimage: ImageBaseParams
   chroma: ImageBaseParams
   anima: ImageBaseParams
+  ltx2: LtxTabParams
   wan: WanTabParams
 }
 
@@ -355,6 +382,30 @@ const WAN_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'lowFollowsHigh',
 ])
 
+const LTX_PARAM_TOP_LEVEL_KEYS = new Set<string>([
+  'schemaVersion',
+  'mode',
+  'prompt',
+  'negativePrompt',
+  'width',
+  'height',
+  'fps',
+  'frames',
+  'steps',
+  'cfgScale',
+  'sampler',
+  'scheduler',
+  'seed',
+  'checkpoint',
+  'vae',
+  'textEncoder',
+  'useInitImage',
+  'initImageData',
+  'initImageName',
+  'denoiseStrength',
+  'videoReturnFrames',
+])
+
 function buildStoragePayload(tabList: BaseTab[], currentActiveId: string): ModelTabsStorageState {
   const tabRefs: ModelTabsStorageTabRef[] = tabList.map((tab) => ({
     id: tab.id,
@@ -392,7 +443,6 @@ function defaultParams<T extends BaseTabType>(
   type: T,
   opts?: { sampler?: string; scheduler?: string },
 ): TabParamsByType[T] {
-  // Video tabs (WAN)
   if (type === 'wan') {
     const stage = (): WanStageParams => ({
       modelDir: '',
@@ -461,7 +511,36 @@ function defaultParams<T extends BaseTabType>(
     return wanDefaults as TabParamsByType[T]
   }
 
-  // Image tabs (SD15, SDXL, FLUX.1, FLUX.2)
+  if (type === 'ltx2') {
+    const samplingDefaults = fallbackSamplingDefaultsForTabFamily('ltx2')
+    const resolvedSampler = String(opts?.sampler || '').trim() || samplingDefaults.sampler
+    const resolvedScheduler = String(opts?.scheduler || '').trim() || samplingDefaults.scheduler
+    const ltxDefaults: TabParamsByType['ltx2'] = {
+      schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
+      mode: 'txt2vid',
+      prompt: '',
+      negativePrompt: '',
+      width: 768,
+      height: 512,
+      fps: 24,
+      frames: 121,
+      steps: 3,
+      cfgScale: 1,
+      sampler: resolvedSampler,
+      scheduler: resolvedScheduler,
+      seed: -1,
+      checkpoint: '',
+      vae: '',
+      textEncoder: '',
+      useInitImage: false,
+      initImageData: '',
+      initImageName: '',
+      denoiseStrength: 0.5,
+      videoReturnFrames: false,
+    }
+    return ltxDefaults as TabParamsByType[T]
+  }
+
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
   const guidance = (!config.capabilities.usesCfg && defaults.distilledCfg !== undefined) ? defaults.distilledCfg : defaults.cfg
@@ -545,8 +624,8 @@ export function defaultImageParamsForType(
   type: BaseTabType,
   opts?: { sampler?: string; scheduler?: string },
 ): ImageBaseParams {
-  if (type === 'wan') {
-    const msg = "defaultImageParamsForType received 'wan'; expected an image tab type."
+  if (type === 'wan' || type === 'ltx2') {
+    const msg = `defaultImageParamsForType received '${type}'; expected an image tab type.`
     console.error(`[model_tabs] ${msg}`, { type })
     throw new Error(msg)
   }
@@ -580,6 +659,49 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function asParamsRecord(params: TabParamsByType[BaseTabType]): Record<string, unknown> {
   return params as unknown as Record<string, unknown>
+}
+
+function normalizePositiveInt(rawValue: unknown, fallback: number): number {
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) return Math.max(1, Math.trunc(fallback))
+  return Math.max(1, Math.trunc(numeric))
+}
+
+function normalizeLtxMode(rawValue: unknown, fallback: LtxGenerationMode): LtxGenerationMode {
+  const normalized = String(rawValue || '').trim().toLowerCase()
+  if (normalized === 'txt2vid' || normalized === 'img2vid') return normalized
+  return fallback
+}
+
+function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams {
+  const patch = asRecordObject(raw)
+  const merged: LtxTabParams = { ...defaults }
+  for (const [key, value] of Object.entries(patch)) {
+    if (!LTX_PARAM_TOP_LEVEL_KEYS.has(key)) continue
+    ;(merged as unknown as Record<string, unknown>)[key] = value
+  }
+  merged.mode = normalizeLtxMode(patch.mode, defaults.mode)
+  merged.prompt = String(merged.prompt || '')
+  merged.negativePrompt = String(merged.negativePrompt || '')
+  merged.width = normalizePositiveInt(merged.width, defaults.width)
+  merged.height = normalizePositiveInt(merged.height, defaults.height)
+  merged.fps = normalizePositiveInt(merged.fps, defaults.fps)
+  merged.frames = normalizePositiveInt(merged.frames, defaults.frames)
+  merged.steps = normalizePositiveInt(merged.steps, defaults.steps)
+  merged.cfgScale = Number.isFinite(Number(merged.cfgScale)) ? Number(merged.cfgScale) : defaults.cfgScale
+  merged.sampler = String(merged.sampler || '').trim() || defaults.sampler
+  merged.scheduler = String(merged.scheduler || '').trim() || defaults.scheduler
+  merged.seed = Number.isFinite(Number(merged.seed)) ? Math.trunc(Number(merged.seed)) : defaults.seed
+  merged.checkpoint = String(merged.checkpoint || '').trim()
+  merged.vae = String(merged.vae || '').trim()
+  merged.textEncoder = String(merged.textEncoder || '').trim()
+  merged.useInitImage = normalizeBoolean(merged.useInitImage, defaults.useInitImage)
+  merged.initImageData = String(merged.initImageData || '')
+  merged.initImageName = String(merged.initImageName || '')
+  merged.denoiseStrength = Number.isFinite(Number(merged.denoiseStrength)) ? Number(merged.denoiseStrength) : defaults.denoiseStrength
+  merged.videoReturnFrames = normalizeBoolean(merged.videoReturnFrames, defaults.videoReturnFrames)
+  merged.schemaVersion = TAB_PARAMS_SCHEMA_VERSION
+  return merged
 }
 
 function parseParamsSchemaVersion(rawValue: unknown): number | null {
@@ -1112,6 +1234,9 @@ function normalizeParamsForType<T extends BaseTabType>(
   if (type === 'wan') {
     return normalizeWanParams(raw, defaults as TabParamsByType['wan']) as TabParamsByType[T]
   }
+  if (type === 'ltx2') {
+    return normalizeLtxParams(raw, defaults as TabParamsByType['ltx2']) as TabParamsByType[T]
+  }
   const normalized = normalizeImageParams(raw, defaults as ImageBaseParams)
   if (type === 'flux2') {
     normalized.textEncoders = normalized.textEncoders
@@ -1143,6 +1268,9 @@ const BASE_REQUIRED_TYPES: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'flux2', 'c
 
 export function requiredTypesFromCapabilities(engines: Record<string, unknown>): BaseTabType[] {
   const types: BaseTabType[] = [...BASE_REQUIRED_TYPES]
+  if (Object.prototype.hasOwnProperty.call(engines, 'ltx2')) {
+    types.push('ltx2')
+  }
   if (Object.prototype.hasOwnProperty.call(engines, 'anima')) {
     types.push('anima')
   }

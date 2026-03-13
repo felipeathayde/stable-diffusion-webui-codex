@@ -7,8 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: UI persistence and metadata API routes.
-Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`.
-Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type.
+    Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`.
+    Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type and accepts
+    a dedicated `ltx2` video workspace tab type.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for UI endpoints.
@@ -141,7 +142,7 @@ def build_router(
 
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
-    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "flux2", "chroma", "zimage", "wan", "anima"}
+    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "flux2", "chroma", "zimage", "wan", "anima", "ltx2"}
     _IMAGE_PARAM_TOP_LEVEL_KEYS = {
         "schemaVersion",
         "prompt",
@@ -188,6 +189,29 @@ def build_router(
         "assets",
         "lightx2v",
         "lowFollowsHigh",
+    }
+    _LTX_PARAM_TOP_LEVEL_KEYS = {
+        "schemaVersion",
+        "mode",
+        "prompt",
+        "negativePrompt",
+        "width",
+        "height",
+        "fps",
+        "frames",
+        "steps",
+        "cfgScale",
+        "sampler",
+        "scheduler",
+        "seed",
+        "checkpoint",
+        "vae",
+        "textEncoder",
+        "useInitImage",
+        "initImageData",
+        "initImageName",
+        "denoiseStrength",
+        "videoReturnFrames",
     }
     _NESTED_OBJECT_PARAM_KEYS = {
         "guidanceAdvanced",
@@ -243,6 +267,8 @@ def build_router(
     def _allowed_param_keys(tab_type: str) -> set[str]:
         if tab_type == "wan":
             return _WAN_PARAM_TOP_LEVEL_KEYS
+        if tab_type == "ltx2":
+            return _LTX_PARAM_TOP_LEVEL_KEYS
         return _IMAGE_PARAM_TOP_LEVEL_KEYS
 
     def _sanitize_tab_params_patch(

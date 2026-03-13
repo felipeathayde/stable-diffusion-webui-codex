@@ -28,7 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fallbackSamplingDefaultsForTabFamily` (function): Stable frontend fallback sampler/scheduler defaults by tab family.
 */
 
-export type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'chroma' | 'wan' | 'zimage' | 'anima'
+export type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'chroma' | 'wan' | 'zimage' | 'anima' | 'ltx2'
 
 export type SemanticEngine =
   | 'sd15'
@@ -39,6 +39,7 @@ export type SemanticEngine =
   | 'anima'
   | 'chroma'
   | 'wan22'
+  | 'ltx2'
   | 'hunyuan_video'
   | 'svd'
 
@@ -49,6 +50,7 @@ export type EngineRequestId =
   | 'flux1_fill'
   | 'wan22_14b'
   | 'wan22_5b'
+  | 'ltx2'
 
 const TAB_FAMILY_ALIASES: Readonly<Record<string, TabFamily>> = Object.freeze({
   sd15: 'sd15',
@@ -58,6 +60,7 @@ const TAB_FAMILY_ALIASES: Readonly<Record<string, TabFamily>> = Object.freeze({
   chroma: 'chroma',
   zimage: 'zimage',
   anima: 'anima',
+  ltx2: 'ltx2',
   wan: 'wan',
   wan22: 'wan',
   wan22_14b: 'wan',
@@ -74,6 +77,7 @@ const SEMANTIC_ENGINE_SET: ReadonlySet<string> = new Set<string>([
   'anima',
   'chroma',
   'wan22',
+  'ltx2',
   'hunyuan_video',
   'svd',
 ])
@@ -88,6 +92,7 @@ const ENGINE_ID_SET: ReadonlySet<string> = new Set<string>([
   'flux1_fill',
   'zimage',
   'anima',
+  'ltx2',
   'wan22',
   'wan22_14b',
   'wan22_5b',
@@ -103,6 +108,7 @@ const TAB_FAMILY_FALLBACK_SAMPLING: Readonly<Record<TabFamily, SamplingDefaults>
   chroma: { sampler: 'euler', scheduler: 'simple' },
   zimage: { sampler: 'euler', scheduler: 'simple' },
   anima: { sampler: 'euler', scheduler: 'simple' },
+  ltx2: { sampler: 'euler', scheduler: 'simple' },
   wan: { sampler: 'uni-pc', scheduler: 'simple' },
 })
 
@@ -148,7 +154,9 @@ export function resolveImageRequestEngineId(tabType: string, useInitImage: boole
   if (!family) {
     throw new Error(`Unsupported image tab type '${String(tabType)}'.`)
   }
-  if (family === 'wan') return 'wan22'
+  if (family === 'wan' || family === 'ltx2') {
+    throw new Error(`Unsupported image tab type '${String(tabType)}'.`)
+  }
   if (family === 'chroma') return 'flux1_chroma'
   if (family === 'flux1' && useInitImage) return 'flux1_kontext'
   return family

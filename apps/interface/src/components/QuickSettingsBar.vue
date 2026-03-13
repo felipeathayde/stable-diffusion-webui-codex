@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/WAN).
+Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/LTX/WAN).
 Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
 and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders. FLUX.2 stays first-class as the
 current Klein 4B / base-4B slice (single Qwen3-4B selector, shared-taxonomy img2img/inpaint gating, no FLUX.1 aliasing).
@@ -300,6 +300,34 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </template>
 
+      <!-- LTX quicksettings -->
+      <template v-else-if="activeFamily === 'ltx2'">
+        <QuickSettingsBase
+          :checkpoint="effectiveCheckpoint"
+          :checkpoints="filteredModelTitles"
+          :vae="effectiveVae"
+          :vae-choices="filteredVaeChoices"
+          :text-encoder="primaryTextEncoder"
+          :text-encoder-choices="filteredTextEncoderChoices"
+          text-encoder-automatic-label="Select text encoder"
+          :show-text-encoder="true"
+          :show-text-encoder-actions="true"
+          @update:checkpoint="onModelChange"
+          @update:vae="onVaeChange"
+          @update:textEncoder="onPrimaryTextEncoderChange"
+          @addCheckpointPath="onAddCheckpointPath"
+          @addVaePath="onAddVaePath"
+          @addTencPath="onAddTencPath"
+          @showMetadata="onShowMetadata"
+        />
+        <div class="quicksettings-group qs-group-models">
+          <label class="label-muted">Models</label>
+          <div class="qs-row">
+            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          </div>
+        </div>
+      </template>
+
       <!-- Default (SD15/SDXL) quicksettings -->
       <template v-else>
         <QuickSettingsBase
@@ -461,6 +489,7 @@ type InventoryVae = { name: string; path: string; sha256?: string; format: strin
 type InventoryWanGguf = { name: string; path: string; sha256?: string; stage: string }
 type InventoryTextEncoder = { name: string; path: string; sha256?: string }
 type ImageTab = TabByType<'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'zimage' | 'chroma' | 'anima'>
+type LtxTab = TabByType<'ltx2'>
 type WanTab = TabByType<'wan'>
 type AddPathTargetKind = 'checkpoint' | 'vae' | 'text_encoder'
 const inventoryVaes = ref<InventoryVae[]>([])
@@ -621,6 +650,12 @@ function asWanTab(value: unknown): WanTab | null {
   if (!value || typeof value !== 'object') return null
   const candidate = value as { type?: unknown }
   return normalizeTabFamily(candidate.type) === 'wan' ? (value as WanTab) : null
+}
+
+function asLtxTab(value: unknown): LtxTab | null {
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as { type?: unknown }
+  return normalizeTabFamily(candidate.type) === 'ltx2' ? (value as unknown as LtxTab) : null
 }
 
 function tabFamilyFromStorage(tabId: string): TabFamily | null {
@@ -988,6 +1023,7 @@ function isVaeForFamily(name: string, fam: string): boolean {
   if (fam === 'flux1') return fileInPaths(path, 'flux1_vae')
   if (fam === 'flux2') return fileInPaths(path, 'flux2_vae')
   if (fam === 'chroma') return fileInPaths(path, 'flux1_vae')
+  if (fam === 'ltx2') return fileInPaths(path, 'ltx2_vae')
   if (fam === 'zimage') return fileInPaths(path, 'zimage_vae') || fileInPaths(path, 'flux1_vae')  // Z Image uses same VAE as Flux.1
   return true
 }
@@ -1072,7 +1108,7 @@ watch(
   ([family, currentVae, choices, quicksettingsReady]) => {
     if (!route.path.startsWith('/models/')) return
     if (!activeModelTab.value) return
-    if (family === 'wan') return
+    if (family === 'wan' || family === 'ltx2') return
     if (!quicksettingsReady) return
     const persistedFamilyVae = store.getPersistedVaeForFamily(family)
     const sourceVae = String(persistedFamilyVae || '')
@@ -1115,6 +1151,11 @@ const filteredTextEncoderChoices = computed(() => {
       .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux1_tenc'))
       .map((item) => `chroma/${item.path}`)
   }
+  if (fam === 'ltx2') {
+    return inventoryTextEncoders.value
+      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'ltx2_tenc'))
+      .map((item) => `ltx2/${item.path}`)
+  }
   if (fam === 'zimage') {
     // For Z Image, derive choices from inventory.text_encoders constrained by zimage_tenc paths.
     return inventoryTextEncoders.value
@@ -1129,6 +1170,10 @@ const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Bool
 const activeImageTab = computed(() => {
   if (!isModelTabRoute.value) return null
   return asImageTab(activeModelTab.value)
+})
+const activeLtxTab = computed(() => {
+  if (!isModelTabRoute.value) return null
+  return asLtxTab(activeModelTab.value)
 })
 const activeImageSurface = computed(() => {
   const tab = activeImageTab.value
@@ -1198,6 +1243,12 @@ function normalizeTextEncoderLabels(raw: unknown): string[] {
 }
 
 const effectiveTextEncoders = computed(() => {
+  if (activeFamily.value === 'ltx2') {
+    const tab = activeLtxTab.value
+    if (!tab) return store.currentTextEncoders
+    const textEncoder = String(tab.params.textEncoder || '').trim()
+    return textEncoder ? [textEncoder] : []
+  }
   const tab = activeImageTab.value
   if (!tab) return store.currentTextEncoders
   return normalizeTextEncoderLabels(tab.params.textEncoders)
@@ -1210,11 +1261,27 @@ const flux1TextEncoderSecondary = computed(() => flux1TextEncoders.value[1] ?? '
 const flux2TextEncoder = computed(() => effectiveTextEncoders.value.find((label) => label.startsWith('flux2/')) ?? '')
 
 const effectiveCheckpoint = computed(() => {
+  const ltxTab = activeLtxTab.value
+  if (ltxTab) {
+    const checkpoint = String(ltxTab.params.checkpoint || '').trim()
+    if (checkpoint) return checkpoint
+    return filteredModelTitles.value[0] ?? ''
+  }
   const tab = activeImageTab.value
   if (!tab) return store.currentModel
   const ckpt = String(tab.params.checkpoint || '').trim()
   if (ckpt) return ckpt
   return filteredModelTitles.value[0] ?? ''
+})
+
+const effectiveVae = computed(() => {
+  const ltxTab = activeLtxTab.value
+  if (ltxTab) {
+    const vae = String(ltxTab.params.vae || '').trim()
+    if (vae) return vae
+    return filteredVaeChoices.value[0] ?? 'built-in'
+  }
+  return store.currentVae
 })
 
 const activeImageAssetContract = computed(() => {
@@ -1319,6 +1386,23 @@ watch(
     const first = models[0]
     if (!first) return
     updateImageTabParams(tab.id, { checkpoint: first }).catch((error) => {
+      qsToast(error instanceof Error ? error.message : String(error))
+    })
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [activeLtxTab.value?.id ?? '', filteredModelTitles.value] as const,
+  ([tabId, models]) => {
+    if (!tabId) return
+    const tab = activeLtxTab.value
+    if (!tab) return
+    const checkpoint = String(tab.params.checkpoint || '').trim()
+    if (checkpoint) return
+    const first = models[0]
+    if (!first) return
+    updateLtxTabParams(tab.id, { checkpoint: first }).catch((error) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   },
@@ -1526,8 +1610,17 @@ function updateImageTabParams(tabId: string, patch: Partial<ImageBaseParams>): P
   return tabsStore.updateParams(tabId, patch as Partial<Record<string, unknown>>)
 }
 
+function updateLtxTabParams(tabId: string, patch: Partial<LtxTab['params']>): Promise<void> {
+  return tabsStore.updateParams<Record<string, unknown>>(tabId, patch as unknown as Record<string, unknown>)
+}
+
 async function onModelChange(value: string): Promise<void> {
   try {
+    const ltxTab = activeLtxTab.value
+    if (ltxTab) {
+      await updateLtxTabParams(ltxTab.id, { checkpoint: String(value || '') })
+      return
+    }
     const tab = activeImageTab.value
     if (tab) {
       await updateImageTabParams(tab.id, { checkpoint: String(value || '') })
@@ -1541,6 +1634,11 @@ async function onModelChange(value: string): Promise<void> {
 
 async function onVaeChange(value: string): Promise<void> {
   try {
+    const ltxTab = activeLtxTab.value
+    if (ltxTab) {
+      await updateLtxTabParams(ltxTab.id, { vae: String(value || '') })
+      return
+    }
     await store.setVaeForFamily(activeFamily.value, value)
   } catch (error) {
     toastQuicksettingsError(error)
@@ -1624,6 +1722,18 @@ function onPrimaryTextEncoderChange(value: string): void {
     })
   } else if (fam === 'flux2') {
     updateFlux2TextEncoder(value).catch((error) => {
+      qsToast(error instanceof Error ? error.message : String(error))
+    })
+  } else if (fam === 'ltx2') {
+    const tab = activeLtxTab.value
+    const payload = String(value || '').trim()
+    if (tab) {
+      updateLtxTabParams(tab.id, { textEncoder: payload }).catch((error) => {
+        qsToast(error instanceof Error ? error.message : String(error))
+      })
+      return
+    }
+    store.setTextEncoders(payload ? [payload] : []).catch((error) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   } else {

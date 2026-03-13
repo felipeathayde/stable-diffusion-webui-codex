@@ -6,11 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Base quicksettings selectors for diffusion tabs (SD15/SDXL).
-Renders Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, emitting updates and “add path” actions to the parent quicksettings bar.
+Purpose: Base quicksettings selectors for non-WAN model tabs.
+Renders Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, emitting updates and add-path/metadata actions to the parent quicksettings bar.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `QuickSettingsBase` (component): Base quicksettings selectors for diffusion model tabs.
+- `QuickSettingsBase` (component): Base quicksettings selectors for non-WAN model tabs.
 - `isVaeSentinel` (function): Returns whether a VAE value is a sentinel selection (built-in/none) without metadata.
 - `vaeLabel` (function): Formats canonical VAE sentinel values for dropdown display.
 - `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder dropdown values.
@@ -69,10 +69,31 @@ Symbols (top-level; keep in sync; no ghosts):
     <div v-if="showTextEncoder !== false" class="quicksettings-group qs-group-text-encoder">
       <label class="label-muted">Text Encoder</label>
       <div class="qs-row">
-        <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
-          <option value="">{{ textEncoderAutomaticLabel }}</option>
-          <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
-        </select>
+        <div class="qs-pair">
+          <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ textEncoderAutomaticLabel }}</option>
+            <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
+          </select>
+          <button
+            v-if="showTextEncoderActions"
+            class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+            type="button"
+            :disabled="!textEncoder"
+            title="Show text encoder metadata"
+            aria-label="Show text encoder metadata"
+            @click="$emit('showMetadata', { kind: 'text_encoder', value: textEncoder })"
+          >
+            i
+          </button>
+          <button
+            v-if="showTextEncoderActions"
+            class="btn qs-btn-outline qs-inline-btn"
+            type="button"
+            @click="$emit('addTencPath')"
+          >
+            +
+          </button>
+        </div>
       </div>
     </div>
 </template>
@@ -84,9 +105,10 @@ const props = defineProps<{
   vae: string
   vaeChoices: string[]
   textEncoder: string
-  textEncoderChoices: any
+  textEncoderChoices: string[]
   textEncoderAutomaticLabel?: string
   showTextEncoder?: boolean
+  showTextEncoderActions?: boolean
 }>()
 
 defineEmits<{
@@ -95,6 +117,7 @@ defineEmits<{
   (e: 'update:textEncoder', value: string): void
   (e: 'addCheckpointPath'): void
   (e: 'addVaePath'): void
+  (e: 'addTencPath'): void
   (e: 'showMetadata', payload: { kind: 'checkpoint' | 'vae' | 'text_encoder'; value: string }): void
 }>()
 

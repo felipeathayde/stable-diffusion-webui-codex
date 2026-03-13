@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-09
+Last Review: 2026-03-12
 Status: Active
 
 ## Purpose
@@ -14,6 +14,7 @@ Status: Active
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.hires.refiner`; `HiresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
 - 2026-02-08: swap-model payload semantics now use `switch_at_step` (not `steps`) in both global and hires nested refiner payloads; frontend form state uses `swapAtStep`.
 - `payloads_video.ts` provides typed (Zod) payload builders for WAN video endpoints (sha-first): stages use `model_sha` + optional `loras[]` entries (`{sha, weight?}`), TE/VAE use sha selection, and builders guard against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for `vid2vid_model_dir` and stage `model_dir`.
+- 2026-03-12: `payloads_ltx_video.ts` provides dedicated typed (Zod) payload builders for the generic LTX video lane (`/api/txt2vid` + `/api/img2vid`), emitting only the generic selectors (`engine/model/model_sha/vae_sha/tenc_sha`) plus canonical `euler`/`simple` sampling, `4n+1` frame counts, 16px-snapped dimensions, and top-level `video_return_frames`; LTX `img2vid` does not emit a denoise field because the backend generic route does not accept one today.
 - 2026-01-23: `payloads_video.ts` snaps WAN video `width/height` up to a multiple of 16 (rounded up; Diffusers parity) so requests never trip backend `%16` validation.
 - 2026-01-23: `client.ts` now extracts FastAPI `{"detail": ...}` error bodies into readable `Error.message` strings (no more opaque “400 Bad Request”).
 - 2026-01-24: Removed the static `/settings_schema.json` fallback; the frontend now requires `/api/settings/schema` to be available.

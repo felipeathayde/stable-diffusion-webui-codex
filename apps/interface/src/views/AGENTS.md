@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-09
+Last Review: 2026-03-12
 Status: Active
 
 ## Purpose
@@ -14,7 +14,10 @@ Status: Active
 - 2026-03-06: `Home.vue` and `ModelsList.vue` tab-creation selectors include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` persists per-tab profiles under a dedicated `flux2` key, preserves capability-driven img2img state, resolves FLUX.2 CFG/negative-prompt semantics from the selected Klein 4B vs base-4B checkpoint, keeps FLUX.2 img2img denoise truthful/visible, and gates img2img hires through shared capability + mask policy (Kontext defaults remain FLUX.1-only).
 - All generation workspaces live under model tabs (`/models/:tabId`):
   - `ModelTabView.vue` mounts `WANTab.vue` when `tab.type === 'wan'`.
+- `ModelTabView.vue` mounts `LTXTab.vue` when `tab.type === 'ltx2'`.
 - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|flux2|chroma|zimage|anima`.
+- 2026-03-12: `LTXTab.vue` is the dedicated generic-video LTX workspace. It owns only LTX mode/prompt/video/init-image controls and reuses `useLtxVideoGeneration(tabId)` for `/api/txt2vid` + `/api/img2vid`; checkpoint/VAE/text-encoder selection stays in `QuickSettingsBar.vue`.
+- 2026-03-12: `Home.vue` and `ModelsList.vue` now expose `LTX 2.3` creation only when backend capabilities advertise `ltx2`; manual creation without capability fails loud.
 - `Home.vue` is the engine-agnostic landing page and the canonical place to manage tabs (enable/disable, rename, duplicate, remove).
 - `WANTab.vue` uses typed WAN video payload builders and `useVideoGeneration(tabId)` for streaming progress.
 - `ImageModelTab.vue` mirrors the legacy engine-tab layout (same `panels` + `panel-stack` structure as WAN): PromptCard (prompt + optional init-image controls), Basic parameters (txt2img: `BasicParametersCard`; img2img: `Img2ImgBasicParametersCard`) + optional Hires/Refiner, RunCard (batch dropdown + unified status panel), ResultsCard (gentime/actions), ResultViewer gallery, and an Info panel; generation/payload wiring lives in `useGeneration(tabId)` and capability gating uses `useEngineCapabilitiesStore()`.

@@ -6,6 +6,7 @@ Key files:
 - `apps/backend/runtime/state_dict/keymap_flux_transformer.py`: Flux transformer key-style resolver (native/source Diffusers or internal fused layout → Flux runtime lookup space).
 - `apps/backend/runtime/state_dict/keymap_flux2_transformer.py`: FLUX.2 transformer key-style resolver (legacy fused core layout or native/source Diffusers → Diffusers `Flux2Transformer2DModel` lookup space).
 - `apps/backend/runtime/state_dict/key_mapping.py`: Strict key-style detection + keyspace resolver core (fail loud; collision/ambiguity checks).
+- `apps/backend/runtime/state_dict/keymap_gemma3_text_encoder.py`: Gemma3 text-only GGUF key-style resolver (llama.cpp GGUF or native HF text-backbone layout → `Gemma3TextModel` lookup space).
 - `apps/backend/runtime/state_dict/keymap_llama_gguf.py`: llama.cpp-style GGUF tensor-name resolver for text models (HF key layout).
 - `apps/backend/runtime/state_dict/keymap_qwen_text_encoder.py`: Qwen text-encoder key-style resolver (HF/wrapped layouts → canonical `model.*` backbone keys; optional aux heads accepted).
 - `apps/backend/runtime/state_dict/keymap_sdxl_clip.py`: SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
@@ -41,5 +42,6 @@ Notes:
 - 2026-03-06: WAN video request allowlists were moved out of `keymap_wan22_transformer.py` into `apps/backend/interfaces/api/wan_video_request_keys.py`; the WAN22 keymap module now owns only transformer keyspace understanding and LoRA logical-key resolution.
 - 2026-03-03: Added strict generic Qwen text-encoder keymap (`keymap_qwen_text_encoder.py`) covering wrapped HF layouts and known auxiliary heads (`lm_head.*`, `visual.*`) while failing loud on unknown keyspaces.
 - 2026-03-06: Added family-scoped Flux / FLUX.2 / Z Image GGUF keyspace resolvers so native/source checkpoints can be interpreted through lazy lookup views (including fused/unfused tensor conventions) without materializing remapped state dicts.
+- 2026-03-12: Added strict Gemma3 text-only GGUF keyspace resolution in `keymap_gemma3_text_encoder.py` for the LTX2 Gemma3 external loader path; it accepts llama.cpp GGUF text keys or already-native `Gemma3TextModel` keys and exposes only a lookup view.
 
-Last Review: 2026-03-07
+Last Review: 2026-03-12

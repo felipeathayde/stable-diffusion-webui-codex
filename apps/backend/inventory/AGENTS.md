@@ -26,3 +26,4 @@ Status: Active
 - 2026-01-03: Added standardized file header docstring to `cache.py` (doc-only change; part of rollout).
 - 2026-01-21: Inventory now requires `sha256` for file assets; `cache.py` falls back to direct hashing when the registry cache fails and clears the sha→path cache on `init()/refresh()`.
 - 2026-02-11: `cache.py` now exposes `resolve_vae_path_by_sha(...)` with a VAE-only SHA→path cache (`_SHA_TO_VAE_PATH`) so API contracts can reject non-VAE assets passed via `extras.vae_sha` before runtime load.
+- 2026-03-12: Inventory discovery now includes `ltx2_tenc`, `ltx2_vae`, and `ltx2_loras` roots; generic inventory intentionally filters `mmproj` out of text-encoder listings and filters `audio_vae` bundles out of VAE listings so the real LTX 2.3 split pack does not get mislabeled.

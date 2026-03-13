@@ -7,11 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Audio-component and export-asset helpers for the native LTX2 seam.
-Validates the parser-owned audio VAE/vocoder fragments, materializes generated LTX2 audio into a temporary WAV file,
-and wraps that file into the shared `AudioExportAsset` contract used by canonical video export paths.
+Validates parser-owned audio VAE fragments plus the supported vocoder stored layouts, splits combined LTX 2.3 audio
+bundles (`audio_vae.*` + `vocoder.*`), materializes generated LTX2 audio into a temporary WAV file, and wraps that file
+into the shared `AudioExportAsset` contract used by canonical video export paths.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `is_ltx2_wrapped_vocoder_state` (function): Detect whether a parser-owned LTX2 vocoder mapping uses the real 2.3 wrapped owner groups.
 - `validate_ltx2_audio_bundle_contract` (function): Validate required LTX2 audio-VAE and vocoder sentinel keys.
+- `split_ltx2_audio_bundle_state` (function): Split a combined LTX audio bundle file into `audio_vae` and `vocoder` component mappings.
 - `build_ltx2_audio_export_asset` (function): Build a shared `AudioExportAsset` from a generated LTX2 audio file.
 - `materialize_ltx2_generated_audio_asset` (function): Write generated waveform data to a temp WAV and wrap it as `AudioExportAsset`.
 """
@@ -28,6 +31,25 @@ import torch
 
 from apps.backend.runtime.pipeline_stages.video import AudioExportAsset
 
+_LEGACY_VOCODER_TOP_LEVEL_PREFIXES = frozenset({"conv_pre", "ups", "resblocks", "conv_post"})
+_WRAPPED_23_VOCODER_TOP_LEVEL_PREFIXES = frozenset({"bwe_generator", "mel_stft", "vocoder"})
+
+
+def is_ltx2_wrapped_vocoder_state(vocoder_state: Mapping[str, Any]) -> bool:
+    raw_keys = tuple(str(key) for key in vocoder_state.keys())
+    if not raw_keys:
+        raise RuntimeError("LTX2 vocoder bundle is empty after split.")
+
+    top_level_prefixes = {key.split(".", 1)[0] for key in raw_keys}
+    has_legacy = bool(top_level_prefixes & _LEGACY_VOCODER_TOP_LEVEL_PREFIXES)
+    has_wrapped_23 = bool(top_level_prefixes & _WRAPPED_23_VOCODER_TOP_LEVEL_PREFIXES)
+    if has_legacy and has_wrapped_23:
+        raise RuntimeError(
+            "LTX2 vocoder bundle mixes legacy raw and 2.3 wrapper groups. "
+            f"Top-level prefixes={sorted(top_level_prefixes)!r}."
+        )
+    return has_wrapped_23
+
 
 def validate_ltx2_audio_bundle_contract(
     *,
@@ -37,10 +59,80 @@ def validate_ltx2_audio_bundle_contract(
     if "per_channel_statistics.mean-of-means" not in audio_vae_state:
         raise RuntimeError("LTX2 audio VAE bundle is missing `per_channel_statistics.mean-of-means`.")
 
-    required_vocoder = ("conv_pre.weight", "conv_post.weight")
-    missing_vocoder = [key for key in required_vocoder if key not in vocoder_state]
-    if missing_vocoder:
-        raise RuntimeError(f"LTX2 vocoder bundle is missing required keys: {missing_vocoder!r}")
+    raw_keys = tuple(str(key) for key in vocoder_state.keys())
+    top_level_prefixes = {key.split(".", 1)[0] for key in raw_keys}
+    has_wrapped_23 = is_ltx2_wrapped_vocoder_state(vocoder_state)
+
+    if has_wrapped_23:
+        unexpected = sorted(top_level_prefixes - _WRAPPED_23_VOCODER_TOP_LEVEL_PREFIXES)
+        if unexpected:
+            raise RuntimeError(
+                "Unsupported LTX2 2.3 wrapped vocoder bundle layout. "
+                f"Unexpected top-level prefixes={unexpected!r}."
+            )
+        required_wrapped = (
+            "bwe_generator.conv_pre.weight",
+            "bwe_generator.conv_post.weight",
+            "mel_stft.mel_basis",
+            "vocoder.conv_pre.weight",
+            "vocoder.conv_post.weight",
+        )
+        missing_wrapped = [key for key in required_wrapped if key not in vocoder_state]
+        if missing_wrapped:
+            raise RuntimeError(
+                "LTX2 2.3 wrapped vocoder bundle is missing required keys: "
+                f"{missing_wrapped!r}"
+            )
+        return
+
+    required_legacy = ("conv_pre.weight", "conv_post.weight")
+    missing_legacy = [key for key in required_legacy if key not in vocoder_state]
+    if missing_legacy:
+        raise RuntimeError(f"LTX2 vocoder bundle is missing required keys: {missing_legacy!r}")
+
+    unexpected = sorted(top_level_prefixes - _LEGACY_VOCODER_TOP_LEVEL_PREFIXES)
+    if unexpected:
+        raise RuntimeError(
+            "Unsupported legacy LTX2 vocoder bundle layout. "
+            f"Unexpected top-level prefixes={unexpected!r}."
+        )
+
+
+def split_ltx2_audio_bundle_state(state_dict: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    audio_vae_state: dict[str, Any] = {}
+    vocoder_state: dict[str, Any] = {}
+
+    for raw_key, value in state_dict.items():
+        key = str(raw_key)
+        if key.startswith("audio_vae."):
+            stripped = key[len("audio_vae.") :]
+            if not stripped:
+                raise RuntimeError("LTX2 combined audio bundle contains an empty `audio_vae.` key.")
+            if stripped in audio_vae_state:
+                raise RuntimeError(f"LTX2 combined audio bundle collides in audio_vae after prefix split: {stripped!r}.")
+            audio_vae_state[stripped] = value
+            continue
+        if key.startswith("vocoder."):
+            stripped = key[len("vocoder.") :]
+            if not stripped:
+                raise RuntimeError("LTX2 combined audio bundle contains an empty `vocoder.` key.")
+            if stripped in vocoder_state:
+                raise RuntimeError(f"LTX2 combined audio bundle collides in vocoder after prefix split: {stripped!r}.")
+            vocoder_state[stripped] = value
+
+    if not audio_vae_state:
+        raise RuntimeError(
+            "LTX2 combined audio bundle is missing `audio_vae.*` tensors. "
+            "Provide the real combined LTX audio bundle file, not a video VAE or unrelated side asset."
+        )
+    if not vocoder_state:
+        raise RuntimeError(
+            "LTX2 combined audio bundle is missing `vocoder.*` tensors. "
+            "Provide the real combined LTX audio bundle file, not a partial audio-only asset."
+        )
+
+    validate_ltx2_audio_bundle_contract(audio_vae_state=audio_vae_state, vocoder_state=vocoder_state)
+    return audio_vae_state, vocoder_state
 
 
 def build_ltx2_audio_export_asset(

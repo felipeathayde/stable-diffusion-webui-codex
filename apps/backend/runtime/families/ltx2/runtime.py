@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Typed bundle rehydration, native runtime assembly, and run-result contracts for the LTX2 seam.
 Rebuilds the loader-produced LTX2 planning contract from a generic diffusion bundle, assembles the dedicated native
-runtime from local `apps/**` modules, and normalizes execution results into the family-local
+runtime from local `apps/**` modules (including optional wrapper-backed transformer-core streaming), and normalizes
+execution results into the family-local
 `frames + AudioExportAsset + metadata` contract consumed by the canonical video use-cases.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -37,7 +38,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.pipeline_stages.video import AudioExportAsset
 
-from .audio import materialize_ltx2_generated_audio_asset
+from .audio import is_ltx2_wrapped_vocoder_state, materialize_ltx2_generated_audio_asset
 from .model import Ltx2BundleInputs, Ltx2ComponentStates, Ltx2TextEncoderAsset, Ltx2VendorPaths
 from .text_encoder import Ltx2TextEncoderRuntime, load_ltx2_text_encoder_runtime
 
@@ -72,6 +73,7 @@ class Ltx2NativeComponents:
     audio_sample_rate_hz: int
     runtime_impl: str
     transformers_version: str
+    core_streaming_enabled: bool
 
 
 def _resolve_ltx2_sampler_contract(request: Any) -> tuple[str | None, str | None, str, str]:
@@ -268,7 +270,11 @@ def build_ltx2_native_components(
     bundle_inputs: Ltx2BundleInputs,
     device: str,
     dtype: str,
+    engine_options: Mapping[str, Any] | None = None,
 ) -> Ltx2NativeComponents:
+    from .streaming import Ltx2StreamingConfig, wrap_for_streaming
+
+    streaming_config = Ltx2StreamingConfig.from_options(engine_options)
     symbols = _import_native_ltx2_runtime_symbols()
     resolved_device = _resolve_device_name(device)
     torch_dtype = _as_torch_dtype(dtype)
@@ -307,6 +313,19 @@ def build_ltx2_native_components(
         device=resolved_device,
         torch_dtype=torch_dtype,
     )
+    if streaming_config.enabled:
+        logger.info(
+            "[ltx2] enabling transformer-core streaming (policy=%s blocks_per_segment=%d window_size=%d)",
+            streaming_config.policy,
+            streaming_config.blocks_per_segment,
+            streaming_config.window_size,
+        )
+        transformer = wrap_for_streaming(
+            transformer,
+            policy=streaming_config.policy,
+            blocks_per_segment=streaming_config.blocks_per_segment,
+            window_size=streaming_config.window_size,
+        )
     vae = _load_native_component_module(
         label="video_vae",
         module_cls=symbols["Ltx2VideoAutoencoder"],
@@ -323,10 +342,20 @@ def build_ltx2_native_components(
         device=resolved_device,
         torch_dtype=torch_dtype,
     )
+    vocoder_config = bundle_inputs.vocoder_config
+    if is_ltx2_wrapped_vocoder_state(bundle_inputs.components.vocoder):
+        if vocoder_config is None:
+            raise RuntimeError(
+                "LTX2 wrapped vocoder assembly requires metadata-carried `vocoder_config`. "
+                "The bundle lost the real audio-bundle wrapper config."
+            )
+    else:
+        if vocoder_config is None:
+            vocoder_config = _read_component_config(repo_dir, "vocoder")
     vocoder = _load_native_component_via_loader(
         label="vocoder",
         loader_fn=symbols["load_ltx2_vocoder"],
-        config=_read_component_config(repo_dir, "vocoder"),
+        config=vocoder_config,
         state_dict=bundle_inputs.components.vocoder,
         device=resolved_device,
         torch_dtype=torch_dtype,
@@ -349,6 +378,7 @@ def build_ltx2_native_components(
         audio_sample_rate_hz=audio_sample_rate_hz,
         runtime_impl="native",
         transformers_version=str(symbols["transformers_version"]),
+        core_streaming_enabled=streaming_config.enabled,
     )
 
 
@@ -572,11 +602,24 @@ def require_ltx2_bundle_inputs(bundle: object) -> Ltx2BundleInputs:
     if not vendor_paths.repo_dir or not vendor_paths.model_index_path or not vendor_paths.connectors_config_path:
         raise RuntimeError("LTX2 runtime bundle metadata is missing vendored LTX2 metadata paths.")
 
-    return Ltx2BundleInputs(
+    vocoder_config = metadata.get("vocoder_config")
+    if vocoder_config is not None and not isinstance(vocoder_config, Mapping):
+        raise RuntimeError(
+            "LTX2 runtime bundle metadata field `vocoder_config` must be a mapping when present; "
+            f"got {type(vocoder_config).__name__}."
+        )
+
+    bundle_inputs = Ltx2BundleInputs(
         model_ref=model_ref,
         signature=signature,
         estimated_config=estimated_config,
         components=Ltx2ComponentStates.from_component_map(components),
         text_encoder=text_encoder,
         vendor_paths=vendor_paths,
+        vocoder_config=vocoder_config,
     )
+    if is_ltx2_wrapped_vocoder_state(bundle_inputs.components.vocoder) and bundle_inputs.vocoder_config is None:
+        raise RuntimeError(
+            "LTX2 runtime bundle rehydration requires metadata-carried `vocoder_config` for wrapped 2.3 vocoder states."
+        )
+    return bundle_inputs

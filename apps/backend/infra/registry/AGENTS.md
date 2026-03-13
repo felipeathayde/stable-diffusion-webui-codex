@@ -25,3 +25,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to `base.py`, `embeddings.py`, `lora.py`, `text_encoder_roots.py`, and package `__init__.py` (doc-only change; part of rollout).
 - 2026-02-05: `text_encoder_roots.py` now maps `ModelFamily.ANIMA` to `apps/paths.json["anima_tenc"]` so registry listings cover Anima text-encoder roots.
 - 2026-02-16: `text_encoder_roots.py` now exposes explicit WAN22 variant families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) mapped to `wan22_tenc` roots.
+- 2026-03-12: `text_encoder_roots.py` now maps `ModelFamily.LTX2` to `apps/paths.json["ltx2_tenc"]` so diagnostics and inventory-adjacent listings reflect the dedicated LTX2 text-encoder root.

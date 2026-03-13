@@ -12,5 +12,7 @@ Notes:
 - 2026-01-28: `io.py` now also exposes `read_gguf_metadata(...)` so engines can inspect trusted GGUF provenance without importing `apps.backend.quantization.*` directly (import guardrail compliance).
 - 2026-02-15: `load_gguf_state_dict(...)` device argument is now used across WAN22/Flow16 call sites to place loaded tensors directly on the target runtime device (no hidden CPU-only assumption).
 - 2026-03-11: `load_torch_file(...)` treats both `.safetensor` and `.safetensors` as lazy SafeTensors sources; singular-extension checkpoints must not fall through to guarded pickle loading.
+- 2026-03-12: `io.py` also exposes `read_safetensors_metadata(...)` so runtime-family loaders can carry exact SafeTensors header config (for example the real LTX 2.3 wrapped vocoder config) without materializing a second state dict or inventing hardcoded defaults.
+- 2026-03-12: `read_arbitrary_config(...)` now accepts both `config.json` and `scheduler_config.json` so vendored scheduler directories stay first-class config sources instead of special-case failures.
 
-Last Review: 2026-03-11
+Last Review: 2026-03-12

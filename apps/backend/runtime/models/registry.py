@@ -10,7 +10,7 @@ Purpose: Checkpoint/VAE discovery with sha256 and layout-metadata caching.
 Scans configured model roots (via `apps/paths.json` accessors) for checkpoint and VAE weight files, including file-level checkpoint entries,
 computes sha256 hashes, and maintains a persistent cache in `models/.hashes.json` (schema v2) for fast UI inventory, backend SHA-based
 resolution, and CLIP layout metadata reuse. Paths config resolution is fail-loud (no silent fallback to defaults on invalid config payloads).
-Family hints and root selection cover SD/Flux/Anima/WAN/ZImage keyspaces.
+Family hints and root selection cover SD/Flux/Anima/WAN/ZImage/LTX2 keyspaces while generic VAE inventory excludes audio-bundle files.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_models_root` (function): Returns the default `models/` directory under `CODEX_ROOT`.
@@ -485,6 +485,7 @@ class ModelRegistry:
                     "sdxl": "sdxl",
                     "flux": "flux1",
                     "flux2": "flux2",
+                    "ltx2": "ltx2",
                     "zimage": "zimage",
                     "anima": "anima",
                     "wan22": "wan22",
@@ -510,7 +511,7 @@ class ModelRegistry:
 
     def _scan_vaes(self) -> Iterable[VAERecord]:
         candidates: List[Path] = []
-        for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "flux2_vae", "anima_vae", "wan22_vae", "zimage_vae"):
+        for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "flux2_vae", "ltx2_vae", "anima_vae", "wan22_vae", "zimage_vae"):
             for raw in get_paths_for(key):
                 p = Path(raw)
                 if p not in candidates:
@@ -519,11 +520,16 @@ class ModelRegistry:
         files: List[Path] = []
         for root in candidates:
             if root.is_file() and root.suffix.lower() in _VAE_EXTS:
-                files.append(root)
+                if "audio_vae" not in root.name.lower():
+                    files.append(root)
             elif root.is_dir():
                 try:
                     for path in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
-                        if path.is_file() and path.suffix.lower() in _VAE_EXTS:
+                        if (
+                            path.is_file()
+                            and path.suffix.lower() in _VAE_EXTS
+                            and "audio_vae" not in path.name.lower()
+                        ):
                             files.append(path)
                 except Exception:
                     continue
@@ -549,9 +555,9 @@ class ModelRegistry:
         """Iterate over checkpoint files using paths.json overrides + curated defaults.
 
         Resolution order:
-        1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, flux2_ckpt, wan22_ckpt).
+        1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, flux2_ckpt, ltx2_ckpt, wan22_ckpt).
            Entries may be directories (recursive scan) or individual files.
-        2) Built-in defaults under models/: per-engine folders only (sd15, sdxl, flux, wan22, zimage).
+        2) Built-in defaults under models/: per-engine folders only (sd15, sdxl, flux, flux2, ltx2, anima, wan22, zimage).
 
         This replaces the legacy scatter of ad-hoc checkpoint folders ('stable-diffusion', 'sd', 'checkpoints').
         """
@@ -559,7 +565,7 @@ class ModelRegistry:
 
         # 1) User overrides from apps/paths.json per engine.
         # Fail loud when paths config cannot be resolved (no silent fallback).
-        for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "flux2_ckpt", "anima_ckpt", "wan22_ckpt", "zimage_ckpt"):
+        for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "flux2_ckpt", "ltx2_ckpt", "anima_ckpt", "wan22_ckpt", "zimage_ckpt"):
             for raw in get_paths_for(key):
                 p = Path(raw)
                 if p not in candidates:
@@ -573,6 +579,7 @@ class ModelRegistry:
                 self._models_root / "sdxl",
                 self._models_root / "flux",
                 self._models_root / "flux2",
+                self._models_root / "ltx2",
                 self._models_root / "anima",
                 self._models_root / "wan22",
                 self._models_root / "zimage",

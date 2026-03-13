@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Canonical per-engine asset requirements (VAE/text encoders) for generation requests.
 Centralizes “what is required” so UI ↔ API ↔ loader can stay in sync and drift cannot reappear via duplicated `engine_id in (...)` logic.
-    Includes sha-selected external-asset engines (e.g., FLUX.2 Klein, Z-Image, and Anima) where VAE/text-encoder weights must be provided explicitly.
+    Includes sha-selected external-asset engines (e.g., FLUX.2 Klein, LTX2 GGUF core-only, Z-Image, and Anima) where VAE/text-encoder
+    weights must be provided explicitly.
 WAN22 engine variants (`wan22_5b`, `wan22_14b`, `wan22_14b_animate`) are modeled as explicit engine contracts with strict owner mapping.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -225,8 +226,9 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
         tenc_kind=TextEncoderKind.GEMMA,
         sha_only=True,
         notes=(
-            "Monolithic LTX2 checkpoint bundles transformer/connectors/video-audio decoders; "
-            "requires exactly 1 external Gemma3-12B text encoder via sha selection."
+            "Non-core-only LTX2 checkpoint path keeps transformer / merged connector surface / video-audio decoders inside the "
+            "checkpoint and still requires exactly 1 external Gemma3-12B text encoder via sha selection. The current distilled GGUF "
+            "pack uses the core-only contract instead."
         ),
     ),
     "svd": EngineAssetContract(
@@ -335,11 +337,24 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
         "wan22_5b",
         "wan22_14b",
         "wan22_14b_animate",
-        "ltx2",
         "svd",
         "hunyuan_video",
     ):
         return contract_for_engine(owner)
+
+    if owner == "ltx2":
+        return EngineAssetContract(
+            requires_vae=True,
+            tenc_slots=("gemma3_12b",),
+            tenc_slot_labels=("Gemma3-12B",),
+            tenc_kind=TextEncoderKind.GEMMA,
+            sha_only=True,
+            notes=(
+                "Core-only LTX2 GGUF checkpoint requires an external video VAE and exactly 1 external Gemma3-12B text encoder via sha "
+                "selection. Embeddings connectors and the combined audio bundle resolve internally from configured LTX2 roots; mmproj and "
+                "optional upscalers are outside this base contract."
+            ),
+        )
 
     if owner == "flux1_chroma":
         return EngineAssetContract(

@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: External Gemma3 text-encoder resolution and loading for the native LTX2 seam.
 Normalizes the resolved override map into exactly one external LTX2 text-encoder asset path, then materializes the
 Gemma3 model + tokenizer runtime pair from the vendored LTX2 metadata repo without importing `.refs/**` or inventing
-alternate runtime key layouts.
+alternate runtime key layouts. Multimodal projector (`mmproj`) files are rejected explicitly; they are not LTX text
+encoders.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2TextEncoderRuntime` (dataclass): Loaded Gemma3 model + tokenizer pair for LTX2 execution.
@@ -19,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 import logging
 import os
@@ -27,8 +29,9 @@ from typing import Any, Mapping
 
 import torch
 
-from apps.backend.runtime.checkpoint.io import load_torch_file
+from apps.backend.runtime.checkpoint.io import load_gguf_state_dict, load_torch_file
 from apps.backend.runtime.ops.operations_gguf import is_packed_gguf_artifact
+from apps.backend.runtime.state_dict.keymap_gemma3_text_encoder import resolve_gemma3_text_encoder_keyspace
 from .model import Ltx2TextEncoderAsset, Ltx2VendorPaths
 
 _ALLOWED_TEXT_ENCODER_SUFFIXES = (".gguf", ".safetensor", ".safetensors")
@@ -84,6 +87,32 @@ def _place_gguf_non_quant_tensors(
                     submodule_obj._buffers[buffer_name] = buffer.to(device=device, dtype=target_dtype)
 
 
+@contextlib.contextmanager
+def _patched_gemma3_text_embedding(modeling_gemma3: Any):
+    original = getattr(modeling_gemma3, "Gemma3TextScaledWordEmbedding", None)
+    if original is None:
+        raise RuntimeError("LTX2 Gemma3 GGUF load requires Gemma3TextScaledWordEmbedding in transformers.")
+    class CodexGemma3TextScaledWordEmbedding(torch.nn.Embedding):
+        def __init__(
+            self,
+            num_embeddings: int,
+            embedding_dim: int,
+            padding_idx: int,
+            embed_scale: float = 1.0,
+        ) -> None:
+            super().__init__(num_embeddings, embedding_dim, padding_idx)
+            self.register_buffer("embed_scale", torch.tensor(embed_scale), persistent=False)
+
+        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+            return super().forward(input_ids) * self.embed_scale.to(self.weight.dtype)
+
+    setattr(modeling_gemma3, "Gemma3TextScaledWordEmbedding", CodexGemma3TextScaledWordEmbedding)
+    try:
+        yield
+    finally:
+        setattr(modeling_gemma3, "Gemma3TextScaledWordEmbedding", original)
+
+
 def resolve_ltx2_text_encoder_asset(
     *,
     override_paths: Mapping[str, str],
@@ -106,6 +135,11 @@ def resolve_ltx2_text_encoder_asset(
         raise RuntimeError(
             "LTX2 external text encoder must be one `.gguf`, `.safetensor`, or `.safetensors` file; "
             f"got: {path}"
+        )
+    if "mmproj" in Path(path).name.lower():
+        raise RuntimeError(
+            "LTX2 external text encoder must not point to a multimodal projector (`mmproj`) asset. "
+            f"Got: {path}"
         )
     if not os.path.isfile(path):
         raise RuntimeError(f"LTX2 external text encoder path not found: {path}")
@@ -153,14 +187,13 @@ def load_ltx2_text_encoder_runtime(
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"LTX2 Gemma3 config load failed from '{text_encoder_dir}': {exc}") from exc
 
-    state_dict = load_torch_file(asset.path, device=device)
-    if not isinstance(state_dict, Mapping):
-        raise RuntimeError(
-            "LTX2 Gemma3 asset must resolve to a state_dict mapping; "
-            f"got {type(state_dict).__name__}."
-        )
-
     if asset.kind == "safetensors":
+        state_dict = load_torch_file(asset.path, device=device)
+        if not isinstance(state_dict, Mapping):
+            raise RuntimeError(
+                "LTX2 Gemma3 asset must resolve to a state_dict mapping; "
+                f"got {type(state_dict).__name__}."
+            )
         try:
             model = Gemma3ForConditionalGeneration.from_pretrained(
                 str(text_encoder_dir),
@@ -174,6 +207,8 @@ def load_ltx2_text_encoder_runtime(
     elif asset.kind == "gguf":
         try:
             from transformers import modeling_utils as hf_modeling_utils
+            from transformers.models.gemma3 import modeling_gemma3
+            from transformers.models.gemma3.modeling_gemma3 import Gemma3TextModel
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("LTX2 Gemma3 GGUF load requires transformers.modeling_utils.") from exc
         try:
@@ -181,19 +216,30 @@ def load_ltx2_text_encoder_runtime(
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("LTX2 Gemma3 GGUF load requires Codex GGUF operations support.") from exc
 
+        state_dict = load_gguf_state_dict(asset.path, device=device)
+        text_config = getattr(config, "text_config", None)
+        if text_config is None:
+            raise RuntimeError(
+                "LTX2 Gemma3 GGUF load requires vendored Gemma3 config with `text_config`."
+            )
+        resolved = resolve_gemma3_text_encoder_keyspace(
+            state_dict,
+            num_layers=int(getattr(text_config, "num_hidden_layers", 0) or 0),
+        )
         with using_codex_operations(weight_format="gguf", manual_cast_enabled=True, device=None, dtype=torch_dtype):
-            with hf_modeling_utils.no_init_weights():
-                model = Gemma3ForConditionalGeneration(config)
-            try:
-                missing, unexpected = model.load_state_dict(state_dict, strict=False)
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(f"LTX2 Gemma3 GGUF load failed from '{asset.path}': {exc}") from exc
-            if missing or unexpected:
-                raise RuntimeError(
-                    "LTX2 Gemma3 GGUF strict load failed: "
-                    f"missing={len(missing)} unexpected={len(unexpected)} "
-                    f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
-                )
+            with _patched_gemma3_text_embedding(modeling_gemma3):
+                with hf_modeling_utils.no_init_weights():
+                    model = Gemma3TextModel(text_config)
+                try:
+                    missing, unexpected = model.load_state_dict(resolved.view, strict=False)
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(f"LTX2 Gemma3 GGUF load failed from '{asset.path}': {exc}") from exc
+                if missing or unexpected:
+                    raise RuntimeError(
+                        "LTX2 Gemma3 GGUF strict load failed: "
+                        f"missing={len(missing)} unexpected={len(unexpected)} "
+                        f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+                    )
             _place_gguf_non_quant_tensors(model, device=device, dtype=torch_dtype)
     else:
         raise RuntimeError(f"LTX2 Gemma3 asset kind is unsupported: {asset.kind!r}")

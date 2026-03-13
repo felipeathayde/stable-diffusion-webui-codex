@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Native LTX2 text-connector stack for packed video/audio prompt embeddings.
-Implements the parser-owned `connectors` component without relying on LTX2-specific Diffusers classes, keeps the
-stored state-dict layout intact, and exposes strict config/state-driven construction for runtime assembly.
+Implements the legacy parser-owned connector surface and the real LTX 2.3 split-pack connector surface without relying
+on LTX2-specific Diffusers classes, while keeping the stored state-dict layout intact.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2TextConnectors` (class): Native connector stack that projects packed text embeddings into video/audio streams.
@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -24,7 +25,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from apps.backend.runtime.ops.operations_gguf import dequantize_tensor
+
 _CONNECTORS_WRAPPER_PREFIX = "connectors."
+_REAL_23_CONNECTOR_PREFIXES = (
+    "audio_embeddings_connector.",
+    "text_embedding_projection.",
+    "video_embeddings_connector.",
+)
 
 
 def _require_int(config: Mapping[str, Any], key: str) -> int:
@@ -90,6 +98,10 @@ def apply_split_rotary_emb(x: torch.Tensor, freqs: tuple[torch.Tensor, torch.Ten
     if needs_reshape:
         out = out.swapaxes(1, 2).reshape(batch_size, tokens, -1)
     return out.to(dtype=original_dtype)
+
+
+def _rms_norm(hidden_states: torch.Tensor, *, eps: float = 1e-6) -> torch.Tensor:
+    return torch.nn.functional.rms_norm(hidden_states, (hidden_states.shape[-1],), eps=eps)
 
 
 class _Ltx2RotaryPosEmbed1d(nn.Module):
@@ -550,6 +562,432 @@ class Ltx2TextConnectors(nn.Module):
         return video_text_embedding, audio_text_embedding, new_attn_mask
 
 
+@dataclass(frozen=True)
+class _Ltx23ConnectorSpec:
+    prefix: str
+    inner_dim: int
+    num_attention_heads: int
+    attention_head_dim: int
+    num_layers: int
+    num_learnable_registers: int | None
+
+
+def _infer_ltx23_connector_spec(*, prefix: str, state_dict: Mapping[str, Any]) -> _Ltx23ConnectorSpec:
+    layer_prefix = f"{prefix}.transformer_1d_blocks."
+    layer_indexes = sorted(
+        {
+            int(str(key)[len(layer_prefix) :].split(".", 1)[0])
+            for key in state_dict
+            if str(key).startswith(layer_prefix)
+            and str(key)[len(layer_prefix) :].split(".", 1)[0].isdigit()
+        }
+    )
+    if not layer_indexes:
+        raise RuntimeError(f"LTX2 2.3 connector state is missing `{prefix}.transformer_1d_blocks.*` tensors.")
+    expected_indexes = list(range(layer_indexes[-1] + 1))
+    if layer_indexes != expected_indexes:
+        raise RuntimeError(
+            f"LTX2 2.3 connector state has non-contiguous layer indexes for {prefix!r}: {layer_indexes!r}."
+        )
+
+    q_weight = state_dict.get(f"{prefix}.transformer_1d_blocks.0.attn1.to_q.weight")
+    gate_weight = state_dict.get(f"{prefix}.transformer_1d_blocks.0.attn1.to_gate_logits.weight")
+    if not isinstance(q_weight, torch.Tensor) or q_weight.ndim != 2:
+        raise RuntimeError(f"LTX2 2.3 connector state is missing a rank-2 `{prefix}.transformer_1d_blocks.0.attn1.to_q.weight` tensor.")
+    if not isinstance(gate_weight, torch.Tensor) or gate_weight.ndim != 2:
+        raise RuntimeError(
+            f"LTX2 2.3 connector state is missing a rank-2 `{prefix}.transformer_1d_blocks.0.attn1.to_gate_logits.weight` tensor."
+        )
+
+    inner_dim = int(q_weight.shape[0])
+    num_attention_heads = int(gate_weight.shape[0])
+    if inner_dim <= 0 or num_attention_heads <= 0 or inner_dim % num_attention_heads != 0:
+        raise RuntimeError(
+            "LTX2 2.3 connector state has incompatible attention dimensions: "
+            f"inner_dim={inner_dim} heads={num_attention_heads}."
+        )
+
+    learnable_registers = state_dict.get(f"{prefix}.learnable_registers")
+    num_learnable_registers: int | None = None
+    if learnable_registers is not None:
+        if not isinstance(learnable_registers, torch.Tensor) or learnable_registers.ndim != 2:
+            raise RuntimeError(
+                f"LTX2 2.3 connector state `{prefix}.learnable_registers` must be a rank-2 tensor."
+            )
+        if int(learnable_registers.shape[1]) != inner_dim:
+            raise RuntimeError(
+                "LTX2 2.3 connector learnable registers width mismatch: "
+                f"expected {inner_dim}, got {int(learnable_registers.shape[1])}."
+            )
+        num_learnable_registers = int(learnable_registers.shape[0])
+
+    return _Ltx23ConnectorSpec(
+        prefix=prefix,
+        inner_dim=inner_dim,
+        num_attention_heads=num_attention_heads,
+        attention_head_dim=inner_dim // num_attention_heads,
+        num_layers=len(layer_indexes),
+        num_learnable_registers=num_learnable_registers,
+    )
+
+
+class _Ltx23Attention(nn.Module):
+    def __init__(
+        self,
+        *,
+        query_dim: int,
+        heads: int,
+        dim_head: int,
+        rope_type: str,
+    ) -> None:
+        super().__init__()
+        self.query_dim = int(query_dim)
+        self.heads = int(heads)
+        self.head_dim = int(dim_head)
+        self.inner_dim = self.heads * self.head_dim
+        self.rope_type = rope_type
+
+        self.q_norm = torch.nn.RMSNorm(self.inner_dim, eps=1e-6, elementwise_affine=True)
+        self.k_norm = torch.nn.RMSNorm(self.inner_dim, eps=1e-6, elementwise_affine=True)
+        self.to_q = nn.Linear(self.query_dim, self.inner_dim, bias=True)
+        self.to_k = nn.Linear(self.query_dim, self.inner_dim, bias=True)
+        self.to_v = nn.Linear(self.query_dim, self.inner_dim, bias=True)
+        self.to_gate_logits = nn.Linear(self.query_dim, self.heads, bias=True)
+        self.to_out = nn.Sequential(nn.Linear(self.inner_dim, self.query_dim, bias=True), nn.Identity())
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        *,
+        attention_mask: torch.Tensor | None = None,
+        query_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
+        key_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
+    ) -> torch.Tensor:
+        if hidden_states.ndim != 3:
+            raise RuntimeError(
+                f"LTX2 2.3 connector attention expects [batch,tokens,channels], got {tuple(hidden_states.shape)!r}."
+            )
+
+        source_states = hidden_states
+        batch_size, query_len, _ = hidden_states.shape
+        query = self.q_norm(self.to_q(hidden_states))
+        key = self.k_norm(self.to_k(hidden_states))
+        value = self.to_v(hidden_states)
+
+        if query_rotary_emb is not None:
+            if self.rope_type == "interleaved":
+                query = apply_interleaved_rotary_emb(query, query_rotary_emb)
+                key = apply_interleaved_rotary_emb(key, key_rotary_emb or query_rotary_emb)
+            else:
+                query = apply_split_rotary_emb(query, query_rotary_emb)
+                key = apply_split_rotary_emb(key, key_rotary_emb or query_rotary_emb)
+
+        query = query.unflatten(2, (self.heads, -1)).transpose(1, 2)
+        key = key.unflatten(2, (self.heads, -1)).transpose(1, 2)
+        value = value.unflatten(2, (self.heads, -1)).transpose(1, 2)
+        attention_bias = None
+        if attention_mask is not None:
+            attention_bias = attention_mask
+            if attention_bias.ndim == 2:
+                attention_bias = attention_bias[:, None, None, :]
+            elif attention_bias.ndim == 3:
+                attention_bias = attention_bias[:, None, :, :]
+            elif attention_bias.ndim != 4:
+                raise RuntimeError(
+                    f"LTX2 2.3 connector attention mask must be 2D/3D/4D, got {attention_bias.ndim}D."
+                )
+            attention_bias = attention_bias.to(device=query.device, dtype=query.dtype).expand(
+                batch_size,
+                self.heads,
+                query_len,
+                int(key.shape[-2]),
+            )
+
+        hidden_states = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attention_bias,
+            dropout_p=0.0,
+            is_causal=False,
+        )
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, query_len, self.inner_dim)
+        gate_logits = self.to_gate_logits(source_states)
+        gates = 2.0 * torch.sigmoid(gate_logits)
+        hidden_states = hidden_states.view(batch_size, query_len, self.heads, self.head_dim)
+        hidden_states = hidden_states * gates.unsqueeze(-1)
+        hidden_states = hidden_states.view(batch_size, query_len, self.inner_dim)
+        return self.to_out(hidden_states)
+
+
+class _Ltx23TransformerBlock1d(nn.Module):
+    def __init__(self, *, dim: int, num_attention_heads: int, attention_head_dim: int, rope_type: str) -> None:
+        super().__init__()
+        self.attn1 = _Ltx23Attention(
+            query_dim=dim,
+            heads=num_attention_heads,
+            dim_head=attention_head_dim,
+            rope_type=rope_type,
+        )
+        self.ff = _FeedForward(dim, activation_fn="gelu-approximate")
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        *,
+        attention_mask: torch.Tensor | None,
+        rotary_emb: tuple[torch.Tensor, torch.Tensor] | None,
+    ) -> torch.Tensor:
+        norm_hidden_states = _rms_norm(hidden_states)
+        hidden_states = self.attn1(
+            norm_hidden_states,
+            attention_mask=attention_mask,
+            query_rotary_emb=rotary_emb,
+        ) + hidden_states
+        hidden_states = self.ff(_rms_norm(hidden_states)) + hidden_states
+        return hidden_states
+
+
+class _Ltx23Embeddings1DConnector(nn.Module):
+    def __init__(
+        self,
+        *,
+        inner_dim: int,
+        num_attention_heads: int,
+        attention_head_dim: int,
+        num_layers: int,
+        num_learnable_registers: int | None,
+        rope_base_seq_len: int,
+        rope_theta: float,
+        rope_double_precision: bool,
+        causal_temporal_positioning: bool,
+        rope_type: str,
+    ) -> None:
+        super().__init__()
+        self.inner_dim = int(inner_dim)
+        self.num_attention_heads = int(num_attention_heads)
+        self.causal_temporal_positioning = bool(causal_temporal_positioning)
+        self.num_learnable_registers = num_learnable_registers
+        self.learnable_registers = None
+        if num_learnable_registers is not None:
+            init_registers = (torch.rand(num_learnable_registers, self.inner_dim) * 2.0) - 1.0
+            self.learnable_registers = nn.Parameter(init_registers)
+        self.rope = _Ltx2RotaryPosEmbed1d(
+            self.inner_dim,
+            base_seq_len=rope_base_seq_len,
+            theta=rope_theta,
+            double_precision=rope_double_precision,
+            rope_type=rope_type,
+            num_attention_heads=self.num_attention_heads,
+        )
+        self.transformer_1d_blocks = nn.ModuleList(
+            [
+                _Ltx23TransformerBlock1d(
+                    dim=self.inner_dim,
+                    num_attention_heads=self.num_attention_heads,
+                    attention_head_dim=attention_head_dim,
+                    rope_type=rope_type,
+                )
+                for _ in range(int(num_layers))
+            ]
+        )
+
+    def _replace_padded_with_learnable_registers(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        attn_mask_binarize_threshold: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size, seq_len, _ = hidden_states.shape
+        if seq_len % int(self.num_learnable_registers) != 0:
+            raise RuntimeError(
+                "LTX2 2.3 connector sequence length must be divisible by the number of learnable registers; "
+                f"got seq_len={seq_len} registers={self.num_learnable_registers}."
+            )
+        binary_mask = (attention_mask >= float(attn_mask_binarize_threshold)).int()
+        if binary_mask.ndim == 4:
+            binary_mask = binary_mask.squeeze(1).squeeze(1)
+        if binary_mask.ndim != 2:
+            raise RuntimeError(
+                f"LTX2 2.3 connector binary mask must reduce to [batch,tokens], got {binary_mask.ndim}D."
+            )
+        register_repeats = seq_len // int(self.num_learnable_registers)
+        registers = torch.tile(self.learnable_registers, (register_repeats, 1))
+        non_padded = [hidden_states[index, binary_mask[index].bool(), :] for index in range(batch_size)]
+        pad_lengths = [seq_len - item.shape[0] for item in non_padded]
+        padded = [F.pad(item, pad=(0, 0, 0, pad), value=0.0) for item, pad in zip(non_padded, pad_lengths)]
+        hidden_states = torch.cat([item.unsqueeze(0) for item in padded], dim=0)
+        flipped = torch.flip(binary_mask.unsqueeze(-1), dims=[1])
+        hidden_states = flipped * hidden_states + (1 - flipped) * registers
+        attention_mask = torch.zeros_like(attention_mask)
+        return hidden_states, attention_mask
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        attn_mask_binarize_threshold: float = -9000.0,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if hidden_states.ndim != 3:
+            raise RuntimeError(
+                f"LTX2 2.3 connector expects [batch,tokens,channels], got {tuple(hidden_states.shape)!r}."
+            )
+        if self.learnable_registers is not None:
+            if attention_mask is None:
+                raise RuntimeError("LTX2 2.3 connector with learnable registers requires an attention_mask.")
+            hidden_states, attention_mask = self._replace_padded_with_learnable_registers(
+                hidden_states,
+                attention_mask,
+                attn_mask_binarize_threshold=attn_mask_binarize_threshold,
+            )
+
+        rotary_emb = self.rope(hidden_states.shape[0], hidden_states.shape[1], device=hidden_states.device)
+        for block in self.transformer_1d_blocks:
+            hidden_states = block(hidden_states, attention_mask=attention_mask, rotary_emb=rotary_emb)
+        return _rms_norm(hidden_states), attention_mask
+
+
+class _Ltx23TextEmbeddingProjection(nn.Module):
+    def __init__(self, *, packed_input_dim: int, video_dim: int, audio_dim: int) -> None:
+        super().__init__()
+        self.video_aggregate_embed = nn.Linear(int(packed_input_dim), int(video_dim), bias=True)
+        self.audio_aggregate_embed = nn.Linear(int(packed_input_dim), int(audio_dim), bias=True)
+
+
+class _Ltx23TextConnectors(nn.Module):
+    def __init__(
+        self,
+        *,
+        packed_input_dim: int,
+        video_spec: _Ltx23ConnectorSpec,
+        audio_spec: _Ltx23ConnectorSpec,
+        connector_rope_base_seq_len: int,
+        rope_theta: float,
+        rope_double_precision: bool,
+        causal_temporal_positioning: bool,
+        rope_type: str,
+    ) -> None:
+        super().__init__()
+        self.config = SimpleNamespace(
+            packed_input_dim=int(packed_input_dim),
+            connector_rope_base_seq_len=int(connector_rope_base_seq_len),
+            rope_theta=float(rope_theta),
+            rope_double_precision=bool(rope_double_precision),
+            causal_temporal_positioning=bool(causal_temporal_positioning),
+            rope_type=rope_type,
+        )
+        self.text_embedding_projection = _Ltx23TextEmbeddingProjection(
+            packed_input_dim=packed_input_dim,
+            video_dim=video_spec.inner_dim,
+            audio_dim=audio_spec.inner_dim,
+        )
+        self.video_embeddings_connector = _Ltx23Embeddings1DConnector(
+            inner_dim=video_spec.inner_dim,
+            num_attention_heads=video_spec.num_attention_heads,
+            attention_head_dim=video_spec.attention_head_dim,
+            num_layers=video_spec.num_layers,
+            num_learnable_registers=video_spec.num_learnable_registers,
+            rope_base_seq_len=connector_rope_base_seq_len,
+            rope_theta=rope_theta,
+            rope_double_precision=rope_double_precision,
+            causal_temporal_positioning=causal_temporal_positioning,
+            rope_type=rope_type,
+        )
+        self.audio_embeddings_connector = _Ltx23Embeddings1DConnector(
+            inner_dim=audio_spec.inner_dim,
+            num_attention_heads=audio_spec.num_attention_heads,
+            attention_head_dim=audio_spec.attention_head_dim,
+            num_layers=audio_spec.num_layers,
+            num_learnable_registers=audio_spec.num_learnable_registers,
+            rope_base_seq_len=connector_rope_base_seq_len,
+            rope_theta=rope_theta,
+            rope_double_precision=rope_double_precision,
+            causal_temporal_positioning=causal_temporal_positioning,
+            rope_type=rope_type,
+        )
+
+    @classmethod
+    def from_state_dict_and_config(
+        cls,
+        *,
+        config: Mapping[str, Any],
+        state_dict: Mapping[str, Any],
+    ) -> "_Ltx23TextConnectors":
+        rope_type = _require_str(config, "rope_type")
+        if rope_type not in {"interleaved", "split"}:
+            raise RuntimeError(f"LTX2 connectors rope_type must be 'interleaved' or 'split', got {rope_type!r}.")
+
+        video_spec = _infer_ltx23_connector_spec(prefix="video_embeddings_connector", state_dict=state_dict)
+        audio_spec = _infer_ltx23_connector_spec(prefix="audio_embeddings_connector", state_dict=state_dict)
+
+        video_projection = state_dict.get("text_embedding_projection.video_aggregate_embed.weight")
+        audio_projection = state_dict.get("text_embedding_projection.audio_aggregate_embed.weight")
+        if not isinstance(video_projection, torch.Tensor) or video_projection.ndim != 2:
+            raise RuntimeError("LTX2 2.3 connector state is missing `text_embedding_projection.video_aggregate_embed.weight`.")
+        if not isinstance(audio_projection, torch.Tensor) or audio_projection.ndim != 2:
+            raise RuntimeError("LTX2 2.3 connector state is missing `text_embedding_projection.audio_aggregate_embed.weight`.")
+        if int(video_projection.shape[0]) != video_spec.inner_dim:
+            raise RuntimeError(
+                "LTX2 2.3 video aggregate projection output dim mismatch: "
+                f"expected {video_spec.inner_dim}, got {int(video_projection.shape[0])}."
+            )
+        if int(audio_projection.shape[0]) != audio_spec.inner_dim:
+            raise RuntimeError(
+                "LTX2 2.3 audio aggregate projection output dim mismatch: "
+                f"expected {audio_spec.inner_dim}, got {int(audio_projection.shape[0])}."
+            )
+        if int(video_projection.shape[1]) != int(audio_projection.shape[1]):
+            raise RuntimeError(
+                "LTX2 2.3 text aggregate projections must share the same packed input width; "
+                f"got video={int(video_projection.shape[1])} audio={int(audio_projection.shape[1])}."
+            )
+
+        return cls(
+            packed_input_dim=int(video_projection.shape[1]),
+            video_spec=video_spec,
+            audio_spec=audio_spec,
+            connector_rope_base_seq_len=_require_int(config, "connector_rope_base_seq_len"),
+            rope_theta=_require_float(config, "rope_theta"),
+            rope_double_precision=_require_bool(config, "rope_double_precision"),
+            causal_temporal_positioning=_require_bool(config, "causal_temporal_positioning"),
+            rope_type=rope_type,
+        )
+
+    def forward(
+        self,
+        text_encoder_hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        additive_mask: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        if text_encoder_hidden_states.ndim != 3:
+            raise RuntimeError(
+                "LTX2 2.3 connectors expect packed text encoder hidden states with shape [batch,tokens,channels]; "
+                f"got {tuple(text_encoder_hidden_states.shape)!r}."
+            )
+        if attention_mask is None:
+            raise RuntimeError("LTX2 2.3 connectors require an attention_mask.")
+        if not additive_mask:
+            text_dtype = text_encoder_hidden_states.dtype
+            attention_mask = (attention_mask - 1).reshape(
+                attention_mask.shape[0],
+                1,
+                -1,
+                attention_mask.shape[-1],
+            )
+            attention_mask = attention_mask.to(text_dtype) * torch.finfo(text_dtype).max
+
+        video_hidden_states = self.text_embedding_projection.video_aggregate_embed(text_encoder_hidden_states)
+        audio_hidden_states = self.text_embedding_projection.audio_aggregate_embed(text_encoder_hidden_states)
+        video_text_embedding, new_attn_mask = self.video_embeddings_connector(video_hidden_states, attention_mask)
+        attn_mask = (new_attn_mask < 1e-6).to(torch.int64)
+        attn_mask = attn_mask.reshape(video_text_embedding.shape[0], video_text_embedding.shape[1], 1)
+        video_text_embedding = video_text_embedding * attn_mask
+        new_attn_mask = attn_mask.squeeze(-1)
+        audio_text_embedding, _ = self.audio_embeddings_connector(audio_hidden_states, attention_mask)
+        return video_text_embedding, audio_text_embedding, new_attn_mask
+
+
 def _normalize_connector_state_dict(state_dict: Mapping[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
     wrapped_keys = [key for key in state_dict if key.startswith(_CONNECTORS_WRAPPER_PREFIX)]
@@ -582,6 +1020,13 @@ def _normalize_connector_state_dict(state_dict: Mapping[str, Any]) -> dict[str, 
     return normalized
 
 
+def _materialize_connector_state_dict(state_dict: Mapping[str, Any]) -> dict[str, Any]:
+    materialized: dict[str, Any] = {}
+    for raw_key, value in state_dict.items():
+        materialized[str(raw_key)] = dequantize_tensor(value)
+    return materialized
+
+
 def load_ltx2_connectors(
     *,
     config: Mapping[str, Any],
@@ -589,10 +1034,17 @@ def load_ltx2_connectors(
     device: torch.device,
     torch_dtype: torch.dtype,
 ) -> Ltx2TextConnectors:
-    module = Ltx2TextConnectors.from_config(config)
     normalized_state_dict = _normalize_connector_state_dict(state_dict)
+    materialized_state_dict = _materialize_connector_state_dict(normalized_state_dict)
+    if any(str(key).startswith(_REAL_23_CONNECTOR_PREFIXES) for key in normalized_state_dict):
+        module = _Ltx23TextConnectors.from_state_dict_and_config(
+            config=config,
+            state_dict=normalized_state_dict,
+        )
+    else:
+        module = Ltx2TextConnectors.from_config(config)
     try:
-        missing, unexpected = module.load_state_dict(normalized_state_dict, strict=False)
+        missing, unexpected = module.load_state_dict(materialized_state_dict, strict=False)
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"LTX2 connectors state load failed: {exc}") from exc
     if missing or unexpected:

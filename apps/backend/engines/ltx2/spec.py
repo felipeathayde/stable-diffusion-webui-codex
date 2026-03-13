@@ -7,8 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: LTX2 engine specification and truthful runtime assembly.
-Rehydrates the loader-produced typed LTX2 bundle contract into a dedicated native runtime container, so the registered
-`ltx2` engine can load once and execute canonical `txt2vid` / `img2vid` without drifting into WAN paths.
+Rehydrates the loader-produced typed LTX2 bundle contract into a dedicated native runtime container, threads normalized
+internal engine options into that assembly, and lets the registered `ltx2` engine execute canonical `txt2vid` /
+`img2vid` without drifting into WAN paths.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2EngineRuntime` (dataclass): Loaded LTX2 engine runtime container holding bundle inputs plus the assembled native components.
@@ -82,6 +83,7 @@ def assemble_ltx2_runtime(
         bundle_inputs=inputs,
         device=raw_device,
         dtype=raw_dtype,
+        engine_options=options,
     )
 
     return Ltx2EngineRuntime(

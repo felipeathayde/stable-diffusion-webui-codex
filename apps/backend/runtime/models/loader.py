@@ -105,6 +105,7 @@ from apps.backend.runtime.memory.smart_offload import (
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.quantization import detect_state_dict_dtype
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
+from apps.backend.runtime.families.ltx2.config import LTX2_REQUIRED_TEXT_ENCODER_SLOT
 from apps.backend.runtime.families.ltx2.loader import build_ltx2_bundle_metadata, prepare_ltx2_bundle_inputs
 from apps.backend.runtime.model_registry.errors import ModelRegistryError
 from apps.backend.runtime.model_registry.loader import detect_from_state_dict as registry_detect
@@ -798,6 +799,58 @@ def _flux2_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
     )
 
 
+def _ltx2_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
+    suffix = Path(model_path).suffix.lower()
+    if suffix not in {".safetensors", ".safetensor", ".gguf"}:
+        raise RuntimeError(
+            "Unsupported LTX2 checkpoint format %r for %s. Only monolithic SafeTensors or core-only GGUF checkpoints are supported."
+            % (suffix or "<none>", model_path)
+        )
+
+    vendor_root = _BACKEND_ROOT / "huggingface" / "Lightricks" / "LTX-2"
+    transformer_cfg = _read_json(vendor_root / "transformer" / "config.json")
+
+    latent_channels = int(transformer_cfg.get("in_channels", 128))
+    context_dim = int(transformer_cfg.get("cross_attention_dim", 4096))
+    num_layers = int(transformer_cfg.get("num_layers", 48))
+
+    quantization = QuantizationHint()
+    core_only = False
+    if suffix == ".gguf":
+        quantization = QuantizationHint(kind=QuantizationKind.GGUF, detail="file_extension")
+        core_only = True
+
+    return ModelSignature(
+        family=ModelFamily.LTX2,
+        repo_hint="Lightricks/LTX-2",
+        prediction=PredictionKind.FLOW,
+        latent_format=LatentFormat.LTX2,
+        quantization=quantization,
+        core=CodexCoreSignature(
+            architecture=CodexCoreArchitecture.DIT,
+            channels_in=latent_channels,
+            channels_out=latent_channels,
+            context_dim=context_dim,
+            temporal=True,
+            depth=num_layers,
+            key_prefixes=["transformer_blocks."],
+        ),
+        text_encoders=[
+            TextEncoderSignature(
+                name="gemma3_12b",
+                key_prefix="text_encoder.",
+                expected_dim=context_dim,
+                tokenizer_hint="Lightricks/LTX-2/tokenizer",
+            )
+        ],
+        vae=None if core_only else VAESignature(key_prefix="vae.", latent_channels=latent_channels),
+        extras={
+            "core_only": core_only,
+            "signature_source": "vendored_hf",
+        },
+    )
+
+
 def _requires_sdxl_checkpoint_keymap(
     state_dict: Mapping[str, Any],
     *,
@@ -870,6 +923,8 @@ def _parse_checkpoint(
         signature = _zimage_signature_from_vendored_hf(model_path=primary_path)
     elif expected_family is ModelFamily.FLUX2:
         signature = _flux2_signature_from_vendored_hf(model_path=primary_path)
+    elif expected_family is ModelFamily.LTX2:
+        signature = _ltx2_signature_from_vendored_hf(model_path=primary_path)
     elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
         guidance_key = "guidance_in.in_layer.weight"
         has_guidance = any(
@@ -902,6 +957,8 @@ def _parse_checkpoint(
                 extra_signature = _zimage_signature_from_vendored_hf(model_path=extra)
             elif expected_family is ModelFamily.FLUX2:
                 extra_signature = _flux2_signature_from_vendored_hf(model_path=extra)
+            elif expected_family is ModelFamily.LTX2:
+                extra_signature = _ltx2_signature_from_vendored_hf(model_path=extra)
             elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
                 guidance_key = "guidance_in.in_layer.weight"
                 has_guidance = any(
@@ -2288,20 +2345,53 @@ def codex_loader(
                 "LTX2 checkpoint requires an external text encoder (Gemma3-12B; sha-selected). "
                 "Provide one via request extras.tenc_sha so the API can pass a valid tenc_path."
             )
+        resolved_ltx2_tenc_candidates = [
+            value.strip() for value in te_override_paths.values() if isinstance(value, str) and value.strip()
+        ]
+        if len(resolved_ltx2_tenc_candidates) != 1:
+            raise RuntimeError(
+                "LTX2 text encoder override resolution failed: expected exactly one non-empty external path, "
+                f"got {len(resolved_ltx2_tenc_candidates)}."
+            )
+        ltx2_text_encoder_override_paths = {
+            LTX2_REQUIRED_TEXT_ENCODER_SLOT: os.path.expanduser(resolved_ltx2_tenc_candidates[0])
+        }
         ltx2_inputs = prepare_ltx2_bundle_inputs(
             model_ref=sd_path,
             estimated_config=config,
             signature=parsed.signature,
-            text_encoder_override_paths=te_override_paths,
+            text_encoder_override_paths=ltx2_text_encoder_override_paths,
+            vae_path=vae_path,
             backend_root=_BACKEND_ROOT,
         )
+        ltx2_component_states = {
+            "transformer": ltx2_inputs.components.transformer,
+            "connectors": ltx2_inputs.components.connectors,
+            "vae": ltx2_inputs.components.vae,
+            "audio_vae": ltx2_inputs.components.audio_vae,
+            "vocoder": ltx2_inputs.components.vocoder,
+        }
+        estimated_component_names = tuple(ltx2_inputs.estimated_config.components.keys())
+        if estimated_component_names != tuple(ltx2_component_states.keys()):
+            raise RuntimeError(
+                "LTX2 loader bundle assembly drifted from the rewritten component contract. "
+                f"estimated_config.components={estimated_component_names!r} "
+                f"bundle_components={tuple(ltx2_component_states.keys())!r}."
+            )
+        for component_name, component_state in ltx2_component_states.items():
+            estimated_component_state = ltx2_inputs.estimated_config.components[component_name].state_dict
+            if estimated_component_state is not component_state:
+                raise RuntimeError(
+                    "LTX2 loader bundle assembly detected stale component state after bundle planning rewrite. "
+                    f"component={component_name!r}."
+                )
         metadata = build_ltx2_bundle_metadata(ltx2_inputs)
         metadata["tenc_override_paths"] = dict(te_override_paths)
         return _build_diffusion_bundle(
             model_ref=sd_path,
             family=parsed.signature.family,
-            estimated_config=config,
-            components=component_states,
+            estimated_config=ltx2_inputs.estimated_config,
+            components=ltx2_component_states,
             signature=parsed.signature,
             source="state_dict",
             metadata=metadata,

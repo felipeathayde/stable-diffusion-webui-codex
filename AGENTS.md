@@ -224,6 +224,7 @@ When agent-side verification requires running the WebUI/backend on CPU, use the 
 - Required env for CPU lane: `CODEX_ROOT="$PWD" PYTHONPATH="$PWD" CODEX_TORCH_MODE=cpu CODEX_TORCH_BACKEND=cpu`.
 - Example check command pattern:
   - `CODEX_ROOT="$PWD" PYTHONPATH="$PWD" CODEX_TORCH_MODE=cpu CODEX_TORCH_BACKEND=cpu ./.uv/bin/uv run --python .venv/bin/python --no-sync -m apps.backend.interfaces.api.run_api --help`
+- WSL heavy-model safety rule: for LTX/WAN-class giant assets, default to header-only / metadata-only inspection in WSL. Do not materialize tensors, assemble full runtimes, initialize full pipelines, or run forward passes unless the user explicitly asks. Prefer GGUF metadata readers and SafeTensors header readers first.
 
 ---
 

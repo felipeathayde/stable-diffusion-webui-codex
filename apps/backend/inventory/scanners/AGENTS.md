@@ -24,3 +24,4 @@ Status: Active
 - 2026-02-05: Per-family scanner roots now include Anima (`anima_tenc`, `anima_vae`, `anima_loras`) so inventory discovery matches the new `models/anima*` layout.
 - 2026-03-03: `wan22_gguf.py` now scans `wan22_ckpt` directory roots recursively for `.gguf` files (stable order), so nested WAN22 folder layouts from HF/manual extraction still populate `/api/models/inventory`.
 - 2026-03-05: Per-family scanner roots now include Flux.2 keys (`flux2_tenc`, `flux2_vae`, `flux2_loras`) in addition to Flux.1, so discovery contracts are ready for Flux.2 model roots.
+- 2026-03-12: Per-family scanner roots now also include `ltx2_tenc`, `ltx2_vae`, and `ltx2_loras`; generic scanners exclude `mmproj` projector GGUF files from text-encoder inventory and exclude `audio_vae` bundle files from generic VAE inventory.

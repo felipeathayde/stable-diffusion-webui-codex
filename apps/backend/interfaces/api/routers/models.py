@@ -11,7 +11,7 @@ Exposes checkpoints, inventories (sync + async refresh task start), path scan/ad
 surfaces, embeddings, and engine capabilities.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
-(`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, WAN22 animate engine ids, and
+(`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, LTX2, WAN22 animate engine ids, and
 Anima runtime-equivalent prompt preprocessing/max-length checks with the same slow Qwen tokenizer path used by the runtime. Raw `/api/samplers`
 inventory keeps unsupported rows visible with non-executable metadata (`supported=false`, `default_scheduler=null`, `allowed_schedulers=[]`),
 while supported rows must resolve complete executable registry metadata.
@@ -69,6 +69,7 @@ _PROMPT_TOKENIZER_DIRS: Dict[str, Path] = {
     "sdxl": _HF_ROOT / "stabilityai/stable-diffusion-xl-base-1.0/tokenizer",
     "flux1": _HF_ROOT / "black-forest-labs/FLUX.1-dev/tokenizer_2",
     "flux2": _HF_ROOT / "black-forest-labs/FLUX.2-klein-4B/tokenizer",
+    "ltx2": _HF_ROOT / "Lightricks/LTX-2/tokenizer",
     "chroma": _HF_ROOT / "Chroma/tokenizer",
     "zimage": _HF_ROOT / "Tongyi-MAI/Z-Image/tokenizer",
     "wan": _HF_ROOT / "Wan-AI/Wan2.2-T2V-A14B-Diffusers/tokenizer",
@@ -83,6 +84,7 @@ _ENGINE_TOKENIZER_KEY: Dict[str, str] = {
     "flux1": "flux1",
     "flux1_kontext": "flux1",
     "flux2": "flux2",
+    "ltx2": "ltx2",
     "chroma": "chroma",
     "flux1_chroma": "chroma",
     "zimage": "zimage",

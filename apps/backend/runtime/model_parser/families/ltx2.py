@@ -6,10 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Parser plan builder for backend-only monolithic LTX 2.x checkpoints.
-Builds a strict parser plan for the combined LTX checkpoint slice where transformer/connectors, video VAE, audio VAE, and vocoder share
-one state dict. Supports both direct connector aliases and wrapped `connectors.` surfaces without renaming the raw keys, keeps the family
-unadvertised, and registers only the external Gemma 3 12B text-encoder alias needed for future overrides.
+Purpose: Parser plan builder for backend-only LTX 2.x checkpoints.
+Builds strict parser plans for both monolithic combined checkpoints and GGUF core-only checkpoints. Monolithic plans split
+transformer/connectors, video VAE, audio VAE, and vocoder from one state dict; GGUF plans keep only the core transformer
+state while preserving raw connector-aware keyspace interpretation for later split-pack loader assembly. The family stays
+unadvertised and registers only the external Gemma 3 12B text-encoder alias needed for overrides.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_LTX2_ASSET_REPO` (constant): Vendored HF repo used for parser-side asset/config resolution.
@@ -24,9 +25,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_matches_connector_prefixes` (function): Returns True when a raw `dit_root` key matches accepted connector prefixes after wrapper normalization.
 - `_has_connector_group` (function): Returns True when a key collection contains one accepted connector group.
 - `_key_is_connector` (function): Returns True when a raw `dit_root` key belongs in the connector bucket.
-- `_split_dit_root_state` (function): Splits stripped `dit_root` tensors into transformer vs connectors by strict prefixes.
+- `split_ltx2_transformer_and_connectors_state` (function): Splits raw LTX core tensors into transformer vs connectors by strict prefixes.
 - `_validate_dit_root_component` (function): Validates the combined LTX Dit/connector contract before build-config separation.
+- `_validate_transformer_core_component` (function): Validates the GGUF core-only transformer contract before split-pack loader assembly.
 - `_validate_component_required_keys` (function): Validates required key markers for VAE/audio VAE/vocoder components.
+- `_build_ltx2_core_only_estimated_config` (function): Builds `CodexEstimatedConfig` for GGUF core-only checkpoints with parser-owned `transformer` only.
 - `_build_ltx2_estimated_config` (function): Builds `CodexEstimatedConfig` with explicit `transformer` and `connectors` components.
 - `build_plan` (function): Builds and returns the LTX2 `ParserPlanBundle`.
 """
@@ -35,7 +38,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
-from apps.backend.runtime.model_registry.specs import ModelSignature
+from apps.backend.runtime.model_registry.specs import ModelSignature, QuantizationKind
 
 from ..builders import build_estimated_config, register_text_encoder
 from ..errors import ValidationError
@@ -89,7 +92,7 @@ def _key_is_connector(key: str) -> bool:
     return key.startswith(_CONNECTOR_WRAPPER_PREFIX) or _matches_connector_prefixes(key, _CONNECTOR_PREFIXES)
 
 
-def _split_dit_root_state(tensors: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def split_ltx2_transformer_and_connectors_state(tensors: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     transformer: dict[str, Any] = {}
     connectors: dict[str, Any] = {}
     for key, value in tensors.items():
@@ -122,7 +125,7 @@ def _validate_dit_root_component(context) -> None:
             component="dit_root",
         )
 
-    transformer, connectors = _split_dit_root_state(dit_root)
+    transformer, connectors = split_ltx2_transformer_and_connectors_state(dit_root)
     if not transformer:
         raise ValidationError(
             "LTX2 Dit root did not leave any transformer tensors after connector separation.",
@@ -142,6 +145,22 @@ def _validate_dit_root_component(context) -> None:
         raise ValidationError(
             "LTX2 Dit root split failed to retain any connector-only keys in the connectors bucket.",
             component="dit_root",
+        )
+
+
+def _validate_transformer_core_component(context) -> None:
+    transformer = context.require("transformer").tensors
+    if not any(all(key in transformer for key in group) for group in _DIT_REQUIRED_MARKER_GROUPS):
+        raise ValidationError(
+            "LTX2 GGUF core-only checkpoint is missing required transformer markers. "
+            "Expected one supported adaln marker set plus `patchify_proj.weight`.",
+            component="transformer",
+        )
+    if "transformer_blocks.0.attn2.to_k.weight" not in transformer:
+        raise ValidationError(
+            "LTX2 GGUF core-only checkpoint is missing the required core transformer block sentinel "
+            "`transformer_blocks.0.attn2.to_k.weight`.",
+            component="transformer",
         )
 
 
@@ -168,7 +187,7 @@ def _validate_vocoder_component(context) -> None:
 
 
 def _build_ltx2_estimated_config(context, signature: ModelSignature) -> CodexEstimatedConfig:
-    transformer_state, connector_state = _split_dit_root_state(context.require("dit_root").tensors)
+    transformer_state, connector_state = split_ltx2_transformer_and_connectors_state(context.require("dit_root").tensors)
     if not transformer_state or not connector_state:
         raise ValidationError(
             "LTX2 parser build-config reached an invalid split state; transformer/connectors must both be non-empty.",
@@ -218,7 +237,35 @@ def _build_ltx2_estimated_config(context, signature: ModelSignature) -> CodexEst
     )
 
 
+def _build_ltx2_core_only_estimated_config(context, signature: ModelSignature) -> CodexEstimatedConfig:
+    return build_estimated_config(
+        context,
+        signature,
+        repo_override=_LTX2_ASSET_REPO,
+        extra_metadata={
+            "asset_repo_id": _LTX2_ASSET_REPO,
+            "source_checkpoint_repo_id": (signature.extras or {}).get("source_checkpoint_repo_id", ""),
+            "parser_split": "ltx2_core_only_gguf",
+            "core_only": True,
+        },
+    )
+
+
 def build_plan(signature: ModelSignature) -> ParserPlanBundle:
+    if signature.quantization.kind == QuantizationKind.GGUF:
+        plan = ParserPlan(
+            splits=(SplitSpec(name="transformer", prefixes=("",)),),
+            validations=(
+                ValidationSpec(name="register_ltx2_text_encoders", function=_register_ltx2_text_encoders),
+                ValidationSpec(name="ltx2_transformer_core", function=_validate_transformer_core_component),
+                ValidationSpec(name="dtype_sanity", function=validate_component_dtypes),
+            ),
+        )
+        return ParserPlanBundle(
+            plan=plan,
+            build_config=lambda ctx: _build_ltx2_core_only_estimated_config(ctx, signature),
+        )
+
     plan = ParserPlan(
         splits=(
             SplitSpec(name="dit_root", prefixes=("model.diffusion_model.",), strip_prefix=""),

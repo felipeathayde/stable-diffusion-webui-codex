@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Native LTX2 txt2vid/img2vid execution helpers.
 Owns direct native execution against loaded LTX2 components (text encoder, connectors, transformer, VAEs, vocoder,
-and native FlowMatch-Euler scheduler) and returns raw `(video, audio)` tuples that runtime.py can normalize into the
-family-local result contract.
+and native FlowMatch-Euler scheduler), including deterministic generation-boundary cleanup for streamed transformers,
+and returns raw `(video, audio)` tuples that runtime.py can normalize into the family-local result contract.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `run_ltx2_txt2vid_native` (function): Execute the native LTX2 txt2vid path and return raw `(video, audio)`.
@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -96,6 +96,19 @@ def _transformer_cache_context(transformer: Any):
     if callable(cache_context):
         return cache_context("cond_uncond")
     return nullcontext()
+
+
+@contextmanager
+def _transformer_streaming_lifecycle(transformer: Any):
+    reset_controller = getattr(transformer, "reset_controller", None)
+    move_all_to_storage = getattr(transformer, "move_all_to_storage", None)
+    if callable(reset_controller):
+        reset_controller()
+    try:
+        yield
+    finally:
+        if callable(move_all_to_storage):
+            move_all_to_storage()
 
 
 def _retrieve_latents(
@@ -812,19 +825,20 @@ def run_ltx2_txt2vid_native(
     request: Any,
     plan: Any,
 ) -> tuple[Any, Any]:
-    return _run_ltx2_native(
-        native=native,
-        prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
-        negative_prompt=getattr(request, "negative_prompt", None),
-        width=int(getattr(plan, "width", 0) or 0),
-        height=int(getattr(plan, "height", 0) or 0),
-        num_frames=int(getattr(plan, "frames", 0) or 0),
-        frame_rate=float(int(getattr(plan, "fps", 0) or 0)),
-        num_inference_steps=int(getattr(plan, "steps", 0) or 0),
-        guidance_scale=float(getattr(request, "guidance_scale", 4.0) or 4.0),
-        init_image=None,
-        generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
-    )
+    with _transformer_streaming_lifecycle(native.transformer):
+        return _run_ltx2_native(
+            native=native,
+            prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
+            negative_prompt=getattr(request, "negative_prompt", None),
+            width=int(getattr(plan, "width", 0) or 0),
+            height=int(getattr(plan, "height", 0) or 0),
+            num_frames=int(getattr(plan, "frames", 0) or 0),
+            frame_rate=float(int(getattr(plan, "fps", 0) or 0)),
+            num_inference_steps=int(getattr(plan, "steps", 0) or 0),
+            guidance_scale=float(getattr(request, "guidance_scale", 4.0) or 4.0),
+            init_image=None,
+            generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
+        )
 
 
 @torch.no_grad()
@@ -837,19 +851,20 @@ def run_ltx2_img2vid_native(
     init_image = getattr(request, "init_image", None)
     if init_image is None:
         raise RuntimeError("LTX2 native img2vid requires `request.init_image`.")
-    return _run_ltx2_native(
-        native=native,
-        prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
-        negative_prompt=getattr(request, "negative_prompt", None),
-        width=int(getattr(plan, "width", 0) or 0),
-        height=int(getattr(plan, "height", 0) or 0),
-        num_frames=int(getattr(plan, "frames", 0) or 0),
-        frame_rate=float(int(getattr(plan, "fps", 0) or 0)),
-        num_inference_steps=int(getattr(plan, "steps", 0) or 0),
-        guidance_scale=float(getattr(request, "guidance_scale", 4.0) or 4.0),
-        init_image=init_image,
-        generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
-    )
+    with _transformer_streaming_lifecycle(native.transformer):
+        return _run_ltx2_native(
+            native=native,
+            prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
+            negative_prompt=getattr(request, "negative_prompt", None),
+            width=int(getattr(plan, "width", 0) or 0),
+            height=int(getattr(plan, "height", 0) or 0),
+            num_frames=int(getattr(plan, "frames", 0) or 0),
+            frame_rate=float(int(getattr(plan, "fps", 0) or 0)),
+            num_inference_steps=int(getattr(plan, "steps", 0) or 0),
+            guidance_scale=float(getattr(request, "guidance_scale", 4.0) or 4.0),
+            init_image=init_image,
+            generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
+        )
 
 
 __all__ = [

@@ -29,6 +29,20 @@ class TextEncoderSlotError(ValueError):
     """Raised when a text encoder weights file cannot be classified."""
 
 
+def _looks_like_mmproj_context(context: str) -> bool:
+    lower = Path(str(context or "")).name.strip().lower()
+    return "mmproj" in lower or "multimodal-projector" in lower
+
+
+def _gguf_is_multimodal_projector(kv: Mapping[str, object]) -> bool:
+    gguf_type = str(kv.get("general.type") or kv.get("model.type") or "").strip().lower()
+    projector_type = str(kv.get("clip.projector_type") or "").strip().lower()
+    has_vision_encoder = kv.get("clip.has_vision_encoder")
+    return gguf_type in {"mmproj", "multimodal-projector", "projector"} or bool(projector_type) or bool(
+        has_vision_encoder
+    )
+
+
 def classify_text_encoder_slot(path: str) -> str:
     """Classify a text encoder weights file into a known slot.
 
@@ -286,7 +300,10 @@ def _read_gguf_kv(path: Path) -> dict[str, object]:
 
 
 def _classify_gguf_kv(kv: Mapping[str, object], *, context: str) -> str:
-    arch = str(kv.get("general.architecture") or "").strip().lower()
+    if _looks_like_mmproj_context(context) or _gguf_is_multimodal_projector(kv):
+        raise TextEncoderSlotError(f"GGUF multimodal projector files are not supported text encoder slots: {context}")
+
+    arch = str(kv.get("general.architecture") or kv.get("model.architecture") or "").strip().lower()
     tok_model = str(kv.get("tokenizer.ggml.model") or "").strip().lower()
     hint = arch or tok_model
 
@@ -310,7 +327,9 @@ def _classify_gguf_kv(kv: Mapping[str, object], *, context: str) -> str:
         return (
             _get_int("llama.embedding_length")
             or _get_int("qwen.embedding_length")
+            or _get_int("gemma3.embedding_length")
             or _get_int("gemma.embedding_length")
+            or _get_int("model.embedding_length")
             or _get_int("general.embedding_length")
         )
 
@@ -345,7 +364,7 @@ def _classify_gguf_kv(kv: Mapping[str, object], *, context: str) -> str:
         raise TextEncoderSlotError(f"GGUF CLIP slot disambiguation is not supported yet: {context}")
 
     raise TextEncoderSlotError(
-        "Could not classify GGUF text encoder slot for %s (missing/unknown 'general.architecture')." % context
+        "Could not classify GGUF text encoder slot for %s (missing/unknown architecture metadata)." % context
     )
 
 

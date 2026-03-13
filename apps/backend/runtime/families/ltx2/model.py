@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Typed bundle-planning contracts for the native LTX2 runtime seam.
 Defines immutable dataclasses for the parser-owned LTX2 component map, vendored metadata paths, and the external Gemma3
-text-encoder asset that future runtime/engine assembly must consume without renaming bundle keys.
+text-encoder asset that future runtime/engine assembly must consume without renaming bundle keys, including the exact
+wrapped-vocoder config extracted from real LTX 2.3 audio bundles.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2VendorPaths` (dataclass): Normalized local vendor metadata paths (`model_index`, `tokenizer`, `connectors config`).
@@ -83,3 +84,4 @@ class Ltx2BundleInputs:
     components: Ltx2ComponentStates
     text_encoder: Ltx2TextEncoderAsset
     vendor_paths: Ltx2VendorPaths
+    vocoder_config: Mapping[str, Any] | None = None

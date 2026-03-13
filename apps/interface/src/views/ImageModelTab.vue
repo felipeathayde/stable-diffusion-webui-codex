@@ -397,8 +397,8 @@ Symbols (top-level; keep in sync; no ghosts):
           :emptyText="resultsEmptyText"
         >
           <template #empty>
-            <div class="wan-results-empty">
-              <div class="wan-empty-title">
+            <div class="results-empty-state">
+              <div class="results-empty-title">
                 <template v-if="isRunning">{{ resultsEmptyText }}</template>
                 <template v-else>No images yet</template>
               </div>

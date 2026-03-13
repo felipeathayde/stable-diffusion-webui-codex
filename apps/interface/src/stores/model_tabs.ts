@@ -167,9 +167,6 @@ export interface WanVideoParams {
   crf: number
   loopCount: number
   pingpong: boolean
-  saveMetadata?: boolean
-  saveOutput?: boolean
-  trimToAudio?: boolean
   returnFrames: boolean
   // Interpolation (RIFE target FPS; 0 disables interpolation)
   interpolationFps: number
@@ -215,7 +212,6 @@ export interface LtxTabParams {
   useInitImage: boolean
   initImageData: string
   initImageName: string
-  denoiseStrength: number
   videoReturnFrames: boolean
 }
 
@@ -402,7 +398,6 @@ const LTX_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'useInitImage',
   'initImageData',
   'initImageName',
-  'denoiseStrength',
   'videoReturnFrames',
 ])
 
@@ -481,9 +476,6 @@ function defaultParams<T extends BaseTabType>(
       crf: 15,
       loopCount: 0,
       pingpong: false,
-      saveMetadata: true,
-      saveOutput: true,
-      trimToAudio: false,
       returnFrames: false,
       interpolationFps: 0,
       upscalingEnabled: false,
@@ -535,7 +527,6 @@ function defaultParams<T extends BaseTabType>(
       useInitImage: false,
       initImageData: '',
       initImageName: '',
-      denoiseStrength: 0.5,
       videoReturnFrames: false,
     }
     return ltxDefaults as TabParamsByType[T]
@@ -698,7 +689,6 @@ function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams 
   merged.useInitImage = normalizeBoolean(merged.useInitImage, defaults.useInitImage)
   merged.initImageData = String(merged.initImageData || '')
   merged.initImageName = String(merged.initImageName || '')
-  merged.denoiseStrength = Number.isFinite(Number(merged.denoiseStrength)) ? Number(merged.denoiseStrength) : defaults.denoiseStrength
   merged.videoReturnFrames = normalizeBoolean(merged.videoReturnFrames, defaults.videoReturnFrames)
   merged.schemaVersion = TAB_PARAMS_SCHEMA_VERSION
   return merged
@@ -965,9 +955,7 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
   )
   merged.img2vidCropOffsetX = normalizeUnitInterval(merged.img2vidCropOffsetX, defaults.img2vidCropOffsetX)
   merged.img2vidCropOffsetY = normalizeUnitInterval(merged.img2vidCropOffsetY, defaults.img2vidCropOffsetY)
-  merged.saveMetadata = normalizeBoolean(merged.saveMetadata, defaults.saveMetadata ?? true)
-  merged.saveOutput = normalizeBoolean(merged.saveOutput, defaults.saveOutput ?? true)
-  merged.trimToAudio = normalizeBoolean(merged.trimToAudio, defaults.trimToAudio ?? false)
+  merged.returnFrames = normalizeBoolean(merged.returnFrames, defaults.returnFrames ?? false)
 
   merged.interpolationFps = normalizeInterpolationTargetFps(
     merged.interpolationFps,
@@ -1027,9 +1015,6 @@ function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVide
     crf: merged.crf,
     loopCount: merged.loopCount,
     pingpong: merged.pingpong,
-    saveMetadata: merged.saveMetadata,
-    saveOutput: merged.saveOutput,
-    trimToAudio: merged.trimToAudio,
     returnFrames: merged.returnFrames,
     interpolationFps: merged.interpolationFps,
     upscalingEnabled: merged.upscalingEnabled,

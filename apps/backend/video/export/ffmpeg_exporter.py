@@ -101,8 +101,9 @@ def _format_to_container(fmt: str) -> tuple[str, str]:
         return "webm", "vp9"
     if v in {"video/gif", "image/gif", "gif"}:
         return "gif", "gif"
-    # Default to mp4/h264 for unknown values so the exporter behaves predictably.
-    return "mp4", "h264"
+    raise VideoExportError(
+        f"Unsupported video format '{fmt}'. Supported values: video/h264-mp4, video/h265-mp4, video/webm, video/gif."
+    )
 
 
 def _audio_codec_for(container: str) -> str | None:

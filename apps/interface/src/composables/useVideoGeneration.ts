@@ -12,7 +12,7 @@ to update UI state and fetch final results. Every start payload includes `settin
 trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
 via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
 mode prompt fields from the High stage in payload builders for backend compatibility. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/
-`pingpong`/`returnFrames`/`saveOutput`/`saveMetadata`/`trimToAudio`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), stage `scheduler`, and stage `flowShift`
+`pingpong`/`returnFrames`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), stage `scheduler`, and stage `flowShift`
 pass-through in common WAN payload input. Also snapshots and forwards optional SeedVR2 upscaling controls as `video_upscaling`.
 Img2vid temporal payload fields are gated by `img2vidMode` (`solo|sliding|svi2|svi2_pro`), and WAN prompt `<lora:...>` tags are parsed client-side into
 stage-level LoRA arrays (`wan_high/wan_low.loras[]` with `sha+weight`) before payload dispatch. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
@@ -304,9 +304,6 @@ function defaultVideo(): WanVideoParams {
     crf: 15,
     loopCount: 0,
     pingpong: false,
-    saveMetadata: true,
-    saveOutput: true,
-    trimToAudio: false,
     returnFrames: false,
     interpolationFps: 0,
     upscalingEnabled: false,
@@ -441,6 +438,10 @@ export function useVideoGeneration(tabId: string) {
     if (!quicksettings.resolveVaeSha(vaeLabel)) {
       return 'WAN VAE must resolve to a sha256. Click Refresh and re-select the VAE.'
     }
+    const device = String(quicksettings.currentDevice || 'cpu').trim().toLowerCase()
+    if (device !== 'cpu' && device !== 'cuda') {
+      return `WAN video currently supports only cpu or cuda. Switch QuickSettings device from '${quicksettings.currentDevice}' to a supported backend.`
+    }
     return ''
   }
 
@@ -555,9 +556,6 @@ export function useVideoGeneration(tabId: string) {
         crf: v.crf,
         loopCount: v.loopCount,
         pingpong: resolveBooleanWithDefault(v.pingpong, false),
-        saveMetadata: resolveBooleanWithDefault(v.saveMetadata, true),
-        saveOutput: resolveBooleanWithDefault(v.saveOutput, true),
-        trimToAudio: resolveBooleanWithDefault(v.trimToAudio, false),
         returnFrames: resolveBooleanWithDefault(v.returnFrames, false),
       },
       interpolation: {
@@ -726,9 +724,6 @@ export function useVideoGeneration(tabId: string) {
         crf: v.crf,
         loopCount: v.loopCount,
         pingpong: resolveBooleanWithDefault(v.pingpong, false),
-        saveMetadata: resolveBooleanWithDefault(v.saveMetadata, true),
-        saveOutput: resolveBooleanWithDefault(v.saveOutput, true),
-        trimToAudio: resolveBooleanWithDefault(v.trimToAudio, false),
         returnFrames: resolveBooleanWithDefault(v.returnFrames, false),
       },
       interpolation: {
@@ -916,7 +911,7 @@ export function useVideoGeneration(tabId: string) {
         if (state.value.taskId) void refreshTaskSnapshot(state.value.taskId)
         break
       case 'result':
-        state.value.frames = event.images
+        state.value.frames = Array.isArray(event.images) ? event.images : []
         state.value.info = event.info ?? null
         state.value.video = event.video ?? null
         state.value.status = 'done'
@@ -1046,7 +1041,7 @@ export function useVideoGeneration(tabId: string) {
     clearResumeState(key)
 
     if (res.status === 'completed' && res.result) {
-      state.value.frames = res.result.images
+      state.value.frames = Array.isArray(res.result.images) ? res.result.images : []
       state.value.info = res.result.info ?? null
       state.value.video = res.result.video ?? null
       state.value.status = 'done'
@@ -1122,7 +1117,7 @@ export function useVideoGeneration(tabId: string) {
         return
       }
       if (result.status === 'completed' && result.result) {
-        state.value.frames = result.result.images
+        state.value.frames = Array.isArray(result.result.images) ? result.result.images : []
         state.value.info = result.result.info ?? null
         state.value.video = result.result.video ?? null
         state.value.status = 'done'

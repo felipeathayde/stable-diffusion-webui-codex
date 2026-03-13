@@ -81,7 +81,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `UiPresetsResponse` (interface): `/api/ui/presets` response shape.
 - `UiPresetApplyResponse` (interface): `/api/ui/presets/apply` response shape.
 - `ApiTabMeta` (interface): Per-tab metadata timestamps.
-- `ApiTab` (interface): Persisted model tab definition (`sd15|sdxl|flux1|flux2|zimage|chroma|wan|anima`).
+- `ApiTab` (interface): Persisted model tab definition (`sd15|sdxl|flux1|flux2|zimage|chroma|wan|ltx2|anima`).
 - `TabsResponse` (interface): `/api/ui/tabs` response shape.
 - `WorkflowsResponse` (interface): `/api/ui/workflows` response shape.
 - `InventoryResponse` (interface): `/api/models/inventory` response shape.
@@ -271,8 +271,8 @@ export type TaskEvent =
       preview_image?: GeneratedImage
       preview_step?: number | null
     }
-  | { type: 'gap'; oldest_event_id: number; newest_event_id: number }
-  | { type: 'result'; images: GeneratedImage[]; info: unknown; video?: { rel_path?: string | null; mime?: string | null } }
+  | { type: 'gap'; oldest_event_id: number; newest_event_id: number; last_event_id: number }
+  | { type: 'result'; images?: GeneratedImage[]; info: unknown; video?: { rel_path?: string | null; mime?: string | null } }
   | { type: 'error'; message: string }
   | { type: 'end' }
 
@@ -297,7 +297,7 @@ export interface TaskResult {
   started_at_ms?: number | null
   error?: string
   result?: {
-    images: GeneratedImage[]
+    images?: GeneratedImage[]
     info: unknown
     video?: { rel_path?: string | null; mime?: string | null }
   }
@@ -373,7 +373,6 @@ export interface EngineCapabilities {
   supports_img2img: boolean
   supports_txt2vid: boolean
   supports_img2vid: boolean
-  supports_vid2vid?: boolean
   supports_hires: boolean
   supports_refiner: boolean
   supports_lora: boolean

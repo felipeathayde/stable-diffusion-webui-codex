@@ -30,7 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fetchCheckpointMetadata` (function): Fetches the metadata modal payload for a checkpoint selection (`/models/checkpoint-metadata`).
 - `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
 - `startModelInventoryRefreshTask` (function): Starts an async inventory refresh task (`/models/inventory/refresh/async`).
-- `refreshModelInventoryAsync` (function): Runs async inventory refresh task (`/models/inventory/refresh/async`) and resolves only on terminal SSE `end` with validated inventory payload.
+- `refreshModelInventoryAsync` (function): Runs async inventory refresh task (`/models/inventory/refresh/async`), recovers validated inventory from terminal snapshots after SSE gaps or `end` without a live result, and resolves as soon as the recovered task snapshot reports `completed`.
 - `cacheModelInventorySnapshot` (function): Writes an inventory snapshot into the local API cache (`/models/inventory`).
 - `fetchSamplers` (function): Fetches `/samplers`, preserves raw unsupported rows at the DTO boundary, and returns only supported entries after fail-loud metadata validation.
 - `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
@@ -454,16 +454,43 @@ function makeAbortError(): Error {
   return err
 }
 
-function parseInventoryTaskResult(event: TaskEvent): InventoryResponse | null {
-  if (event.type !== 'result') return null
-  const payload = event as unknown as Record<string, unknown>
+function parseInventoryTaskPayload(payload: unknown): InventoryResponse | null {
+  if (!isRecordObject(payload)) return null
+  if (
+    Array.isArray(payload.vaes)
+    && Array.isArray(payload.text_encoders)
+    && Array.isArray(payload.loras)
+    && Array.isArray(payload.metadata)
+    && isRecordObject(payload.wan22)
+  ) {
+    return payload as unknown as InventoryResponse
+  }
   const direct = payload.inventory
   if (isRecordObject(direct)) return direct as unknown as InventoryResponse
+  const nestedResult = parseInventoryTaskPayload(payload.result)
+  if (nestedResult) return nestedResult
   const info = payload.info
-  if (!isRecordObject(info)) return null
-  const nested = info.inventory
-  if (!isRecordObject(nested)) return null
-  return nested as unknown as InventoryResponse
+  return parseInventoryTaskPayload(info)
+}
+
+function parseInventoryTaskResult(event: TaskEvent): InventoryResponse | null {
+  if (event.type !== 'result') return null
+  return parseInventoryTaskPayload(event)
+}
+
+async function fetchInventoryTaskSnapshot(taskId: string): Promise<{ status: TaskResult['status']; inventory: InventoryResponse | null }> {
+  const snapshot = await fetchTaskResult(taskId)
+  if (snapshot.status === 'error') {
+    throw new Error(String(snapshot.error || 'inventory refresh task failed'))
+  }
+  const parsed = parseInventoryTaskPayload(snapshot)
+  if (!parsed) {
+    return { status: snapshot.status, inventory: null }
+  }
+  return {
+    status: snapshot.status,
+    inventory: ensureInventoryTaskPayloadShape(parsed),
+  }
 }
 
 function requireInventoryArrayField(
@@ -531,6 +558,34 @@ export async function refreshModelInventoryAsync(options: { signal?: AbortSignal
       signal.addEventListener('abort', onAbort, { once: true })
     }
 
+    const recoverFromSnapshot = (reason: 'gap' | 'end'): void => {
+      void fetchInventoryTaskSnapshot(taskId)
+        .then(({ status, inventory }) => {
+          if (settled) return
+          if (inventory) {
+            resolvedInventory = inventory
+          }
+          if (status === 'completed') {
+            if (!resolvedInventory) {
+              settle(() => reject(new Error('inventory refresh task completed without inventory payload')))
+              return
+            }
+            const inventoryPayload = resolvedInventory
+            settle(() => resolve(inventoryPayload))
+            return
+          }
+          if (reason === 'end' && !resolvedInventory) {
+            settle(() => reject(new Error('inventory refresh task completed without inventory payload')))
+          }
+        })
+        .catch((error) => {
+          if (settled) return
+          if (reason === 'end') {
+            settle(() => reject(toError(error, 'inventory refresh task snapshot recovery failed')))
+          }
+        })
+    }
+
     unsubscribe = subscribeTask(
       taskId,
       (event) => {
@@ -554,9 +609,14 @@ export async function refreshModelInventoryAsync(options: { signal?: AbortSignal
           return
         }
 
+        if (event.type === 'gap') {
+          recoverFromSnapshot('gap')
+          return
+        }
+
         if (event.type === 'end') {
           if (!resolvedInventory) {
-            settle(() => reject(new Error('inventory refresh task completed without inventory payload')))
+            recoverFromSnapshot('end')
             return
           }
           settle(() => resolve(resolvedInventory as InventoryResponse))

@@ -246,7 +246,7 @@ export const useXyzStore = defineStore('xyz', () => {
         taskId,
         (event: TaskEvent) => {
           if (event.type === 'result') {
-            result = { images: event.images, info: event.info }
+            result = { images: Array.isArray(event.images) ? event.images : [], info: event.info }
           }
           if (event.type === 'error') {
             reject(new Error(event.message ?? 'Task failed'))

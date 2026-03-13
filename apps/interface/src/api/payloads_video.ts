@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2vid/img2vid/vid2vid).
+Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2vid/img2vid).
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
 handling unset sentinels and producing backend-ready payloads for `/api/*` requests with canonical WAN video keys (including `device` and `settings_revision`).
 Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image_scale` + crop offsets) with fail-loud validation, and WAN scheduler fields are enforced as exact canonical `simple`.
@@ -14,10 +14,8 @@ Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image
 	Symbols (top-level; keep in sync; no ghosts):
 	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
 	- `WanImg2VidPayloadSchema` (const): Zod schema for WAN `/api/img2vid` payload.
-	- `WanVid2VidPayloadSchema` (const): Zod schema for WAN `/api/vid2vid` payload.
 	- `WanTxt2VidPayload` (type): Zod-inferred payload type for WAN `/api/txt2vid`.
 	- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
-	- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
 	- `WanStageLoraInput` (interface): UI-friendly stage LoRA entry (`sha` + optional `weight`) mapped to stage `loras[]`.
 	- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
 	- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames, save toggles) mapped into payload.
@@ -26,7 +24,6 @@ Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
 - `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|sliding|svi2|svi2_pro`) and no-stretch guide controls (`imageScale` + crop offsets).
-- `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts into the `4n+1` domain.
@@ -40,7 +37,6 @@ Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image
 - `addWanUpscaling` (function): Injects optional SeedVR2 upscaling config into the payload when enabled.
 - `buildWanTxt2VidPayload` (function): Builds a validated txt2vid payload from UI common input.
 - `buildWanImg2VidPayload` (function): Builds a validated img2vid payload from UI input plus init image data.
-- `buildWanVid2VidPayload` (function): Builds a validated vid2vid payload from UI vid2vid input.
 */
 
 import { z } from 'zod'
@@ -171,10 +167,6 @@ const CommonWanVideoPayloadSchema = z
     video_crf: z.number().int().min(0).max(51).optional(),
     video_loop_count: z.number().int().min(0).optional(),
     video_pingpong: z.boolean(),
-    video_save_metadata: z.boolean(),
-    video_save_output: z.boolean(),
-    video_trim_to_audio: z.boolean(),
-
     video_interpolation: VideoInterpolationSchema.optional(),
     video_upscaling: VideoUpscalingSchema.optional(),
 
@@ -332,37 +324,6 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
 
 export type WanImg2VidPayload = z.infer<typeof WanImg2VidPayloadSchema>
 
-export const WanVid2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
-  vid2vid_prompt: PromptSchema,
-  vid2vid_neg_prompt: z.string().optional().default(''),
-  vid2vid_width: z.number().int().min(8).max(8192),
-  vid2vid_height: z.number().int().min(8).max(8192),
-  vid2vid_steps: z.number().int().min(1),
-  vid2vid_fps: z.number().int().min(1).max(240),
-  vid2vid_num_frames: WanFrameCountSchema,
-  vid2vid_sampler: z.string().min(1).optional(),
-  vid2vid_scheduler: z.literal(WAN_CANONICAL_SCHEDULER),
-  vid2vid_seed: z.number().int().optional(),
-  vid2vid_cfg_scale: z.number().optional(),
-  vid2vid_strength: z.number().min(0).max(1).optional(),
-  vid2vid_method: z.enum(['native', 'flow_chunks']).optional(),
-  vid2vid_use_source_fps: z.boolean().optional(),
-  vid2vid_use_source_frames: z.boolean().optional(),
-  vid2vid_start_seconds: z.number().min(0).optional(),
-  vid2vid_end_seconds: z.number().min(0).optional(),
-  vid2vid_max_frames: z.number().int().min(1).optional(),
-  vid2vid_chunk_frames: z.number().int().min(2).max(128).optional(),
-  vid2vid_overlap_frames: z.number().int().min(0).max(127).optional(),
-  vid2vid_preview_frames: z.number().int().min(1).max(512).optional(),
-  vid2vid_flow_enabled: z.boolean().optional(),
-  vid2vid_flow_use_large: z.boolean().optional(),
-  vid2vid_flow_downscale: z.number().int().min(1).max(8).optional(),
-  vid2vid_flow_device: z.string().min(1).optional(),
-  // Path-based inputs are supported but restricted server-side; prefer multipart upload.
-  vid2vid_video_path: z.string().min(1).optional(),
-}).strict()
-
-export type WanVid2VidPayload = z.infer<typeof WanVid2VidPayloadSchema>
 
 export interface WanStageInput {
   loras?: WanStageLoraInput[]
@@ -388,9 +349,6 @@ export interface WanVideoOutputInput {
   crf: number
   loopCount: number
   pingpong: boolean
-  saveMetadata?: boolean
-  saveOutput?: boolean
-  trimToAudio?: boolean
   returnFrames?: boolean
 }
 
@@ -447,24 +405,6 @@ export interface WanImg2VidInput extends WanVideoCommonInput {
   windowFrames?: number
   windowStride?: number
   windowCommitFrames?: number
-}
-
-export interface WanVid2VidInput extends WanVideoCommonInput {
-  strength: number
-  method: 'native' | 'flow_chunks'
-  useSourceFps: boolean
-  useSourceFrames: boolean
-  startSeconds?: number
-  endSeconds?: number
-  maxFrames?: number
-  chunkFrames?: number
-  overlapFrames?: number
-  previewFrames?: number
-  flowEnabled: boolean
-  flowUseLarge: boolean
-  flowDownscale: number
-  flowDevice?: string
-  videoPath?: string
 }
 
 function normalizeDevice(device: string): WanTxt2VidPayload['device'] {
@@ -653,9 +593,6 @@ function addWanOutput(payload: Record<string, unknown>, out: WanVideoOutputInput
   if (Number.isFinite(out.crf)) payload.video_crf = out.crf
   if (Number.isFinite(out.loopCount)) payload.video_loop_count = out.loopCount
   payload.video_pingpong = resolveToggle(out.pingpong, 'pingpong', false)
-  payload.video_save_metadata = resolveToggle(out.saveMetadata, 'saveMetadata', true)
-  payload.video_save_output = resolveToggle(out.saveOutput, 'saveOutput', true)
-  payload.video_trim_to_audio = resolveToggle(out.trimToAudio, 'trimToAudio', false)
   payload.video_return_frames = resolveToggle(out.returnFrames, 'returnFrames', false)
 }
 
@@ -858,60 +795,4 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
   addWanAssets(payload, input.assets)
 
   return WanImg2VidPayloadSchema.parse(payload)
-}
-
-export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayload {
-  const totalSteps = input.high.steps + input.low.steps
-  const width = snapWanDim(input.width)
-  const height = snapWanDim(input.height)
-  const frames = normalizeWanFrameCount(input.frames)
-  const { prompt, negativePrompt } = resolveTopLevelPrompts(input)
-  const payload: Record<string, unknown> = {
-    device: normalizeDevice(input.device),
-    settings_revision: normalizeSettingsRevision(input.settingsRevision),
-    vid2vid_prompt: prompt,
-    vid2vid_neg_prompt: negativePrompt,
-    vid2vid_width: width,
-    vid2vid_height: height,
-    vid2vid_fps: input.fps,
-    vid2vid_num_frames: frames,
-    // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
-    // high/low stage steps differ.
-    vid2vid_steps: totalSteps,
-    vid2vid_cfg_scale: input.high.cfgScale,
-    vid2vid_seed: input.high.seed,
-    vid2vid_strength: input.strength,
-    vid2vid_method: input.method,
-    vid2vid_use_source_fps: input.useSourceFps,
-    vid2vid_use_source_frames: input.useSourceFrames,
-    vid2vid_flow_enabled: input.flowEnabled,
-    vid2vid_flow_use_large: input.flowUseLarge,
-    vid2vid_flow_downscale: input.flowDownscale,
-  }
-
-  const sampler = String(input.high.sampler || '').trim()
-  if (sampler) payload.vid2vid_sampler = sampler
-  payload.vid2vid_scheduler = requireCanonicalWanScheduler(input.high.scheduler, 'WAN vid2vid scheduler')
-  if (typeof input.startSeconds === 'number') payload.vid2vid_start_seconds = input.startSeconds
-  if (typeof input.endSeconds === 'number') payload.vid2vid_end_seconds = input.endSeconds
-  if (typeof input.maxFrames === 'number') payload.vid2vid_max_frames = input.maxFrames
-  if (typeof input.chunkFrames === 'number') payload.vid2vid_chunk_frames = input.chunkFrames
-  if (typeof input.overlapFrames === 'number') payload.vid2vid_overlap_frames = input.overlapFrames
-  if (typeof input.previewFrames === 'number') payload.vid2vid_preview_frames = input.previewFrames
-  if (typeof input.flowDevice === 'string' && input.flowDevice.trim()) payload.vid2vid_flow_device = input.flowDevice.trim()
-
-  const vp = String(input.videoPath || '').trim()
-  if (vp) payload.vid2vid_video_path = vp
-
-  addWanOutput(payload, input.output)
-  addWanInterpolation(payload, input.interpolation, input.fps)
-  addWanUpscaling(payload, input.upscaling)
-
-  payload.wan_high = stageToPayload(input.high)
-  payload.wan_low = stageToPayload(input.low)
-  payload.gguf_attention_mode = normalizeAttentionMode(input.attentionMode)
-  if (input.format !== 'auto') payload.wan_format = input.format
-  addWanAssets(payload, input.assets)
-
-  return WanVid2VidPayloadSchema.parse(payload)
 }

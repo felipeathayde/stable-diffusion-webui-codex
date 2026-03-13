@@ -210,7 +210,6 @@ def build_router(
         "useInitImage",
         "initImageData",
         "initImageName",
-        "denoiseStrength",
         "videoReturnFrames",
     }
     _NESTED_OBJECT_PARAM_KEYS = {

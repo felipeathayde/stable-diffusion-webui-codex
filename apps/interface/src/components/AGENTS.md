@@ -35,12 +35,13 @@ Status: Active
 - 2026-01-01: `ResultViewer.vue` can optionally show a single `previewImage` (with `previewCaption`) while a task is running, before final results are available.
 - 2026-01-27: `ResultViewer.vue` video mode now includes a per-frame “Download” button (frames-only WAN runs when `Save output` is disabled or export fails).
 - 2026-02-21: `ResultViewer.vue` frame previews now use dedicated `result-frame` styling (`object-fit: contain`, no forced full-width upscaling, `max-height: 30dvh`) to avoid stretch/zoom in shared Results cards.
-- 2025-12-16: Added `InitialVideoCard.vue` to mirror `InitialImageCard.vue` for WAN `vid2vid` uploads (file picker + preview + remove).
+- 2026-03-13: Deleted the dead `InitialVideoCard.vue` vid2vid upload surface; active video tabs now reuse shared image init cards where appropriate and keep `vid2vid` out of the live interface.
 - 2026-01-17: `QuickSettingsWan.vue` now uses a single Mode selector for WAN presets (I2V/T2V/V2V + size) and `QuickSettingsBar.vue` updates WAN tab params directly (no window `codex-wan-mode-change` event); Guided gen still uses `codex-wan-guided-gen`.
 - 2026-02-16: `QuickSettingsBar.vue` now auto-applies WAN stage `flowShift=5.0` for `i2v_14b` when LightX2V is enabled, and removes that managed override when mode/toggle leaves the distill path.
 - 2025-12-28: QuickSettings now groups GPU VRAM / Attention Backend / Overrides into a collapsible Advanced row; the obsolete low-bits dtype selectors were removed and Guided gen entrypoint is hidden for now.
 - 2025-12-14: QuickSettings WAN text encoder dropdown now prefers concrete `.safetensors` files under `wan22_tenc`, emitting `wan22/<abs_path>` values that the WAN payload builder normalizes before POSTing.
 - 2025-12-14: WAN tab UI panels live under `components/wan/` (`WanStagePanel.vue`, `WanVideoOutputPanel.vue`) to avoid duplicating High/Low/Output markup in the view.
+- 2026-03-13: Family-owned model-tab workspaces now live under `components/model-tabs/`; route ownership stays in `views/VideoModelTab.vue`.
 - 2025-12-15: `VideoSettingsCard.vue` gained a dedicated stylesheet (`styles/components/video-settings-card.css`) and the WAN tab’s parameter sections were restyled to use card layouts consistently.
 - 2025-12-22: `GenerationSettingsCard.vue` now exposes a CFG slider (next to Seed via a flex footer) and moves seed actions (🎲/↺) inside the seed input; `VideoSettingsCard.vue` adds an FPS slider.
 - 2025-12-22: `GenerationSettingsCard.vue` internal layout now uses flex rows (`gc-stack`/`gc-row`) so sliders + buttons aren’t constrained by a single grid template.

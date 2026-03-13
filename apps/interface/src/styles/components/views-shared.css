@@ -19,6 +19,19 @@
   /* Results header */
   .results-actions { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-sm); align-items: center; }
   .results-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-sm); }
+  .results-empty-state {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    max-width: 34rem;
+    text-align: left;
+    opacity: 1;
+  }
+  .results-empty-title {
+    font-weight: 800;
+    font-size: 1rem;
+    opacity: 0.95;
+  }
   .results-generate { width: 10rem; }
   .cdx-chips-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 

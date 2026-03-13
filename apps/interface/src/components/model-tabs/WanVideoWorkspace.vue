@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN video generation tab (txt2vid/img2vid) UI.
+Purpose: Family-owned WAN video workspace (txt2vid/img2vid).
 Owns per-stage prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
 renders progress/results via task events (frames and/or exported video), with Run status shown through the shared
 `RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` metadata in progress mode).
@@ -21,7 +21,7 @@ Temporal Loom reset-anchor control is rendered as a compact content-width toggle
 Exported result video preview uses an explicit `Zoom` action to open a dedicated full-screen video overlay with pan/zoom, outside-click/Escape close, and double-click fullscreen suppression.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WANTab` (component): WAN video tab view; handles input modes, generation start/cancel, history apply/reuse, and guided-generation UX.
+- `WanVideoWorkspace` (component): WAN video workspace mounted by `VideoModelTab`.
 - `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
 - `AspectMode` (type): Aspect ratio mode presets for width/height controls.
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
@@ -529,7 +529,7 @@ Symbols (top-level; keep in sync; no ghosts):
         @cancel="cancel()"
       >
         <template #header-right>
-          <div class="wan-header-actions">
+          <div class="results-header-actions">
             <button v-if="history.length && !isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
               Reuse last
             </button>
@@ -559,7 +559,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <ResultsCard
         class="wan-results-panel"
         headerClass="three-cols"
-        headerRightClass="wan-header-actions"
+        headerRightClass="results-header-actions"
         :showGenerate="false"
       >
         <template #header-right>
@@ -607,7 +607,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <div v-if="videoUrl" class="gen-card mb-3">
           <div class="row-split">
             <span class="label-muted">Exported Video</span>
-            <div class="wan-header-actions">
+            <div class="results-header-actions">
               <button class="btn btn-sm btn-outline" type="button" @click="openResultVideoZoom">Zoom</button>
               <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
             </div>
@@ -617,8 +617,8 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
         <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
           <template #empty>
-            <div class="wan-results-empty">
-              <div class="wan-empty-title">
+            <div class="results-empty-state">
+              <div class="results-empty-title">
                 <template v-if="isRunning">Generating…</template>
                 <template v-else-if="videoUrl">Frames not returned</template>
                 <template v-else>No results yet</template>
@@ -635,7 +635,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <div v-if="info" class="gen-card mt-3">
           <div class="row-split">
             <span class="label-muted">Generation Info</span>
-            <div class="wan-header-actions">
+            <div class="results-header-actions">
               <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
             </div>
           </div>
@@ -732,31 +732,31 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
-import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
-import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
-import { fetchSamplers, fetchSchedulers } from '../api/client'
-import ResultViewer from '../components/ResultViewer.vue'
-import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
-import VideoSettingsCard from '../components/VideoSettingsCard.vue'
-import ResultsCard from '../components/results/ResultsCard.vue'
-import RunCard from '../components/results/RunCard.vue'
-import RunProgressStatus from '../components/results/RunProgressStatus.vue'
-import RunSummaryChips from '../components/results/RunSummaryChips.vue'
-import HoverTooltip from '../components/ui/HoverTooltip.vue'
-import SliderField from '../components/ui/SliderField.vue'
-import PromptFields from '../components/prompt/PromptFields.vue'
-import LoraModal from '../components/modals/LoraModal.vue'
-import WanStagePanel from '../components/wan/WanStagePanel.vue'
-import WanSubHeader from '../components/wan/WanSubHeader.vue'
-import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
-import Modal from '../components/ui/Modal.vue'
-import VideoZoomOverlay from '../components/ui/VideoZoomOverlay.vue'
-import { useVideoGeneration, type VideoRunHistoryItem } from '../composables/useVideoGeneration'
-import { useResultsCard } from '../composables/useResultsCard'
-import { useWorkflowsStore } from '../stores/workflows'
-import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
-import { useBootstrapStore } from '../stores/bootstrap'
-import NumberStepperInput from '../components/ui/NumberStepperInput.vue'
+import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../../stores/model_tabs'
+import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../../api/types'
+import { fetchSamplers, fetchSchedulers } from '../../api/client'
+import ResultViewer from '../../components/ResultViewer.vue'
+import Img2ImgInpaintParamsCard from '../../components/Img2ImgInpaintParamsCard.vue'
+import VideoSettingsCard from '../../components/VideoSettingsCard.vue'
+import ResultsCard from '../../components/results/ResultsCard.vue'
+import RunCard from '../../components/results/RunCard.vue'
+import RunProgressStatus from '../../components/results/RunProgressStatus.vue'
+import RunSummaryChips from '../../components/results/RunSummaryChips.vue'
+import HoverTooltip from '../../components/ui/HoverTooltip.vue'
+import SliderField from '../../components/ui/SliderField.vue'
+import PromptFields from '../../components/prompt/PromptFields.vue'
+import LoraModal from '../../components/modals/LoraModal.vue'
+import WanStagePanel from '../../components/wan/WanStagePanel.vue'
+import WanSubHeader from '../../components/wan/WanSubHeader.vue'
+import WanVideoOutputPanel from '../../components/wan/WanVideoOutputPanel.vue'
+import Modal from '../../components/ui/Modal.vue'
+import VideoZoomOverlay from '../../components/ui/VideoZoomOverlay.vue'
+import { useVideoGeneration, type VideoRunHistoryItem } from '../../composables/useVideoGeneration'
+import { useResultsCard } from '../../composables/useResultsCard'
+import { useWorkflowsStore } from '../../stores/workflows'
+import { useEngineCapabilitiesStore } from '../../stores/engine_capabilities'
+import { useBootstrapStore } from '../../stores/bootstrap'
+import NumberStepperInput from '../../components/ui/NumberStepperInput.vue'
 import {
   isWanWindowedImg2VidMode,
   normalizeWanImg2VidMode,
@@ -764,11 +764,11 @@ import {
   normalizeWanWindowStride,
   WAN_WINDOW_COMMIT_OVERLAP_MIN,
   WAN_WINDOW_STRIDE_ALIGNMENT,
-} from '../utils/wan_img2vid_temporal'
+} from '../../utils/wan_img2vid_temporal'
 import {
   normalizeWanImg2VidImageScale,
   type WanImg2VidFrameGuideConfig,
-} from '../utils/wan_img2vid_frame_projection'
+} from '../../utils/wan_img2vid_frame_projection'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()

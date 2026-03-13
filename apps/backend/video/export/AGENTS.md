@@ -17,3 +17,4 @@ Status: Active
 - 2026-01-18: `export/__init__.py` is now a package marker (no re-exports); import `export_video` from `apps/backend/video/export/ffmpeg_exporter.py`.
 - 2026-02-21: `ffmpeg_exporter.py` now parses boolean options (`save_output`, `pingpong`, `trim_to_audio`, `save_metadata`) via shared strict bool parsing and fails loud on invalid literals (no permissive truthy coercion drift from use-case contracts).
 - 2026-03-11: `ffmpeg_exporter.py` now fails loud when `audio_source_path` is missing or when audio mux is requested for unsupported containers, and `VideoExportResult` now reports `has_audio` so shared video metadata can distinguish silent video from muxed output truthfully.
+- 2026-03-13: `ffmpeg_exporter.py::_format_to_container()` now rejects unknown `video_options.format` values with `VideoExportError` instead of silently coercing them to mp4/h264.

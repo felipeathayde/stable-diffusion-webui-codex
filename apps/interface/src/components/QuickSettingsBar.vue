@@ -618,13 +618,37 @@ function toggleAdvancedRow(): void {
   advancedRafId = requestAnimationFrame(tick)
 }
 
-function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
+type UiPresetTab = 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid'
+
+function currentTab(): UiPresetTab | null {
+  const modelTab = activeModelTab.value
+  if (route.path.startsWith('/models/')) {
+    if (!modelTab) return null
+    if (modelTab.type === 'wan') {
+      const wanTab = asWanTab(modelTab)
+      if (!wanTab) return null
+      return wanTab.params.video.useInitImage ? 'img2vid' : 'txt2vid'
+    }
+    if (modelTab.type === 'ltx2') {
+      const ltxTab = asLtxTab(modelTab)
+      if (!ltxTab) return null
+      return ltxTab.params.mode === 'img2vid' ? 'img2vid' : 'txt2vid'
+    }
+    const imageTab = asImageTab(modelTab)
+    if (imageTab) {
+      return imageTab.params.useInitImage ? 'img2img' : 'txt2img'
+    }
+    return null
+  }
+
   const p = route.path
   if (p.startsWith('/img2img')) return 'img2img'
   if (p.startsWith('/txt2vid')) return 'txt2vid'
   if (p.startsWith('/img2vid')) return 'img2vid'
   return 'txt2img'
 }
+
+const resolvedPresetTab = computed<UiPresetTab | null>(() => currentTab())
 
 const routeTabId = computed(() => String(route.params.tabId || ''))
 const activeModelTab = computed(() => {
@@ -642,7 +666,7 @@ function asImageTab(value: unknown): ImageTab | null {
   if (!value || typeof value !== 'object') return null
   const candidate = value as { type?: unknown }
   const type = normalizeTabFamily(candidate.type)
-  if (!type || type === 'wan') return null
+  if (!type || type === 'wan' || type === 'ltx2') return null
   return value as ImageTab
 }
 
@@ -2129,16 +2153,11 @@ onMounted(() => {
   requestAnimationFrame(syncAdvancedHeight)
   void Promise.allSettled([
     initQuicksettings(),
-    presets.init(currentTab()),
   ]).then((results) => {
-    const [quicksettingsResult, presetsResult] = results
+    const [quicksettingsResult] = results
     if (quicksettingsResult.status === 'rejected') {
       console.error('[quicksettings] failed to initialize quicksettings', quicksettingsResult.reason)
       toastQuicksettingsError(quicksettingsResult.reason)
-    }
-    if (presetsResult.status === 'rejected') {
-      console.error('[quicksettings] failed to initialize presets', presetsResult.reason)
-      toastQuicksettingsError(presetsResult.reason)
     }
   })
 })
@@ -2152,12 +2171,21 @@ onBeforeUnmount(() => {
 
 watch(() => route.path, async () => {
   try {
-    await presets.init(currentTab())
     await loadInventory()
   } catch (error) {
     toastQuicksettingsError(error)
   }
 })
+
+watch(resolvedPresetTab, async (tab, previousTab) => {
+  if (!tab || tab === previousTab) return
+  try {
+    await presets.init(tab)
+  } catch (error) {
+    console.error('[quicksettings] failed to initialize presets', error)
+    toastQuicksettingsError(error)
+  }
+}, { immediate: true })
 
 // random seed button removed from quicksettings; presets applied elsewhere
 </script>

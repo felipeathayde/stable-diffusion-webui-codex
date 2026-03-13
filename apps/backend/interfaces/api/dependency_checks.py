@@ -447,9 +447,10 @@ def build_engine_dependency_checks(
                             label="Checkpoint Mix",
                             ok=True,
                             message=(
-                                "Mixed LTX2 inventory discovered: all LTX2 checkpoints still require the external Gemma3 text "
-                                "encoder, while core-only GGUF checkpoints additionally require the external video VAE, embeddings "
-                                "connectors, and the audio bundle."
+                                "Mixed LTX2 inventory discovered: every LTX2 checkpoint still requires exactly 1 external "
+                                "Gemma3-12B text encoder via sha selection, while core-only GGUF checkpoints additionally require "
+                                "an external video VAE. Embeddings connectors and the combined audio bundle resolve internally from "
+                                "configured LTX2 roots."
                             ),
                         )
                     )
@@ -460,8 +461,9 @@ def build_engine_dependency_checks(
                             label="Checkpoint Mix",
                             ok=True,
                             message=(
-                                "Only core-only LTX2 GGUF checkpoints are currently discovered. External video VAE, Gemma3 text "
-                                "encoder, embeddings connectors, and the audio bundle are required for generation."
+                                "Only core-only LTX2 GGUF checkpoints are currently discovered. External video VAE and exactly 1 "
+                                "external Gemma3-12B text encoder are required for generation; embeddings connectors and the "
+                                "combined audio bundle resolve internally from configured LTX2 roots."
                             ),
                         )
                     )
@@ -471,7 +473,11 @@ def build_engine_dependency_checks(
                             id="checkpoint_mix",
                             label="Checkpoint Mix",
                             ok=True,
-                            message="Only monolithic LTX2 checkpoints are currently discovered.",
+                            message=(
+                                "Only non-core-only LTX2 checkpoints are currently discovered. They keep the transformer, merged "
+                                "connectors surface, and video/audio decoders inside the checkpoint, and still require exactly 1 "
+                                "external Gemma3-12B text encoder via sha selection."
+                            ),
                         )
                     )
         scoped_vae_roots = _roots_for_keys(_VAE_ROOT_KEYS_BY_CONTRACT_OWNER.get(contract_engine, ()))

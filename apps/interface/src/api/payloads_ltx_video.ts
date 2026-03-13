@@ -32,7 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { z } from 'zod'
 
-const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
+const DEVICE_VALUES = ['cuda', 'cpu'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
 const LTX_DIM_STEP = 16
 const LTX_DIM_MIN = 16

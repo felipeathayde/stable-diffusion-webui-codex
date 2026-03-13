@@ -220,7 +220,7 @@ export const useImg2ImgStore = defineStore('img2img', () => {
         }
         break
       case 'result':
-        gallery.value = event.images
+        gallery.value = event.images || []
         info.value = event.info
         status.value = 'done'
         if (event.info && typeof event.info === 'object') {

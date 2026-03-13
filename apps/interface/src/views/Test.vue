@@ -443,9 +443,6 @@ async function generate(): Promise<void> {
         crf: 15,
         loopCount: 0,
         pingpong: false,
-        saveMetadata: true,
-        saveOutput: true,
-        trimToAudio: false,
         returnFrames: true,
       },
       interpolation: {
@@ -512,7 +509,7 @@ function resizeDataUrl(src: string, width: number, height: number): Promise<stri
 function onTaskEvent(ev: TaskEvent): void {
   switch (ev.type) {
     case 'result':
-      framesResult.value = ev.images
+      framesResult.value = ev.images || []
       isRunning.value = false
       stopStream()
       break

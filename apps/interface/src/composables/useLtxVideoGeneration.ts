@@ -28,6 +28,7 @@ import { formatZodError } from '../api/payloads'
 import {
   buildLtxImg2VidPayload,
   buildLtxTxt2VidPayload,
+  normalizeDevice,
   normalizeLtxSampler,
   normalizeLtxScheduler,
   type LtxImg2VidPayload,
@@ -273,6 +274,12 @@ export function useLtxVideoGeneration(tabId: string) {
     if (!checkpointLabel) return 'Select an LTX checkpoint in QuickSettings.'
 
     try {
+      normalizeDevice(quicksettings.currentDevice || 'cpu')
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+
+    try {
       normalizeLtxSampler(currentParams.sampler)
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
@@ -347,7 +354,7 @@ export function useLtxVideoGeneration(tabId: string) {
     }
 
     return {
-      device: quicksettings.currentDevice || 'cpu',
+      device: normalizeDevice(quicksettings.currentDevice || 'cpu'),
       settingsRevision: quicksettings.getSettingsRevision(),
       model: checkpointLabel,
       modelSha,

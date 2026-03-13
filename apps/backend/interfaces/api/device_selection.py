@@ -61,17 +61,17 @@ _GENERATION_ROUTE_DEVICE_POLICY_MATRIX: dict[GenerationRouteMode, RouteDevicePol
     ),
     GenerationRouteMode.TXT2VID: RouteDevicePolicy(
         route_mode=GenerationRouteMode.TXT2VID,
-        route_label="WAN video",
+        route_label="video generation",
         allowed_devices=_WAN_VIDEO_ALLOWED_DEVICES,
     ),
     GenerationRouteMode.IMG2VID: RouteDevicePolicy(
         route_mode=GenerationRouteMode.IMG2VID,
-        route_label="WAN video",
+        route_label="video generation",
         allowed_devices=_WAN_VIDEO_ALLOWED_DEVICES,
     ),
     GenerationRouteMode.VID2VID: RouteDevicePolicy(
         route_mode=GenerationRouteMode.VID2VID,
-        route_label="WAN video",
+        route_label="video generation",
         allowed_devices=_WAN_VIDEO_ALLOWED_DEVICES,
     ),
 }

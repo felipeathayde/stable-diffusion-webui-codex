@@ -6,14 +6,14 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Dedicated LTX video tab UI backed by the generic video endpoints.
+Purpose: Family-owned LTX video workspace backed by the generic video endpoints.
 Renders a minimal truthful `ltx2` txt2vid/img2vid workspace, reusing shared prompt/init-image/progress/results components while keeping
 checkpoint/VAE/text-encoder selection in QuickSettings instead of duplicating local selectors. Exposes only the generic backend contract:
 mode, prompts, dimensions, fps, frames, steps, cfg, sampler, scheduler, seed, optional init image, run/cancel, progress, exported video,
 and optional returned frames.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `LTXTab` (component): LTX video generation workspace for `/models/:tabId`.
+- `LtxVideoWorkspace` (component): LTX video generation workspace mounted by `VideoModelTab`.
 - `fallbackSamplers` / `fallbackSchedulers` (const): Local selector fallbacks when sampler catalogs are unavailable.
 - `readFileAsDataURL` (function): Reads the selected init image into a data URL.
 - `normalizePositiveInt` (function): Clamps/sanitizes positive integer field updates.
@@ -67,24 +67,30 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
 
           <div v-if="mode === 'img2vid'" class="gen-card">
-            <InitialImageCard
-              label="Initial Image"
-              :src="params.initImageData"
-              :hasImage="Boolean(params.initImageData)"
+            <Img2ImgInpaintParamsCard
+              embedded
               :disabled="isRunning"
-              placeholder="Drop an image or click to browse."
-              dropzone
-              zoomable
-              @set="onInitImageFile"
-              @clear="clearInit"
-              @rejected="onInitImageRejected"
-            >
-              <template #footer>
-                <p class="caption mt-2">
-                  Generic LTX img2vid currently does not expose denoise strength on `/api/img2vid`; the stored tab value is not sent.
-                </p>
-              </template>
-            </InitialImageCard>
+              sectionTitle="Img2Vid Parameters"
+              sectionSubtitle="Initial image"
+              initImageLabel="Image"
+              :initImageData="params.initImageData"
+              :initImageName="params.initImageName"
+              :imageWidth="params.width"
+              :imageHeight="params.height"
+              :useMask="false"
+              maskImageData=""
+              maskImageName=""
+              maskEnforcement="per_step_clamp"
+              :inpaintingFill="1"
+              :inpaintFullResPadding="0"
+              :maskBlur="0"
+              @set:initImage="onInitImageFile"
+              @clear:initImage="clearInit"
+              @reject:initImage="onInitImageRejected"
+            />
+            <p class="caption mt-2">
+              Generic LTX img2vid currently does not expose denoise strength on `/api/img2vid`.
+            </p>
           </div>
         </div>
       </div>
@@ -217,10 +223,10 @@ Symbols (top-level; keep in sync; no ghosts):
               <div class="row-split"><span class="label-muted">Text Encoder</span><code>{{ textEncoderDisplay }}</code></div>
             </div>
 
-            <p v-if="checkpointCoreOnly" class="caption mt-2">
-              Core-only LTX checkpoint detected: external VAE, text encoder, embeddings connectors, and the audio bundle are required.
+            <p v-if="checkpointCoreOnly && assetContract?.notes" class="caption mt-2">
+              {{ assetContract.notes }}
             </p>
-            <details v-if="assetContract?.notes" class="accordion mt-2">
+            <details v-else-if="assetContract?.notes" class="accordion mt-2">
               <summary>Contract notes</summary>
               <div class="accordion-body">
                 <p class="text-xs break-words">{{ assetContract.notes }}</p>
@@ -269,7 +275,7 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </RunCard>
 
-      <ResultsCard :showGenerate="false" headerRightClass="wan-header-actions">
+      <ResultsCard :showGenerate="false" headerRightClass="results-header-actions">
         <template #header-right>
           <button v-if="info" class="btn btn-sm btn-outline" type="button" @click="copyJson(info, 'Copied generation info.')">
             Copy info
@@ -292,8 +298,8 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
           <ResultViewer mode="video" :frames="frames" :toDataUrl="toDataUrl" emptyText="No frames yet.">
             <template #empty>
-              <div class="wan-results-empty">
-                <div class="wan-empty-title">
+              <div class="results-empty-state">
+                <div class="results-empty-title">
                   <template v-if="isRunning">Generating…</template>
                   <template v-else-if="videoUrl">Frames not returned</template>
                   <template v-else>No frames yet</template>
@@ -325,28 +331,28 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 
-import { fetchSamplers, fetchSchedulers } from '../api/client'
-import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
+import { fetchSamplers, fetchSchedulers } from '../../api/client'
+import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../../api/types'
 import {
   LTX_ALLOWED_SAMPLERS,
   LTX_CANONICAL_SCHEDULER,
   normalizeLtxFrameCount,
   snapLtxDim,
-} from '../api/payloads_ltx_video'
-import InitialImageCard from '../components/InitialImageCard.vue'
-import PromptFields from '../components/prompt/PromptFields.vue'
-import ResultViewer from '../components/ResultViewer.vue'
-import ResultsCard from '../components/results/ResultsCard.vue'
-import RunCard from '../components/results/RunCard.vue'
-import RunProgressStatus from '../components/results/RunProgressStatus.vue'
-import SamplerSelector from '../components/SamplerSelector.vue'
-import SchedulerSelector from '../components/SchedulerSelector.vue'
-import VideoSettingsCard from '../components/VideoSettingsCard.vue'
-import NumberStepperInput from '../components/ui/NumberStepperInput.vue'
-import SliderField from '../components/ui/SliderField.vue'
-import { useLtxVideoGeneration } from '../composables/useLtxVideoGeneration'
-import { useResultsCard } from '../composables/useResultsCard'
-import { useModelTabsStore, type LtxGenerationMode, type LtxTabParams } from '../stores/model_tabs'
+} from '../../api/payloads_ltx_video'
+import Img2ImgInpaintParamsCard from '../../components/Img2ImgInpaintParamsCard.vue'
+import PromptFields from '../../components/prompt/PromptFields.vue'
+import ResultViewer from '../../components/ResultViewer.vue'
+import ResultsCard from '../../components/results/ResultsCard.vue'
+import RunCard from '../../components/results/RunCard.vue'
+import RunProgressStatus from '../../components/results/RunProgressStatus.vue'
+import SamplerSelector from '../../components/SamplerSelector.vue'
+import SchedulerSelector from '../../components/SchedulerSelector.vue'
+import VideoSettingsCard from '../../components/VideoSettingsCard.vue'
+import NumberStepperInput from '../../components/ui/NumberStepperInput.vue'
+import SliderField from '../../components/ui/SliderField.vue'
+import { useLtxVideoGeneration } from '../../composables/useLtxVideoGeneration'
+import { useResultsCard } from '../../composables/useResultsCard'
+import { useModelTabsStore, type LtxGenerationMode, type LtxTabParams } from '../../stores/model_tabs'
 
 const props = defineProps<{ tabId: string }>()
 

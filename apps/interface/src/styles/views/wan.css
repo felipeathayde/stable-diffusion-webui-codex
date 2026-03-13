@@ -11,14 +11,6 @@
     }
   }
 
-  .wan-header-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.4rem;
-  }
-
   .wan-results-panel {
     flex: 1 1 auto;
     min-height: 0;
@@ -169,21 +161,6 @@
   .wan-upscaling-toggle-row .qs-toggle-btn {
     width: auto;
     justify-content: flex-start;
-  }
-
-  .wan-results-empty {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    max-width: 34rem;
-    text-align: left;
-    opacity: 1;
-  }
-
-  .wan-empty-title {
-    font-weight: 800;
-    font-size: 1rem;
-    opacity: 0.95;
   }
 
   .wan-empty-steps {

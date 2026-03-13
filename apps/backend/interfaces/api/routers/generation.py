@@ -2872,6 +2872,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         default_sampler: str,
         default_scheduler: str,
         expected_unipc_solver_hint: str | None,
+        sampler_validator: Callable[[str, str], str] | None = None,
+        scheduler_validator: Callable[[str, str], str] | None = None,
         default_seed: int,
         default_cfg_scale: float,
     ) -> _VideoCoreDTO:
@@ -2907,12 +2909,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
         sampler_name = _require_str_field(payload, sampler_key) if sampler_key in payload else str(default_sampler)
         scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else str(default_scheduler)
-        sampler_name = _validate_wan22_sampler_field(
-            field_name=sampler_key,
-            value=sampler_name,
-            expected_unipc_solver_hint=expected_unipc_solver_hint,
-        )
-        scheduler_name = _validate_wan22_scheduler_field(field_name=scheduler_key, value=scheduler_name)
+        if sampler_validator is None:
+            sampler_name = _validate_wan22_sampler_field(
+                field_name=sampler_key,
+                value=sampler_name,
+                expected_unipc_solver_hint=expected_unipc_solver_hint,
+            )
+        else:
+            sampler_name = sampler_validator(sampler_key, sampler_name)
+        if scheduler_validator is None:
+            scheduler_name = _validate_wan22_scheduler_field(field_name=scheduler_key, value=scheduler_name)
+        else:
+            scheduler_name = scheduler_validator(scheduler_key, scheduler_name)
         seed_val = _require_int_field(payload, seed_key) if seed_key in payload else int(default_seed)
         guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else float(default_cfg_scale)
 
@@ -2978,9 +2986,44 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_cfg_scale=7.0,
         )
 
-    def _parse_generic_txt2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+    def _validate_ltx2_generic_video_sampler_field(field_name: str, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"euler", "uni-pc"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' for engine 'ltx2' must be 'euler' or 'uni-pc', got {value!r}.",
+            )
+        return normalized
+
+    def _validate_ltx2_generic_video_scheduler_field(field_name: str, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized != "simple":
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' for engine 'ltx2' must be 'simple', got {value!r}.",
+            )
+        return normalized
+
+    def _parse_generic_txt2vid_core_dto(payload: Dict[str, Any], *, engine_key: str) -> _VideoCoreDTO:
         _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
         _reject_unknown_keys(payload, _TXT2VID_GENERIC_ALLOWED_KEYS, "txt2vid")
+        if _canonical_engine_key(engine_key) == "ltx2":
+            return _parse_video_core_dto(
+                payload,
+                task_prefix='txt2vid',
+                default_width=768,
+                default_height=432,
+                default_steps=30,
+                default_fps=24,
+                default_frames=17,
+                default_sampler="euler",
+                default_scheduler="simple",
+                expected_unipc_solver_hint=None,
+                sampler_validator=_validate_ltx2_generic_video_sampler_field,
+                scheduler_validator=_validate_ltx2_generic_video_scheduler_field,
+                default_seed=-1,
+                default_cfg_scale=7.0,
+            )
         return _parse_video_core_dto(
             payload,
             task_prefix='txt2vid',
@@ -2996,9 +3039,26 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_cfg_scale=7.0,
         )
 
-    def _parse_generic_img2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+    def _parse_generic_img2vid_core_dto(payload: Dict[str, Any], *, engine_key: str) -> _VideoCoreDTO:
         _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
         _reject_unknown_keys(payload, _IMG2VID_GENERIC_ALLOWED_KEYS, "img2vid")
+        if _canonical_engine_key(engine_key) == "ltx2":
+            return _parse_video_core_dto(
+                payload,
+                task_prefix='img2vid',
+                default_width=768,
+                default_height=432,
+                default_steps=30,
+                default_fps=24,
+                default_frames=17,
+                default_sampler="euler",
+                default_scheduler="simple",
+                expected_unipc_solver_hint=None,
+                sampler_validator=_validate_ltx2_generic_video_sampler_field,
+                scheduler_validator=_validate_ltx2_generic_video_scheduler_field,
+                default_seed=-1,
+                default_cfg_scale=7.0,
+            )
         return _parse_video_core_dto(
             payload,
             task_prefix='img2vid',
@@ -3674,7 +3734,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_metadata_dir: str | None = None
         expected_unipc_solver_hint: str | None = None
         if use_generic_video_route:
-            parsed = _parse_generic_txt2vid_core_dto(payload)
+            parsed = _parse_generic_txt2vid_core_dto(payload, engine_key=video_engine_key)
         else:
             wan_metadata_dir = _resolve_wan_metadata_dir(payload)
             default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)
@@ -3989,7 +4049,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_metadata_dir: str | None = None
         expected_unipc_solver_hint: str | None = None
         if use_generic_video_route:
-            parsed = _parse_generic_img2vid_core_dto(payload)
+            parsed = _parse_generic_img2vid_core_dto(payload, engine_key=video_engine_key)
         else:
             wan_metadata_dir = _resolve_wan_metadata_dir(payload)
             default_sampler, default_scheduler = _resolve_wan_sampler_scheduler_defaults_from_assets(wan_metadata_dir)

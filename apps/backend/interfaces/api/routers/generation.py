@@ -1725,11 +1725,35 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         engine_key: str,
         checkpoint_record: Any,
     ) -> None:
+        from apps.backend.runtime.model_registry.specs import ModelFamily
+
         expected_family = _expected_family_for_engine(engine_key)
+        checkpoint_label = _checkpoint_record_label(checkpoint_record)
+        family_hint = str(getattr(checkpoint_record, "family_hint", "") or "").strip().lower()
+        if family_hint:
+            try:
+                hinted_family = ModelFamily(family_hint)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Selected checkpoint '{checkpoint_label}' has unsupported family_hint {family_hint!r}. "
+                        "Refresh model inventory before using this checkpoint."
+                    ),
+                ) from exc
+            if hinted_family is expected_family:
+                return
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Selected checkpoint '{checkpoint_label}' is family '{hinted_family.value}', "
+                    f"but engine '{engine_key}' requires '{expected_family.value}'."
+                ),
+            )
+
         detected_family = _detect_checkpoint_family_for_record(checkpoint_record)
         if detected_family is expected_family:
             return
-        checkpoint_label = _checkpoint_record_label(checkpoint_record)
         raise HTTPException(
             status_code=400,
             detail=(

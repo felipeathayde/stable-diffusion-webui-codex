@@ -36,6 +36,7 @@ from apps.backend.runtime.model_registry.specs import ModelFamily
 if TYPE_CHECKING:
     from apps.backend.core.requests import Img2VidRequest, Txt2VidRequest
     from apps.backend.runtime.families.ltx2.runtime import Ltx2RunResult
+    from apps.backend.runtime.pipeline_stages.video import GeneratedAudioExportPolicy
     from apps.backend.runtime.processing.datatypes import VideoPlan
 
 
@@ -46,11 +47,33 @@ class Ltx2EngineRuntime:
     device: str
     dtype: str
 
-    def run_txt2vid(self, *, request: "Txt2VidRequest", plan: "VideoPlan") -> "Ltx2RunResult":
-        return run_ltx2_txt2vid(native=self.native, request=request, plan=plan)
+    def run_txt2vid(
+        self,
+        *,
+        request: "Txt2VidRequest",
+        plan: "VideoPlan",
+        generated_audio_export_policy: "GeneratedAudioExportPolicy",
+    ) -> "Ltx2RunResult":
+        return run_ltx2_txt2vid(
+            native=self.native,
+            request=request,
+            plan=plan,
+            generated_audio_export_policy=generated_audio_export_policy,
+        )
 
-    def run_img2vid(self, *, request: "Img2VidRequest", plan: "VideoPlan") -> "Ltx2RunResult":
-        return run_ltx2_img2vid(native=self.native, request=request, plan=plan)
+    def run_img2vid(
+        self,
+        *,
+        request: "Img2VidRequest",
+        plan: "VideoPlan",
+        generated_audio_export_policy: "GeneratedAudioExportPolicy",
+    ) -> "Ltx2RunResult":
+        return run_ltx2_img2vid(
+            native=self.native,
+            request=request,
+            plan=plan,
+            generated_audio_export_policy=generated_audio_export_policy,
+        )
 
 
 @dataclass(frozen=True, slots=True)

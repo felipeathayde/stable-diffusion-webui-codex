@@ -8,11 +8,12 @@ Required Notice: see NOTICE
 
 Purpose: Shared helpers for Codex video generation pipelines.
 Builds `VideoPlan`/`VideoResult`, applies LoRAs, configures sampler/scheduler, explicitly rejects native-only sampler variants unsupported
-by the diffusers video bridge, and assembles export metadata.
+by the diffusers video bridge, resolves generated-audio export policy before video runs, and assembles export metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger used by video pipeline helpers.
 - `AudioExportAsset` (dataclass): Pre-export audio asset descriptor used by shared video export helpers.
+- `GeneratedAudioExportPolicy` (dataclass): Normalized policy for mux-capable generated-audio export decisions.
 - `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
@@ -21,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `read_video_upscaling_options` (function): Parses `extras.video_upscaling` into typed upscaling options when present.
 - `apply_video_upscaling` (function): Applies the shared SeedVR2 upscaling stage and returns `(frames_out, upscaling_metadata)`.
 - `resolve_video_output_fps` (function): Computes output fps from request/base fps and interpolation metadata.
+- `resolve_generated_audio_export_policy` (function): Validates generated-audio export intent before heavy video generation work.
 - `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
 - `prepare_base_snapshot_video_options` (function): Builds a fail-loud snapshot export options payload for base-video persistence before post-processing.
 - `build_video_request_effective_snapshot` (function): Builds an immutable request-vs-effective execution snapshot for shared backend video metadata.
@@ -38,8 +40,10 @@ from typing import Any, Mapping, Sequence
 from apps.backend.core.params.video import VideoInterpolationOptions, VideoUpscalingOptions
 from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.runtime.adapters.lora import selections as lora_selections
+from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
+from apps.backend.video.export.ffmpeg_exporter import resolve_video_export_container
 from apps.backend.video.interpolation import maybe_interpolate
 from apps.backend.video.upscaling.seedvr2 import run_seedvr2_upscaling
 
@@ -55,6 +59,16 @@ class AudioExportAsset:
     owned_temp: bool
     sample_rate_hz: int | None = None
     channels: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class GeneratedAudioExportPolicy:
+    """Normalized mux policy for generated-audio video workflows."""
+
+    save_output: bool
+    format: str
+    container: str | None
+    materialize_audio_asset: bool
 
 
 def build_video_plan(request: Any) -> VideoPlan:
@@ -91,18 +105,36 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         raise RuntimeError(f"Failed to fetch LoRA selections: {exc}") from exc
 
-    has_lora_capability = hasattr(engine, "codex_objects_after_applying_lora")
+    engine_id = str(getattr(engine, "engine_id", "") or "").strip()
+    supports_lora: bool | None = None
+    if engine_id:
+        try:
+            semantic_engine = semantic_engine_for_engine_id(engine_id)
+        except KeyError:
+            semantic_engine = None
+        else:
+            supports_lora = bool(ENGINE_SURFACES[semantic_engine].supports_lora)
+
+    if supports_lora is False:
+        if selections:
+            raise RuntimeError(
+                f"Video pipeline LoRA selections are unsupported for engine '{engine_id}'. "
+                "Remove LoRA selections for this request."
+            )
+        return None
+
+    if supports_lora is None and selections:
+        label = engine_id or type(engine).__name__
+        raise RuntimeError(
+            "Video pipeline LoRA selections require a capability-registered engine with "
+            f"`supports_lora=true`; could not validate engine '{label}'."
+        )
+
     if not selections:
-        if not has_lora_capability:
+        if supports_lora is not True:
             return None
         # Empty-selection runs must still clear any stale LoRA state from prior requests.
         return apply_loras_to_engine(engine, [])
-
-    if not has_lora_capability:
-        raise RuntimeError(
-            "Video pipeline LoRA selections were provided, but the active engine does not expose "
-            "`codex_objects_after_applying_lora`."
-        )
 
     stats = apply_loras_to_engine(engine, selections)
     if logger_:
@@ -112,6 +144,7 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
             getattr(stats, "params_touched", 0),
         )
     return stats
+
 
 def configure_sampler(component: Any, plan: VideoPlan, logger_: logging.Logger | None = None) -> Any:
     """Apply sampler/scheduler selection on a Diffusers pipeline component."""
@@ -343,6 +376,42 @@ def resolve_video_output_fps(base_fps: int, interpolation_meta: Mapping[str, Any
     return fps_base * times
 
 
+def resolve_generated_audio_export_policy(video_options: Any, *, task: str) -> GeneratedAudioExportPolicy:
+    options: dict[str, Any] = dict(video_options) if isinstance(video_options, Mapping) else {}
+    save_output = parse_bool_value(
+        options.get("save_output"),
+        field="video_options.save_output",
+        default=False,
+    )
+    format_value = str(options.get("format") or "video/h264-mp4").strip() or "video/h264-mp4"
+    if not save_output:
+        return GeneratedAudioExportPolicy(
+            save_output=False,
+            format=format_value,
+            container=None,
+            materialize_audio_asset=False,
+        )
+
+    try:
+        container, _codec_kind = resolve_video_export_container(format_value)
+    except Exception as exc:
+        raise RuntimeError(
+            f"{task}: generated-audio video export requires a supported video_options.format when save_output=true; "
+            f"got {format_value!r} ({exc})."
+        ) from exc
+    if container not in {"mp4", "webm"}:
+        raise RuntimeError(
+            f"{task}: generated-audio video export requires mp4 or webm when video_options.save_output=true; "
+            f"got {format_value!r}."
+        )
+    return GeneratedAudioExportPolicy(
+        save_output=True,
+        format=format_value,
+        container=container,
+        materialize_audio_asset=True,
+    )
+
+
 def export_video(
     engine: Any,
     frames: Sequence[Any],
@@ -352,10 +421,19 @@ def export_video(
     task: str,
     audio_asset: AudioExportAsset | None = None,
 ) -> Any:
-    save_output = parse_bool_value(
-        video_options.get("save_output") if isinstance(video_options, Mapping) else None,
-        field="video_options.save_output",
-        default=False,
+    audio_policy = (
+        resolve_generated_audio_export_policy(video_options, task=task)
+        if audio_asset is not None
+        else None
+    )
+    save_output = (
+        bool(audio_policy.save_output)
+        if audio_policy is not None
+        else parse_bool_value(
+            video_options.get("save_output") if isinstance(video_options, Mapping) else None,
+            field="video_options.save_output",
+            default=False,
+        )
     )
     normalized_audio_source = str(audio_asset.path).strip() if audio_asset is not None else ""
     if normalized_audio_source and not save_output:
@@ -778,6 +856,7 @@ def build_video_result(
 
 __all__ = [
     "AudioExportAsset",
+    "GeneratedAudioExportPolicy",
     "apply_engine_loras",
     "build_video_plan",
     "configure_sampler",
@@ -786,6 +865,7 @@ __all__ = [
     "read_video_upscaling_options",
     "apply_video_upscaling",
     "resolve_video_output_fps",
+    "resolve_generated_audio_export_policy",
     "export_video",
     "prepare_base_snapshot_video_options",
     "build_video_request_effective_snapshot",

@@ -31,6 +31,7 @@ from apps.backend.core.contracts.asset_requirements import (
 )
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.inventory import cache as inventory_cache
+from apps.backend.runtime.families.ltx2.config import LTX2_VENDOR_REPO_ID, resolve_ltx2_vendor_paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +88,7 @@ _CHECKPOINT_REQUIRED_ENGINES: frozenset[str] = frozenset(
         "hunyuan_video",
     }
 )
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 _WAN_METADATA_PREFIX = "wan-ai/wan2.2-"
 
@@ -154,6 +156,34 @@ def _count_wan_metadata_repos(value: object) -> int:
         if name.startswith(_WAN_METADATA_PREFIX):
             count += 1
     return count
+
+
+def _ltx2_vendored_metadata_check() -> DependencyCheckRow:
+    try:
+        vendor_paths = resolve_ltx2_vendor_paths(
+            backend_root=_BACKEND_ROOT,
+            repo_id=LTX2_VENDOR_REPO_ID,
+        )
+    except Exception as exc:
+        return DependencyCheckRow(
+            id="vendored_metadata",
+            label="Vendored Metadata",
+            ok=False,
+            message=str(exc),
+        )
+
+    return DependencyCheckRow(
+        id="vendored_metadata",
+        label="Vendored Metadata",
+        ok=True,
+        message=(
+            "LTX2 vendored runtime metadata ready: "
+            f"model_index={vendor_paths.model_index_path}, "
+            f"tokenizer={vendor_paths.tokenizer_dir}, "
+            f"connectors_config={vendor_paths.connectors_config_path}, "
+            "component_configs=text_encoder|scheduler|connectors|transformer|vae|audio_vae|vocoder."
+        ),
+    )
 
 
 def _normalized_path(value: object) -> str:
@@ -437,6 +467,7 @@ def build_engine_dependency_checks(
         contract_engine = contract_owner_for_semantic_engine(semantic_engine)
         contract = contract_for_engine(contract_engine)
         if semantic_engine == "ltx2":
+            checks.append(_ltx2_vendored_metadata_check())
             if has_core_only_checkpoints and not has_monolithic_checkpoints:
                 contract = contract_for_core_only(contract_engine)
             if checkpoint_count > 0:

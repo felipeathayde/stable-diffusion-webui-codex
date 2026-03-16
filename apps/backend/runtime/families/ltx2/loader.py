@@ -97,18 +97,6 @@ def _resolve_unique_side_asset_path(
         )
     return candidates[0]
 
-
-def _merge_component_states(label: str, *parts: Mapping[str, object]) -> dict[str, object]:
-    merged: dict[str, object] = {}
-    for part in parts:
-        for raw_key, value in part.items():
-            key = str(raw_key)
-            if key in merged:
-                raise RuntimeError(f"LTX2 {label} state collides on key {key!r} while merging split-pack side assets.")
-            merged[key] = value
-    return merged
-
-
 def _read_ltx2_audio_bundle_vocoder_config(audio_bundle_path: str) -> Mapping[str, object] | None:
     metadata = read_safetensors_metadata(audio_bundle_path)
     raw_config_json = str(metadata.get("config") or "").strip()
@@ -174,9 +162,10 @@ def prepare_ltx2_bundle_inputs(
         transformer_state, embedded_connectors_state = split_ltx2_transformer_and_connectors_state(transformer_bundle)
         if not transformer_state:
             raise RuntimeError("LTX2 core-only GGUF bundle planning produced an empty transformer state after connector separation.")
-        if not embedded_connectors_state:
+        if embedded_connectors_state:
             raise RuntimeError(
-                "LTX2 core-only GGUF bundle planning did not expose any embedded connector tensors from the core checkpoint."
+                "LTX2 core-only GGUF bundle planning requires the parser-owned `transformer` component to stay connector-free. "
+                "Connector tensors must resolve from the external embeddings sidecar, not from the core transformer checkpoint."
             )
 
         connectors_path = _resolve_unique_side_asset_path(
@@ -200,7 +189,7 @@ def prepare_ltx2_bundle_inputs(
                 "LTX2 core-only GGUF bundle planning requires wrapped vocoder metadata in the audio bundle. "
                 f"Missing `config.vocoder` in SafeTensors metadata for {audio_bundle_path!r}."
             )
-        connectors_state = _merge_component_states("connectors", embedded_connectors_state, connectors_sidecar_state)
+        connectors_state = dict(connectors_sidecar_state)
 
         validate_ltx2_video_vae_contract(video_vae_state)
         validate_ltx2_audio_bundle_contract(audio_vae_state=audio_vae_state, vocoder_state=vocoder_state)

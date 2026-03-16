@@ -36,7 +36,7 @@ import torch
 from apps.backend.runtime.checkpoint.io import read_arbitrary_config
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.pipeline_stages.video import AudioExportAsset
+from apps.backend.runtime.pipeline_stages.video import AudioExportAsset, GeneratedAudioExportPolicy
 
 from .audio import is_ltx2_wrapped_vocoder_state, materialize_ltx2_generated_audio_asset
 from .model import Ltx2BundleInputs, Ltx2ComponentStates, Ltx2TextEncoderAsset, Ltx2VendorPaths
@@ -492,6 +492,7 @@ def run_ltx2_txt2vid(
     native: Ltx2NativeComponents,
     request: Any,
     plan: Any,
+    generated_audio_export_policy: GeneratedAudioExportPolicy,
 ) -> Ltx2RunResult:
     sampler_requested, scheduler_requested, sampler_effective, scheduler_effective = _resolve_ltx2_sampler_contract(
         request
@@ -503,10 +504,12 @@ def run_ltx2_txt2vid(
     )
     video, audio = _coerce_native_media_outputs(outputs, mode_label="txt2vid")
     frames = _normalize_video_frames(video)
-    audio_asset = materialize_ltx2_generated_audio_asset(
-        audio,
-        sample_rate_hz=native.audio_sample_rate_hz,
-    )
+    audio_asset = None
+    if generated_audio_export_policy.materialize_audio_asset:
+        audio_asset = materialize_ltx2_generated_audio_asset(
+            audio,
+            sample_rate_hz=native.audio_sample_rate_hz,
+        )
     metadata = _build_pipeline_metadata(
         native=native,
         pipeline_name="ltx2_native_txt2vid",
@@ -526,6 +529,7 @@ def run_ltx2_img2vid(
     native: Ltx2NativeComponents,
     request: Any,
     plan: Any,
+    generated_audio_export_policy: GeneratedAudioExportPolicy,
 ) -> Ltx2RunResult:
     init_image = getattr(request, "init_image", None)
     if init_image is None:
@@ -541,10 +545,12 @@ def run_ltx2_img2vid(
     )
     video, audio = _coerce_native_media_outputs(outputs, mode_label="img2vid")
     frames = _normalize_video_frames(video)
-    audio_asset = materialize_ltx2_generated_audio_asset(
-        audio,
-        sample_rate_hz=native.audio_sample_rate_hz,
-    )
+    audio_asset = None
+    if generated_audio_export_policy.materialize_audio_asset:
+        audio_asset = materialize_ltx2_generated_audio_asset(
+            audio,
+            sample_rate_hz=native.audio_sample_rate_hz,
+        )
     metadata = _build_pipeline_metadata(
         native=native,
         pipeline_name="ltx2_native_img2vid",

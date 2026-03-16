@@ -30,6 +30,7 @@ from apps.backend.runtime.state_dict.key_mapping import (
     ResolvedKeyspace,
     SentinelKind,
     resolve_state_dict_keyspace,
+    strip_repeated_prefixes,
 )
 
 _T = TypeVar("_T")
@@ -55,6 +56,7 @@ _DIRECT_TO_HF = {
     "token_embd.weight": "embed_tokens.weight",
     "output_norm.weight": "norm.weight",
 }
+_HF_WRAPPER_PREFIXES = ("base_text_encoder.", "language_model.", "model.")
 
 _RX_LAYER_PARAM = re.compile(r"^blk\.(?P<idx>\d+)\.(?P<suffix>[a-z0-9_]+)\.(?P<param>weight|bias)$")
 
@@ -116,10 +118,13 @@ def resolve_gemma3_text_encoder_keyspace(
         param = match.group("param")
         return f"layers.{idx}.{prefix}.{param}"
 
+    def _normalize_key(key: str) -> str:
+        return strip_repeated_prefixes(str(key), _HF_WRAPPER_PREFIXES)
+
     resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_DETECTOR,
-        normalize=lambda key: str(key),
+        normalize=_normalize_key,
         mappers={
             KeyStyle.HF: lambda key: key,
             KeyStyle.LLAMA_GGUF: _map_llama_gguf,
@@ -127,6 +132,7 @@ def resolve_gemma3_text_encoder_keyspace(
     )
     resolved.metadata.setdefault("resolver", "gemma3_text_encoder")
     resolved.metadata.setdefault("num_layers", int(num_layers))
+    resolved.metadata.setdefault("hf_wrapper_prefixes", _HF_WRAPPER_PREFIXES)
     return resolved
 
 

@@ -21,11 +21,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from apps.backend.runtime.checkpoint.io import read_arbitrary_config
+
 from .model import Ltx2VendorPaths
 
 LTX2_VENDOR_REPO_ID = "Lightricks/LTX-2"
 LTX2_REQUIRED_TEXT_ENCODER_SLOT = "gemma3_12b"
 LTX2_COMPONENT_NAMES = ("transformer", "connectors", "vae", "audio_vae", "vocoder")
+_LTX2_REQUIRED_RUNTIME_CONFIG_DIRS = ("text_encoder", "scheduler", "connectors", "transformer", "vae", "audio_vae", "vocoder")
+_LTX2_REQUIRED_TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json")
 
 
 def resolve_ltx2_vendor_paths(*, backend_root: Path, repo_id: str = LTX2_VENDOR_REPO_ID) -> Ltx2VendorPaths:
@@ -43,8 +47,22 @@ def resolve_ltx2_vendor_paths(*, backend_root: Path, repo_id: str = LTX2_VENDOR_
         raise RuntimeError(f"LTX2 model_index.json not found: {model_index_path}")
     if not tokenizer_dir.is_dir():
         raise RuntimeError(f"LTX2 tokenizer directory not found: {tokenizer_dir}")
+    for filename in _LTX2_REQUIRED_TOKENIZER_FILES:
+        tokenizer_file = tokenizer_dir / filename
+        if not tokenizer_file.is_file():
+            raise RuntimeError(f"LTX2 tokenizer file not found: {tokenizer_file}")
     if not connectors_config_path.is_file():
         raise RuntimeError(f"LTX2 connectors config not found: {connectors_config_path}")
+    for component_name in _LTX2_REQUIRED_RUNTIME_CONFIG_DIRS:
+        component_dir = repo_dir / component_name
+        if not component_dir.is_dir():
+            raise RuntimeError(f"LTX2 vendored component directory not found: {component_dir}")
+        try:
+            read_arbitrary_config(str(component_dir))
+        except Exception as exc:
+            raise RuntimeError(
+                f"LTX2 vendored component config load failed for {component_dir}: {exc}"
+            ) from exc
 
     return Ltx2VendorPaths(
         repo_dir=str(repo_dir),

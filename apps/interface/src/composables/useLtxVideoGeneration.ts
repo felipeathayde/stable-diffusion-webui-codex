@@ -255,6 +255,8 @@ export function useLtxVideoGeneration(tabId: string) {
     if (!dependency) return "Dependency checks for 'ltx2' are not available."
     const checkpointInventoryMessage = dependencyCheckMessage(dependency, 'checkpoint_inventory')
     if (checkpointInventoryMessage) return checkpointInventoryMessage
+    const vendoredMetadataMessage = dependencyCheckMessage(dependency, 'vendored_metadata')
+    if (vendoredMetadataMessage) return vendoredMetadataMessage
     if (checkpointCoreOnly.value) {
       const connectorsMessage = dependencyCheckMessage(dependency, 'connectors_inventory')
       if (connectorsMessage) return connectorsMessage

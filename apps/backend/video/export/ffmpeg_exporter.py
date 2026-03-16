@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_output_root` (function): Resolves the repo-local output root (`CODEX_ROOT/output`).
 - `_sanitize_filename_prefix` (function): Sanitizes a user/task-provided filename prefix for safe output paths.
 - `_normalize_video_options` (function): Normalizes legacy `video_*` option keys into exporter option keys.
-- `_format_to_container` (function): Maps a format token to an output container + codec kind.
+- `resolve_video_export_container` (function): Maps a format token to an output container + codec kind.
 - `_audio_codec_for` (function): Chooses an audio codec for a given output container.
 - `VideoExportResult` (dataclass): Export result container (saved flag + path/rel_path/mime + metadata).
 - `export_video` (function): Main entrypoint; writes frames and runs ffmpeg to produce the final video file.
@@ -91,7 +91,7 @@ def _normalize_video_options(options: Mapping[str, Any] | None) -> dict[str, Any
     return raw
 
 
-def _format_to_container(fmt: str) -> tuple[str, str]:
+def resolve_video_export_container(fmt: str) -> tuple[str, str]:
     v = (fmt or "").strip().lower()
     if v in {"video/h264-mp4", "h264", "mp4", "video/mp4"}:
         return "mp4", "h264"
@@ -150,7 +150,7 @@ def export_video(
         return VideoExportResult(saved=False, reason="no-frames")
 
     fps_i = int(fps) if int(fps) > 0 else 24
-    ext, codec_kind = _format_to_container(str(opts.get("format") or "video/h264-mp4"))
+    ext, codec_kind = resolve_video_export_container(str(opts.get("format") or "video/h264-mp4"))
     normalized_audio_source = (
         str(audio_source_path).strip()
         if isinstance(audio_source_path, str) and audio_source_path.strip()

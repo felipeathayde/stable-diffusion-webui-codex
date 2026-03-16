@@ -55,6 +55,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     prepare_base_snapshot_video_options,
     read_video_interpolation_options,
     read_video_upscaling_options,
+    resolve_generated_audio_export_policy,
     resolve_video_output_fps,
 )
 
@@ -198,10 +199,18 @@ def _run_ltx2_txt2vid(
 
     audio_asset: AudioExportAsset | None = None
     try:
+        generated_audio_export_policy = resolve_generated_audio_export_policy(
+            getattr(request, "video_options", None),
+            task="txt2vid",
+        )
         apply_engine_loras(engine, logger)
 
         yield ProgressEvent(stage="run", percent=5.0, message="Running LTX2 txt2vid")
-        runtime_result = comp.run_txt2vid(request=request, plan=plan)
+        runtime_result = comp.run_txt2vid(
+            request=request,
+            plan=plan,
+            generated_audio_export_policy=generated_audio_export_policy,
+        )
         if not isinstance(runtime_result, Ltx2RunResult):
             raise RuntimeError(
                 "LTX2 txt2vid runtime must return `Ltx2RunResult`; "

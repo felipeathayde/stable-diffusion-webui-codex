@@ -77,6 +77,8 @@ const CommonLtxVideoPayloadSchema = z.object({
   model_sha: Sha256Schema.optional(),
   tenc_sha: Sha256Schema,
   vae_sha: Sha256Schema.optional(),
+  video_save_output: z.literal(true),
+  video_save_metadata: z.literal(true),
   video_return_frames: z.boolean(),
 }).strict()
 
@@ -215,6 +217,8 @@ function buildCommonFields(input: LtxVideoCommonInput): Omit<LtxTxt2VidPayload, 
     engine: 'ltx2',
     model,
     tenc_sha: textEncoderSha,
+    video_save_output: true,
+    video_save_metadata: true,
     video_return_frames: Boolean(input.videoReturnFrames),
   }
   const modelSha = normalizeOptionalSha(input.modelSha)

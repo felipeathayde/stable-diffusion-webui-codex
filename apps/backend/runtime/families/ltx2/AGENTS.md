@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/ltx2 Overview
 <!-- tags: backend, runtime, families, ltx2, video, audio, gemma3 -->
 Date: 2026-03-11
-Last Review: 2026-03-12
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -30,3 +30,5 @@ Status: Active
 - The real LTX 2.3 combined audio side asset is a wrapper bundle, not a flat raw vocoder. `audio.py` must validate the stored nested groups (`bwe_generator.*`, `mel_stft.*`, `vocoder.*`) without renaming keys, `loader.py` / `runtime.py` must carry the exact wrapped `vocoder` config from SafeTensors metadata through the bundle contract, and `native/vocoder.py` must load that wrapper layout directly instead of hardcoding BWE defaults.
 - Gemma3 GGUF loads must be assembled under Codex GGUF operations support; do not bypass that context with raw HF model construction.
 - The current LTX2 sampler/scheduler contract is fixed to the native FlowMatchEuler path. Accept only empty/default generic-route values (`uni-pc`/`simple`) or explicit `euler`/`simple`, report the actual effective scheduler in metadata, and fail loud on other overrides.
+- 2026-03-16: `loader.py` core-only GGUF planning now treats the parser-owned `transformer` component as transformer-only truth. Connector tensors must come from the external `ltx2_connectors` sidecar; unexpected embedded connector keys are a fail-loud contract violation, not something to merge around.
+- 2026-03-16: `runtime.py` now materializes generated LTX2 audio only when the canonical use-case passes a `GeneratedAudioExportPolicy` that actually needs a muxable saved output. No-save runs keep frame results without writing temp WAVs, while unsupported saved containers fail before generation.

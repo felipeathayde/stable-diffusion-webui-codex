@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-06
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -68,6 +68,7 @@ Status: Active
 - 2026-02-22: WAN video request normalization now enforces strict GGUF runtime controls in-router (`gguf_cache_policy`/`gguf_cache_limit_mb` and `gguf_te_device`) with synchronous HTTP 400 on invalid combinations/values.
 - 2026-03-13: API device selection stays explicit (`device_selection.py`): missing payload device is rejected fail-loud, and per-request device overrides that diverge from the configured main device are also rejected.
 - 2026-03-13: `dependency_checks.py` now describes LTX2 checkpoint mixes in terms of the canonical asset contract: every LTX2 checkpoint still requires exactly 1 external Gemma3-12B text encoder, while core-only GGUF checkpoints additionally require an external video VAE; embeddings connectors and the combined audio bundle resolve from configured LTX2 roots.
+- 2026-03-16: `dependency_checks.py` now exposes an explicit LTX2 `vendored_metadata` readiness row backed by the same fail-loud vendored-runtime validator used by loader assembly: the local `Lightricks/LTX-2` repo must provide `model_index.json`, tokenizer assets, and readable config dirs for `text_encoder`, `scheduler`, `connectors`, `transformer`, `vae`, `audio_vae`, and `vocoder` before the frontend unblocks LTX generation.
 - 2026-02-23: `device_selection.configured_main_device()` now resolves main-device from live memory-manager authority first (`manager.primary_device()`), then args/env fallback; this removes stale bootstrap-only device reads after hot device updates.
 - 2026-02-23: `routers/supir.py` now resolves canonical request device before SUPIR payload parsing and passes the resolved value into `parse_supir_enhance_config(..., device=...)`, removing duplicate device-authority parsing inside SUPIR config.
 - 2026-02-23: `run_api.py` now logs effective allocator bootstrap state at startup (`PYTORCH_CUDA_ALLOC_CONF`, resolved `backend`, and `--cuda-malloc` flag).

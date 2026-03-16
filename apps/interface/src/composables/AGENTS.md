@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-03-06
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -66,3 +66,4 @@ Status: Active
 - 2026-02-27: `useVideoGeneration(tabId)` removed obsolete WAN output fields (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) from snapshots/common payload input and now carries interpolation as one `interpolation.targetFps` field (`0` disables, active values are interpreted as output FPS targets).
 - 2026-02-27: `useVideoGeneration(tabId)` WAN default video FPS is now `15` (was `24`) to match store/view initialization defaults.
 - 2026-02-27: `useVideoGeneration(tabId)` now carries WAN SeedVR2 upscaling fields in defaults, run snapshots (`paramsSnapshot.upscaling`), and common payload input (`upscaling` -> `video_upscaling`), and appends compact ` · seedvr2` in run summaries when enabled.
+- 2026-03-16: `useLtxVideoGeneration(tabId)` now blocks generation on the backend-owned `vendored_metadata` dependency row in addition to checkpoint/core-only sidecars, so the dedicated LTX path fails before the runtime hits missing local `Lightricks/LTX-2` metadata.

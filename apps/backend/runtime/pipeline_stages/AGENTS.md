@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-03-11
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -62,3 +62,5 @@ Status: Active
 - 2026-03-08: `sampling_execute.py` preview/post-step callback contracts now allow `total=None` so native samplers with open-ended progress (for example `dpm adaptive`) can report truthful unknown-total progress without fake callback totals.
 - 2026-03-09: `prompt_context.py` now exposes `reject_prompt_controls(...)` so hires/runtime paths that do not support prompt-derived control tags can fail loud instead of silently ignoring sampler/scheduler or dimension controls.
 - 2026-03-11: `video.py` now owns the shared pre-export audio handoff contract via `AudioExportAsset`, replaces snapshot `audio_input` with `audio_source_kind` (`none|input|generated`), and records truthful `has_audio` export state in normalized video metadata instead of assuming audio is input-only.
+- 2026-03-16: `video.py::apply_engine_loras(...)` now gates video LoRA handling by semantic capability metadata (`supports_lora`) instead of probing `codex_objects_after_applying_lora` with `hasattr(...)`; unsupported video engines fail loud only when LoRA selections are present, and no-selection LTX2 runs no longer enter the patcher path.
+- 2026-03-16: `video.py` now exposes `resolve_generated_audio_export_policy(...)` for generated-audio video lanes, failing before heavy generation work when `save_output=true` targets a non-audio container and skipping temp-audio materialization when no saved output is requested.

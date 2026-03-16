@@ -43,5 +43,6 @@ Notes:
 - 2026-03-03: Added strict generic Qwen text-encoder keymap (`keymap_qwen_text_encoder.py`) covering wrapped HF layouts and known auxiliary heads (`lm_head.*`, `visual.*`) while failing loud on unknown keyspaces.
 - 2026-03-06: Added family-scoped Flux / FLUX.2 / Z Image GGUF keyspace resolvers so native/source checkpoints can be interpreted through lazy lookup views (including fused/unfused tensor conventions) without materializing remapped state dicts.
 - 2026-03-12: Added strict Gemma3 text-only GGUF keyspace resolution in `keymap_gemma3_text_encoder.py` for the LTX2 Gemma3 external loader path; it accepts llama.cpp GGUF text keys or already-native `Gemma3TextModel` keys and exposes only a lookup view.
+- 2026-03-16: `keymap_gemma3_text_encoder.py` now interprets the currently documented Gemma3 text wrapper prefixes (`model.`, `language_model.`, `base_text_encoder.`) before style detection so LTX2 sidecar GGUF assets load through the same strict lookup view without mutating source keys.
 
-Last Review: 2026-03-12
+Last Review: 2026-03-16

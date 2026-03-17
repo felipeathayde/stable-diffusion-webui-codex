@@ -161,8 +161,8 @@ const CommonWanVideoPayloadSchema = z
     device: DeviceEnum,
     settings_revision: z.number().int().min(0),
 
-    video_save_output: z.boolean(),
-    video_save_metadata: z.boolean(),
+    video_save_output: z.literal(true),
+    video_save_metadata: z.literal(true),
     video_return_frames: z.boolean(),
     video_format: z.string().min(1).optional(),
     video_pix_fmt: z.string().min(1).optional(),

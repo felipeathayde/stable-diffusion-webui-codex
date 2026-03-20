@@ -38,7 +38,7 @@ from typing import Any, Optional, Tuple
 
 import torch
 
-from apps.backend.runtime.attention.wan_fused_v1 import wan_fused_runtime_metrics_set_stage
+from apps.backend.runtime.attention.sram import sram_attention_runtime_metrics_set_stage
 from apps.backend.runtime.sampling.block_progress import (
     BLOCK_PROGRESS_CALLBACK_KEY,
     resolve_block_progress_callback,
@@ -612,7 +612,7 @@ def sample_stage_latents_generator(
     transformer_options: dict[str, Any] | None = None,
 ):
     log = get_logger(logger)
-    wan_fused_runtime_metrics_set_stage(stage_name)
+    sram_attention_runtime_metrics_set_stage(stage_name)
     scheduler_state_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
     t_lat, h_lat, w_lat = latent_dimensions(geom)
     steps = max(int(steps), 1)

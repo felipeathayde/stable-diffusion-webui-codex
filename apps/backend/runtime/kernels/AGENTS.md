@@ -4,8 +4,9 @@ Status: Active
 ## Purpose
 - Owns custom C++/CUDA extensions used by runtime code.
 
-## Active kernel trees
-- `wan_fused_v1/` — WAN fused self/cross attention addon sources and build scripts.
+## Kernel Trees
+- `attention_sram_v1/` — generic SRAM/shared-memory attention addon sources and build scripts.
+- `wan_fused_v1/` — retired WAN-specific prototype awaiting removal after generic cutover.
 
 ## Expectations
 - Keep build inputs aligned with the runtime loaders that consume each extension.

@@ -28,6 +28,15 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normal_attention_single_head_spatial` (function): Baseline single-head spatial attention.
 - `xformers_attention_single_head_spatial` (function): xFormers-backed single-head spatial attention.
 - `pytorch_attention_single_head_spatial` (function): PyTorch SDPA-backed single-head spatial attention.
+- `SramAttentionMode` (enum): Generic SRAM/shared-memory attention mode (`off|auto|force`) re-exported from the versioned runtime bridge.
+- `SramAttentionContractError` (class): Fail-loud generic SRAM attention contract error.
+- `SramAttentionAttemptResult` (dataclass): Generic SRAM attention attempt result for pre-shaped Q/K/V dispatch.
+- `SramAttentionWarmupStatus` (dataclass): Generic SRAM attention warmup status with truthful `loaded` vs `ready`.
+- `parse_sram_attention_mode` (function): Parses and validates the generic SRAM attention mode string.
+- `resolve_effective_sram_attention_mode` (function): Resolves generic SRAM attention mode from override/env.
+- `warmup_sram_attention_extension_for_load` (function): Warms up the generic SRAM attention extension and performs the narrow readiness smoke call.
+- `is_sram_attention_extension_available` (function): Returns whether generic SRAM attention ops are loaded and registered.
+- `last_sram_attention_extension_error` (function): Returns the last generic SRAM attention extension load/build error details.
 - `AttentionProcessorCodex` (class): Diffusers-style attention processor adapter that dispatches to the selected attention backend.
 """
 
@@ -44,6 +53,17 @@ from apps.backend.infra.config.args import args
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import AttentionBackend
 from apps.backend.runtime.misc.sub_quadratic_attention import efficient_dot_product_attention
+from apps.backend.runtime.attention.sram import (
+    SramAttentionAttemptResult,
+    SramAttentionContractError,
+    SramAttentionMode,
+    SramAttentionWarmupStatus,
+    is_extension_available as is_sram_attention_extension_available,
+    last_extension_error as last_sram_attention_extension_error,
+    parse_sram_attention_mode,
+    resolve_effective_sram_attention_mode,
+    warmup_extension_for_load as warmup_sram_attention_extension_for_load,
+)
 
 _LOGGER = logging.getLogger("backend.attention")
 

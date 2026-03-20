@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model mounting.
-Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN keyspace resolution, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize=False`, `computation_dtype=dtype`) so placement policy remains centralized. Also triggers WAN fused-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
+Validates stage GGUF paths and mounts stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN keyspace resolution, with GGUF state loading/materialization wired to the memory-manager mount device (`dequantize=False`, `computation_dtype=dtype`) so placement policy remains centralized. Also triggers generic SRAM-attention warmup at stage-load time so extension load/JIT compile can happen before denoise.
 Optionally applies an ordered per-stage LoRA sequence (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -92,16 +92,16 @@ def mount_stage_model_from_gguf(
         loras=loras,
         logger=logger,
     )
-    fused_mode_raw = str(os.environ.get("CODEX_WAN22_FUSED_ATTN_V1_MODE", "off")).strip().lower()
+    sram_mode_raw = str(os.environ.get("CODEX_ATTENTION_SRAM_MODE", "off")).strip().lower()
     try:
-        from apps.backend.runtime.attention.wan_fused_v1 import warmup_extension_for_load
+        from apps.backend.runtime.attention.sram import warmup_extension_for_load
     except Exception as exc:
-        if fused_mode_raw in {"force", "required"}:
+        if sram_mode_raw in {"force", "required"}:
             raise RuntimeError(
-                "WAN fused V1 force mode requested but warmup import failed during stage load."
+                "SRAM attention force mode requested but warmup import failed during stage load."
             ) from exc
         log.warning(
-            "[wan22.gguf] fused warmup skipped: stage=%s import_failed=%s: %s",
+            "[wan22.gguf] attention_sram warmup skipped: stage=%s import_failed=%s: %s",
             stage,
             type(exc).__name__,
             exc,
@@ -109,11 +109,12 @@ def mount_stage_model_from_gguf(
     else:
         warmup = warmup_extension_for_load(mode=None)
         log.info(
-            "[wan22.gguf] fused warmup: stage=%s mode=%s attempted=%s available=%s jit_build=%s detail=%r",
+            "[wan22.gguf] attention_sram warmup: stage=%s mode=%s attempted=%s loaded=%s ready=%s jit_build=%s detail=%r",
             stage,
             warmup.mode.value,
             warmup.attempted,
-            warmup.available,
+            warmup.loaded,
+            warmup.ready,
             warmup.build_enabled,
             warmup.detail,
         )

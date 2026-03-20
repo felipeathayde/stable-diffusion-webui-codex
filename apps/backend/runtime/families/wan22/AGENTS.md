@@ -1,7 +1,7 @@
 <!-- tags: backend, runtime, wan22, gguf, streaming, transformer -->
 # apps/backend/runtime/families/wan22 Overview
 Status: Active
-Last Review: 2026-03-08
+Last Review: 2026-03-19
 
 ## Purpose
 - WAN 2.2 GGUF runtime components used by WAN engines.
@@ -12,6 +12,7 @@ Last Review: 2026-03-08
 - `config.py` — run/stage config parsing and device/dtype resolution.
 - `run.py` — txt2vid/img2vid orchestration and streaming entrypoints.
 - `sampling.py` — stage sampling loops and block-progress wiring.
+- `sdpa.py` — WAN22 SDPA policy/chunking wrapper and SRAM-mode context plumbing for self-attention integration.
 - `scheduler.py` — WAN-specific scheduler helpers.
 - `text_context.py` — local-files-only tokenizer/text-encoder loading for prompt embeddings.
 - `stage_loader.py` — mounts base GGUF stage weights via `using_codex_operations(..., weight_format="gguf")`.
@@ -22,6 +23,9 @@ Last Review: 2026-03-08
 
 ## Expectations
 - Keep runtime behavior aligned with `apps/backend/engines/wan22/`.
+- Current Phase 1 SRAM integration is self-attention-only. WAN22 cross-attention stays on the PyTorch SDPA path until the generic backend proves speed and VRAM advantage on the narrow self-attention slice.
+- WAN22 self-attention may hand the generic SRAM bridge non-overlapping dense `[B,H,S,D]` permute views. Do not force blind `.contiguous()` materialization on Q/K/V just to enter the SRAM path.
+- `sdpa.py`, `run.py`, `sampling.py`, and `stage_loader.py` must use generic SRAM naming/telemetry; do not reintroduce WAN-only backend naming or `attn_core` selectors into the active path.
 - Base `.gguf` artifacts are the supported root-path input; unsupported packed artifacts must fail loud.
 - WAN22 GGUF sampler support is intentionally narrow: `uni-pc` (optional solver hint), `euler`, and `euler a`. Non-lane labels (`uni-pc bh2`, `euler cfg++`, `euler a cfg++`) must fail loud and must not collapse to executable lanes.
 - `text_context.py` must keep tokenizer/model loading local-files-only and strict on device/key mismatches.

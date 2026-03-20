@@ -1,13 +1,14 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-16
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
 - Typed API client and DTO definitions used by the frontend to interact with the Codex backend.
 
 ## Notes
+- 2026-03-20: image payload DTOs now treat `model_format` as a first-class selector alongside `model_sha`, `checkpoint_core_only`, and `vae_source`; frontend/backend image contracts must keep these selectors explicit and inventory-validated.
 - Keep request/response types synchronized with `.sangoi/backend/interfaces/schemas/`.
 - Regenerate or update the client whenever backend schemas change.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
@@ -19,7 +20,7 @@ Status: Active
 - 2026-01-23: `payloads_video.ts` snaps WAN video `width/height` up to a multiple of 16 (rounded up; Diffusers parity) so requests never trip backend `%16` validation.
 - 2026-01-23: `client.ts` now extracts FastAPI `{"detail": ...}` error bodies into readable `Error.message` strings (no more opaque “400 Bad Request”).
 - 2026-01-24: Removed the static `/settings_schema.json` fallback; the frontend now requires `/api/settings/schema` to be available.
-- `ModelsResponse` is served by `/api/models`; it includes `core_only` plus `core_only_reason` so UIs can explain why a checkpoint is treated as core-only (suffix remains a fallback).
+- `ModelsResponse` is served by `/api/models`; it includes `format`, `core_only`, and `core_only_reason` so image payload builders can keep selector truth inventory-authoritative before dispatch.
 - `EngineCapabilitiesResponse` is served by `/api/engines/capabilities`; it includes:
   - `asset_contracts` (base + core-only; now includes `tenc_slots`/`tenc_slot_labels` for slot-accurate requirements)
   - `engine_id_to_semantic_engine` (explicit key-space mapping; required by frontend taxonomy resolution)

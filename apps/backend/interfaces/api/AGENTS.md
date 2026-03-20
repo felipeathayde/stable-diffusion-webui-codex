@@ -35,7 +35,7 @@ Status: Active
 - 2026-03-06: WAN video request allowlists are backend API-owned in `wan_video_request_keys.py`; `routers/generation.py` consumes them directly, and `runtime/state_dict/keymap_wan22_transformer.py` no longer owns HTTP request-key authority.
 - 2026-03-08: `/api/samplers` is the executable sampler surface: backend support flags are implementation-backed (not enum/catalog-only), the route must fail loud if a `supported=true` sampler is missing registry metadata, and frontend filtering is expected to honor `supported !== false`.
 - `/api/models/file-metadata` is intended for UI/debug; it returns `flat` plus a nested view of dotted keys. Codex-generated GGUF files use `model.*`, `codex.*`, and `gguf.*` keys (no legacy `general.*` provenance fields).
-- 2026-01-18: `/api/models` checkpoint serialization now includes `core_only`, `core_only_reason`, and optional `family_hint` so the UI can stop guessing core-only status from filename suffixes alone.
+- 2026-03-20: `/api/models` checkpoint serialization now includes explicit selector metadata (`format`, `core_only`, `core_only_reason`, optional `family_hint`) so image clients can validate request selectors from inventory truth instead of guessing from filenames.
 - 2026-01-18: `/api/engines/capabilities` now also includes `engine_id_to_semantic_engine` so UI callers can keep engine-id and semantic-engine key spaces explicit.
 - 2026-01-20: Removed unreferenced API helper modules (`media_helpers.py`, `script_models.py`) (no call sites).
 - 2026-01-21: WAN stage LoRA inputs are stage arrays (`loras[]` with `{sha, weight}` entries); legacy single-field stage keys (`lora_sha`/`lora_weight`) and raw-path stage `lora_path` are rejected during payload normalization/validation.

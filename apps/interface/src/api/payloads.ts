@@ -10,7 +10,9 @@ Purpose: Zod request schemas + payload builders for image generation (txt2img/im
 Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including hires/refiner) and to
 apply engine-agnostic request normalization/validation (including required `settings_revision`). FLUX.2 guidance mode is checkpoint-resolved
 by callers (`cfg` for base-4B, `distilled_cfg` for distilled 4B) instead of being hard-coded by engine id, and hires normalization is shared
-between txt2img (`extras.hires`) and img2img (`img2img_hires_*`) payload builders.
+between txt2img (`extras.hires`) and img2img (`img2img_hires_*`) payload builders. The canonical txt2img schema now requires the explicit
+image selectors carried in `extras` (`model_sha`, `checkpoint_core_only`, `model_format`, `vae_source`) so local validation matches the
+backend image contract.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DISTILLED_CFG_ENGINES` (const): Engine ids treated as distilled-guidance engines (use `distilled_cfg`; CFG/negative prompt omitted).
@@ -140,13 +142,15 @@ export const Txt2ImgRequestSchema = z
         // SHA-based model selection
         tenc_sha: z.union([z.string(), z.array(z.string())]).optional(),
         vae_sha: z.string().optional(),
+        vae_source: z.enum(['built_in', 'external']),
         lora_sha: z.union([z.string(), z.array(z.string())]).optional(),
-        model_sha: z.string().optional(),
+        model_sha: z.string().min(1),
+        checkpoint_core_only: z.boolean(),
+        model_format: z.enum(['checkpoint', 'diffusers', 'gguf']),
         // Z-Image variant selection
         zimage_variant: z.enum(['turbo', 'base']).optional(),
       })
-      .passthrough()  // Allow additional dynamic keys for engine-specific extras
-      .optional(),
+      .passthrough(),  // Allow additional dynamic keys for engine-specific extras
   })
   .strict()
 
@@ -410,9 +414,7 @@ export function buildTxt2ImgPayload(
       }
     }
   }
-  if (Object.keys(extras).length > 0) {
-    payload.extras = extras
-  }
+  payload.extras = extras
 
   return Txt2ImgRequestSchema.parse(payload)
 }

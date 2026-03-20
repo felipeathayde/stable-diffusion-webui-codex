@@ -1,13 +1,14 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-16
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
 - Reusable Vue components (panels, form widgets, prompts, galleries) shared across views.
 
 ## Notes
+- 2026-03-20: `QuickSettingsBar.vue` now hides image asset-contract-derived selector hints when checkpoint inventory metadata lacks a valid `core_only` boolean, avoiding stale text-encoder/VAE contract display from broken inventory rows.
 - Components should be presentational and rely on Pinia stores or props for state.
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts`; ensure new prompt widgets pass through that module, then run `cd apps/interface && npm run typecheck` and manual prompt round-trip validation in the UI.

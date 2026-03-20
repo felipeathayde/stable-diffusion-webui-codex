@@ -11,7 +11,7 @@ Defines TypeScript interfaces/types for backend responses (models/options/sample
 Add-path contracts expose explicit nullable `size_bytes` metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `ModelInfo` (interface): Model list entry returned by `/api/models`.
+- `ModelInfo` (interface): Model list entry returned by `/api/models`, including explicit `format` and `core_only` checkpoint selectors.
 - `RawSamplerInfo` (interface): Raw sampler metadata entry returned by `/api/samplers` (unsupported rows may omit executable defaults).
 - `SamplerInfo` (interface): Executable sampler metadata entry used by frontend selector surfaces after client-side filtering.
 - `SchedulerInfo` (interface): Scheduler metadata entry returned by `/api/schedulers`.
@@ -94,6 +94,7 @@ export interface ModelInfo {
   model_name: string
   hash: string | null
   filename: string
+  format: 'checkpoint' | 'diffusers' | 'gguf'
   metadata: Record<string, unknown>
   core_only: boolean
   core_only_reason?: string | null

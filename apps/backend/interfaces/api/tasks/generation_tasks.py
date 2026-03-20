@@ -14,7 +14,7 @@ When `CODEX_TRACE_CONTRACT=1`, emits prompt-redacted contract-trace JSONL events
 
 Symbols (top-level; keep in sync; no ghosts):
 - `encode_images` (function): Encode PIL images to base64 PNG payloads, optionally injecting PNG text metadata.
-- `build_engine_options` (function): Build `engine_options` dict from request extras + options snapshot (TE/VAE overrides, Z-Image variant, core streaming).
+- `build_engine_options` (function): Build `engine_options` dict from request extras + options snapshot (TE/VAE overrides, explicit checkpoint selectors, Z-Image variant, core streaming).
 - `resolve_request_smart_flags` (function): Parse/validate per-request smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) as strict booleans.
 - `force_runtime_memory_cleanup` (function): Best-effort runtime cleanup used on worker error paths (orchestrator cache + memory manager + CUDA cache).
 - `_format_parameters_infotext` (function): Serializes generation `info` dicts into A1111-compatible infotext for PNG `parameters`.
@@ -105,7 +105,32 @@ def build_engine_options(*, req: Any, opts_snapshot: Callable[[], Any]) -> dict[
     vae_path_from_extras = extras.get("vae_path")
     if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
         engine_options["vae_path"] = vae_path_from_extras.strip()
-    engine_options["vae_source"] = "external" if "vae_path" in engine_options else "built_in"
+    vae_source_from_extras = extras.get("vae_source")
+    if vae_source_from_extras is None:
+        raise RuntimeError("Missing extras.vae_source.")
+    if not isinstance(vae_source_from_extras, str) or not vae_source_from_extras.strip():
+        raise RuntimeError("extras.vae_source must be 'built_in' or 'external'.")
+    normalized_vae_source = vae_source_from_extras.strip().lower()
+    if normalized_vae_source not in {"built_in", "external"}:
+        raise RuntimeError("extras.vae_source must be 'built_in' or 'external'.")
+    engine_options["vae_source"] = normalized_vae_source
+
+    checkpoint_core_only_from_extras = extras.get("checkpoint_core_only")
+    if checkpoint_core_only_from_extras is None:
+        raise RuntimeError("Missing extras.checkpoint_core_only.")
+    if not isinstance(checkpoint_core_only_from_extras, bool):
+        raise RuntimeError("extras.checkpoint_core_only must be a boolean.")
+    engine_options["checkpoint_core_only"] = checkpoint_core_only_from_extras
+
+    model_format_from_extras = extras.get("model_format")
+    if model_format_from_extras is None:
+        raise RuntimeError("Missing extras.model_format.")
+    if not isinstance(model_format_from_extras, str) or not model_format_from_extras.strip():
+        raise RuntimeError("extras.model_format must be one of: checkpoint, diffusers, gguf.")
+    normalized_model_format = model_format_from_extras.strip().lower()
+    if normalized_model_format not in {"checkpoint", "diffusers", "gguf"}:
+        raise RuntimeError("extras.model_format must be one of: checkpoint, diffusers, gguf.")
+    engine_options["model_format"] = normalized_model_format
 
     tenc_path_from_extras = extras.get("tenc_path")
     if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():

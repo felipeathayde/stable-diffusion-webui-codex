@@ -1,12 +1,13 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
-Last Review: 2026-03-11
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
 - Shared engine utilities (base classes, mixins, helpers) reused across SD, Flux, Chroma, WAN22 engines.
 
 ## Notes
+- 2026-03-20: `base.py` load-path selectors are now request/inventory-authoritative for image runs (`checkpoint_core_only`, `model_format`, `vae_source`); missing selector truth fails loud instead of falling back from suffix/path presence, inpaint is no longer inferred from checkpoint shape/channels, and external SDXL VAE overrides strip known wrapper/metadata keys before strict keyspace resolution.
 - `CodexDiffusionEngine` now subclasses `BaseInferenceEngine`; implement `_build_components(bundle, *, options)` to assemble runtime objects during `load()`.
 - Engines receive pre-materialised `DiffusionModelBundle` instances; avoid invoking legacy loaders inside subclasses.
 - Model family flags (`is_sd1`, `is_sd2`, `is_sd3`, `is_sdxl`) remain read-only; call `register_model_family(...)` inside `_build_components` after deriving the runtime.

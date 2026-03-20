@@ -13,6 +13,7 @@ with helpers to locate and load those VAEs from either a diffusers directory or 
 Symbols (top-level; keep in sync; no ghosts):
 - `FLOW16_VAE_CONFIG` (constant): Canonical diffusers-like config dict for Flow16 VAEs (16 latent channels, scaling/shift factors).
 - `FLUX2_VAE_CONFIG` (constant): Canonical diffusers-like config dict for FLUX.2 AutoencoderKLFlux2 (32 latent channels + patch BN).
+- `prepare_external_vae_override_state_dict` (function): Strips wrapper prefixes and allowed SDXL/Flow16 metadata before engine-side VAE override lane handling.
 - `load_flow16_vae` (function): Loads a Flow16 VAE from a directory or weights file with strict latent-channel validation and device-aware state-dict ingestion.
 - `load_flux2_vae` (function): Loads a FLUX.2 AutoencoderKLFlux2 from a directory or weights file with strict 32-channel + BN contract validation.
 - `find_flow16_vae` (function): Searches candidate directories for a valid Flow16 VAE path.
@@ -22,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Mapping, Optional
 
 import torch
 
@@ -133,6 +134,34 @@ def _validate_flux2_vae_contract(vae: object, *, vae_path: str) -> None:
         raise ValueError(
             f"Incompatible FLUX.2 VAE at {vae_path}: expected bn.running_var with 128 patch channels."
         )
+
+
+def prepare_external_vae_override_state_dict(
+    *,
+    state_dict: dict[str, object],
+    family: ModelFamily,
+) -> Mapping[str, object]:
+    """Normalize an external VAE override enough for lane-specific engine handling.
+
+    This helper is intentionally narrower than the full SDXL/Flow16 keyspace resolver:
+    - always strips wrapper prefixes;
+    - for SDXL/Flow16 families, always drops only the known training metadata keys
+      and fails loud on unknown non-weight keys;
+    - leaves lane-specific keyspace normalization to the caller after lane resolution.
+    """
+
+    prepared: Mapping[str, object] = strip_known_vae_prefixes(state_dict)
+    if family in (
+        ModelFamily.SDXL,
+        ModelFamily.SDXL_REFINER,
+        ModelFamily.FLUX,
+        ModelFamily.FLUX_KONTEXT,
+        ModelFamily.ZIMAGE,
+    ):
+        from apps.backend.runtime.state_dict.keymap_sdxl_vae import strip_known_sdxl_vae_metadata
+
+        prepared = strip_known_sdxl_vae_metadata(prepared)  # type: ignore[arg-type]
+    return prepared
 
 
 def load_flux2_vae(
@@ -327,6 +356,7 @@ def find_flow16_vae(search_paths: list[str]) -> Optional[str]:
 __all__ = [
     "FLOW16_VAE_CONFIG",
     "FLUX2_VAE_CONFIG",
+    "prepare_external_vae_override_state_dict",
     "load_flux2_vae",
     "load_flow16_vae",
     "find_flow16_vae",

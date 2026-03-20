@@ -1,12 +1,13 @@
 # apps/backend/runtime/processing Overview
 Date: 2025-10-28
-Last Review: 2026-02-27
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
 - Shared preprocessing utilities (e.g., image conditioning, mask preparation) used before dispatching to engines.
 
 ## Notes
+- 2026-03-20: `conditioners.img2img_conditioning(...)` no longer synthesizes SD-family inpaint `c_concat` from checkpoint heuristics; shared conditioning stays request-owned and explicit.
 - Centralize preprocessing logic here to avoid duplicating conversions in use cases or engines.
 - `CodexProcessingBase` carries per-job smart flags (`smart_offload`, `smart_fallback`, `smart_cache`) so use-cases and engines can honor request-level overrides without consulting globals directly.
 - 2026-01-02: Removed token-merging fields from processing dataclasses (feature is no longer supported).

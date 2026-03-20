@@ -10,6 +10,7 @@ Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsin
 Resolves TE/VAE overrides (`tenc_path` shorthand), applies family-scoped keyspace interpretation where needed, and selects storage/compute dtypes
 (storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
 Includes core-only families (e.g., Anima) that are not diffusers repositories: the loader returns a minimal bundle and leaves external asset loading to engines.
+Partial-metadata fallback stays structural only; loader compatibility no longer invents inpaint-model semantics from channels or name hints.
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 WAN22 variants use explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) with no shared family alias bucket.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
@@ -2527,17 +2528,6 @@ class _SimpleEstimated:
         self.huggingface_repo = huggingface_repo
         self.core_config = core_config
         self.pipeline_class = pipeline_class
-
-    def inpaint_model(self) -> bool:  # API parity with CodexEstimatedConfig
-        channels_in = None
-        try:
-            channels_in = int(self.core_config.get("in_channels"))
-        except Exception:
-            channels_in = None
-        if channels_in is not None and channels_in > 4:
-            return True
-        inpaint_hint = f"{self.pipeline_class} {self.huggingface_repo}".strip().lower()
-        return "inpaint" in inpaint_hint
 
 
 def _detect_engine_from_config(config: dict) -> str:

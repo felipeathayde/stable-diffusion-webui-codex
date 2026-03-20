@@ -21,6 +21,8 @@ without promoting recommendation hints into allowlists.
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
+Image request selectors are explicit: the router validates `model_sha`, `checkpoint_core_only`, `model_format`, and `vae_source`
+against inventory metadata instead of probing checkpoint families or inferring core-only status from checkpoint names.
 Resolves `extras.lora_sha` / `img2img_extras.lora_sha` into server-side `lora_path` overrides only for engines with `supports_lora=True`
 and when SHA ownership matches LoRA inventory (`inventory.loras`, `.safetensors`), rejecting unsupported-engine/non-LoRA resolution fail-loud.
 Enforces generation settings contracts: top-level `smart_*` payload keys are rejected and `settings_revision` must match persisted options revision.
@@ -115,9 +117,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         legacy_wan_video_request_key_alias_target,
     )
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL) - set(TXT2IMG_KEYS.SMART)
-    _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
+    _IMAGE_REQUEST_SELECTOR_KEYS = {"checkpoint_core_only", "model_format", "vae_source"}
+    _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL) | _IMAGE_REQUEST_SELECTOR_KEYS
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
-    _IMG2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
+    _IMG2IMG_EXTRAS_KEYS = (
+        set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
+    ) | _IMAGE_REQUEST_SELECTOR_KEYS
     _IMG2IMG_ALLOWED_KEYS = {
         "device",
         "engine",
@@ -557,6 +562,65 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(value, bool):
             raise HTTPException(status_code=400, detail=f"'{key}' must be a boolean")
         return value
+
+
+    def _parse_optional_bool_selector(
+        *,
+        payload: Mapping[str, Any],
+        key: str,
+        field_name: str,
+    ) -> Optional[bool]:
+        if key not in payload or payload.get(key) is None:
+            return None
+        value = payload.get(key)
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be a boolean")
+        return value
+
+
+    def _parse_optional_vae_source_selector(
+        *,
+        payload: Mapping[str, Any],
+        key: str,
+        field_name: str,
+    ) -> Optional[str]:
+        if key not in payload or payload.get(key) is None:
+            return None
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be 'built_in' or 'external'",
+            )
+        normalized = value.strip().lower()
+        if normalized not in {"built_in", "external"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be 'built_in' or 'external'",
+            )
+        return normalized
+
+    def _parse_optional_model_format_selector(
+        *,
+        payload: Mapping[str, Any],
+        key: str,
+        field_name: str,
+    ) -> Optional[str]:
+        if key not in payload or payload.get(key) is None:
+            return None
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be one of: checkpoint, diffusers, gguf",
+            )
+        normalized = value.strip().lower()
+        if normalized not in {"checkpoint", "diffusers", "gguf"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be one of: checkpoint, diffusers, gguf",
+            )
+        return normalized
 
     def _parse_optional_non_negative_int(value: object, *, field_name: str) -> Optional[int]:
         if value is None:
@@ -1415,6 +1479,27 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             sha = value.strip()
             if sha:
                 extras[key] = sha
+        checkpoint_core_only = _parse_optional_bool_selector(
+            payload=raw,
+            key="checkpoint_core_only",
+            field_name="extras.checkpoint_core_only",
+        )
+        if checkpoint_core_only is not None:
+            extras["checkpoint_core_only"] = checkpoint_core_only
+        model_format = _parse_optional_model_format_selector(
+            payload=raw,
+            key="model_format",
+            field_name="extras.model_format",
+        )
+        if model_format is not None:
+            extras["model_format"] = model_format
+        vae_source = _parse_optional_vae_source_selector(
+            payload=raw,
+            key="vae_source",
+            field_name="extras.vae_source",
+        )
+        if vae_source is not None:
+            extras["vae_source"] = vae_source
         # Batch params
         if 'batch_size' in raw:
             extras['batch_size'] = int(raw['batch_size'])
@@ -1568,7 +1653,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         return extras, hires_cfg
 
-
     def _resolve_model_ref_from_sha_or_name(
         *,
         model_override: Any,
@@ -1576,12 +1660,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         field_prefix: str,
         models_api: Any,
     ) -> str:
-        """Resolve the checkpoint reference for a request.
-
-        - Prefer `<field_prefix>.model_sha` when present.
-        - Back-compat: accept `model` when it looks like a sha (10 or 64 hex).
-        - On match, update `extras["model_path"]` so downstream stages can surface the resolved filename.
-        """
+        """Legacy checkpoint resolution used by generic video routes."""
 
         model_sha = extras.get("model_sha")
         sha_candidate = None
@@ -1606,200 +1685,152 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=f"Missing model selection: provide 'model' or '{model_sha_field}'",
             )
-
         return resolved.strip()
 
-    def _find_checkpoint_record_from_request(
+    def _resolve_checkpoint_selection(
         *,
         model_override: Any,
-        extras: Mapping[str, Any] | None,
+        extras: Dict[str, Any],
         field_prefix: str,
-    ):
-        extras_map: Dict[str, Any] = dict(extras or {})
-        resolved_model_ref = _resolve_model_ref_from_sha_or_name(
-            model_override=model_override,
-            extras=extras_map,
-            field_prefix=field_prefix,
-            models_api=models_api,
-        )
-        return models_api.find_checkpoint(resolved_model_ref)
+        models_api: Any,
+    ) -> tuple[str, Any]:
+        """Resolve the selected checkpoint record for a request."""
 
-    def _checkpoint_record_label(record: Any) -> str:
-        title = str(getattr(record, "title", "") or "").strip()
-        if title:
-            return title
-        filename = str(getattr(record, "filename", "") or "").strip()
-        if filename:
-            return Path(filename).name or filename
-        return "<unknown>"
+        model_sha = extras.get("model_sha")
+        record = None
+        if model_sha is not None:
+            model_sha_field = f"{field_prefix}.model_sha" if field_prefix else "model_sha"
+            if not isinstance(model_sha, str) or not model_sha.strip():
+                raise HTTPException(status_code=400, detail=f"'{model_sha_field}' must be a non-empty string")
+            sha_candidate = model_sha.strip().lower()
+            record = models_api.find_checkpoint_by_sha(sha_candidate)
+            if record is None:
+                raise HTTPException(status_code=409, detail=f"Checkpoint not found for sha: {sha_candidate}")
+        else:
+            if not isinstance(model_override, str) or not model_override.strip():
+                model_sha_field = f"{field_prefix}.model_sha" if field_prefix else "model_sha"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing model selection: provide 'model' or '{model_sha_field}'",
+                )
+            record = models_api.find_checkpoint(model_override.strip())
+            if record is None:
+                raise HTTPException(status_code=409, detail=f"Selected checkpoint not found: {model_override.strip()}")
 
-    def _expected_family_for_engine(engine_key: str):
-        from apps.backend.core.registry import registry as _engine_registry
-        from apps.backend.runtime.model_registry.specs import ModelFamily
+        resolved_model_ref = str(getattr(record, "filename", "") or "").strip()
+        if not resolved_model_ref:
+            raise HTTPException(status_code=409, detail="Selected checkpoint record is missing filename metadata.")
 
-        normalized_engine = str(engine_key or "").strip().lower()
-        if not normalized_engine:
-            raise HTTPException(status_code=400, detail="Missing engine key for checkpoint family validation.")
-        try:
-            descriptor = _engine_registry.get_descriptor(normalized_engine)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Unknown engine key: {normalized_engine}") from exc
-        expected_family = getattr(descriptor.cls, "expected_family", None)
-        if expected_family is None:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"Engine '{normalized_engine}' does not declare expected_family and "
-                    "cannot validate the selected checkpoint."
-                ),
-            )
-        if not isinstance(expected_family, ModelFamily):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Engine '{normalized_engine}' declares an invalid expected_family contract.",
-            )
-        return expected_family
+        extras["model_path"] = resolved_model_ref
+        return resolved_model_ref, record
 
-    def _detect_checkpoint_family_for_record(record: Any):
-        from apps.backend.runtime.checkpoint.io import load_torch_file
-        from apps.backend.runtime.model_registry import detectors as _registered_model_detectors  # noqa: F401
-        from apps.backend.runtime.model_registry.errors import AmbiguousModelError, UnknownModelError
-        from apps.backend.runtime.model_registry.loader import detect_from_state_dict
-        from apps.backend.runtime.model_registry.specs import ModelFamily
+    def _normalize_checkpoint_core_only_field(value: object, *, field_label: str) -> bool | None:
+        if value is None:
+            return None
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"'{field_label}' must be a boolean")
+        return value
 
-        del _registered_model_detectors
-
-        checkpoint_file = str(getattr(record, "filename", "") or "").strip()
-        if not checkpoint_file:
-            raise HTTPException(status_code=409, detail="Selected checkpoint record is missing a checkpoint filename.")
-
-        cache_key = (
-            checkpoint_file,
-            str(getattr(record, "sha256", "") or "").strip().lower() or None,
-            float(getattr(record, "updated_at", None)) if getattr(record, "updated_at", None) is not None else None,
-        )
-        with _CHECKPOINT_FAMILY_PROBE_CACHE_LOCK:
-            cached_family = _CHECKPOINT_FAMILY_PROBE_CACHE.get(cache_key)
-        if cached_family:
-            try:
-                return ModelFamily(cached_family)
-            except Exception:
-                pass
-
-        checkpoint_label = _checkpoint_record_label(record)
-        try:
-            state_dict = load_torch_file(checkpoint_file, device="cpu")
-            signature = detect_from_state_dict(state_dict)
-        except UnknownModelError as exc:
+    def _normalize_model_format_field(value: object, *, field_label: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(status_code=400, detail=f"'{field_label}' must be a non-empty string")
+        normalized = value.strip().lower()
+        if normalized not in {"checkpoint", "diffusers", "gguf"}:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"Selected checkpoint '{checkpoint_label}' could not be identified for "
-                    "engine family validation."
-                ),
-            ) from exc
-        except AmbiguousModelError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Selected checkpoint '{checkpoint_label}' matched multiple model families "
-                    "and cannot be used for engine family validation."
-                ),
-            ) from exc
-        except Exception as exc:
-            _router_log.warning("checkpoint family probe failed for '%s': %s", checkpoint_file, exc)
+                detail=f"'{field_label}' must be one of: checkpoint, diffusers, gguf",
+            )
+        return normalized
+
+    def _record_checkpoint_format(record: Any) -> str | None:
+        raw = getattr(record, "format", None)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        value = getattr(raw, "value", None)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+        return None
+
+    def _resolve_checkpoint_contract_from_request(
+        *,
+        checkpoint_record: Any,
+        extras: Dict[str, Any],
+        field_prefix: str,
+        require_explicit_contract: bool,
+    ) -> tuple[bool, str]:
+        core_only_field = _asset_field_label(field_prefix=field_prefix, field_name="checkpoint_core_only")
+        model_format_field = _asset_field_label(field_prefix=field_prefix, field_name="model_format")
+        explicit_core_only = _normalize_checkpoint_core_only_field(
+            extras.get("checkpoint_core_only"),
+            field_label=core_only_field,
+        )
+        explicit_model_format = _normalize_model_format_field(
+            extras.get("model_format"),
+            field_label=model_format_field,
+        )
+
+        record_core_only = getattr(checkpoint_record, "core_only", None)
+        if not isinstance(record_core_only, bool):
             raise HTTPException(
                 status_code=409,
-                detail=public_http_error_detail(
-                    exc,
-                    fallback=f"Failed to inspect selected checkpoint '{checkpoint_label}' for family validation.",
-                ),
-            ) from exc
+                detail="Selected checkpoint record is missing core_only metadata. Refresh model inventory and retry.",
+            )
 
-        with _CHECKPOINT_FAMILY_PROBE_CACHE_LOCK:
-            _CHECKPOINT_FAMILY_PROBE_CACHE[cache_key] = signature.family.value
-        return signature.family
+        record_model_format = _record_checkpoint_format(checkpoint_record)
+        if record_model_format is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Selected checkpoint record is missing format metadata. Refresh model inventory and retry.",
+            )
 
-    def _validate_explicit_engine_checkpoint_family(
+        if explicit_core_only is None:
+            if require_explicit_contract:
+                raise HTTPException(status_code=400, detail=f"Missing '{core_only_field}'")
+            resolved_core_only = record_core_only
+        else:
+            resolved_core_only = explicit_core_only
+
+        if explicit_model_format is None:
+            if require_explicit_contract:
+                raise HTTPException(status_code=400, detail=f"Missing '{model_format_field}'")
+            resolved_model_format = record_model_format
+        else:
+            resolved_model_format = explicit_model_format
+
+        if explicit_core_only is not None and explicit_core_only != record_core_only:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{core_only_field}' does not match selected checkpoint inventory metadata. Refresh model inventory and retry.",
+            )
+        if explicit_model_format is not None and explicit_model_format != record_model_format:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{model_format_field}' does not match selected checkpoint inventory metadata. Refresh model inventory and retry.",
+            )
+
+        extras["checkpoint_core_only"] = resolved_core_only
+        extras["model_format"] = resolved_model_format
+        return resolved_core_only, resolved_model_format
+
+    def _parse_flux2_submitted_guidance(
         *,
-        engine_key: str,
-        checkpoint_record: Any,
-    ) -> None:
-        from apps.backend.runtime.model_registry.specs import ModelFamily
-
-        expected_family = _expected_family_for_engine(engine_key)
-        checkpoint_label = _checkpoint_record_label(checkpoint_record)
-        family_hint = str(getattr(checkpoint_record, "family_hint", "") or "").strip().lower()
-        if family_hint:
-            try:
-                hinted_family = ModelFamily(family_hint)
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Selected checkpoint '{checkpoint_label}' has unsupported family_hint {family_hint!r}. "
-                        "Refresh model inventory before using this checkpoint."
-                    ),
-                ) from exc
-            if hinted_family is expected_family:
-                return
+        payload: Dict[str, Any],
+        cfg_field: str,
+        distilled_cfg_field: str,
+        distilled_cfg_default: Optional[float],
+    ) -> Tuple[float, Optional[float]]:
+        has_cfg = cfg_field in payload
+        has_distilled_cfg = distilled_cfg_field in payload
+        if has_cfg == has_distilled_cfg:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"Selected checkpoint '{checkpoint_label}' is family '{hinted_family.value}', "
-                    f"but engine '{engine_key}' requires '{expected_family.value}'."
-                ),
+                detail=f"FLUX.2 requires exactly one of '{cfg_field}' or '{distilled_cfg_field}'.",
             )
-
-        detected_family = _detect_checkpoint_family_for_record(checkpoint_record)
-        if detected_family is expected_family:
-            return
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Selected checkpoint '{checkpoint_label}' is family '{detected_family.value}', "
-                f"but engine '{engine_key}' requires '{expected_family.value}'."
-            ),
-        )
-
-    def _resolve_flux2_guidance_mode_for_request(
-        *,
-        model_override: Any,
-        extras: Mapping[str, Any] | None,
-        field_prefix: str,
-    ) -> str:
-        record = _find_checkpoint_record_from_request(
-            model_override=model_override,
-            extras=extras,
-            field_prefix=field_prefix,
-        )
-        if record is None:
-            raise HTTPException(status_code=409, detail="FLUX.2 checkpoint not found for the selected request model.")
-
-        family_hint = str(record.family_hint or "").strip().lower()
-        if family_hint and family_hint != "flux2":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Selected checkpoint '{record.filename}' is not a FLUX.2 checkpoint.",
-            )
-
-        metadata = dict(record.metadata or {})
-        variant_raw = metadata.get("flux2_variant")
-        if variant_raw is None:
-            variant_raw = metadata.get("codex.flux2.variant")
-        if variant_raw is None and isinstance(metadata.get("is_distilled"), bool):
-            variant_raw = "klein" if bool(metadata["is_distilled"]) else "base"
-
-        variant = str(variant_raw or "").strip().lower()
-        if variant not in {"base", "klein"}:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Unsupported FLUX.2 checkpoint variant for '{record.filename}'. "
-                    "Only Klein 4B and Klein base-4B are supported."
-                ),
-            )
-        return "cfg" if variant == "base" else "distilled_cfg"
+        if has_cfg:
+            return _require_float_field(payload, cfg_field), distilled_cfg_default
+        return 1.0, _require_float_field(payload, distilled_cfg_field)
 
     def _build_hires(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
         if cfg is None:
@@ -1869,8 +1900,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         GenerationRouteMode.IMG2VID: TaskType.IMG2VID,
     }
     _WAN_VIDEO_ENGINE_KEYS = {"wan22_5b", "wan22_14b", "wan22_14b_animate"}
-    _CHECKPOINT_FAMILY_PROBE_CACHE: dict[tuple[str, str | None, float | None], str] = {}
-    _CHECKPOINT_FAMILY_PROBE_CACHE_LOCK = threading.Lock()
 
     def _supports_route_via_registered_engine(*, engine_key: str, route_mode: GenerationRouteMode) -> bool:
         from apps.backend.core.exceptions import EngineNotFoundError
@@ -2179,24 +2208,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
             raise HTTPException(status_code=400, detail=detail) from exc
 
-    def _is_gguf_checkpoint(_models_api: Any, model_ref: object) -> bool:
-        raw = str(model_ref or "").strip()
-        if not raw:
-            return False
-        if Path(raw).suffix.lower() == ".gguf":
-            return True
-        try:
-            record = _models_api.find_checkpoint(raw)
-        except Exception:
-            record = None
-        if record is None:
-            return False
-        core_only = getattr(record, "core_only", None)
-        if isinstance(core_only, bool):
-            return bool(core_only)
-        filename = str(getattr(record, "filename", "") or "")
-        return Path(filename).suffix.lower() == ".gguf"
-
     from apps.backend.core.contracts.asset_requirements import (
         EngineAssetContract,
         contract_for_request,
@@ -2252,14 +2263,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     def _apply_asset_contract_to_extras(
         *,
         engine_id: str,
-        checkpoint_ref: object,
+        checkpoint_record: Any,
         extras: Dict[str, Any],
         field_prefix: str,
+        require_explicit_checkpoint_contract: bool,
         resolve_asset_by_sha,  # type: ignore[no-untyped-def]
         resolve_vae_path_by_sha,  # type: ignore[no-untyped-def]
-        models_api: Any,
     ) -> None:
         vae_field = _asset_field_label(field_prefix=field_prefix, field_name="vae_sha")
+        vae_source_field = _asset_field_label(field_prefix=field_prefix, field_name="vae_source")
         tenc_field = _asset_field_label(field_prefix=field_prefix, field_name="tenc_sha")
         lora_field = _asset_field_label(field_prefix=field_prefix, field_name="lora_sha")
         text_encoder_override_field = _asset_field_label(field_prefix=field_prefix, field_name="text_encoder_override")
@@ -2278,9 +2290,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 detail=f"Do not send {text_encoder_override_field} for Flux.1; use {tenc_field} only.",
             )
 
-        is_core_only = _is_gguf_checkpoint(models_api, checkpoint_ref)
+        checkpoint_core_only, _model_format = _resolve_checkpoint_contract_from_request(
+            checkpoint_record=checkpoint_record,
+            extras=extras,
+            field_prefix=field_prefix,
+            require_explicit_contract=require_explicit_checkpoint_contract,
+        )
         try:
-            contract = contract_for_request(engine_id=engine_id, checkpoint_core_only=bool(is_core_only))
+            contract = contract_for_request(engine_id=engine_id, checkpoint_core_only=checkpoint_core_only)
         except Exception as exc:
             _router_log.exception("asset contract resolution failed for engine '%s'", engine_id)
             raise HTTPException(
@@ -2292,11 +2309,46 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             ) from exc
 
         vae_sha = _normalize_sha_field(extras.get("vae_sha"), field_label=vae_field)
+        vae_source_raw = extras.get("vae_source")
+        vae_source: str | None = None
+        if vae_source_raw is not None:
+            if not isinstance(vae_source_raw, str) or not vae_source_raw.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{vae_source_field}' must be 'built_in' or 'external'",
+                )
+            vae_source = vae_source_raw.strip().lower()
+            if vae_source not in {"built_in", "external"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{vae_source_field}' must be 'built_in' or 'external'",
+                )
+            extras["vae_source"] = vae_source
+        elif require_explicit_checkpoint_contract:
+            raise HTTPException(status_code=400, detail=f"Missing '{vae_source_field}'")
         tenc_shas = _normalize_sha_list_field(extras.get("tenc_sha"), field_label=tenc_field)
         lora_shas = _normalize_sha_list_field(extras.get("lora_sha"), field_label=lora_field)
 
+        if vae_source == "external" and not vae_sha:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{vae_source_field}' set to 'external' requires '{vae_field}' (sha256)",
+            )
+        if vae_source == "built_in" and vae_sha:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{vae_source_field}' set to 'built_in' does not allow '{vae_field}'",
+            )
         if contract.requires_vae and not vae_sha:
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires '{vae_field}' (sha256)")
+        if contract.requires_vae and vae_source == "built_in":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Engine '{engine_id}' requires an external VAE via '{vae_field}' "
+                    f"and does not allow '{vae_source_field}=built_in'."
+                ),
+            )
 
         if contract.requires_text_encoders:
             if len(tenc_shas) == 0:
@@ -2509,34 +2561,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
         if engine_key == "flux2":
-            raw_extras = payload.get("extras")
-            if raw_extras is not None and not isinstance(raw_extras, Mapping):
-                raise HTTPException(status_code=400, detail="'extras' must be an object")
-            guidance_mode = _resolve_flux2_guidance_mode_for_request(
-                model_override=payload.get("model"),
-                extras=raw_extras if isinstance(raw_extras, Mapping) else None,
-                field_prefix="extras",
+            cfg_scale, distilled_cfg_scale = _parse_flux2_submitted_guidance(
+                payload=payload,
+                cfg_field="cfg",
+                distilled_cfg_field="distilled_cfg",
+                distilled_cfg_default=3.5,
             )
-            if guidance_mode == "distilled_cfg":
-                if 'cfg' in payload:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Selected FLUX.2 checkpoint uses distilled guidance; use 'distilled_cfg'.",
-                    )
-                if 'distilled_cfg' not in payload:
-                    raise HTTPException(status_code=400, detail="Selected FLUX.2 checkpoint requires 'distilled_cfg'.")
-                cfg_scale = 1.0
-                distilled_cfg_scale = _require_float_field(payload, 'distilled_cfg')
-            else:
-                if 'distilled_cfg' in payload:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Selected FLUX.2 checkpoint uses classic CFG; use 'cfg'.",
-                    )
-                if 'cfg' not in payload:
-                    raise HTTPException(status_code=400, detail="Selected FLUX.2 checkpoint requires 'cfg'.")
-                cfg_scale = _require_float_field(payload, 'cfg')
-                distilled_cfg_scale = 3.5
         elif not engine_supports_cfg(engine_key):
             if 'cfg' in payload:
                 raise HTTPException(
@@ -2636,34 +2666,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="'img2img_steps' is required")
 
         if engine_key == "flux2":
-            raw_img2img_extras = payload.get("img2img_extras")
-            if raw_img2img_extras is not None and not isinstance(raw_img2img_extras, Mapping):
-                raise HTTPException(status_code=400, detail="'img2img_extras' must be an object")
-            guidance_mode = _resolve_flux2_guidance_mode_for_request(
-                model_override=model_override,
-                extras=raw_img2img_extras if isinstance(raw_img2img_extras, Mapping) else None,
-                field_prefix="img2img_extras",
+            cfg_scale, distilled_cfg_scale = _parse_flux2_submitted_guidance(
+                payload=payload,
+                cfg_field="img2img_cfg_scale",
+                distilled_cfg_field="img2img_distilled_cfg_scale",
+                distilled_cfg_default=None,
             )
-            if guidance_mode == "distilled_cfg":
-                if 'img2img_cfg_scale' in payload:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Selected FLUX.2 checkpoint uses distilled guidance; use 'img2img_distilled_cfg_scale'.",
-                    )
-                if 'img2img_distilled_cfg_scale' not in payload:
-                    raise HTTPException(status_code=400, detail="'img2img_distilled_cfg_scale' is required")
-                cfg_scale = 1.0
-                distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale')
-            else:
-                if 'img2img_distilled_cfg_scale' in payload:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Selected FLUX.2 checkpoint uses classic CFG; use 'img2img_cfg_scale'.",
-                    )
-                if 'img2img_cfg_scale' not in payload:
-                    raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
-                cfg_scale = _require_float_field(payload, 'img2img_cfg_scale')
-                distilled_cfg_scale = None
         elif engine_supports_cfg(engine_key):
             if 'img2img_cfg_scale' not in payload:
                 raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
@@ -3099,7 +3107,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
     def _copy_generic_video_asset_selector_fields(*, payload: Mapping[str, Any], extras: Dict[str, Any]) -> None:
-        for key in ("model_sha", "vae_sha", "tenc_sha", "lora_sha"):
+        for key in ("model_sha", "checkpoint_core_only", "model_format", "vae_sha", "tenc_sha", "lora_sha"):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
 
@@ -3217,21 +3225,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
         from apps.backend.runtime.models import api as _models_api
-        model_override = _resolve_model_ref_from_sha_or_name(
+        model_override, checkpoint_record = _resolve_checkpoint_selection(
             model_override=model_override,
             extras=extras,
             field_prefix="extras",
             models_api=_models_api,
         )
-        model_ref_for_contract = model_override
         _apply_asset_contract_to_extras(
             engine_id=engine_id,
-            checkpoint_ref=model_ref_for_contract,
+            checkpoint_record=checkpoint_record,
             extras=extras,
             field_prefix="extras",
+            require_explicit_checkpoint_contract=True,
             resolve_asset_by_sha=resolve_asset_by_sha,
             resolve_vae_path_by_sha=resolve_vae_path_by_sha,
-            models_api=_models_api,
         )
 
         req = Txt2ImgRequest(
@@ -3559,6 +3566,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail="'img2img_extras' must be an object")
             _reject_unknown_keys(raw_extras, _IMG2IMG_EXTRAS_KEYS, "img2img_extras")
             raw_extras = dict(raw_extras)
+            checkpoint_core_only = _parse_optional_bool_selector(
+                payload=raw_extras,
+                key="checkpoint_core_only",
+                field_name="img2img_extras.checkpoint_core_only",
+            )
+            model_format = _parse_optional_model_format_selector(
+                payload=raw_extras,
+                key="model_format",
+                field_name="img2img_extras.model_format",
+            )
+            vae_source = _parse_optional_vae_source_selector(
+                payload=raw_extras,
+                key="vae_source",
+                field_name="img2img_extras.vae_source",
+            )
+            raw_extras.pop("checkpoint_core_only", None)
+            raw_extras.pop("model_format", None)
+            raw_extras.pop("vae_source", None)
 
             te_override = raw_extras.get("text_encoder_override")
             if te_override is not None:
@@ -3606,6 +3631,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
 
             extras.update(raw_extras)
+            if checkpoint_core_only is not None:
+                extras["checkpoint_core_only"] = checkpoint_core_only
+            if model_format is not None:
+                extras["model_format"] = model_format
+            if vae_source is not None:
+                extras["vae_source"] = vae_source
         # Z-Image variant selection (Turbo/Base) for img2img runs.
         if "zimage_variant" in extras:
             val = extras.get("zimage_variant")
@@ -3640,7 +3671,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if "vae_path" in extras or "tenc_path" in extras:
             raise HTTPException(status_code=400, detail="img2img_extras must not include raw '*_path' fields; use sha256 via '*_sha'")
 
-        model_ref = _resolve_model_ref_from_sha_or_name(
+        model_ref, checkpoint_record = _resolve_checkpoint_selection(
             model_override=model_ref,
             extras=extras,
             field_prefix="img2img_extras",
@@ -3649,12 +3680,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         _apply_asset_contract_to_extras(
             engine_id=engine_id,
-            checkpoint_ref=model_ref,
+            checkpoint_record=checkpoint_record,
             extras=extras,
             field_prefix="img2img_extras",
+            require_explicit_checkpoint_contract=True,
             resolve_asset_by_sha=resolve_asset_by_sha,
             resolve_vae_path_by_sha=resolve_vae_path_by_sha,
-            models_api=_models_api,
         )
 
         metadata = {
@@ -3847,18 +3878,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     status_code=409,
                     detail=f"Selected checkpoint not found for engine '{video_engine_key}': {model_ref}",
                 )
-            _validate_explicit_engine_checkpoint_family(
-                engine_key=video_engine_key,
-                checkpoint_record=checkpoint_record,
-            )
             _apply_asset_contract_to_extras(
                 engine_id=video_engine_key,
-                checkpoint_ref=model_ref,
+                checkpoint_record=checkpoint_record,
                 extras=extras,
                 field_prefix="",
+                require_explicit_checkpoint_contract=False,
                 resolve_asset_by_sha=resolve_asset_by_sha,
                 resolve_vae_path_by_sha=resolve_vae_path_by_sha,
-                models_api=_models_api,
             )
             _apply_gguf_video_runtime_controls_from_payload(payload=payload, extras=extras)
             smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
@@ -4164,18 +4191,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     status_code=409,
                     detail=f"Selected checkpoint not found for engine '{video_engine_key}': {model_ref}",
                 )
-            _validate_explicit_engine_checkpoint_family(
-                engine_key=video_engine_key,
-                checkpoint_record=checkpoint_record,
-            )
             _apply_asset_contract_to_extras(
                 engine_id=video_engine_key,
-                checkpoint_ref=model_ref,
+                checkpoint_record=checkpoint_record,
                 extras=extras,
                 field_prefix="",
+                require_explicit_checkpoint_contract=False,
                 resolve_asset_by_sha=resolve_asset_by_sha,
                 resolve_vae_path_by_sha=resolve_vae_path_by_sha,
-                models_api=_models_api,
             )
             _apply_gguf_video_runtime_controls_from_payload(payload=payload, extras=extras)
             smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()

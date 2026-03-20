@@ -8,8 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/LTX/WAN).
 Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
-and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders. FLUX.2 stays first-class as the
-current Klein 4B / base-4B slice (single Qwen3-4B selector, shared-taxonomy img2img/inpaint gating, no FLUX.1 aliasing).
+and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders. Asset-contract-derived selector
+hints now disappear when checkpoint inventory metadata lacks a valid `core_only` flag, preventing stale UI contract display. FLUX.2 stays
+first-class as the current Klein 4B / base-4B slice (single Qwen3-4B selector, shared-taxonomy img2img/inpaint gating, no FLUX.1 aliasing).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
@@ -1463,8 +1464,12 @@ const activeImageAssetContract = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return null
   const checkpoint = String(tab.params.checkpoint || '').trim()
+  const modelInfo = checkpoint ? store.resolveModelInfo(checkpoint) : undefined
+  if (checkpoint && modelInfo && typeof modelInfo.core_only !== 'boolean') {
+    return null
+  }
   return engineCaps.getAssetContract(semanticEngineFromTabFamily(tab.type), {
-    checkpointCoreOnly: store.isModelCoreOnly(checkpoint),
+    checkpointCoreOnly: typeof modelInfo?.core_only === 'boolean' ? modelInfo.core_only : false,
   })
 })
 

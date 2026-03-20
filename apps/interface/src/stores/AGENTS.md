@@ -1,13 +1,15 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-03-16
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
 - Pinia stores encapsulating shared UI/application state (tabs, task options, session data).
 
 ## Notes
+- 2026-03-20: `xyz.ts` now emits explicit image selectors (`model_sha`, `checkpoint_core_only`, `model_format`, `vae_source`) and required asset SHAs from the active tab baseline instead of relying on `model`-as-SHA fallback or backend-side guessing.
+- 2026-03-20: `quicksettings.ts` now treats checkpoint inventory metadata as authoritative for image requests; `requireModelInfo(...)` is the fail-loud seam and `isModelCoreOnly(...)` must not guess from filename suffix for that lane.
 - Keep store interfaces aligned with backend schemas and avoid duplicating validation already enforced server-side.
 - Derive computed state for components instead of mutating raw backend payloads.
 - 2025-12-03: Result `info` now includes prompt, negative prompt, resolved seed, and default save directory so the UI surfaces real generation inputs/outputs.

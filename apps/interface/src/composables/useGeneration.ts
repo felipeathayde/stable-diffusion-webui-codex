@@ -562,14 +562,39 @@ export function useGeneration(tabId: string) {
         : (usesStaticDistilledCfgEngine(engineOverrideForRequest) ? 'distilled_cfg' : 'cfg')
     )
     const usesDistilledCfgModel = guidanceMode === 'distilled_cfg'
-    const modelIsCoreOnly = quicksettings.isModelCoreOnly(checkpoint)
-    const resolvedModelSha = quicksettings.resolveModelSha(checkpoint)
-    const modelOverride = resolvedModelSha || checkpoint
-    if (!modelOverride) {
+    const modelRef = String(checkpoint || '').trim()
+    if (!modelRef) {
       state.value.status = 'error'
       state.value.errorMessage = 'Select a checkpoint to generate.'
       return
     }
+    let modelInfo
+    try {
+      modelInfo = quicksettings.requireModelInfo(modelRef)
+    } catch (error) {
+      state.value.status = 'error'
+      state.value.errorMessage = error instanceof Error ? error.message : String(error)
+      return
+    }
+    const resolvedModelSha = String(modelInfo.hash || '').trim().toLowerCase()
+    if (!resolvedModelSha) {
+      state.value.status = 'error'
+      state.value.errorMessage = 'Selected checkpoint is missing hash metadata. Refresh model inventory and retry.'
+      return
+    }
+    const modelFormat = String(modelInfo.format || '').trim().toLowerCase()
+    if (modelFormat !== 'checkpoint' && modelFormat !== 'diffusers' && modelFormat !== 'gguf') {
+      state.value.status = 'error'
+      state.value.errorMessage = 'Selected checkpoint is missing format metadata. Refresh model inventory and retry.'
+      return
+    }
+    const modelCoreOnlyRaw = modelInfo.core_only
+    if (typeof modelCoreOnlyRaw !== 'boolean') {
+      state.value.status = 'error'
+      state.value.errorMessage = 'Selected checkpoint is missing core-only metadata. Refresh model inventory and retry.'
+      return
+    }
+    const modelIsCoreOnly = modelCoreOnlyRaw
 
     const createdAtMs = Date.now()
     const promptPreview = String(p.prompt || '').trim().slice(0, 120)
@@ -646,6 +671,9 @@ export function useGeneration(tabId: string) {
 
     // Build extras based on engine capabilities (e.g. tenc_sha)
     const extras: Record<string, unknown> = {}
+    extras.model_sha = resolvedModelSha
+    extras.checkpoint_core_only = modelIsCoreOnly
+    extras.model_format = modelFormat
     const guidancePayload = buildGuidancePayload(p.guidanceAdvanced, guidanceSupport)
     if (guidancePayload) {
       extras.guidance = guidancePayload
@@ -691,17 +719,13 @@ export function useGeneration(tabId: string) {
       return
     }
     const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
-    const selectedVaeLower = String(selectedVae || '').trim().toLowerCase()
-    const selectedVaeIsSentinel =
-      selectedVaeLower === 'automatic' ||
-      selectedVaeLower === 'built in' ||
-      selectedVaeLower === 'built-in' ||
-      selectedVaeLower === 'none'
+    const selectedVaeIsSentinel = selectedVae === 'built-in' || selectedVae === 'none'
     if (!selectedVaeIsSentinel && !resolvedVaeSha) {
       state.value.status = 'error'
       state.value.errorMessage = 'Selected VAE is invalid or stale. Re-select a VAE and retry.'
       return
     }
+    extras.vae_source = resolvedVaeSha ? 'external' : 'built_in'
     const needsVaeSha = Boolean(assetContract?.requires_vae)
     if (needsVaeSha) {
       if (!resolvedVaeSha) {
@@ -757,7 +781,7 @@ export function useGeneration(tabId: string) {
           device,
           settingsRevision,
           engineId: engineOverrideForRequest,
-          modelOverride,
+          modelOverride: modelRef,
           hiresFallbackOnOom: Boolean(upscalersStore.fallbackOnOom),
           hiresMinTile: Number(upscalersStore.minTile),
           extras,
@@ -784,7 +808,7 @@ export function useGeneration(tabId: string) {
             device,
             settingsRevision,
             engine: engineOverrideForRequest,
-            model: modelOverride,
+            model: modelRef,
             guidanceMode,
             hires: p.hires,
             refiner: p.refiner,

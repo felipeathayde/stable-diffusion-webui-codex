@@ -20,7 +20,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeTextEncoderSelectionLabels` (function): Normalizes persisted/current TE override labels, deduping values and capping FLUX.2 to one selector.
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
   setters that call API updates, inventory hydrators (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
-  It also exports checkpoint helpers (`resolveModelInfo`, `resolveFlux2CheckpointVariant`) so FLUX.2 guidance semantics can be derived from the selected model without extra request fields.
+  It also exports checkpoint helpers (`resolveModelInfo`, `requireModelInfo`, `resolveFlux2CheckpointVariant`) so image requests can fail loud on stale checkpoint picks
+  and FLUX.2 guidance semantics can be derived from the selected model without extra request fields.
 */
 
 import { defineStore } from 'pinia'
@@ -821,12 +822,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     const tail = normalized.split('/').pop() || ''
     const lower = raw.toLowerCase()
     const isHex = /^[0-9a-f]+$/.test(lower)
-    const looksLikeShortSha = lower.length === 10 && isHex
+    const looksLikeSha = (lower.length === 10 || lower.length === 64) && isHex
 
     for (const model of models.value) {
       if (!model) continue
       const modelHash = String(model.hash || '').trim().toLowerCase()
-      if (looksLikeShortSha && modelHash && modelHash === lower) return model
+      if (looksLikeSha && modelHash && modelHash === lower) return model
 
       if (raw === model.title || raw === model.name || raw === model.filename) return model
 
@@ -837,6 +838,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       if (tail && (tail === model.title || tail === model.name || tail === fileTail)) return model
     }
     return undefined
+  }
+
+  function requireModelInfo(label: string | null | undefined): ModelInfo {
+    const model = resolveModelInfo(label)
+    if (model) return model
+    throw new Error('Selected checkpoint is invalid or stale. Refresh model inventory and re-select the checkpoint.')
   }
 
   function resolveFlux2CheckpointVariant(
@@ -982,13 +989,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (!raw) return false
 
     const model = resolveModelInfo(raw)
-    if (model && typeof (model as any).core_only === 'boolean') {
-      return Boolean((model as any).core_only)
+    if (!model) {
+      return false
     }
-
-    // Fallback for unknown/older model shapes: `.gguf` implies core-only.
-    const lower = raw.replace(/\\+/g, '/').toLowerCase()
-    return lower.endsWith('.gguf')
+    return typeof model.core_only === 'boolean' ? model.core_only : false
   }
 
   async function setVae(label: string): Promise<void> {
@@ -1185,6 +1189,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     textEncoderShaMap,
     resolveTextEncoderSha,
     resolveModelInfo,
+    requireModelInfo,
     resolveFlux2CheckpointVariant,
     resolveModelSha,
     resolveVaeSha,

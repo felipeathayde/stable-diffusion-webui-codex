@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-16
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
@@ -22,6 +22,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/models.py` also exposes `/api/models/checkpoint-metadata` (UI metadata modal payload for a checkpoint selection).
 
 ## Notes
+- 2026-03-20: `generation.py` image routes now require explicit request selectors for `checkpoint_core_only`, `model_format`, and `vae_source` and validate them against checkpoint inventory metadata; the image lane no longer guesses family/core-only/inpaint behavior from checkpoint suffixes, shapes, or `model`-as-SHA fallbacks.
 - Routers should not mutate global state in `run_api.py`; prefer explicit dependency injection via `build_router(...)`.
 - 2026-02-28: `generation.py` img2vid API contract now accepts only `solo|sliding|svi2|svi2_pro`; unsupported mode values return fail-loud HTTP 400.
 - 2026-02-28: `generation.py` keeps `/api/vid2vid` route scaffolded but intentionally disabled (HTTP 501 + `NotImplementedError`) until the capability-driven router/runtime contract is finalized.

@@ -13,7 +13,7 @@ Sampling-path latent decode uses the shared canonical VAE memory target helper t
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_ZImagePromptList` (class): List-like prompt wrapper that carries per-run metadata (CFG scale, smart-cache policy, negative marker).
-- `ZImageEngine` (class): `CodexDiffusionEngine` implementation for Z Image txt2img; loads/keeps runtime, formats prompts, builds conditioning,
+- `ZImageEngine` (class): `CodexDiffusionEngine` implementation for Z Image txt2img/img2img; loads/keeps runtime, formats prompts, builds conditioning,
   runs the shared txt2img pipeline, and records cache/timeline telemetry (contains nested helpers for prompt metadata and capability gating).
 """
 
@@ -113,14 +113,14 @@ class ZImageEngine(CodexDiffusionEngine):
         except Exception:
             inferred = None
 
-        if inferred is not None:
-            if variant and variant != inferred:
-                logger.warning(
-                    "Z-Image: requested zimage_variant=%r conflicts with trusted GGUF metadata variant=%r; using metadata.",
-                    variant,
-                    inferred,
-                )
+        if not variant and inferred is not None:
             variant = inferred
+        elif inferred is not None and variant != inferred:
+            logger.warning(
+                "Z-Image: explicit request zimage_variant=%r overrides trusted GGUF metadata variant=%r.",
+                variant,
+                inferred,
+            )
 
         if variant not in {"turbo", "base"}:
             raise RuntimeError(

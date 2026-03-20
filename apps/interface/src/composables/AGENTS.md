@@ -1,13 +1,14 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-03-16
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
 - Vue composables that encapsulate shared generation logic and reusable reactive helpers for engine tabs.
 
 ## Notes
+- 2026-03-20: `useGeneration(tabId)` now requires canonical checkpoint inventory metadata (`hash`, `format`, `core_only`) and emits explicit image selectors `model_sha`, `checkpoint_core_only`, `model_format`, and `vae_source`; masked img2img remains request-owned, not model-class inferred.
 - `useGeneration(tabId)` builds txt2img payloads for model tabs using tab-scoped selections (`tab.params.checkpoint`, `tab.params.textEncoders`). It fails fast when no checkpoint is selected and when required `tenc_sha` values can’t be resolved (engine requires TE, including Flux/ZImage, or a GGUF checkpoint is selected).
 - 2025-12-28: `useGeneration(tabId)` now propagates tab-scoped `batchCount`/`batchSize` into txt2img/img2img payloads (previously fixed to 1×1) and tracks `progress`/`info`/`gentimeMs` for the image-tabs Results UI.
 - 2025-12-28: `useGeneration(tabId)` now maintains a small per-tab image run history (task id + params snapshot) and exposes `loadHistory/clearHistory` so views can render a History panel.

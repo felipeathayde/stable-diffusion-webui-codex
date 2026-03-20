@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Frontend-driven XYZ sweep store for image tabs.
 Builds parameter grid combos, enqueues jobs, starts txt2img tasks (including required `settings_revision`), streams task events, and supports stop modes/cancellation while collecting
 per-cell results. Hires upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring; hires tile prefs (fallback/min_tile) are propagated from the shared upscalers store.
-Preflight now fails loud when VAE selection is empty before queuing XYZ requests.
+Preflight now fails loud when VAE selection is empty before queuing XYZ requests, and queued txt2img payloads carry the same explicit checkpoint/VAE selectors
+(`model_sha`, `checkpoint_core_only`, `model_format`, `vae_source`) used by the main image generation lane.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): XYZ sweep lifecycle status (`idle`/`running`/`stopped`/`error`/`done`).
@@ -135,6 +136,21 @@ export const useXyzStore = defineStore('xyz', () => {
     const checkpoint = String((params as any)?.checkpoint || '').trim()
     const modelLabel = checkpoint || quick.currentModel
     const resolvedModelInfo = quick.resolveModelInfo(modelLabel)
+    if (!resolvedModelInfo) {
+      throw new Error('Selected checkpoint is invalid or stale. Refresh model inventory and re-select the checkpoint.')
+    }
+    const modelSha = String(resolvedModelInfo.hash || '').trim().toLowerCase()
+    if (!modelSha) {
+      throw new Error('Selected checkpoint is missing hash metadata. Refresh model inventory and retry.')
+    }
+    const modelFormat = String(resolvedModelInfo.format || '').trim().toLowerCase()
+    if (modelFormat !== 'checkpoint' && modelFormat !== 'diffusers' && modelFormat !== 'gguf') {
+      throw new Error('Selected checkpoint is missing format metadata. Refresh model inventory and retry.')
+    }
+    const checkpointCoreOnly = resolvedModelInfo.core_only
+    if (typeof checkpointCoreOnly !== 'boolean') {
+      throw new Error('Selected checkpoint is missing core-only metadata. Refresh model inventory and retry.')
+    }
     const guidanceMode = engineKey === 'flux2'
       ? (() => {
           const variant = quick.resolveFlux2CheckpointVariant(resolvedModelInfo ?? checkpoint)
@@ -144,7 +160,59 @@ export const useXyzStore = defineStore('xyz', () => {
           return variant === 'base' ? 'cfg' : 'distilled_cfg'
         })()
       : undefined
-    const resolvedModelSha = quick.resolveModelSha(modelLabel)
+    const assetContract = caps.getAssetContract(engineKey, { checkpointCoreOnly })
+    if (!assetContract) {
+      throw new Error(`Asset contract for '${engineKey}' is not available.`)
+    }
+    const extras: Record<string, unknown> = {
+      model_sha: modelSha,
+      checkpoint_core_only: checkpointCoreOnly,
+      model_format: modelFormat,
+    }
+    const textEncoders = Array.isArray((params as any)?.textEncoders)
+      ? (params as any).textEncoders
+          .map((value: unknown) => String(value || '').trim())
+          .filter((value: string) => value.length > 0)
+      : []
+    const requiredTencCount = Math.max(0, Math.trunc(Number(assetContract.tenc_count ?? 0)))
+    if (requiredTencCount > 0) {
+      const shas: string[] = []
+      for (const label of textEncoders) {
+        const sha = quick.resolveTextEncoderSha(label)
+        if (!sha) {
+          throw new Error(`Text encoder SHA not found for '${label}'.`)
+        }
+        shas.push(sha)
+      }
+      if (shas.length !== requiredTencCount) {
+        const kindLabel = String(assetContract.tenc_kind_label || assetContract.tenc_kind || '').trim()
+        throw new Error(
+          kindLabel
+            ? `This engine requires exactly ${requiredTencCount} text encoder(s) (${kindLabel}).`
+            : `This engine requires exactly ${requiredTencCount} text encoder(s).`,
+        )
+      }
+      extras.tenc_sha = shas.length === 1 ? shas[0] : shas
+    }
+    const selectedVae = quick.requireVaeSelection()
+    const selectedVaeIsSentinel = selectedVae === 'built-in' || selectedVae === 'none'
+    const resolvedVaeSha = selectedVaeIsSentinel ? '' : String(quick.resolveVaeSha(selectedVae) || '').trim().toLowerCase()
+    if (!selectedVaeIsSentinel && !resolvedVaeSha) {
+      throw new Error('Selected VAE is invalid or stale. Re-select a VAE and retry.')
+    }
+    extras.vae_source = resolvedVaeSha ? 'external' : 'built_in'
+    if (assetContract.requires_vae) {
+      if (!resolvedVaeSha) {
+        throw new Error('Select a VAE so the request can include vae_sha.')
+      }
+      extras.vae_sha = resolvedVaeSha
+    } else if (resolvedVaeSha) {
+      extras.vae_sha = resolvedVaeSha
+    }
+    if (engineKey === 'zimage') {
+      const zimageTurbo = Boolean((params as any)?.zimageTurbo ?? true)
+      extras.zimage_variant = zimageTurbo ? 'turbo' : 'base'
+    }
     const fallbackSampling = fallbackSamplingDefaultsForTabFamily(tabFamily)
     const samplingDefaults = caps.resolveSamplingDefaults(engineKey, {
       fallbackSampler: fallbackSampling.sampler,
@@ -175,8 +243,9 @@ export const useXyzStore = defineStore('xyz', () => {
       device: quick.currentDevice,
       settingsRevision: quick.getSettingsRevision(),
       engine: engineKey,
-      model: resolvedModelSha || modelLabel,
+      model: modelLabel,
       guidanceMode,
+      extras,
     }
   }
 
@@ -320,28 +389,25 @@ export const useXyzStore = defineStore('xyz', () => {
 
     errorMessage.value = ''
     resetStopState()
-    status.value = 'running'
     resetProgress()
 
     const comboList = combos.value
-    progress.total = comboList.length
-    progress.completed = 0
-    cells.value = comboList.map((combo) => ({ x: combo.x, y: combo.y, z: combo.z, status: 'queued' }))
-    jobs.value = []
     const upscalers = useUpscalersStore()
     const hiresFallbackOnOom = Boolean(upscalers.fallbackOnOom)
     const hiresMinTile = Number(upscalers.minTile)
+    const nextCells: XyzCell[] = comboList.map((combo) => ({ x: combo.x, y: combo.y, z: combo.z, status: 'queued' }))
+    const nextJobs: XyzJob[] = []
 
     // Pre-build job queue with payload snapshots
-    for (const combo of comboList) {
-      const form = buildBaseForm()
-      if (xEnabled.value) applyAxis(form, xParam.value, combo.x)
-      if (combo.y !== null && yEnabled.value) applyAxis(form, yParam.value, combo.y)
-      if (combo.z !== null && zEnabled.value) applyAxis(form, zParam.value, combo.z)
+    for (const [index, combo] of comboList.entries()) {
       try {
+        const form = buildBaseForm()
+        if (xEnabled.value) applyAxis(form, xParam.value, combo.x)
+        if (combo.y !== null && yEnabled.value) applyAxis(form, yParam.value, combo.y)
+        if (combo.z !== null && zEnabled.value) applyAxis(form, zParam.value, combo.z)
         const payload = buildTxt2ImgPayload(form, { hiresFallbackOnOom, hiresMinTile })
-        jobs.value.push({
-          id: `job-${jobs.value.length + 1}`,
+        nextJobs.push({
+          id: `job-${index + 1}`,
           combo: { x: combo.x, y: combo.y, z: combo.z },
           payload,
           status: 'queued',
@@ -349,9 +415,17 @@ export const useXyzStore = defineStore('xyz', () => {
       } catch (err) {
         errorMessage.value = err instanceof Error ? err.message : String(err)
         status.value = 'error'
+        jobs.value = []
+        cells.value = []
         return
       }
     }
+
+    jobs.value = nextJobs
+    cells.value = nextCells
+    progress.total = comboList.length
+    progress.completed = 0
+    status.value = 'running'
 
     for (let idx = 0; idx < jobs.value.length; idx++) {
       const job = jobs.value[idx]

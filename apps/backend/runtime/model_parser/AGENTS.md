@@ -1,7 +1,7 @@
 # AGENT — Model Parser
 <!-- tags: runtime, model-parser -->
 Status: Active
-Last Review: 2026-03-11
+Last Review: 2026-03-20
 
 ## Mandate
 - Parse checkpoint state dicts without `huggingface_guess`.
@@ -17,6 +17,7 @@ Last Review: 2026-03-11
 - `families/` — family-specific parser planners.
 
 ## Expectations
+- 2026-03-20: `CodexEstimatedConfig` no longer carries an `inpaint_model()` heuristic; request/use-case ownership decides img2img masking behavior, and parser output must stay descriptive rather than pipeline-authoring.
 - Keep GGUF plans aligned with canonical keyspace resolvers in `apps/backend/runtime/state_dict/**`.
 - `quantization.py` must detect GGUF/NF4/FP4 and fail loud on unsupported packed artifacts.
 - When parser modules change, run `uv run python -m py_compile ...` for the touched parser files and record manual validation steps.

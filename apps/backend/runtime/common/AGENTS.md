@@ -1,6 +1,6 @@
 # apps/backend/runtime/common Overview
 Date: 2025-10-28
-Last Review: 2026-03-05
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
@@ -10,6 +10,7 @@ Status: Active
 - `nn/` — Common neural network modules (core transformers/UNets, attention blocks, etc.).
 
 ## Notes
+- 2026-03-20: `vae.py` now prepares external VAE overrides by stripping known wrapper prefixes plus SDXL/Flow bookkeeping metadata before lane-specific keyspace resolution, so SDXL override loads stay strict without model-class heuristics.
 - Add reusable building blocks here to avoid duplication across model-specific runtimes.
 - `vae.py` normalises Flow16 VAE safetensors by stripping common prefixes, reusing SDXL/Flux LDM→diffusers key conversion for Z Image, and fails fast on incompatible (non-16-channel) VAEs to avoid noisy decodes.
   - Flow16 config parity: includes `use_quant_conv=false` / `use_post_quant_conv=false` (HF Flux/Z-Image configs) so missing quant conv weights do not trigger false drift warnings.

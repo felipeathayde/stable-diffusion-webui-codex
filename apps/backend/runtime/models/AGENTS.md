@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-03-11
+Last Review: 2026-03-20
 Status: Active
 
 ## Scope
@@ -39,6 +39,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - Normalization converges on Diffusers-style text encoder keys: converts legacy resblocks to `text_model.*` and accepts plain `text_model.*` roots by lifting them into the active wrapper namespace.
 
 ## Updates
+- 2026-03-20: `loader.py` no longer exports/consumes a loader-side `inpaint_model()` checkpoint heuristic; image runtime behavior must come from explicit request selectors plus validated inventory metadata, not channel-count guesses.
 - 2025-11-22: VAE selection now prefers diffusers `AutoencoderKL` on diffusers-native layouts; native `AutoencoderKL_LDM` is selected only on native-LDM lane resolution (WAN22 constrained, other supported families policy-driven).
 - 2025-11-23: VAE loader now fails fast when weights are missing (e.g., pruned checkpoints without VAE); error names missing key count and asks for a compatible VAE.
 - 2025-11-23: VAE loader logs missing/expected/unexpected key counts before raising, making “frame cinza” cases debuggable when a single safetensors lacks VAE tensors.

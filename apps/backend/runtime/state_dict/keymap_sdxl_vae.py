@@ -16,6 +16,7 @@ Projection normalization is lane-based and explicit:
 - any other shape fails loud.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `strip_known_sdxl_vae_metadata` (function): Drops only the allowed SDXL/Flow16 non-weight metadata keys and fails loud on unknown non-weight keys.
 - `resolve_sdxl_vae_keyspace` (function): Resolves SDXL/Flow16 VAE keys into canonical keyspace (`ResolvedKeyspace`).
 """
 
@@ -224,21 +225,8 @@ class _FilteredKeysView(MutableMapping[str, _T]):
         return list(self._keys)
 
 
-def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
-    """Normalize SDXL/Flow16 VAE keys into diffusers AutoencoderKL layout (fail loud).
-
-    Accepted inputs:
-    - Diffusers-style VAE keys (optionally wrapped): `encoder.down_blocks.*`, `decoder.up_blocks.*`, `*.mid_block.*`
-      (legacy mid-attention aliases `query/key/value/proj_attn` are canonicalized)
-    - LDM-style SDXL VAE keys (optionally wrapped): `encoder.down.*`, `decoder.up.*`, `*.mid.attn_1.*`
-
-    Output:
-    - Canonical diffusers AutoencoderKL keys (no wrapper prefixes).
-    - Mid-attention projection weights use explicit shape lanes:
-      - 2D linear weights pass through untouched;
-      - 1×1 conv weights pass through untouched;
-      - non-canonical projection shapes fail loud.
-    """
+def strip_known_sdxl_vae_metadata(state_dict: MutableMapping[str, _T]) -> MutableMapping[str, _T]:
+    """Drop only the known SDXL/Flow16 non-weight metadata keys (fail loud on any other non-weight key)."""
 
     def _normalize(key: str) -> str:
         return strip_repeated_prefixes(str(key), _PREFIXES)
@@ -263,7 +251,26 @@ def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKe
             f"unknown_sample={sample}"
         )
 
-    filtered = _FilteredKeysView(state_dict, kept_raw_keys)
+    return _FilteredKeysView(state_dict, kept_raw_keys)
+
+
+def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
+    """Normalize SDXL/Flow16 VAE keys into diffusers AutoencoderKL layout (fail loud).
+
+    Accepted inputs:
+    - Diffusers-style VAE keys (optionally wrapped): `encoder.down_blocks.*`, `decoder.up_blocks.*`, `*.mid_block.*`
+      (legacy mid-attention aliases `query/key/value/proj_attn` are canonicalized)
+    - LDM-style SDXL VAE keys (optionally wrapped): `encoder.down.*`, `decoder.up.*`, `*.mid.attn_1.*`
+
+    Output:
+    - Canonical diffusers AutoencoderKL keys (no wrapper prefixes).
+    - Mid-attention projection weights use explicit shape lanes:
+      - 2D linear weights pass through untouched;
+      - 1×1 conv weights pass through untouched;
+      - non-canonical projection shapes fail loud.
+    """
+
+    filtered = strip_known_sdxl_vae_metadata(state_dict)
 
     def _diffusers_to_canonical(key: str) -> str:
         prefix = ""
@@ -494,4 +501,4 @@ def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKe
     return resolved
 
 
-__all__ = ["resolve_sdxl_vae_keyspace"]
+__all__ = ["resolve_sdxl_vae_keyspace", "strip_known_sdxl_vae_metadata"]

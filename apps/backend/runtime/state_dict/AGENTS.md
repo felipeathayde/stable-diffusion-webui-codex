@@ -22,6 +22,7 @@ Key files:
 
 Notes:
 - Views should stay lightweight and avoid eagerly materializing large state dicts.
+- 2026-03-20: `keymap_sdxl_vae.py` now exposes the shared metadata-strip seam used by external override prep; only known SDXL/Flow bookkeeping keys are dropped before strict keyspace resolution.
 - 2026-01-25: `LazySafetensorsDict` is now truly lazy on non-Windows (persistent `safe_open` handle) and implements `__contains__` so key checks don’t load tensors; `KeyspaceLookupView` also implements `__contains__` for the same reason.
 - Helpers should remain generic and not import model-family runtime code.
 - Keyspace resolution must be explicit and strict: unknown/ambiguous layouts raise (no silent fallbacks). Use the family-specific keymap modules from loaders.
@@ -45,4 +46,4 @@ Notes:
 - 2026-03-12: Added strict Gemma3 text-only GGUF keyspace resolution in `keymap_gemma3_text_encoder.py` for the LTX2 Gemma3 external loader path; it accepts llama.cpp GGUF text keys or already-native `Gemma3TextModel` keys and exposes only a lookup view.
 - 2026-03-16: `keymap_gemma3_text_encoder.py` now interprets the currently documented Gemma3 text wrapper prefixes (`model.`, `language_model.`, `base_text_encoder.`) before style detection so LTX2 sidecar GGUF assets load through the same strict lookup view without mutating source keys.
 
-Last Review: 2026-03-16
+Last Review: 2026-03-20

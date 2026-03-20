@@ -10,6 +10,7 @@ Status: Active
 - `apps/backend/runtime/kernels/attention_sram_v1/setup.py` — local CUDAExtension build script for `attention_sram_v1_cuda`.
 - `apps/backend/runtime/kernels/attention_sram_v1/attention_sram_v1_binding.cpp` — ABI export, op registration, and CPU fail-loud stubs.
 - `apps/backend/runtime/kernels/attention_sram_v1/attention_sram_v1_kernels.cu` — narrow shared-memory attention forward kernel for pre-shaped `[B,H,S,D]` tensors plus optional generic RoPE helper.
+- `apps/backend/runtime/kernels/attention_sram_v1/smoke_attention_sram_v1.py` — manual CUDA smoke harness for preflight/build/warmup/parity/fallback on a CUDA-capable host.
 
 ## Notes
 - Keep this tree generic: no WAN-only naming, no fake backend selectors, no projection/norm/out-proj logic here.
@@ -17,3 +18,11 @@ Status: Active
 - `rope_blhd_` is optional scaffolding and must stay separate from the `attn_fwd` hot path.
 - 2026-03-19: Kernel-side validation now mirrors the bridge on K/V sequence-length agreement, and the tile loop uses explicit `std::min(...)` selection so the first cut stays compileable under the narrow CUDA contract.
 - 2026-03-20: The CUDA path now consumes stride-based `[B,H,S,D]` views directly and writes the output with the input layout, instead of forcing caller-side Q/K/V materialization just to satisfy the first SRAM cut.
+- 2026-03-20: The manual smoke harness keeps build ownership explicit:
+  - `build` is the only stage that may compile the extension,
+  - `warmup` / `parity` / `fallback` / `full` run the bridge with `CODEX_ATTENTION_SRAM_JIT=0`,
+  - `full` executes `preflight -> build -> warmup -> parity -> fallback` without re-triggering bridge-owned JIT.
+- 2026-03-20: The operator-facing harness CLI is locked to the documented flow:
+  - `parity`, `fallback`, and `full` use the fixed supported/unsupported tuples from the runbook,
+  - only `--mode auto|force` stays user-selectable on the runtime stages,
+  - widen the runbook first if the harness contract ever needs more CLI surface.

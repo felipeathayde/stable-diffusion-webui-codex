@@ -49,6 +49,7 @@ import { buildImg2ImgHiresPayloadFields, buildTxt2ImgPayload, type Txt2ImgReques
 import { cancelTask, fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '../api/types'
 import { resolveImageRequestEngineId, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
+import { buildExplicitImageRequestContract } from '../utils/image_request_contract'
 import { normalizeMaskEnforcement } from '../utils/image_params'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
@@ -547,63 +548,7 @@ export function useGeneration(tabId: string) {
     const useMask = normalizeBooleanParam(p.useMask, false)
     const tabType = String(engineType.value)
     const engineOverrideForRequest = resolveEngineForRequest(tabType, useInitImage)
-    const resolvedModelInfo = quicksettings.resolveModelInfo(checkpoint)
-    const flux2Variant = engineOverrideForRequest === 'flux2'
-      ? quicksettings.resolveFlux2CheckpointVariant(resolvedModelInfo ?? checkpoint)
-      : null
-    if (engineOverrideForRequest === 'flux2' && checkpoint && !flux2Variant) {
-      state.value.status = 'error'
-      state.value.errorMessage = 'Unsupported FLUX.2 checkpoint variant. Only Klein 4B/base-4B is supported.'
-      return
-    }
-    const guidanceMode: 'cfg' | 'distilled_cfg' = (
-      engineOverrideForRequest === 'flux2'
-        ? (flux2Variant === 'base' ? 'cfg' : 'distilled_cfg')
-        : (usesStaticDistilledCfgEngine(engineOverrideForRequest) ? 'distilled_cfg' : 'cfg')
-    )
-    const usesDistilledCfgModel = guidanceMode === 'distilled_cfg'
     const modelRef = String(checkpoint || '').trim()
-    if (!modelRef) {
-      state.value.status = 'error'
-      state.value.errorMessage = 'Select a checkpoint to generate.'
-      return
-    }
-    let modelInfo
-    try {
-      modelInfo = quicksettings.requireModelInfo(modelRef)
-    } catch (error) {
-      state.value.status = 'error'
-      state.value.errorMessage = error instanceof Error ? error.message : String(error)
-      return
-    }
-    const resolvedModelSha = String(modelInfo.hash || '').trim().toLowerCase()
-    if (!resolvedModelSha) {
-      state.value.status = 'error'
-      state.value.errorMessage = 'Selected checkpoint is missing hash metadata. Refresh model inventory and retry.'
-      return
-    }
-    const modelFormat = String(modelInfo.format || '').trim().toLowerCase()
-    if (modelFormat !== 'checkpoint' && modelFormat !== 'diffusers' && modelFormat !== 'gguf') {
-      state.value.status = 'error'
-      state.value.errorMessage = 'Selected checkpoint is missing format metadata. Refresh model inventory and retry.'
-      return
-    }
-    const modelCoreOnlyRaw = modelInfo.core_only
-    if (typeof modelCoreOnlyRaw !== 'boolean') {
-      state.value.status = 'error'
-      state.value.errorMessage = 'Selected checkpoint is missing core-only metadata. Refresh model inventory and retry.'
-      return
-    }
-    const modelIsCoreOnly = modelCoreOnlyRaw
-
-    const createdAtMs = Date.now()
-    const promptPreview = String(p.prompt || '').trim().slice(0, 120)
-    const summary = buildRunSummary(p, guidanceMode)
-    const paramsSnapshot = buildParamsSnapshot(p, engineOverrideForRequest)
-
-    const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
-    const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
-    const settingsRevision = quicksettings.getSettingsRevision()
 
     const engineSurface = backendCaps.get(engineOverrideForRequest)
     if (!engineSurface) {
@@ -621,11 +566,6 @@ export function useGeneration(tabId: string) {
       state.value.errorMessage = message
       return
     }
-    const supportsNegative = familyCaps.supports_negative_prompt && !usesDistilledCfgModel
-    const guidanceSupport = engineSurface.guidance_advanced ?? null
-
-    const assetContract = backendCaps.getAssetContract(engineOverrideForRequest, { checkpointCoreOnly: modelIsCoreOnly })
-
     if (!useInitImage && !engineSurface.supports_txt2img) {
       const message = `This engine does not support txt2img (${engineOverrideForRequest}).`
       console.error(`[useGeneration] ${message}`)
@@ -664,87 +604,55 @@ export function useGeneration(tabId: string) {
     const textEncoders = Array.isArray((p as any).textEncoders)
       ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
       : []
-    const loraNames = [
-      ...extractLoraNamesFromPrompt(p.prompt),
-      ...(supportsNegative ? extractLoraNamesFromPrompt(p.negativePrompt) : []),
-    ]
-
-    // Build extras based on engine capabilities (e.g. tenc_sha)
-    const extras: Record<string, unknown> = {}
-    extras.model_sha = resolvedModelSha
-    extras.checkpoint_core_only = modelIsCoreOnly
-    extras.model_format = modelFormat
-    const guidancePayload = buildGuidancePayload(p.guidanceAdvanced, guidanceSupport)
-    if (guidancePayload) {
-      extras.guidance = guidancePayload
-    }
-
-    const needsTencSha = (assetContract?.tenc_count ?? 0) > 0
-    if (needsTencSha) {
-      const shas: string[] = []
-      for (const label of textEncoders) {
-        const sha = quicksettings.resolveTextEncoderSha(label)
-        if (!sha) {
-          state.value.status = 'error'
-          state.value.errorMessage = `Text encoder SHA not found for '${label}'.`
-          return
-        }
-        shas.push(sha)
-      }
-      if (needsTencSha && shas.length === 0) {
-        state.value.status = 'error'
-        state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
-        return
-      }
-      const requiredCount = Math.trunc(Number(assetContract?.tenc_count ?? 0))
-      if (requiredCount > 0 && shas.length !== requiredCount) {
-        const label = String(assetContract?.tenc_kind_label || assetContract?.tenc_kind || '').trim()
-        state.value.status = 'error'
-        state.value.errorMessage = label
-          ? `This engine requires exactly ${requiredCount} text encoder(s) (${label}).`
-          : `This engine requires exactly ${requiredCount} text encoder(s).`
-        return
-      }
-      if (shas.length > 0) {
-        extras.tenc_sha = shas.length === 1 ? shas[0] : shas
-      }
-    }
-
-    let selectedVae = ''
+    let guidanceMode: 'cfg' | 'distilled_cfg'
+    let extras: Record<string, unknown>
     try {
-      selectedVae = quicksettings.requireVaeSelection()
+      const requestContract = buildExplicitImageRequestContract({
+        modelLabel: modelRef,
+        engineKey: engineOverrideForRequest,
+        textEncoderLabels: textEncoders,
+        zimageTurbo: engineOverrideForRequest === 'zimage'
+          ? Boolean((p as any)?.zimageTurbo ?? true)
+          : false,
+        fallbackGuidanceMode: usesStaticDistilledCfgEngine(engineOverrideForRequest) ? 'distilled_cfg' : 'cfg',
+        resolvers: {
+          requireModelInfo: quicksettings.requireModelInfo,
+          resolveFlux2CheckpointVariant: quicksettings.resolveFlux2CheckpointVariant,
+          resolveTextEncoderSha: quicksettings.resolveTextEncoderSha,
+          requireVaeSelection: quicksettings.requireVaeSelection,
+          resolveVaeSha: quicksettings.resolveVaeSha,
+          getAssetContract: backendCaps.getAssetContract,
+        },
+      })
+      if (requestContract.guidanceMode !== 'cfg' && requestContract.guidanceMode !== 'distilled_cfg') {
+        throw new Error(`Image guidance mode is missing for '${engineOverrideForRequest}'.`)
+      }
+      guidanceMode = requestContract.guidanceMode
+      extras = { ...requestContract.extras }
     } catch (error) {
       state.value.status = 'error'
       state.value.errorMessage = error instanceof Error ? error.message : String(error)
       return
     }
-    const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
-    const selectedVaeIsSentinel = selectedVae === 'built-in' || selectedVae === 'none'
-    if (!selectedVaeIsSentinel && !resolvedVaeSha) {
-      state.value.status = 'error'
-      state.value.errorMessage = 'Selected VAE is invalid or stale. Re-select a VAE and retry.'
-      return
-    }
-    extras.vae_source = resolvedVaeSha ? 'external' : 'built_in'
-    const needsVaeSha = Boolean(assetContract?.requires_vae)
-    if (needsVaeSha) {
-      if (!resolvedVaeSha) {
-        state.value.status = 'error'
-        state.value.errorMessage = 'Select a VAE so the request can include vae_sha.'
-        return
-      }
-      extras.vae_sha = resolvedVaeSha
-    } else if (resolvedVaeSha) {
-      // Optional override: if user picked an explicit VAE, include its sha.
-      extras.vae_sha = resolvedVaeSha
-    }
-    
-    // Z-Image variant selection lives in request extras so the backend can pick flow_shift (shift=3.0 turbo / shift=6.0 base).
-    const zimageTurbo = engineOverrideForRequest === 'zimage'
-      ? Boolean((p as any)?.zimageTurbo ?? true)
-      : false
-    if (engineOverrideForRequest === 'zimage') {
-      extras.zimage_variant = zimageTurbo ? 'turbo' : 'base'
+
+    const usesDistilledCfgModel = guidanceMode === 'distilled_cfg'
+    const createdAtMs = Date.now()
+    const promptPreview = String(p.prompt || '').trim().slice(0, 120)
+    const summary = buildRunSummary(p, guidanceMode)
+    const paramsSnapshot = buildParamsSnapshot(p, engineOverrideForRequest)
+    const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
+    const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
+    const settingsRevision = quicksettings.getSettingsRevision()
+    const supportsNegative = familyCaps.supports_negative_prompt && !usesDistilledCfgModel
+    const guidanceSupport = engineSurface.guidance_advanced ?? null
+    const loraNames = [
+      ...extractLoraNamesFromPrompt(p.prompt),
+      ...(supportsNegative ? extractLoraNamesFromPrompt(p.negativePrompt) : []),
+    ]
+
+    const guidancePayload = buildGuidancePayload(p.guidanceAdvanced, guidanceSupport)
+    if (guidancePayload) {
+      extras.guidance = guidancePayload
     }
 
     if (loraNames.length > 0) {

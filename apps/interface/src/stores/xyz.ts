@@ -9,8 +9,8 @@ Required Notice: see NOTICE
 Purpose: Frontend-driven XYZ sweep store for image tabs.
 Builds parameter grid combos, enqueues jobs, starts txt2img tasks (including required `settings_revision`), streams task events, and supports stop modes/cancellation while collecting
 per-cell results. Hires upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring; hires tile prefs (fallback/min_tile) are propagated from the shared upscalers store.
-Preflight now fails loud when VAE selection is empty before queuing XYZ requests, and queued txt2img payloads carry the same explicit checkpoint/VAE selectors
-(`model_sha`, `checkpoint_core_only`, `model_format`, `vae_source`) used by the main image generation lane.
+Preflight now fails loud when VAE selection is empty before queuing XYZ requests, and queued txt2img payloads reuse the shared image request contract helper so the sweep lane emits the
+same explicit checkpoint/VAE selectors (`model_sha`, `checkpoint_core_only`, `model_format`, `vae_source`), FLUX.2 guidance mode, and asset-contract-backed extras as the main image generation lane.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): XYZ sweep lifecycle status (`idle`/`running`/`stopped`/`error`/`done`).
@@ -29,6 +29,7 @@ import { cancelTask, startTxt2Img, subscribeTask } from '../api/client'
 import { buildTxt2ImgPayload } from '../api/payloads'
 import type { Txt2ImgRequest } from '../api/payloads'
 import type { GeneratedImage, TaskEvent } from '../api/types'
+import { buildExplicitImageRequestContract } from '../utils/image_request_contract'
 import { AXIS_OPTIONS, buildCombos, labelOf, parseAxisValues, type AxisParam, type AxisValue, type XyzCell } from '../utils/xyz'
 import { useModelTabsStore, type ImageBaseParams } from './model_tabs'
 import { useEngineCapabilitiesStore } from './engine_capabilities'
@@ -135,84 +136,29 @@ export const useXyzStore = defineStore('xyz', () => {
     const engineKey = resolveImageRequestEngineId(tabFamily, false)
     const checkpoint = String((params as any)?.checkpoint || '').trim()
     const modelLabel = checkpoint || quick.currentModel
-    const resolvedModelInfo = quick.resolveModelInfo(modelLabel)
-    if (!resolvedModelInfo) {
-      throw new Error('Selected checkpoint is invalid or stale. Refresh model inventory and re-select the checkpoint.')
-    }
-    const modelSha = String(resolvedModelInfo.hash || '').trim().toLowerCase()
-    if (!modelSha) {
-      throw new Error('Selected checkpoint is missing hash metadata. Refresh model inventory and retry.')
-    }
-    const modelFormat = String(resolvedModelInfo.format || '').trim().toLowerCase()
-    if (modelFormat !== 'checkpoint' && modelFormat !== 'diffusers' && modelFormat !== 'gguf') {
-      throw new Error('Selected checkpoint is missing format metadata. Refresh model inventory and retry.')
-    }
-    const checkpointCoreOnly = resolvedModelInfo.core_only
-    if (typeof checkpointCoreOnly !== 'boolean') {
-      throw new Error('Selected checkpoint is missing core-only metadata. Refresh model inventory and retry.')
-    }
-    const guidanceMode = engineKey === 'flux2'
-      ? (() => {
-          const variant = quick.resolveFlux2CheckpointVariant(resolvedModelInfo ?? checkpoint)
-          if (!variant) {
-            throw new Error('Unsupported FLUX.2 checkpoint variant. Only Klein 4B/base-4B is supported.')
-          }
-          return variant === 'base' ? 'cfg' : 'distilled_cfg'
-        })()
-      : undefined
-    const assetContract = caps.getAssetContract(engineKey, { checkpointCoreOnly })
-    if (!assetContract) {
-      throw new Error(`Asset contract for '${engineKey}' is not available.`)
-    }
-    const extras: Record<string, unknown> = {
-      model_sha: modelSha,
-      checkpoint_core_only: checkpointCoreOnly,
-      model_format: modelFormat,
-    }
     const textEncoders = Array.isArray((params as any)?.textEncoders)
       ? (params as any).textEncoders
           .map((value: unknown) => String(value || '').trim())
           .filter((value: string) => value.length > 0)
       : []
-    const requiredTencCount = Math.max(0, Math.trunc(Number(assetContract.tenc_count ?? 0)))
-    if (requiredTencCount > 0) {
-      const shas: string[] = []
-      for (const label of textEncoders) {
-        const sha = quick.resolveTextEncoderSha(label)
-        if (!sha) {
-          throw new Error(`Text encoder SHA not found for '${label}'.`)
-        }
-        shas.push(sha)
-      }
-      if (shas.length !== requiredTencCount) {
-        const kindLabel = String(assetContract.tenc_kind_label || assetContract.tenc_kind || '').trim()
-        throw new Error(
-          kindLabel
-            ? `This engine requires exactly ${requiredTencCount} text encoder(s) (${kindLabel}).`
-            : `This engine requires exactly ${requiredTencCount} text encoder(s).`,
-        )
-      }
-      extras.tenc_sha = shas.length === 1 ? shas[0] : shas
-    }
-    const selectedVae = quick.requireVaeSelection()
-    const selectedVaeIsSentinel = selectedVae === 'built-in' || selectedVae === 'none'
-    const resolvedVaeSha = selectedVaeIsSentinel ? '' : String(quick.resolveVaeSha(selectedVae) || '').trim().toLowerCase()
-    if (!selectedVaeIsSentinel && !resolvedVaeSha) {
-      throw new Error('Selected VAE is invalid or stale. Re-select a VAE and retry.')
-    }
-    extras.vae_source = resolvedVaeSha ? 'external' : 'built_in'
-    if (assetContract.requires_vae) {
-      if (!resolvedVaeSha) {
-        throw new Error('Select a VAE so the request can include vae_sha.')
-      }
-      extras.vae_sha = resolvedVaeSha
-    } else if (resolvedVaeSha) {
-      extras.vae_sha = resolvedVaeSha
-    }
-    if (engineKey === 'zimage') {
-      const zimageTurbo = Boolean((params as any)?.zimageTurbo ?? true)
-      extras.zimage_variant = zimageTurbo ? 'turbo' : 'base'
-    }
+    const requestContract = buildExplicitImageRequestContract({
+      modelLabel,
+      engineKey,
+      textEncoderLabels: textEncoders,
+      zimageTurbo: engineKey === 'zimage'
+        ? Boolean((params as any)?.zimageTurbo ?? true)
+        : false,
+      resolvers: {
+        requireModelInfo: quick.requireModelInfo,
+        resolveFlux2CheckpointVariant: quick.resolveFlux2CheckpointVariant,
+        resolveTextEncoderSha: quick.resolveTextEncoderSha,
+        requireVaeSelection: quick.requireVaeSelection,
+        resolveVaeSha: quick.resolveVaeSha,
+        getAssetContract: caps.getAssetContract,
+      },
+    })
+    const guidanceMode = requestContract.guidanceMode
+    const extras: Record<string, unknown> = { ...requestContract.extras }
     const fallbackSampling = fallbackSamplingDefaultsForTabFamily(tabFamily)
     const samplingDefaults = caps.resolveSamplingDefaults(engineKey, {
       fallbackSampler: fallbackSampling.sampler,

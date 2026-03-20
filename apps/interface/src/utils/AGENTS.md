@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-03-12
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
@@ -10,6 +10,7 @@ Status: Active
 ## Notes
 - Keep helpers pure and framework-agnostic so manual validation remains deterministic.
 - For utility changes, run `cd apps/interface && npm run typecheck` and validate impacted UI flows manually.
+- 2026-03-20: Added `image_request_contract.ts` as the canonical pure helper for frontend image request selector/extras resolution; `useGeneration.ts` and `xyz.ts` must both reuse it for checkpoint metadata, FLUX.2 guidance mode, asset-contract-backed `tenc_sha`/`vae_sha`, `vae_source`, and ZImage variant extras instead of duplicating that logic.
 - 2025-12-03: Added XYZ helpers (`xyz.ts`) for axis parsing/combo building used by the sweep view/store.
 - 2026-01-03: Added standardized file header block to `xyz.ts` (doc-only change; part of rollout).
 - 2026-01-29: Added PNG infotext parsing + sampler/scheduler mapping helpers (`pnginfo.ts`).

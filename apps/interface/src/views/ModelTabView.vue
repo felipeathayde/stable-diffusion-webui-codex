@@ -7,10 +7,12 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Dynamic model tab view (`/models/:tabId`).
-Loads the selected tab from the tabs store and mounts the canonical route owner for video tabs or `ImageModelTab` for image families.
+Loads the selected tab from the tabs store and mounts the canonical route owner for video tabs or `ImageModelTab` for image families,
+while distinguishing stale route ids from deferred tab-load failures.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabView` (component): Route view that mounts the correct model tab workspace.
+- `tabLoadFailed` (computed): Tracks whether deferred model-tab loading failed for the current route.
 - `VideoTabType` (type): Video tab types supported by `VideoModelTab`.
 - `videoTabType` (computed): Normalized video tab type passed to `VideoModelTab`.
 - `ImageTabType` (type): Non-video tab types supported by `ImageModelTab`.
@@ -25,6 +27,14 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="panel-body">Unsupported tab type: {{ tab.type }}</div>
     </div>
   </section>
+  <section v-else-if="tabLoadFailed">
+    <div class="panel">
+      <div class="panel-body">
+        <p>Falha ao carregar abas do modelo.</p>
+        <p v-if="bootstrap.deferredMessage" class="caption">{{ bootstrap.deferredMessage }}</p>
+      </div>
+    </div>
+  </section>
   <section v-else>
     <div class="panel"><div class="panel-body">Tab não encontrada.</div></div>
   </section>
@@ -35,13 +45,16 @@ import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ImageModelTab from './ImageModelTab.vue'
 import VideoModelTab from './VideoModelTab.vue'
+import { useBootstrapStore } from '../stores/bootstrap'
 import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 
 const route = useRoute()
+const bootstrap = useBootstrapStore()
 const store = useModelTabsStore()
 
 const id = computed(() => String(route.params.tabId || ''))
 const tab = computed(() => store.tabs.find(t => t.id === id.value) || null)
+const tabLoadFailed = computed(() => !tab.value && bootstrap.deferredStatus === 'error')
 
 type VideoTabType = Extract<BaseTabType, 'wan' | 'ltx2'>
 type ImageTabType = Exclude<BaseTabType, 'wan' | 'ltx2'>

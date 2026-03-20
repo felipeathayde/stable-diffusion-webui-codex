@@ -19,6 +19,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `toggleAdvancedRow` (function): Toggles the advanced row (uses animation helpers and persisted UI state).
 - `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
 - `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
+- `resolvedRouteTabFamily` (computed): Resolves the route-tab family from hydrated tab state or persisted tab refs.
+- `routeTabHydrating` (computed): Tracks whether `/models/:tabId` is still waiting on the hydrated tab object and must not render any family branch yet.
+- `routeTabLoadFailed` (computed): Tracks whether `/models/:tabId` failed to load tab state and must show an explicit load-failure placeholder.
+- `routeTabMissing` (computed): Tracks whether `/models/:tabId` finished syncing without a matching tab and must show an explicit not-found placeholder.
 - `normalizePath` (function): Normalizes paths for stable comparisons (slash/case handling).
 - `MetadataKind` (type): Discriminant for inline metadata popups (checkpoint/TE/VAE/WAN stage).
 - `isRecordObject` (function): Type guard for plain object payloads used by metadata parsers.
@@ -50,6 +54,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onWanModeChange` (function): Updates WAN mode selection and derived controls.
 - `onWanBrowseModels` (function): Opens the shared add-path modal for WAN model roots (`wan22_ckpt`) from the WAN quicksettings `+` action.
 - `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
+- `activeLtxMode` (computed): Resolves the authoritative LTX `txt2vid|img2vid` mode from the active tab params or persisted resume marker.
+- `activeLtxRouteTabId` (computed): Resolves the route-scoped LTX tab id even before full tab hydration completes.
+- `isActiveLtxTabRunning` (computed): Tracks whether the route-scoped LTX tab currently has an in-flight generation task.
+- `ltxRouteHydrating` (computed): Tracks whether the LTX quicksettings row is waiting for route-tab hydration.
+- `ltxQuicksettingsDisabled` (computed): Freezes the LTX quicksettings row during active runs and hydration gaps.
+- `ltxModeToggleTitle` (computed): Tooltip reason for the LTX mode toggle enabled/disabled state.
+- `ltxRefreshTitle` (computed): Tooltip reason for the LTX Refresh button enabled/disabled state.
+- `onLtxModeChange` (function): Toggles the active LTX tab between `txt2vid` and `img2vid` from quick settings.
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
 - `canShowModeToggles` (computed): Enables IMG2IMG/INPAINT quicksettings controls when the active image tab supports img2img.
 - `useMask` (computed): Reflects active image-tab inpaint toggle state (`tab.params.useMask`).
@@ -105,8 +117,32 @@ Symbols (top-level; keep in sync; no ghosts):
           </button>
         </div>
       </div>
+      <template v-if="routeTabHydrating">
+        <div class="quicksettings-group">
+          <label class="label-muted">Model Tab</label>
+          <div class="qs-row">
+            <span class="caption">Loading tab settings...</span>
+          </div>
+        </div>
+      </template>
+      <template v-else-if="routeTabLoadFailed">
+        <div class="quicksettings-group">
+          <label class="label-muted">Model Tab</label>
+          <div class="qs-row">
+            <span class="caption" :title="routeTabSyncError">Failed to load tab settings.</span>
+          </div>
+        </div>
+      </template>
+      <template v-else-if="routeTabMissing">
+        <div class="quicksettings-group">
+          <label class="label-muted">Model Tab</label>
+          <div class="qs-row">
+            <span class="caption">Tab não encontrada.</span>
+          </div>
+        </div>
+      </template>
       <!-- WAN-specific quicksettings -->
-      <template v-if="activeFamily === 'wan'">
+      <template v-else-if="activeFamily === 'wan'">
         <QuickSettingsWan
           :mode="wanModelMode"
           :lightx2v="wanLightx2v"
@@ -195,7 +231,15 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
           <div class="qs-row">
-            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+            <button
+              class="btn qs-btn-secondary qs-refresh-btn"
+              type="button"
+              :disabled="isLoadingQuicksettings"
+              title="Refresh lists"
+              @click="refreshAll"
+            >
+              Refresh
+            </button>
           </div>
         </div>
       </template>
@@ -302,6 +346,31 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <!-- LTX quicksettings -->
       <template v-else-if="activeFamily === 'ltx2'">
+        <div class="quicksettings-group qs-group-mode-toggle">
+          <label class="label-muted">Mode</label>
+          <div class="qs-row">
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', activeLtxMode === 'txt2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :disabled="ltxQuicksettingsDisabled"
+              :title="ltxModeToggleTitle"
+              :aria-pressed="activeLtxMode === 'txt2vid'"
+              @click="onLtxModeChange('txt2vid')"
+            >
+              TXT2VID
+            </button>
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', activeLtxMode === 'img2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :disabled="ltxQuicksettingsDisabled"
+              :title="ltxModeToggleTitle"
+              :aria-pressed="activeLtxMode === 'img2vid'"
+              @click="onLtxModeChange('img2vid')"
+            >
+              IMG2VID
+            </button>
+          </div>
+        </div>
         <QuickSettingsBase
           :checkpoint="effectiveCheckpoint"
           :checkpoints="filteredModelTitles"
@@ -312,6 +381,7 @@ Symbols (top-level; keep in sync; no ghosts):
           text-encoder-automatic-label="Select text encoder"
           :show-text-encoder="true"
           :show-text-encoder-actions="true"
+          :disabled="ltxQuicksettingsDisabled"
           @update:checkpoint="onModelChange"
           @update:vae="onVaeChange"
           @update:textEncoder="onPrimaryTextEncoderChange"
@@ -320,10 +390,19 @@ Symbols (top-level; keep in sync; no ghosts):
           @addTencPath="onAddTencPath"
           @showMetadata="onShowMetadata"
         />
+        <div v-if="ltxRouteHydrating" class="caption">Loading LTX tab settings...</div>
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
           <div class="qs-row">
-            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+            <button
+              class="btn qs-btn-secondary qs-refresh-btn"
+              type="button"
+              :disabled="isLoadingQuicksettings || ltxQuicksettingsDisabled"
+              :title="ltxRefreshTitle"
+              @click="refreshAll"
+            >
+              Refresh
+            </button>
           </div>
         </div>
       </template>
@@ -446,7 +525,7 @@ import { useRoute } from 'vue-router'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
-import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams, type WanStageParams } from '../stores/model_tabs'
+import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type LtxGenerationMode, type TabByType, type WanAssetsParams, type WanStageParams } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import {
   fetchCheckpointMetadata,
@@ -456,6 +535,7 @@ import {
 } from '../api/client'
 import type { InventoryResponse, ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
+import { isLtxGenerationRunningForTab, readPersistedLtxResumeModeForTab } from '../composables/useLtxVideoGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
 import {
   normalizeTabFamily,
@@ -632,7 +712,9 @@ function currentTab(): UiPresetTab | null {
     if (modelTab.type === 'ltx2') {
       const ltxTab = asLtxTab(modelTab)
       if (!ltxTab) return null
-      return ltxTab.params.mode === 'img2vid' ? 'img2vid' : 'txt2vid'
+      const explicit = String(ltxTab.params.mode || '').trim().toLowerCase()
+      if (explicit === 'img2vid' || explicit === 'txt2vid') return explicit
+      return ltxTab.params.useInitImage ? 'img2vid' : 'txt2vid'
     }
     const imageTab = asImageTab(modelTab)
     if (imageTab) {
@@ -651,8 +733,9 @@ function currentTab(): UiPresetTab | null {
 const resolvedPresetTab = computed<UiPresetTab | null>(() => currentTab())
 
 const routeTabId = computed(() => String(route.params.tabId || ''))
+const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Boolean(routeTabId.value))
 const activeModelTab = computed(() => {
-  if (!route.path.startsWith('/models/')) return null
+  if (!isModelTabRoute.value) return null
   const id = routeTabId.value
   if (!id) return null
   const fromList = tabsStore.tabs.find(t => t.id === id) || null
@@ -700,10 +783,26 @@ function tabFamilyFromStorage(tabId: string): TabFamily | null {
   }
 }
 
+const resolvedRouteTabFamily = computed<TabFamily | null>(() => {
+  if (!isModelTabRoute.value) return null
+  return normalizeTabFamily(activeModelTab.value?.type) || tabFamilyFromStorage(routeTabId.value)
+})
+
+const routeTabSyncPending = ref(isModelTabRoute.value)
+const routeTabSyncError = ref('')
+const routeTabHydrating = computed(() => isModelTabRoute.value && !activeModelTab.value && routeTabSyncPending.value)
+const routeTabLoadFailed = computed(() => isModelTabRoute.value && !activeModelTab.value && !routeTabSyncPending.value && routeTabSyncError.value.length > 0)
+const routeTabMissing = computed(() => isModelTabRoute.value && !activeModelTab.value && !routeTabSyncPending.value && routeTabSyncError.value.length === 0)
+
 let routeActiveSyncToken = 0
 watch(routeTabId, async (tabId) => {
   const token = ++routeActiveSyncToken
-  if (!tabId) return
+  routeTabSyncPending.value = Boolean(tabId)
+  routeTabSyncError.value = ''
+  if (!tabId) {
+    routeTabSyncPending.value = false
+    return
+  }
   try {
     if (!tabsStore.tabs.length) {
       await tabsStore.load()
@@ -711,13 +810,18 @@ watch(routeTabId, async (tabId) => {
     if (token !== routeActiveSyncToken) return
     tabsStore.setActive(tabId)
   } catch (error) {
+    routeTabSyncError.value = error instanceof Error ? (error.message || error.name || 'Unknown error') : String(error)
     toastQuicksettingsError(error)
+  } finally {
+    if (token === routeActiveSyncToken) {
+      routeTabSyncPending.value = false
+    }
   }
 }, { immediate: true })
 
 const activeFamily = computed<TabFamily>(() => {
-  if (route.path.startsWith('/models/') && routeTabId.value) {
-    const type = normalizeTabFamily(activeModelTab.value?.type) || tabFamilyFromStorage(routeTabId.value)
+  if (isModelTabRoute.value) {
+    const type = resolvedRouteTabFamily.value
     if (type) return type
   }
 
@@ -1190,7 +1294,6 @@ const filteredTextEncoderChoices = computed(() => {
   return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
 })
 
-const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Boolean(routeTabId.value))
 const activeImageTab = computed(() => {
   if (!isModelTabRoute.value) return null
   return asImageTab(activeModelTab.value)
@@ -1198,6 +1301,25 @@ const activeImageTab = computed(() => {
 const activeLtxTab = computed(() => {
   if (!isModelTabRoute.value) return null
   return asLtxTab(activeModelTab.value)
+})
+const activeLtxRouteTabId = computed(() => {
+  if (!isModelTabRoute.value) return ''
+  if (activeLtxTab.value) return activeLtxTab.value.id
+  return activeFamily.value === 'ltx2' ? routeTabId.value : ''
+})
+const ltxRouteHydrating = computed(() => (
+  isModelTabRoute.value
+  && activeFamily.value === 'ltx2'
+  && Boolean(routeTabId.value)
+  && !activeLtxTab.value
+))
+const activeLtxMode = computed<LtxGenerationMode>(() => {
+  const tab = activeLtxTab.value
+  const explicit = String(tab?.params.mode || '').trim().toLowerCase()
+  if (explicit === 'img2vid' || explicit === 'txt2vid') return explicit
+  if (tab?.params.useInitImage) return 'img2vid'
+  const persistedMode = activeLtxRouteTabId.value ? readPersistedLtxResumeModeForTab(activeLtxRouteTabId.value) : null
+  return persistedMode === 'img2vid' ? 'img2vid' : 'txt2vid'
 })
 const activeImageSurface = computed(() => {
   const tab = activeImageTab.value
@@ -1242,6 +1364,23 @@ const isActiveImageTabRunning = computed(() => {
   if (!tab) return false
   return isGenerationRunningForTab(tab.id)
 })
+const isActiveLtxTabRunning = computed(() => {
+  const tabId = activeLtxRouteTabId.value
+  if (!tabId) return false
+  return isLtxGenerationRunningForTab(tabId)
+})
+const ltxQuicksettingsDisabled = computed(() => isActiveLtxTabRunning.value || ltxRouteHydrating.value)
+const ltxModeToggleTitle = computed(() => {
+  if (ltxRouteHydrating.value) return 'Loading LTX tab settings...'
+  if (isActiveLtxTabRunning.value) return 'Cannot change LTX mode while generation is running.'
+  return 'Toggle LTX video mode'
+})
+const ltxRefreshTitle = computed(() => {
+  if (isLoadingQuicksettings.value) return 'Refresh already in progress.'
+  if (ltxRouteHydrating.value) return 'Loading LTX tab settings...'
+  if (isActiveLtxTabRunning.value) return 'Cannot refresh LTX lists while generation is running.'
+  return 'Refresh lists'
+})
 const inpaintToggleDisabled = computed(() => (
   isActiveImageTabRunning.value
   || !useInitImage.value
@@ -1267,15 +1406,18 @@ function normalizeTextEncoderLabels(raw: unknown): string[] {
 }
 
 const effectiveTextEncoders = computed(() => {
-  if (activeFamily.value === 'ltx2') {
-    const tab = activeLtxTab.value
-    if (!tab) return store.currentTextEncoders
-    const textEncoder = String(tab.params.textEncoder || '').trim()
-    return textEncoder ? [textEncoder] : []
+  if (isModelTabRoute.value) {
+    if (activeFamily.value === 'ltx2') {
+      const tab = activeLtxTab.value
+      if (!tab) return []
+      const textEncoder = String(tab.params.textEncoder || '').trim()
+      return textEncoder ? [textEncoder] : []
+    }
+    const tab = activeImageTab.value
+    if (!tab) return []
+    return normalizeTextEncoderLabels(tab.params.textEncoders)
   }
-  const tab = activeImageTab.value
-  if (!tab) return store.currentTextEncoders
-  return normalizeTextEncoderLabels(tab.params.textEncoders)
+  return store.currentTextEncoders
 })
 
 const primaryTextEncoder = computed(() => effectiveTextEncoders.value[0] ?? '')
@@ -1285,25 +1427,34 @@ const flux1TextEncoderSecondary = computed(() => flux1TextEncoders.value[1] ?? '
 const flux2TextEncoder = computed(() => effectiveTextEncoders.value.find((label) => label.startsWith('flux2/')) ?? '')
 
 const effectiveCheckpoint = computed(() => {
-  const ltxTab = activeLtxTab.value
-  if (ltxTab) {
-    const checkpoint = String(ltxTab.params.checkpoint || '').trim()
+  if (isModelTabRoute.value) {
+    if (activeFamily.value === 'ltx2') {
+      const ltxTab = activeLtxTab.value
+      if (!ltxTab) return ''
+      const checkpoint = String(ltxTab.params.checkpoint || '').trim()
+      if (checkpoint) return checkpoint
+      return filteredModelTitles.value[0] ?? ''
+    }
+    const tab = activeImageTab.value
+    if (!tab) return ''
+    const checkpoint = String(tab.params.checkpoint || '').trim()
     if (checkpoint) return checkpoint
     return filteredModelTitles.value[0] ?? ''
   }
-  const tab = activeImageTab.value
-  if (!tab) return store.currentModel
-  const ckpt = String(tab.params.checkpoint || '').trim()
-  if (ckpt) return ckpt
-  return filteredModelTitles.value[0] ?? ''
+  return store.currentModel
 })
 
 const effectiveVae = computed(() => {
-  const ltxTab = activeLtxTab.value
-  if (ltxTab) {
-    const vae = String(ltxTab.params.vae || '').trim()
-    if (vae) return vae
-    return filteredVaeChoices.value[0] ?? 'built-in'
+  if (isModelTabRoute.value) {
+    if (activeFamily.value === 'ltx2') {
+      const ltxTab = activeLtxTab.value
+      if (!ltxTab) return ''
+      const vae = String(ltxTab.params.vae || '').trim()
+      if (vae) return vae
+      return filteredVaeChoices.value[0] ?? 'built-in'
+    }
+    if (!activeModelTab.value) return ''
+    return store.currentVae
   }
   return store.currentVae
 })
@@ -1638,15 +1789,27 @@ function updateLtxTabParams(tabId: string, patch: Partial<LtxTab['params']>): Pr
   return tabsStore.updateParams<Record<string, unknown>>(tabId, patch as unknown as Record<string, unknown>)
 }
 
+function toastModelTabStillLoading(): void {
+  qsToast('Model tab settings are still loading.')
+}
+
 async function onModelChange(value: string): Promise<void> {
   try {
-    const ltxTab = activeLtxTab.value
-    if (ltxTab) {
-      await updateLtxTabParams(ltxTab.id, { checkpoint: String(value || '') })
-      return
-    }
-    const tab = activeImageTab.value
-    if (tab) {
+    if (isModelTabRoute.value) {
+      if (activeFamily.value === 'ltx2') {
+        const ltxTab = activeLtxTab.value
+        if (!ltxTab) {
+          toastModelTabStillLoading()
+          return
+        }
+        await updateLtxTabParams(ltxTab.id, { checkpoint: String(value || '') })
+        return
+      }
+      const tab = activeImageTab.value
+      if (!tab) {
+        toastModelTabStillLoading()
+        return
+      }
       await updateImageTabParams(tab.id, { checkpoint: String(value || '') })
       return
     }
@@ -1658,12 +1821,36 @@ async function onModelChange(value: string): Promise<void> {
 
 async function onVaeChange(value: string): Promise<void> {
   try {
+    if (isModelTabRoute.value && !activeModelTab.value) {
+      toastModelTabStillLoading()
+      return
+    }
     const ltxTab = activeLtxTab.value
-    if (ltxTab) {
+    if (activeFamily.value === 'ltx2' && isModelTabRoute.value) {
+      if (!ltxTab) {
+        toastModelTabStillLoading()
+        return
+      }
       await updateLtxTabParams(ltxTab.id, { vae: String(value || '') })
       return
     }
     await store.setVaeForFamily(activeFamily.value, value)
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
+}
+
+async function onLtxModeChange(value: LtxGenerationMode): Promise<void> {
+  try {
+    if (ltxQuicksettingsDisabled.value) return
+    const tab = activeLtxTab.value
+    if (!tab) return
+    const nextMode: LtxGenerationMode = value === 'img2vid' ? 'img2vid' : 'txt2vid'
+    if (activeLtxMode.value === nextMode && Boolean(tab.params.useInitImage) === (nextMode === 'img2vid')) return
+    await updateLtxTabParams(tab.id, {
+      mode: nextMode,
+      useInitImage: nextMode === 'img2vid',
+    })
   } catch (error) {
     toastQuicksettingsError(error)
   }
@@ -1712,6 +1899,9 @@ async function updatePrefixedTextEncoders(familyPrefix: 'flux1' | 'flux2', label
     .map((label) => String(label || '').trim())
     .filter((label, index, array) => label.startsWith(labelPrefix) && label.length > 0 && array.indexOf(label) === index)
   const tab = activeImageTab.value
+  if (isModelTabRoute.value && !tab) {
+    throw new Error('Model tab settings are still loading.')
+  }
   if (tab) {
     await updateImageTabParams(tab.id, { textEncoders: normalizedLabels })
     return
@@ -1751,7 +1941,11 @@ function onPrimaryTextEncoderChange(value: string): void {
   } else if (fam === 'ltx2') {
     const tab = activeLtxTab.value
     const payload = String(value || '').trim()
-    if (tab) {
+    if (isModelTabRoute.value) {
+      if (!tab) {
+        toastModelTabStillLoading()
+        return
+      }
       updateLtxTabParams(tab.id, { textEncoder: payload }).catch((error) => {
         qsToast(error instanceof Error ? error.message : String(error))
       })
@@ -1763,6 +1957,10 @@ function onPrimaryTextEncoderChange(value: string): void {
   } else {
     const tab = activeImageTab.value
     const payload = value ? [value] : []
+    if (isModelTabRoute.value && !tab) {
+      toastModelTabStillLoading()
+      return
+    }
     if (tab) {
       updateImageTabParams(tab.id, { textEncoders: payload }).catch((error) => {
         qsToast(error instanceof Error ? error.message : String(error))

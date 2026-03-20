@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22
-Last Review: 2026-03-05
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -145,3 +145,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-03-05: `styles/components/quicksettings.css` renamed the Flux dual text-encoder sizing hook from `.qs-group-flux1-tenc` to `.qs-group-flux-tenc` so class naming matches Flux-family scope (`flux1` + `flux2`).
 - 2026-02-27: `styles/views/wan.css` now stacks `Ping-pong`/`Return frames` vertically in `WanVideoOutputPanel.vue` (`.wan-video-output-toggle-row` single-column grid), keeping output toggles compact under the Loop/CRF/Interpolation FPS row.
 - 2026-03-13: `styles/components/views-shared.css` now owns neutral video result helpers (`results-header-actions`, `results-empty-state`, `results-empty-title`) shared by WAN, LTX, and image-tab result cards; the old WAN-prefixed empty/header-action helpers were removed from `styles/views/wan.css`.
+- 2026-03-16: `styles/components/views-shared.css` now owns the shared video-family grid ratio through `.video-panels`, and both WAN/LTX video workspaces use that class; `styles/views/wan.css` no longer owns the canonical two-column video grid.

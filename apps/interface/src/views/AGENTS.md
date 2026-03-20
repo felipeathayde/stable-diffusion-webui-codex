@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-12
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -16,7 +16,8 @@ Status: Active
   - `ModelTabView.vue` mounts `VideoModelTab.vue` when `tab.type === 'wan' | 'ltx2'`.
   - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|flux2|chroma|zimage|anima`.
 - 2026-03-13: `VideoModelTab.vue` is the only route-level owner for video-family tabs and delegates to family-owned workspaces under `components/model-tabs/**`.
-- 2026-03-13: `LtxVideoWorkspace.vue` is the dedicated generic-video LTX workspace. It owns only LTX mode/prompt/video/init-image controls and reuses `useLtxVideoGeneration(tabId)` for `/api/txt2vid` + `/api/img2vid`; checkpoint/VAE/text-encoder selection stays in `QuickSettingsBar.vue`.
+- 2026-03-16: `LtxVideoWorkspace.vue` follows the shared video-family presentation baseline used by WAN while keeping LTX controls truthful. `QuickSettingsBar.vue` now owns the LTX `TXT2VID/IMG2VID` mode toggle plus checkpoint/VAE/text-encoder selection; the workspace keeps prompt/init-image, generation parameters, and the run/results rail on `useLtxVideoGeneration(tabId)`.
+- 2026-03-16: `ModelTabView.vue` now distinguishes stale `/models/:tabId` routes from deferred model-tab load failures, so route-level “not found” UI is no longer reused for backend/bootstrap tab-load errors.
 - 2026-03-12: `Home.vue` and `ModelsList.vue` now expose `LTX 2.3` creation only when backend capabilities advertise `ltx2`; manual creation without capability fails loud.
 - `Home.vue` is the engine-agnostic landing page and the canonical place to manage tabs (enable/disable, rename, duplicate, remove).
 - `WanVideoWorkspace.vue` uses typed WAN video payload builders and `useVideoGeneration(tabId)` for streaming progress.

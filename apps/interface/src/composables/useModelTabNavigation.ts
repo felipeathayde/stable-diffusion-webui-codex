@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Navigation helper for model tabs (`/models/:tabId`).
-Ensures a tab exists for a given type, optionally applies init-image params, and navigates to the tab route.
+Ensures a tab exists for a given type, optionally applies init-image params for supported families, fails loud on unsupported init-image
+flows, and navigates to the tab route.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useModelTabNavigation` (function): Provides `openModelTab(...)` helper for routing to a model tab.
@@ -29,11 +30,25 @@ export function useModelTabNavigation(): {
     if (!id) throw new Error('failed to resolve a model tab id')
 
     if (options?.initImage) {
-      await tabs.updateParams(id, {
-        useInitImage: true,
-        initImageData: options.initImage.dataUrl,
-        initImageName: options.initImage.name,
-      })
+      if (type === 'wan') {
+        throw new Error('WAN init-image navigation is not implemented in useModelTabNavigation.')
+      }
+      if (type === 'ltx2') {
+        const patch: Record<string, unknown> = {
+          mode: 'img2vid',
+          useInitImage: true,
+          initImageData: options.initImage.dataUrl,
+          initImageName: options.initImage.name,
+        }
+        await tabs.updateParams(id, patch)
+      } else {
+        const patch: Record<string, unknown> = {
+          useInitImage: true,
+          initImageData: options.initImage.dataUrl,
+          initImageName: options.initImage.name,
+        }
+        await tabs.updateParams(id, patch)
+      }
     }
 
     await router.push(`/models/${id}`)

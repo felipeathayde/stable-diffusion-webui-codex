@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-03-12
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -78,6 +78,7 @@ Status: Active
 - 2026-02-22: `model_tabs.ts` WAN img2vid temporal mode now includes `svi2` and `svi2_pro`, with shared window normalization via `utils/wan_img2vid_temporal.ts`; default window params were tightened to `stride=8` and `commit=12` so persisted values satisfy the continuity guards (`stride % 4 == 0`, `commit - stride >= 4`).
 - 2026-02-22: `model_tabs.ts` WAN `video` params now persist `img2vidResetAnchorToBase`; normalization applies mode defaults (`sliding/solo=false`) and forces `false` for `svi2|svi2_pro`.
 - 2026-02-28: `model_tabs.ts` canonical img2vid modes are `solo|sliding|svi2|svi2_pro`; persisted unsupported temporal state is rejected fail-loud during normalization.
+- 2026-03-16: `model_tabs.ts` now reconciles LTX `mode` and `useInitImage` during normalization with `mode` as the canonical owner; invalid/missing legacy `mode` falls back from persisted `useInitImage`, and the compatibility boolean is rewritten from the normalized mode without clearing hidden init-image payload fields.
 - 2026-03-01: `model_tabs.ts` WAN `video` params now persist no-stretch guide settings (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with strict normalization (`imageScale > 0` + crop offsets in `[0,1]`).
 - 2026-03-02: `quicksettings.ts` now exposes `hydrateLoraShaMap(inventory)` so LoRA inventory refresh surfaces (for example `LoraModal.vue`) can refresh LoRA filename/path → SHA mapping immediately without requiring a separate quicksettings refresh path.
 - 2026-03-05: `model_tabs.ts` baseline required tab types now include `flux2`; `engine_config.ts` now exposes `flux2` defaults/capabilities, and `quicksettings.ts` now recognizes `flux2` in VAE-by-family and text-encoder root/prefix mappings (`flux2_tenc`).

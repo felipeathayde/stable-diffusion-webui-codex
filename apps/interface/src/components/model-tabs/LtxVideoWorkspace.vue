@@ -7,10 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Family-owned LTX video workspace backed by the generic video endpoints.
-Renders a minimal truthful `ltx2` txt2vid/img2vid workspace, reusing shared prompt/init-image/progress/results components while keeping
-checkpoint/VAE/text-encoder selection in QuickSettings instead of duplicating local selectors. Exposes only the generic backend contract:
-mode, prompts, dimensions, fps, frames, steps, cfg, sampler, scheduler, seed, optional init image, run/cancel, progress, exported video,
-and optional returned frames.
+Uses the shared video-family presentation baseline so `ltx2` reads like the same 2vid surface as WAN22 while keeping LTX-specific controls
+truthful to the generic backend contract. Checkpoint/VAE/text-encoder selection stays in QuickSettings; the workspace owns prompt/init-image,
+generation parameters, run/cancel, progress, exported video, and optional returned frames.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LtxVideoWorkspace` (component): LTX video generation workspace mounted by `VideoModelTab`.
@@ -18,45 +17,21 @@ Symbols (top-level; keep in sync; no ghosts):
 - `readFileAsDataURL` (function): Reads the selected init image into a data URL.
 - `normalizePositiveInt` (function): Clamps/sanitizes positive integer field updates.
 - `updateParamsPatch` (function): Persists top-level LTX param patches.
-- `setMode` (function): Keeps `mode` and `useInitImage` in sync.
 - `onInitImageFile` (function): Loads an init image into tab params.
 - `clearInit` (function): Clears init-image fields without changing mode.
 -->
 
 <template>
-  <section v-if="tab && params" class="panels ltx-panels">
+  <section v-if="tab && params" class="panels video-panels">
     <div class="panel-stack">
       <div class="panel">
         <div class="panel-header">Prompt</div>
         <div class="panel-body">
-          <div class="gen-card mb-3">
-            <div class="row-split">
-              <span class="label-muted">Mode</span>
-              <div class="qs-row">
-                <button
-                  :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', mode === 'txt2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                  type="button"
-                  :disabled="isRunning"
-                  :aria-pressed="mode === 'txt2vid'"
-                  @click="setMode('txt2vid')"
-                >
-                  TXT2VID
-                </button>
-                <button
-                  :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', mode === 'img2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                  type="button"
-                  :disabled="isRunning"
-                  :aria-pressed="mode === 'img2vid'"
-                  @click="setMode('img2vid')"
-                >
-                  IMG2VID
-                </button>
-              </div>
+          <div class="gen-card">
+            <div class="row-split mb-2">
+              <span class="label-muted">Prompt</span>
+              <span class="caption">{{ mode === 'img2vid' ? 'IMG2VID' : 'TXT2VID' }}</span>
             </div>
-            <p class="caption mt-2">Checkpoint, VAE, and text encoder are selected in QuickSettings.</p>
-          </div>
-
-          <div class="gen-card mb-3">
             <PromptFields
               :prompt="params.prompt"
               :negative="params.negativePrompt"
@@ -64,9 +39,13 @@ Symbols (top-level; keep in sync; no ghosts):
               @update:prompt="(value) => updateParamsPatch({ prompt: value })"
               @update:negative="(value) => updateParamsPatch({ negativePrompt: value })"
             />
+            <p class="caption mt-2">Mode, checkpoint, VAE, and text encoder are selected in QuickSettings.</p>
           </div>
 
-          <div v-if="mode === 'img2vid'" class="gen-card">
+          <div v-if="mode === 'img2vid'" class="gen-card mt-3">
+            <div class="row-split mb-2">
+              <span class="label-muted">Init Image</span>
+            </div>
             <Img2ImgInpaintParamsCard
               embedded
               :disabled="isRunning"
@@ -99,7 +78,10 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="panel-header">Generation Parameters</div>
         <div class="panel-body">
           <div class="gen-card mb-3">
-            <div class="grid gap-3 md:grid-cols-2">
+            <div class="row-split mb-2">
+              <span class="label-muted">Video</span>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2 mb-3">
               <SliderField
                 label="Width (px)"
                 :modelValue="params.width"
@@ -125,9 +107,6 @@ Symbols (top-level; keep in sync; no ghosts):
                 @update:modelValue="(value) => updateParamsPatch({ height: snapLtxDim(value) })"
               />
             </div>
-          </div>
-
-          <div class="gen-card mb-3">
             <VideoSettingsCard
               embedded
               :frames="params.frames"
@@ -142,7 +121,10 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
 
           <div class="gen-card mb-3">
-            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div class="row-split mb-2">
+              <span class="label-muted">Sampling</span>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3 mb-3">
               <SliderField
                 label="Steps"
                 :modelValue="params.steps"
@@ -181,9 +163,6 @@ Symbols (top-level; keep in sync; no ghosts):
                 />
               </div>
             </div>
-          </div>
-
-          <div class="gen-card mb-3">
             <div class="grid gap-3 md:grid-cols-2">
               <SamplerSelector
                 :samplers="filteredSamplers"
@@ -204,6 +183,9 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
 
           <div class="gen-card">
+            <div class="row-split mb-2">
+              <span class="label-muted">Output / Assets</span>
+            </div>
             <div class="row-split mb-2">
               <span class="label-muted">Return frames</span>
               <button
@@ -249,7 +231,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <div v-if="resumeNotice || copyNotice" class="caption">
           {{ resumeNotice || copyNotice }}
         </div>
-        <div class="caption">{{ runSummary }}</div>
+        <RunSummaryChips class="video-results-summary" :text="runSummary" />
         <RunProgressStatus
           v-if="isRunning"
           :stage="progress.stage"
@@ -275,7 +257,7 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </RunCard>
 
-      <ResultsCard :showGenerate="false" headerRightClass="results-header-actions">
+      <ResultsCard class="video-results-panel" :showGenerate="false" headerRightClass="results-header-actions">
         <template #header-right>
           <button v-if="info" class="btn btn-sm btn-outline" type="button" @click="copyJson(info, 'Copied generation info.')">
             Copy info
@@ -287,7 +269,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <span class="label-muted">Exported Video</span>
             <a v-if="videoUrl" class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
           </div>
-          <video v-if="videoUrl" class="w-full rounded mt-2" :src="videoUrl" controls />
+          <video v-if="videoUrl" class="rounded mt-2" :src="videoUrl" controls />
           <div v-else class="caption mt-2">No exported video yet.</div>
         </div>
 
@@ -345,6 +327,7 @@ import ResultViewer from '../../components/ResultViewer.vue'
 import ResultsCard from '../../components/results/ResultsCard.vue'
 import RunCard from '../../components/results/RunCard.vue'
 import RunProgressStatus from '../../components/results/RunProgressStatus.vue'
+import RunSummaryChips from '../../components/results/RunSummaryChips.vue'
 import SamplerSelector from '../../components/SamplerSelector.vue'
 import SchedulerSelector from '../../components/SchedulerSelector.vue'
 import VideoSettingsCard from '../../components/VideoSettingsCard.vue'
@@ -352,7 +335,7 @@ import NumberStepperInput from '../../components/ui/NumberStepperInput.vue'
 import SliderField from '../../components/ui/SliderField.vue'
 import { useLtxVideoGeneration } from '../../composables/useLtxVideoGeneration'
 import { useResultsCard } from '../../composables/useResultsCard'
-import { useModelTabsStore, type LtxGenerationMode, type LtxTabParams } from '../../stores/model_tabs'
+import { useModelTabsStore, type LtxTabParams } from '../../stores/model_tabs'
 
 const props = defineProps<{ tabId: string }>()
 
@@ -527,12 +510,6 @@ function updateParamsPatch(patch: Partial<LtxTabParams>): void {
   store.updateParams(props.tabId, patch as Partial<Record<string, unknown>>).catch((error) => {
     toast(error instanceof Error ? error.message : String(error))
   })
-}
-
-function setMode(nextMode: LtxGenerationMode): void {
-  if (!params.value) return
-  if (mode.value === nextMode && Boolean(params.value.useInitImage) === (nextMode === 'img2vid')) return
-  updateParamsPatch({ mode: nextMode, useInitImage: nextMode === 'img2vid' })
 }
 
 function readFileAsDataURL(file: File): Promise<string> {

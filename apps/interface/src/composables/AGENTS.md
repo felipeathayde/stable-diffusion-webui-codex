@@ -23,6 +23,7 @@ Status: Active
 - 2025-12-27: Removed Checkpoints state from `usePromptCard` (PromptCard no longer renders the Checkpoints modal/button).
 - 2025-12-25: `useResultsCard` encapsulates shared “Results” helpers (clipboard copy + ephemeral notice/toast + JSON formatting) so views don’t duplicate the same wiring.
 - 2025-12-27: Added `useModelTabNavigation` to bridge “Send to Img2Img/Inpaint” actions into `/models/:tabId` tabs by setting init-image params.
+- 2026-03-16: `useModelTabNavigation` now fails loud on unsupported video-family init-image routing and treats `ltx2` explicitly: opening an LTX tab with an init image synchronizes `mode='img2vid'` with `useInitImage=true` instead of relying on image-tab patch semantics.
 - 2026-01-01: `useGeneration(tabId)` now tracks live preview images from task progress events (`previewImage`/`previewStep`) and sets the initial stage to `starting` immediately on Generate click (so Results doesn’t read as “No results yet” during request setup).
 - 2026-01-02: `useGeneration(tabId)` now resolves the selected checkpoint to its short hash (when available) before sending requests.
 - 2026-01-18: `useGeneration(tabId)` now derives required VAE/text encoder count from backend-provided `asset_contracts` and uses `models[].core_only` (via `quicksettings.isModelCoreOnly(...)`) to enforce core-only requirements (no duplicated per-engine lists in the UI).
@@ -66,4 +67,6 @@ Status: Active
 - 2026-02-27: `useVideoGeneration(tabId)` removed obsolete WAN output fields (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) from snapshots/common payload input and now carries interpolation as one `interpolation.targetFps` field (`0` disables, active values are interpreted as output FPS targets).
 - 2026-02-27: `useVideoGeneration(tabId)` WAN default video FPS is now `15` (was `24`) to match store/view initialization defaults.
 - 2026-02-27: `useVideoGeneration(tabId)` now carries WAN SeedVR2 upscaling fields in defaults, run snapshots (`paramsSnapshot.upscaling`), and common payload input (`upscaling` -> `video_upscaling`), and appends compact ` · seedvr2` in run summaries when enabled.
+- 2026-03-16: `useLtxVideoGeneration.ts` now exports `isLtxGenerationRunningForTab(tabId)` so `QuickSettingsBar.vue` can lock the shared LTX `TXT2VID/IMG2VID` mode toggle while an LTX run is active without duplicating local task-state tracking.
+- 2026-03-16: `useLtxVideoGeneration.ts` now seeds per-tab runtime state from the persisted LTX resume marker before async reconnect completes, so QuickSettings keeps the mode toggle locked during reload/reconnect windows instead of exposing a false idle state.
 - 2026-03-16: `useLtxVideoGeneration(tabId)` now blocks generation on the backend-owned `vendored_metadata` dependency row in addition to checkpoint/core-only sidecars, so the dedicated LTX path fails before the runtime hits missing local `Lightricks/LTX-2` metadata.

@@ -92,14 +92,15 @@ The `AGENTS.md` files across the project tell the truth or they shut up.
 
 ### ACT II.1 – WORKSPACE-SPECIFIC PATROL EXTENSIONS
 
-This repository adds two permanent scouts on top of the global persistent patrol pair.
-These two scouts are workspace-specific and must be defined here, not in global policy.
+This repository adds two permanent Bug Hunter-based local patrols on top of the global persistent patrol pair.
+These two local patrols are workspace-specific and must be defined here, not in global policy.
 
 - Additional always-on patrols (keep exactly one of each running while session is active):
-  - `Anti-Pattern & Identity-Drift Scout`
-  - `VRAM & Overhead Scout`
-- Both scouts MUST reuse the developer_settings `Senior Scout Cavalry` prompt template and execution flow (`spawn_agent -> send_input -> wait`).
-- Both scouts MUST receive the current `active-task exclusion set` and must stay out of active in-progress diff scope.
+  - `anti-pattern-drift`
+  - `vram-overhead`
+- The canonical local patrol ids are `anti-pattern-drift` and `vram-overhead`; `Senior Bug Hunter Machine` is the reused sub-agent template/type, not the local patrol identity.
+- Both local patrols MUST reuse the global `Senior Bug Hunter Machine` prompt template and execution flow (`spawn_agent -> send_input -> wait`).
+- Both local patrols MUST receive the current `active-task exclusion set` and must stay out of active in-progress diff scope.
 
 Fixed objectives (use exact text in mission brief):
 
@@ -119,7 +120,7 @@ Patrol report filenames (mandatory, UTC):
 
 Report location and structure:
 
-- Save each round in `.sangoi/patrol-reports/`
+- Only when intentionally materializing a patrol report, save it in `.sangoi/patrol-reports/`
 - Use `.sangoi/patrol-reports/patrol-report-template.md`
 - Include evidence (`file:line`, command output), impact, and minimal fix direction.
 

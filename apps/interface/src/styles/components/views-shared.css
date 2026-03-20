@@ -1,4 +1,15 @@
 @layer components {
+  .video-panels {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    align-items: stretch;
+  }
+
+  @media (max-width: 68.75rem) {
+    .video-panels {
+      grid-template-columns: 1fr;
+    }
+  }
+
   /* Prompt header toolbar */
   .prompt-toolbar { margin-left: auto; display: flex; align-items: center; gap: var(--space-sm); }
   .prompt-toolbar .styles-label { margin-left: var(--space-sm); }
@@ -34,6 +45,19 @@
   }
   .results-generate { width: 10rem; }
   .cdx-chips-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
+  .video-results-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .video-results-panel video {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    max-height: 30dvh;
+    margin-inline: auto;
+    object-fit: contain;
+  }
+  .video-results-summary { opacity: 0.85; }
 
   /* History cards (shared layout) */
   .cdx-history-list {

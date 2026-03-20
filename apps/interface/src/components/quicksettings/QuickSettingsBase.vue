@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Base quicksettings selectors for non-WAN model tabs.
-Renders Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, emitting updates and add-path/metadata actions to the parent quicksettings bar.
+Renders Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, emitting updates and add-path/metadata actions to the parent
+quicksettings bar while supporting a shared disabled state from the parent during run/hydration locks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBase` (component): Base quicksettings selectors for non-WAN model tabs.
@@ -21,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
     <label class="label-muted">Checkpoint</label>
     <div class="qs-row">
       <div class="qs-pair">
-        <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
+        <select class="select-md" :value="checkpoint" :disabled="disabled" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
           <option v-if="checkpoints.length === 0" value="">No models found</option>
           <option v-for="model in checkpoints" :key="model" :value="model">
             {{ model }}
@@ -30,14 +31,14 @@ Symbols (top-level; keep in sync; no ghosts):
         <button
           class="btn qs-btn-outline qs-inline-btn qs-info-btn"
           type="button"
-          :disabled="!checkpoint"
+            :disabled="disabled || !checkpoint"
           title="Show checkpoint metadata"
           aria-label="Show checkpoint metadata"
           @click="$emit('showMetadata', { kind: 'checkpoint', value: checkpoint })"
         >
           i
         </button>
-        <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
+        <button class="btn qs-btn-outline qs-inline-btn" type="button" :disabled="disabled" @click="$emit('addCheckpointPath')">+</button>
       </div>
     </div>
   </div>
@@ -46,7 +47,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <label class="label-muted">VAE</label>
       <div class="qs-row">
         <div class="qs-pair">
-          <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
+          <select class="select-md" :value="vae" :disabled="disabled" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
             <option v-for="v in vaeChoices" :key="v" :value="v">
               {{ vaeLabel(v) }}
             </option>
@@ -54,14 +55,14 @@ Symbols (top-level; keep in sync; no ghosts):
           <button
             class="btn qs-btn-outline qs-inline-btn qs-info-btn"
             type="button"
-            :disabled="!vae || isVaeSentinel(vae)"
+            :disabled="disabled || !vae || isVaeSentinel(vae)"
             title="Show VAE metadata"
             aria-label="Show VAE metadata"
             @click="$emit('showMetadata', { kind: 'vae', value: vae })"
           >
             i
           </button>
-          <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
+          <button class="btn qs-btn-outline qs-inline-btn" type="button" :disabled="disabled" @click="$emit('addVaePath')">+</button>
         </div>
       </div>
     </div>
@@ -70,7 +71,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <label class="label-muted">Text Encoder</label>
       <div class="qs-row">
         <div class="qs-pair">
-          <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
+          <select class="select-md" :value="textEncoder" :disabled="disabled" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
             <option value="">{{ textEncoderAutomaticLabel }}</option>
             <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
           </select>
@@ -78,7 +79,7 @@ Symbols (top-level; keep in sync; no ghosts):
             v-if="showTextEncoderActions"
             class="btn qs-btn-outline qs-inline-btn qs-info-btn"
             type="button"
-            :disabled="!textEncoder"
+            :disabled="disabled || !textEncoder"
             title="Show text encoder metadata"
             aria-label="Show text encoder metadata"
             @click="$emit('showMetadata', { kind: 'text_encoder', value: textEncoder })"
@@ -89,6 +90,7 @@ Symbols (top-level; keep in sync; no ghosts):
             v-if="showTextEncoderActions"
             class="btn qs-btn-outline qs-inline-btn"
             type="button"
+            :disabled="disabled"
             @click="$emit('addTencPath')"
           >
             +
@@ -109,6 +111,7 @@ const props = defineProps<{
   textEncoderAutomaticLabel?: string
   showTextEncoder?: boolean
   showTextEncoderActions?: boolean
+  disabled?: boolean
 }>()
 
 defineEmits<{

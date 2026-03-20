@@ -1,6 +1,6 @@
 # apps/interface/src/components/model-tabs Overview
 Date: 2026-03-13
-Last Review: 2026-03-13
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -8,7 +8,7 @@ Status: Active
 
 ## Files
 - `apps/interface/src/components/model-tabs/WanVideoWorkspace.vue` — WAN txt2vid/img2vid workspace using `useVideoGeneration(tabId)`.
-- `apps/interface/src/components/model-tabs/LtxVideoWorkspace.vue` — LTX generic-video workspace using `useLtxVideoGeneration(tabId)`.
+- `apps/interface/src/components/model-tabs/LtxVideoWorkspace.vue` — LTX video workspace using `useLtxVideoGeneration(tabId)` and the shared video-family presentation baseline.
 
 ## Notes
 - Keep route ownership in `apps/interface/src/views/VideoModelTab.vue`.

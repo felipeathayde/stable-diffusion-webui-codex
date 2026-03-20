@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-12
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -14,7 +14,7 @@ Status: Active
 - Generation + hires + refiner controls live in `GenerationSettingsCard.vue`, `HiresSettingsCard.vue`, and `RefinerSettingsCard.vue`, following shared `gen-card` organization with component-specific row/grid arrangements.
 - Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
 - `QuickSettingsBar.vue` renders per-tab selectors in the main header row; it includes a nested, collapsible Advanced area (Smart toggles + Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `uiBlocks.semanticEngine` when available (otherwise `sd15`).
-- 2026-03-12: `QuickSettingsBar.vue` now includes a dedicated `ltx2` branch in the shared header lane. LTX selectors are per-tab (`tab.params.checkpoint`, `tab.params.vae`, `tab.params.textEncoder`), use `ltx2_*` roots for filtering, keep the text-encoder selector visible, and do not reuse the image-tab `textEncoders[]` contract.
+- 2026-03-16: `QuickSettingsBar.vue` keeps LTX as its own video-family branch in the shared header lane. LTX selectors remain per-tab (`tab.params.checkpoint`, `tab.params.vae`, `tab.params.textEncoder`), use `ltx2_*` roots for filtering, keep the text-encoder selector visible, and own the LTX `TXT2VID/IMG2VID` mode toggle in the top row instead of the workspace body. On any `/models/:tabId` route, the bar stays in a non-family placeholder state until the hydrated tab object exists, so no family branch can fall back to global selector writes during route hydration; stale route ids switch that placeholder to explicit not-found, and tab-load failures switch it to an explicit load-failure state instead of fake loading.
 - 2026-01-18: `QuickSettingsBar.vue` now supports the `chroma` model tab type (mapped to backend engine id `flux1_chroma`) and renders a dedicated `QuickSettingsChroma.vue` selector row.
 - 2026-01-13: Metadata modal payload now uses a single `metadata` object (no `codex_metadata` wrapper; `file_metadata` → `metadata`).
 - 2026-01-13: Metadata modal adds a toggle to switch between raw (flat) and nested (organized) views for file metadata.

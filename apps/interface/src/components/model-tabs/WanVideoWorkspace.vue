@@ -19,6 +19,7 @@ and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled v
 payload parsing/LoRA SHA resolution is handled in `useVideoGeneration`.
 Temporal Loom reset-anchor control is rendered as a compact content-width toggle button, and upscaling controls keep the same experimental badge treatment as Temporal Loom.
 Exported result video preview uses an explicit `Zoom` action to open a dedicated full-screen video overlay with pan/zoom, outside-click/Escape close, and double-click fullscreen suppression.
+Uses the shared video-family layout/result styling baseline from `views-shared.css` while keeping WAN-specific guided flow, history, and export tooling local to this workspace.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoWorkspace` (component): WAN video workspace mounted by `VideoModelTab`.
@@ -106,7 +107,7 @@ Symbols (top-level; keep in sync; no ghosts):
 -->
 
 <template>
-  <section v-if="tab" class="panels wan-panels">
+  <section v-if="tab" class="panels video-panels">
     <div class="panel-stack">
       <div class="panel">
         <div class="panel-header">Prompt</div>
@@ -537,7 +538,7 @@ Symbols (top-level; keep in sync; no ghosts):
         </template>
 
         <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
-        <RunSummaryChips class="wan-results-summary" :text="runSummary" />
+        <RunSummaryChips class="video-results-summary" :text="runSummary" />
         <RunProgressStatus
           v-if="isRunning"
           :stage="progress.stage"
@@ -557,7 +558,7 @@ Symbols (top-level; keep in sync; no ghosts):
       </RunCard>
 
       <ResultsCard
-        class="wan-results-panel"
+        class="video-results-panel"
         headerClass="three-cols"
         headerRightClass="results-header-actions"
         :showGenerate="false"

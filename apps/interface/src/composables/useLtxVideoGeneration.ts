@@ -17,11 +17,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `LtxGenerationState` (interface): Per-tab LTX runtime state.
 - `ResumeState` (type): Persisted auto-resume marker for an in-flight LTX task.
 - `freshState` (function): Creates empty per-tab state.
+- `readPersistedLtxResumeModeForTab` (function): Reads the persisted LTX resume-marker mode for a tab when available.
+- `isLtxGenerationRunningForTab` (function): Reports whether a given LTX tab currently owns an in-flight task.
 - `getTabState` (function): Returns/initializes per-tab state storage.
 - `useLtxVideoGeneration` (function): Main LTX video composable.
 */
 
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 
 import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, subscribeTask } from '../api/client'
 import { formatZodError } from '../api/payloads'
@@ -123,8 +125,43 @@ function freshState(): LtxGenerationState {
   }
 }
 
+function applyResumePendingState(state: LtxGenerationState, saved: ResumeState): void {
+  state.status = 'running'
+  state.progress = {
+    ...DEFAULT_PROGRESS,
+    stage: 'resuming',
+    message: 'Reconnecting to task...',
+  }
+  state.frames = []
+  state.info = null
+  state.video = null
+  state.errorMessage = ''
+  state.taskId = saved.taskId
+  state.cancelRequested = false
+}
+
+function resetStateToIdle(state: LtxGenerationState): void {
+  state.status = 'idle'
+  state.progress = { ...DEFAULT_PROGRESS }
+  state.frames = []
+  state.info = null
+  state.video = null
+  state.errorMessage = ''
+  state.taskId = ''
+  state.cancelRequested = false
+}
+
+export function isLtxGenerationRunningForTab(tabId: string): boolean {
+  return getTabState(tabId).status === 'running'
+}
+
 function getTabState(tabId: string): LtxGenerationState {
-  if (!tabStates.has(tabId)) tabStates.set(tabId, freshState())
+  if (!tabStates.has(tabId)) {
+    const state = reactive(freshState()) as LtxGenerationState
+    const saved = loadResumeState(resumeKey(tabId))
+    if (saved) applyResumePendingState(state, saved)
+    tabStates.set(tabId, state)
+  }
   return tabStates.get(tabId)!
 }
 
@@ -155,6 +192,10 @@ function loadResumeState(key: string): ResumeState | null {
   } catch {
     return null
   }
+}
+
+export function readPersistedLtxResumeModeForTab(tabId: string): LtxGenerationMode | null {
+  return loadResumeState(resumeKey(tabId))?.mode ?? null
 }
 
 function saveResumeState(key: string, state: ResumeState): void {
@@ -559,17 +600,13 @@ export function useLtxVideoGeneration(tabId: string) {
       result = await fetchTaskResult(saved.taskId)
     } catch {
       clearResumeState(key)
+      resetStateToIdle(state.value)
       return
     }
 
     if (result.status === 'running') {
       stopStream()
-      state.value.status = 'running'
-      state.value.taskId = saved.taskId
-      state.value.errorMessage = ''
-      state.value.cancelRequested = false
-      clearResultState()
-      resetProgress()
+      applyResumePendingState(state.value, saved)
 
       if (typeof result.stage === 'string' && result.stage.trim()) state.value.progress.stage = result.stage
       const progress = result.progress
@@ -618,7 +655,10 @@ export function useLtxVideoGeneration(tabId: string) {
     if (result.status === 'error') {
       state.value.taskId = saved.taskId
       setError(String(result.error || 'Task failed.'))
+      return
     }
+
+    resetStateToIdle(state.value)
   }
 
   void tryAutoResume()

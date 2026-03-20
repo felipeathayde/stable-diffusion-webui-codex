@@ -14,7 +14,8 @@ default parameter shapes per tab type (image vs WAN/LTX video) using engine defa
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
 backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both scheduler/sampler backfills through the normal tab-persistence
 queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
-`flux2/*` Qwen selector without overriding shared img2img denoise state.
+`flux2/*` Qwen selector without overriding shared img2img denoise state. LTX normalization treats `mode` as the canonical owner of txt2vid/img2vid
+state and rewrites the compatibility boolean `useInitImage` from that normalized mode while preserving hidden init-image payload fields.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -671,7 +672,8 @@ function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams 
     if (!LTX_PARAM_TOP_LEVEL_KEYS.has(key)) continue
     ;(merged as unknown as Record<string, unknown>)[key] = value
   }
-  merged.mode = normalizeLtxMode(patch.mode, defaults.mode)
+  const fallbackMode: LtxGenerationMode = normalizeBoolean(patch.useInitImage, defaults.useInitImage) ? 'img2vid' : defaults.mode
+  merged.mode = normalizeLtxMode(patch.mode, fallbackMode)
   merged.prompt = String(merged.prompt || '')
   merged.negativePrompt = String(merged.negativePrompt || '')
   merged.width = normalizePositiveInt(merged.width, defaults.width)
@@ -686,7 +688,7 @@ function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams 
   merged.checkpoint = String(merged.checkpoint || '').trim()
   merged.vae = String(merged.vae || '').trim()
   merged.textEncoder = String(merged.textEncoder || '').trim()
-  merged.useInitImage = normalizeBoolean(merged.useInitImage, defaults.useInitImage)
+  merged.useInitImage = merged.mode === 'img2vid'
   merged.initImageData = String(merged.initImageData || '')
   merged.initImageName = String(merged.initImageName || '')
   merged.videoReturnFrames = normalizeBoolean(merged.videoReturnFrames, defaults.videoReturnFrames)

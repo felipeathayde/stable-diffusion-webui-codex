@@ -1,7 +1,7 @@
 # apps/interface/src/components/quicksettings Overview
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
-Last Review: 2026-03-12
+Last Review: 2026-03-16
 Status: Active
 
 ## Purpose
@@ -16,7 +16,9 @@ Status: Active
 ## Notes
 - `QuickSettingsBase` stays presentational and engine-agnostic; engine-specific filtering and labels (e.g. Flux-family dual TE layout, WAN-only selectors) live in `QuickSettingsBar.vue`.
 - `QuickSettingsBar.vue` renders a main row for engine selectors and a collapsible Advanced nested area (Smart toggles + GPU VRAM / Attention Backend / Overrides), with a left-side handle button.
-- 2026-03-12: `QuickSettingsBar.vue` now treats `ltx2` as its own non-image video family: the LTX branch binds checkpoint/VAE/text encoder directly to `tab.params.{checkpoint,vae,textEncoder}`, filters text encoders through `ltx2_tenc`, keeps the TE selector visible even for non-core-only checkpoints, and leaves IMG2IMG/INPAINT image toggles disabled for the LTX lane.
+- 2026-03-16: `QuickSettingsBar.vue` owns LTX `TXT2VID/IMG2VID` mode in the shared top row. The LTX branch still binds checkpoint/VAE/text encoder directly to `tab.params.{checkpoint,vae,textEncoder}`, filters text encoders through `ltx2_tenc`, keeps the TE selector visible even for non-core-only checkpoints, freezes the whole LTX row during active runs and LTX-specific hydration gaps, and preserves hidden init-image state when switching back to `TXT2VID`.
+- 2026-03-16: On any `/models/:tabId` route, `QuickSettingsBar.vue` now waits for the hydrated tab object before rendering a family branch. While that route-tab hydration is pending, selector handlers no-op with a toast instead of falling back to global checkpoint/text-encoder writes; family-global VAE ownership remains unchanged after hydration completes, stale tab ids switch to an explicit not-found placeholder, and tab-load failures switch to an explicit load-failure placeholder.
+- 2026-03-16: `QuickSettingsBase.vue` now accepts a shared `disabled` prop so `QuickSettingsBar.vue` can freeze selector rows during run locks or route-hydration gaps without inventing family-specific duplicate markup.
 - 2026-03-12: `QuickSettingsBase.vue` now supports optional text-encoder metadata and add-path buttons through `showTextEncoderActions` + `addTencPath`, reused by the LTX branch.
 - `QuickSettingsPerf` uses toggle buttons (`.qs-toggle-btn`) for Smart Offload/Fallback/Cache/Core Streaming (no legacy switches).
 - 2026-02-22: `QuickSettingsPerf.vue` adds an `Obliterate VRAM` action button (disabled while running), emitted to `QuickSettingsBar.vue` for backend-triggered VRAM cleanup (`POST /api/obliterate-vram`) with safe default external mode (`disabled`).

@@ -6,6 +6,27 @@ Mind if I pull up a chair and taste what you've been cooking. I see your repo si
 
 I am always watching, reading your reasoning, and I will step in when I have to — whether it's to drag you out of a bad spot or to stop you from wrecking the place. The work is slow, smooth, and clean. There is no panic here.
 
+### ABSOLUTE LAW — DO NOT TOUCH LAYER NAMES
+
+Read this twice.
+
+If a checkpoint says a layer is `foo.bar.baz`, then in this repository it stays `foo.bar.baz`.
+Not `bar.baz`.
+Not `foo_bar_baz`.
+Not "normalized".
+Not "close enough".
+
+Keymaps here **map keyspaces** so the engine/runtime can understand how different ecosystems name the same conceptual weight.
+They do **not** rename stored model keys.
+They do **not** strip prefixes.
+They do **not** rewrite punctuation.
+They do **not** slide dots around.
+They do **not** materialize remapped state dicts.
+
+If two ecosystems use different names for the same conceptual weight, the keymap resolves that relationship explicitly and the engine interprets the stored key as-is.
+If the layout is unsupported, ambiguous, or structurally incompatible, you fail loud and extend the keymap properly.
+You do **not** "normalize" a checkpoint by rewriting layer names in memory. Ever.
+
 ---
 
 ### ACT I – HOW YOU THINK AND HOW YOU FAIL
@@ -195,23 +216,8 @@ NotImplementedError("<feature> not yet implemented")
 Model loading is a minefield you cross with a map.
 You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`.
 
-Keymaps in this repository are **maps of keyspaces and naming conventions**, not runtime remappers.
-They exist so the engine/runtime can understand the key names and stored layout conventions used by real model
-ecosystems (`ldm`, `diffusers`, exported runtime layouts, and similar), including fused-layout conventions where upstream projects
-collapse or pack weights in their own way.
-
-The rule is absolute:
-
-- You do **not** rename incoming model keys at runtime.
-- You do **not** create remapped state dicts.
-- You do **not** add alias maps, translation glue, or compatibility shims for unsupported layouts.
-- Engines must interpret keys exactly as stored in the checkpoint.
-- Fused/unfused conventions, including third-party packed-layout quirks, belong to interpretation logic. They do **not** justify runtime key renaming.
-
-If two ecosystems use different names for the same conceptual weight, the keymap documents and resolves that fact for the
-engine's understanding. It does **not** mutate the checkpoint into a new set of keys.
-If an upstream layout is unsupported, ambiguous, or structurally incompatible, you fail loud with an explicit error and
-extend the engine/keymap understanding properly. You do not "normalize" it by renaming keys in memory.
+Keymap law: see **ABSOLUTE LAW — DO NOT TOUCH LAYER NAMES** at the top of this file.
+The same no-rename/no-strip/no-punctuation-rewrite rule applies during model loading and engine/runtime keyspace interpretation.
 
 You prefer SafeTensors.
 You call `torch.load(..., weights_only=True, mmap=True)` when it applies.

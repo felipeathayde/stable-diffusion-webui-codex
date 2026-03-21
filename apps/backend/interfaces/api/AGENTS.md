@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-03
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
@@ -58,7 +58,7 @@ Status: Active
 - 2026-02-18: `run_api.py` bootstrap env publication now also exports non-default LoRA loader toggles (`CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) alongside `CODEX_LORA_APPLY_MODE`, preserving CLI/env/settings precedence without mutating process `os.environ`.
 - 2026-02-20: `json_store.py` is now fail-loud for persistence faults: `_load_json` returns `{}` only for missing files and raises on parse/read/type violations; `_save_json` raises on write/serialization failures (no best-effort swallow).
 - 2026-02-21: `run_api.py` startup settings normalization now parses checkbox values via shared strict bool parser and fails startup on invalid checkbox literals (no silent coercion of unknown strings to `False`).
-- 2026-02-21: UI persistence routes now fail loud on malformed `tabs.json`/`workflows.json`/`presets.json` payloads (no silent default/empty remap), and `/api/options` now rejects out-of-range numeric values instead of silently clamping (aligned with `/api/options/validate`).
+- 2026-02-21: UI persistence routes now fail loud on malformed `tabs.json`/`workflows.json`/`presets.json` JSON/shape errors (no silent default/empty remap), while `/api/ui/tabs` drops persisted entries whose tab type is unknown or empty and rewrites the filtered list back to disk; `/api/options` rejects out-of-range numeric values instead of silently clamping (aligned with `/api/options/validate`).
 - 2026-02-21: `run_api.py` checkbox startup normalization now canonicalizes persisted checkbox values to strict `bool` type (including `0/1` -> `False/True`) to prevent numeric-bool type drift in `settings_values.json`.
 - 2026-02-22: `routers/system.py` adds `POST /api/obliterate-vram` (quick-settings VRAM cleanup) with safe default behavior: internal runtime cleanup always runs, external process termination is opt-in via `external_kill_mode='all'`, and critical/process-self protections are enforced with structured report output for UI feedback.
 - 2026-02-22: `inference_gate.py` release semantics now track lock ownership per acquisition (thread-local marker) so gate release remains deterministic even if `CODEX_SINGLE_FLIGHT` changes between acquire/release.

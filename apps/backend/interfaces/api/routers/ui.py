@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: UI persistence and metadata API routes.
-Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`.
-Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type.
+Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application. During `/api/ui/tabs` hydration it normalizes
+legacy aliases, drops persisted tabs whose type is no longer recognized, and keeps create/update payload validation strict.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for UI endpoints.
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import time
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -346,18 +347,24 @@ def build_router(
 
         # Normalize/migrate tab payloads so the API never returns legacy identifiers.
         changed = False
+        normalized_tabs: list[Dict[str, Any]] = []
         for index, t in enumerate(tabs_in):
             if not isinstance(t, dict):
                 raise HTTPException(status_code=500, detail=f"tabs.json invalid: entry #{index + 1} must be object")
+            tab_id = str(t.get("id") or f"#{index + 1}")
             old_type = t.get("type")
             try:
                 new_type = _normalize_tab_type(old_type)
-            except ValueError as exc:
-                raise HTTPException(status_code=500, detail=f"tabs.json contains {exc}") from exc
+            except ValueError:
+                logging.getLogger(__name__).warning(
+                    "Dropping persisted tab with unsupported type during /api/ui/tabs hydration.",
+                    extra={"tab_id": tab_id, "tab_type": old_type},
+                )
+                changed = True
+                continue
             if new_type != old_type:
                 t["type"] = new_type
                 changed = True
-            tab_id = str(t.get("id") or f"#{index + 1}")
             params = t.get("params")
             sanitized_params = _sanitize_stored_tab_params(tab_type=new_type, raw_params=params, tab_id=tab_id)
             if sanitized_params != params:
@@ -381,6 +388,10 @@ def build_router(
                             if s:
                                 migrated.append(s)
                         params_for_flux["textEncoders"] = migrated
+            normalized_tabs.append(t)
+
+        if len(normalized_tabs) != len(tabs_in):
+            data["tabs"] = normalized_tabs
 
         if changed:
             _save_tabs(data)

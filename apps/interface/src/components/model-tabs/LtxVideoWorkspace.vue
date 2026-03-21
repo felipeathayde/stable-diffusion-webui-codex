@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Family-owned LTX video workspace backed by the generic video endpoints.
 Uses the shared video-family presentation baseline so `ltx2` reads like the same 2vid surface as WAN22 while keeping LTX-specific controls
-truthful to the generic backend contract. Checkpoint/VAE/text-encoder selection stays in QuickSettings; the workspace owns prompt/init-image,
+truthful to the strict LTX generic backend contract (`32px` geometry, `8n+1` frames, no silent snapping). Checkpoint/VAE/text-encoder selection stays in QuickSettings; the workspace owns prompt/init-image,
 generation parameters, run/cancel, progress, exported video, and optional returned frames.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -85,37 +85,40 @@ Symbols (top-level; keep in sync; no ghosts):
               <SliderField
                 label="Width (px)"
                 :modelValue="params.width"
-                :min="16"
-                :max="2048"
-                :step="16"
-                :inputStep="16"
-                :nudgeStep="16"
+                :min="LTX_DIM_MIN"
+                :max="LTX_DIM_MAX"
+                :step="LTX_DIM_ALIGNMENT"
+                :inputStep="1"
+                :nudgeStep="LTX_DIM_ALIGNMENT"
                 inputClass="cdx-input-w-md"
                 :disabled="isRunning"
-                @update:modelValue="(value) => updateParamsPatch({ width: snapLtxDim(value) })"
+                @update:modelValue="(value) => updateParamsPatch({ width: normalizePositiveInt(value, params?.width ?? LTX_DIM_MIN, LTX_DIM_MIN, LTX_DIM_MAX) })"
               />
               <SliderField
                 label="Height (px)"
                 :modelValue="params.height"
-                :min="16"
-                :max="2048"
-                :step="16"
-                :inputStep="16"
-                :nudgeStep="16"
+                :min="LTX_DIM_MIN"
+                :max="LTX_DIM_MAX"
+                :step="LTX_DIM_ALIGNMENT"
+                :inputStep="1"
+                :nudgeStep="LTX_DIM_ALIGNMENT"
                 inputClass="cdx-input-w-md"
                 :disabled="isRunning"
-                @update:modelValue="(value) => updateParamsPatch({ height: snapLtxDim(value) })"
+                @update:modelValue="(value) => updateParamsPatch({ height: normalizePositiveInt(value, params?.height ?? LTX_DIM_MIN, LTX_DIM_MIN, LTX_DIM_MAX) })"
               />
             </div>
             <VideoSettingsCard
               embedded
               :frames="params.frames"
               :fps="params.fps"
-              :minFrames="9"
-              :maxFrames="401"
+              :minFrames="LTX_FRAMES_MIN"
+              :maxFrames="LTX_FRAMES_MAX"
+              :frameStep="LTX_FRAME_ALIGNMENT"
+              :frameNudgeStep="LTX_FRAME_ALIGNMENT"
+              frameRuleLabel="8n+1"
               :minFps="1"
               :maxFps="60"
-              @update:frames="(value) => updateParamsPatch({ frames: normalizeLtxFrameCount(value) })"
+              @update:frames="(value) => updateParamsPatch({ frames: normalizePositiveInt(value, params?.frames ?? LTX_FRAMES_MIN, LTX_FRAMES_MIN, LTX_FRAMES_MAX) })"
               @update:fps="(value) => updateParamsPatch({ fps: normalizePositiveInt(value, params?.fps ?? 24, 1, 240) })"
             />
           </div>
@@ -318,8 +321,12 @@ import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../../api/types
 import {
   LTX_ALLOWED_SAMPLERS,
   LTX_CANONICAL_SCHEDULER,
-  normalizeLtxFrameCount,
-  snapLtxDim,
+  LTX_DIM_ALIGNMENT,
+  LTX_DIM_MAX,
+  LTX_DIM_MIN,
+  LTX_FRAME_ALIGNMENT,
+  LTX_FRAMES_MAX,
+  LTX_FRAMES_MIN,
 } from '../../api/payloads_ltx_video'
 import Img2ImgInpaintParamsCard from '../../components/Img2ImgInpaintParamsCard.vue'
 import PromptFields from '../../components/prompt/PromptFields.vue'

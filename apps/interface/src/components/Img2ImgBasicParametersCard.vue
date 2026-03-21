@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Img2img-focused Basic Parameters card with hires-like structure.
-Renders sampler/scheduler/steps, dimensions, resize-mode + upscaler controls, and seed/CFG with optional denoise
+Renders sampler/scheduler/steps, dimensions, optional resize-mode + upscaler controls, and seed/CFG with optional denoise
 for init-image mode without hires-only prompt/checkpoint swap controls, backend recommendation-aware sampler/scheduler selector grouping, plus optional advanced CFG/APG controls
-gated by per-engine capabilities.
+gated by per-engine capabilities. The resize-type selector can now receive an engine-scoped truthful option subset and hides the upscaler field when the active engine does not expose an upscaler-backed resize mode.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgBasicParametersCard` (component): Img2img parameters card used when init image mode is active.
@@ -24,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onSeedChange` (function): Handles manual seed input changes and emits a normalized integer seed.
 - `onResizeModeChange` (function): Emits normalized resize-mode updates from the resize-type select.
 - `onUpscalerChange` (function): Emits upscaler selection updates.
+- `showsUpscalerResizeMode` (const): Whether the active resize-mode option subset exposes an upscaler-backed mode.
 - `recommendedSamplers` / `recommendedSchedulers` (const): Optional recommendation arrays forwarded into selector components.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
 - `toggleGuidanceAdvanced` (function): Toggles Advanced guidance mode and auto-syncs APG/CFG trunc activation flags when supported.
@@ -137,7 +138,7 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </div>
 
-      <div class="gc-row">
+      <div v-if="props.showResizeMode !== false" class="gc-row">
         <div class="gc-col field">
           <label class="label-muted">Resize type</label>
           <select class="select-md" :disabled="disabled" :value="resizeModeValue" @change="onResizeModeChange">
@@ -147,7 +148,7 @@ Symbols (top-level; keep in sync; no ghosts):
           </select>
         </div>
 
-        <div class="gc-col field">
+        <div v-if="showsUpscalerResizeMode" class="gc-col field">
           <label class="label-muted">Upscaler</label>
           <select
             class="select-md"
@@ -415,7 +416,8 @@ import SchedulerSelector from './SchedulerSelector.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
 import {
   IMG2IMG_RESIZE_MODE_OPTIONS,
-  normalizeImg2ImgResizeMode,
+  normalizeImg2ImgResizeModeFromOptions,
+  type Img2ImgResizeModeOption,
   type Img2ImgResizeMode,
 } from '../utils/img2img_resize'
 
@@ -511,6 +513,9 @@ const props = withDefaults(defineProps<{
   height: number
   upscaler: string
   resizeMode: Img2ImgResizeMode
+  resizeModeOptions?: readonly Img2ImgResizeModeOption[]
+  showResizeMode?: boolean
+  dimensionSnapMode?: 'nearest' | 'floor'
   disabled?: boolean
   minSteps?: number
   maxSteps?: number
@@ -572,6 +577,9 @@ const props = withDefaults(defineProps<{
     renormCfg: 0,
   }),
   guidanceSupport: null,
+  resizeModeOptions: () => [...IMG2IMG_RESIZE_MODE_OPTIONS],
+  showResizeMode: true,
+  dimensionSnapMode: 'nearest',
 })
 
 const emit = defineEmits<{
@@ -621,8 +629,14 @@ const showGuidanceAdvancedRow = computed(() => showGuidanceAdvancedToggle.value 
 const aspectRatioLocked = ref(false)
 const aspectRatio = ref(1)
 
-const resizeModeOptions = IMG2IMG_RESIZE_MODE_OPTIONS
-const resizeModeValue = computed<Img2ImgResizeMode>(() => normalizeImg2ImgResizeMode(props.resizeMode))
+const resizeModeOptions = computed<readonly Img2ImgResizeModeOption[]>(() => {
+  if (Array.isArray(props.resizeModeOptions) && props.resizeModeOptions.length > 0) {
+    return props.resizeModeOptions
+  }
+  return IMG2IMG_RESIZE_MODE_OPTIONS
+})
+const resizeModeValue = computed<Img2ImgResizeMode>(() => normalizeImg2ImgResizeModeFromOptions(props.resizeMode, resizeModeOptions.value))
+const showsUpscalerResizeMode = computed(() => resizeModeOptions.value.some((option) => option.value === 'upscaler'))
 const isUpscalerResizeMode = computed(() => resizeModeValue.value === 'upscaler')
 
 const upscalers = computed(() => Array.isArray(props.upscalers) ? props.upscalers : [])
@@ -640,10 +654,16 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, numberValue))
 }
 
-function clampIntToStep(value: number, min: number, max: number, step: number): number {
+function clampIntToStep(
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+  mode: 'nearest' | 'floor' = 'nearest',
+): number {
   const clamped = clampInt(value, min, max)
   if (!Number.isFinite(step) || step <= 0) return clamped
-  const snapped = Math.round(clamped / step) * step
+  const snapped = (mode === 'floor' ? Math.floor(clamped / step) : Math.round(clamped / step)) * step
   return Math.min(max, Math.max(min, snapped))
 }
 
@@ -676,12 +696,36 @@ function emitDimensions(widthValue: number, heightValue: number): void {
 function deriveLockedDimensions(nextValue: number, axis: 'width' | 'height'): { width: number; height: number } {
   const ratio = Number.isFinite(aspectRatio.value) && aspectRatio.value > 0 ? aspectRatio.value : 1
   if (axis === 'width') {
-    const widthValue = clampIntToStep(nextValue, minWidth.value, maxWidth.value, widthInputStep.value)
-    const heightValue = clampIntToStep(Math.round(widthValue / ratio), minHeight.value, maxHeight.value, heightInputStep.value)
+    const widthValue = clampIntToStep(
+      nextValue,
+      minWidth.value,
+      maxWidth.value,
+      widthInputStep.value,
+      props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+    )
+    const heightValue = clampIntToStep(
+      Math.round(widthValue / ratio),
+      minHeight.value,
+      maxHeight.value,
+      heightInputStep.value,
+      props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+    )
     return { width: widthValue, height: heightValue }
   }
-  const heightValue = clampIntToStep(nextValue, minHeight.value, maxHeight.value, heightInputStep.value)
-  const widthValue = clampIntToStep(Math.round(heightValue * ratio), minWidth.value, maxWidth.value, widthInputStep.value)
+  const heightValue = clampIntToStep(
+    nextValue,
+    minHeight.value,
+    maxHeight.value,
+    heightInputStep.value,
+    props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+  )
+  const widthValue = clampIntToStep(
+    Math.round(heightValue * ratio),
+    minWidth.value,
+    maxWidth.value,
+    widthInputStep.value,
+    props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+  )
   return { width: widthValue, height: heightValue }
 }
 
@@ -692,7 +736,16 @@ function toggleAspectRatioLock(): void {
 
 function onWidthDimensionChange(value: number): void {
   if (!aspectRatioLocked.value) {
-    emit('update:width', clampIntToStep(value, minWidth.value, maxWidth.value, widthInputStep.value))
+    emit(
+      'update:width',
+      clampIntToStep(
+        value,
+        minWidth.value,
+        maxWidth.value,
+        widthInputStep.value,
+        props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+      ),
+    )
     return
   }
   const next = deriveLockedDimensions(value, 'width')
@@ -701,7 +754,16 @@ function onWidthDimensionChange(value: number): void {
 
 function onHeightDimensionChange(value: number): void {
   if (!aspectRatioLocked.value) {
-    emit('update:height', clampIntToStep(value, minHeight.value, maxHeight.value, heightInputStep.value))
+    emit(
+      'update:height',
+      clampIntToStep(
+        value,
+        minHeight.value,
+        maxHeight.value,
+        heightInputStep.value,
+        props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+      ),
+    )
     return
   }
   const next = deriveLockedDimensions(value, 'height')
@@ -710,7 +772,7 @@ function onHeightDimensionChange(value: number): void {
 
 function onResizeModeChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
-  emit('update:resizeMode', normalizeImg2ImgResizeMode(value))
+  emit('update:resizeMode', normalizeImg2ImgResizeModeFromOptions(value, resizeModeOptions.value))
 }
 
 function onUpscalerChange(event: Event): void {
@@ -734,8 +796,20 @@ function toggleGuidanceAdvanced(): void {
 }
 
 function swapWH(): void {
-  const nextWidth = clampIntToStep(props.height, minWidth.value, maxWidth.value, widthInputStep.value)
-  const nextHeight = clampIntToStep(props.width, minHeight.value, maxHeight.value, heightInputStep.value)
+  const nextWidth = clampIntToStep(
+    props.height,
+    minWidth.value,
+    maxWidth.value,
+    widthInputStep.value,
+    props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+  )
+  const nextHeight = clampIntToStep(
+    props.width,
+    minHeight.value,
+    maxHeight.value,
+    heightInputStep.value,
+    props.dimensionSnapMode === 'floor' ? 'floor' : 'nearest',
+  )
   syncAspectRatioFromValues(nextWidth, nextHeight)
   emitDimensions(nextWidth, nextHeight)
 }

@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Dedicated LTX video generation composable for the generic backend video contract.
 Owns per-tab runtime state for `ltx2` txt2vid/img2vid runs, validates LTX-specific frontend assumptions against the backend capability/asset
-contracts, builds generic payloads, starts `/api/txt2vid` or `/api/img2vid` tasks, and consumes task SSE events to surface progress/results.
+contracts, preflights the strict LTX geometry/frame contract (`32px` dimensions, `8n+1` frames), builds generic payloads, starts `/api/txt2vid`
+or `/api/img2vid` tasks, and consumes task SSE events to surface progress/results.
 Unlike the WAN composable, this lane has no queue/history/stage orchestration; it stays fail-loud on unsupported generic-video assumptions.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -31,6 +32,8 @@ import {
   buildLtxImg2VidPayload,
   buildLtxTxt2VidPayload,
   normalizeDevice,
+  requireLtxDim,
+  requireLtxFrameCount,
   normalizeLtxSampler,
   normalizeLtxScheduler,
   type LtxImg2VidPayload,
@@ -318,6 +321,21 @@ export function useLtxVideoGeneration(tabId: string) {
 
     try {
       normalizeDevice(quicksettings.currentDevice || 'cpu')
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    try {
+      requireLtxDim(Number(currentParams.width), 'Width')
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    try {
+      requireLtxDim(Number(currentParams.height), 'Height')
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    try {
+      requireLtxFrameCount(Number(currentParams.frames))
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }

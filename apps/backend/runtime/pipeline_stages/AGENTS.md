@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-03-20
+Last Review: 2026-03-21
 Status: Active
 
 ## Purpose
@@ -21,7 +21,8 @@ Status: Active
 - `__init__.py` — Package marker (intentionally no re-export facade; callers import modules directly).
 
 ## Notes
-- 2026-03-20: `masked_img2img.py` remains the owner of request-driven masking/inpaint prep; shared stages must not infer “inpaint model” behavior from checkpoint metadata or family guesses.
+- 2026-03-21: `image_init.py` now owns truthful pixel-space img2img resize semantics (`just_resize`, `crop_and_resize`, `resize_and_fill`) only for unmasked img2img before VAE encode instead of forcing every init image through one direct-resize path; unknown runtime resize-mode overrides fail loud.
+- 2026-03-20: `masked_img2img.py` remains the owner of request-driven masking/inpaint prep; shared stages must not infer “inpaint model” behavior from checkpoint metadata or family guesses, and masked ZImage runs rely only on normalized target geometry (no separate resize-mode contract).
 - Modules in this directory must stay dependency-light and only import from `apps.*` namespaces.
 - Prefer adding new pipeline stages here rather than duplicating logic inside `apps/backend/use_cases/`.
 - Helper functions should raise explicit errors; avoid silent fallbacks or catching broad exceptions.

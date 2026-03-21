@@ -1,6 +1,6 @@
 # apps/backend/runtime/common Overview
 Date: 2025-10-28
-Last Review: 2026-03-20
+Last Review: 2026-03-21
 Status: Active
 
 ## Purpose
@@ -10,11 +10,12 @@ Status: Active
 - `nn/` — Common neural network modules (core transformers/UNets, attention blocks, etc.).
 
 ## Notes
-- 2026-03-20: `vae.py` now prepares external VAE overrides by stripping known wrapper prefixes plus SDXL/Flow bookkeeping metadata before lane-specific keyspace resolution, so SDXL override loads stay strict without model-class heuristics.
+- 2026-03-21: `vae_lane_policy.py` now exposes `validate_vae_key_names(...)` as a fail-loud guard instead of stripping wrapper prefixes; `vae.py` load paths now reject any attempt to rewrite stored VAE keys before lane resolution or keyspace interpretation.
+- 2026-03-20: `vae.py` now prepares external VAE overrides by enforcing the stored-key contract first and then filtering only the known SDXL/Flow bookkeeping metadata before lane-specific keyspace resolution, so SDXL override loads stay strict without model-class heuristics.
 - Add reusable building blocks here to avoid duplication across model-specific runtimes.
-- `vae.py` normalises Flow16 VAE safetensors by stripping common prefixes, reusing SDXL/Flux LDM→diffusers key conversion for Z Image, and fails fast on incompatible (non-16-channel) VAEs to avoid noisy decodes.
+- `vae.py` now validates Flow16 VAE source keys without wrapper rewrites, reuses strict SDXL/Flux LDM→diffusers keyspace resolution for Z Image, and fails fast on incompatible (non-16-channel) VAEs to avoid noisy decodes.
   - Flow16 config parity: includes `use_quant_conv=false` / `use_post_quant_conv=false` (HF Flux/Z-Image configs) so missing quant conv weights do not trigger false drift warnings.
-- 2026-01-25: Flow16 VAE state_dict normalization now reuses the strict SDXL VAE keymap (`apps/backend/runtime/state_dict/keymap_sdxl_vae.py`), drops `model_ema.decay` / `model_ema.num_updates`, and fails loud on unknown non-weight keys (no silent “skip conversion” path).
+- 2026-01-25: Flow16 VAE state_dict preparation now reuses the strict SDXL VAE keymap (`apps/backend/runtime/state_dict/keymap_sdxl_vae.py`), drops `model_ema.decay` / `model_ema.num_updates`, and fails loud on unknown non-weight keys (no silent “skip conversion” path).
 - 2026-02-11: Global VAE lane policy now treats WAN22 as native-LDM-only: `resolve_vae_layout_lane` fails loud on non-LDM layout or `diffusers_native` override for WAN22 instead of allowing drift between policy and loader behavior.
 - 2026-02-16: WAN22 native-LDM-only policy is now enforced across explicit family variants (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) via shared `_WAN22_FAMILIES` gate.
 - 2026-02-11: `vae_ldm.sanitize_ldm_vae_config` now maps WAN alias config fields (`z_dim`, `base_dim`, `dim_mult`, `num_res_blocks`) into native LDM constructor fields before instantiation, keeping config-to-constructor contracts explicit.

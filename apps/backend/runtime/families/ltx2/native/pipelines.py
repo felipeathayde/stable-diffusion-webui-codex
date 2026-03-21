@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Native LTX2 txt2vid/img2vid execution helpers.
 Owns direct native execution against loaded LTX2 components (text encoder, connectors, transformer, VAEs, vocoder,
 and native FlowMatch-Euler scheduler), including deterministic generation-boundary cleanup for streamed transformers,
-and returns raw `(video, audio)` tuples that runtime.py can normalize into the family-local result contract.
+returns raw `(video, audio)` tuples that runtime.py can normalize into the family-local result contract, and threads the
+explicit zero-timestep decode input required by timestep-conditioned LTX video VAEs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `run_ltx2_txt2vid_native` (function): Execute the native LTX2 txt2vid path and return raw `(video, audio)`.
@@ -807,7 +808,7 @@ def _run_ltx2_native(
 
     video = native.vae.decode(
         decoded_video_latents.to(dtype=vae_dtype),
-        decode_timestep,
+        timestep=decode_timestep,
         return_dict=False,
     )[0]
     generated_mel_spectrograms = native.audio_vae.decode(

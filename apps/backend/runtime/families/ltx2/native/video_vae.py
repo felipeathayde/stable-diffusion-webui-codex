@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Native LTX2 video VAE with parser-state-compatible parameter names.
 Implements the LTX2 video autoencoder under `apps/**` without importing the official Diffusers LTX2 class while
 preserving the parser-produced raw/original state-dict surface (`per_channel_statistics.*`, sequential `down_blocks`
-/ `up_blocks`, `res_blocks`, `last_time_embedder`, `last_scale_shift_table`).
+/ `up_blocks`, `res_blocks`, `last_time_embedder`, `last_scale_shift_table`). The public `decode(...)` path now
+enforces the explicit decode-timestep contract required by `config.timestep_conditioning`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2VideoAutoencoder` (class): Config/state-driven native LTX2 video KL autoencoder.
@@ -1291,15 +1292,66 @@ class Ltx2VideoAutoencoder(nn.Module):
             return (posterior,)
         return _AutoencoderKLOutput(latent_dist=posterior)
 
-    def _decode(self, z: torch.Tensor) -> torch.Tensor:
-        return self.decoder(z)
+    def _normalize_decode_timestep(
+        self,
+        timestep: torch.Tensor | None,
+        *,
+        batch_size: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor | None:
+        expects_timestep = bool(getattr(self.config, "timestep_conditioning", False))
+        if timestep is None:
+            if expects_timestep:
+                raise RuntimeError(
+                    "LTX2 video VAE decode requires `timestep` when `config.timestep_conditioning=True`."
+                )
+            return None
+        if not expects_timestep:
+            raise RuntimeError(
+                "LTX2 video VAE decode received `timestep`, but `config.timestep_conditioning=False`."
+            )
+        if not isinstance(timestep, torch.Tensor):
+            raise RuntimeError(
+                f"LTX2 video VAE decode expected `timestep` as torch.Tensor, got {type(timestep).__name__}."
+            )
+        if timestep.ndim == 0:
+            timestep = timestep.reshape(1)
+        if timestep.ndim != 1:
+            raise RuntimeError(
+                f"LTX2 video VAE decode expected `timestep` to be 1D, got shape={tuple(timestep.shape)!r}."
+            )
+        if int(timestep.shape[0]) != int(batch_size):
+            raise RuntimeError(
+                "LTX2 video VAE decode expected `timestep` batch size to match latents: "
+                f"batch={int(batch_size)} timestep={int(timestep.shape[0])}."
+            )
+        return timestep.to(device=device, dtype=dtype)
 
-    def decode(self, z: torch.Tensor, *, return_dict: bool = True) -> _DecoderOutput | tuple[torch.Tensor]:
+    def _decode(self, z: torch.Tensor, *, timestep: torch.Tensor | None = None) -> torch.Tensor:
+        return self.decoder(z, temb=timestep)
+
+    def decode(
+        self,
+        z: torch.Tensor,
+        timestep: torch.Tensor | None = None,
+        *,
+        return_dict: bool = True,
+    ) -> _DecoderOutput | tuple[torch.Tensor]:
+        decode_timestep = self._normalize_decode_timestep(
+            timestep,
+            batch_size=int(z.shape[0]),
+            device=z.device,
+            dtype=z.dtype,
+        )
         if self.use_slicing and z.shape[0] > 1:
-            decoded_slices = [self._decode(z_slice) for z_slice in z.split(1)]
+            decoded_slices = []
+            for index, z_slice in enumerate(z.split(1)):
+                timestep_slice = None if decode_timestep is None else decode_timestep[index:index + 1]
+                decoded_slices.append(self._decode(z_slice, timestep=timestep_slice))
             decoded = torch.cat(decoded_slices)
         else:
-            decoded = self._decode(z)
+            decoded = self._decode(z, timestep=decode_timestep)
         if not return_dict:
             return (decoded,)
         return _DecoderOutput(sample=decoded)
@@ -1314,7 +1366,10 @@ class Ltx2VideoAutoencoder(nn.Module):
     ) -> _DecoderOutput | tuple[torch.Tensor]:
         posterior = self.encode(sample).latent_dist
         latent = posterior.sample(generator=generator) if sample_posterior else posterior.mode()
-        decoded = self.decode(latent)
+        decode_timestep = None
+        if bool(getattr(self.config, "timestep_conditioning", False)):
+            decode_timestep = torch.zeros(int(latent.shape[0]), device=latent.device, dtype=latent.dtype)
+        decoded = self.decode(latent, timestep=decode_timestep)
         if not return_dict:
             return (decoded.sample,)
         return decoded

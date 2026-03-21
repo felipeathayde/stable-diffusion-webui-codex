@@ -29,6 +29,7 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses backend API-owned WAN video request key allowlists from `interfaces/api/wan_video_request_keys.py`,
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
+The generic LTX video route now owns its own request contract (`32px` geometry, `8n+1` frames, explicit safe defaults) instead of inheriting WAN `%16` / `4n+1` assumptions.
 FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
 WAN sampler fields are strict at API parse-time: values must resolve to real WAN22 runtime lanes (`uni-pc` with metadata-compatible optional solver hint, `euler`, or `euler a`); scheduler fields remain strict (`simple`) for WAN22 requests.
@@ -123,6 +124,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _IMG2IMG_EXTRAS_KEYS = (
         set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
     ) | _IMAGE_REQUEST_SELECTOR_KEYS
+    _IMG2IMG_PIXEL_RESIZE_MODES = {"just_resize", "crop_and_resize", "resize_and_fill"}
     _IMG2IMG_ALLOWED_KEYS = {
         "device",
         "engine",
@@ -165,6 +167,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "img2img_noise_source",
         "img2img_prompt",
         "img2img_randn_source",
+        "img2img_resize_mode",
         "img2img_sampling",
         "img2img_scheduler",
         "img2img_seed",
@@ -374,6 +377,57 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if maximum is not None and value > maximum:
             raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
         return value
+
+
+    def _snap_dimension(
+        value: int,
+        *,
+        minimum: int = 8,
+        maximum: int = 8192,
+        multiple: int = 8,
+        strategy: str = "nearest",
+    ) -> int:
+        if not value:
+            return 0
+        clamped = max(minimum, min(maximum, int(value)))
+        if multiple <= 1:
+            return clamped
+        if strategy == "floor":
+            snapped = int((clamped // multiple) * multiple)
+        else:
+            snapped = int(((clamped + (multiple // 2)) // multiple) * multiple)
+        return max(minimum, min(maximum, snapped))
+
+
+    def _img2img_dimension_multiple_for_engine(engine_key: str) -> int:
+        return 16 if engine_key == "zimage" else 8
+
+
+    def _normalize_img2img_dimensions_for_engine(
+        engine_key: str,
+        width: int,
+        height: int,
+    ) -> Tuple[int, int]:
+        multiple = _img2img_dimension_multiple_for_engine(engine_key)
+        strategy = "floor" if engine_key == "zimage" else "nearest"
+        minimum = multiple if engine_key == "zimage" else 8
+        return (
+            _snap_dimension(width, minimum=minimum, multiple=multiple, strategy=strategy),
+            _snap_dimension(height, minimum=minimum, multiple=multiple, strategy=strategy),
+        )
+
+
+    def _parse_img2img_resize_mode(payload: Dict[str, Any]) -> Optional[str]:
+        if "img2img_resize_mode" not in payload:
+            return None
+        resize_mode = _require_str_field(payload, "img2img_resize_mode")
+        if resize_mode not in _IMG2IMG_PIXEL_RESIZE_MODES:
+            allowed = ", ".join(sorted(_IMG2IMG_PIXEL_RESIZE_MODES))
+            raise HTTPException(
+                status_code=400,
+                detail=f"'img2img_resize_mode' must be one of: {allowed}",
+            )
+        return resize_mode
 
 
     def _require_float_field(payload: Dict[str, Any], key: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
@@ -2695,25 +2749,34 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         image_cfg_scale = _require_float_field(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
         denoise = _require_float_field(payload, 'img2img_denoising_strength', minimum=0.0, maximum=1.0)
 
-        def _snap_dim(value: int) -> int:
-            if not value:
-                return 0
-            value = max(8, min(8192, int(value)))
-            return int(((value + 4) // 8) * 8)
+        dimension_multiple = _img2img_dimension_multiple_for_engine(engine_key)
 
         if 'img2img_width' in payload:
             width_val = _require_int_field(payload, "img2img_width", minimum=8, maximum=8192)
         else:
-            width_val = _snap_dim(int(init_w) if init_w else 0)
+            width_val = _snap_dimension(
+                int(init_w) if init_w else 0,
+                multiple=dimension_multiple,
+                strategy="floor" if engine_key == "zimage" else "nearest",
+            )
             if not width_val:
                 raise HTTPException(status_code=400, detail="'img2img_width' is required")
 
         if 'img2img_height' in payload:
             height_val = _require_int_field(payload, "img2img_height", minimum=8, maximum=8192)
         else:
-            height_val = _snap_dim(int(init_h) if init_h else 0)
+            height_val = _snap_dimension(
+                int(init_h) if init_h else 0,
+                multiple=dimension_multiple,
+                strategy="floor" if engine_key == "zimage" else "nearest",
+            )
             if not height_val:
                 raise HTTPException(status_code=400, detail="'img2img_height' is required")
+        width_val, height_val = _normalize_img2img_dimensions_for_engine(
+            engine_key,
+            width_val,
+            height_val,
+        )
         sampler_name = _require_str_field(payload, "img2img_sampling")
         scheduler_name = _require_str_field(payload, "img2img_scheduler")
         _validate_er_sde_release_scope(
@@ -3036,26 +3099,74 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
         return normalized
 
+    def _ltx2_require_dims_multiple_of_32(*, task: str, width: int, height: int) -> None:
+        if height % 32 == 0 and width % 32 == 0:
+            return
+        raise HTTPException(
+            status_code=400,
+            detail=f"LTX2 {task}: width/height must be divisible by 32. Got {int(width)}x{int(height)}.",
+        )
+
+    def _ltx2_require_frames_8n_plus_1(*, task: str, frames: int) -> None:
+        if frames < 9 or frames > 401:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{task}_num_frames' must be within [9, 401] (8n+1 domain), got {frames}.",
+            )
+        if (frames - 1) % 8 != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{task}_num_frames' must satisfy 8n+1, got {frames}.",
+            )
+
+    def _parse_ltx2_generic_video_core_dto(payload: Dict[str, Any], *, task_prefix: str) -> _VideoCoreDTO:
+        prompt_key = f"{task_prefix}_prompt"
+        negative_prompt_key = f"{task_prefix}_neg_prompt"
+        width_key = f"{task_prefix}_width"
+        height_key = f"{task_prefix}_height"
+        steps_key = f"{task_prefix}_steps"
+        fps_key = f"{task_prefix}_fps"
+        frames_key = f"{task_prefix}_num_frames"
+        sampler_key = f"{task_prefix}_sampler"
+        scheduler_key = f"{task_prefix}_scheduler"
+        seed_key = f"{task_prefix}_seed"
+        cfg_key = f"{task_prefix}_cfg_scale"
+
+        prompt = _require_str_field(payload, prompt_key, allow_empty=True) if prompt_key in payload else ""
+        negative_prompt = _require_str_field(payload, negative_prompt_key, allow_empty=True) if negative_prompt_key in payload else ""
+        width_val = _require_int_field(payload, width_key, minimum=32, maximum=8192) if width_key in payload else 768
+        height_val = _require_int_field(payload, height_key, minimum=32, maximum=8192) if height_key in payload else 512
+        _ltx2_require_dims_multiple_of_32(task=task_prefix, width=width_val, height=height_val)
+        steps_val = _require_int_field(payload, steps_key, minimum=1) if steps_key in payload else 30
+        fps_val = _require_int_field(payload, fps_key, minimum=1) if fps_key in payload else 24
+        frames_val = _require_int_field(payload, frames_key, minimum=9, maximum=401) if frames_key in payload else 121
+        _ltx2_require_frames_8n_plus_1(task=task_prefix, frames=frames_val)
+        sampler_name = _require_str_field(payload, sampler_key) if sampler_key in payload else "euler"
+        scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else "simple"
+        sampler_name = _validate_ltx2_generic_video_sampler_field(sampler_key, sampler_name)
+        scheduler_name = _validate_ltx2_generic_video_scheduler_field(scheduler_key, scheduler_name)
+        seed_val = _require_int_field(payload, seed_key) if seed_key in payload else -1
+        guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else 7.0
+
+        return _VideoCoreDTO(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width_val,
+            height=height_val,
+            steps=steps_val,
+            fps=fps_val,
+            num_frames=frames_val,
+            sampler_name=sampler_name,
+            scheduler_name=scheduler_name,
+            seed=seed_val,
+            guidance_scale=guidance_scale,
+        )
+
     def _parse_generic_txt2vid_core_dto(payload: Dict[str, Any], *, engine_key: str) -> _VideoCoreDTO:
         _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
         _reject_unknown_keys(payload, _TXT2VID_GENERIC_ALLOWED_KEYS, "txt2vid")
         if _canonical_engine_key(engine_key) == "ltx2":
-            return _parse_video_core_dto(
-                payload,
-                task_prefix='txt2vid',
-                default_width=768,
-                default_height=432,
-                default_steps=30,
-                default_fps=24,
-                default_frames=17,
-                default_sampler="euler",
-                default_scheduler="simple",
-                expected_unipc_solver_hint=None,
-                sampler_validator=_validate_ltx2_generic_video_sampler_field,
-                scheduler_validator=_validate_ltx2_generic_video_scheduler_field,
-                default_seed=-1,
-                default_cfg_scale=7.0,
-            )
+            return _parse_ltx2_generic_video_core_dto(payload, task_prefix="txt2vid")
         return _parse_video_core_dto(
             payload,
             task_prefix='txt2vid',
@@ -3075,22 +3186,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
         _reject_unknown_keys(payload, _IMG2VID_GENERIC_ALLOWED_KEYS, "img2vid")
         if _canonical_engine_key(engine_key) == "ltx2":
-            return _parse_video_core_dto(
-                payload,
-                task_prefix='img2vid',
-                default_width=768,
-                default_height=432,
-                default_steps=30,
-                default_fps=24,
-                default_frames=17,
-                default_sampler="euler",
-                default_scheduler="simple",
-                expected_unipc_solver_hint=None,
-                sampler_validator=_validate_ltx2_generic_video_sampler_field,
-                scheduler_validator=_validate_ltx2_generic_video_scheduler_field,
-                default_seed=-1,
-                default_cfg_scale=7.0,
-            )
+            return _parse_ltx2_generic_video_core_dto(payload, task_prefix="img2vid")
         return _parse_video_core_dto(
             payload,
             task_prefix='img2vid',
@@ -3559,7 +3655,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         else:
             hires_data = {"enable": False}
 
+        resize_mode = _parse_img2img_resize_mode(payload)
+        if resize_mode is not None and engine_key != "zimage":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Engine '{engine_key}' does not support top-level 'img2img_resize_mode'.",
+            )
+        if resize_mode is not None and mask_image is not None and engine_key == "zimage":
+            raise HTTPException(
+                status_code=400,
+                detail="Engine 'zimage' does not support 'img2img_resize_mode' when 'img2img_mask' is provided.",
+            )
         extras: Dict[str, Any] = {}
+        if resize_mode is not None:
+            extras["resize_mode"] = resize_mode
         raw_extras = payload.get("img2img_extras")
         if raw_extras is not None:
             if not isinstance(raw_extras, dict):

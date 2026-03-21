@@ -51,6 +51,7 @@ import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '..
 import { resolveImageRequestEngineId, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
 import { buildExplicitImageRequestContract } from '../utils/image_request_contract'
 import { normalizeMaskEnforcement } from '../utils/image_params'
+import { normalizeImg2ImgResizeModeForEngine } from '../utils/img2img_resize'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
 export interface ImageRunHistoryItem {
@@ -285,6 +286,7 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
   const maskInvert = normalizeBooleanParam(params.maskInvert, false)
   const maskRound = normalizeBooleanParam(params.maskRound, true)
   const maskRegionSplit = normalizeBooleanParam(params.maskRegionSplit, false)
+  const resizeMode = normalizeImg2ImgResizeModeForEngine(args.engineId, params.img2imgResizeMode)
   const guidanceFields = buildImg2ImgGuidanceFields(params.cfgScale, args.guidanceMode)
   if (hiresEnabled && !args.supportsHires) {
     throw new Error(`This engine does not support img2img hires (${args.engineId}).`)
@@ -328,6 +330,9 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
         { hiresFallbackOnOom: args.hiresFallbackOnOom, hiresMinTile: args.hiresMinTile },
       ),
     )
+  }
+  if (args.engineId === 'zimage' && !useMask) {
+    payload.img2img_resize_mode = resizeMode
   }
   if (useMask) {
     const maskData = String(params.maskImageData || '').trim()

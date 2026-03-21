@@ -1,13 +1,15 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-20
+Last Review: 2026-03-21
 Status: Active
 
 ## Purpose
 - Reusable Vue components (panels, form widgets, prompts, galleries) shared across views.
 
 ## Notes
+- 2026-03-21: `Img2ImgBasicParametersCard.vue` now accepts engine-scoped `resizeModeOptions`; when the active engine only supports truthful pixel-space resize modes (ZImage), the card hides the unsupported upscaler selector instead of rendering a dead selector, and ZImage inpaint hides the resize block entirely because the masked runtime path does not own a separate resize-mode contract.
+- 2026-03-21: `VideoSettingsCard.vue` is now family-neutral by default (`1..1000`, step `1`, no baked-in frame rule); WAN/LTX workspaces must pass their own frame-step/rule contract explicitly.
 - 2026-03-20: `QuickSettingsBar.vue` now hides image asset-contract-derived selector hints when checkpoint inventory metadata lacks a valid `core_only` boolean, avoiding stale text-encoder/VAE contract display from broken inventory rows.
 - Components should be presentational and rely on Pinia stores or props for state.
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
@@ -80,7 +82,7 @@ Status: Active
 - 2026-02-18: `HiresSettingsCard.vue` row order now renders dimensions (`scale/width/height`) before the upscaler row (`upscaler/cfg/denoise`) for parity with the img2img basic-parameters layout.
 - 2026-02-18: `BasicParametersCard.vue` and `Img2ImgBasicParametersCard.vue` now expose a CFG-side `Advanced` toggle and a conditional row below CFG for advanced guidance controls (APG/rescale/trunc/renorm), with per-control visibility gated by capability flags.
 - 2026-02-18: In both basic parameter cards, enabling `Advanced` now auto-activates APG + CFG trunc payload paths (when supported), removes per-feature On/Off toggles, and surfaces ELI5-style slider tooltips (hover/focus on label `?`).
-- 2026-02-17: `VideoSettingsCard.vue` WAN frame controls now snap to `4n+1`, use slider/input step `4`, and default to the expanded frame range `[9,401]`.
+- 2026-03-20: `VideoSettingsCard.vue` is now presentation-only for frame alignment: it no longer owns `4n+1` snapping internally, WAN still passes the `4n+1` rule from its family workspace/store, and LTX passes its own strict `8n+1` rule without silent correction.
 - 2026-02-17: `InitialImageCard.vue` now supports Dropzone-backed selection, thumbnail preview mode, click-to-zoom full-size preview, and rejected-file emits for parent-side toasts.
 - 2026-02-17: `ResultViewer.vue` now delegates zoom interactions to shared `ui/ImageZoomOverlay.vue` (no overlay legends; outside-click uses the same close path as `Esc`).
 - 2026-02-17: Added `components/results/RunProgressStatus.vue` and migrated Run status rendering to this shared component across image/WAN/upscale views.

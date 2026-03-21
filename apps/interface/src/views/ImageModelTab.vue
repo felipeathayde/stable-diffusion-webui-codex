@@ -33,6 +33,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `loadProfile` (function): Loads a saved profile into current params (with validation/defaulting).
 - `saveProfile` (function): Saves current params as a profile in localStorage.
 - `setParams` (function): Applies partial updates to the current tab params state.
+- `normalizeImageDimension` (function): Snaps width/height updates to the active engine grid before they reach tab state.
+- `normalizeImageParamPatch` (function): Applies engine-aware width/height + img2img resize-mode normalization to partial param patches.
+- `syncImageContractToEngine` (function): Reconciles persisted width/height/resize-mode state with the active engine contract.
 - `normalizeGuidanceAdvancedPatch` (function): Sanitizes/normalizes advanced-guidance payload fragments (profile + UI patch merges).
 - `setGuidanceAdvanced` (function): Applies partial advanced-guidance updates into `params.guidanceAdvanced`.
 - `setHires` (function): Applies partial updates to the hires config object.
@@ -40,7 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setRefiner` (function): Applies partial updates to the refiner config object.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
 - `setMinTile` (function): Updates the global `min_tile` preference used as the tiled OOM fallback lower bound (hires-fix + `/upscale`).
-- `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
+- `snapInitImageDim` (function): Snaps init-image derived dimensions to the active engine grid before reuse/sync.
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for init-image input.
 - `clearInit` (function): Clears init image fields.
@@ -151,20 +154,27 @@ Symbols (top-level; keep in sync; no ghosts):
             :guidance-support="guidanceAdvancedSupport"
             :upscaler="params.img2imgUpscaler"
             :resize-mode="params.img2imgResizeMode"
+            :resize-mode-options="img2imgResizeModeOptions"
+            :show-resize-mode="!(resolvedEngineForMode === 'zimage' && params.useMask)"
+            :dimension-snap-mode="resolvedEngineForMode === 'zimage' ? 'floor' : 'nearest'"
             :show-init-image-dims="Boolean(params.initImageData)"
+            :width-step="imageDimensionSliderStep"
+            :width-input-step="imageDimensionInputStep"
+            :height-step="imageDimensionSliderStep"
+            :height-input-step="imageDimensionInputStep"
             :disabled="isRunning"
             @update:sampler="onSamplerChange"
             @update:scheduler="(v) => setParams({ scheduler: v })"
             @update:steps="(v) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
-            @update:width="(v) => setParams({ width: Math.max(64, Math.trunc(v)) })"
-            @update:height="(v) => setParams({ height: Math.max(64, Math.trunc(v)) })"
+            @update:width="(v) => setParams({ width: normalizeImageDimension(v) })"
+            @update:height="(v) => setParams({ height: normalizeImageDimension(v) })"
             @update:cfgScale="(v) => setParams({ cfgScale: v })"
             @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
             @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
             @update:guidanceAdvanced="setGuidanceAdvanced"
             @update:upscaler="(v) => setParams({ img2imgUpscaler: String(v || '').trim() })"
-            @update:resizeMode="(v) => setParams({ img2imgResizeMode: normalizeImg2ImgResizeMode(v) })"
+            @update:resizeMode="(v) => setParams({ img2imgResizeMode: normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode, v) })"
             @random-seed="randomizeSeed"
             @reuse-seed="reuseSeed"
             @sync-init-image-dims="syncInitImageDims"
@@ -196,12 +206,16 @@ Symbols (top-level; keep in sync; no ghosts):
             :guidance-advanced="params.guidanceAdvanced"
             :guidance-support="guidanceAdvancedSupport"
             :show-init-image-dims="false"
+            :width-step="imageDimensionSliderStep"
+            :width-input-step="imageDimensionInputStep"
+            :height-step="imageDimensionSliderStep"
+            :height-input-step="imageDimensionInputStep"
             :disabled="isRunning"
             @update:sampler="onSamplerChange"
             @update:scheduler="(v) => setParams({ scheduler: v })"
             @update:steps="(v) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
-            @update:width="(v) => setParams({ width: Math.max(64, Math.trunc(v)) })"
-            @update:height="(v) => setParams({ height: Math.max(64, Math.trunc(v)) })"
+            @update:width="(v) => setParams({ width: normalizeImageDimension(v) })"
+            @update:height="(v) => setParams({ height: normalizeImageDimension(v) })"
             @update:cfgScale="(v) => setParams({ cfgScale: v })"
             @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
             @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
@@ -522,7 +536,10 @@ import { useWorkflowsStore } from '../stores/workflows'
 import { useXyzStore } from '../stores/xyz'
 import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
-import { normalizeImg2ImgResizeMode } from '../utils/img2img_resize'
+import {
+  img2imgResizeModeOptionsForEngine,
+  normalizeImg2ImgResizeModeForEngine,
+} from '../utils/img2img_resize'
 import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy } from '../utils/image_params'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
@@ -708,6 +725,9 @@ watch(
 
 const engineConfig = computed(() => getEngineConfig(props.type))
 const resolvedEngineForMode = computed(() => resolveEngineForRequest(props.type, Boolean(params.value.useInitImage)))
+const imageDimensionInputStep = computed(() => resolvedEngineForMode.value === 'zimage' ? 16 : 8)
+const imageDimensionSliderStep = computed(() => resolvedEngineForMode.value === 'zimage' ? 16 : 64)
+const img2imgResizeModeOptions = computed(() => img2imgResizeModeOptionsForEngine(resolvedEngineForMode.value))
 const engineSurface = computed(() => engineCaps.get(resolvedEngineForMode.value))
 const guidanceAdvancedSupport = computed<GuidanceAdvancedCapabilities | null>(() => {
   const guidance = engineSurface.value?.guidance_advanced
@@ -1417,7 +1437,8 @@ function saveProfile(): void {
 
 function setParams(patch: Partial<ImageBaseParams>): void {
   if (!tab.value) return
-  store.updateParams(props.tabId, patch as Partial<Record<string, unknown>>).catch((error) => {
+  const normalizedPatch = normalizeImageParamPatch(patch)
+  store.updateParams(props.tabId, normalizedPatch as Partial<Record<string, unknown>>).catch((error) => {
     toast(error instanceof Error ? error.message : String(error))
   })
 }
@@ -1471,13 +1492,52 @@ const _KONTEXT_DEFAULT_STEPS = 28
 const _KONTEXT_DEFAULT_DISTILLED_CFG = 2.5
 const _INIT_IMAGE_DIM_MIN = 64
 const _INIT_IMAGE_DIM_MAX = 8192
-const _INIT_IMAGE_DIM_STEP = 8
 
-function snapInitImageDim(value: number): number {
+function snapInitImageDim(value: number, step: number): number {
   const clamped = Math.max(_INIT_IMAGE_DIM_MIN, Math.min(_INIT_IMAGE_DIM_MAX, Math.trunc(value)))
-  const snapped = Math.round(clamped / _INIT_IMAGE_DIM_STEP) * _INIT_IMAGE_DIM_STEP
+  const safeStep = Number.isFinite(step) && step > 0 ? Math.trunc(step) : 8
+  const snapped = (resolvedEngineForMode.value === 'zimage' ? Math.floor(clamped / safeStep) : Math.round(clamped / safeStep)) * safeStep
   return Math.max(_INIT_IMAGE_DIM_MIN, Math.min(_INIT_IMAGE_DIM_MAX, snapped))
 }
+
+function normalizeImageDimension(value: unknown): number {
+  const numeric = Number(value)
+  const fallback = Number.isFinite(numeric) ? numeric : _INIT_IMAGE_DIM_MIN
+  return snapInitImageDim(fallback, imageDimensionInputStep.value)
+}
+
+function normalizeImageParamPatch(patch: Partial<ImageBaseParams>): Partial<ImageBaseParams> {
+  const next: Partial<ImageBaseParams> = { ...patch }
+  if (patch.width !== undefined) next.width = normalizeImageDimension(patch.width)
+  if (patch.height !== undefined) next.height = normalizeImageDimension(patch.height)
+  if (patch.img2imgResizeMode !== undefined) {
+    next.img2imgResizeMode = normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode.value, patch.img2imgResizeMode)
+  }
+  return next
+}
+
+function syncImageContractToEngine(): void {
+  const patch = normalizeImageParamPatch({
+    width: params.value.width,
+    height: params.value.height,
+    img2imgResizeMode: params.value.img2imgResizeMode,
+  })
+  const needsUpdate = (
+    patch.width !== params.value.width
+    || patch.height !== params.value.height
+    || patch.img2imgResizeMode !== params.value.img2imgResizeMode
+  )
+  if (!needsUpdate) return
+  setParams(patch)
+}
+
+watch(
+  resolvedEngineForMode,
+  () => {
+    syncImageContractToEngine()
+  },
+  { immediate: true },
+)
 
 async function onInitFileSet(file: File): Promise<void> {
   const dataUrl = await readFileAsDataURL(file)
@@ -1491,8 +1551,8 @@ async function onInitFileSet(file: File): Promise<void> {
   }
   try {
     const { width, height } = await readImageDimensions(dataUrl)
-    patch.width = snapInitImageDim(width)
-    patch.height = snapInitImageDim(height)
+    patch.width = normalizeImageDimension(width)
+    patch.height = normalizeImageDimension(height)
   } catch {
     // ignore: keep current dims
   }
@@ -1582,8 +1642,8 @@ async function sendToImg2Img(image: GeneratedImage): Promise<void> {
   }
   try {
     const { width, height } = await readImageDimensions(dataUrl)
-    patch.width = snapInitImageDim(width)
-    patch.height = snapInitImageDim(height)
+    patch.width = normalizeImageDimension(width)
+    patch.height = normalizeImageDimension(height)
   } catch {
     // ignore
   }
@@ -1610,7 +1670,7 @@ async function syncInitImageDims(): Promise<void> {
   if (!src) return
   try {
     const { width, height } = await readImageDimensions(src)
-    setParams({ width: snapInitImageDim(width), height: snapInitImageDim(height) })
+    setParams({ width: normalizeImageDimension(width), height: normalizeImageDimension(height) })
   } catch {
     // ignore
   }

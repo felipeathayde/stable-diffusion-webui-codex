@@ -13,6 +13,7 @@ renders progress/results via task events (frames and/or exported video), with Ru
 Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled in WAN flows).
 Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card so the zoom overlay can visualize and edit generation-frame projection.
 In img2vid mode, the shared init-image card is presented directly as `Img2Vid Parameters` without an extra wrapper header row.
+Passes the WAN `4n+1` frame contract explicitly into the shared `VideoSettingsCard` instead of relying on shared-component defaults.
 Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
 Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `sampler`/`scheduler` + `flowShift` in history/sync flows,
 and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
@@ -257,6 +258,9 @@ Symbols (top-level; keep in sync; no ghosts):
               :fps="video.fps"
               :minFrames="9"
               :maxFrames="401"
+              :frameStep="4"
+              :frameNudgeStep="4"
+              frameRuleLabel="4n+1"
               @update:frames="(v:number)=>setVideo({ frames: v })"
               @update:fps="(v:number)=>setVideo({ fps: v })"
             />

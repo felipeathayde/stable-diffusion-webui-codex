@@ -7,10 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Zod-validated payload schemas + builders for the generic LTX video lane (`/api/txt2vid` + `/api/img2vid`).
-Defines the strict payload contracts used by the dedicated LTX frontend path, normalizing device/settings revision and snapping generic-video
-width/height + frame-count fields into the backend-supported domain while failing loud on unsupported sampler/scheduler assumptions.
+Defines the strict payload contracts used by the dedicated LTX frontend path, validating exact device/settings revision, geometry, and frame-count
+inputs against the real backend-supported domain while failing loud on unsupported sampler/scheduler assumptions.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `LTX_DIM_ALIGNMENT` (const): Spatial alignment required by the active LTX generic-video contract.
+- `LTX_DIM_MIN` / `LTX_DIM_MAX` (const): Supported LTX dimension bounds.
+- `LTX_FRAME_ALIGNMENT` (const): Frame-count alignment required by the active LTX generic-video contract.
+- `LTX_FRAMES_MIN` / `LTX_FRAMES_MAX` (const): Supported LTX frame-count bounds.
 - `LTX_ALLOWED_SAMPLERS` (const): Generic-video sampler lanes accepted by the current LTX backend contract.
 - `LTX_CANONICAL_SCHEDULER` (const): Canonical scheduler accepted by the current LTX backend contract.
 - `LtxTxt2VidPayloadSchema` (const): Zod schema for generic `/api/txt2vid` LTX requests.
@@ -22,8 +26,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `LtxImg2VidInput` (interface): Img2vid input including init image data.
 - `normalizeDevice` (function): Validates and normalizes a device token.
 - `normalizeSettingsRevision` (function): Normalizes unknown revision input into a non-negative integer.
-- `snapLtxDim` (function): Snaps dimensions up to the generic-video 16px grid.
-- `normalizeLtxFrameCount` (function): Clamps/snap-normalizes frame counts into the backend `4n+1` domain.
+- `requireLtxDim` (function): Validates that a dimension already satisfies the strict LTX `32px` contract.
+- `requireLtxFrameCount` (function): Validates that a frame count already satisfies the strict LTX `8n+1` contract.
 - `normalizeLtxSampler` (function): Enforces the currently supported generic-video sampler lanes.
 - `normalizeLtxScheduler` (function): Enforces the canonical generic-video scheduler.
 - `buildLtxTxt2VidPayload` (function): Builds a validated generic txt2vid payload for engine `ltx2`.
@@ -34,11 +38,12 @@ import { z } from 'zod'
 
 const DEVICE_VALUES = ['cuda', 'cpu'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
-const LTX_DIM_STEP = 16
-const LTX_DIM_MIN = 16
-const LTX_DIM_MAX = 8192
-const LTX_FRAMES_MIN = 9
-const LTX_FRAMES_MAX = 401
+export const LTX_DIM_ALIGNMENT = 32
+export const LTX_DIM_MIN = 32
+export const LTX_DIM_MAX = 8192
+export const LTX_FRAME_ALIGNMENT = 8
+export const LTX_FRAMES_MIN = 9
+export const LTX_FRAMES_MAX = 401
 
 export const LTX_ALLOWED_SAMPLERS = ['uni-pc', 'euler'] as const
 export const LTX_CANONICAL_SCHEDULER = 'simple' as const
@@ -59,14 +64,16 @@ const LtxDimSchema = z
   .int()
   .min(LTX_DIM_MIN)
   .max(LTX_DIM_MAX)
-  .refine((value) => value % LTX_DIM_STEP === 0, { message: `Expected dimension aligned to ${LTX_DIM_STEP}px` })
+  .refine((value) => value % LTX_DIM_ALIGNMENT === 0, {
+    message: `Expected dimension aligned to ${LTX_DIM_ALIGNMENT}px`,
+  })
 const LtxFrameCountSchema = z
   .number()
   .int()
   .min(LTX_FRAMES_MIN)
   .max(LTX_FRAMES_MAX)
-  .refine((value) => (value - 1) % 4 === 0, {
-    message: `Expected 4n+1 frame count in [${LTX_FRAMES_MIN}, ${LTX_FRAMES_MAX}]`,
+  .refine((value) => (value - 1) % LTX_FRAME_ALIGNMENT === 0, {
+    message: `Expected 8n+1 frame count in [${LTX_FRAMES_MIN}, ${LTX_FRAMES_MAX}]`,
   })
 
 const CommonLtxVideoPayloadSchema = z.object({
@@ -158,29 +165,34 @@ export function normalizeSettingsRevision(value: unknown): number {
   return 0
 }
 
-export function snapLtxDim(rawValue: number): number {
-  const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : LTX_DIM_MIN
-  const clamped = Math.min(LTX_DIM_MAX, Math.max(LTX_DIM_MIN, numeric))
-  return Math.ceil(clamped / LTX_DIM_STEP) * LTX_DIM_STEP
+export function requireLtxDim(rawValue: number, fieldName = 'dimension'): number {
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`${fieldName} must be a finite integer, got ${String(rawValue)}.`)
+  }
+  const value = Math.trunc(numeric)
+  if (value < LTX_DIM_MIN || value > LTX_DIM_MAX) {
+    throw new Error(`${fieldName} must be within [${LTX_DIM_MIN}, ${LTX_DIM_MAX}], got ${value}.`)
+  }
+  if (value % LTX_DIM_ALIGNMENT !== 0) {
+    throw new Error(`${fieldName} must be divisible by ${LTX_DIM_ALIGNMENT}, got ${value}.`)
+  }
+  return value
 }
 
-export function normalizeLtxFrameCount(rawValue: number): number {
-  const numeric = Number.isFinite(rawValue) ? Math.trunc(rawValue) : LTX_FRAMES_MIN
-  const clamped = Math.min(LTX_FRAMES_MAX, Math.max(LTX_FRAMES_MIN, numeric))
-  if ((clamped - 1) % 4 === 0) return clamped
-
-  const down = clamped - (((clamped - 1) % 4 + 4) % 4)
-  const up = down + 4
-  const downInRange = down >= LTX_FRAMES_MIN
-  const upInRange = up <= LTX_FRAMES_MAX
-  if (downInRange && upInRange) {
-    const downDistance = Math.abs(clamped - down)
-    const upDistance = Math.abs(up - clamped)
-    return downDistance <= upDistance ? down : up
+export function requireLtxFrameCount(rawValue: number): number {
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`frame count must be a finite integer, got ${String(rawValue)}.`)
   }
-  if (downInRange) return down
-  if (upInRange) return up
-  return LTX_FRAMES_MIN
+  const value = Math.trunc(numeric)
+  if (value < LTX_FRAMES_MIN || value > LTX_FRAMES_MAX) {
+    throw new Error(`frame count must be within [${LTX_FRAMES_MIN}, ${LTX_FRAMES_MAX}], got ${value}.`)
+  }
+  if ((value - 1) % LTX_FRAME_ALIGNMENT !== 0) {
+    throw new Error(`frame count must satisfy 8n+1, got ${value}.`)
+  }
+  return value
 }
 
 export function normalizeLtxSampler(rawValue: string): LtxTxt2VidPayload['txt2vid_sampler'] {
@@ -233,11 +245,11 @@ export function buildLtxTxt2VidPayload(input: LtxTxt2VidInput): LtxTxt2VidPayloa
     ...buildCommonFields(input),
     txt2vid_prompt: String(input.prompt || '').trim(),
     txt2vid_neg_prompt: String(input.negativePrompt || '').trim(),
-    txt2vid_width: snapLtxDim(Number(input.width)),
-    txt2vid_height: snapLtxDim(Number(input.height)),
+    txt2vid_width: requireLtxDim(Number(input.width), 'txt2vid_width'),
+    txt2vid_height: requireLtxDim(Number(input.height), 'txt2vid_height'),
     txt2vid_steps: Math.max(1, Math.trunc(Number(input.steps))),
     txt2vid_fps: Math.max(1, Math.trunc(Number(input.fps))),
-    txt2vid_num_frames: normalizeLtxFrameCount(Number(input.frames)),
+    txt2vid_num_frames: requireLtxFrameCount(Number(input.frames)),
     txt2vid_sampler: normalizeLtxSampler(input.sampler),
     txt2vid_scheduler: normalizeLtxScheduler(input.scheduler),
     txt2vid_seed: Number.isFinite(Number(input.seed)) ? Math.trunc(Number(input.seed)) : -1,
@@ -254,11 +266,11 @@ export function buildLtxImg2VidPayload(input: LtxImg2VidInput): LtxImg2VidPayloa
     ...buildCommonFields(input),
     img2vid_prompt: String(input.prompt || '').trim(),
     img2vid_neg_prompt: String(input.negativePrompt || '').trim(),
-    img2vid_width: snapLtxDim(Number(input.width)),
-    img2vid_height: snapLtxDim(Number(input.height)),
+    img2vid_width: requireLtxDim(Number(input.width), 'img2vid_width'),
+    img2vid_height: requireLtxDim(Number(input.height), 'img2vid_height'),
     img2vid_steps: Math.max(1, Math.trunc(Number(input.steps))),
     img2vid_fps: Math.max(1, Math.trunc(Number(input.fps))),
-    img2vid_num_frames: normalizeLtxFrameCount(Number(input.frames)),
+    img2vid_num_frames: requireLtxFrameCount(Number(input.frames)),
     img2vid_sampler: normalizeLtxSampler(input.sampler),
     img2vid_scheduler: normalizeLtxScheduler(input.scheduler),
     img2vid_seed: Number.isFinite(Number(input.seed)) ? Math.trunc(Number(input.seed)) : -1,

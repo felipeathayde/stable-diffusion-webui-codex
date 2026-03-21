@@ -1,15 +1,17 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-03-20
+Last Review: 2026-03-21
 Status: Active
 
 ## Purpose
 - Vue composables that encapsulate shared generation logic and reusable reactive helpers for engine tabs.
 
 ## Notes
+- 2026-03-21: `useGeneration(tabId)` now normalizes img2img resize mode against the active engine contract and emits top-level `img2img_resize_mode` only for unmasked ZImage img2img, matching the truthful pixel-space resize modes owned by `runtime/pipeline_stages/image_init.py`.
 - 2026-03-20: `useGeneration(tabId)` now delegates explicit image selector/extras resolution to `utils/image_request_contract.ts`; checkpoint metadata validation, FLUX.2 guidance-mode resolution, asset-contract lookup, required `tenc_sha`/`vae_sha`, `vae_source`, and ZImage variant extras must stay owned by that shared helper instead of drifting back into the composable.
 - 2026-03-20: `useGeneration(tabId)` now requires canonical checkpoint inventory metadata (`hash`, `format`, `core_only`) and emits explicit image selectors `model_sha`, `checkpoint_core_only`, `model_format`, and `vae_source`; masked img2img remains request-owned, not model-class inferred.
+- 2026-03-20: `useLtxVideoGeneration(tabId)` now preflights the strict LTX generic-video contract before submit: dimensions must already be divisible by `32`, frame counts must already satisfy `8n+1`, and invalid LTX tab state blocks generation instead of being snapped silently by the composable.
 - `useGeneration(tabId)` builds txt2img payloads for model tabs using tab-scoped selections (`tab.params.checkpoint`, `tab.params.textEncoders`). It fails fast when no checkpoint is selected and when required `tenc_sha` values can’t be resolved (engine requires TE, including Flux/ZImage, or a GGUF checkpoint is selected).
 - 2025-12-28: `useGeneration(tabId)` now propagates tab-scoped `batchCount`/`batchSize` into txt2img/img2img payloads (previously fixed to 1×1) and tracks `progress`/`info`/`gentimeMs` for the image-tabs Results UI.
 - 2025-12-28: `useGeneration(tabId)` now maintains a small per-tab image run history (task id + params snapshot) and exposes `loadHistory/clearHistory` so views can render a History panel.
@@ -39,7 +41,7 @@ Status: Active
 - 2026-02-06: `useVideoGeneration(tabId)` default WAN video params now include `returnFrames` (default false) and keep `interpolationFps` in parity with the canonical WAN params surface (prevents drift between store/view/composable defaults).
 - 2026-02-06: `useGeneration` engine mapping now delegates to `utils/engine_taxonomy.ts` so request engine-id resolution (`flux1_kontext`, `flux1_chroma`) is centralized and shared with other frontend modules.
 - 2026-02-08: `useGeneration.ts` now exports `isGenerationRunningForTab(tabId)` so header quicksettings controls can enforce run-lock behavior on mode toggles (e.g., INPAINT).
-- 2026-03-06: `useGeneration.ts` now emits `img2img_hires_*` only when the engine capability says hires is supported and the run is unmasked; `img2imgResizeMode`/`img2imgUpscaler` remain UI-state fields only (layout/selection, no direct payload dispatch), and masked hires still fails loud.
+- 2026-03-06: `useGeneration.ts` now emits `img2img_hires_*` only when the engine capability says hires is supported and the run is unmasked; `img2imgUpscaler` remains a UI-state field only, masked hires still fails loud, and masked ZImage runs do not dispatch `img2img_resize_mode`.
 - 2026-02-18: `useGeneration.ts` now builds optional `extras.guidance` / `img2img_extras.guidance` from `tab.params.guidanceAdvanced`, gated by backend `engineSurface.guidance_advanced` so unsupported engines/controls are omitted at source.
 - 2026-02-15: `useGeneration(tabId)` and `useVideoGeneration(tabId)` now emit `settings_revision` on every start payload and handle stale-revision backend conflicts (`409` + `current_revision`) by refreshing revision state and surfacing a manual-retry message.
 - 2026-02-15: Added `settings_revision_conflict.ts` shared composable helper for parsing/formatting stale-settings conflict UX across image/video generation.

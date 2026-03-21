@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-16
+Last Review: 2026-03-21
 Status: Active
 
 ## Purpose
@@ -10,6 +10,7 @@ Status: Active
 ## Notes
 - Views should compose reusable components and stores; avoid duplicating logic that belongs in shared modules.
 - Keep routes documented in `apps/interface/src/router.ts` and the UI taxonomy in `.sangoi/frontend/guidelines/`.
+- 2026-03-21: `ImageModelTab.vue` now snaps ZImage width/height and init-image sync to a `16px` grid, reconciles persisted state on mount/engine switch, and restricts ZImage img2img resize controls to the truthful pixel-space modes the backend currently implements.
 - 2026-03-03: `Home.vue` Docs & Help reference paths now point only to repo-shipped docs under `apps/**` and root docs (`SUBSYSTEM-MAP.md`, `apps/**/AGENTS.md`), with no `.sangoi` path mentions.
 - 2026-03-06: `Home.vue` and `ModelsList.vue` tab-creation selectors include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` persists per-tab profiles under a dedicated `flux2` key, preserves capability-driven img2img state, resolves FLUX.2 CFG/negative-prompt semantics from the selected Klein 4B vs base-4B checkpoint, keeps FLUX.2 img2img denoise truthful/visible, and gates img2img hires through shared capability + mask policy (Kontext defaults remain FLUX.1-only).
 - All generation workspaces live under model tabs (`/models/:tabId`):
@@ -74,6 +75,7 @@ Status: Active
 - 2026-02-17: `ImageModelTab.vue` now embeds XYZ controls/results at the end of Generation Parameters through `components/XyzSweepCard.vue`.
 - 2026-02-17: Run cards across `ImageModelTab.vue`, `WanVideoWorkspace.vue`, and `Upscale.vue` now use shared `components/results/RunProgressStatus.vue` for the canonical Stage/Progress/Step/ETA block.
 - 2026-02-17: `ImageModelTab.vue` init-image controls now use PNG-Info-style dropzone handling (thumbnail preview + click-to-zoom full-screen).
+- 2026-03-21: `ImageModelTab.vue` now floors ZImage img2img width/height to the shared `%16` contract instead of nearest-snapping upward, and ZImage inpaint hides the resize selector because the masked runtime path only honors the normalized target geometry.
 - 2026-03-06: In `useInitImage` mode, `ImageModelTab.vue` renders `Img2ImgBasicParametersCard.vue` (hires-like layout with resize-type/upscaler gating) instead of the txt2img `BasicParametersCard.vue`; img2img payload wiring remains in `useGeneration(tabId)` and can now emit hires when the active engine supports it and masking is off.
 - 2026-03-06: `ImageModelTab.vue` now keeps the img2img denoise slider visible for FLUX.2 and no longer rewrites stored FLUX.2 denoise back to `1.0`.
 - 2026-03-07: `ImageModelTab.vue` sampler/scheduler selectors now keep backend recommendation arrays as hints (`Recommended` vs `Use at your own risk`) while enforcing hard executable constraints (`sampler -> allowed_schedulers`) and family capability constraints (`supported_*` / `excluded_*`) for base/hires/XYZ sampling selections.

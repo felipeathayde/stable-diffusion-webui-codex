@@ -1,7 +1,7 @@
 <!-- tags: backend, runtime, families, ltx2, native, transformer, vae, audio -->
 # apps/backend/runtime/families/ltx2/native Overview
 Date: 2026-03-12
-Last Review: 2026-03-12
+Last Review: 2026-03-20
 Status: Active
 
 ## Purpose
@@ -28,5 +28,6 @@ Status: Active
 - The real LTX 2.3 vocoder side asset is a nested wrapper bundle with `bwe_generator.*`, `mel_stft.*`, and `vocoder.*` groups. Do not flatten or rename those keys. `native/vocoder.py` must load that surface through the wrapped owner using the exact `vocoder` metadata carried out of the SafeTensors audio bundle; fail loud on mixed/remapped surfaces or missing wrapper config.
 - Transformer, video VAE, and audio VAE must keep `from_config(...)` plus `load_strict_state_dict(...)` as the required runtime assembly contract.
 - `video_vae.py` and `audio_vae.py` must preserve the attributes consumed by `pipelines.py` (`latents_mean`, `latents_std`, compression ratios, sample/mel metadata).
+- `video_vae.py::decode(...)` now owns the explicit decode-timestep contract: when `config.timestep_conditioning=True`, callers must provide a batch-matched `timestep` tensor instead of relying on positional mismatch or hidden fallback glue. `native/pipelines.py` owns the current zero-timestep default for generation.
 - `pipelines.py` may rely on the local scheduler/text/native module contracts, but canonical API/result/export ownership stays outside this directory in the canonical use-cases.
 - `pipelines.py` directly touches `native.transformer.config`, `native.transformer.rope`, `native.transformer.audio_rope`, and `cache_context(...)`; any streamed wrapper must proxy those surfaces honestly and cleanup must live here, not in public metadata.

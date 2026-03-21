@@ -98,6 +98,7 @@ function parseFamilySamplingList(
 
 function capabilitySet(values: string[] | null | undefined): Set<string> | null {
   if (!Array.isArray(values)) return null
+  if (values.length === 0) return null
   return new Set(values)
 }
 

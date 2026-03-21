@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 transformer key-style detection + keyspace resolution (Diffusers/WAN-export/Codex).
-Resolves multiple upstream key layouts into the canonical Codex WAN22 runtime keyspace via lookup views and fails loud on unknown/ambiguous inputs.
+Resolves multiple upstream key layouts into the canonical Codex WAN22 runtime keyspace via lookup views and fails loud on unknown/ambiguous inputs or wrapper/prefix rewrite attempts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `resolve_wan22_lora_logical_key` (function): Maps WAN22 LoRA logical keys to canonical WAN22 transformer target keys.
@@ -21,6 +21,7 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from typing import TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
+    fail_on_key_name_rewrite,
     KeyMappingError,
     KeySentinel,
     KeyStyle,
@@ -29,7 +30,6 @@ from apps.backend.runtime.state_dict.key_mapping import (
     ResolvedKeyspace,
     SentinelKind,
     resolve_state_dict_keyspace,
-    strip_repeated_prefixes,
 )
 
 _T = TypeVar("_T")
@@ -173,7 +173,7 @@ def resolve_wan22_lora_logical_key(logical_key: str) -> str | None:
     - Optional LoRA wrappers (`lora_unet_`, `lycoris_`)
     """
 
-    key = strip_repeated_prefixes(str(logical_key), _PREFIXES)
+    key = fail_on_key_name_rewrite(str(logical_key), _PREFIXES)
     if key.endswith(".weight"):
         key = key[: -len(".weight")]
     for prefix in _LORA_LOGICAL_PREFIXES:
@@ -259,9 +259,6 @@ def resolve_wan22_lora_logical_key(logical_key: str) -> str | None:
 
 
 def resolve_wan22_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
-    def _normalize(key: str) -> str:
-        return strip_repeated_prefixes(str(key), _PREFIXES)
-
     def _export_to_codex(key: str) -> str:
         for export_prefix, codex_prefix in _EXPORT_TO_CODEX_PREFIX_ALIASES:
             if key.startswith(export_prefix):
@@ -385,7 +382,7 @@ def resolve_wan22_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> R
     resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_DETECTOR,
-        normalize=_normalize,
+        source_key_guard=lambda key: fail_on_key_name_rewrite(key, _PREFIXES),
         mappers=mappers,
         output_validator=_validate_output,
     )

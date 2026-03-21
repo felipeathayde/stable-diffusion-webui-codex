@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Flux transformer GGUF/runtime key-style resolver.
 Resolves Flux core checkpoints between runtime-export keys (`double_blocks.*`, `single_blocks.*`) and native/source Diffusers keys
 (`transformer_blocks.*`, `single_transformer_blocks.*`) into the canonical runtime lookup keyspace used by the Codex Flux runtime,
-without mutating or materializing a remapped state dict.
+without mutating or materializing a remapped state dict; wrapper/prefix rewrite attempts fail loud.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `resolve_flux_transformer_keyspace` (function): Resolves runtime-export or native/source Flux transformer keys into canonical runtime lookup keys.
@@ -21,6 +21,7 @@ from collections.abc import MutableMapping, Sequence
 from typing import Any, TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
+    fail_on_key_name_rewrite,
     KeyMappingError,
     KeySentinel,
     KeyStyle,
@@ -28,7 +29,6 @@ from apps.backend.runtime.state_dict.key_mapping import (
     KeyStyleSpec,
     ResolvedKeyspace,
     SentinelKind,
-    strip_repeated_prefixes,
 )
 from apps.backend.runtime.state_dict.views import (
     ComputedKeyspaceView,
@@ -82,26 +82,26 @@ _DETECTOR = KeyStyleDetector(
 )
 
 
-def _normalize_key(key: str) -> str:
-    return strip_repeated_prefixes(str(key), _WRAPPER_PREFIXES)
+def _validated_source_key(key: str) -> str:
+    return fail_on_key_name_rewrite(str(key), _WRAPPER_PREFIXES)
 
 
-def _normalized_to_source(state_dict: MutableMapping[str, _T]) -> dict[str, str]:
+def _source_keys_to_source(state_dict: MutableMapping[str, _T]) -> dict[str, str]:
     out: dict[str, str] = {}
     for raw_key in state_dict.keys():
         source_key = str(raw_key)
-        normalized = _normalize_key(source_key)
-        if normalized in _IGNORED_KEYS:
+        validated_source_key = _validated_source_key(source_key)
+        if validated_source_key in _IGNORED_KEYS:
             continue
-        previous = out.get(normalized)
+        previous = out.get(validated_source_key)
         if previous is not None and previous != source_key:
             raise KeyMappingError(
-                "flux_transformer_runtime_key_style: normalized key collision "
-                f"for key={normalized!r} srcs={previous!r},{source_key!r}"
+                "flux_transformer_runtime_key_style: source-key collision "
+                f"for key={validated_source_key!r} srcs={previous!r},{source_key!r}"
             )
-        out[normalized] = source_key
+        out[validated_source_key] = source_key
     if not out:
-        raise KeyMappingError("flux_transformer_runtime_key_style: no tensor keys remained after normalization")
+        raise KeyMappingError("flux_transformer_runtime_key_style: no tensor keys remained after source-key validation")
     return out
 
 
@@ -188,20 +188,20 @@ def _extract_indices(keys: Sequence[str], prefix: str) -> list[int]:
 
 
 def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
-    normalized_to_source = _normalized_to_source(state_dict)
-    normalized_keys = tuple(normalized_to_source.keys())
-    _reject_unsupported_prefixes(normalized_keys)
-    style = _DETECTOR.detect(normalized_keys)
+    source_keys_to_source = _source_keys_to_source(state_dict)
+    source_keys = tuple(source_keys_to_source.keys())
+    _reject_unsupported_prefixes(source_keys)
+    style = _DETECTOR.detect(source_keys)
 
     if style is KeyStyle.CODEX:
         return ResolvedKeyspace(
             style=style,
-            canonical_to_source=dict(normalized_to_source),
+            canonical_to_source=dict(source_keys_to_source),
             metadata={
                 "resolver": "flux_transformer",
                 "source_style": style.value,
             },
-            view=KeyspaceLookupView(state_dict, normalized_to_source),
+            view=KeyspaceLookupView(state_dict, source_keys_to_source),
         )
 
     canonical_to_source: dict[str, str] = {}
@@ -210,13 +210,13 @@ def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> Re
     computed: dict[str, Any] = {}
     consumed: set[str] = set()
 
-    def _register_direct(canonical_key: str, normalized_source: str, *, required: bool = True) -> None:
-        source_key = normalized_to_source.get(normalized_source)
+    def _register_direct(canonical_key: str, source_key_name: str, *, required: bool = True) -> None:
+        source_key = source_keys_to_source.get(source_key_name)
         if source_key is None:
             if required:
                 raise KeyMappingError(
                     "flux_transformer_runtime_key_style: missing native/source key for runtime lookup. "
-                    f"dst={canonical_key!r} src={normalized_source!r}"
+                    f"dst={canonical_key!r} src={source_key_name!r}"
                 )
             return
         previous = canonical_to_source.get(canonical_key)
@@ -224,18 +224,18 @@ def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> Re
             raise KeyMappingError(
                 "flux_transformer_runtime_key_style: multiple source keys map to the same runtime key. "
                 f"dst={canonical_key!r} srcs={previous!r},{source_key!r}"
-            )
+        )
         canonical_to_source[canonical_key] = source_key
-        consumed.add(normalized_source)
+        consumed.add(source_key_name)
 
-    def _register_concat(canonical_key: str, normalized_sources: tuple[str, ...]) -> None:
-        missing = [key for key in normalized_sources if key not in normalized_to_source]
+    def _register_concat(canonical_key: str, source_key_names: tuple[str, ...]) -> None:
+        missing = [key for key in source_key_names if key not in source_keys_to_source]
         if missing:
             raise KeyMappingError(
                 "flux_transformer_runtime_key_style: missing native/source tensors for fused runtime key. "
                 f"dst={canonical_key!r} missing={missing!r}"
             )
-        source_keys = tuple(normalized_to_source[key] for key in normalized_sources)
+        source_keys = tuple(source_keys_to_source[key] for key in source_key_names)
         logical_shape = _validate_concat_shapes(state_dict, source_keys=source_keys, destination_key=canonical_key)
         computed_shapes[canonical_key] = logical_shape
         computed_sources[canonical_key] = f"concat_dim0({', '.join(source_keys)})"
@@ -243,14 +243,14 @@ def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> Re
             tuple(state_dict[source_key] for source_key in source_keys),
             logical_shape=logical_shape,
         )
-        consumed.update(normalized_sources)
+        consumed.update(source_key_names)
 
-    def _register_swap(canonical_key: str, normalized_source: str) -> None:
-        source_key = normalized_to_source.get(normalized_source)
+    def _register_swap(canonical_key: str, source_key_name: str) -> None:
+        source_key = source_keys_to_source.get(source_key_name)
         if source_key is None:
             raise KeyMappingError(
                 "flux_transformer_runtime_key_style: missing native/source tensor for swapped runtime key. "
-                f"dst={canonical_key!r} src={normalized_source!r}"
+                f"dst={canonical_key!r} src={source_key_name!r}"
             )
         logical_shape = _validate_swap_shape(state_dict, source_key=source_key, destination_key=canonical_key)
         computed_shapes[canonical_key] = logical_shape
@@ -259,7 +259,7 @@ def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> Re
             state_dict[source_key],
             logical_shape=logical_shape,
         )
-        consumed.add(normalized_source)
+        consumed.add(source_key_name)
 
     direct_pairs = (
         ("img_in.weight", "x_embedder.weight", True),
@@ -281,13 +281,13 @@ def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> Re
         ("final_layer.linear.weight", "proj_out.weight", True),
         ("final_layer.linear.bias", "proj_out.bias", True),
     )
-    for canonical_key, normalized_source, required in direct_pairs:
-        _register_direct(canonical_key, normalized_source, required=required)
+    for canonical_key, source_key_name, required in direct_pairs:
+        _register_direct(canonical_key, source_key_name, required=required)
 
     _register_swap("final_layer.adaLN_modulation.1.weight", "norm_out.linear.weight")
     _register_swap("final_layer.adaLN_modulation.1.bias", "norm_out.linear.bias")
 
-    double_indices = _extract_indices(normalized_keys, "transformer_blocks.")
+    double_indices = _extract_indices(source_keys, "transformer_blocks.")
     for index in double_indices:
         base = f"transformer_blocks.{index}."
         runtime = f"double_blocks.{index}."
@@ -344,7 +344,7 @@ def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> Re
         _register_direct(f"{runtime}txt_mod.lin.weight", base + "norm1_context.linear.weight")
         _register_direct(f"{runtime}txt_mod.lin.bias", base + "norm1_context.linear.bias")
 
-    single_indices = _extract_indices(normalized_keys, "single_transformer_blocks.")
+    single_indices = _extract_indices(source_keys, "single_transformer_blocks.")
     for index in single_indices:
         base = f"single_transformer_blocks.{index}."
         runtime = f"single_blocks.{index}."
@@ -373,7 +373,7 @@ def resolve_flux_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> Re
         _register_direct(f"{runtime}modulation.lin.weight", base + "norm.linear.weight")
         _register_direct(f"{runtime}modulation.lin.bias", base + "norm.linear.bias")
 
-    leftovers = sorted(set(normalized_keys).difference(consumed))
+    leftovers = sorted(set(source_keys).difference(consumed))
     if leftovers:
         raise KeyMappingError(
             "flux_transformer_runtime_key_style: unsupported native/source Flux transformer tensors remain after resolution. "

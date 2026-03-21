@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Keyspace resolver helpers for llama.cpp-style GGUF tensor names.
 Provides strict, fail-loud mapping from common llama.cpp GGUF tensor keys (e.g. `token_embd.weight`, `blk.N.attn_q.weight`)
-into HuggingFace/Codex-native parameter names used by runtime modules.
+into HuggingFace/Codex-native parameter names used by runtime modules without any generic source-key rewrite seam.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QWEN3_LLAMA_GGUF_LAYER_SUFFIX_TO_HF_PREFIX` (constant): Qwen3 per-layer GGUF suffix → HF prefix (without `.weight`/`.bias`).
@@ -121,7 +121,6 @@ def resolve_llama_gguf_text_model_keyspace(
     resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_DETECTOR,
-        normalize=lambda key: str(key),
         mappers={
             KeyStyle.HF: lambda k: k,
             KeyStyle.LLAMA_GGUF: _map_llama_gguf,

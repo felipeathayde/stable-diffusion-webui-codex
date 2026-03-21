@@ -7,14 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
-Resolves TE/VAE overrides (`tenc_path` shorthand), applies family-scoped keyspace interpretation where needed, and selects storage/compute dtypes
+Resolves TE/VAE overrides (`tenc_path` shorthand), applies family-scoped keyspace interpretation plus source-key rewrite guards where needed, and selects storage/compute dtypes
 (storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
 Includes core-only families (e.g., Anima) that are not diffusers repositories: the loader returns a minimal bundle and leaves external asset loading to engines.
 Partial-metadata fallback stays structural only; loader compatibility no longer invents inpaint-model semantics from channels or name hints.
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 WAN22 variants use explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`) with no shared family alias bucket.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
-Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 key normalization to a canonical keymap module.
+Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths, and delegates T5 keyspace interpretation to a canonical keymap module.
 FLUX.2 Klein 4B/base-4B expected-family loads use vendored HF metadata plus family-scoped keyspace resolution so native/source GGUF keys and
 legacy fused core slices land in the Diffusers `Flux2Transformer2DModel` lookup space without mutating the checkpoint; unsupported FLUX.2
 variants/configs fail loud.
@@ -43,7 +43,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_flux2_repo_id_from_path` (function): Chooses the supported FLUX.2 4B/base-4B vendored repo id from a checkpoint path hint.
 - `_validate_supported_flux2_transformer_config` (function): Validates that a FLUX.2 transformer config matches the supported Klein 4B/base-4B slice.
 - `_flux2_signature_from_vendored_hf` (function): Builds a FLUX.2 `ModelSignature` from vendored HF metadata for the supported 4B/base-4B slice.
-- `_requires_sdxl_checkpoint_keymap` (function): Determines whether SDXL checkpoint keymap normalization must run for a checkpoint parse call.
+- `_requires_sdxl_checkpoint_keymap` (function): Determines whether SDXL checkpoint keyspace resolution must run for a checkpoint parse call.
 - `_maybe_resolve_expected_family_keyspace` (function): Applies family-scoped GGUF/native keyspace interpretation for expected-family loads.
 - `_parse_checkpoint` (function): Parses one checkpoint (plus optional addons) into `ParsedCheckpoint` for bundle assembly.
 - `_build_diffusion_bundle` (function): Assembles a `DiffusionModelBundle` from a parsed checkpoint and loader options.
@@ -92,7 +92,7 @@ from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.vae_lane_policy import (
     detect_vae_layout,
     resolve_vae_layout_lane,
-    strip_known_vae_prefixes,
+    validate_vae_key_names,
     uses_ldm_native_lane,
 )
 from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
@@ -863,13 +863,27 @@ def _requires_sdxl_checkpoint_keymap(
         return False
     for raw_key in state_dict.keys():
         key = str(raw_key)
-        while key.startswith("module."):
-            key = key[len("module.") :]
+        if key.startswith("module."):
+            module_inner_key = key[len("module.") :]
+            if not module_inner_key.startswith("module."):
+                key = module_inner_key
         if key.startswith(
             (
+                "model.diffusion_model.",
                 "model.diffusion_model.label_emb.0.",
                 "model.model.diffusion_model.label_emb.0.",
                 "diffusion_model.label_emb.0.",
+                "diffusion_model.",
+                "model.model.diffusion_model.",
+                "conditioner.",
+                "model.conditioner.",
+                "model.model.conditioner.",
+                "first_stage_model.",
+                "model.first_stage_model.",
+                "model.model.first_stage_model.",
+                "model.vae.",
+                "model.model.vae.",
+                "vae.",
             )
         ):
             return True
@@ -1381,7 +1395,7 @@ def _load_huggingface_component(
             list(state_dict.keys())[:5] if hasattr(state_dict, "keys") else None,
         )
 
-        state_dict = strip_known_vae_prefixes(state_dict)
+        state_dict = validate_vae_key_names(state_dict)
         vae_layout = _detect_vae_layout(state_dict)
         signature = getattr(parsed, "signature", None)
         vae_lane = resolve_vae_layout_lane(family=getattr(signature, "family", None), layout=vae_layout)

@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Declarative key-style detection + strict keyspace resolver primitives for checkpoint state_dicts.
 Provides fail-loud style detection and canonical keyspace resolution utilities used by model-family loaders to resolve multiple upstream
-key layouts into one canonical lookup space without mutating source keys or relying on ad-hoc string-replace chains.
+key layouts into one canonical lookup space without mutating source keys or relying on ad-hoc string-replace chains. Any attempt to
+rewrite an incoming layer name outside explicit keyspace mapping now raises immediately; keymaps must map source keys deliberately instead of renaming them through generic preprocessing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyMappingError` (exception): Raised when key-style detection or keyspace resolution fails (unknown style, ambiguous style, collisions).
@@ -19,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `KeyStyleSpec` (dataclass): A named key-style + its sentinel set and matching threshold.
 - `KeyStyleDetector` (dataclass): Detects a style from a key list with strict ambiguity handling.
 - `ResolvedKeyspace` (dataclass): Canonical resolver envelope (`style`, `canonical_to_source`, `metadata`, `view`).
-- `strip_repeated_prefixes` (function): Removes known wrapper prefixes repeatedly (e.g. `model.diffusion_model.`).
+- `fail_on_key_name_rewrite` (function): Fail-loud guard that rejects any attempt to rewrite an incoming source key by dropping known wrapper/prefix chains.
 - `resolve_state_dict_keyspace` (function): Detects style + resolves a canonical keyspace view with strict fail-loud invariants.
 """
 
@@ -41,6 +42,27 @@ class KeyMappingError(RuntimeError):
 
 class KeyStyleDetectionError(KeyMappingError):
     pass
+
+
+def _raise_layer_name_mutation(*, operation: str, source_key: str, candidate_key: str) -> None:
+    raise KeyMappingError(
+        "Layer-name mutation is forbidden in this repository. "
+        "Keymaps map keyspaces; they do not rewrite stored model keys. "
+        f"operation={operation!r} source_key={source_key!r} candidate_key={candidate_key!r}"
+    )
+
+
+def _candidate_after_prefix_chain(source_key: str, prefixes: tuple[str, ...]) -> str:
+    candidate_key = source_key
+    changed = True
+    while changed:
+        changed = False
+        for prefix in prefixes:
+            if candidate_key.startswith(prefix):
+                candidate_key = candidate_key[len(prefix) :]
+                changed = True
+                break
+    return candidate_key
 
 
 class KeyStyle(str, Enum):
@@ -158,24 +180,22 @@ class ResolvedKeyspace(Generic[_T]):
     view: MutableMapping[str, _T]
 
 
-def strip_repeated_prefixes(name: str, prefixes: tuple[str, ...]) -> str:
-    out = name
-    changed = True
-    while changed:
-        changed = False
-        for prefix in prefixes:
-            if out.startswith(prefix):
-                out = out[len(prefix) :]
-                changed = True
-                break
-    return out
+def fail_on_key_name_rewrite(source_key: str, prefixes: tuple[str, ...]) -> str:
+    candidate_key = _candidate_after_prefix_chain(source_key, prefixes)
+    if candidate_key != source_key:
+        _raise_layer_name_mutation(
+            operation="fail_on_key_name_rewrite",
+            source_key=source_key,
+            candidate_key=candidate_key,
+        )
+    return source_key
 
 
 def resolve_state_dict_keyspace(
     state_dict: MutableMapping[str, _T],
     *,
     detector: KeyStyleDetector,
-    normalize: Callable[[str], str],
+    source_key_guard: Callable[[str], None] | None = None,
     mappers: Mapping[KeyStyle, Callable[[str], str]],
     view_factory: Callable[[MutableMapping[str, _T], dict[str, str]], MutableMapping[str, _T]] | None = None,
     output_validator: Callable[[Sequence[str]], None] | None = None,
@@ -184,16 +204,19 @@ def resolve_state_dict_keyspace(
     metadata: Mapping[str, object] | None = None,
 ) -> ResolvedKeyspace[_T]:
     keys = list(state_dict.keys())
-    normalized_keys = [normalize(k) for k in keys]
-    style = detector.detect(normalized_keys)
+    source_keys = [str(key) for key in keys]
+    if source_key_guard is not None:
+        for source_key in source_keys:
+            source_key_guard(source_key)
+    style = detector.detect(source_keys)
 
     mapper = mappers.get(style)
     if mapper is None:
         raise KeyMappingError(f"{detector.name}: no mapper registered for style={style.value!r}")
 
     canonical_to_source: dict[str, str] = {}
-    for source_key, normalized_key in zip(keys, normalized_keys, strict=True):
-        destination_key = mapper(normalized_key)
+    for source_key in source_keys:
+        destination_key = mapper(source_key)
         previous_source = canonical_to_source.get(destination_key)
         if previous_source is not None and previous_source != source_key:
             raise KeyMappingError(
@@ -249,6 +272,6 @@ __all__ = [
     "KeyStyleSpec",
     "KeyStyleDetector",
     "ResolvedKeyspace",
-    "strip_repeated_prefixes",
+    "fail_on_key_name_rewrite",
     "resolve_state_dict_keyspace",
 ]

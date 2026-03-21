@@ -13,7 +13,7 @@ with helpers to locate and load those VAEs from either a diffusers directory or 
 Symbols (top-level; keep in sync; no ghosts):
 - `FLOW16_VAE_CONFIG` (constant): Canonical diffusers-like config dict for Flow16 VAEs (16 latent channels, scaling/shift factors).
 - `FLUX2_VAE_CONFIG` (constant): Canonical diffusers-like config dict for FLUX.2 AutoencoderKLFlux2 (32 latent channels + patch BN).
-- `prepare_external_vae_override_state_dict` (function): Strips wrapper prefixes and allowed SDXL/Flow16 metadata before engine-side VAE override lane handling.
+- `prepare_external_vae_override_state_dict` (function): Validates incoming VAE key names plus allowed SDXL/Flow16 metadata before engine-side override lane handling.
 - `load_flow16_vae` (function): Loads a Flow16 VAE from a directory or weights file with strict latent-channel validation and device-aware state-dict ingestion.
 - `load_flux2_vae` (function): Loads a FLUX.2 AutoencoderKLFlux2 from a directory or weights file with strict 32-channel + BN contract validation.
 - `find_flow16_vae` (function): Searches candidate directories for a valid Flow16 VAE path.
@@ -31,7 +31,7 @@ from apps.backend.infra.config.vae_layout_lane import VaeLayoutLane
 from apps.backend.runtime.common.vae_lane_policy import (
     detect_vae_layout,
     resolve_vae_layout_lane,
-    strip_known_vae_prefixes,
+    validate_vae_key_names,
     uses_ldm_native_lane,
 )
 from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
@@ -141,16 +141,16 @@ def prepare_external_vae_override_state_dict(
     state_dict: dict[str, object],
     family: ModelFamily,
 ) -> Mapping[str, object]:
-    """Normalize an external VAE override enough for lane-specific engine handling.
+    """Validate an external VAE override enough for lane-specific engine handling.
 
     This helper is intentionally narrower than the full SDXL/Flow16 keyspace resolver:
-    - always strips wrapper prefixes;
+    - always rejects any wrapper-prefix rewrite attempt;
     - for SDXL/Flow16 families, always drops only the known training metadata keys
       and fails loud on unknown non-weight keys;
-    - leaves lane-specific keyspace normalization to the caller after lane resolution.
+    - leaves lane-specific keyspace mapping to the caller after lane resolution.
     """
 
-    prepared: Mapping[str, object] = strip_known_vae_prefixes(state_dict)
+    prepared: Mapping[str, object] = validate_vae_key_names(state_dict)
     if family in (
         ModelFamily.SDXL,
         ModelFamily.SDXL_REFINER,
@@ -193,7 +193,7 @@ def load_flux2_vae(
 
                 state_dict = load_torch_file(vae_path, device=device)
 
-            state_dict = strip_known_vae_prefixes(state_dict)
+            state_dict = validate_vae_key_names(state_dict)
             vae = AutoencoderKLFlux2.from_config(FLUX2_VAE_CONFIG)
             expected_total = len(vae.state_dict())
             missing, unexpected = vae.load_state_dict(state_dict, strict=False)
@@ -274,7 +274,7 @@ def load_flow16_vae(
 
                 state_dict = load_torch_file(vae_path, device=device)
 
-            state_dict = strip_known_vae_prefixes(state_dict)
+            state_dict = validate_vae_key_names(state_dict)
             vae_layout = detect_vae_layout(state_dict)
             vae_lane = resolve_vae_layout_lane(family=family, layout=vae_layout)
             using_ldm_native = uses_ldm_native_lane(vae_lane)
@@ -282,7 +282,7 @@ def load_flow16_vae(
             if using_ldm_native:
                 vae = AutoencoderKL_LDM.from_config(sanitize_ldm_vae_config(FLOW16_VAE_CONFIG))
             else:
-                # Normalize LDM-style Flow16 VAEs to diffusers keyspace when diffusers lane is active.
+                # Resolve LDM-style Flow16 VAE keyspace into diffusers lookup semantics when diffusers lane is active.
                 from apps.backend.runtime.state_dict.keymap_sdxl_vae import resolve_sdxl_vae_keyspace
 
                 state_dict = resolve_sdxl_vae_keyspace(state_dict).view

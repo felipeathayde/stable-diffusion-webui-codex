@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Gemma3 text-encoder keyspace resolver for llama.cpp-style GGUF tensor names.
 Provides strict, fail-loud mapping from Gemma3 text-only GGUF tensor keys (for example `token_embd.weight`,
-`blk.N.attn_q.weight`) into the native `Gemma3TextModel` lookup keyspace without materializing renamed tensors.
+`blk.N.attn_q.weight`) into the native `Gemma3TextModel` lookup keyspace without materializing renamed tensors; wrapper-prefix rewrite attempts fail loud.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `GEMMA3_LLAMA_GGUF_LAYER_SUFFIX_TO_HF_PREFIX` (constant): Gemma3 per-layer GGUF suffix → `Gemma3TextModel` prefix.
@@ -22,6 +22,7 @@ from collections.abc import MutableMapping
 from typing import TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
+    fail_on_key_name_rewrite,
     KeyMappingError,
     KeySentinel,
     KeyStyle,
@@ -30,7 +31,6 @@ from apps.backend.runtime.state_dict.key_mapping import (
     ResolvedKeyspace,
     SentinelKind,
     resolve_state_dict_keyspace,
-    strip_repeated_prefixes,
 )
 
 _T = TypeVar("_T")
@@ -118,13 +118,10 @@ def resolve_gemma3_text_encoder_keyspace(
         param = match.group("param")
         return f"layers.{idx}.{prefix}.{param}"
 
-    def _normalize_key(key: str) -> str:
-        return strip_repeated_prefixes(str(key), _HF_WRAPPER_PREFIXES)
-
     resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_DETECTOR,
-        normalize=_normalize_key,
+        source_key_guard=lambda key: fail_on_key_name_rewrite(key, _HF_WRAPPER_PREFIXES),
         mappers={
             KeyStyle.HF: lambda key: key,
             KeyStyle.LLAMA_GGUF: _map_llama_gguf,

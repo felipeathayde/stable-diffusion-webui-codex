@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Z-Image transformer GGUF/runtime key-style resolver.
 Resolves Z-Image core checkpoints between runtime-export keys (`x_embedder.*`, fused `attention.qkv.*`) and native/source keys
 (`all_x_embedder.*`, split `attention.to_{q,k,v}.*`) into the canonical runtime lookup keyspace used by the Codex Z-Image runtime,
-without mutating or materializing a remapped state dict.
+without mutating or materializing a remapped state dict; wrapper/prefix rewrite attempts fail loud.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `resolve_zimage_transformer_keyspace` (function): Resolves runtime-export or native/source Z-Image transformer keys into canonical runtime lookup keys.
@@ -22,6 +22,7 @@ from collections.abc import MutableMapping
 from typing import Any, TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
+    fail_on_key_name_rewrite,
     KeyMappingError,
     KeySentinel,
     KeyStyle,
@@ -29,7 +30,6 @@ from apps.backend.runtime.state_dict.key_mapping import (
     KeyStyleSpec,
     ResolvedKeyspace,
     SentinelKind,
-    strip_repeated_prefixes,
 )
 from apps.backend.runtime.state_dict.views import (
     ComputedKeyspaceView,
@@ -85,26 +85,26 @@ _DETECTOR = KeyStyleDetector(
 )
 
 
-def _normalize_key(key: str) -> str:
-    return strip_repeated_prefixes(str(key), _WRAPPER_PREFIXES)
+def _validated_source_key(key: str) -> str:
+    return fail_on_key_name_rewrite(str(key), _WRAPPER_PREFIXES)
 
 
-def _normalized_to_source(state_dict: MutableMapping[str, _T]) -> dict[str, str]:
+def _source_keys_to_source(state_dict: MutableMapping[str, _T]) -> dict[str, str]:
     out: dict[str, str] = {}
     for raw_key in state_dict.keys():
         source_key = str(raw_key)
-        normalized = _normalize_key(source_key)
-        if normalized in _IGNORED_KEYS:
+        validated_source_key = _validated_source_key(source_key)
+        if validated_source_key in _IGNORED_KEYS:
             continue
-        previous = out.get(normalized)
+        previous = out.get(validated_source_key)
         if previous is not None and previous != source_key:
             raise KeyMappingError(
-                "zimage_transformer_runtime_key_style: normalized key collision "
-                f"for key={normalized!r} srcs={previous!r},{source_key!r}"
+                "zimage_transformer_runtime_key_style: source-key collision "
+                f"for key={validated_source_key!r} srcs={previous!r},{source_key!r}"
             )
-        out[normalized] = source_key
+        out[validated_source_key] = source_key
     if not out:
-        raise KeyMappingError("zimage_transformer_runtime_key_style: no tensor keys remained after normalization")
+        raise KeyMappingError("zimage_transformer_runtime_key_style: no tensor keys remained after source-key validation")
     return out
 
 
@@ -159,20 +159,20 @@ def _validate_concat_shapes(
 
 
 def resolve_zimage_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
-    normalized_to_source = _normalized_to_source(state_dict)
-    normalized_keys = tuple(normalized_to_source.keys())
-    _reject_unsupported_prefixes(normalized_keys)
-    style = _DETECTOR.detect(normalized_keys)
+    source_keys_to_source = _source_keys_to_source(state_dict)
+    source_keys = tuple(source_keys_to_source.keys())
+    _reject_unsupported_prefixes(source_keys)
+    style = _DETECTOR.detect(source_keys)
 
     if style is KeyStyle.CODEX:
         return ResolvedKeyspace(
             style=style,
-            canonical_to_source=dict(normalized_to_source),
+            canonical_to_source=dict(source_keys_to_source),
             metadata={
                 "resolver": "zimage_transformer",
                 "source_style": style.value,
             },
-            view=KeyspaceLookupView(state_dict, normalized_to_source),
+            view=KeyspaceLookupView(state_dict, source_keys_to_source),
         )
 
     canonical_to_source: dict[str, str] = {}
@@ -191,35 +191,35 @@ def resolve_zimage_transformer_keyspace(state_dict: MutableMapping[str, _T]) -> 
 
     qkv_groups: dict[tuple[str, str], dict[str, str]] = {}
 
-    for normalized_key, source_key in normalized_to_source.items():
-        match = _RX_ALL_X_EMBEDDER.match(normalized_key)
+    for source_key_name, source_key in source_keys_to_source.items():
+        match = _RX_ALL_X_EMBEDDER.match(source_key_name)
         if match is not None:
             _register_direct(f"x_embedder.{match.group('suffix')}", source_key)
             continue
 
-        match = _RX_ALL_FINAL_LAYER.match(normalized_key)
+        match = _RX_ALL_FINAL_LAYER.match(source_key_name)
         if match is not None:
             _register_direct(f"final_layer.{match.group('rest')}", source_key)
             continue
 
-        match = _RX_ATTN_OUT.match(normalized_key)
+        match = _RX_ATTN_OUT.match(source_key_name)
         if match is not None:
             _register_direct(f"{match.group('prefix')}.out.{match.group('param')}", source_key)
             continue
 
-        match = _RX_ATTN_NORM.match(normalized_key)
+        match = _RX_ATTN_NORM.match(source_key_name)
         if match is not None:
             suffix = "q_norm" if match.group("which") == "q" else "k_norm"
             _register_direct(f"{match.group('prefix')}.{suffix}.weight", source_key)
             continue
 
-        match = _RX_ATTN_QKV.match(normalized_key)
+        match = _RX_ATTN_QKV.match(source_key_name)
         if match is not None:
             group_key = (match.group("prefix"), match.group("param"))
             qkv_groups.setdefault(group_key, {})[match.group("which")] = source_key
             continue
 
-        _register_direct(normalized_key, source_key)
+        _register_direct(source_key_name, source_key)
 
     for (prefix, param), sources in sorted(qkv_groups.items()):
         missing = [which for which in ("q", "k", "v") if which not in sources]

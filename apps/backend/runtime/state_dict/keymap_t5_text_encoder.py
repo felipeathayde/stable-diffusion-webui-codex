@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Canonical key-style detection + keyspace resolver for T5 text-encoder state_dict keys.
 Provides strict, fail-loud mapping from HF-style T5 keys (`encoder.*`, `shared.weight`, `embed_tokens*`)
-into Codex IntegratedT5 layout (`transformer.*`) so loader paths do not perform ad-hoc key normalization logic.
+into Codex IntegratedT5 layout (`transformer.*`) so loader paths do not perform ad-hoc generic key preprocessing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `resolve_t5_text_encoder_keyspace` (function): Resolves a T5 encoder state_dict into canonical IntegratedT5 keyspace.
@@ -73,7 +73,6 @@ def resolve_t5_text_encoder_keyspace(
     resolved = resolve_state_dict_keyspace(
         state_dict,
         detector=_DETECTOR,
-        normalize=lambda key: str(key),
         mappers={
             KeyStyle.CODEX: lambda k: k,
             KeyStyle.HF: _map_hf,

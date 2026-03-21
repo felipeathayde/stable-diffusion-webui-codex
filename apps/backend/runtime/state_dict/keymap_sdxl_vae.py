@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: SDXL VAE key-style detection + keyspace resolution (LDM-style + DIFFUSERS legacy aliases → canonical diffusers AutoencoderKL).
-Resolves common LDM layouts into diffusers keyspace via lookup views and strips wrapper prefixes.
+Resolves common LDM layouts into diffusers keyspace via lookup views, rejects wrapper/prefix rewrites, and fails loud on unsupported layouts.
 Supports legacy mid-attention aliases under `mid.attn_1.*`, prefixed `mid.attn_1.to_*`, `mid.block_1.*`, and DIFFUSERS `mid_block.attentions.*.{query,key,value,proj_attn}.*`.
 Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
 Projection normalization is lane-based and explicit:
@@ -26,6 +26,7 @@ from collections.abc import MutableMapping, Sequence
 from typing import TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
+    fail_on_key_name_rewrite,
     KeyMappingError,
     KeySentinel,
     KeyStyle,
@@ -34,7 +35,6 @@ from apps.backend.runtime.state_dict.key_mapping import (
     ResolvedKeyspace,
     SentinelKind,
     resolve_state_dict_keyspace,
-    strip_repeated_prefixes,
 )
 
 _T = TypeVar("_T")
@@ -228,21 +228,18 @@ class _FilteredKeysView(MutableMapping[str, _T]):
 def strip_known_sdxl_vae_metadata(state_dict: MutableMapping[str, _T]) -> MutableMapping[str, _T]:
     """Drop only the known SDXL/Flow16 non-weight metadata keys (fail loud on any other non-weight key)."""
 
-    def _normalize(key: str) -> str:
-        return strip_repeated_prefixes(str(key), _PREFIXES)
-
     raw_keys = list(state_dict.keys())
     kept_raw_keys: list[str] = []
     unknown_non_weight: list[str] = []
 
     for raw_key in raw_keys:
-        normalized = _normalize(raw_key)
-        if normalized.startswith(_WEIGHT_PREFIXES):
+        source_key = fail_on_key_name_rewrite(str(raw_key), _PREFIXES)
+        if source_key.startswith(_WEIGHT_PREFIXES):
             kept_raw_keys.append(raw_key)
             continue
-        if normalized in _DROPPED_KEYS:
+        if source_key in _DROPPED_KEYS:
             continue
-        unknown_non_weight.append(normalized)
+        unknown_non_weight.append(source_key)
 
     if unknown_non_weight:
         sample = sorted(set(unknown_non_weight))[:10]
@@ -255,12 +252,12 @@ def strip_known_sdxl_vae_metadata(state_dict: MutableMapping[str, _T]) -> Mutabl
 
 
 def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKeyspace[_T]:
-    """Normalize SDXL/Flow16 VAE keys into diffusers AutoencoderKL layout (fail loud).
+    """Resolve SDXL/Flow16 VAE keys into diffusers AutoencoderKL layout (fail loud).
 
     Accepted inputs:
-    - Diffusers-style VAE keys (optionally wrapped): `encoder.down_blocks.*`, `decoder.up_blocks.*`, `*.mid_block.*`
+    - Diffusers-style VAE keys: `encoder.down_blocks.*`, `decoder.up_blocks.*`, `*.mid_block.*`
       (legacy mid-attention aliases `query/key/value/proj_attn` are canonicalized)
-    - LDM-style SDXL VAE keys (optionally wrapped): `encoder.down.*`, `decoder.up.*`, `*.mid.attn_1.*`
+    - LDM-style SDXL VAE keys: `encoder.down.*`, `decoder.up.*`, `*.mid.attn_1.*`
 
     Output:
     - Canonical diffusers AutoencoderKL keys (no wrapper prefixes).
@@ -492,7 +489,6 @@ def resolve_sdxl_vae_keyspace(state_dict: MutableMapping[str, _T]) -> ResolvedKe
     resolved = resolve_state_dict_keyspace(
         filtered,
         detector=_DETECTOR,
-        normalize=_normalize,
         mappers=mappers,
         view_factory=lambda base, mapping: _SDXLVAEKeyspaceView(base, mapping),
         output_validator=_validate_output,

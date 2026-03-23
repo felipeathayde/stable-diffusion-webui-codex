@@ -31,16 +31,15 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageFilter, ImageOps
 
-from apps.backend.runtime.processing.conditioners import encode_image_batch
+from apps.backend.runtime.processing.conditioners import (
+    encode_image_batch,
+    normalize_torch_manual_seed,
+    resolve_processing_encode_seed,
+)
 from apps.backend.runtime.pipeline_stages.image_io import pil_to_tensor
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 _RESAMPLE_NEAREST = Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST
-_MAX_TORCH_SEED = (1 << 63) - 1
-
-
-def _normalize_manual_seed(value: int) -> int:
-    return int(value) & _MAX_TORCH_SEED
 
 MaskEnforcementMode = str
 MASK_ENFORCEMENT_POST_BLEND = "post_blend"
@@ -88,7 +87,7 @@ class LatentMaskEnforcer:
         raw_seeds = [int(seed) for seed in (noise_seeds or [0])]
         if not raw_seeds:
             raw_seeds = [0]
-        self._noise_seeds = tuple(_normalize_manual_seed(seed) for seed in raw_seeds)
+        self._noise_seeds = tuple(normalize_torch_manual_seed(seed) for seed in raw_seeds)
         self._cache: dict[
             tuple[torch.device, torch.dtype, int],
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
@@ -570,6 +569,7 @@ def prepare_masked_img2img_bundle(
     init_latent = encode_image_batch(
         processing.sd_model,
         init_tensor,
+        encode_seed=resolve_processing_encode_seed(processing),
         stage="runtime.pipeline_stages.masked_img2img.prepare_masked_img2img_bundle.encode",
     )
 
@@ -592,7 +592,7 @@ def prepare_masked_img2img_bundle(
         gens = []
         for seed in noise_seeds:
             gen = torch.Generator(device=init_latent.device)
-            gen.manual_seed(_normalize_manual_seed(int(seed)))
+            gen.manual_seed(normalize_torch_manual_seed(int(seed)))
             gens.append(torch.randn(tuple(init_latent.shape[1:]), generator=gen, device=init_latent.device, dtype=init_latent.dtype))
         noise = torch.stack(gens, dim=0)
         init_latent = init_latent * latent_unmasked + noise * latent_masked

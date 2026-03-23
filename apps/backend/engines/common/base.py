@@ -1040,14 +1040,14 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         return self._canonical_patcher_target(getattr(self.codex_objects, "denoiser", None))
 
     @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
+    def encode_first_stage(self, x: torch.Tensor, *, encode_seed: int | None = None) -> torch.Tensor:
         from apps.backend.runtime.memory import memory_management
 
         vae_target = self._vae_memory_target()
         memory_management.manager.load_model(vae_target)
         unload_vae = self.smart_offload_enabled
         try:
-            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5, encode_seed=encode_seed)
             sample = self.codex_objects.vae.first_stage_model.process_in(sample)
             return sample.to(x)
         finally:

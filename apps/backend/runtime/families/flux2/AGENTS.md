@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/flux2 Overview
 <!-- tags: backend, runtime, families, flux2, qwen3 -->
 Date: 2026-03-06
-Last Review: 2026-03-06
+Last Review: 2026-03-22
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 
 ## Notes
 - External sampler state uses normalized external **32-channel latents**; `encode_flux2_external_latents(...)` / `decode_flux2_external_latents(...)` apply the FLUX.2 patchified batch-norm mean/std instead of Flow16-style scalar `process_in/out`.
+- 2026-03-22: `encode_flux2_external_latents(...)` now forwards optional shared `encode_seed` into the VAE wrapper instead of silently dropping img2img posterior-seed requests at the FLUX.2 runtime seam.
 - Qwen prompt encoding must follow the FLUX.2 Klein contract: `apply_chat_template(..., enable_thinking=False)`, `max_length=512`, and stacked hidden states from layers `9/18/27` → `7680` feature dim.
 - 2026-03-06: FLUX.2 GGUF Qwen loads now reuse the ZImage Qwen keyspace resolver directly (`resolve_qwen3_gguf_keyspace`) and pass the lazy lookup mapping into native strict load (no materialized renamed state dict).
 - The truthful active slice is **txt2img + image-conditioned img2img** and **Qwen-only**:

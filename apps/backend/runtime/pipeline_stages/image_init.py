@@ -29,7 +29,7 @@ import torch
 from PIL import Image, ImageOps
 
 from apps.backend.core import devices
-from apps.backend.runtime.processing.conditioners import encode_image_batch
+from apps.backend.runtime.processing.conditioners import encode_image_batch, resolve_processing_encode_seed
 from apps.backend.runtime.processing.datatypes import InitImageBundle
 
 
@@ -131,6 +131,7 @@ def prepare_init_bundle(processing: Any) -> InitImageBundle:
     latents = encode_image_batch(
         processing.sd_model,
         tensor,
+        encode_seed=resolve_processing_encode_seed(processing),
         stage="runtime.pipeline_stages.image_init.prepare_init_bundle.encode",
     )
     bundle = InitImageBundle(

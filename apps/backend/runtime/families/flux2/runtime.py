@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `unpatchify_flux2_latents` (function): Convert patchified 128-channel FLUX.2 latents into external 32-channel latents.
 - `normalize_flux2_patchified_latents` (function): Apply AutoencoderKLFlux2 batch-norm normalization to patchified latents.
 - `denormalize_flux2_patchified_latents` (function): Reverse AutoencoderKLFlux2 batch-norm normalization for patchified latents.
-- `encode_flux2_external_latents` (function): Encode pixels through `VAE.encode(...)` and export normalized external 32-channel latents.
+- `encode_flux2_external_latents` (function): Encode pixels through `VAE.encode(...)` and export normalized external 32-channel latents, forwarding optional shared `encode_seed`.
 - `decode_flux2_external_latents` (function): Decode normalized external 32-channel latents through `VAE.decode(...)`.
 - `_pack_flux2_latents` (function): Convert patchified BCHW latents into transformer token format `(B, L, C)`.
 - `_unpack_flux2_latents` (function): Convert transformer token format `(B, L, C)` back into patchified BCHW latents.
@@ -172,10 +172,15 @@ def denormalize_flux2_patchified_latents(latents: torch.Tensor, *, vae_model: ob
     return (latents * std) + mean
 
 
-def encode_flux2_external_latents(vae, pixel_samples_bhwc: torch.Tensor) -> torch.Tensor:
+def encode_flux2_external_latents(
+    vae,
+    pixel_samples_bhwc: torch.Tensor,
+    *,
+    encode_seed: int | None = None,
+) -> torch.Tensor:
     if not hasattr(vae, "encode"):
         raise TypeError("FLUX.2 encode helper requires a VAE wrapper exposing `encode(...)`.")
-    raw_latents = vae.encode(pixel_samples_bhwc)
+    raw_latents = vae.encode(pixel_samples_bhwc, encode_seed=encode_seed)
     patchified = patchify_flux2_latents(raw_latents)
     normalized = normalize_flux2_patchified_latents(patchified, vae_model=vae.first_stage_model)
     return unpatchify_flux2_latents(normalized)

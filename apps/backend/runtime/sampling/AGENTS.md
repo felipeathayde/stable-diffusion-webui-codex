@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-03-09
+Last Review: 2026-03-22
 Status: Active
 
 ## Purpose
@@ -38,6 +38,10 @@ Status: Active
 - Scheduler vs sampler split is strict:
   - Scheduler controls only the sigma ladder.
   - Sampler integrator is selected by `SamplerKind` in `driver.py`.
+- Flow/const img2img partial denoise:
+  - `driver.py` trims the already-built sigma ladder with diffusers-style flow semantics (`t_start = int(steps - min(steps * strength, steps))`) instead of rebuilding a longer ladder.
+  - For `discard_penultimate` samplers, flow partial denoise trims the already-discarded ladder so low-strength runs keep the last real denoise step instead of collapsing to zero steps.
+  - Init-latent startup for `img2img` now goes through predictor-owned `noise_scaling(...)`; raw `init_latent + sigma * noise` is invalid for flow/const predictors.
 - Canonical names are strict:
   - No alias mapping.
   - Empty or unknown sampler/scheduler names fail fast.

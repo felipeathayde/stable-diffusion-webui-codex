@@ -530,6 +530,69 @@ class CodexSampler:
             raise ValueError("denoise_strength must be in [0, 1]")
         return value
 
+    @staticmethod
+    def _flow_partial_denoise_start_index(*, steps: int, denoise_strength: float) -> int:
+        init_timestep = min(float(steps) * float(denoise_strength), float(steps))
+        return int(max(float(steps) - init_timestep, 0.0))
+
+    @classmethod
+    def _flow_partial_denoise_effective_steps(cls, *, steps: int, denoise_strength: float) -> int:
+        return int(steps) - cls._flow_partial_denoise_start_index(steps=int(steps), denoise_strength=float(denoise_strength))
+
+    @staticmethod
+    def _discard_penultimate_sigma_ladder(sigmas: torch.Tensor) -> torch.Tensor:
+        if sigmas.ndim != 1:
+            raise RuntimeError(f"Discard-penultimate sigma ladder must be 1D; got shape={tuple(sigmas.shape)}")
+        sigma_count = int(sigmas.numel())
+        if sigma_count < 3:
+            raise RuntimeError(f"Discard-penultimate samplers require at least 3 sigma entries; got {sigma_count}.")
+        return torch.cat([sigmas[:-2], sigmas[-1:]])
+
+    def _build_flow_partial_denoise_sigmas(
+        self,
+        *,
+        active_context: SamplingContext,
+        noise: torch.Tensor,
+        steps: int,
+        denoise_strength: float,
+        discard_penultimate_sigma: bool = False,
+    ) -> torch.Tensor:
+        base_sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
+        if base_sigmas.ndim != 1:
+            raise RuntimeError(f"Flow partial denoise sigma schedule must be 1D; got shape={tuple(base_sigmas.shape)}")
+        flow_steps = int(steps)
+        if discard_penultimate_sigma:
+            base_sigmas = self._discard_penultimate_sigma_ladder(base_sigmas)
+            flow_steps -= 1
+        t_start = self._flow_partial_denoise_start_index(steps=int(flow_steps), denoise_strength=float(denoise_strength))
+        effective_steps = int(flow_steps) - int(t_start)
+        if effective_steps < 1:
+            raise ValueError(
+                "After adjusting the num_inference_steps by strength parameter: "
+                f"{denoise_strength}, the number of pipeline steps is {effective_steps} which is < 1 "
+                "and not appropriate for this pipeline."
+            )
+        tail = base_sigmas[int(t_start) :]
+        expected_length = int(effective_steps) + 1
+        if int(tail.numel()) != expected_length:
+            raise RuntimeError(
+                "Flow partial denoise sigma schedule length mismatch: "
+                f"got={int(tail.numel())} expected={expected_length} "
+                f"(steps={steps} denoise={denoise_strength} t_start={t_start})."
+            )
+        if self._log_enabled:
+            self._emit_event(
+                "sampling.denoise_schedule",
+                steps=int(flow_steps),
+                denoise=float(denoise_strength),
+                mode="flow_trim",
+                t_start=int(t_start),
+                effective_steps=int(effective_steps),
+                first=float(tail[0].item()),
+                last=float(tail[-1].item()),
+            )
+        return tail
+
     def _build_partial_denoise_sigmas(
         self,
         *,
@@ -539,9 +602,18 @@ class CodexSampler:
         noise: torch.Tensor,
         steps: int,
         denoise_strength: float,
+        discard_penultimate_sigma: bool = False,
     ) -> torch.Tensor:
         if denoise_strength > _FULL_DENOISE_THRESHOLD:
             return active_context.sigmas.to(device=noise.device, dtype=torch.float32)
+        if str(getattr(active_context, "prediction_type", "") or "").lower() == "const":
+            return self._build_flow_partial_denoise_sigmas(
+                active_context=active_context,
+                noise=noise,
+                steps=steps,
+                denoise_strength=denoise_strength,
+                discard_penultimate_sigma=discard_penultimate_sigma,
+            )
 
         new_steps = int(float(steps) / float(denoise_strength))
         if new_steps < 1:
@@ -1054,6 +1126,11 @@ class CodexSampler:
                 # Keep sigma ladder in fp32 for numeric stability; casting to bf16/fp16
                 # quantizes the schedule and can produce severe quality regressions.
                 schedule_steps = int(active_context.steps)
+                flow_partial_denoise = (
+                    normalized_denoise is not None
+                    and normalized_denoise <= _FULL_DENOISE_THRESHOLD
+                    and str(getattr(active_context, "prediction_type", "") or "").lower() == "const"
+                )
                 if normalized_denoise is None:
                     sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
                 else:
@@ -1064,6 +1141,7 @@ class CodexSampler:
                         noise=noise,
                         steps=schedule_steps,
                         denoise_strength=normalized_denoise,
+                        discard_penultimate_sigma=discard_penultimate_sigma,
                     )
 
                 if sigmas.ndim != 1 or int(sigmas.numel()) < 2:
@@ -1074,31 +1152,34 @@ class CodexSampler:
                         "sigma schedule length unexpectedly exceeds requested build length: "
                         f"got {sigma_count}, max_expected {schedule_steps + 1} (schedule_steps={schedule_steps})."
                     )
-                if discard_penultimate_sigma:
-                    if sigma_count < 3:
-                        raise RuntimeError(
-                            f"Discard-penultimate samplers require at least 3 sigma entries; got {sigma_count}."
-                        )
-                    sigmas = torch.cat([sigmas[:-2], sigmas[-1:]])
+                if discard_penultimate_sigma and not flow_partial_denoise:
+                    sigmas = self._discard_penultimate_sigma_ladder(sigmas)
                 sigma_count = int(sigmas.numel())
                 effective_steps = sigma_count - 1
                 if effective_steps <= 0:
                     raise RuntimeError(
                         f"sigma schedule must expose at least one denoise step; got sigma_count={sigma_count}."
                     )
+                expected_effective_steps = int(requested_steps)
+                if flow_partial_denoise:
+                    expected_effective_steps = self._flow_partial_denoise_effective_steps(
+                        steps=int(schedule_steps) - (1 if discard_penultimate_sigma else 0),
+                        denoise_strength=float(normalized_denoise),
+                    )
                 ddpm_beta_dedup = (
                     active_context.sampler_kind is SamplerKind.DDPM and active_context.scheduler_name == "beta"
                 )
-                if effective_steps != requested_steps:
+                if effective_steps != expected_effective_steps:
                     if not ddpm_beta_dedup:
                         raise RuntimeError(
                             "post-adjust sigma schedule length mismatch: "
-                            f"got {sigma_count}, expected {requested_steps + 1} (requested_steps={requested_steps})."
+                            f"got {sigma_count}, expected {expected_effective_steps + 1} "
+                            f"(requested_steps={requested_steps} effective_expected={expected_effective_steps})."
                         )
-                    if effective_steps > requested_steps:
+                    if effective_steps > expected_effective_steps:
                         raise RuntimeError(
                             "beta scheduler produced more steps than requested for ddpm: "
-                            f"requested_steps={requested_steps}, effective_steps={effective_steps}."
+                            f"requested_steps={expected_effective_steps}, effective_steps={effective_steps}."
                         )
                 steps = effective_steps
 
@@ -1131,7 +1212,14 @@ class CodexSampler:
                     if not restart_step_plan:
                         raise RuntimeError("Restart planner produced an empty execution plan.")
                 if init_latent is not None:
-                    x = init_latent + float(sigmas_run[0]) * noise
+                    sigma0 = sigmas_run[:1].to(device=noise.device, dtype=noise.dtype)
+                    init_latent = init_latent.to(device=noise.device, dtype=noise.dtype)
+                    x = model.predictor.noise_scaling(
+                        sigma0,
+                        noise,
+                        init_latent,
+                        max_denoise=False,
+                    )
                 else:
                     # Keep x in the core dtype (bf16/fp16) while preserving the sigma ladder precision.
                     sigma0 = sigmas_run[:1].to(dtype=noise.dtype)

@@ -306,11 +306,11 @@ class ZImageEngine(CodexDiffusionEngine):
 
     @timeline_node("vae", "encode_first_stage")
     @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
+    def encode_first_stage(self, x: torch.Tensor, *, encode_seed: int | None = None) -> torch.Tensor:
         # Match Flux/Z-Image Flow16 VAE semantics:
         # - VAE wrapper expects pixel samples as BHWC in [0, 1]
         # - Latents used by the flow core must be normalized via process_in()
-        return super().encode_first_stage(x)
+        return super().encode_first_stage(x, encode_seed=encode_seed)
 
     @timeline_node("vae", "decode_first_stage")
     @torch.inference_mode()

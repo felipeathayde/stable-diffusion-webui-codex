@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: VAE patcher + tiled encode/decode fallback helpers (diffusers + WAN-aware).
 Provides a VAE wrapper that normalizes diffusers outputs (scalar and optional per-channel latent stats) using family-aware policy resolution for scale/shift semantics,
-supports tiled decode/encode paths, and integrates memory-management and smart-fallback behavior. Supports separate storage vs compute dtype selection
-without hardcoded fp32 casts in hot decode/encode paths (compute defaults still follow runtime policy unless overridden).
+supports tiled decode/encode paths, deterministic posterior-sampled img2img encode seeding, and integrates memory-management and smart-fallback behavior.
+Supports separate storage vs compute dtype selection without hardcoded fp32 casts in hot decode/encode paths (compute defaults still follow runtime policy unless overridden).
 Tiled VAE fallback uses context-padding and center-crop stitching (via shared `runtime.common.vae_tiled` helpers) to reduce seams without fast/approximate paths,
 including family-aware decode fallback geometry resolution.
 Regular-path OOM fallback notices are emitted through structured backend logger warnings.
@@ -17,6 +17,7 @@ Regular-path OOM fallback notices are emitted through structured backend logger 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
 - `_unwrap_decode_output` (function): Normalizes diffusers decode outputs to a plain tensor (`DecoderOutput.sample` or passthrough).
+- `_new_encode_generator` (function): Builds a device-local seeded generator for deterministic VAE posterior sampling when img2img requests supply an encode seed.
 - `_unwrap_encode_output` (function): Normalizes diffusers encode outputs to a latent tensor (handles `latent_dist`, `.sample()`, `.mean`, etc.).
 - `_report_vae_progress` (function): Reports VAE encode/decode block progress into backend state for phase-aware streaming.
 - `_NormalizingFirstStage` (class): Wrapper around a first-stage VAE that applies strict scalar/per-channel latent normalization (including optional shift semantics) and proxies encode/decode APIs.
@@ -90,29 +91,58 @@ def _unwrap_decode_output(output):
     return output
 
 
-def _unwrap_encode_output(output):
+def _new_encode_generator(*, encode_seed: int | None, device: torch.device | str) -> torch.Generator | None:
+    if encode_seed is None:
+        return None
+    resolved_device = device if isinstance(device, torch.device) else torch.device(device)
+    generator_device = resolved_device if resolved_device.type in {"cpu", "cuda"} else torch.device("cpu")
+    generator = torch.Generator(device=generator_device)
+    generator.manual_seed(int(encode_seed))
+    return generator
+
+
+def _unwrap_encode_output(output, *, generator: torch.Generator | None = None):
     """Extract latent tensor from diffusers AutoencoderKLOutput or passthrough."""
+
+    def _sample_output(sample_owner):
+        if generator is None:
+            return sample_owner.sample()
+        try:
+            return sample_owner.sample(generator=generator)
+        except TypeError:
+            try:
+                return sample_owner.sample(generator)
+            except TypeError as exc:
+                raise RuntimeError("VAE encode output does not support generator-seeded sampling.") from exc
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError("VAE encode output failed during generator-seeded sampling.") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("VAE encode output failed during generator-seeded sampling.") from exc
+
     # Newer diffusers-style outputs: AutoencoderKLOutput with latent_dist
     if hasattr(output, "latent_dist"):
         dist = getattr(output, "latent_dist")
         if hasattr(dist, "sample"):
             try:
-                return dist.sample()
+                return _sample_output(dist)
             except Exception:  # noqa: BLE001
+                if generator is not None:
+                    raise
                 pass
         if hasattr(dist, "mean") and torch.is_tensor(dist.mean):
             return dist.mean
     # Objects that are themselves distributions (e.g., DiagonalGaussianDistribution)
     if hasattr(output, "sample") and callable(getattr(output, "sample", None)):
         try:
-            sample = output.sample()
+            sample = _sample_output(output)
             if torch.is_tensor(sample):
                 return sample
         except Exception:  # noqa: BLE001
+            if generator is not None:
+                raise
             pass
     if hasattr(output, "mean") and torch.is_tensor(getattr(output, "mean")):
         return getattr(output, "mean")
-    # Some implementations return a plain tensor or an object with `.sample` tensor attribute
     if hasattr(output, "sample") and torch.is_tensor(getattr(output, "sample")):
         return output.sample
     if torch.is_tensor(output):
@@ -124,10 +154,12 @@ def _unwrap_encode_output(output):
             if torch.is_tensor(item):
                 return item
             try:
-                inner = _unwrap_encode_output(item)
+                inner = _unwrap_encode_output(item, generator=generator)
                 if torch.is_tensor(inner):
                     return inner
             except Exception:
+                if generator is not None:
+                    raise
                 continue
     # Fallback: surface an explicit error instead of returning an unsupported type.
     raise RuntimeError(f"VAE encode returned unsupported output type: {type(output)!r}")
@@ -525,6 +557,7 @@ class VAE:
         *,
         forward_dtype: torch.dtype,
         regulation,
+        encode_generator: torch.Generator | None = None,
     ) -> torch.Tensor:
         base = getattr(self.first_stage_model, "_base", self.first_stage_model)
         pixels_typed = pixels_in.to(device=self.device, dtype=forward_dtype)
@@ -540,7 +573,7 @@ class VAE:
                     encoded_raw = base.encode(pixels_typed)
         if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
             encoded_raw = encoded_raw[0]
-        return _unwrap_encode_output(encoded_raw).to(self.output_device)
+        return _unwrap_encode_output(encoded_raw, generator=encode_generator).to(self.output_device)
 
     @staticmethod
     def _decode_crop_bounds(
@@ -674,7 +707,16 @@ class VAE:
                         logger.debug("decode_tiled_ progress callback failed", exc_info=True)
         return torch.clamp((output + 1.0) / 2.0, min=0.0, max=1.0)
 
-    def encode_tiled_(self, pixel_samples, tile_x=512, tile_y=512, overlap=64, progress_callback=None):
+    def encode_tiled_(
+        self,
+        pixel_samples,
+        tile_x=512,
+        tile_y=512,
+        overlap=64,
+        progress_callback=None,
+        *,
+        encode_generator: torch.Generator | None = None,
+    ):
         if pixel_samples.ndim != 4:
             raise RuntimeError(f"encode_tiled_ expects NCHW pixels; got shape={tuple(pixel_samples.shape)}.")
         geometry = VaeTileGeometry(
@@ -719,6 +761,7 @@ class VAE:
                     2.0 * pixels_tile - 1.0,
                     forward_dtype=forward_dtype,
                     regulation=regulation,
+                    encode_generator=encode_generator,
                 )
                 y_bounds = self._encode_crop_bounds(
                     window_start=window.core_y0,
@@ -794,7 +837,13 @@ class VAE:
                 except Exception:  # noqa: BLE001
                     logger.warning("Failed to restore VAE device after CPU fallback.", exc_info=True)
 
-    def _encode_cpu_fallback(self, pixel_samples_chw: torch.Tensor, regulation) -> torch.Tensor:
+    def _encode_cpu_fallback(
+        self,
+        pixel_samples_chw: torch.Tensor,
+        regulation,
+        *,
+        encode_seed: int | None = None,
+    ) -> torch.Tensor:
         """Best-effort CPU encode path used after CUDA OOM when smart fallback is enabled.
 
         Mirrors the GPU encode logic but runs entirely on CPU to avoid repeated
@@ -822,6 +871,7 @@ class VAE:
             )
             base.to(device=cpu_device, dtype=cpu_forward_dtype)
 
+            encode_generator = _new_encode_generator(encode_seed=encode_seed, device=cpu_device)
             with torch.no_grad():
                 pixels_cpu = pixel_samples_chw.to(cpu_device, dtype=cpu_forward_dtype)
                 pixels_in = 2.0 * pixels_cpu - 1.0
@@ -838,7 +888,7 @@ class VAE:
 
                 if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
                     encoded_raw = encoded_raw[0]
-                encoded = _unwrap_encode_output(encoded_raw).to(self.output_device)
+                encoded = _unwrap_encode_output(encoded_raw, generator=encode_generator).to(self.output_device)
 
             return encoded
         finally:
@@ -1065,7 +1115,7 @@ class VAE:
         # Return BCHW format in [-1, 1] range like decode_inner
         return output * 2.0 - 1.0
 
-    def encode_inner(self, pixel_samples):
+    def encode_inner(self, pixel_samples, *, encode_seed: int | None = None):
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
         pixel_samples = pixel_samples.movedim(-1, 1)
         progress_phase = "encode"
@@ -1088,6 +1138,7 @@ class VAE:
             use_tiled = bool(memory_management.manager.vae_always_tiled)
 
             try:
+                encode_generator = _new_encode_generator(encode_seed=encode_seed, device=self.device)
                 if use_tiled:
                     encode_total_blocks = max(1, int(pixel_samples.shape[0]))
                     _report_vae_progress(
@@ -1109,6 +1160,7 @@ class VAE:
                     samples = self.encode_tiled_(
                         pixel_samples,
                         progress_callback=_encode_progress,
+                        encode_generator=encode_generator,
                     )
                 else:
                     memory_used = self.memory_used_encode(pixel_samples.shape, forward_dtype)
@@ -1138,6 +1190,7 @@ class VAE:
                             pixels_in,
                             forward_dtype=forward_dtype,
                             regulation=regulation,
+                            encode_generator=encode_generator,
                         )
                         samples[x:x + batch_number] = encoded
                         _report_vae_progress(
@@ -1153,7 +1206,7 @@ class VAE:
                         bool(memory_management.manager.vae_always_tiled),
                     )
                     _report_vae_progress(phase=progress_phase, block_index=0, total_blocks=1)
-                    samples = self._encode_cpu_fallback(pixel_samples, regulation)
+                    samples = self._encode_cpu_fallback(pixel_samples, regulation, encode_seed=encode_seed)
                     encode_total_blocks = 1
                     _report_vae_progress(phase=progress_phase, block_index=1, total_blocks=1)
                 else:
@@ -1204,9 +1257,11 @@ class VAE:
                             total_blocks=encode_total_blocks,
                         )
 
+                    retry_encode_generator = _new_encode_generator(encode_seed=encode_seed, device=self.device)
                     samples = self.encode_tiled_(
                         pixel_samples,
                         progress_callback=_encode_retry_progress,
+                        encode_generator=retry_encode_generator,
                     )
 
             if torch.isnan(samples).any():
@@ -1237,14 +1292,14 @@ class VAE:
             )
             return samples
 
-    def encode(self, pixel_samples):
+    def encode(self, pixel_samples, *, encode_seed: int | None = None):
         wrapper = self.patcher.model_options.get('model_vae_encode_wrapper', None)
         if wrapper is None:
-            return self.encode_inner(pixel_samples)
+            return self.encode_inner(pixel_samples, encode_seed=encode_seed)
         else:
-            return wrapper(self.encode_inner, pixel_samples)
+            return wrapper(lambda samples: self.encode_inner(samples, encode_seed=encode_seed), pixel_samples)
 
-    def encode_tiled(self, pixel_samples, tile_x=512, tile_y=512, overlap=64):
+    def encode_tiled(self, pixel_samples, tile_x=512, tile_y=512, overlap=64, *, encode_seed: int | None = None):
         memory_management.manager.load_model(self.patcher)
         pixel_samples = pixel_samples.movedim(-1, 1)
         desired_storage, desired_compute = self._resolve_dtypes()
@@ -1260,5 +1315,12 @@ class VAE:
         )
         self._apply_precision(desired_storage)
         self.vae_compute_dtype = desired_compute
-        samples = self.encode_tiled_(pixel_samples, tile_x=tile_x, tile_y=tile_y, overlap=overlap)
+        encode_generator = _new_encode_generator(encode_seed=encode_seed, device=self.device)
+        samples = self.encode_tiled_(
+            pixel_samples,
+            tile_x=tile_x,
+            tile_y=tile_y,
+            overlap=overlap,
+            encode_generator=encode_generator,
+        )
         return samples

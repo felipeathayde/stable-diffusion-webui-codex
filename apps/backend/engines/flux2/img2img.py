@@ -34,7 +34,7 @@ import torch
 
 from apps.backend.core.requests import Img2ImgRequest
 from apps.backend.engines.util.adapters import build_img2img_processing
-from apps.backend.runtime.processing.conditioners import encode_image_batch
+from apps.backend.runtime.processing.conditioners import encode_image_batch, resolve_processing_encode_seed
 from apps.backend.runtime.pipeline_stages.image_init import prepare_init_bundle
 from apps.backend.runtime.pipeline_stages.hires_fix import (
     prepare_hires_latents_and_conditioning,
@@ -450,6 +450,7 @@ def generate_flux2_img2img(
     post_step_hook = None
     post_sample_hook = None
     full_res_plan = None
+    encode_seed = resolve_processing_encode_seed(processing)
     if processing.has_mask():
         enforcement = getattr(processing, "mask_enforcement", None)
         masked_bundle, enforcer = prepare_masked_img2img_bundle(
@@ -461,6 +462,7 @@ def generate_flux2_img2img(
             processing.sd_model,
             masked_bundle.init_tensor,
             stage="engines.flux2.img2img.mask_conditioning_latents",
+            encode_seed=encode_seed,
         )
         continuation_latent = masked_bundle.init_latent
         full_res_plan = masked_bundle.full_res

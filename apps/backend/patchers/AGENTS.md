@@ -1,6 +1,6 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Last Review: 2026-03-06
+Last Review: 2026-03-22
 Status: Active
 
 ## Purpose
@@ -20,6 +20,7 @@ Status: Active
 
 ## Notes
 - Patchers should operate on runtime objects provided by `runtime/` and `engines/` without duplicating loading logic.
+- 2026-03-22: `vae.py` encode paths now accept optional `encode_seed` and build a device-local posterior generator for diffusers-style `latent_dist.sample(...)`; regular, tiled, regular->tiled retry, and CPU-fallback encode paths must all recreate generators from the same seed when they restart full-image work, and seeded posterior sampling failures must fail loud instead of silently degrading to mean latents.
 - LoRA merges are transactional: loaders snapshot parameters, track deterministic patch order, surface tqdm progress, and raise on any mismatched tensor metadata.
 - When introducing new patch behaviour, add explicit configuration flags/options and document them in `.sangoi/backend/`.
 - Mutator methods must raise on invalid payloads (no fallbacks) and emit backend debug logs; `ModelPatcher` now centralises logging/telemetry for patch registration.

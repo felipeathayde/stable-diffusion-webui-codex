@@ -1,12 +1,13 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
-Last Review: 2026-03-20
+Last Review: 2026-03-22
 Status: Active
 
 ## Purpose
 - Shared engine utilities (base classes, mixins, helpers) reused across SD, Flux, Chroma, WAN22 engines.
 
 ## Notes
+- 2026-03-22: shared `CodexDiffusionEngine.encode_first_stage(...)` now accepts optional `encode_seed` and forwards it into the VAE wrapper; image engines that use the canonical first-stage lane inherit deterministic img2img posterior sampling without custom engine-side logic, and callers that retry from seed must recreate the generator from that same seed.
 - 2026-03-20: `base.py` load-path selectors are now request/inventory-authoritative for image runs (`checkpoint_core_only`, `model_format`, `vae_source`); missing selector truth fails loud instead of falling back from suffix/path presence, inpaint is no longer inferred from checkpoint shape/channels, and external SDXL VAE overrides strip known wrapper/metadata keys before strict keyspace resolution.
 - `CodexDiffusionEngine` now subclasses `BaseInferenceEngine`; implement `_build_components(bundle, *, options)` to assemble runtime objects during `load()`.
 - Engines receive pre-materialised `DiffusionModelBundle` instances; avoid invoking legacy loaders inside subclasses.

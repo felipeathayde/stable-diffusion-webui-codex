@@ -1,7 +1,7 @@
 # apps/backend/engines/flux2 Overview
 <!-- tags: backend, engines, flux2, qwen3 -->
 Date: 2026-03-08
-Last Review: 2026-03-08
+Last Review: 2026-03-22
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 - `apps/backend/engines/flux2/__init__.py` — Package marker only.
 
 ## Notes
+- 2026-03-22: `Flux2Engine.encode_first_stage(...)` now forwards the shared optional `encode_seed` into the FLUX.2 external-latent VAE encode helper, and `img2img.py` threads the same shared seed into masked `image_latents` conditioning so FLUX.2 img2img/inpaint no longer drops posterior-seed requests on either encode branch.
 - 2026-03-08: `img2img.py` now preserves truthful open-ended sampling progress for native samplers without an honest bounded total (for example `dpm adaptive`) by emitting `percent=None`, `total_steps=None`, and non-fake sampling/decode metadata instead of coercing unknown totals to integers.
 - 2026-03-09: `img2img.py` hires path now applies hires-prompt sampler/scheduler and width/height controls before explicit hires request overrides, and records effective hires sampler/scheduler/steps/denoise/size metadata for the shared img2img response surface.
 - Loader/parser already own FLUX.2 checkpoint detection + component loading; engine code must reuse the resolved bundle instead of inventing new loading paths.

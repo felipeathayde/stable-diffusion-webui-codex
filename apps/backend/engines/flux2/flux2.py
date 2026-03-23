@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: FLUX.2 Klein backend engine for the truthful 4B/base-4B image-generation slice.
 Assembles the FLUX.2 runtime via the factory seam, exposes Qwen3 prompt conditioning as sampler-ready
 `{"crossattn", "vector"}` payloads, wires the dedicated FLUX.2 image-conditioned img2img wrapper, and overrides
-first-stage latent encode/decode for normalized external 32-channel FLUX.2 latents.
+first-stage latent encode/decode for normalized external 32-channel FLUX.2 latents while honoring the shared optional
+img2img `encode_seed` contract.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_Flux2PromptList` (class): Prompt wrapper carrying negative/smart-cache flags for FLUX.2 conditioning.
@@ -232,7 +233,7 @@ class Flux2Engine(CodexDiffusionEngine):
         return runtime.text.qwen3_text.prompt_lengths(prompt)
 
     @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
+    def encode_first_stage(self, x: torch.Tensor, *, encode_seed: int | None = None) -> torch.Tensor:
         vae_target = self._vae_memory_target()
         memory_management.manager.load_model(
             vae_target,
@@ -242,7 +243,11 @@ class Flux2Engine(CodexDiffusionEngine):
         )
         unload_vae = self.smart_offload_enabled
         try:
-            sample = encode_flux2_external_latents(self.codex_objects.vae, x.movedim(1, -1) * 0.5 + 0.5)
+            sample = encode_flux2_external_latents(
+                self.codex_objects.vae,
+                x.movedim(1, -1) * 0.5 + 0.5,
+                encode_seed=encode_seed,
+            )
             return sample.to(x)
         finally:
             if unload_vae:

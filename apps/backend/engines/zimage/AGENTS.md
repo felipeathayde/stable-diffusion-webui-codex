@@ -1,6 +1,6 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
-Last Review: 2026-03-20
+Last Review: 2026-03-22
 Status: Active
 
 ## Purpose
@@ -18,6 +18,7 @@ Status: Active
 - `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/vae/config.json` — canonical `scaling_factor` + `shift_factor`.
 
 ## Notes / Decisions
+- 2026-03-22: `ZImageEngine.encode_first_stage(...)` still uses the shared Flow16 first-stage lane, but now forwards optional `encode_seed` so img2img init-latent posterior sampling stays deterministic without a ZImage-only encode fork.
 - 2026-03-20: `ZImageEngine` now treats `extras.zimage_variant` as the authoritative selector for Base vs Turbo; GGUF metadata is only a fallback when the request omitted the variant, and Z Image img2img must not inherit SD-family inpaint heuristics from checkpoint metadata.
 - **Variant contract:** UI sends `extras.zimage_variant="turbo"|"base"`; the backend forwards it to `engine_options["zimage_variant"]` so the orchestrator reloads the engine when the variant changes.
   - For Codex-produced GGUFs, the engine may also trust `codex.zimage.variant` metadata when it matches Codex provenance.

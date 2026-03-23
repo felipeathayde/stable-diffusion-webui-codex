@@ -8,19 +8,21 @@ Required Notice: see NOTICE
 
 Purpose: Pinia store for backend engine capability gating.
 Fetches `/api/engines/capabilities` and exposes cached capability + family + asset-contract + backend-owned dependency-check maps so views/components can gate
-UI features, required asset selection, family-specific behavior, readiness indicators, and family-scoped sampler/scheduler filtering from a single contract surface.
+UI features, required asset selection, family-specific behavior, readiness indicators, family-scoped sampler/scheduler filtering, and the LTX-only
+execution-profile/default surface from a single contract surface.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `asEngineDependencyCheckRow` (function): Validates/coerces one dependency-check row from unknown payload data.
 - `asEngineDependencyStatus` (function): Validates/coerces one dependency status payload per semantic engine.
 - `parseDependencyChecks` (function): Parses strict `dependency_checks` map from capabilities response.
 - `parseEngineIdToSemanticMap` (function): Parses strict `engine_id_to_semantic_engine` map from capabilities response.
+- `asLtxExecutionSurface` (function): Parses the optional nested LTX execution-profile/default surface from one engine capability row.
 - `filterSamplersForFamilyCapabilities` (function): Applies family `supported_samplers`/`excluded_samplers` constraints to executable sampler rows.
 - `filterSchedulersForFamilyCapabilities` (function): Applies family `supported_schedulers`/`excluded_schedulers` constraints to executable scheduler rows.
 - `filterSchedulersForSampler` (function): Filters scheduler rows by sampler `allowed_schedulers` compatibility.
 - `normalizeSamplerSchedulerSelection` (function): Resolves a valid sampler/scheduler pair against executable catalogs + family + sampler compatibility constraints.
 - `parseFamilyCapabilities` (function): Parses strict `families` capability map from capabilities response.
-- `useEngineCapabilitiesStore` (store): Pinia store exposing engine capabilities, load state, and lookup helpers.
+- `useEngineCapabilitiesStore` (store): Pinia store exposing engine capabilities, load state, and lookup helpers (including `getLtxExecutionSurface(...)`).
 */
 
 import { defineStore } from 'pinia'
@@ -33,6 +35,7 @@ import type {
   FamilyCapabilities,
   EngineDependencyStatus,
   EngineDependencyCheckRow,
+  LtxExecutionSurface,
   SamplerInfo,
   SchedulerInfo,
 } from '../api/types'
@@ -100,6 +103,61 @@ function capabilitySet(values: string[] | null | undefined): Set<string> | null 
   if (!Array.isArray(values)) return null
   if (values.length === 0) return null
   return new Set(values)
+}
+
+function asLtxExecutionSurface(
+  value: unknown,
+  engine: string,
+): LtxExecutionSurface | null {
+  if (value == null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has non-object 'ltx_execution_surface'.`)
+  }
+  const row = value as Record<string, unknown>
+  const allowedExecutionProfiles = row.allowed_execution_profiles
+  const defaultExecutionProfile = row.default_execution_profile
+  const defaultStepsByProfile = row.default_steps_by_profile
+  const defaultGuidanceByProfile = row.default_guidance_scale_by_profile
+  if (!Array.isArray(allowedExecutionProfiles) || allowedExecutionProfiles.some((entry) => typeof entry !== 'string' || !entry.trim())) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has invalid 'ltx_execution_surface.allowed_execution_profiles'.`)
+  }
+  if (typeof defaultExecutionProfile !== 'string' || !defaultExecutionProfile.trim()) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has invalid 'ltx_execution_surface.default_execution_profile'.`)
+  }
+  if (defaultStepsByProfile === null || typeof defaultStepsByProfile !== 'object' || Array.isArray(defaultStepsByProfile)) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has invalid 'ltx_execution_surface.default_steps_by_profile'.`)
+  }
+  if (defaultGuidanceByProfile === null || typeof defaultGuidanceByProfile !== 'object' || Array.isArray(defaultGuidanceByProfile)) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has invalid 'ltx_execution_surface.default_guidance_scale_by_profile'.`)
+  }
+  const stepsOut: Record<string, number> = {}
+  for (const [profile, rawValue] of Object.entries(defaultStepsByProfile as Record<string, unknown>)) {
+    const normalizedProfile = String(profile || '').trim()
+    if (!normalizedProfile) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has empty LTX profile key in 'default_steps_by_profile'.`)
+    }
+    if (typeof rawValue !== 'number' || !Number.isFinite(rawValue) || !Number.isInteger(rawValue) || rawValue <= 0) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has invalid default steps for LTX profile '${normalizedProfile}'.`)
+    }
+    stepsOut[normalizedProfile] = rawValue
+  }
+  const guidanceOut: Record<string, number> = {}
+  for (const [profile, rawValue] of Object.entries(defaultGuidanceByProfile as Record<string, unknown>)) {
+    const normalizedProfile = String(profile || '').trim()
+    if (!normalizedProfile) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has empty LTX profile key in 'default_guidance_scale_by_profile'.`)
+    }
+    if (typeof rawValue !== 'number' || !Number.isFinite(rawValue) || rawValue < 0) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} engine '${engine}' has invalid default guidance for LTX profile '${normalizedProfile}'.`)
+    }
+    guidanceOut[normalizedProfile] = rawValue
+  }
+  return {
+    allowed_execution_profiles: allowedExecutionProfiles.map((entry) => String(entry).trim()),
+    default_execution_profile: defaultExecutionProfile.trim(),
+    default_steps_by_profile: stepsOut,
+    default_guidance_scale_by_profile: guidanceOut,
+  }
 }
 
 export function filterSamplersForFamilyCapabilities(
@@ -425,6 +483,12 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     return { sampler, scheduler }
   }
 
+  function getLtxExecutionSurface(engine: string | null | undefined): LtxExecutionSurface | null {
+    const semantic = semanticEngineForId(engine)
+    if (!semantic) return null
+    return asLtxExecutionSurface(engines.value[semantic]?.ltx_execution_surface, semantic)
+  }
+
   const knownEngines = computed(() => Object.keys(engines.value))
   const notReadyEngines = computed(() =>
     Object.entries(dependencyChecks.value)
@@ -452,6 +516,7 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     getDependencyStatus,
     firstDependencyError,
     getAssetContract,
+    getLtxExecutionSurface,
     resolveSamplingDefaults,
   }
 })

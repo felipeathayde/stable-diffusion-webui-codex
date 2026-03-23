@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine,
-with executable defaults and recommendation hints for the live surface (for example SD15 `ddim`/`ddim` and WAN22 `uni-pc bh2`/`simple` with
-recommendation hints `recommended_samplers=('uni-pc bh2', 'uni-pc', 'euler', 'euler a')`, `recommended_schedulers=('simple',)`).
+with executable defaults and recommendation hints for the live surface (for example SD15 `ddim`/`ddim`, WAN22 `uni-pc bh2`/`simple`, and LTX2
+`euler`/`simple` with no sampler fiction beyond the live runtime lane).
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
 `er sde` in the recommended sampler surface. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
 image-conditioned img2img with hires enabled only after the real backend continuation path landed; LoRA remains off.
@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler recommendations).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
+- `build_ltx2_capability_surface` (function): Build the truthful semantic capability surface for the live LTX2 lane.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
 - `semantic_engine_for_engine_id` (function): Resolve a semantic engine tag from an API engine id (fail-loud on unknown ids).
 - `engine_supports_cfg` (function): Return whether the engine family supports classic CFG (`cfg`) via family capabilities.
@@ -34,6 +35,11 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, Mapping
 
+from apps.backend.runtime.model_registry.ltx2_execution import (
+    LTX2_EXECUTION_SURFACE_KEY,
+    Ltx2ExecutionSurface,
+    build_ltx2_execution_surface,
+)
 from apps.backend.runtime.model_registry.specs import ModelFamily
 
 
@@ -98,6 +104,28 @@ class EngineParamSurface:
     default_scheduler: str | None = None
     # Optional: support map for advanced guidance controls (`extras.guidance` keys).
     guidance_advanced: GuidanceAdvancedSurface | None = None
+    # Optional: nested LTX-only execution-profile/default surface.
+    ltx_execution_surface: Ltx2ExecutionSurface | None = None
+
+
+def build_ltx2_capability_surface() -> EngineParamSurface:
+    """Build the truthful semantic capability surface for the live LTX2 lane."""
+
+    return EngineParamSurface(
+        supports_txt2img=False,
+        supports_img2img=False,
+        supports_txt2vid=True,
+        supports_img2vid=True,
+        supports_hires=False,
+        supports_refiner=False,
+        supports_lora=False,
+        supports_controlnet=False,
+        recommended_samplers=("euler",),
+        recommended_schedulers=("simple",),
+        default_sampler="euler",
+        default_scheduler="simple",
+        ltx_execution_surface=build_ltx2_execution_surface(),
+    )
 
 
 _GUIDANCE_ADVANCED_CLASSIC_CFG = GuidanceAdvancedSurface(
@@ -235,20 +263,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         default_scheduler="simple",
     ),
     # LTX2 distilled/core-only video workflows (txt2vid/img2vid).
-    SemanticEngine.LTX2: EngineParamSurface(
-        supports_txt2img=False,
-        supports_img2img=False,
-        supports_txt2vid=True,
-        supports_img2vid=True,
-        supports_hires=False,
-        supports_refiner=False,
-        supports_lora=False,
-        supports_controlnet=False,
-        recommended_samplers=("euler", "uni-pc"),
-        recommended_schedulers=("simple",),
-        default_sampler="euler",
-        default_scheduler="simple",
-    ),
+    SemanticEngine.LTX2: build_ltx2_capability_surface(),
     # Hunyuan Video: video-only workflows.
     SemanticEngine.HUNYUAN_VIDEO: EngineParamSurface(
         supports_txt2img=False,
@@ -347,7 +362,13 @@ def engine_supports_cfg(engine_id: str) -> bool:
 
 def serialize_engine_capabilities() -> Dict[str, Dict[str, object]]:
     """Return capabilities as plain dicts for JSON responses."""
-    return {engine: asdict(surface) for engine, surface in list_engine_capabilities().items()}
+    result: Dict[str, Dict[str, object]] = {}
+    for engine, surface in list_engine_capabilities().items():
+        payload = asdict(surface)
+        if payload.get(LTX2_EXECUTION_SURFACE_KEY) is None:
+            payload.pop(LTX2_EXECUTION_SURFACE_KEY, None)
+        result[engine] = payload
+    return result
 
 
 def serialize_family_capabilities() -> Dict[str, Dict[str, object]]:
@@ -370,6 +391,7 @@ __all__ = [
     "EngineParamSurface",
     "ENGINE_SURFACES",
     "ENGINE_ID_TO_SEMANTIC_ENGINE",
+    "build_ltx2_capability_surface",
     "list_engine_capabilities",
     "semantic_engine_for_engine_id",
     "engine_supports_cfg",

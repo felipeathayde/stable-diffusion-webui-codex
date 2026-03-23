@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Canonical txt2vid orchestration for backend video engines.
-Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native backend-only LTX2 branch), applies
+Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native LTX2 branch), applies
 shared SeedVR2 upscaling/interpolation stages when requested, exports the resulting video, and yields
 progress/result events.
 WAN22 Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when
@@ -47,6 +47,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
     apply_video_interpolation,
     apply_video_upscaling,
+    build_ltx2_video_plan,
     build_video_request_effective_snapshot,
     build_video_plan,
     build_video_result,
@@ -499,9 +500,9 @@ def run_txt2vid(
 ) -> Iterator[InferenceEvent]:
     logger = getattr(engine, "_logger", None)
     telemetry_scope = _build_pipeline_telemetry_scope(mode="txt2vid")
-    plan = build_video_plan(request)
-    start = time.perf_counter()
     engine_id = str(getattr(engine, "engine_id", "") or "").strip().lower()
+    plan = build_ltx2_video_plan(request) if engine_id == "ltx2" else build_video_plan(request)
+    start = time.perf_counter()
     if engine_id == "ltx2":
         pipe = None
         backend_variant = "ltx2"

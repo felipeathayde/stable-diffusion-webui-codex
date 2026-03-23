@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-20
+Last Review: 2026-03-23
 Status: Active
 
 ## Purpose
@@ -15,7 +15,7 @@ Status: Active
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.hires.refiner`; `HiresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
 - 2026-02-08: swap-model payload semantics now use `switch_at_step` (not `steps`) in both global and hires nested refiner payloads; frontend form state uses `swapAtStep`.
 - `payloads_video.ts` provides typed (Zod) payload builders for active WAN video endpoints (sha-first `txt2vid`/`img2vid`): stages use `model_sha` + optional `loras[]` entries (`{sha, weight?}`), TE/VAE use sha selection, builders guard against sentinel asset values (`Automatic`/`Built-in`), and the frontend no longer models dead vid2vid payloads or obsolete output toggles.
-- 2026-03-20: `payloads_ltx_video.ts` now enforces the real generic LTX contract instead of silently mutating input: dimensions must already satisfy the strict `32px` grid, frame counts must already satisfy `8n+1`, invalid values fail loud, and the lane still emits only the generic selectors (`engine/model/model_sha/vae_sha/tenc_sha`) plus the canonical LTX sampler/scheduler contract (`euler|uni-pc` + `simple`), top-level `video_save_output=true` / `video_save_metadata=true`, and `video_return_frames`; LTX `img2vid` still does not emit a denoise field because the backend generic route does not accept one today.
+- 2026-03-23: `payloads_ltx_video.ts` now treats LTX as a checkpoint-aware execution-profile lane instead of a raw sampler surface: dimensions must already satisfy the strict `32px` grid, frame counts must already satisfy `8n+1`, `settings_revision` / `steps` / `fps` / `seed` / `cfgScale` must already be valid, invalid values fail loud, and the builder derives the canonical generic selectors plus the live `euler` / `simple` runtime lane from the selected execution profile and checkpoint metadata. LTX `img2vid` still does not emit a denoise field because the backend generic route does not accept one today.
 - 2026-03-13: `types.ts` task contracts now expose `gap.last_event_id`, and video-capable task results may omit `images` when the backend returns only a saved video artifact; image-only callers keep local array fallbacks instead of pretending every task result carries frames.
 - 2026-01-23: `payloads_video.ts` snaps WAN video `width/height` up to a multiple of 16 (rounded up; Diffusers parity) so requests never trip backend `%16` validation.
 - 2026-01-23: `client.ts` now extracts FastAPI `{"detail": ...}` error bodies into readable `Error.message` strings (no more opaque “400 Bad Request”).

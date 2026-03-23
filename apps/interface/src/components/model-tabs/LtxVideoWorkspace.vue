@@ -8,14 +8,19 @@ Required Notice: see NOTICE
 
 Purpose: Family-owned LTX video workspace backed by the generic video endpoints.
 Uses the shared video-family presentation baseline so `ltx2` reads like the same 2vid surface as WAN22 while keeping LTX-specific controls
-truthful to the strict LTX generic backend contract (`32px` geometry, `8n+1` frames, no silent snapping). Checkpoint/VAE/text-encoder selection stays in QuickSettings; the workspace owns prompt/init-image,
-generation parameters, run/cancel, progress, exported video, and optional returned frames.
+truthful to the strict LTX generic backend contract (`32px` geometry, `8n+1` frames, checkpoint-aware execution profiles, no silent snapping).
+Stale persisted unsupported execution profiles stay visible as blocking state until the user repairs them. Checkpoint/VAE/text-encoder selection
+stays in QuickSettings; the workspace owns prompt/init-image, generation parameters, run/cancel, progress, exported video, and optional
+returned frames.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LtxVideoWorkspace` (component): LTX video generation workspace mounted by `VideoModelTab`.
-- `fallbackSamplers` / `fallbackSchedulers` (const): Local selector fallbacks when sampler catalogs are unavailable.
+- `ExecutionProfileOption` (type): Workspace-facing execution-profile selector row.
 - `readFileAsDataURL` (function): Reads the selected init image into a data URL.
 - `normalizePositiveInt` (function): Clamps/sanitizes positive integer field updates.
+- `normalizeExecutionProfileName` (function): Normalizes raw execution-profile names for selector/display checks.
+- `executionProfileLabel` (function): Formats a user-facing label for a known or stale execution profile.
+- `ensureExecutionProfileVisible` (function): Preserves stale persisted execution-profile values in the local selector option list.
 - `updateParamsPatch` (function): Persists top-level LTX param patches.
 - `onInitImageFile` (function): Loads an init image into tab params.
 - `clearInit` (function): Clears init-image fields without changing mode.
@@ -167,22 +172,30 @@ Symbols (top-level; keep in sync; no ghosts):
               </div>
             </div>
             <div class="grid gap-3 md:grid-cols-2">
-              <SamplerSelector
-                :samplers="filteredSamplers"
-                :modelValue="params.sampler"
-                :recommendedNames="recommendedSamplers"
-                :disabled="isRunning"
-                @update:modelValue="(value) => updateParamsPatch({ sampler: value })"
-              />
-              <SchedulerSelector
-                :schedulers="filteredSchedulers"
-                :modelValue="params.scheduler"
-                :recommendedNames="recommendedSchedulers"
-                :disabled="isRunning"
-                @update:modelValue="(value) => updateParamsPatch({ scheduler: value })"
-              />
+              <div class="form-field">
+                <label class="label-muted">Execution Profile</label>
+                <select
+                  class="select-md"
+                  :value="params.executionProfile"
+                  :disabled="isRunning"
+                  @change="(event) => updateParamsPatch({ executionProfile: (event.target as HTMLSelectElement).value })"
+                >
+                  <option value="">Select profile</option>
+                  <option
+                    v-for="option in executionProfileOptions"
+                    :key="option.value"
+                    :value="option.value"
+                    :disabled="!option.supported"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+                <p class="caption mt-2">
+                  Sampler and scheduler are derived from the selected execution profile on the current LTX slice.
+                </p>
+              </div>
             </div>
-            <p v-if="samplingWarning" class="panel-status mt-2">{{ samplingWarning }}</p>
+            <p v-if="executionProfileWarning" class="panel-status mt-2">{{ executionProfileWarning }}</p>
           </div>
 
           <div class="gen-card">
@@ -314,13 +327,10 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 
-import { fetchSamplers, fetchSchedulers } from '../../api/client'
-import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../../api/types'
+import type { GeneratedImage } from '../../api/types'
 import {
-  LTX_ALLOWED_SAMPLERS,
-  LTX_CANONICAL_SCHEDULER,
   LTX_DIM_ALIGNMENT,
   LTX_DIM_MAX,
   LTX_DIM_MIN,
@@ -335,8 +345,6 @@ import ResultsCard from '../../components/results/ResultsCard.vue'
 import RunCard from '../../components/results/RunCard.vue'
 import RunProgressStatus from '../../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../../components/results/RunSummaryChips.vue'
-import SamplerSelector from '../../components/SamplerSelector.vue'
-import SchedulerSelector from '../../components/SchedulerSelector.vue'
 import VideoSettingsCard from '../../components/VideoSettingsCard.vue'
 import NumberStepperInput from '../../components/ui/NumberStepperInput.vue'
 import SliderField from '../../components/ui/SliderField.vue'
@@ -347,9 +355,6 @@ import { useModelTabsStore, type LtxTabParams } from '../../stores/model_tabs'
 const props = defineProps<{ tabId: string }>()
 
 const store = useModelTabsStore()
-const samplers = ref<SamplerInfo[]>([])
-const schedulers = ref<SchedulerInfo[]>([])
-const samplingCatalogError = ref('')
 
 const {
   status,
@@ -363,7 +368,8 @@ const {
   params,
   mode,
   checkpointCoreOnly,
-  engineSurface,
+  ltxExecutionSurface,
+  checkpointExecutionMetadata,
   assetContract,
   blockedReason,
   generate,
@@ -373,69 +379,57 @@ const {
 
 const { notice: copyNotice, copyJson, formatJson, toast } = useResultsCard()
 
-const fallbackSamplers: SamplerInfo[] = LTX_ALLOWED_SAMPLERS.map((name) => ({
-  name,
-  label: name,
-  supported: true,
-  default_scheduler: LTX_CANONICAL_SCHEDULER,
-  allowed_schedulers: [LTX_CANONICAL_SCHEDULER],
-}))
-const fallbackSchedulers: SchedulerInfo[] = [{ name: LTX_CANONICAL_SCHEDULER, label: LTX_CANONICAL_SCHEDULER, supported: true }]
+type ExecutionProfileOption = {
+  value: string
+  label: string
+  supported: boolean
+}
 
-function normalizeSamplerName(rawValue: string): string {
+function normalizeExecutionProfileName(rawValue: string): string {
   return String(rawValue || '').trim().toLowerCase()
 }
 
-function normalizeSchedulerName(rawValue: string): string {
-  return String(rawValue || '').trim().toLowerCase()
+function executionProfileLabel(value: string): string {
+  const normalized = normalizeExecutionProfileName(value)
+  if (normalized === 'one_stage') return 'One-stage'
+  if (normalized === 'distilled') return 'Distilled'
+  return value || 'Unknown'
 }
 
-function ensureSamplerVisible(options: SamplerInfo[], currentValue: string): SamplerInfo[] {
-  const current = normalizeSamplerName(currentValue)
+function ensureExecutionProfileVisible(options: ExecutionProfileOption[], currentValue: string): ExecutionProfileOption[] {
+  const current = normalizeExecutionProfileName(currentValue)
   if (!current) return options
-  if (options.some((entry) => normalizeSamplerName(entry.name) === current)) return options
-  if (!LTX_ALLOWED_SAMPLERS.includes(current as (typeof LTX_ALLOWED_SAMPLERS)[number])) return options
+  if (options.some((entry) => normalizeExecutionProfileName(entry.value) === current)) return options
   return [{
-    name: current,
-    label: current,
-    supported: true,
-    default_scheduler: LTX_CANONICAL_SCHEDULER,
-    allowed_schedulers: [LTX_CANONICAL_SCHEDULER],
+    value: current,
+    label: `${executionProfileLabel(current)} (unsupported; reselect a supported profile)`,
+    supported: false,
   }, ...options]
 }
 
-function ensureSchedulerVisible(options: SchedulerInfo[], currentValue: string): SchedulerInfo[] {
-  const current = normalizeSchedulerName(currentValue)
-  if (!current) return options
-  if (options.some((entry) => normalizeSchedulerName(entry.name) === current)) return options
-  if (current !== LTX_CANONICAL_SCHEDULER) return options
-  return [{ name: current, label: current, supported: true }, ...options]
-}
+const executionProfileOptions = computed<ExecutionProfileOption[]>(() => {
+  const checkpointExecution = checkpointExecutionMetadata.value
+  const checkpointAllowed = checkpointExecution?.allowedExecutionProfiles ?? []
+  const surfaceAllowed = ltxExecutionSurface.value?.allowed_execution_profiles ?? []
+  const allowed = checkpointExecution ? checkpointAllowed : surfaceAllowed
+  const base = allowed.map((value: string) => ({
+    value,
+    label: executionProfileLabel(value),
+    supported: true,
+  }))
+  return ensureExecutionProfileVisible(base, String(params.value?.executionProfile || ''))
+})
 
-const filteredSamplers = computed(() => {
-  const allowed = new Set<string>(LTX_ALLOWED_SAMPLERS)
-  const filtered = samplers.value.filter((entry) => allowed.has(String(entry.name || '').trim()))
-  const base = filtered.length > 0 ? filtered : fallbackSamplers
-  return ensureSamplerVisible(base, String(params.value?.sampler || ''))
-})
-const filteredSchedulers = computed(() => {
-  const filtered = schedulers.value.filter((entry) => String(entry.name || '').trim() === LTX_CANONICAL_SCHEDULER)
-  const base = filtered.length > 0 ? filtered : fallbackSchedulers
-  return ensureSchedulerVisible(base, String(params.value?.scheduler || ''))
-})
-const recommendedSamplers = computed(() => {
-  const allowed = new Set<string>(LTX_ALLOWED_SAMPLERS)
-  const raw = Array.isArray(engineSurface.value?.recommended_samplers) ? engineSurface.value?.recommended_samplers : []
-  return raw.map((entry) => String(entry || '').trim()).filter((entry) => allowed.has(entry))
-})
-const recommendedSchedulers = computed(() => {
-  const raw = Array.isArray(engineSurface.value?.recommended_schedulers) ? engineSurface.value?.recommended_schedulers : []
-  return raw.map((entry) => String(entry || '').trim()).filter((entry) => entry === LTX_CANONICAL_SCHEDULER)
-})
-const samplingWarning = computed(() => {
+const executionProfileWarning = computed(() => {
   const message = String(blockedReason.value || '')
-  if (message.includes('sampler') || message.includes('scheduler')) return message
-  return samplingCatalogError.value
+  if (
+    message.includes('execution profile')
+    || message.includes('checkpoint metadata')
+    || message.includes('not executable')
+  ) {
+    return message
+  }
+  return ''
 })
 
 const checkpointDisplay = computed(() => String(params.value?.checkpoint || '').trim() || 'Not selected')
@@ -443,10 +437,13 @@ const vaeDisplay = computed(() => String(params.value?.vae || '').trim() || (che
 const textEncoderDisplay = computed(() => String(params.value?.textEncoder || '').trim() || 'Not selected')
 const runGenerateDisabled = computed(() => isRunning.value || Boolean(blockedReason.value))
 const runGenerateTitle = computed(() => (isRunning.value ? '' : blockedReason.value))
+let pendingCheckpointRepairCheckpoint = ''
 const runSummary = computed(() => {
   const current = params.value
   if (!current) return ''
-  return `${current.width}×${current.height} · ${current.frames}f @ ${current.fps}fps · steps ${current.steps} · cfg ${current.cfgScale}`
+  const profile = String(current.executionProfile || '').trim()
+  const profileLabel = profile ? executionProfileLabel(profile) : 'Profile unresolved'
+  return `${current.width}×${current.height} · ${current.frames}f @ ${current.fps}fps · ${profileLabel} · steps ${current.steps} · cfg ${current.cfgScale}`
 })
 const successMessage = computed(() => {
   const parts: string[] = []
@@ -455,45 +452,64 @@ const successMessage = computed(() => {
   return parts.join(' · ') || 'Task finished.'
 })
 
-onMounted(async () => {
-  try {
-    const [samplerResponse, schedulerResponse] = await Promise.all([fetchSamplers(), fetchSchedulers()])
-    samplers.value = samplerResponse.samplers
-    schedulers.value = schedulerResponse.schedulers
-    samplingCatalogError.value = ''
-  } catch (error) {
-    samplers.value = []
-    schedulers.value = []
-    samplingCatalogError.value = error instanceof Error ? error.message : String(error)
-  }
-})
-
-function syncSamplingSelections(): void {
-  const current = params.value
-  if (!current) return
-
-  const patch: Partial<LtxTabParams> = {}
-  const normalizedSampler = normalizeSamplerName(current.sampler)
-  if (
-    normalizedSampler
-    && normalizedSampler !== current.sampler
-    && LTX_ALLOWED_SAMPLERS.includes(normalizedSampler as (typeof LTX_ALLOWED_SAMPLERS)[number])
-  ) {
-    patch.sampler = normalizedSampler
-  }
-
-  const normalizedScheduler = normalizeSchedulerName(current.scheduler)
-  if (normalizedScheduler === LTX_CANONICAL_SCHEDULER && normalizedScheduler !== current.scheduler) {
-    patch.scheduler = normalizedScheduler
-  }
-
-  if (Object.keys(patch).length > 0) updateParamsPatch(patch)
-}
-
 watch(
-  () => [String(params.value?.sampler || ''), String(params.value?.scheduler || '')] as const,
   () => {
-    syncSamplingSelections()
+    const metadata = checkpointExecutionMetadata.value
+    return {
+      checkpoint: String(params.value?.checkpoint || '').trim(),
+      checkpointKind: String(metadata?.checkpointKind || '').trim(),
+      defaultProfile: String(metadata?.defaultExecutionProfile || '').trim(),
+      defaultStepsKey: typeof metadata?.defaultSteps === 'number' ? String(metadata.defaultSteps) : '',
+      defaultGuidanceKey: typeof metadata?.defaultGuidanceScale === 'number' ? String(metadata.defaultGuidanceScale) : '',
+      allowedProfilesKey: (metadata?.allowedExecutionProfiles ?? []).join('|'),
+    }
+  },
+  (nextState, previousState) => {
+    const current = params.value
+    const previousCheckpoint = String(previousState?.checkpoint || '').trim()
+    const checkpointChanged = previousCheckpoint !== nextState.checkpoint
+    const isInitialRun = previousState === undefined
+    if (!isInitialRun && checkpointChanged) {
+      pendingCheckpointRepairCheckpoint = nextState.checkpoint
+    }
+
+    const metadata = checkpointExecutionMetadata.value
+    if (!current || !metadata) return
+    if (metadata.checkpointKind === 'unknown') return
+    const defaultProfile = String(metadata.defaultExecutionProfile || '').trim()
+    if (!defaultProfile) return
+    const allowed = new Set(metadata.allowedExecutionProfiles.map((entry: string) => normalizeExecutionProfileName(entry)))
+    const currentProfile = normalizeExecutionProfileName(current.executionProfile)
+    const metadataArrived = !String(previousState?.checkpointKind || '').trim() && Boolean(nextState.checkpointKind)
+    const defaultsReady = nextState.defaultProfile !== '' && nextState.defaultStepsKey !== '' && nextState.defaultGuidanceKey !== ''
+    const previousDefaultsReady =
+      String(previousState?.defaultProfile || '').trim() !== ''
+      && String(previousState?.defaultStepsKey || '').trim() !== ''
+      && String(previousState?.defaultGuidanceKey || '').trim() !== ''
+    const defaultsCompleted = defaultsReady && !previousDefaultsReady
+    const pendingCheckpointRepair = pendingCheckpointRepairCheckpoint !== '' && pendingCheckpointRepairCheckpoint === nextState.checkpoint
+    const shouldApplyDefaults = !currentProfile
+      ? isInitialRun || metadataArrived || checkpointChanged || pendingCheckpointRepair || defaultsCompleted
+      : !allowed.has(currentProfile) && ((!isInitialRun && checkpointChanged) || pendingCheckpointRepair)
+
+    if (!shouldApplyDefaults) {
+      if (pendingCheckpointRepair && currentProfile && allowed.has(currentProfile)) {
+        pendingCheckpointRepairCheckpoint = ''
+      }
+      return
+    }
+
+    const patch: Partial<LtxTabParams> = {}
+    if (current.executionProfile !== defaultProfile) patch.executionProfile = defaultProfile
+    if (typeof metadata.defaultSteps === 'number' && current.steps !== metadata.defaultSteps) patch.steps = metadata.defaultSteps
+    if (
+      typeof metadata.defaultGuidanceScale === 'number'
+      && Number(current.cfgScale) !== Number(metadata.defaultGuidanceScale)
+    ) {
+      patch.cfgScale = metadata.defaultGuidanceScale
+    }
+    if (Object.keys(patch).length > 0) updateParamsPatch(patch)
+    pendingCheckpointRepairCheckpoint = ''
   },
   { immediate: true },
 )

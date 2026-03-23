@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-21
+Last Review: 2026-03-23
 Status: Active
 
 ## Purpose
@@ -24,7 +24,7 @@ Status: Active
 ## Notes
 - 2026-03-21: `generation.py` now accepts top-level `img2img_resize_mode` only for the truthful unmasked pixel-space resize modes, rejects masked ZImage callers that try to submit it, and normalizes ZImage img2img width/height onto the shared `16px` request contract (floor/downscale for in-range values, clamp up to the minimum valid `16px` size for undersized direct callers) instead of letting odd latent patch grids fail later in the runtime.
 - 2026-03-20: `generation.py` image routes now require explicit request selectors for `checkpoint_core_only`, `model_format`, and `vae_source` and validate them against checkpoint inventory metadata; the image lane no longer guesses family/core-only/inpaint behavior from checkpoint suffixes, shapes, or `model`-as-SHA fallbacks.
-- 2026-03-20: `generation.py` now gives LTX its own generic-video contract instead of reusing WAN validation: LTX requests require width/height divisible by `32`, frame counts satisfying `8n+1`, and safe geometry/frame defaults (`768x512`, `121` frames) for direct callers, while WAN keeps its own `%16` / `4n+1` rules.
+- 2026-03-23: `generation.py` keeps LTX on its own generic-video contract instead of reusing WAN validation: LTX requests require width/height divisible by `32`, frame counts satisfying `8n+1`, explicit `img2vid_init_image` for `img2vid`, and now resolve omitted steps/guidance/profile state only after checkpoint classification through the LTX execution-default resolver. The visible runtime lane is still `euler` / `simple`, negative seed values remain request-level random sentinels normalized to unset before native execution, and `unknown` LTX checkpoints are blocked instead of guessed.
 - Routers should not mutate global state in `run_api.py`; prefer explicit dependency injection via `build_router(...)`.
 - 2026-02-28: `generation.py` img2vid API contract now accepts only `solo|sliding|svi2|svi2_pro`; unsupported mode values return fail-loud HTTP 400.
 - 2026-02-28: `generation.py` keeps `/api/vid2vid` route scaffolded but intentionally disabled (HTTP 501 + `NotImplementedError`) until the capability-driven router/runtime contract is finalized.

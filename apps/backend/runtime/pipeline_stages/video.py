@@ -7,14 +7,16 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared helpers for Codex video generation pipelines.
-Builds `VideoPlan`/`VideoResult`, applies LoRAs, configures sampler/scheduler, explicitly rejects native-only sampler variants unsupported
-by the diffusers video bridge, resolves generated-audio export policy before video runs, and assembles export metadata.
+Builds generic `VideoPlan`/`VideoResult` helpers plus the strict LTX2 video-plan seam, applies LoRAs, configures sampler/scheduler,
+explicitly rejects native-only sampler variants unsupported by the diffusers video bridge, resolves generated-audio export policy
+before video runs, and assembles export metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger used by video pipeline helpers.
 - `AudioExportAsset` (dataclass): Pre-export audio asset descriptor used by shared video export helpers.
 - `GeneratedAudioExportPolicy` (dataclass): Normalized policy for mux-capable generated-audio export decisions.
 - `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
+- `build_ltx2_video_plan` (function): Builds a strict LTX2 `VideoPlan` that requires explicit router-owned fields instead of generic fallbacks.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
 - `read_video_interpolation_options` (function): Parses `extras.video_interpolation` into typed interpolation options when present.
@@ -89,6 +91,45 @@ def build_video_plan(request: Any) -> VideoPlan:
         fps=int(getattr(request, "fps", 24) or 24),
         width=int(getattr(request, "width", 768) or 768),
         height=int(getattr(request, "height", 432) or 432),
+        guidance_scale=getattr(request, "guidance_scale", None),
+        extras=extras,
+    )
+
+
+def build_ltx2_video_plan(request: Any) -> VideoPlan:
+    """Build a strict `VideoPlan` for the LTX2 execution path."""
+
+    extras_raw = getattr(request, "extras", {}) or {}
+    extras: dict[str, Any]
+    if isinstance(extras_raw, Mapping):
+        extras = dict(extras_raw)
+    else:
+        extras = {}
+
+    required_ints = {
+        "steps": getattr(request, "steps", None),
+        "num_frames": getattr(request, "num_frames", None),
+        "fps": getattr(request, "fps", None),
+        "width": getattr(request, "width", None),
+        "height": getattr(request, "height", None),
+    }
+    normalized: dict[str, int] = {}
+    for field_name, raw_value in required_ints.items():
+        if raw_value is None:
+            raise RuntimeError(f"LTX2 video request missing required '{field_name}'.")
+        value = int(raw_value)
+        if value <= 0:
+            raise RuntimeError(f"LTX2 video request field '{field_name}' must be > 0, got {value}.")
+        normalized[field_name] = value
+
+    return VideoPlan(
+        sampler_name=getattr(request, "sampler", None),
+        scheduler_name=getattr(request, "scheduler", None),
+        steps=normalized["steps"],
+        frames=normalized["num_frames"],
+        fps=normalized["fps"],
+        width=normalized["width"],
+        height=normalized["height"],
         guidance_scale=getattr(request, "guidance_scale", None),
         extras=extras,
     )

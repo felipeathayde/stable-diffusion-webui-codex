@@ -14,8 +14,9 @@ default parameter shapes per tab type (image vs WAN/LTX video) using engine defa
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
 backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both scheduler/sampler backfills through the normal tab-persistence
 queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
-`flux2/*` Qwen selector without overriding shared img2img denoise state. LTX normalization treats `mode` as the canonical owner of txt2vid/img2vid
-state and rewrites the compatibility boolean `useInitImage` from that normalized mode while preserving hidden init-image payload fields.
+`flux2/*` Qwen selector without overriding shared img2img denoise state. LTX normalization treats `mode` as the canonical owner of txt2vid/img2vid,
+persists explicit `executionProfile` state, rewrites the compatibility boolean `useInitImage` from that normalized mode, and leaves stale/blank
+profile values visible until the active checkpoint metadata or user choice resolves them truthfully.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -29,6 +30,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanChunkSeedMode` (type): WAN sliding/SVI per-window seed strategy (`fixed|increment|random`).
 - `WanVideoParams` (interface): UI WAN video params (dims/fps/frames + optional init image + img2vid temporal controls + no-stretch guide controls (`img2vidImageScale` + crop offsets) + output/interpolation + SeedVR2 upscaling controls).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
+- `LtxGenerationMode` (type): LTX video mode discriminator (`txt2vid|img2vid`).
+- `LtxTabParams` (interface): UI LTX video params, including checkpoint-owned `executionProfile` state plus prompt/init-image/video controls.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Flux.2/Chroma/ZImage
   (includes optional family-specific fields like `zimageTurbo`, img2img layout state `img2imgResizeMode`/`img2imgUpscaler`,
@@ -204,8 +207,7 @@ export interface LtxTabParams {
   frames: number
   steps: number
   cfgScale: number
-  sampler: string
-  scheduler: string
+  executionProfile: string
   seed: number
   checkpoint: string
   vae: string
@@ -328,7 +330,7 @@ type ModelTabsStorageState = {
 
 export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v2'
 const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
-const TAB_PARAMS_SCHEMA_VERSION = 1
+const TAB_PARAMS_SCHEMA_VERSION = 2
 
 const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'schemaVersion',
@@ -390,8 +392,7 @@ const LTX_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'frames',
   'steps',
   'cfgScale',
-  'sampler',
-  'scheduler',
+  'executionProfile',
   'seed',
   'checkpoint',
   'vae',
@@ -505,9 +506,15 @@ function defaultParams<T extends BaseTabType>(
   }
 
   if (type === 'ltx2') {
-    const samplingDefaults = fallbackSamplingDefaultsForTabFamily('ltx2')
-    const resolvedSampler = String(opts?.sampler || '').trim() || samplingDefaults.sampler
-    const resolvedScheduler = String(opts?.scheduler || '').trim() || samplingDefaults.scheduler
+    const capsStore = useEngineCapabilitiesStore()
+    const ltxExecutionSurface = capsStore.getLtxExecutionSurface('ltx2')
+    const defaultProfile = String(ltxExecutionSurface?.default_execution_profile || '').trim()
+    const defaultSteps = defaultProfile
+      ? ltxExecutionSurface?.default_steps_by_profile[defaultProfile] ?? 30
+      : 30
+    const defaultGuidance = defaultProfile
+      ? ltxExecutionSurface?.default_guidance_scale_by_profile[defaultProfile] ?? 4
+      : 4
     const ltxDefaults: TabParamsByType['ltx2'] = {
       schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
       mode: 'txt2vid',
@@ -517,10 +524,9 @@ function defaultParams<T extends BaseTabType>(
       height: 512,
       fps: 24,
       frames: 121,
-      steps: 3,
-      cfgScale: 1,
-      sampler: resolvedSampler,
-      scheduler: resolvedScheduler,
+      steps: defaultSteps,
+      cfgScale: defaultGuidance,
+      executionProfile: '',
       seed: -1,
       checkpoint: '',
       vae: '',
@@ -682,8 +688,14 @@ function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams 
   merged.frames = normalizePositiveInt(merged.frames, defaults.frames)
   merged.steps = normalizePositiveInt(merged.steps, defaults.steps)
   merged.cfgScale = Number.isFinite(Number(merged.cfgScale)) ? Number(merged.cfgScale) : defaults.cfgScale
-  merged.sampler = String(merged.sampler || '').trim() || defaults.sampler
-  merged.scheduler = String(merged.scheduler || '').trim() || defaults.scheduler
+  merged.executionProfile = String(merged.executionProfile || '').trim()
+  if (!merged.executionProfile) {
+    const legacySampler = String(patch.sampler || '').trim().toLowerCase()
+    const legacyScheduler = String(patch.scheduler || '').trim().toLowerCase()
+    if (legacySampler && !(legacySampler === 'euler' && (legacyScheduler === '' || legacyScheduler === 'simple'))) {
+      merged.executionProfile = legacySampler
+    }
+  }
   merged.seed = Number.isFinite(Number(merged.seed)) ? Math.trunc(Number(merged.seed)) : defaults.seed
   merged.checkpoint = String(merged.checkpoint || '').trim()
   merged.vae = String(merged.vae || '').trim()

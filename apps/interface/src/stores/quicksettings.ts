@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeTextEncoderSelectionLabels` (function): Normalizes persisted/current TE override labels, deduping values and capping FLUX.2 to one selector.
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
   setters that call API updates, inventory hydrators (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
-  It also exports checkpoint helpers (`resolveModelInfo`, `requireModelInfo`, `resolveFlux2CheckpointVariant`) so image requests can fail loud on stale checkpoint picks
+  It also exports checkpoint helpers (`resolveModelInfo`, `requireModelInfo`, `resolveFlux2CheckpointVariant`, `resolveLtxCheckpointExecutionMetadata`) so image/video requests can fail loud on stale checkpoint picks
   and FLUX.2 guidance semantics can be derived from the selected model without extra request fields.
 */
 
@@ -110,6 +110,45 @@ function normalizeFlux2Variant(value: unknown): 'distilled' | 'base' | null {
   if (normalized === 'distilled' || normalized === 'klein') return 'distilled'
   if (FLUX2_BASE_VARIANT_MARKERS.some((marker) => normalized.includes(marker))) return 'base'
   return null
+}
+
+export type LtxCheckpointKind = 'dev' | 'distilled' | 'unknown'
+
+export interface LtxCheckpointExecutionMetadata {
+  checkpointKind: LtxCheckpointKind
+  allowedExecutionProfiles: string[]
+  defaultExecutionProfile: string | null
+  defaultSteps: number | null
+  defaultGuidanceScale: number | null
+}
+
+function normalizeLtxCheckpointKind(value: unknown): LtxCheckpointKind | null {
+  const normalized = normalizePath(String(value || '')).toLowerCase()
+  if (normalized === 'dev' || normalized === 'distilled' || normalized === 'unknown') return normalized
+  return null
+}
+
+function parseLtxExecutionProfiles(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    const normalized = String(entry || '').trim()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out
+}
+
+function parseOptionalNonNegativeInteger(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) return null
+  return value
+}
+
+function parseOptionalNonNegativeNumber(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null
+  return value
 }
 
 function appendUniqueCandidate(target: string[], seen: Set<string>, value: unknown): void {
@@ -914,6 +953,32 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     return 'distilled'
   }
 
+  function resolveLtxCheckpointExecutionMetadata(
+    source: string | ModelInfo | null | undefined,
+  ): LtxCheckpointExecutionMetadata | null {
+    const model = typeof source === 'string' ? resolveModelInfo(source) : source
+    if (!model) return null
+    const metadata = isRecordObject(model.metadata) ? model.metadata : null
+    if (!metadata) return null
+
+    const checkpointKind = normalizeLtxCheckpointKind(metadata.ltx_checkpoint_kind)
+    if (!checkpointKind) return null
+
+    const allowedExecutionProfiles = parseLtxExecutionProfiles(metadata.ltx_allowed_execution_profiles) ?? []
+    const rawDefaultProfile = String(metadata.ltx_default_execution_profile || '').trim()
+    const defaultExecutionProfile = rawDefaultProfile || null
+    const defaultSteps = parseOptionalNonNegativeInteger(metadata.ltx_default_steps)
+    const defaultGuidanceScale = parseOptionalNonNegativeNumber(metadata.ltx_default_guidance_scale)
+
+    return {
+      checkpointKind,
+      allowedExecutionProfiles,
+      defaultExecutionProfile,
+      defaultSteps,
+      defaultGuidanceScale,
+    }
+  }
+
   function resolveModelSha(label: string | null | undefined): string | undefined {
     const raw = String(label || '').trim()
     if (!raw) return undefined
@@ -1191,6 +1256,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     resolveModelInfo,
     requireModelInfo,
     resolveFlux2CheckpointVariant,
+    resolveLtxCheckpointExecutionMetadata,
     resolveModelSha,
     resolveVaeSha,
     requireVaeSelection,

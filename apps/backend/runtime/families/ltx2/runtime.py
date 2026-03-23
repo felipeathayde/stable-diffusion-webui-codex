@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Typed bundle rehydration, native runtime assembly, and run-result contracts for the LTX2 seam.
 Rebuilds the loader-produced LTX2 planning contract from a generic diffusion bundle, assembles the dedicated native
-runtime from local `apps/**` modules (including optional wrapper-backed transformer-core streaming), and normalizes
-execution results into the family-local
+runtime from local `apps/**` modules (including optional wrapper-backed transformer-core streaming), enforces the
+truthful single-lane `euler` / `simple` execution contract, and normalizes execution results into the family-local
 `frames + AudioExportAsset + metadata` contract consumed by the canonical video use-cases.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -45,7 +45,7 @@ from .text_encoder import Ltx2TextEncoderRuntime, load_ltx2_text_encoder_runtime
 logger = logging.getLogger("backend.runtime.families.ltx2.runtime")
 _LTX2_EFFECTIVE_SAMPLER = "euler"
 _LTX2_EFFECTIVE_SCHEDULER = "FlowMatchEulerDiscreteScheduler"
-_LTX2_ALLOWED_SAMPLERS = frozenset({"", "euler", "uni-pc"})
+_LTX2_ALLOWED_SAMPLERS = frozenset({"", "euler"})
 _LTX2_ALLOWED_SCHEDULERS = frozenset({"", "simple"})
 
 
@@ -83,13 +83,12 @@ def _resolve_ltx2_sampler_contract(request: Any) -> tuple[str | None, str | None
     if sampler_requested not in _LTX2_ALLOWED_SAMPLERS:
         raise RuntimeError(
             "LTX2 runtime currently executes on a fixed FlowMatchEulerDiscreteScheduler path. "
-            "Accepted sampler values on this backend-only slice are empty, 'uni-pc' (generic-route default), "
-            f"or 'euler'; got {getattr(request, 'sampler', None)!r}."
+            f"Accepted sampler values on this slice are empty or 'euler'; got {getattr(request, 'sampler', None)!r}."
         )
     if scheduler_requested not in _LTX2_ALLOWED_SCHEDULERS:
         raise RuntimeError(
             "LTX2 runtime currently executes on a fixed FlowMatchEulerDiscreteScheduler path. "
-            "Accepted scheduler values on this backend-only slice are empty or 'simple'; "
+            "Accepted scheduler values on this live slice are empty or 'simple'; "
             f"got {getattr(request, 'scheduler', None)!r}."
         )
 
@@ -99,6 +98,15 @@ def _resolve_ltx2_sampler_contract(request: Any) -> tuple[str | None, str | None
         _LTX2_EFFECTIVE_SAMPLER,
         _LTX2_EFFECTIVE_SCHEDULER,
     )
+
+
+def _read_ltx2_execution_extra(source: Any, key: str) -> str | None:
+    extras = getattr(source, "extras", None)
+    if not isinstance(extras, Mapping):
+        return None
+    raw_value = extras.get(key)
+    normalized = str(raw_value or "").strip()
+    return normalized or None
 
 
 def build_ltx2_run_result(
@@ -458,6 +466,7 @@ def _build_pipeline_metadata(
     *,
     native: Ltx2NativeComponents,
     pipeline_name: str,
+    request: Any,
     plan: Any,
     frame_count: int,
     has_audio: bool,
@@ -482,6 +491,8 @@ def _build_pipeline_metadata(
         "scheduler": scheduler_effective,
         "sampler_effective": sampler_effective,
         "scheduler_effective": scheduler_effective,
+        "ltx_checkpoint_kind": _read_ltx2_execution_extra(request, "ltx_checkpoint_kind"),
+        "ltx_execution_profile": _read_ltx2_execution_extra(request, "ltx_execution_profile"),
         "runtime_impl": native.runtime_impl,
         "transformers_version": native.transformers_version,
     }
@@ -513,6 +524,7 @@ def run_ltx2_txt2vid(
     metadata = _build_pipeline_metadata(
         native=native,
         pipeline_name="ltx2_native_txt2vid",
+        request=request,
         plan=plan,
         frame_count=len(frames),
         has_audio=audio_asset is not None,
@@ -554,6 +566,7 @@ def run_ltx2_img2vid(
     metadata = _build_pipeline_metadata(
         native=native,
         pipeline_name="ltx2_native_img2vid",
+        request=request,
         plan=plan,
         frame_count=len(frames),
         has_audio=audio_asset is not None,

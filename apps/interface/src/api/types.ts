@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Frontend API DTOs and response/payload types.
 Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows), including options revision/apply metadata fields used by strict generation contracts.
-Add-path contracts expose explicit nullable `size_bytes` metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds.
+Add-path contracts expose explicit nullable `size_bytes` metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds, and
+engine capabilities now include the optional nested LTX execution-profile surface used by the current checkpoint-aware LTX defaults lane.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`, including explicit `format` and `core_only` checkpoint selectors.
@@ -41,7 +42,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ObliterateVramRequest` (interface): Request payload for `/api/obliterate-vram`.
 - `ObliterateVramResponse` (interface): `/api/obliterate-vram` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
-- `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features, including recommended sampler/scheduler hint lists.
+- `LtxExecutionSurface` (interface): Optional nested LTX execution-profile/default surface returned under `/api/engines/capabilities`.
+- `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features, including recommended sampler/scheduler hint lists and optional LTX execution-profile metadata.
 - `GuidanceAdvancedCapabilities` (interface): Per-engine support map for advanced CFG/APG controls.
 - `FamilyCapabilities` (interface): Per-family capability flags from backend (`families`) used to gate prompt/clip controls and optional sampler/scheduler support/exclusion lists.
 - `EngineDependencyCheckRow` (interface): One dependency-check row returned by backend readiness contract.
@@ -369,6 +371,13 @@ export interface VersionResponse {
   cuda_version: string | null
 }
 
+export interface LtxExecutionSurface {
+  allowed_execution_profiles: string[]
+  default_execution_profile: string
+  default_steps_by_profile: Record<string, number>
+  default_guidance_scale_by_profile: Record<string, number>
+}
+
 export interface EngineCapabilities {
   supports_txt2img: boolean
   supports_img2img: boolean
@@ -384,6 +393,7 @@ export interface EngineCapabilities {
   default_sampler?: string | null
   default_scheduler?: string | null
   guidance_advanced?: GuidanceAdvancedCapabilities | null
+  ltx_execution_surface?: LtxExecutionSurface | null
 }
 
 export interface GuidanceAdvancedCapabilities {

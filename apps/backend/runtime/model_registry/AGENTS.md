@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-03-11
+Last Review: 2026-03-23
 Status: Draft
 
 ## Purpose
@@ -36,7 +36,8 @@ Status: Draft
 - 2026-03-07: `EngineParamSurface` sampler/scheduler capability fields were renamed to `recommended_samplers` / `recommended_schedulers`; these fields are UI recommendation hints (not engine-level filtering lists). Defaults and recommendations must still stay executable and scheduler-compatible for the live engine path.
 - 2026-03-08: WAN22 semantic capabilities expose recommendation hints as `recommended_samplers=('uni-pc bh2', 'uni-pc', 'euler', 'euler a')` and `recommended_schedulers=('simple',)`, with defaults `default_sampler='uni-pc bh2'` and `default_scheduler='simple'`.
 - 2026-03-07: WAN22 detector now recognizes the current local I2V base surface by `patch_embedding.weight` input channels (`C_in=36` for the 36-channel concat I2V path) instead of relying only on upstream `img_emb.proj.*` keys, which are absent from the current local WAN22 GGUF base artifacts.
-- 2026-03-11: Added strict monolithic LTX2 detection (`detectors/ltx2.py`) and parser dispatch/planner support (`model_parser/families/ltx2.py`) for the backend-only bring-up slice. The detector now accepts connector evidence only under `model.diffusion_model.*`, keeps checkpoint provenance truthful (`repo_hint=None` when filepath evidence is absent), and stays unadvertised until runtime support exists.
+- 2026-03-23: Strict monolithic LTX2 detection (`detectors/ltx2.py`) and parser dispatch/planner support (`model_parser/families/ltx2.py`) are now part of the live advertised `txt2vid` / `img2vid` slice. The detector accepts connector evidence only under `model.diffusion_model.*`, keeps checkpoint provenance truthful (`repo_hint=None` when filepath evidence is absent), and must stay aligned with the live semantic capability surface.
+- 2026-03-23: LTX2 model inventory/capability metadata now includes a checkpoint-aware execution/default seam. `models/registry.py` forwards namespaced per-checkpoint metadata (`ltx_checkpoint_kind`, allowed/default execution profiles, default steps, default guidance), and `capabilities.py` exposes one nested LTX-only `ltx_execution_surface` object under `/api/engines/capabilities`. `unknown` LTX checkpoints stay blocked in this tranche instead of being guessed into executable kinds.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

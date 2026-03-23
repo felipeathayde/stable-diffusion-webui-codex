@@ -11,6 +11,8 @@ Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, 
 and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders. Asset-contract-derived selector
 hints now disappear when checkpoint inventory metadata lacks a valid `core_only` flag, preventing stale UI contract display. FLUX.2 stays
 first-class as the current Klein 4B / base-4B slice (single Qwen3-4B selector, shared-taxonomy img2img/inpaint gating, no FLUX.1 aliasing).
+For LTX, QuickSettings remains the owner of mode + checkpoint/VAE/text-encoder selection only; execution-profile defaults are checkpoint-aware
+workspace state, not a second raw sampler/scheduler control surface in the shared header.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
@@ -1223,7 +1225,7 @@ const filteredVaeChoices = computed(() => {
       .map((v) => String(v.path || ''))
     )
   }
-  const familyChoices = (store.vaeChoices.length ? store.vaeChoices : ['built-in']).filter((value) => {
+  const familyChoices = (store.vaeChoices.length ? store.vaeChoices : ['built-in']).filter((value: string) => {
     const normalized = String(value || '').trim().toLowerCase()
     if (normalized === 'automatic' || normalized === 'built in' || normalized === 'built-in') return true
     if (normalized === 'none') return true
@@ -1246,19 +1248,19 @@ watch(
     const nextVae = canonical.value
     if (canonical.reason === 'fallback') {
       if (String(currentVae || '') === nextVae) return
-      store.setVae(nextVae).catch((error) => {
+      store.setVae(nextVae).catch((error: unknown) => {
         toastQuicksettingsError(error)
       })
       return
     }
     if (String(persistedFamilyVae || '') === nextVae) {
       if (String(currentVae || '') === nextVae) return
-      store.setVae(nextVae).catch((error) => {
+      store.setVae(nextVae).catch((error: unknown) => {
         toastQuicksettingsError(error)
       })
       return
     }
-    store.setVaeForFamily(family, nextVae).catch((error) => {
+    store.setVaeForFamily(family, nextVae).catch((error: unknown) => {
       toastQuicksettingsError(error)
     })
   },
@@ -1292,7 +1294,7 @@ const filteredTextEncoderChoices = computed(() => {
       .map((item) => `zimage/${item.path}`)
   }
   const prefix = fam === 'wan' ? 'wan22/' : `${fam}/`
-  return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
+  return store.textEncoderChoices.filter((name: string) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
 })
 
 const activeImageTab = computed(() => {
@@ -1422,10 +1424,10 @@ const effectiveTextEncoders = computed(() => {
 })
 
 const primaryTextEncoder = computed(() => effectiveTextEncoders.value[0] ?? '')
-const flux1TextEncoders = computed(() => effectiveTextEncoders.value.filter((label) => label.startsWith('flux1/')))
+const flux1TextEncoders = computed(() => effectiveTextEncoders.value.filter((label: string) => label.startsWith('flux1/')))
 const flux1TextEncoderPrimary = computed(() => flux1TextEncoders.value[0] ?? '')
 const flux1TextEncoderSecondary = computed(() => flux1TextEncoders.value[1] ?? '')
-const flux2TextEncoder = computed(() => effectiveTextEncoders.value.find((label) => label.startsWith('flux2/')) ?? '')
+const flux2TextEncoder = computed(() => effectiveTextEncoders.value.find((label: string) => label.startsWith('flux2/')) ?? '')
 
 const effectiveCheckpoint = computed(() => {
   if (isModelTabRoute.value) {
@@ -1912,7 +1914,7 @@ async function updatePrefixedTextEncoders(familyPrefix: 'flux1' | 'flux2', label
     return
   }
   const all = store.currentTextEncoders.slice()
-  const other = all.filter((label) => !String(label || '').startsWith(labelPrefix))
+  const other = all.filter((label: string) => !String(label || '').startsWith(labelPrefix))
   const next = [...other, ...normalizedLabels]
   await store.setTextEncoders(next)
 }
@@ -1936,11 +1938,11 @@ function onPrimaryTextEncoderChange(value: string): void {
   if (fam === 'flux1') {
     const primary = value || ''
     const secondary = flux1TextEncoderSecondary.value || ''
-    updateFlux1TextEncoders(primary, secondary).catch((error) => {
+    updateFlux1TextEncoders(primary, secondary).catch((error: unknown) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   } else if (fam === 'flux2') {
-    updateFlux2TextEncoder(value).catch((error) => {
+    updateFlux2TextEncoder(value).catch((error: unknown) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   } else if (fam === 'ltx2') {
@@ -1951,12 +1953,12 @@ function onPrimaryTextEncoderChange(value: string): void {
         toastModelTabStillLoading()
         return
       }
-      updateLtxTabParams(tab.id, { textEncoder: payload }).catch((error) => {
+      updateLtxTabParams(tab.id, { textEncoder: payload }).catch((error: unknown) => {
         qsToast(error instanceof Error ? error.message : String(error))
       })
       return
     }
-    store.setTextEncoders(payload ? [payload] : []).catch((error) => {
+    store.setTextEncoders(payload ? [payload] : []).catch((error: unknown) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   } else {
@@ -1967,12 +1969,12 @@ function onPrimaryTextEncoderChange(value: string): void {
       return
     }
     if (tab) {
-      updateImageTabParams(tab.id, { textEncoders: payload }).catch((error) => {
+      updateImageTabParams(tab.id, { textEncoders: payload }).catch((error: unknown) => {
         qsToast(error instanceof Error ? error.message : String(error))
       })
       return
     }
-    store.setTextEncoders(payload).catch((error) => {
+    store.setTextEncoders(payload).catch((error: unknown) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   }
@@ -1983,31 +1985,31 @@ function onSecondaryTextEncoderChange(value: string): void {
   if (fam !== 'flux1') return
   const primary = flux1TextEncoderPrimary.value || ''
   const secondary = value || ''
-  updateFlux1TextEncoders(primary, secondary).catch((error) => {
+  updateFlux1TextEncoders(primary, secondary).catch((error: unknown) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }
 
 function onSmartOffloadChange(value: boolean): void {
-  store.setSmartOffload(value).catch((error) => {
+  store.setSmartOffload(value).catch((error: unknown) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }
 
 function onSmartFallbackChange(value: boolean): void {
-  store.setSmartFallback(value).catch((error) => {
+  store.setSmartFallback(value).catch((error: unknown) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }
 
 function onSmartCacheChange(value: boolean): void {
-  store.setSmartCache(value).catch((error) => {
+  store.setSmartCache(value).catch((error: unknown) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }
 
 function onCoreStreamingChange(value: boolean): void {
-  store.setCoreStreaming(value).catch((error) => {
+  store.setCoreStreaming(value).catch((error: unknown) => {
     qsToast(error instanceof Error ? error.message : String(error))
   })
 }

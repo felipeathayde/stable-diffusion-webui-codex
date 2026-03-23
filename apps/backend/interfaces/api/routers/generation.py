@@ -29,7 +29,8 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses backend API-owned WAN video request key allowlists from `interfaces/api/wan_video_request_keys.py`,
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
-The generic LTX video route now owns its own request contract (`32px` geometry, `8n+1` frames, explicit safe defaults) instead of inheriting WAN `%16` / `4n+1` assumptions.
+The generic LTX video route now owns its own request contract (`32px` geometry, `8n+1` frames, explicit safe defaults, `euler` / `simple`,
+negative-seed random semantics, and required `img2vid_init_image`) instead of inheriting WAN `%16` / `4n+1` assumptions.
 FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
 WAN sampler fields are strict at API parse-time: values must resolve to real WAN22 runtime lanes (`uni-pc` with metadata-compatible optional solver hint, `euler`, or `euler a`); scheduler fields remain strict (`simple`) for WAN22 requests.
@@ -2593,7 +2594,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         num_frames: int
         sampler_name: str
         scheduler_name: str
-        seed: int
+        seed: int | None
         guidance_scale: float
 
     def _parse_txt2img_payload_dto(payload: Dict[str, Any]) -> _Txt2ImgPayloadDTO:
@@ -3083,10 +3084,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def _validate_ltx2_generic_video_sampler_field(field_name: str, value: str) -> str:
         normalized = str(value or "").strip().lower()
-        if normalized not in {"euler", "uni-pc"}:
+        if normalized != "euler":
             raise HTTPException(
                 status_code=400,
-                detail=f"'{field_name}' for engine 'ltx2' must be 'euler' or 'uni-pc', got {value!r}.",
+                detail=f"'{field_name}' for engine 'ltx2' must be 'euler', got {value!r}.",
             )
         return normalized
 
@@ -3119,7 +3120,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 detail=f"'{task}_num_frames' must satisfy 8n+1, got {frames}.",
             )
 
-    def _parse_ltx2_generic_video_core_dto(payload: Dict[str, Any], *, task_prefix: str) -> _VideoCoreDTO:
+    def _parse_ltx2_generic_video_core_dto(
+        payload: Dict[str, Any],
+        *,
+        task_prefix: str,
+        default_steps: int,
+        default_cfg_scale: float,
+        default_sampler: str = "euler",
+        default_scheduler: str = "simple",
+    ) -> _VideoCoreDTO:
         prompt_key = f"{task_prefix}_prompt"
         negative_prompt_key = f"{task_prefix}_neg_prompt"
         width_key = f"{task_prefix}_width"
@@ -3137,16 +3146,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         width_val = _require_int_field(payload, width_key, minimum=32, maximum=8192) if width_key in payload else 768
         height_val = _require_int_field(payload, height_key, minimum=32, maximum=8192) if height_key in payload else 512
         _ltx2_require_dims_multiple_of_32(task=task_prefix, width=width_val, height=height_val)
-        steps_val = _require_int_field(payload, steps_key, minimum=1) if steps_key in payload else 30
+        steps_val = _require_int_field(payload, steps_key, minimum=1) if steps_key in payload else int(default_steps)
         fps_val = _require_int_field(payload, fps_key, minimum=1) if fps_key in payload else 24
         frames_val = _require_int_field(payload, frames_key, minimum=9, maximum=401) if frames_key in payload else 121
         _ltx2_require_frames_8n_plus_1(task=task_prefix, frames=frames_val)
-        sampler_name = _require_str_field(payload, sampler_key) if sampler_key in payload else "euler"
-        scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else "simple"
+        sampler_name = _require_str_field(payload, sampler_key) if sampler_key in payload else str(default_sampler)
+        scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else str(default_scheduler)
         sampler_name = _validate_ltx2_generic_video_sampler_field(sampler_key, sampler_name)
         scheduler_name = _validate_ltx2_generic_video_scheduler_field(scheduler_key, scheduler_name)
-        seed_val = _require_int_field(payload, seed_key) if seed_key in payload else -1
-        guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else 7.0
+        seed_raw = _require_int_field(payload, seed_key) if seed_key in payload else -1
+        seed_val = None if seed_raw < 0 else seed_raw
+        guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else float(default_cfg_scale)
 
         return _VideoCoreDTO(
             prompt=prompt,
@@ -3166,7 +3176,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
         _reject_unknown_keys(payload, _TXT2VID_GENERIC_ALLOWED_KEYS, "txt2vid")
         if _canonical_engine_key(engine_key) == "ltx2":
-            return _parse_ltx2_generic_video_core_dto(payload, task_prefix="txt2vid")
+            raise RuntimeError("LTX2 generic txt2vid parsing requires checkpoint-owned defaults before parse.")
         return _parse_video_core_dto(
             payload,
             task_prefix='txt2vid',
@@ -3186,7 +3196,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
         _reject_unknown_keys(payload, _IMG2VID_GENERIC_ALLOWED_KEYS, "img2vid")
         if _canonical_engine_key(engine_key) == "ltx2":
-            return _parse_ltx2_generic_video_core_dto(payload, task_prefix="img2vid")
+            raise RuntimeError("LTX2 generic img2vid parsing requires checkpoint-owned defaults before parse.")
         return _parse_video_core_dto(
             payload,
             task_prefix='img2vid',
@@ -3206,6 +3216,58 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         for key in ("model_sha", "checkpoint_core_only", "model_format", "vae_sha", "tenc_sha", "lora_sha"):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
+
+    def _resolve_generic_video_checkpoint_contract(
+        *,
+        payload: Mapping[str, Any],
+        extras: Dict[str, Any],
+        engine_key: str,
+    ) -> tuple[str, Any]:
+        from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
+        from apps.backend.runtime.models import api as _models_api
+
+        _copy_generic_video_asset_selector_fields(payload=payload, extras=extras)
+        model_ref = _resolve_model_ref_from_sha_or_name(
+            model_override=payload.get("model"),
+            extras=extras,
+            field_prefix="",
+            models_api=_models_api,
+        )
+        checkpoint_record = _models_api.find_checkpoint(model_ref)
+        if checkpoint_record is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Selected checkpoint not found for engine '{engine_key}': {model_ref}",
+            )
+        _apply_asset_contract_to_extras(
+            engine_id=engine_key,
+            checkpoint_record=checkpoint_record,
+            extras=extras,
+            field_prefix="",
+            require_explicit_checkpoint_contract=False,
+            resolve_asset_by_sha=resolve_asset_by_sha,
+            resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+        )
+        _apply_gguf_video_runtime_controls_from_payload(payload=payload, extras=extras)
+        return model_ref, checkpoint_record
+
+    def _require_ltx2_checkpoint_execution_defaults(*, checkpoint_record: Any) -> Any:
+        from apps.backend.runtime.model_registry.ltx2_execution import (
+            LTX2_KIND_UNKNOWN,
+            resolve_ltx2_checkpoint_execution_defaults,
+        )
+
+        defaults = resolve_ltx2_checkpoint_execution_defaults(checkpoint_record)
+        if defaults.checkpoint_kind == LTX2_KIND_UNKNOWN:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Selected LTX2 checkpoint is unsupported by the current executable tranche: "
+                    f"{getattr(checkpoint_record, 'title', getattr(checkpoint_record, 'name', '<unknown>'))!r}. "
+                    "The checkpoint classified as 'unknown' from local signals and is blocked until a truthful lane exists."
+                ),
+            )
+        return defaults
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
@@ -3897,7 +3959,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
         wan_metadata_dir: str | None = None
         expected_unipc_solver_hint: str | None = None
-        if use_generic_video_route:
+        extras: Dict[str, Any] = {}
+        model_ref: str | None = None
+        if use_generic_video_route and video_engine_key == "ltx2":
+            model_ref, checkpoint_record = _resolve_generic_video_checkpoint_contract(
+                payload=payload,
+                extras=extras,
+                engine_key=video_engine_key,
+            )
+            ltx_defaults = _require_ltx2_checkpoint_execution_defaults(checkpoint_record=checkpoint_record)
+            extras["ltx_checkpoint_kind"] = ltx_defaults.checkpoint_kind
+            extras["ltx_execution_profile"] = ltx_defaults.default_execution_profile
+            parsed = _parse_ltx2_generic_video_core_dto(
+                payload,
+                task_prefix="txt2vid",
+                default_steps=int(ltx_defaults.default_steps),
+                default_cfg_scale=float(ltx_defaults.default_guidance_scale),
+            )
+        elif use_generic_video_route:
             parsed = _parse_generic_txt2vid_core_dto(payload, engine_key=video_engine_key)
         else:
             wan_metadata_dir = _resolve_wan_metadata_dir(payload)
@@ -3921,7 +4000,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         seed_val = parsed.seed
         cfg_val = parsed.guidance_scale
 
-        extras: Dict[str, Any] = {}
         if "video_return_frames" in payload:
             raw_return_frames = payload.get("video_return_frames")
             if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
@@ -3971,32 +4049,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if video_upscaling is not None:
             extras["video_upscaling"] = video_upscaling
         if use_generic_video_route:
-            from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
-            from apps.backend.runtime.models import api as _models_api
-
-            _copy_generic_video_asset_selector_fields(payload=payload, extras=extras)
-            model_ref = _resolve_model_ref_from_sha_or_name(
-                model_override=payload.get("model"),
-                extras=extras,
-                field_prefix="",
-                models_api=_models_api,
-            )
-            checkpoint_record = _models_api.find_checkpoint(model_ref)
-            if checkpoint_record is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Selected checkpoint not found for engine '{video_engine_key}': {model_ref}",
+            if model_ref is None:
+                model_ref, _checkpoint_record = _resolve_generic_video_checkpoint_contract(
+                    payload=payload,
+                    extras=extras,
+                    engine_key=video_engine_key,
                 )
-            _apply_asset_contract_to_extras(
-                engine_id=video_engine_key,
-                checkpoint_record=checkpoint_record,
-                extras=extras,
-                field_prefix="",
-                require_explicit_checkpoint_contract=False,
-                resolve_asset_by_sha=resolve_asset_by_sha,
-                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
-            )
-            _apply_gguf_video_runtime_controls_from_payload(payload=payload, extras=extras)
             smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
             req = Txt2VidRequest(
                 task=TaskType.TXT2VID,
@@ -4208,7 +4266,30 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
         wan_metadata_dir: str | None = None
         expected_unipc_solver_hint: str | None = None
-        if use_generic_video_route:
+        init_image_data = payload.get('img2vid_init_image')
+        if use_generic_video_route and (not isinstance(init_image_data, str) or not init_image_data.strip()):
+            raise HTTPException(
+                status_code=400,
+                detail="'img2vid_init_image' is required for engine 'ltx2'.",
+            )
+        extras: Dict[str, Any] = {}
+        model_ref: str | None = None
+        if use_generic_video_route and video_engine_key == "ltx2":
+            model_ref, checkpoint_record = _resolve_generic_video_checkpoint_contract(
+                payload=payload,
+                extras=extras,
+                engine_key=video_engine_key,
+            )
+            ltx_defaults = _require_ltx2_checkpoint_execution_defaults(checkpoint_record=checkpoint_record)
+            extras["ltx_checkpoint_kind"] = ltx_defaults.checkpoint_kind
+            extras["ltx_execution_profile"] = ltx_defaults.default_execution_profile
+            parsed = _parse_ltx2_generic_video_core_dto(
+                payload,
+                task_prefix="img2vid",
+                default_steps=int(ltx_defaults.default_steps),
+                default_cfg_scale=float(ltx_defaults.default_guidance_scale),
+            )
+        elif use_generic_video_route:
             parsed = _parse_generic_img2vid_core_dto(payload, engine_key=video_engine_key)
         else:
             wan_metadata_dir = _resolve_wan_metadata_dir(payload)
@@ -4232,10 +4313,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         seed_val = parsed.seed
         cfg_val = parsed.guidance_scale
 
-        init_image_data = payload.get('img2vid_init_image')
         init_image = media.decode_image(init_image_data) if init_image_data else None
 
-        extras: Dict[str, Any] = {}
         if "video_return_frames" in payload:
             raw_return_frames = payload.get("video_return_frames")
             if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
@@ -4284,32 +4363,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if video_upscaling is not None:
             extras["video_upscaling"] = video_upscaling
         if use_generic_video_route:
-            from apps.backend.inventory.cache import resolve_asset_by_sha, resolve_vae_path_by_sha
-            from apps.backend.runtime.models import api as _models_api
-
-            _copy_generic_video_asset_selector_fields(payload=payload, extras=extras)
-            model_ref = _resolve_model_ref_from_sha_or_name(
-                model_override=payload.get("model"),
-                extras=extras,
-                field_prefix="",
-                models_api=_models_api,
-            )
-            checkpoint_record = _models_api.find_checkpoint(model_ref)
-            if checkpoint_record is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Selected checkpoint not found for engine '{video_engine_key}': {model_ref}",
+            if model_ref is None:
+                model_ref, _checkpoint_record = _resolve_generic_video_checkpoint_contract(
+                    payload=payload,
+                    extras=extras,
+                    engine_key=video_engine_key,
                 )
-            _apply_asset_contract_to_extras(
-                engine_id=video_engine_key,
-                checkpoint_record=checkpoint_record,
-                extras=extras,
-                field_prefix="",
-                require_explicit_checkpoint_contract=False,
-                resolve_asset_by_sha=resolve_asset_by_sha,
-                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
-            )
-            _apply_gguf_video_runtime_controls_from_payload(payload=payload, extras=extras)
             smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
             req = Img2VidRequest(
                 task=TaskType.IMG2VID,
@@ -4668,6 +4727,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, engine_key, model_ref
+
+    def validate_pre_task_img2vid_payload(payload: Dict[str, Any]) -> None:
+        video_engine_key = _canonical_engine_key(payload.get("engine")) if payload.get("engine") is not None else ""
+        use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
+        if not use_generic_video_route:
+            return
+        init_image_data = payload.get("img2vid_init_image")
+        if not isinstance(init_image_data, str) or not init_image_data.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="'img2vid_init_image' is required for engine 'ltx2'.",
+            )
 
     def _resolve_vid2vid_input_path(raw: str, *, field: str) -> str:
         """Resolve a user-supplied input path safely (root-scoped).
@@ -5230,6 +5301,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _enforce_generation_settings_contract(payload)
         _validate_route_engine_capability(payload, route_mode=GenerationRouteMode.IMG2VID)
         _reject_legacy_wan_request_key_aliases(payload, context="img2vid")
+        validate_pre_task_img2vid_payload(payload)
 
         device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.IMG2VID)
         loop = asyncio.get_running_loop()

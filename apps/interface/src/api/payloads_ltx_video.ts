@@ -8,14 +8,16 @@ Required Notice: see NOTICE
 
 Purpose: Zod-validated payload schemas + builders for the generic LTX video lane (`/api/txt2vid` + `/api/img2vid`).
 Defines the strict payload contracts used by the dedicated LTX frontend path, validating exact device/settings revision, geometry, and frame-count
-inputs against the real backend-supported domain while failing loud on unsupported sampler/scheduler assumptions.
+inputs against the real backend-supported domain while deriving the canonical `euler` / `simple` request lane from the selected checkpoint-aware
+execution profile instead of exposing a second raw sampler/scheduler authority seam.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LTX_DIM_ALIGNMENT` (const): Spatial alignment required by the active LTX generic-video contract.
 - `LTX_DIM_MIN` / `LTX_DIM_MAX` (const): Supported LTX dimension bounds.
 - `LTX_FRAME_ALIGNMENT` (const): Frame-count alignment required by the active LTX generic-video contract.
 - `LTX_FRAMES_MIN` / `LTX_FRAMES_MAX` (const): Supported LTX frame-count bounds.
-- `LTX_ALLOWED_SAMPLERS` (const): Generic-video sampler lanes accepted by the current LTX backend contract.
+- `LTX_ALLOWED_EXECUTION_PROFILES` (const): Truthful public execution profiles exposed by the current LTX frontend contract.
+- `LTX_ALLOWED_SAMPLERS` (const): Derived generic-video sampler lane accepted by the current LTX backend contract.
 - `LTX_CANONICAL_SCHEDULER` (const): Canonical scheduler accepted by the current LTX backend contract.
 - `LtxTxt2VidPayloadSchema` (const): Zod schema for generic `/api/txt2vid` LTX requests.
 - `LtxImg2VidPayloadSchema` (const): Zod schema for generic `/api/img2vid` LTX requests.
@@ -25,11 +27,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `LtxTxt2VidInput` (interface): Common txt2vid input.
 - `LtxImg2VidInput` (interface): Img2vid input including init image data.
 - `normalizeDevice` (function): Validates and normalizes a device token.
-- `normalizeSettingsRevision` (function): Normalizes unknown revision input into a non-negative integer.
+- `requireSettingsRevision` (function): Validates unknown revision input as a non-negative integer without synthesizing fallback values.
 - `requireLtxDim` (function): Validates that a dimension already satisfies the strict LTX `32px` contract.
 - `requireLtxFrameCount` (function): Validates that a frame count already satisfies the strict LTX `8n+1` contract.
-- `normalizeLtxSampler` (function): Enforces the currently supported generic-video sampler lanes.
-- `normalizeLtxScheduler` (function): Enforces the canonical generic-video scheduler.
+- `requirePositiveInt` (function): Validates an already-normalized positive integer field without dispatch-time fallback coercion.
+- `requireFiniteNumber` (function): Validates an already-normalized finite numeric field without dispatch-time fallback coercion.
+- `requireLtxSeed` (function): Validates the LTX seed field as an integer, preserving the visible negative random sentinel.
+- `normalizeLtxExecutionProfile` (function): Enforces the currently supported LTX execution profiles.
+- `resolveLtxSamplingFromExecutionProfile` (function): Derives sampler/scheduler from the selected LTX execution profile.
 - `buildLtxTxt2VidPayload` (function): Builds a validated generic txt2vid payload for engine `ltx2`.
 - `buildLtxImg2VidPayload` (function): Builds a validated generic img2vid payload for engine `ltx2`.
 */
@@ -45,9 +50,11 @@ export const LTX_FRAME_ALIGNMENT = 8
 export const LTX_FRAMES_MIN = 9
 export const LTX_FRAMES_MAX = 401
 
-export const LTX_ALLOWED_SAMPLERS = ['uni-pc', 'euler'] as const
+export const LTX_ALLOWED_EXECUTION_PROFILES = ['one_stage', 'distilled'] as const
+export const LTX_ALLOWED_SAMPLERS = ['euler'] as const
 export const LTX_CANONICAL_SCHEDULER = 'simple' as const
 
+const LtxExecutionProfileEnum = z.enum(LTX_ALLOWED_EXECUTION_PROFILES)
 const LtxSamplerEnum = z.enum(LTX_ALLOWED_SAMPLERS)
 const LtxSchedulerEnum = z.literal(LTX_CANONICAL_SCHEDULER)
 const Sha256Schema = z
@@ -134,8 +141,7 @@ export interface LtxVideoCommonInput {
   frames: number
   steps: number
   cfgScale: number
-  sampler: string
-  scheduler: string
+  executionProfile: string
   seed: number
   textEncoderSha: string
   vaeSha?: string | null | undefined
@@ -156,21 +162,25 @@ export function normalizeDevice(device: string): LtxTxt2VidPayload['device'] {
   throw new Error(`Unsupported device '${device}'`)
 }
 
-export function normalizeSettingsRevision(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.trunc(value))
+export function requireSettingsRevision(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0) {
+    return value
+  }
   if (typeof value === 'string') {
     const trimmed = value.trim()
-    if (/^-?\d+$/.test(trimmed)) return Math.max(0, Math.trunc(Number(trimmed)))
+    if (/^\d+$/.test(trimmed)) return Number(trimmed)
   }
-  return 0
+  throw new Error(`settings_revision must be a non-negative integer, got ${String(value)}.`)
 }
 
 export function requireLtxDim(rawValue: number, fieldName = 'dimension'): number {
-  const numeric = Number(rawValue)
-  if (!Number.isFinite(numeric)) {
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
     throw new Error(`${fieldName} must be a finite integer, got ${String(rawValue)}.`)
   }
-  const value = Math.trunc(numeric)
+  if (!Number.isInteger(rawValue)) {
+    throw new Error(`${fieldName} must be an integer, got ${String(rawValue)}.`)
+  }
+  const value = rawValue
   if (value < LTX_DIM_MIN || value > LTX_DIM_MAX) {
     throw new Error(`${fieldName} must be within [${LTX_DIM_MIN}, ${LTX_DIM_MAX}], got ${value}.`)
   }
@@ -181,11 +191,13 @@ export function requireLtxDim(rawValue: number, fieldName = 'dimension'): number
 }
 
 export function requireLtxFrameCount(rawValue: number): number {
-  const numeric = Number(rawValue)
-  if (!Number.isFinite(numeric)) {
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
     throw new Error(`frame count must be a finite integer, got ${String(rawValue)}.`)
   }
-  const value = Math.trunc(numeric)
+  if (!Number.isInteger(rawValue)) {
+    throw new Error(`frame count must be an integer, got ${String(rawValue)}.`)
+  }
+  const value = rawValue
   if (value < LTX_FRAMES_MIN || value > LTX_FRAMES_MAX) {
     throw new Error(`frame count must be within [${LTX_FRAMES_MIN}, ${LTX_FRAMES_MAX}], got ${value}.`)
   }
@@ -195,20 +207,65 @@ export function requireLtxFrameCount(rawValue: number): number {
   return value
 }
 
-export function normalizeLtxSampler(rawValue: string): LtxTxt2VidPayload['txt2vid_sampler'] {
+export function requirePositiveInt(rawValue: number, fieldName: string, minimum = 1, maximum?: number): number {
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
+    throw new Error(`${fieldName} must be a finite integer, got ${String(rawValue)}.`)
+  }
+  if (!Number.isInteger(rawValue)) {
+    throw new Error(`${fieldName} must be an integer, got ${String(rawValue)}.`)
+  }
+  const value = rawValue
+  if (value < minimum) {
+    throw new Error(`${fieldName} must be >= ${minimum}, got ${value}.`)
+  }
+  if (maximum !== undefined && value > maximum) {
+    throw new Error(`${fieldName} must be <= ${maximum}, got ${value}.`)
+  }
+  return value
+}
+
+export function requireFiniteNumber(rawValue: number, fieldName: string, minimum?: number, maximum?: number): number {
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
+    throw new Error(`${fieldName} must be a finite number, got ${String(rawValue)}.`)
+  }
+  const value = rawValue
+  if (minimum !== undefined && value < minimum) {
+    throw new Error(`${fieldName} must be >= ${minimum}, got ${value}.`)
+  }
+  if (maximum !== undefined && value > maximum) {
+    throw new Error(`${fieldName} must be <= ${maximum}, got ${value}.`)
+  }
+  return value
+}
+
+export function requireLtxSeed(rawValue: number): number {
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
+    throw new Error(`seed must be a finite integer, got ${String(rawValue)}.`)
+  }
+  if (!Number.isInteger(rawValue)) {
+    throw new Error(`seed must be an integer, got ${String(rawValue)}.`)
+  }
+  return rawValue
+}
+
+export function normalizeLtxExecutionProfile(rawValue: string): z.infer<typeof LtxExecutionProfileEnum> {
   const normalized = String(rawValue || '').trim().toLowerCase()
-  if (LTX_ALLOWED_SAMPLERS.includes(normalized as (typeof LTX_ALLOWED_SAMPLERS)[number])) {
-    return normalized as LtxTxt2VidPayload['txt2vid_sampler']
+  if (LTX_ALLOWED_EXECUTION_PROFILES.includes(normalized as (typeof LTX_ALLOWED_EXECUTION_PROFILES)[number])) {
+    return normalized as z.infer<typeof LtxExecutionProfileEnum>
   }
   throw new Error(
-    `Unsupported LTX sampler '${rawValue}'. Generic video currently accepts only ${LTX_ALLOWED_SAMPLERS.map((value) => `'${value}'`).join(', ')}.`,
+    `Unsupported LTX execution profile '${rawValue}'. LTX currently accepts only ${LTX_ALLOWED_EXECUTION_PROFILES.map((value) => `'${value}'`).join(', ')}.`,
   )
 }
 
-export function normalizeLtxScheduler(rawValue: string): typeof LTX_CANONICAL_SCHEDULER {
-  const normalized = String(rawValue || '').trim().toLowerCase()
-  if (normalized === LTX_CANONICAL_SCHEDULER) return LTX_CANONICAL_SCHEDULER
-  throw new Error(`Unsupported LTX scheduler '${rawValue}'. Generic video currently requires '${LTX_CANONICAL_SCHEDULER}'.`)
+export function resolveLtxSamplingFromExecutionProfile(
+  rawValue: string,
+): { sampler: LtxTxt2VidPayload['txt2vid_sampler']; scheduler: typeof LTX_CANONICAL_SCHEDULER } {
+  normalizeLtxExecutionProfile(rawValue)
+  return {
+    sampler: LTX_ALLOWED_SAMPLERS[0],
+    scheduler: LTX_CANONICAL_SCHEDULER,
+  }
 }
 
 function normalizeOptionalSha(rawValue: string | null | undefined): string | undefined {
@@ -225,7 +282,7 @@ function buildCommonFields(input: LtxVideoCommonInput): Omit<LtxTxt2VidPayload, 
 
   const common: Omit<LtxTxt2VidPayload, 'txt2vid_prompt' | 'txt2vid_neg_prompt' | 'txt2vid_width' | 'txt2vid_height' | 'txt2vid_steps' | 'txt2vid_fps' | 'txt2vid_num_frames' | 'txt2vid_sampler' | 'txt2vid_scheduler' | 'txt2vid_seed' | 'txt2vid_cfg_scale'> = {
     device: normalizeDevice(String(input.device || '')),
-    settings_revision: normalizeSettingsRevision(input.settingsRevision),
+    settings_revision: requireSettingsRevision(input.settingsRevision),
     engine: 'ltx2',
     model,
     tenc_sha: textEncoderSha,
@@ -241,19 +298,20 @@ function buildCommonFields(input: LtxVideoCommonInput): Omit<LtxTxt2VidPayload, 
 }
 
 export function buildLtxTxt2VidPayload(input: LtxTxt2VidInput): LtxTxt2VidPayload {
+  const sampling = resolveLtxSamplingFromExecutionProfile(input.executionProfile)
   const payload: LtxTxt2VidPayload = {
     ...buildCommonFields(input),
     txt2vid_prompt: String(input.prompt || '').trim(),
     txt2vid_neg_prompt: String(input.negativePrompt || '').trim(),
-    txt2vid_width: requireLtxDim(Number(input.width), 'txt2vid_width'),
-    txt2vid_height: requireLtxDim(Number(input.height), 'txt2vid_height'),
-    txt2vid_steps: Math.max(1, Math.trunc(Number(input.steps))),
-    txt2vid_fps: Math.max(1, Math.trunc(Number(input.fps))),
-    txt2vid_num_frames: requireLtxFrameCount(Number(input.frames)),
-    txt2vid_sampler: normalizeLtxSampler(input.sampler),
-    txt2vid_scheduler: normalizeLtxScheduler(input.scheduler),
-    txt2vid_seed: Number.isFinite(Number(input.seed)) ? Math.trunc(Number(input.seed)) : -1,
-    txt2vid_cfg_scale: Number.isFinite(Number(input.cfgScale)) ? Number(input.cfgScale) : 0,
+    txt2vid_width: requireLtxDim(input.width, 'txt2vid_width'),
+    txt2vid_height: requireLtxDim(input.height, 'txt2vid_height'),
+    txt2vid_steps: requirePositiveInt(input.steps, 'txt2vid_steps'),
+    txt2vid_fps: requirePositiveInt(input.fps, 'txt2vid_fps', 1, 240),
+    txt2vid_num_frames: requireLtxFrameCount(input.frames),
+    txt2vid_sampler: sampling.sampler,
+    txt2vid_scheduler: sampling.scheduler,
+    txt2vid_seed: requireLtxSeed(input.seed),
+    txt2vid_cfg_scale: requireFiniteNumber(input.cfgScale, 'txt2vid_cfg_scale', 0),
   }
   return LtxTxt2VidPayloadSchema.parse(payload)
 }
@@ -261,20 +319,21 @@ export function buildLtxTxt2VidPayload(input: LtxTxt2VidInput): LtxTxt2VidPayloa
 export function buildLtxImg2VidPayload(input: LtxImg2VidInput): LtxImg2VidPayload {
   const initImageData = String(input.initImageData || '').trim()
   if (!initImageData) throw new Error('Select an initial image for img2vid.')
+  const sampling = resolveLtxSamplingFromExecutionProfile(input.executionProfile)
 
   const payload: LtxImg2VidPayload = {
     ...buildCommonFields(input),
     img2vid_prompt: String(input.prompt || '').trim(),
     img2vid_neg_prompt: String(input.negativePrompt || '').trim(),
-    img2vid_width: requireLtxDim(Number(input.width), 'img2vid_width'),
-    img2vid_height: requireLtxDim(Number(input.height), 'img2vid_height'),
-    img2vid_steps: Math.max(1, Math.trunc(Number(input.steps))),
-    img2vid_fps: Math.max(1, Math.trunc(Number(input.fps))),
-    img2vid_num_frames: requireLtxFrameCount(Number(input.frames)),
-    img2vid_sampler: normalizeLtxSampler(input.sampler),
-    img2vid_scheduler: normalizeLtxScheduler(input.scheduler),
-    img2vid_seed: Number.isFinite(Number(input.seed)) ? Math.trunc(Number(input.seed)) : -1,
-    img2vid_cfg_scale: Number.isFinite(Number(input.cfgScale)) ? Number(input.cfgScale) : 0,
+    img2vid_width: requireLtxDim(input.width, 'img2vid_width'),
+    img2vid_height: requireLtxDim(input.height, 'img2vid_height'),
+    img2vid_steps: requirePositiveInt(input.steps, 'img2vid_steps'),
+    img2vid_fps: requirePositiveInt(input.fps, 'img2vid_fps', 1, 240),
+    img2vid_num_frames: requireLtxFrameCount(input.frames),
+    img2vid_sampler: sampling.sampler,
+    img2vid_scheduler: sampling.scheduler,
+    img2vid_seed: requireLtxSeed(input.seed),
+    img2vid_cfg_scale: requireFiniteNumber(input.cfgScale, 'img2vid_cfg_scale', 0),
     img2vid_init_image: initImageData,
   }
   return LtxImg2VidPayloadSchema.parse(payload)

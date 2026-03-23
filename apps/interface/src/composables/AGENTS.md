@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-03-21
+Last Review: 2026-03-23
 Status: Active
 
 ## Purpose
@@ -11,7 +11,7 @@ Status: Active
 - 2026-03-21: `useGeneration(tabId)` now normalizes img2img resize mode against the active engine contract and emits top-level `img2img_resize_mode` only for unmasked ZImage img2img, matching the truthful pixel-space resize modes owned by `runtime/pipeline_stages/image_init.py`.
 - 2026-03-20: `useGeneration(tabId)` now delegates explicit image selector/extras resolution to `utils/image_request_contract.ts`; checkpoint metadata validation, FLUX.2 guidance-mode resolution, asset-contract lookup, required `tenc_sha`/`vae_sha`, `vae_source`, and ZImage variant extras must stay owned by that shared helper instead of drifting back into the composable.
 - 2026-03-20: `useGeneration(tabId)` now requires canonical checkpoint inventory metadata (`hash`, `format`, `core_only`) and emits explicit image selectors `model_sha`, `checkpoint_core_only`, `model_format`, and `vae_source`; masked img2img remains request-owned, not model-class inferred.
-- 2026-03-20: `useLtxVideoGeneration(tabId)` now preflights the strict LTX generic-video contract before submit: dimensions must already be divisible by `32`, frame counts must already satisfy `8n+1`, and invalid LTX tab state blocks generation instead of being snapped silently by the composable.
+- 2026-03-23: `useLtxVideoGeneration(tabId)` now preflights the strict LTX generic-video contract before submit and requires checkpoint-scoped execution metadata: dimensions must already be divisible by `32`, frame counts must already satisfy `8n+1`, `steps` / `fps` / `seed` must already be exact integers, `cfgScale` must already be finite and `>= 0`, `unknown` checkpoints are blocked, and the chosen `executionProfile` must be both explicit and allowed by the selected checkpoint metadata instead of being silently synthesized by the composable or payload builder.
 - `useGeneration(tabId)` builds txt2img payloads for model tabs using tab-scoped selections (`tab.params.checkpoint`, `tab.params.textEncoders`). It fails fast when no checkpoint is selected and when required `tenc_sha` values can’t be resolved (engine requires TE, including Flux/ZImage, or a GGUF checkpoint is selected).
 - 2025-12-28: `useGeneration(tabId)` now propagates tab-scoped `batchCount`/`batchSize` into txt2img/img2img payloads (previously fixed to 1×1) and tracks `progress`/`info`/`gentimeMs` for the image-tabs Results UI.
 - 2025-12-28: `useGeneration(tabId)` now maintains a small per-tab image run history (task id + params snapshot) and exposes `loadHistory/clearHistory` so views can render a History panel.

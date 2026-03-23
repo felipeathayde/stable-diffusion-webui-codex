@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Checkpoint picker modal (QuickSettings models list).
-Provides a searchable checkpoint list sourced from the quicksettings store and applies the selected checkpoint before closing.
+Provides a searchable checkpoint list sourced from the quicksettings store and applies the selected checkpoint before closing; checkpoint-scoped
+metadata/default derivation stays in stores/composables instead of being reimplemented in this modal.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CheckpointModal` (component): Modal for selecting a checkpoint from the known models list.
@@ -57,7 +58,7 @@ const q = ref('')
 const filtered = computed(() => {
   const query = q.value.toLowerCase().trim()
   if (!query) return qs.models
-  return qs.models.filter((m) => m.title.toLowerCase().includes(query) || m.model_name.toLowerCase().includes(query))
+  return qs.models.filter((m: { title: string; model_name: string }) => m.title.toLowerCase().includes(query) || m.model_name.toLowerCase().includes(query))
 })
 
 async function apply(title: string): Promise<void> {

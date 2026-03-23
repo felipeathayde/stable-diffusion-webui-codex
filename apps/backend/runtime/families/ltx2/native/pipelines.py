@@ -9,10 +9,13 @@ Required Notice: see NOTICE
 Purpose: Native LTX2 txt2vid/img2vid execution helpers.
 Owns direct native execution against loaded LTX2 components (text encoder, connectors, transformer, VAEs, vocoder,
 and native FlowMatch-Euler scheduler), including deterministic generation-boundary cleanup for streamed transformers,
-returns raw `(video, audio)` tuples that runtime.py can normalize into the family-local result contract, and threads the
-explicit zero-timestep decode input required by timestep-conditioned LTX video VAEs.
+truthful request-owned seed/guidance handling, returns raw `(video, audio)` tuples that runtime.py can normalize into
+the family-local result contract, and threads the explicit zero-timestep decode input required by timestep-conditioned
+LTX video VAEs.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_build_seed_generator` (function): Normalize LTX native seed ownership into truthful generator-or-random semantics.
+- `_resolve_guidance_scale` (function): Preserve explicit `cfg_scale=0` while defaulting only missing guidance values.
 - `run_ltx2_txt2vid_native` (function): Execute the native LTX2 txt2vid path and return raw `(video, audio)`.
 - `run_ltx2_img2vid_native` (function): Execute the native LTX2 img2vid path and return raw `(video, audio)`.
 """
@@ -27,6 +30,7 @@ from PIL import Image
 import torch
 import torch.nn.functional as F
 
+from apps.backend.runtime.model_registry.ltx2_execution import LTX2_PROFILE_DISTILLED
 from .scheduler import Ltx2FlowMatchEulerScheduler
 from .text import encode_ltx2_prompt_pair
 
@@ -40,10 +44,30 @@ def _resolve_device(native: Any) -> torch.device:
 def _build_seed_generator(seed: int | None, *, device: torch.device) -> torch.Generator | None:
     if seed is None:
         return None
+    seed_value = int(seed)
+    if seed_value < 0:
+        raise RuntimeError(f"LTX2 native seed must be >= 0 or None, got {seed_value}.")
     generator_device = device.type if device.type == "cuda" else "cpu"
     generator = torch.Generator(device=generator_device)
-    generator.manual_seed(int(seed))
+    generator.manual_seed(seed_value)
     return generator
+
+
+def _resolve_execution_profile(request: Any) -> str | None:
+    extras = getattr(request, "extras", None)
+    if not isinstance(extras, Mapping):
+        return None
+    normalized = str(extras.get("ltx_execution_profile") or "").strip()
+    return normalized or None
+
+
+def _resolve_guidance_scale(request: Any) -> float:
+    guidance_scale = getattr(request, "guidance_scale", None)
+    if guidance_scale is None:
+        if _resolve_execution_profile(request) == LTX2_PROFILE_DISTILLED:
+            return 1.0
+        return 4.0
+    return float(guidance_scale)
 
 def _resolve_dtype(native: Any) -> torch.dtype:
     native_dtype = getattr(native, "torch_dtype", None)
@@ -836,7 +860,7 @@ def run_ltx2_txt2vid_native(
             num_frames=int(getattr(plan, "frames", 0) or 0),
             frame_rate=float(int(getattr(plan, "fps", 0) or 0)),
             num_inference_steps=int(getattr(plan, "steps", 0) or 0),
-            guidance_scale=float(getattr(request, "guidance_scale", 4.0) or 4.0),
+            guidance_scale=_resolve_guidance_scale(request),
             init_image=None,
             generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
         )
@@ -862,7 +886,7 @@ def run_ltx2_img2vid_native(
             num_frames=int(getattr(plan, "frames", 0) or 0),
             frame_rate=float(int(getattr(plan, "fps", 0) or 0)),
             num_inference_steps=int(getattr(plan, "steps", 0) or 0),
-            guidance_scale=float(getattr(request, "guidance_scale", 4.0) or 4.0),
+            guidance_scale=_resolve_guidance_scale(request),
             init_image=init_image,
             generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
         )

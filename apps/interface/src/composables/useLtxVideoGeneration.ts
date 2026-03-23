@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Dedicated LTX video generation composable for the generic backend video contract.
 Owns per-tab runtime state for `ltx2` txt2vid/img2vid runs, validates LTX-specific frontend assumptions against the backend capability/asset
-contracts, preflights the strict LTX geometry/frame contract (`32px` dimensions, `8n+1` frames), builds generic payloads, starts `/api/txt2vid`
-or `/api/img2vid` tasks, and consumes task SSE events to surface progress/results.
+contracts, preflights the strict LTX request contract (`32px` dimensions, `8n+1` frames, integer `steps` / `fps` / `seed`, finite `cfgScale`),
+builds generic payloads, starts `/api/txt2vid` or `/api/img2vid` tasks, and consumes task SSE events to surface progress/results.
 Unlike the WAN composable, this lane has no queue/history/stage orchestration; it stays fail-loud on unsupported generic-video assumptions.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -32,10 +32,12 @@ import {
   buildLtxImg2VidPayload,
   buildLtxTxt2VidPayload,
   normalizeDevice,
+  normalizeLtxExecutionProfile,
+  requireFiniteNumber,
   requireLtxDim,
   requireLtxFrameCount,
-  normalizeLtxSampler,
-  normalizeLtxScheduler,
+  requireLtxSeed,
+  requirePositiveInt,
   type LtxImg2VidPayload,
   type LtxTxt2VidPayload,
   type LtxVideoCommonInput,
@@ -251,10 +253,12 @@ export function useLtxVideoGeneration(tabId: string) {
     return params.value?.useInitImage ? 'img2vid' : 'txt2vid'
   })
   const engineSurface = computed(() => engineCaps.get('ltx2'))
+  const ltxExecutionSurface = computed(() => engineCaps.getLtxExecutionSurface('ltx2'))
   const dependencyStatus = computed(() => engineCaps.getDependencyStatus('ltx2'))
   const dependencyError = computed(() => engineCaps.firstDependencyError('ltx2'))
   const checkpoint = computed(() => String(params.value?.checkpoint || '').trim())
   const checkpointCoreOnly = computed(() => Boolean(checkpoint.value) && quicksettings.isModelCoreOnly(checkpoint.value))
+  const checkpointExecutionMetadata = computed(() => quicksettings.resolveLtxCheckpointExecutionMetadata(checkpoint.value))
   const assetContract = computed(() => engineCaps.getAssetContract('ltx2', { checkpointCoreOnly: checkpointCoreOnly.value }))
 
   void engineCaps.init().catch(() => {
@@ -318,6 +322,26 @@ export function useLtxVideoGeneration(tabId: string) {
 
     const checkpointLabel = String(currentParams.checkpoint || '').trim()
     if (!checkpointLabel) return 'Select an LTX checkpoint in QuickSettings.'
+    const checkpointExecution = quicksettings.resolveLtxCheckpointExecutionMetadata(checkpointLabel)
+    if (!checkpointExecution) {
+      return 'LTX checkpoint metadata is missing execution defaults. Refresh inventory and re-select the checkpoint.'
+    }
+    if (checkpointExecution.checkpointKind === 'unknown') {
+      return 'Selected LTX checkpoint is not executable on the current LTX tranche.'
+    }
+    const currentProfile = String(currentParams.executionProfile || '').trim()
+    if (!currentProfile) return 'Select an LTX execution profile for this checkpoint.'
+    try {
+      normalizeLtxExecutionProfile(currentProfile)
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    if (!checkpointExecution.allowedExecutionProfiles.includes(currentProfile)) {
+      return `Execution profile '${currentProfile}' is unsupported for the selected LTX checkpoint.`
+    }
+    if (!ltxExecutionSurface.value) {
+      return "Capabilities for 'ltx2' are missing execution-profile metadata."
+    }
 
     try {
       normalizeDevice(quicksettings.currentDevice || 'cpu')
@@ -325,28 +349,37 @@ export function useLtxVideoGeneration(tabId: string) {
       return error instanceof Error ? error.message : String(error)
     }
     try {
-      requireLtxDim(Number(currentParams.width), 'Width')
+      requireLtxDim(currentParams.width, 'Width')
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
     try {
-      requireLtxDim(Number(currentParams.height), 'Height')
+      requireLtxDim(currentParams.height, 'Height')
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
     try {
-      requireLtxFrameCount(Number(currentParams.frames))
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error)
-    }
-
-    try {
-      normalizeLtxSampler(currentParams.sampler)
+      requireLtxFrameCount(currentParams.frames)
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
     try {
-      normalizeLtxScheduler(currentParams.scheduler)
+      requirePositiveInt(currentParams.steps, 'Steps')
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    try {
+      requirePositiveInt(currentParams.fps, 'FPS', 1, 240)
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    try {
+      requireLtxSeed(currentParams.seed)
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    try {
+      requireFiniteNumber(currentParams.cfgScale, 'CFG Scale', 0)
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
@@ -389,6 +422,17 @@ export function useLtxVideoGeneration(tabId: string) {
     const checkpointLabel = String(currentParams.checkpoint || '').trim()
     if (!checkpointLabel) throw new Error('Select an LTX checkpoint in QuickSettings.')
     const modelSha = quicksettings.resolveModelSha(checkpointLabel)
+    const checkpointExecution = quicksettings.resolveLtxCheckpointExecutionMetadata(checkpointLabel)
+    if (!checkpointExecution) {
+      throw new Error('LTX checkpoint metadata is missing execution defaults. Refresh inventory and re-select the checkpoint.')
+    }
+    if (checkpointExecution.checkpointKind === 'unknown') {
+      throw new Error('Selected LTX checkpoint is not executable on the current LTX tranche.')
+    }
+    const executionProfile = normalizeLtxExecutionProfile(currentParams.executionProfile)
+    if (!checkpointExecution.allowedExecutionProfiles.includes(executionProfile)) {
+      throw new Error(`Execution profile '${executionProfile}' is unsupported for the selected LTX checkpoint.`)
+    }
 
     const contract = assetContract.value
     if (!contract) throw new Error("Asset contract for 'ltx2' is not available.")
@@ -427,8 +471,7 @@ export function useLtxVideoGeneration(tabId: string) {
       frames: currentParams.frames,
       steps: currentParams.steps,
       cfgScale: currentParams.cfgScale,
-      sampler: currentParams.sampler,
-      scheduler: currentParams.scheduler,
+      executionProfile,
       seed: currentParams.seed,
       textEncoderSha,
       vaeSha: resolvedVaeSha,
@@ -716,6 +759,8 @@ export function useLtxVideoGeneration(tabId: string) {
     checkpoint,
     checkpointCoreOnly,
     engineSurface,
+    ltxExecutionSurface,
+    checkpointExecutionMetadata,
     dependencyStatus,
     dependencyError,
     assetContract,

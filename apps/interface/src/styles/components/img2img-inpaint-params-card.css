@@ -34,6 +34,8 @@
     background: hsla(2, 92%, 58%, 0.45);
     -webkit-mask-image: var(--img2img-mask-src);
     mask-image: var(--img2img-mask-src);
+    -webkit-mask-mode: luminance;
+    mask-mode: luminance;
     -webkit-mask-position: center;
     mask-position: center;
     -webkit-mask-repeat: no-repeat;

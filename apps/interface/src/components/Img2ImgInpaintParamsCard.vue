@@ -11,7 +11,7 @@ Groups img2img controls (initial image) and optional inpaint controls (canvas-ma
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
-Saved inpaint masks can preview their hard mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail, anchored to the same image-bounds wrapper as the base preview.
+Saved inpaint masks can preview their hard mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail, anchored to the same image-bounds wrapper as the base preview, with footer legend copy that makes the final blue crop box explicit in the UI.
 Init-image filename captions are centered in the footer area for clearer media identification.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onMaskEditorExternalReset` (function): Forwards editor reset notices for parent-side toasts.
 - `loadMaskPreviewPlaneFromSource` (function): Decodes the saved mask PNG into a binary plane for preview geometry.
 - `previewOverlaySource` (ref): Cached RGBA data URL for the inline thumbnail hard-mask + blur-spill preview.
+- `previewHasBlurSpill` (ref): Tracks whether the current preview overlay actually contains outward blur spill beyond the hard mask.
 - `schedulePreviewOverlaySourceRender` (function): Coalesces thumbnail overlay raster updates after mask/blur changes.
 - `previewCropStyle` (computed): Expresses the effective masked-region crop box directly in image-space percentages inside the thumbnail wrapper.
 -->
@@ -79,6 +80,28 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </template>
       <template #footer>
+        <div v-if="useMask && (previewOverlaySource || previewCropStyle)" class="img2img-preview-legend">
+          <span v-if="previewOverlaySource" class="caption img2img-preview-legend__item">
+            <span class="img2img-preview-legend__swatch img2img-preview-legend__swatch--mask" aria-hidden="true" />
+            <span>Mask</span>
+          </span>
+          <span v-if="previewHasBlurSpill" class="caption img2img-preview-legend__item">
+            <span class="img2img-preview-legend__swatch img2img-preview-legend__swatch--blur" aria-hidden="true" />
+            <span>Blur range</span>
+          </span>
+          <HoverTooltip
+            v-if="previewCropStyle"
+            class="img2img-preview-legend__tooltip"
+            :title="INPAINT_PARAMETER_TOOLTIPS.previewCrop.title"
+            :content="INPAINT_PARAMETER_TOOLTIPS.previewCrop.content"
+          >
+            <span class="caption img2img-preview-legend__item img2img-preview-legend__item--interactive">
+              <span class="img2img-preview-legend__swatch img2img-preview-legend__swatch--crop" aria-hidden="true" />
+              <span>Final inpaint crop</span>
+              <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+            </span>
+          </HoverTooltip>
+        </div>
         <p v-if="initImageName" class="caption img2img-caption img2img-caption--init-name">{{ initImageName }}</p>
       </template>
     </InitialImageCard>
@@ -261,10 +284,19 @@ const INPAINT_PARAMETER_TOOLTIPS = {
       'Requires batch size = 1, does not work with Invert mask, and unsupported engines still fail loud.',
     ],
   },
+  previewCrop: {
+    title: 'Final inpaint crop',
+    content: [
+      'The blue box marks the final crop region used by the inpaint-only-masked pass.',
+      '[[Includes:]] mask bounds, mask blur support, masked padding, and the final aspect-ratio expansion for processing.',
+      '[[Padding 0:]] the box can still stay visible or grow when Mask blur is above 0, because blur expands before padding is applied.',
+    ],
+  },
   maskedPadding: {
     title: 'Masked padding',
     content: [
-      'Extra context around the masked crop used by the inpaint-only-masked pass.',
+      'Adds extra context after the blurred mask bounds are computed for the inpaint-only-masked pass.',
+      '[[Blue box:]] shows the final crop after mask blur support, masked padding, and aspect-ratio expansion.',
       '[[Increase:]] gives the model more surrounding context and can reduce seam pressure, but reprocesses a larger area.',
       '[[Decrease:]] keeps the edit tighter and faster, but can starve edge context and make seams harsher.',
     ],
@@ -273,6 +305,7 @@ const INPAINT_PARAMETER_TOOLTIPS = {
     title: 'Mask blur',
     content: [
       'Softens the mask edge before the inpaint crop and conditioning bundle are prepared.',
+      '[[Blue box:]] can enlarge the final inpaint crop even when Masked padding is 0, because blur expands the crop seed first.',
       '[[Increase:]] widens the transition band and can hide hard cut lines, but lets the edit spill farther past the exact mask.',
       '[[Decrease:]] keeps the edit tighter to the painted mask, but edges can look harsher or more cut out.',
     ],
@@ -334,6 +367,7 @@ const maskEditorOpen = ref(false)
 const previewMaskPlane = ref<Uint8Array | null>(null)
 const previewMaskDecodeToken = ref(0)
 const previewOverlaySource = ref('')
+const previewHasBlurSpill = ref(false)
 let previewOverlayRenderRafId = 0
 let previewOverlayCanvas: HTMLCanvasElement | null = null
 
@@ -389,11 +423,13 @@ watch(
       cancelPreviewOverlaySourceRender()
       previewMaskPlane.value = null
       previewOverlaySource.value = ''
+      previewHasBlurSpill.value = false
       return
     }
     cancelPreviewOverlaySourceRender()
     previewMaskPlane.value = null
     previewOverlaySource.value = ''
+    previewHasBlurSpill.value = false
     void loadMaskPreviewPlaneFromSource(source, imageWidth, imageHeight)
       .then((maskPlane) => {
         if (previewMaskDecodeToken.value !== token) return
@@ -402,6 +438,7 @@ watch(
       .catch((error) => {
         if (previewMaskDecodeToken.value !== token) return
         previewMaskPlane.value = null
+        previewHasBlurSpill.value = false
         console.error('[Img2ImgInpaintParamsCard] Failed to decode saved mask preview.', error)
       })
   },
@@ -449,6 +486,7 @@ function renderPreviewOverlaySource(): void {
   const imageHeight = Math.trunc(props.imageHeight)
   if (!maskPlane || imageWidth <= 0 || imageHeight <= 0) {
     previewOverlaySource.value = ''
+    previewHasBlurSpill.value = false
     return
   }
 
@@ -469,6 +507,7 @@ function renderPreviewOverlaySource(): void {
       : new Uint8ClampedArray(imageWidth * imageHeight * 4)
 
     let hasVisiblePixel = false
+    let hasBlurSpill = false
     for (let pixel = 0; pixel < maskPlane.length; pixel += 1) {
       const baseIndex = pixel * 4
       if (maskPlane[pixel] > 0) {
@@ -481,11 +520,13 @@ function renderPreviewOverlaySource(): void {
       }
       if (rgba[baseIndex + 3] > 0) {
         hasVisiblePixel = true
+        hasBlurSpill = true
       }
     }
 
     if (!hasVisiblePixel) {
       previewOverlaySource.value = ''
+      previewHasBlurSpill.value = false
       return
     }
 
@@ -493,8 +534,10 @@ function renderPreviewOverlaySource(): void {
     imageData.data.set(rgba)
     context.putImageData(imageData, 0, 0)
     previewOverlaySource.value = canvas.toDataURL('image/png')
+    previewHasBlurSpill.value = hasBlurSpill
   } catch (error) {
     previewOverlaySource.value = ''
+    previewHasBlurSpill.value = false
     console.error('[Img2ImgInpaintParamsCard] Failed to render inpaint thumbnail preview source.', error)
   }
 }

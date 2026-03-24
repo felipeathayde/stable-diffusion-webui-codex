@@ -15,7 +15,7 @@ Init-image filename captions are centered in the footer area for clearer media i
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
-- `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select and slider controls.
+- `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select, slider, and split-toggle controls.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `InitialImageCard` zoom overlay.
 - `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent WAN state.
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
@@ -122,15 +122,22 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <div class="gc-col gc-col--presets img2img-mask-toggle-col">
-          <button
-            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-            type="button"
-            :aria-pressed="maskRegionSplit"
-            :disabled="disabled"
-            @click="emit('toggle:maskRegionSplit')"
+          <HoverTooltip
+            class="cdx-slider-field__label-tooltip"
+            :title="INPAINT_PARAMETER_TOOLTIPS.splitMaskRegions.title"
+            :content="INPAINT_PARAMETER_TOOLTIPS.splitMaskRegions.content"
+            :wrapperFocusable="false"
           >
-            Split mask regions
-          </button>
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="maskRegionSplit"
+              :disabled="disabled"
+              @click="emit('toggle:maskRegionSplit')"
+            >
+              Split mask regions
+            </button>
+          </HoverTooltip>
         </div>
       </div>
 
@@ -203,26 +210,35 @@ const INPAINT_PARAMETER_TOOLTIPS = {
     title: 'Masked content',
     content: [
       'Chooses how the masked area is initialized before sampling.',
-      'Original: starts from the current image crop.',
-      'Fill: replaces the masked area with a blur-smear fill scaffold from surrounding pixels.',
-      'Latent noise: injects fresh latent noise inside the mask for a stronger redraw.',
-      'Latent nothing: zeros the masked latent, usually the most destructive reset.',
+      '[[Original:]] starts from the current image crop.',
+      '[[Fill:]] replaces the masked area with a blur-smear fill scaffold from surrounding pixels.',
+      '[[Latent noise:]] injects fresh latent noise inside the mask for a stronger redraw.',
+      '[[Latent nothing:]] zeros the masked latent, usually the most destructive reset.',
+    ],
+  },
+  splitMaskRegions: {
+    title: 'Split mask regions',
+    content: [
+      'Runs disconnected mask islands as separate inpaint passes instead of one combined masked region.',
+      '[[Enabled:]] isolated holes stay decoupled, which can reduce one region bleeding into another.',
+      '[[Disabled:]] the full masked area is processed as one region.',
+      'Requires batch size = 1, does not work with Invert mask, and unsupported engines still fail loud.',
     ],
   },
   onlyMaskedPadding: {
     title: 'Only masked padding',
     content: [
       'Extra context around the masked crop used by the inpaint-only-masked pass.',
-      'Increase: gives the model more surrounding context and can reduce seam pressure, but reprocesses a larger area.',
-      'Decrease: keeps the edit tighter and faster, but can starve edge context and make seams harsher.',
+      '[[Increase:]] gives the model more surrounding context and can reduce seam pressure, but reprocesses a larger area.',
+      '[[Decrease:]] keeps the edit tighter and faster, but can starve edge context and make seams harsher.',
     ],
   },
   maskBlur: {
     title: 'Mask blur',
     content: [
       'Softens the mask edge before the inpaint crop and conditioning bundle are prepared.',
-      'Increase: widens the transition band and can hide hard cut lines, but lets the edit spill farther past the exact mask.',
-      'Decrease: keeps the edit tighter to the painted mask, but edges can look harsher or more cut out.',
+      '[[Increase:]] widens the transition band and can hide hard cut lines, but lets the edit spill farther past the exact mask.',
+      '[[Decrease:]] keeps the edit tighter to the painted mask, but edges can look harsher or more cut out.',
     ],
   },
 } as const

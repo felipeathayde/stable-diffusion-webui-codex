@@ -7,10 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + only-masked padding + mask blur + region splitting),
+Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + masked padding + mask blur + region splitting),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
+Saved inpaint masks can preview their hard mask, blur range, and effective masked-region crop directly on the init-image thumbnail.
 Init-image filename captions are centered in the footer area for clearer media identification.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -23,6 +24,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onMaskEditorApply` (function): Emits edited mask data URL produced by the inpaint mask editor overlay.
 - `onInitPreviewClick` (function): Opens the mask editor when inpaint mode is active and an init image is present.
 - `onMaskEditorExternalReset` (function): Forwards editor reset notices for parent-side toasts.
+- `loadMaskPreviewPlaneFromSource` (function): Decodes the saved mask PNG into a binary plane for preview geometry.
+- `schedulePreviewMeasurement` (function): Measures the actual thumbnail box after layout so image-space crop geometry projects truthfully.
+- `previewBlurStyle` (computed): Maps the saved mask source plus scaled blur radius into the inline thumbnail halo overlay.
+- `previewCropStyle` (computed): Projects the effective masked-region crop box into the contained thumbnail image area.
 -->
 
 <template>
@@ -62,11 +67,11 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </template>
       <template #preview-overlay>
-        <div
-          v-if="maskImageData"
-          class="img2img-mask-preview-overlay"
-          :style="{ '--img2img-mask-src': `url('${maskImageData}')` }"
-        />
+        <div v-if="maskImageData" ref="previewOverlayEl" class="img2img-mask-preview-layers">
+          <div v-if="showPreviewBlur" class="img2img-mask-preview-blur" :style="previewBlurStyle" />
+          <div class="img2img-mask-preview-overlay" :style="previewMaskStyle" />
+          <div v-if="previewCropStyle" class="img2img-mask-preview-crop-box" :style="previewCropStyle" />
+        </div>
       </template>
       <template #footer>
         <p v-if="initImageName" class="caption img2img-caption img2img-caption--init-name">{{ initImageName }}</p>
@@ -144,9 +149,9 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="gc-row img2img-mask-slider-row">
         <SliderField
           class="gc-col gc-col--wide"
-          label="Only masked padding"
-          :tooltip="INPAINT_PARAMETER_TOOLTIPS.onlyMaskedPadding.content"
-          :tooltipTitle="INPAINT_PARAMETER_TOOLTIPS.onlyMaskedPadding.title"
+          label="Masked padding"
+          :tooltip="INPAINT_PARAMETER_TOOLTIPS.maskedPadding.content"
+          :tooltipTitle="INPAINT_PARAMETER_TOOLTIPS.maskedPadding.title"
           :modelValue="inpaintFullResPadding"
           :min="0"
           :max="256"
@@ -180,19 +185,31 @@ Symbols (top-level; keep in sync; no ghosts):
       :initial-mask-data="maskImageData"
       :image-width="imageWidth"
       :image-height="imageHeight"
+      :processing-width="effectiveProcessingWidth"
+      :processing-height="effectiveProcessingHeight"
+      :mask-blur="maskBlur"
+      :masked-padding="inpaintFullResPadding"
       @apply="onMaskEditorApply"
       @external-reset="onMaskEditorExternalReset"
+      @update:maskBlur="(value) => emit('update:maskBlur', value)"
+      @update:maskedPadding="(value) => emit('update:inpaintFullResPadding', value)"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
 import InitialImageCard from './InitialImageCard.vue'
 import InpaintMaskEditorOverlay from './ui/InpaintMaskEditorOverlay.vue'
 import HoverTooltip from './ui/HoverTooltip.vue'
 import SliderField from './ui/SliderField.vue'
+import { rgbaToMaskPlane } from './ui/inpaint_mask_editor_engine'
 import WanSubHeader from './wan/WanSubHeader.vue'
+import {
+  computeContainedImageRect,
+  computeInpaintMaskPreviewGeometry,
+  projectImageRectToContainer,
+} from '../utils/inpaint_mask_preview'
 import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
 type MaskEnforcement = 'post_blend' | 'per_step_clamp'
@@ -225,8 +242,8 @@ const INPAINT_PARAMETER_TOOLTIPS = {
       'Requires batch size = 1, does not work with Invert mask, and unsupported engines still fail loud.',
     ],
   },
-  onlyMaskedPadding: {
-    title: 'Only masked padding',
+  maskedPadding: {
+    title: 'Masked padding',
     content: [
       'Extra context around the masked crop used by the inpaint-only-masked pass.',
       '[[Increase:]] gives the model more surrounding context and can reduce seam pressure, but reprocesses a larger area.',
@@ -243,7 +260,7 @@ const INPAINT_PARAMETER_TOOLTIPS = {
   },
 } as const
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   disabled?: boolean
   embedded?: boolean
   sectionTitle?: string
@@ -261,6 +278,8 @@ withDefaults(defineProps<{
   inpaintFullResPadding: number
   maskBlur: number
   maskRegionSplit?: boolean
+  processingWidth?: number
+  processingHeight?: number
   zoomFrameGuide?: WanImg2VidFrameGuideConfig | null
 }>(), {
   disabled: false,
@@ -293,6 +312,161 @@ const emit = defineEmits<{
 }>()
 
 const maskEditorOpen = ref(false)
+const previewOverlayEl = ref<HTMLElement | null>(null)
+const previewContainerWidth = ref(0)
+const previewContainerHeight = ref(0)
+const previewMaskPlane = ref<Uint8Array | null>(null)
+const previewMaskDecodeToken = ref(0)
+let previewResizeObserver: ResizeObserver | null = null
+let previewMeasureRafId = 0
+
+const effectiveProcessingWidth = computed(() => {
+  const width = Number(props.processingWidth)
+  if (Number.isFinite(width) && width > 0) return Math.trunc(width)
+  return Math.max(1, Math.trunc(props.imageWidth))
+})
+
+const effectiveProcessingHeight = computed(() => {
+  const height = Number(props.processingHeight)
+  if (Number.isFinite(height) && height > 0) return Math.trunc(height)
+  return Math.max(1, Math.trunc(props.imageHeight))
+})
+
+const previewGeometry = computed(() => {
+  const maskPlane = previewMaskPlane.value
+  if (!maskPlane) return null
+  try {
+    return computeInpaintMaskPreviewGeometry(maskPlane, {
+      imageWidth: props.imageWidth,
+      imageHeight: props.imageHeight,
+      processingWidth: effectiveProcessingWidth.value,
+      processingHeight: effectiveProcessingHeight.value,
+      maskBlur: props.maskBlur,
+      maskedPadding: props.inpaintFullResPadding,
+    })
+  } catch (error) {
+    console.error('[Img2ImgInpaintParamsCard] Failed to compute inpaint preview geometry.', error)
+    return null
+  }
+})
+
+const containedPreviewRect = computed(() => {
+  if (previewContainerWidth.value <= 0 || previewContainerHeight.value <= 0) return null
+  try {
+    return computeContainedImageRect(
+      previewContainerWidth.value,
+      previewContainerHeight.value,
+      props.imageWidth,
+      props.imageHeight,
+    )
+  } catch (error) {
+    console.error('[Img2ImgInpaintParamsCard] Failed to project inpaint preview into thumbnail.', error)
+    return null
+  }
+})
+
+const previewMaskStyle = computed<CSSProperties>(() => ({
+  '--img2img-mask-src': `url('${props.maskImageData}')`,
+}))
+
+const previewBlurRadiusPx = computed(() => {
+  const containedRect = containedPreviewRect.value
+  if (!containedRect) return 0
+  return Math.max(0, Number(props.maskBlur) || 0) * containedRect.scale
+})
+
+const showPreviewBlur = computed(() => Boolean(props.maskImageData) && previewBlurRadiusPx.value > 0)
+
+const previewBlurStyle = computed<CSSProperties>(() => ({
+  ...previewMaskStyle.value,
+  '--img2img-mask-blur-radius': `${previewBlurRadiusPx.value}px`,
+}))
+
+const previewCropStyle = computed<CSSProperties | null>(() => {
+  const geometry = previewGeometry.value
+  const containedRect = containedPreviewRect.value
+  if (!geometry || !containedRect) return null
+  const projected = projectImageRectToContainer(geometry.cropRegion, containedRect)
+  return {
+    left: `${projected.x1}px`,
+    top: `${projected.y1}px`,
+    width: `${projected.width}px`,
+    height: `${projected.height}px`,
+  }
+})
+
+watch(
+  [() => props.maskImageData, () => props.imageWidth, () => props.imageHeight],
+  ([sourceMask, imageWidth, imageHeight]) => {
+    const token = (previewMaskDecodeToken.value += 1)
+    const source = String(sourceMask || '').trim()
+    if (!source || imageWidth <= 0 || imageHeight <= 0) {
+      previewMaskPlane.value = null
+      return
+    }
+    void loadMaskPreviewPlaneFromSource(source, imageWidth, imageHeight)
+      .then((maskPlane) => {
+        if (previewMaskDecodeToken.value !== token) return
+        previewMaskPlane.value = maskPlane
+      })
+      .catch((error) => {
+        if (previewMaskDecodeToken.value !== token) return
+        previewMaskPlane.value = null
+        console.error('[Img2ImgInpaintParamsCard] Failed to decode saved mask preview.', error)
+      })
+  },
+  { immediate: true },
+)
+
+watch(
+  previewOverlayEl,
+  (element) => {
+    previewResizeObserver?.disconnect()
+    previewResizeObserver = null
+    cancelPreviewMeasurement()
+    if (!element) {
+      previewContainerWidth.value = 0
+      previewContainerHeight.value = 0
+      return
+    }
+    schedulePreviewMeasurement()
+    if (typeof ResizeObserver !== 'undefined') {
+      previewResizeObserver = new ResizeObserver(() => {
+        schedulePreviewMeasurement()
+      })
+      previewResizeObserver.observe(element)
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  previewResizeObserver?.disconnect()
+  previewResizeObserver = null
+  cancelPreviewMeasurement()
+})
+
+function cancelPreviewMeasurement(): void {
+  if (previewMeasureRafId <= 0) return
+  window.cancelAnimationFrame(previewMeasureRafId)
+  previewMeasureRafId = 0
+}
+
+function schedulePreviewMeasurement(): void {
+  cancelPreviewMeasurement()
+  previewMeasureRafId = window.requestAnimationFrame(() => {
+    previewMeasureRafId = 0
+    const element = previewOverlayEl.value
+    if (!element) {
+      previewContainerWidth.value = 0
+      previewContainerHeight.value = 0
+      return
+    }
+    const rect = element.getBoundingClientRect()
+    previewContainerWidth.value = rect.width
+    previewContainerHeight.value = rect.height
+  })
+}
 
 function onMaskEnforcementChange(event: Event): void {
   emit('update:maskEnforcement', (event.target as HTMLSelectElement).value)
@@ -317,6 +491,39 @@ function onMaskEditorExternalReset(message: string): void {
 
 function onZoomFrameGuideUpdate(value: WanImg2VidFrameGuideConfig): void {
   emit('update:zoomFrameGuide', value)
+}
+
+async function loadMaskPreviewPlaneFromSource(
+  sourceMask: string,
+  imageWidth: number,
+  imageHeight: number,
+): Promise<Uint8Array> {
+  const maskImage = await loadMaskPreviewImage(sourceMask)
+  const naturalWidth = maskImage.naturalWidth || maskImage.width
+  const naturalHeight = maskImage.naturalHeight || maskImage.height
+  if (naturalWidth !== imageWidth || naturalHeight !== imageHeight) {
+    throw new Error(`Expected mask preview dimensions ${imageWidth}x${imageHeight}, got ${naturalWidth}x${naturalHeight}.`)
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = imageWidth
+  canvas.height = imageHeight
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) {
+    throw new Error('Failed to create canvas context for saved mask preview decode.')
+  }
+  context.drawImage(maskImage, 0, 0, imageWidth, imageHeight)
+  const rgba = context.getImageData(0, 0, imageWidth, imageHeight).data
+  return rgbaToMaskPlane(rgba, imageWidth, imageHeight)
+}
+
+function loadMaskPreviewImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Failed to decode saved mask preview image.'))
+    image.src = src
+  })
 }
 </script>
 

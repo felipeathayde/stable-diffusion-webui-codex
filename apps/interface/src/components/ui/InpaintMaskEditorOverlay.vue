@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Full-screen inpaint mask editor overlay for img2img/inpaint workflows.
-Provides practical mask tools (brush, eraser, circle, polygon), zoom/pan viewport controls,
+Provides practical mask tools (brush, eraser, circle, polygon), shared blur/padding sliders, zoom/pan viewport controls,
 undo/redo with deep history, mask upload import (auto-stretched to init-image dimensions), and apply/close semantics while
 keeping state presentational (props/emits only).
 
@@ -15,12 +15,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `InpaintMaskEditorOverlay` (component): Full-screen inpaint mask editor overlay.
 - `loadMaskPlaneFromSources` (function): Loads/validates init+mask sources and initializes draft state.
 - `renderMaskCanvas` (function): Renders current draft mask and active shape previews.
+- `renderPreviewCanvas` (function): Renders blur halo and crop-region preview layers from the current working mask.
 - `onStagePointerDown` (function): Handles drawing/panning pointer-down interactions.
 - `onStagePointerMove` (function): Handles drawing/panning pointer-move interactions.
 - `onStagePointerUp` (function): Commits or ends active interactions on pointer-up.
 - `onMaskUploadInputChange` (function): Imports an uploaded mask image, stretches it to canvas dimensions, and commits it to history.
 - `applyDraftMask` (function): Exports current draft mask and emits `apply`.
 - `resetDraftFromSource` (function): Discards local draft and reloads source-derived baseline.
+- `previewCropStyle` (ref): Pixel-space crop-box style for the current effective masked region.
 -->
 
 <template>
@@ -55,10 +57,21 @@ Symbols (top-level; keep in sync; no ghosts):
             @load="onBaseImageLoad"
           >
           <canvas
+            ref="previewCanvasEl"
+            class="inpaint-mask-editor-preview-canvas"
+            :width="imageWidth"
+            :height="imageHeight"
+          />
+          <canvas
             ref="maskCanvasEl"
             class="inpaint-mask-editor-mask-canvas"
             :width="imageWidth"
             :height="imageHeight"
+          />
+          <div
+            v-if="previewCropStyle"
+            class="inpaint-mask-editor-crop-box"
+            :style="previewCropStyle"
           />
           <div
             v-if="showBrushCursor"
@@ -110,6 +123,32 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
 
+      <div class="toolbar-group inpaint-mask-editor-toolbar__param-sliders">
+        <SliderField
+          label="Masked padding"
+          :modelValue="maskedPadding"
+          :min="0"
+          :max="256"
+          :step="1"
+          :inputStep="1"
+          inputClass="cdx-input-w-xs"
+          :disabled="!engine || loadingSource"
+          @update:modelValue="(value) => emit('update:maskedPadding', value)"
+        />
+
+        <SliderField
+          label="Mask blur"
+          :modelValue="maskBlur"
+          :min="0"
+          :max="64"
+          :step="1"
+          :inputStep="1"
+          inputClass="cdx-input-w-xs"
+          :disabled="!engine || loadingSource"
+          @update:modelValue="(value) => emit('update:maskBlur', value)"
+        />
+      </div>
+
       <div class="toolbar-group inpaint-mask-editor-toolbar__actions">
         <button class="btn btn-sm btn-outline" type="button" @click="resetView">Fit</button>
         <button class="btn btn-sm btn-outline" type="button" @click="setZoom(1)">1:1</button>
@@ -148,6 +187,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
+import SliderField from './SliderField.vue'
 import {
   InpaintMaskEditorEngine,
   MASK_VALUE_EMPTY,
@@ -159,6 +199,7 @@ import {
   rgbaToMaskPlane,
   type MaskPoint,
 } from './inpaint_mask_editor_engine'
+import { computeInpaintMaskPreviewGeometry } from '../../utils/inpaint_mask_preview'
 
 type ToolName = 'brush' | 'eraser' | 'circle' | 'polygon'
 
@@ -181,14 +222,24 @@ const props = withDefaults(defineProps<{
   initialMaskData?: string
   imageWidth: number
   imageHeight: number
+  processingWidth?: number
+  processingHeight?: number
+  maskBlur?: number
+  maskedPadding?: number
 }>(), {
   initialMaskData: '',
+  processingWidth: 0,
+  processingHeight: 0,
+  maskBlur: 0,
+  maskedPadding: 0,
 })
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'apply', maskDataUrl: string): void
   (e: 'external-reset', message: string): void
+  (e: 'update:maskBlur', value: number): void
+  (e: 'update:maskedPadding', value: number): void
 }>()
 
 const ZOOM_MIN = 0.1
@@ -212,6 +263,7 @@ const brushSize = ref<number>(32)
 const stageEl = ref<HTMLElement | null>(null)
 const contentEl = ref<HTMLElement | null>(null)
 const initImageEl = ref<HTMLImageElement | null>(null)
+const previewCanvasEl = ref<HTMLCanvasElement | null>(null)
 const maskCanvasEl = ref<HTMLCanvasElement | null>(null)
 const maskUploadInputEl = ref<HTMLInputElement | null>(null)
 
@@ -237,6 +289,20 @@ const strokePoints = ref<MaskPoint[] | null>(null)
 const circlePreview = ref<CirclePreviewState | null>(null)
 const polygonPoints = ref<MaskPoint[]>([])
 const transientMask = ref<Uint8Array | null>(null)
+const previewCropStyle = ref<CSSProperties | null>(null)
+let previewBufferCanvas: HTMLCanvasElement | null = null
+
+const effectiveProcessingWidth = computed(() => {
+  const width = Number(props.processingWidth)
+  if (Number.isFinite(width) && width > 0) return Math.trunc(width)
+  return Math.max(1, Math.trunc(props.imageWidth))
+})
+
+const effectiveProcessingHeight = computed(() => {
+  const height = Number(props.processingHeight)
+  if (Number.isFinite(height) && height > 0) return Math.trunc(height)
+  return Math.max(1, Math.trunc(props.imageHeight))
+})
 
 const isOpen = computed(() => Boolean(props.modelValue) && Boolean(props.initImageData))
 const hasRenderableSource = computed(() => Boolean(props.initImageData) && props.imageWidth > 0 && props.imageHeight > 0)
@@ -293,6 +359,15 @@ watch(
   () => {
     if (!hasInitializedSource.value) return
     void ensureLoadedAndRender(true)
+  },
+)
+
+watch(
+  [() => props.maskBlur, () => props.maskedPadding, () => props.processingWidth, () => props.processingHeight],
+  () => {
+    if (!hasInitializedSource.value) return
+    if (!isOpen.value) return
+    renderMaskCanvas()
   },
 )
 
@@ -418,10 +493,65 @@ function getMaskContext(): CanvasRenderingContext2D | null {
   return canvas.getContext('2d', { willReadFrequently: true })
 }
 
+function getPreviewContext(): CanvasRenderingContext2D | null {
+  const canvas = previewCanvasEl.value
+  if (!canvas) return null
+  return canvas.getContext('2d', { willReadFrequently: true })
+}
+
+function getPreviewBufferContext(width: number, height: number): CanvasRenderingContext2D | null {
+  if (!previewBufferCanvas) {
+    previewBufferCanvas = document.createElement('canvas')
+  }
+  if (previewBufferCanvas.width !== width) previewBufferCanvas.width = width
+  if (previewBufferCanvas.height !== height) previewBufferCanvas.height = height
+  return previewBufferCanvas.getContext('2d', { willReadFrequently: true })
+}
+
+function buildPolygonPreviewPoints(): MaskPoint[] | null {
+  if (activeTool.value !== TOOL_VALUE_POLYGON) return null
+  if (previewPointerPoint.value) {
+    const previewPoints = [
+      ...polygonPoints.value,
+      normalizePoint(previewPointerPoint.value),
+    ]
+    return previewPoints.length >= 3 ? previewPoints : null
+  }
+  return polygonPoints.value.length >= 3 ? polygonPoints.value : null
+}
+
 function resolveWorkingMask(): Uint8Array {
   if (transientMask.value) return transientMask.value
   const current = engine.value?.currentMask
-  return current ? current : new Uint8Array(props.imageWidth * props.imageHeight)
+  const baseMask = current ? current : new Uint8Array(props.imageWidth * props.imageHeight)
+
+  if (activeTool.value === TOOL_VALUE_CIRCLE && circlePreview.value) {
+    const previewMask = new Uint8Array(baseMask)
+    applyCircleToMask(
+      previewMask,
+      props.imageWidth,
+      props.imageHeight,
+      circlePreview.value.center,
+      circlePreview.value.radius,
+      MASK_VALUE_FILLED,
+    )
+    return previewMask
+  }
+
+  const polygonPreviewPoints = buildPolygonPreviewPoints()
+  if (polygonPreviewPoints) {
+    const previewMask = new Uint8Array(baseMask)
+    applyPolygonToMask(
+      previewMask,
+      props.imageWidth,
+      props.imageHeight,
+      polygonPreviewPoints,
+      MASK_VALUE_FILLED,
+    )
+    return previewMask
+  }
+
+  return baseMask
 }
 
 function renderMaskCanvas(): void {
@@ -433,6 +563,7 @@ function renderMaskCanvas(): void {
   if (!context) return
 
   const mask = resolveWorkingMask()
+  renderPreviewCanvas(mask)
   const rgba = new Uint8ClampedArray(width * height * 4)
   for (let pixel = 0; pixel < mask.length; pixel += 1) {
     const baseIndex = pixel * 4
@@ -452,6 +583,63 @@ function renderMaskCanvas(): void {
   context.clearRect(0, 0, width, height)
   context.putImageData(new ImageData(rgba, width, height), 0, 0)
   renderShapePreview(context)
+}
+
+function renderPreviewCanvas(mask: Uint8Array): void {
+  const width = props.imageWidth
+  const height = props.imageHeight
+  const context = getPreviewContext()
+  if (!context) return
+
+  context.clearRect(0, 0, width, height)
+  previewCropStyle.value = null
+
+  let geometry = null
+  try {
+    geometry = computeInpaintMaskPreviewGeometry(mask, {
+      imageWidth: width,
+      imageHeight: height,
+      processingWidth: effectiveProcessingWidth.value,
+      processingHeight: effectiveProcessingHeight.value,
+      maskBlur: props.maskBlur,
+      maskedPadding: props.maskedPadding,
+    })
+  } catch (error) {
+    console.error('[InpaintMaskEditorOverlay] Failed to compute mask preview geometry.', error)
+    return
+  }
+
+  if (!geometry) return
+
+  previewCropStyle.value = {
+    left: `${geometry.cropRegion.x1}px`,
+    top: `${geometry.cropRegion.y1}px`,
+    width: `${geometry.cropRegion.width}px`,
+    height: `${geometry.cropRegion.height}px`,
+  }
+
+  if (!Number.isFinite(props.maskBlur) || Number(props.maskBlur) <= 0) return
+
+  const previewBufferContext = getPreviewBufferContext(width, height)
+  if (!previewBufferContext || !previewBufferCanvas) return
+
+  const rgba = new Uint8ClampedArray(width * height * 4)
+  for (let pixel = 0; pixel < mask.length; pixel += 1) {
+    if (mask[pixel] < MASK_VALUE_FILLED) continue
+    const baseIndex = pixel * 4
+    rgba[baseIndex] = 255
+    rgba[baseIndex + 1] = 178
+    rgba[baseIndex + 2] = 68
+    rgba[baseIndex + 3] = 112
+  }
+
+  previewBufferContext.clearRect(0, 0, width, height)
+  previewBufferContext.putImageData(new ImageData(rgba, width, height), 0, 0)
+
+  context.save()
+  context.filter = `blur(${Math.max(0, Number(props.maskBlur) || 0)}px)`
+  context.drawImage(previewBufferCanvas, 0, 0)
+  context.restore()
 }
 
 function renderShapePreview(context: CanvasRenderingContext2D): void {

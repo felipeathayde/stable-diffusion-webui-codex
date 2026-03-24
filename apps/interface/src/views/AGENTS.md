@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-21
+Last Review: 2026-03-24
 Status: Active
 
 ## Purpose
@@ -11,6 +11,7 @@ Status: Active
 - Views should compose reusable components and stores; avoid duplicating logic that belongs in shared modules.
 - Keep routes documented in `apps/interface/src/router.ts` and the UI taxonomy in `.sangoi/frontend/guidelines/`.
 - 2026-03-21: `ImageModelTab.vue` now snaps ZImage width/height and init-image sync to a `16px` grid, reconciles persisted state on mount/engine switch, and restricts ZImage img2img resize controls to the truthful pixel-space modes the backend currently implements.
+- 2026-03-24: `ImageModelTab.vue` now forwards both natural init-image dimensions and current processing target dimensions into the shared inpaint preview seam so the card/editor crop preview stays aligned with the real generation target.
 - 2026-03-03: `Home.vue` Docs & Help reference paths now point only to repo-shipped docs under `apps/**` and root docs (`SUBSYSTEM-MAP.md`, `apps/**/AGENTS.md`), with no `.sangoi` path mentions.
 - 2026-03-06: `Home.vue` and `ModelsList.vue` tab-creation selectors include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` persists per-tab profiles under a dedicated `flux2` key, preserves capability-driven img2img state, resolves FLUX.2 CFG/negative-prompt semantics from the selected Klein 4B vs base-4B checkpoint, keeps FLUX.2 img2img denoise truthful/visible, and gates img2img hires through shared capability + mask policy (Kontext defaults remain FLUX.1-only).
 - All generation workspaces live under model tabs (`/models/:tabId`):

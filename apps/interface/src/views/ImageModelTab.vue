@@ -10,6 +10,7 @@ Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-fa
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base and FLUX.2 Klein distilled/base-4B are variant-dependent:
 CFG label + negative prompt gating follow the selected checkpoint/tab state, while img2img denoise + hires visibility stay truthful to the active capability/mask contract).
+When inpaint masking is active, it also forwards natural init-image dimensions plus current processing target dimensions to the shared card/editor preview seam.
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with honest img2img control visibility).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
@@ -95,6 +96,8 @@ Symbols (top-level; keep in sync; no ghosts):
             :initImageName="params.initImageName"
             :imageWidth="maskEditorImageWidth"
             :imageHeight="maskEditorImageHeight"
+            :processingWidth="params.width"
+            :processingHeight="params.height"
             :useMask="supportsImg2ImgMasking ? params.useMask : false"
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"

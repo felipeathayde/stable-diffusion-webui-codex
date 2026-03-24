@@ -42,11 +42,12 @@
     gap: 0.45rem;
   }
 
+  .img2img-params-card .img2img-mask-preview-layers,
+  .img2img-params-card .img2img-mask-preview-blur,
   .img2img-params-card .img2img-mask-preview-overlay {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: hsla(2, 92%, 58%, 0.45);
     -webkit-mask-image: var(--img2img-mask-src);
     mask-image: var(--img2img-mask-src);
     -webkit-mask-mode: luminance;
@@ -57,6 +58,31 @@
     mask-repeat: no-repeat;
     -webkit-mask-size: contain;
     mask-size: contain;
+  }
+
+  .img2img-params-card .img2img-mask-preview-layers {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .img2img-params-card .img2img-mask-preview-blur {
+    background: hsla(38, 96%, 60%, 0.34);
+    filter: blur(var(--img2img-mask-blur-radius, 0px));
+    opacity: 0.96;
+    will-change: filter;
+  }
+
+  .img2img-params-card .img2img-mask-preview-overlay {
+    background: hsla(2, 92%, 58%, 0.45);
+  }
+
+  .img2img-params-card .img2img-mask-preview-crop-box {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    border: 0.0625rem solid hsla(197, 92%, 68%, 0.95);
+    background: hsla(197, 92%, 62%, 0.12);
+    box-shadow: 0 0 0 0.0625rem hsla(0, 0%, 0%, 0.35);
   }
 
   .img2img-params-card .img2img-mask-slider-row {

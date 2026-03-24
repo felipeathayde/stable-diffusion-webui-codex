@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-21
+Last Review: 2026-03-24
 Status: Active
 
 ## Purpose
@@ -105,6 +105,7 @@ Status: Active
 - 2026-02-21: `Img2ImgInpaintParamsCard.vue` now integrates `ui/InpaintMaskEditorOverlay.vue` and emits edited-mask data URLs to parent ownership (`apply:maskImageData`), keeping upload + editor paths in parity.
 - 2026-02-21: `Img2ImgInpaintParamsCard.vue` no longer renders a separate mask dropzone selector; when `useMask=true`, mask tools are attached to the init-image section (open editor / clear mask), and mask import happens inside the editor canvas flow.
 - 2026-03-02: `Img2ImgInpaintParamsCard.vue` inpaint enforcement selector now exposes only `Per-step blend` (`per_step_clamp`) and `Post-sample blend` (`post_blend`); `Invert mask` and `Round mask` toggles were removed from the card UI pending a follow-up UX decision. `Clear mask` now renders in the init-image dropzone top-right to the left of `Remove`, the placeholder line `No mask applied. Open the editor to draw or upload.` was removed, preview clicks open the mask editor while inpaint mode is active, and saved masks are overlaid on the init preview in semi-transparent red.
+- 2026-03-24: `Img2ImgInpaintParamsCard.vue` now renames `Only masked padding` to `Masked padding`, previews saved-mask blur range + effective inpaint crop directly on the init-image thumbnail, and forwards optional processing target dimensions to the shared editor/card preview seam without breaking non-mask callers.
 - 2026-02-21: `QuickSettingsBar.vue` no longer exposes Attention Backend controls; attention backend/SDPA policy bootstrap ownership moved to Launcher Runtime tab.
 - 2026-02-21: `QuickSettingsBar.vue` WAN mode handling is now `txt2vid|img2vid` only; legacy `v2v_14b` mapping and `useInitVideo` patching were removed to keep mode semantics aligned with the disabled vid2vid contract.
 - 2026-02-22: `QuickSettingsBar.vue` wires `Obliterate VRAM` to `POST /api/obliterate-vram` with in-flight lock (`isObliteratingVram`) and fail-loud toast/console feedback; UI now surfaces the safe-default behavior (`external_kill_mode='disabled'`) when external GPU processes are only detected (not terminated).

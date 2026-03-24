@@ -23,15 +23,24 @@
   .img2img-params-card .img2img-mask-grid > .img2img-mask-toggle-col {
     flex: 0 0 auto;
     min-width: 0;
-    display: inline-grid;
-    grid-template-columns: minmax(0, max-content);
+    display: flex;
     justify-content: flex-end;
     align-items: start;
     align-self: flex-end;
   }
 
-  .img2img-params-card .img2img-mask-toggle-col .qs-toggle-btn {
-    width: auto;
+  .img2img-params-card .img2img-mask-toggle-stack {
+    display: grid;
+    gap: 0.45rem;
+    width: max-content;
+  }
+
+  .img2img-params-card .img2img-mask-toggle-stack > * {
+    width: 100%;
+  }
+
+  .img2img-params-card .img2img-mask-toggle-stack .qs-toggle-btn {
+    width: 100%;
     justify-content: flex-start;
   }
 

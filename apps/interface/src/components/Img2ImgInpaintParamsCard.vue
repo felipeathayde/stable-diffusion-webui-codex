@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + masked padding + mask blur + region splitting),
+Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + masked padding + mask blur + invert/region-splitting toggles),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
-Saved inpaint masks can preview their hard mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail, anchored to the same image-bounds wrapper as the base preview, with footer legend copy that makes the final blue crop box explicit in the UI.
+Saved inpaint masks can preview their effective mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail, anchored to the same image-bounds wrapper as the base preview, with footer legend copy that makes the final blue crop box explicit in the UI.
 Init-image filename captions are centered in the footer area for clearer media identification.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -25,6 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onInitPreviewClick` (function): Opens the mask editor when inpaint mode is active and an init image is present.
 - `onMaskEditorExternalReset` (function): Forwards editor reset notices for parent-side toasts.
 - `loadMaskPreviewPlaneFromSource` (function): Decodes the saved mask PNG into a binary plane for preview geometry.
+- `effectivePreviewMaskPlane` (computed): Display-only effective mask plane used by the thumbnail overlay/crop preview.
 - `previewOverlaySource` (ref): Cached RGBA data URL for the inline thumbnail hard-mask + blur-spill preview.
 - `previewHasBlurSpill` (ref): Tracks whether the current preview overlay actually contains outward blur spill beyond the hard mask.
 - `schedulePreviewOverlaySourceRender` (function): Coalesces thumbnail overlay raster updates after mask/blur changes.
@@ -155,22 +156,41 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <div class="gc-col gc-col--presets img2img-mask-toggle-col">
-          <HoverTooltip
-            class="cdx-slider-field__label-tooltip"
-            :title="INPAINT_PARAMETER_TOOLTIPS.splitMaskRegions.title"
-            :content="INPAINT_PARAMETER_TOOLTIPS.splitMaskRegions.content"
-            :wrapperFocusable="false"
-          >
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="maskRegionSplit"
-              :disabled="disabled"
-              @click="emit('toggle:maskRegionSplit')"
+          <div class="img2img-mask-toggle-stack">
+            <HoverTooltip
+              class="cdx-slider-field__label-tooltip"
+              :title="INPAINT_PARAMETER_TOOLTIPS.splitMaskRegions.title"
+              :content="INPAINT_PARAMETER_TOOLTIPS.splitMaskRegions.content"
+              :wrapperFocusable="false"
             >
-              Split mask regions
-            </button>
-          </HoverTooltip>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="maskRegionSplit"
+                :disabled="disabled"
+                @click="emit('toggle:maskRegionSplit')"
+              >
+                Split mask regions
+              </button>
+            </HoverTooltip>
+
+            <HoverTooltip
+              class="cdx-slider-field__label-tooltip"
+              :title="INPAINT_PARAMETER_TOOLTIPS.invertMask.title"
+              :content="INPAINT_PARAMETER_TOOLTIPS.invertMask.content"
+              :wrapperFocusable="false"
+            >
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskInvert ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="maskInvert"
+                :disabled="disabled"
+                @click="emit('toggle:maskInvert')"
+              >
+                Invert mask
+              </button>
+            </HoverTooltip>
+          </div>
         </div>
       </div>
 
@@ -217,6 +237,7 @@ Symbols (top-level; keep in sync; no ghosts):
       :processing-height="effectiveProcessingHeight"
       :mask-blur="maskBlur"
       :masked-padding="inpaintFullResPadding"
+      :mask-invert="maskInvert"
       @apply="onMaskEditorApply"
       @external-reset="onMaskEditorExternalReset"
       @update:maskBlur="(value) => emit('update:maskBlur', value)"
@@ -236,6 +257,7 @@ import WanSubHeader from './wan/WanSubHeader.vue'
 import {
   computeInpaintMaskBlurSpillAlphaPlane,
   computeInpaintMaskPreviewGeometry,
+  resolveInpaintDisplayMaskPlane,
   tintAlphaPlaneToRgba,
 } from '../utils/inpaint_mask_preview'
 import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
@@ -284,6 +306,15 @@ const INPAINT_PARAMETER_TOOLTIPS = {
       'Requires batch size = 1, does not work with Invert mask, and unsupported engines still fail loud.',
     ],
   },
+  invertMask: {
+    title: 'Invert mask',
+    content: [
+      'Swaps the editable and preserved sides of the current mask.',
+      '[[Enabled:]] everything outside the painted mask becomes editable, and the thumbnail/editor previews switch to that effective mask immediately.',
+      '[[Disabled:]] only the painted mask stays editable.',
+      'Still incompatible with Split mask regions; that combination keeps failing loud at run time.',
+    ],
+  },
   previewCrop: {
     title: 'Final inpaint crop',
     content: [
@@ -329,6 +360,7 @@ const props = withDefaults(defineProps<{
   inpaintingFill: number
   inpaintFullResPadding: number
   maskBlur: number
+  maskInvert?: boolean
   maskRegionSplit?: boolean
   processingWidth?: number
   processingHeight?: number
@@ -344,6 +376,7 @@ const props = withDefaults(defineProps<{
   maskImageData: '',
   maskImageName: '',
   maskEnforcement: 'per_step_clamp',
+  maskInvert: false,
   maskRegionSplit: false,
   zoomFrameGuide: null,
 })
@@ -359,6 +392,7 @@ const emit = defineEmits<{
   (e: 'update:inpaintingFill', value: number): void
   (e: 'update:inpaintFullResPadding', value: number): void
   (e: 'toggle:maskRegionSplit'): void
+  (e: 'toggle:maskInvert'): void
   (e: 'update:maskBlur', value: number): void
   (e: 'update:zoomFrameGuide', value: WanImg2VidFrameGuideConfig): void
 }>()
@@ -383,8 +417,14 @@ const effectiveProcessingHeight = computed(() => {
   return Math.max(1, Math.trunc(props.imageHeight))
 })
 
-const previewGeometry = computed(() => {
+const effectivePreviewMaskPlane = computed<Uint8Array | Uint8ClampedArray | null>(() => {
   const maskPlane = previewMaskPlane.value
+  if (!maskPlane) return null
+  return resolveInpaintDisplayMaskPlane(maskPlane, props.maskInvert)
+})
+
+const previewGeometry = computed(() => {
+  const maskPlane = effectivePreviewMaskPlane.value
   if (!maskPlane) return null
   try {
     return computeInpaintMaskPreviewGeometry(maskPlane, {
@@ -446,7 +486,7 @@ watch(
 )
 
 watch(
-  [previewMaskPlane, () => props.maskBlur, () => props.imageWidth, () => props.imageHeight],
+  [previewMaskPlane, () => props.maskBlur, () => props.maskInvert, () => props.imageWidth, () => props.imageHeight],
   () => {
     schedulePreviewOverlaySourceRender()
   },
@@ -481,7 +521,7 @@ function getPreviewOverlayCanvas(width: number, height: number): HTMLCanvasEleme
 }
 
 function renderPreviewOverlaySource(): void {
-  const maskPlane = previewMaskPlane.value
+  const maskPlane = effectivePreviewMaskPlane.value
   const imageWidth = Math.trunc(props.imageWidth)
   const imageHeight = Math.trunc(props.imageHeight)
   if (!maskPlane || imageWidth <= 0 || imageHeight <= 0) {

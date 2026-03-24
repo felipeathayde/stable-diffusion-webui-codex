@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22
-Last Review: 2026-03-16
+Last Review: 2026-03-24
 Status: Active
 
 ## Purpose
@@ -37,6 +37,7 @@ Rules:
 - Don’t hard-code colors/shadows in feature CSS. Use existing `--color-*` variables or add a token.
 - When adding a new token, define it in `styles.css` and keep dark-mode parity.
 - For new component/view-scoped tokens, use a `cdx` prefix: `--cdx-<scope>-<name>`.
+- 2026-03-24: `styles/components/img2img-inpaint-params-card.css` now owns the compact stacked toggle lane for `Split mask regions` + `Invert mask`; keep those controls aligned in the first inpaint row instead of reintroducing ad-hoc inline button spacing in the Vue template.
 
 ## Naming (replace “ab” → “cdx”)
 - Avoid creating new unprefixed “global-ish” classes. This repo already has legacy primitives (`.btn`, `.panel`, `.ui-input`, …) — don’t create more.

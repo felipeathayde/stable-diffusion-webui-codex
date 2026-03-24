@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Pure inpaint preview helpers shared by the img2img card and mask editor.
 Mirrors the backend masked-img2img crop math needed for frontend previews and exposes pure frontend raster helpers for
 mask-blur spill visualization: binary mask bbox, blur-support expansion, masked-padding expansion, aspect-preserving
-crop expansion, blur-spill alpha generation, and tint packing.
+crop expansion, blur-spill alpha generation, display-only invert-mask resolution, and tint packing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InpaintMaskPreviewInput` (interface): Input contract for computing preview geometry from a binary mask plane.
@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `InpaintPreviewTint` (interface): RGB + opacity contract for packing a preview alpha plane into RGBA bytes.
 - `computeInpaintMaskPreviewGeometry` (function): Computes blur-support and masked-padding preview geometry from a binary mask plane.
 - `computeInpaintMaskBlurSpillAlphaPlane` (function): Computes the outward-only blur spill alpha plane for a binary mask.
+- `resolveInpaintDisplayMaskPlane` (function): Returns the display-only effective mask plane, with optional grayscale inversion for preview semantics.
 - `tintAlphaPlaneToRgba` (function): Packs an alpha plane into an RGBA buffer using a shared preview tint.
 */
 
@@ -353,6 +354,19 @@ export function computeInpaintMaskBlurSpillAlphaPlane(
     if (alpha > 0) hasVisibleSpill = true
   }
   return hasVisibleSpill ? spillAlpha : null
+}
+
+export function resolveInpaintDisplayMaskPlane(
+  maskPlane: Uint8Array | Uint8ClampedArray,
+  invertMask: boolean,
+): Uint8Array | Uint8ClampedArray {
+  if (!invertMask) return maskPlane
+
+  const effectiveMask = new Uint8Array(maskPlane.length)
+  for (let index = 0; index < maskPlane.length; index += 1) {
+    effectiveMask[index] = 255 - maskPlane[index]
+  }
+  return effectiveMask
 }
 
 export function tintAlphaPlaneToRgba(

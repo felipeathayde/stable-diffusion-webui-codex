@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Full-screen inpaint mask editor overlay for img2img/inpaint workflows.
-Provides practical mask tools (brush, eraser, circle, polygon), shared blur/padding sliders, zoom/pan viewport controls,
-undo/redo with deep history, mask upload import (auto-stretched to init-image dimensions), and apply/close semantics while
-keeping state presentational (props/emits only).
+Provides practical mask tools (brush, eraser, circle, polygon), shared blur/padding sliders, invert-aware preview semantics,
+zoom/pan viewport controls, undo/redo with deep history, mask upload import (auto-stretched to init-image dimensions), and
+apply/close semantics while keeping state presentational (props/emits only).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InpaintMaskEditorOverlay` (component): Full-screen inpaint mask editor overlay.
@@ -202,6 +202,7 @@ import {
 import {
   computeInpaintMaskBlurSpillAlphaPlane,
   computeInpaintMaskPreviewGeometry,
+  resolveInpaintDisplayMaskPlane,
   tintAlphaPlaneToRgba,
 } from '../../utils/inpaint_mask_preview'
 
@@ -237,12 +238,14 @@ const props = withDefaults(defineProps<{
   processingHeight?: number
   maskBlur?: number
   maskedPadding?: number
+  maskInvert?: boolean
 }>(), {
   initialMaskData: '',
   processingWidth: 0,
   processingHeight: 0,
   maskBlur: 0,
   maskedPadding: 0,
+  maskInvert: false,
 })
 
 const emit = defineEmits<{
@@ -373,7 +376,7 @@ watch(
 )
 
 watch(
-  [() => props.maskBlur, () => props.maskedPadding, () => props.processingWidth, () => props.processingHeight],
+  [() => props.maskBlur, () => props.maskedPadding, () => props.maskInvert, () => props.processingWidth, () => props.processingHeight],
   () => {
     if (!hasInitializedSource.value) return
     if (!isOpen.value) return
@@ -563,12 +566,13 @@ function renderMaskCanvas(): void {
   const context = getMaskContext()
   if (!context) return
 
-  const mask = resolveWorkingMask()
-  renderPreviewCanvas(mask)
+  const rawMask = resolveWorkingMask()
+  const displayMask = resolveInpaintDisplayMaskPlane(rawMask, props.maskInvert)
+  renderPreviewCanvas(displayMask)
   const rgba = new Uint8ClampedArray(width * height * 4)
-  for (let pixel = 0; pixel < mask.length; pixel += 1) {
+  for (let pixel = 0; pixel < displayMask.length; pixel += 1) {
     const baseIndex = pixel * 4
-    if (mask[pixel] >= MASK_VALUE_FILLED) {
+    if (displayMask[pixel] >= MASK_VALUE_FILLED) {
       rgba[baseIndex] = 255
       rgba[baseIndex + 1] = 56
       rgba[baseIndex + 2] = 56
@@ -586,7 +590,7 @@ function renderMaskCanvas(): void {
   renderShapePreview(context)
 }
 
-function renderPreviewCanvas(mask: Uint8Array): void {
+function renderPreviewCanvas(mask: Uint8Array | Uint8ClampedArray): void {
   const width = props.imageWidth
   const height = props.imageHeight
   const context = getPreviewContext()

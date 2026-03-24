@@ -97,6 +97,18 @@ Symbols (top-level; keep in sync; no ghosts):
             <option :value="3">Latent nothing</option>
           </select>
         </div>
+
+        <div class="gc-col gc-col--presets img2img-mask-toggle-col">
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :aria-pressed="maskRegionSplit"
+            :disabled="disabled"
+            @click="emit('toggle:maskRegionSplit')"
+          >
+            Split mask regions
+          </button>
+        </div>
       </div>
 
       <div class="gc-row img2img-mask-slider-row">
@@ -125,18 +137,6 @@ Symbols (top-level; keep in sync; no ghosts):
           :disabled="disabled"
           @update:modelValue="(value) => emit('update:maskBlur', value)"
         />
-
-        <div class="gc-col img2img-mask-split-col">
-          <button
-            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-            type="button"
-            :aria-pressed="maskRegionSplit"
-            :disabled="disabled"
-            @click="emit('toggle:maskRegionSplit')"
-          >
-            Split mask regions (ADetailer-style)
-          </button>
-        </div>
       </div>
     </div>
 

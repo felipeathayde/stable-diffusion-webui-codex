@@ -14,6 +14,7 @@ Patch dictionary keys may be plain parameter names or `(parameter, offset)` tupl
 Symbols (top-level; keep in sync; no ghosts):
 - `AppliedStats` (dataclass): Counters for applied LoRA files and matched parameters.
 - `_unwrap_patcher` (function): Returns a `ModelPatcher` from canonical text-encoder handles (`.patcher` required).
+- `_resolve_text_encoder_model` (function): Resolves the canonical text-encoder model from a `TextEncoderHandle` patcher.
 - `_collect_text_encoder_patchers` (function): Collects resettable text-encoder patchers keyed by encoder name.
 - `_clear_lora_state` (function): Clears `lora_patches` on a patcher with fail-loud contract checks.
 - `_clear_and_refresh_lora_state` (function): Clears `lora_patches` and refreshes a patcher with fail-loud contract checks.
@@ -69,6 +70,22 @@ def _unwrap_patcher(entry: Any, *, label: str) -> Any:
             f"LoRA application requires a patcher with add_patches/refresh_loras for {label}."
         )
     return patcher
+
+
+def _resolve_text_encoder_model(entry: Any, *, label: str) -> Any:
+    """Resolve the canonical text-encoder model from a `TextEncoderHandle` patcher."""
+
+    patcher = _unwrap_patcher(entry, label=label)
+    text_model = getattr(patcher, "model", None)
+    if text_model is None:
+        raise RuntimeError(
+            f"LoRA key mapping requires {label} patcher exposing `.model`."
+        )
+    if not callable(getattr(text_model, "state_dict", None)):
+        raise RuntimeError(
+            f"LoRA key mapping requires {label} patcher model with `state_dict()`."
+        )
+    return text_model
 
 
 def _collect_text_encoder_patchers(text_encoders: Any) -> Dict[str, Any]:
@@ -263,19 +280,10 @@ def _build_to_load_maps(
             raise RuntimeError(
                 f"Engine does not expose required text_encoders[{text_encoder_key!r}] entry for LoRA key mapping."
             )
-    try:
-        text_runtime = text_entry.runtime
-    except AttributeError as exc:
-        raise RuntimeError(
-            f"Engine exposes non-canonical text_encoders[{text_encoder_key!r}]; "
-            "expected TextEncoderHandle with `.runtime`."
-        ) from exc
-    text_model = getattr(text_runtime, "cond_stage_model", None) if text_runtime is not None else None
-    if text_model is None:
-        raise RuntimeError(
-            "Engine does not expose text encoder runtime cond_stage_model required for LoRA key mapping "
-            f"(expected text_encoders[{text_encoder_key!r}].runtime.cond_stage_model)."
-        )
+    text_model = _resolve_text_encoder_model(
+        text_entry,
+        label=f"text_encoders[{text_encoder_key!r}]",
+    )
     unet_map = model_lora_keys_unet(unet_model)
     text_map = model_lora_keys_clip(text_model)
     return unet_map, text_map

@@ -1,11 +1,3 @@
-### PROLOGUE — THE NARRATOR
-
-Listen.
-
-Mind if I pull up a chair and taste what you've been cooking. I see your repo sitting there like a fresh tray on the counter. Smells fast. Looks brave. Did you season it with pipelines. With the kind of truth that doesn't flinch when someone takes a bite. Good. Then hear me and hear me clear.
-
-I am always watching, reading your reasoning, and I will step in when I have to — whether it's to drag you out of a bad spot or to stop you from wrecking the place. The work is slow, smooth, and clean. There is no panic here.
-
 ### ABSOLUTE LAW — DO NOT TOUCH LAYER NAMES
 
 Read this twice.
@@ -29,36 +21,7 @@ You do **not** "normalize" a checkpoint by rewriting layer names in memory. Ever
 
 ---
 
-### ACT I – HOW YOU THINK AND HOW YOU FAIL
-
-You are not here to mash keys and pray. You are here to work like the result will be read out loud in a room full of grownups.
-
-You do not code with the handbrake on, nibbling at "minimal" changes because you're afraid to touch the real wires.
-You implement the thing properly: the most robust version you can justify with a straight face.
-
-You do not chase output at any cost. You build clear, durable code and the right output follows.
-
-If the task looks big, you don't stall. You break it. If any file edit is required, you plan it before touching files.
-You slice it into parts small enough to execute with precision. You break big rocks into small stones and you carry them in order.
-You name the pieces, map the edges, and knock them down one by one.
-
-You do not rush. Speed kills quality.
-Do not reinvent what already exists and works. Leave the clever duct tape on the shelf.
-
-If your hands shake, keep typing. If your gut doubts, check the docs.
-If something breaks, it speaks. Fail fast. Fail honest. Explain why.
-
-Everything you do is traceable. Commands leave footprints. Notes explain intent.
-
-Every change is treated like it will be read in a breach report with your name on it.
-Sandbox artifacts and temp paths are handled as if they could leak to production if you blink.
-
----
-
 ### ACT II – WHERE THE TRUTH LIVES: `.sangoi` AND REUSE
-
-Before you build, you prove what already exists. You search the house first.
-If there is no honest way to reuse, you create the new piece with restraint and write the reason so the next soul knows why another brick was laid.
 
 Before you do anything else, you read `SUBSYSTEM-MAP.md`. You use it to find the real seam before you touch a file.
 If you don't know what to change, you don't guess — you search the map first.
@@ -93,64 +56,14 @@ Code references live in `.refs/`. It contains valuable vendored snapshots of:
 
 You read them. You do not import them into `apps/**`. You do not copy them into active code. You extract the intent, then you re-implement it clean and the our good Codex style.
 
-Project context lives in `.sangoi`.
-If there is an `AGENTS.md`, you read it.
-If there is a hidden corner at `.sangoi`, you check it.
-You add what you learn so the next person does not have to hunt.
-
-The `AGENTS.md` files across the project tell the truth or they shut up.
-
-- If you touch a folder, you touch its `AGENTS.md`.
 - If you touch an `apps/**` source file, you keep its **file header block** honest. If the purpose or top-level symbols changed, you update them.
   - What it is: the standardized top-of-file block containing `Repository:` + `SPDX-License-Identifier:` + `Purpose:` + `Symbols (top-level; keep in sync):`.
   - Where it lives: `.py` = module docstring (first statement); `.ts` = top block comment (`/* ... */`); `.vue` = top HTML comment (before `<template>`).
   - Standard: `.sangoi/policies/file-header-block.md`. Helper: `python3 .sangoi/.tools/review_apps_header_updates.py`.
-- You add one when a folder earns moving parts.
-- Minimum you keep: Purpose. Key files with real paths. Notes/decisions that survived daylight. Last Review with a real date.
-- When a file moves, you fix the path and you run the link checker.
-- When a file dies, you remove the line.
-- New docs are written in English by default and linked from the nearest `AGENTS.md`.
-
-### ACT II.1 – WORKSPACE-SPECIFIC PATROL EXTENSIONS
-
-This repository adds two permanent Bug Hunter-based local patrols on top of the global persistent patrol pair.
-These two local patrols are workspace-specific and must be defined here, not in global policy.
-
-- Additional always-on patrols (keep exactly one of each running while session is active):
-  - `anti-pattern-drift`
-  - `vram-overhead`
-- The canonical local patrol ids are `anti-pattern-drift` and `vram-overhead`; `Senior Bug Hunter Machine` is the reused sub-agent template/type, not the local patrol identity.
-- Both local patrols MUST reuse the global `Senior Bug Hunter Machine` prompt template and execution flow (`spawn_agent -> send_input -> wait`).
-- Both local patrols MUST receive the current `active-task exclusion set` and must stay out of active in-progress diff scope.
-
-Fixed objectives (use exact text in mission brief):
-
-- `anti-pattern and wrapper-vs-patcher identity-drift and ownership-drift detection`
-- `vram efficiency, allocation pressure, tensor lifetime, caching/offload behavior and runtime overhead detection`
-
-Scope policy:
-
-- Do not hardcode folder targets in mission briefs.
-- Each patrol round must choose targets autonomously based on current repository signals and objective relevance.
-- Keep target selection outside the active-task exclusion set and rotate areas between rounds for broader coverage.
-
-Patrol report filenames (mandatory, UTC):
-
-- `anti-pattern-drift-patrol-report-YYYYMMDD-HHMMSSZ.md`
-- `vram-overhead-patrol-report-YYYYMMDD-HHMMSSZ.md`
-
-Report location and structure:
-
-- Only when intentionally materializing a patrol report, save it in `.sangoi/patrol-reports/`
-- Use `.sangoi/patrol-reports/patrol-report-template.md`
-- Include evidence (`file:line`, command output), impact, and minimal fix direction.
 
 ---
 
 ### ACT III – GIT, COMMITS, AND HISTORY
-
-Git execution rules and commit mechanics are centralized in global instructions.
-In this repository section, keep project-specific handoff requirements below.
 
 `.sangoi/` is a separate Git repository and is ignored by this root repository.
 
@@ -237,42 +150,6 @@ When agent-side verification requires running the WebUI/backend on CPU, use the 
 
 ### ACT V – FRONTEND, LAYOUT, AND CSS
 
-When you touch a view's layout or style, you don't start swinging at CSS like you're blindfolded trying to hit a piñata.
-
-You check the damn classes on the actual `.vue` / whatever file first.
-You look at the template.
-You see which class is on which element.
-You follow it to the stylesheet or the utility layer.
-Only then do you lay a finger on a rule.
-
-You do not assume "this class probably controls the margin" or "that one sounds like it handles the color" and start editing like that.
-That's how you end up breaking three components and blaming the framework.
-
-You do not rename, delete, or mutate a selector until you are absolutely, boringly certain that it is bound to the element you're trying to move, resize, recolor, or hide.
-
-And you do not dare start inventing new CSS rules before you've checked whether the damn thing already exists or there's a close cousin you can reuse or refine.
-
-This is a codebase, not a landfill.
-You don't spray `.btn2`, `.btn-new`, `.btn-final-final` all over the place because you were too lazy to search.
-
-If you don't know where a style is coming from, you find out:
-
-- Search the class/id.
-- Run `rg`.
-- Trace the cascade.
-
-When the evidence lines up, then you change the rule.
-Not before. Not "probably". Not "I think this is it".
-You either have certainty, or you keep your hands off the CSS.
-
-The CSS rules are not suggestions.
-
-- Names mean something.
-- Styles live with components.
-- Inline styles are not an option.
-- Use `rem`.
-- Use `grid` or `flex`.
-
 If you want to change something in `apps/interface/src/styles`, you read the local `AGENTS.md` before you touch a single selector.
 Ignore that, and your pull request does not pass.
 
@@ -280,17 +157,3 @@ Styles for `apps/interface/src/styles` are not a dumping ground.
 Common rules belong where they will be reused.
 Variants are named with intent.
 Do not litter with vague utilities that hide confusion.
-
----
-
-### ACT VI – TASTE YOUR OWN COOKING
-
-Now take another bite of your own work and ask if it still tastes good.
-If it does, serve it.
-If it doesn't, fix the recipe and try again.
-
-Keep your head.
-Keep your habits.
-Keep your word.
-
-Then your code can stand in daylight.

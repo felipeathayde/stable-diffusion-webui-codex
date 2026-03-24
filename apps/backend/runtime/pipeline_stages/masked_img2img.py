@@ -433,18 +433,23 @@ def compute_mask_connected_component_bboxes(
 
 
 def _overlay_from_mask(*, image: Image.Image, mask_for_overlay: Image.Image) -> Image.Image:
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    inv = ImageOps.invert(mask_for_overlay.convert("L"))
-    overlay.paste(image.convert("RGBA"), (0, 0), inv)
-    return overlay
+    return _preserved_region_scaffold(image=image, mask=mask_for_overlay).convert("RGBA")
+
+
+def _preserved_region_scaffold(*, image: Image.Image, mask: Image.Image) -> Image.Image:
+    """Build a premultiplied-alpha preserved-region scaffold for soft mask edges."""
+    preserved = Image.new("RGBa", image.size)
+    preserved.paste(
+        image.convert("RGBA").convert("RGBa"),
+        mask=ImageOps.invert(mask.convert("L")),
+    )
+    return preserved.convert("RGBa")
 
 
 def _fill_masked_regions(image: Image.Image, *, mask: Image.Image) -> Image.Image:
     """Best-effort masked-region fill (blur-smear) used for `inpainting_fill` parity."""
     base = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    inv = ImageOps.invert(mask.convert("L"))
-    scaffold = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    scaffold.paste(image.convert("RGBA"), (0, 0), inv)
+    scaffold = _preserved_region_scaffold(image=image, mask=mask)
 
     for radius, repeats in ((128, 1), (32, 1), (16, 1), (8, 2), (4, 4), (2, 2), (0, 1)):
         blurred = scaffold.filter(ImageFilter.GaussianBlur(radius)).convert("RGBA")

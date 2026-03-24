@@ -15,6 +15,7 @@ Init-image filename captions are centered in the footer area for clearer media i
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
+- `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select and slider controls.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `InitialImageCard` zoom overlay.
 - `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent WAN state.
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
@@ -81,7 +82,18 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <div class="gc-row img2img-mask-grid">
         <div class="field">
-          <label class="label-muted">Enforcement</label>
+          <label class="label-muted">
+            <HoverTooltip
+              class="cdx-slider-field__label-tooltip"
+              :title="INPAINT_PARAMETER_TOOLTIPS.enforcement.title"
+              :content="INPAINT_PARAMETER_TOOLTIPS.enforcement.content"
+            >
+              <span class="cdx-slider-field__label-trigger">
+                <span>Enforcement</span>
+                <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+              </span>
+            </HoverTooltip>
+          </label>
           <select class="select-md" :disabled="disabled" :value="maskEnforcement" @change="onMaskEnforcementChange">
             <option value="per_step_clamp">Per-step blend</option>
             <option value="post_blend">Post-sample blend</option>
@@ -89,7 +101,18 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <div class="field">
-          <label class="label-muted">Masked content</label>
+          <label class="label-muted">
+            <HoverTooltip
+              class="cdx-slider-field__label-tooltip"
+              :title="INPAINT_PARAMETER_TOOLTIPS.maskedContent.title"
+              :content="INPAINT_PARAMETER_TOOLTIPS.maskedContent.content"
+            >
+              <span class="cdx-slider-field__label-trigger">
+                <span>Masked content</span>
+                <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+              </span>
+            </HoverTooltip>
+          </label>
           <select class="select-md" :disabled="disabled" :value="inpaintingFill" @change="onInpaintingFillChange">
             <option :value="1">Original</option>
             <option :value="0">Fill</option>
@@ -115,6 +138,8 @@ Symbols (top-level; keep in sync; no ghosts):
         <SliderField
           class="gc-col gc-col--wide"
           label="Only masked padding"
+          :tooltip="INPAINT_PARAMETER_TOOLTIPS.onlyMaskedPadding.content"
+          :tooltipTitle="INPAINT_PARAMETER_TOOLTIPS.onlyMaskedPadding.title"
           :modelValue="inpaintFullResPadding"
           :min="0"
           :max="256"
@@ -128,6 +153,8 @@ Symbols (top-level; keep in sync; no ghosts):
         <SliderField
           class="gc-col gc-col--wide"
           label="Mask blur"
+          :tooltip="INPAINT_PARAMETER_TOOLTIPS.maskBlur.content"
+          :tooltipTitle="INPAINT_PARAMETER_TOOLTIPS.maskBlur.title"
           :modelValue="maskBlur"
           :min="0"
           :max="64"
@@ -156,11 +183,49 @@ Symbols (top-level; keep in sync; no ghosts):
 import { ref } from 'vue'
 import InitialImageCard from './InitialImageCard.vue'
 import InpaintMaskEditorOverlay from './ui/InpaintMaskEditorOverlay.vue'
+import HoverTooltip from './ui/HoverTooltip.vue'
 import SliderField from './ui/SliderField.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
 import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
 type MaskEnforcement = 'post_blend' | 'per_step_clamp'
+
+const INPAINT_PARAMETER_TOOLTIPS = {
+  enforcement: {
+    title: 'Enforcement',
+    content: [
+      'Controls when the preserved source image is reintroduced during masked denoise.',
+      'Per-step blend: reapplies preserved content every step, usually keeping boundaries and structure tighter.',
+      'Post-sample blend: lets sampling run freer, then blends preserved content back at the end, usually allowing larger interior changes.',
+    ],
+  },
+  maskedContent: {
+    title: 'Masked content',
+    content: [
+      'Chooses how the masked area is initialized before sampling.',
+      'Original: starts from the current image crop.',
+      'Fill: replaces the masked area with a blur-smear fill scaffold from surrounding pixels.',
+      'Latent noise: injects fresh latent noise inside the mask for a stronger redraw.',
+      'Latent nothing: zeros the masked latent, usually the most destructive reset.',
+    ],
+  },
+  onlyMaskedPadding: {
+    title: 'Only masked padding',
+    content: [
+      'Extra context around the masked crop used by the inpaint-only-masked pass.',
+      'Increase: gives the model more surrounding context and can reduce seam pressure, but reprocesses a larger area.',
+      'Decrease: keeps the edit tighter and faster, but can starve edge context and make seams harsher.',
+    ],
+  },
+  maskBlur: {
+    title: 'Mask blur',
+    content: [
+      'Softens the mask edge before the inpaint crop and conditioning bundle are prepared.',
+      'Increase: widens the transition band and can hide hard cut lines, but lets the edit spill farther past the exact mask.',
+      'Decrease: keeps the edit tighter to the painted mask, but edges can look harsher or more cut out.',
+    ],
+  },
+} as const
 
 withDefaults(defineProps<{
   disabled?: boolean

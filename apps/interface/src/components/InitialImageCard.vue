@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Initial image file picker for img2img-style workflows.
 Provides a file input, preview, and remove action and emits the selected `File` back to the parent.
 In dropzone mode, top-right actions render inside the dotted zone (including `Remove`) to keep picker controls close to the preview.
-Exposes `dropzone-actions` and `preview-overlay` slots for caller-defined preview actions/overlays.
+Exposes `dropzone-actions` and `preview-overlay` slots for caller-defined preview actions/overlays; `preview-overlay` now renders inside an image-bounds media wrapper so overlays align to the actual contained preview image.
 Supports optional pass-through WAN frame-guide config for zoom-overlay no-stretch projection metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -56,8 +56,12 @@ Symbols (top-level; keep in sync; no ghosts):
               ]"
               @click.stop="onPreviewClick"
             >
-              <img :src="src" alt="Initial" />
-              <slot name="preview-overlay" />
+              <div class="init-preview__media">
+                <img :src="src" alt="Initial" />
+                <div class="init-preview__overlay">
+                  <slot name="preview-overlay" />
+                </div>
+              </div>
             </div>
             <p v-else class="caption">{{ placeholder }}</p>
           </div>
@@ -77,8 +81,12 @@ Symbols (top-level; keep in sync; no ghosts):
           ]"
           @click.stop="onPreviewClick"
         >
-          <img :src="src" alt="Initial" />
-          <slot name="preview-overlay" />
+          <div class="init-preview__media">
+            <img :src="src" alt="Initial" />
+            <div class="init-preview__overlay">
+              <slot name="preview-overlay" />
+            </div>
+          </div>
         </div>
         <p v-else class="caption">{{ placeholder }}</p>
       </template>

@@ -9,19 +9,16 @@ Required Notice: see NOTICE
 Purpose: Pure inpaint preview helpers shared by the img2img card and mask editor.
 Mirrors the backend masked-img2img crop math needed for frontend previews and exposes pure frontend raster helpers for
 mask-blur spill visualization: binary mask bbox, blur-support expansion, masked-padding expansion, aspect-preserving
-crop expansion, image-space to contained-preview projection, blur-spill alpha generation, and tint packing.
+crop expansion, blur-spill alpha generation, and tint packing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InpaintMaskPreviewInput` (interface): Input contract for computing preview geometry from a binary mask plane.
 - `InpaintPreviewRect` (interface): Rect contract using image/container pixel coordinates with cached width/height.
 - `InpaintMaskPreviewGeometry` (interface): Output contract for mask bounds, blur bounds, blur-support radius, and final crop region.
 - `InpaintMaskBlurSpillInput` (interface): Input contract for computing the outward mask-blur spill alpha plane.
-- `ContainedImageRect` (interface): Projection metadata for an image rendered with `object-fit: contain`.
 - `InpaintPreviewTint` (interface): RGB + opacity contract for packing a preview alpha plane into RGBA bytes.
 - `computeInpaintMaskPreviewGeometry` (function): Computes blur-support and masked-padding preview geometry from a binary mask plane.
 - `computeInpaintMaskBlurSpillAlphaPlane` (function): Computes the outward-only blur spill alpha plane for a binary mask.
-- `computeContainedImageRect` (function): Computes the rendered image rect inside a containing preview box.
-- `projectImageRectToContainer` (function): Projects an image-space rect into the contained preview box.
 - `tintAlphaPlaneToRgba` (function): Packs an alpha plane into an RGBA buffer using a shared preview tint.
 */
 
@@ -54,14 +51,6 @@ export interface InpaintMaskBlurSpillInput {
   imageWidth: number
   imageHeight: number
   maskBlur: number
-}
-
-export interface ContainedImageRect {
-  left: number
-  top: number
-  width: number
-  height: number
-  scale: number
 }
 
 export interface InpaintPreviewTint {
@@ -364,42 +353,6 @@ export function computeInpaintMaskBlurSpillAlphaPlane(
     if (alpha > 0) hasVisibleSpill = true
   }
   return hasVisibleSpill ? spillAlpha : null
-}
-
-export function computeContainedImageRect(
-  containerWidth: number,
-  containerHeight: number,
-  imageWidth: number,
-  imageHeight: number,
-): ContainedImageRect {
-  const width = requirePositiveInt('containerWidth', containerWidth)
-  const height = requirePositiveInt('containerHeight', containerHeight)
-  const sourceWidth = requirePositiveInt('imageWidth', imageWidth)
-  const sourceHeight = requirePositiveInt('imageHeight', imageHeight)
-  const scale = Math.min(width / sourceWidth, height / sourceHeight)
-  if (!Number.isFinite(scale) || scale <= 0) {
-    throw new Error('Inpaint preview produced invalid contain scale.')
-  }
-  const renderedWidth = sourceWidth * scale
-  const renderedHeight = sourceHeight * scale
-  return {
-    left: (width - renderedWidth) / 2,
-    top: (height - renderedHeight) / 2,
-    width: renderedWidth,
-    height: renderedHeight,
-    scale,
-  }
-}
-
-export function projectImageRectToContainer(
-  rect: InpaintPreviewRect,
-  containedImage: ContainedImageRect,
-): InpaintPreviewRect {
-  const x1 = containedImage.left + (rect.x1 * containedImage.scale)
-  const y1 = containedImage.top + (rect.y1 * containedImage.scale)
-  const x2 = containedImage.left + (rect.x2 * containedImage.scale)
-  const y2 = containedImage.top + (rect.y2 * containedImage.scale)
-  return buildRect(x1, y1, x2, y2)
 }
 
 export function tintAlphaPlaneToRgba(

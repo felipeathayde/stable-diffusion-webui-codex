@@ -50,6 +50,7 @@ Status: Active
 - 2026-02-19: `vae.py` output staging now treats `DeviceRole.INTERMEDIATE=auto` as CPU-target by default, preventing large decode buffers from staying on GPU unless intermediate backend is explicitly overridden.
 - 2026-02-20: `vae.py` native-LDM type checks now import `AutoencoderKL_LDM` from `runtime/common/vae_ldm.py` (canonical shared lane) instead of the WAN family path.
 - 2026-02-23: `lora_loader.py::CodexLoraLoader.refresh(...)` now resolves default LoRA backup/offload placement from `memory_management.manager.offload_device()` when `offload_device` is omitted (no implicit CPU literal default).
+- 2026-03-24: `lora_loader.py` now normalizes GGUF re-quantization inputs through a NumPy-safe CPU float bridge; BF16 merged tensors are promoted to FP32 before `.numpy()` so GGUF-backed LoRA refresh does not die on `Got unsupported ScalarType BFloat16` while non-GGUF merge/output behavior stays unchanged.
 - 2026-03-02: `vae.py` now reports encode/decode block progress into `BackendState` during both tiled and non-tiled paths (including OOM fallback retries), so use-case progress polling can surface VAE phase progress in task streams.
 - 2026-03-05: `vae.py` now consumes shared tiled geometry policy from `runtime/common/vae_tiled.py` (`resolve_vae_decode_tiled_geometry` + `VaeTileGeometry`/window iterator); decode fallback defaults remain `64/64/16` for non-Anima, with `ModelFamily.ANIMA` override `48/48/24`.
 

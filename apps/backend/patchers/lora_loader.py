@@ -12,9 +12,11 @@ Supports explicit merge precision mode (`CODEX_LORA_MERGE_MODE`) and refresh sig
 Fails loud when removed packed GGUF artifacts reach the root runtime path.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_trace_load_patch_debug_enabled` (function): Returns whether verbose per-patch load tracing is enabled via env flag.
 - `_raise_packed_gguf_unsupported` (function): Raises the canonical root-runtime error for removed packed GGUF artifacts during LoRA refresh.
 - `get_parameter_devices` (function): Captures current parameter device mapping for later restoration.
 - `set_parameter_devices` (function): Restores parameters to a previously captured device mapping.
+- `_numpy_safe_quantize_input` (function): Materializes a CPU float tensor into a NumPy-safe array for GGUF re-quantization, promoting BF16 to FP32 before the NumPy bridge.
 - `CodexLoraLoader` (class): High-level loader/applier that integrates mapping, device placement, and progress reporting (tqdm).
 """
 
@@ -68,6 +70,13 @@ def set_parameter_devices(model, parameter_devices: Mapping[str, torch.device]) 
         if parameter.device != device:
             parameter = utils.tensor2parameter(parameter.to(device=device))
             utils.set_attr_raw(model, key, parameter)
+
+
+def _numpy_safe_quantize_input(tensor: torch.Tensor):
+    cpu_tensor = tensor.detach().to(device="cpu")
+    if cpu_tensor.dtype == torch.bfloat16:
+        cpu_tensor = cpu_tensor.to(dtype=torch.float32)
+    return cpu_tensor.numpy()
 
 
 class CodexLoraLoader:
@@ -192,7 +201,7 @@ class CodexLoraLoader:
                     if qtype is None:
                         raise RuntimeError(f"Unexpected GGUF parameter without qtype: {param_key}")
 
-                    packed = quantize_numpy(merged.detach().cpu().numpy(), qtype)
+                    packed = quantize_numpy(_numpy_safe_quantize_input(merged), qtype)
                     restored = CodexParameter(
                         packed,
                         qtype=qtype,

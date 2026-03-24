@@ -43,11 +43,13 @@
   }
 
   .img2img-params-card .img2img-mask-preview-layers,
-  .img2img-params-card .img2img-mask-preview-blur,
   .img2img-params-card .img2img-mask-preview-overlay {
     position: absolute;
     inset: 0;
     pointer-events: none;
+  }
+
+  .img2img-params-card .img2img-mask-preview-overlay {
     -webkit-mask-image: var(--img2img-mask-src);
     mask-image: var(--img2img-mask-src);
     -webkit-mask-mode: luminance;
@@ -65,11 +67,14 @@
     mask-image: none;
   }
 
-  .img2img-params-card .img2img-mask-preview-blur {
-    background: hsla(38, 96%, 60%, 0.34);
-    filter: blur(var(--img2img-mask-blur-radius, 0px));
-    opacity: 0.96;
-    will-change: filter;
+  .img2img-params-card .img2img-mask-preview-spill {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+    pointer-events: none;
   }
 
   .img2img-params-card .img2img-mask-preview-overlay {

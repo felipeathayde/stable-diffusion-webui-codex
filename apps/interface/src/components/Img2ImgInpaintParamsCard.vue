@@ -11,7 +11,7 @@ Groups img2img controls (initial image) and optional inpaint controls (canvas-ma
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
-Saved inpaint masks can preview their hard mask, blur range, and effective masked-region crop directly on the init-image thumbnail.
+Saved inpaint masks can preview their hard mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail.
 Init-image filename captions are centered in the footer area for clearer media identification.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -26,7 +26,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onMaskEditorExternalReset` (function): Forwards editor reset notices for parent-side toasts.
 - `loadMaskPreviewPlaneFromSource` (function): Decodes the saved mask PNG into a binary plane for preview geometry.
 - `schedulePreviewMeasurement` (function): Measures the actual thumbnail box after layout so image-space crop geometry projects truthfully.
-- `previewBlurStyle` (computed): Maps the saved mask source plus scaled blur radius into the inline thumbnail halo overlay.
+- `previewBlurSource` (ref): Cached RGBA data URL for the inline thumbnail blur-spill preview.
+- `schedulePreviewBlurSourceRender` (function): Coalesces thumbnail blur-spill raster updates after mask/blur changes.
 - `previewCropStyle` (computed): Projects the effective masked-region crop box into the contained thumbnail image area.
 -->
 
@@ -68,7 +69,13 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
       <template #preview-overlay>
         <div v-if="maskImageData" ref="previewOverlayEl" class="img2img-mask-preview-layers">
-          <div v-if="showPreviewBlur" class="img2img-mask-preview-blur" :style="previewBlurStyle" />
+          <img
+            v-if="showPreviewBlur"
+            class="img2img-mask-preview-spill"
+            :src="previewBlurSource"
+            alt=""
+            aria-hidden="true"
+          >
           <div class="img2img-mask-preview-overlay" :style="previewMaskStyle" />
           <div v-if="previewCropStyle" class="img2img-mask-preview-crop-box" :style="previewCropStyle" />
         </div>
@@ -207,12 +214,21 @@ import { rgbaToMaskPlane } from './ui/inpaint_mask_editor_engine'
 import WanSubHeader from './wan/WanSubHeader.vue'
 import {
   computeContainedImageRect,
+  computeInpaintMaskBlurSpillAlphaPlane,
   computeInpaintMaskPreviewGeometry,
   projectImageRectToContainer,
+  tintAlphaPlaneToRgba,
 } from '../utils/inpaint_mask_preview'
 import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
 type MaskEnforcement = 'post_blend' | 'per_step_clamp'
+
+const PREVIEW_BLUR_TINT = {
+  red: 255,
+  green: 178,
+  blue: 68,
+  opacity: 0.62,
+} as const
 
 const INPAINT_PARAMETER_TOOLTIPS = {
   enforcement: {
@@ -317,8 +333,11 @@ const previewContainerWidth = ref(0)
 const previewContainerHeight = ref(0)
 const previewMaskPlane = ref<Uint8Array | null>(null)
 const previewMaskDecodeToken = ref(0)
+const previewBlurSource = ref('')
 let previewResizeObserver: ResizeObserver | null = null
 let previewMeasureRafId = 0
+let previewBlurRenderRafId = 0
+let previewBlurCanvas: HTMLCanvasElement | null = null
 
 const effectiveProcessingWidth = computed(() => {
   const width = Number(props.processingWidth)
@@ -369,18 +388,7 @@ const previewMaskStyle = computed<CSSProperties>(() => ({
   '--img2img-mask-src': `url('${props.maskImageData}')`,
 }))
 
-const previewBlurRadiusPx = computed(() => {
-  const containedRect = containedPreviewRect.value
-  if (!containedRect) return 0
-  return Math.max(0, Number(props.maskBlur) || 0) * containedRect.scale
-})
-
-const showPreviewBlur = computed(() => Boolean(props.maskImageData) && previewBlurRadiusPx.value > 0)
-
-const previewBlurStyle = computed<CSSProperties>(() => ({
-  ...previewMaskStyle.value,
-  '--img2img-mask-blur-radius': `${previewBlurRadiusPx.value}px`,
-}))
+const showPreviewBlur = computed(() => Boolean(previewBlurSource.value))
 
 const previewCropStyle = computed<CSSProperties | null>(() => {
   const geometry = previewGeometry.value
@@ -401,9 +409,14 @@ watch(
     const token = (previewMaskDecodeToken.value += 1)
     const source = String(sourceMask || '').trim()
     if (!source || imageWidth <= 0 || imageHeight <= 0) {
+      cancelPreviewBlurSourceRender()
       previewMaskPlane.value = null
+      previewBlurSource.value = ''
       return
     }
+    cancelPreviewBlurSourceRender()
+    previewMaskPlane.value = null
+    previewBlurSource.value = ''
     void loadMaskPreviewPlaneFromSource(source, imageWidth, imageHeight)
       .then((maskPlane) => {
         if (previewMaskDecodeToken.value !== token) return
@@ -414,6 +427,14 @@ watch(
         previewMaskPlane.value = null
         console.error('[Img2ImgInpaintParamsCard] Failed to decode saved mask preview.', error)
       })
+  },
+  { immediate: true },
+)
+
+watch(
+  [previewMaskPlane, () => props.maskBlur, () => props.imageWidth, () => props.imageHeight],
+  () => {
+    schedulePreviewBlurSourceRender()
   },
   { immediate: true },
 )
@@ -444,12 +465,19 @@ onBeforeUnmount(() => {
   previewResizeObserver?.disconnect()
   previewResizeObserver = null
   cancelPreviewMeasurement()
+  cancelPreviewBlurSourceRender()
 })
 
 function cancelPreviewMeasurement(): void {
   if (previewMeasureRafId <= 0) return
   window.cancelAnimationFrame(previewMeasureRafId)
   previewMeasureRafId = 0
+}
+
+function cancelPreviewBlurSourceRender(): void {
+  if (previewBlurRenderRafId <= 0) return
+  window.cancelAnimationFrame(previewBlurRenderRafId)
+  previewBlurRenderRafId = 0
 }
 
 function schedulePreviewMeasurement(): void {
@@ -466,6 +494,59 @@ function schedulePreviewMeasurement(): void {
     previewContainerWidth.value = rect.width
     previewContainerHeight.value = rect.height
   })
+}
+
+function schedulePreviewBlurSourceRender(): void {
+  cancelPreviewBlurSourceRender()
+  previewBlurRenderRafId = window.requestAnimationFrame(() => {
+    previewBlurRenderRafId = 0
+    renderPreviewBlurSource()
+  })
+}
+
+function getPreviewBlurCanvas(width: number, height: number): HTMLCanvasElement {
+  if (!previewBlurCanvas) {
+    previewBlurCanvas = document.createElement('canvas')
+  }
+  if (previewBlurCanvas.width !== width) previewBlurCanvas.width = width
+  if (previewBlurCanvas.height !== height) previewBlurCanvas.height = height
+  return previewBlurCanvas
+}
+
+function renderPreviewBlurSource(): void {
+  const maskPlane = previewMaskPlane.value
+  const imageWidth = Math.trunc(props.imageWidth)
+  const imageHeight = Math.trunc(props.imageHeight)
+  if (!maskPlane || imageWidth <= 0 || imageHeight <= 0) {
+    previewBlurSource.value = ''
+    return
+  }
+
+  try {
+    const alphaPlane = computeInpaintMaskBlurSpillAlphaPlane(maskPlane, {
+      imageWidth,
+      imageHeight,
+      maskBlur: props.maskBlur,
+    })
+    if (!alphaPlane) {
+      previewBlurSource.value = ''
+      return
+    }
+
+    const canvas = getPreviewBlurCanvas(imageWidth, imageHeight)
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('Failed to create canvas context for inpaint blur thumbnail preview.')
+    }
+    context.clearRect(0, 0, imageWidth, imageHeight)
+    const imageData = context.createImageData(imageWidth, imageHeight)
+    imageData.data.set(tintAlphaPlaneToRgba(alphaPlane, imageWidth, imageHeight, PREVIEW_BLUR_TINT))
+    context.putImageData(imageData, 0, 0)
+    previewBlurSource.value = canvas.toDataURL('image/png')
+  } catch (error) {
+    previewBlurSource.value = ''
+    console.error('[Img2ImgInpaintParamsCard] Failed to render inpaint blur preview source.', error)
+  }
 }
 
 function onMaskEnforcementChange(event: Event): void {

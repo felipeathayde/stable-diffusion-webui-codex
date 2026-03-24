@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `InpaintMaskEditorOverlay` (component): Full-screen inpaint mask editor overlay.
 - `loadMaskPlaneFromSources` (function): Loads/validates init+mask sources and initializes draft state.
 - `renderMaskCanvas` (function): Renders current draft mask and active shape previews.
-- `renderPreviewCanvas` (function): Renders blur halo and crop-region preview layers from the current working mask.
+- `renderPreviewCanvas` (function): Renders blur-spill and crop-region preview layers from the current working mask.
 - `onStagePointerDown` (function): Handles drawing/panning pointer-down interactions.
 - `onStagePointerMove` (function): Handles drawing/panning pointer-move interactions.
 - `onStagePointerUp` (function): Commits or ends active interactions on pointer-up.
@@ -199,7 +199,11 @@ import {
   rgbaToMaskPlane,
   type MaskPoint,
 } from './inpaint_mask_editor_engine'
-import { computeInpaintMaskPreviewGeometry } from '../../utils/inpaint_mask_preview'
+import {
+  computeInpaintMaskBlurSpillAlphaPlane,
+  computeInpaintMaskPreviewGeometry,
+  tintAlphaPlaneToRgba,
+} from '../../utils/inpaint_mask_preview'
 
 type ToolName = 'brush' | 'eraser' | 'circle' | 'polygon'
 
@@ -215,6 +219,13 @@ interface CirclePreviewState {
   center: MaskPoint
   radius: number
 }
+
+const PREVIEW_BLUR_TINT = {
+  red: 255,
+  green: 178,
+  blue: 68,
+  opacity: 0.62,
+} as const
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -290,7 +301,6 @@ const circlePreview = ref<CirclePreviewState | null>(null)
 const polygonPoints = ref<MaskPoint[]>([])
 const transientMask = ref<Uint8Array | null>(null)
 const previewCropStyle = ref<CSSProperties | null>(null)
-let previewBufferCanvas: HTMLCanvasElement | null = null
 
 const effectiveProcessingWidth = computed(() => {
   const width = Number(props.processingWidth)
@@ -499,15 +509,6 @@ function getPreviewContext(): CanvasRenderingContext2D | null {
   return canvas.getContext('2d', { willReadFrequently: true })
 }
 
-function getPreviewBufferContext(width: number, height: number): CanvasRenderingContext2D | null {
-  if (!previewBufferCanvas) {
-    previewBufferCanvas = document.createElement('canvas')
-  }
-  if (previewBufferCanvas.width !== width) previewBufferCanvas.width = width
-  if (previewBufferCanvas.height !== height) previewBufferCanvas.height = height
-  return previewBufferCanvas.getContext('2d', { willReadFrequently: true })
-}
-
 function buildPolygonPreviewPoints(): MaskPoint[] | null {
   if (activeTool.value !== TOOL_VALUE_POLYGON) return null
   if (previewPointerPoint.value) {
@@ -618,28 +619,20 @@ function renderPreviewCanvas(mask: Uint8Array): void {
     height: `${geometry.cropRegion.height}px`,
   }
 
-  if (!Number.isFinite(props.maskBlur) || Number(props.maskBlur) <= 0) return
+  try {
+    const alphaPlane = computeInpaintMaskBlurSpillAlphaPlane(mask, {
+      imageWidth: width,
+      imageHeight: height,
+      maskBlur: props.maskBlur,
+    })
+    if (!alphaPlane) return
 
-  const previewBufferContext = getPreviewBufferContext(width, height)
-  if (!previewBufferContext || !previewBufferCanvas) return
-
-  const rgba = new Uint8ClampedArray(width * height * 4)
-  for (let pixel = 0; pixel < mask.length; pixel += 1) {
-    if (mask[pixel] < MASK_VALUE_FILLED) continue
-    const baseIndex = pixel * 4
-    rgba[baseIndex] = 255
-    rgba[baseIndex + 1] = 178
-    rgba[baseIndex + 2] = 68
-    rgba[baseIndex + 3] = 112
+    const imageData = context.createImageData(width, height)
+    imageData.data.set(tintAlphaPlaneToRgba(alphaPlane, width, height, PREVIEW_BLUR_TINT))
+    context.putImageData(imageData, 0, 0)
+  } catch (error) {
+    console.error('[InpaintMaskEditorOverlay] Failed to compute blur spill preview.', error)
   }
-
-  previewBufferContext.clearRect(0, 0, width, height)
-  previewBufferContext.putImageData(new ImageData(rgba, width, height), 0, 0)
-
-  context.save()
-  context.filter = `blur(${Math.max(0, Number(props.maskBlur) || 0)}px)`
-  context.drawImage(previewBufferCanvas, 0, 0)
-  context.restore()
 }
 
 function renderShapePreview(context: CanvasRenderingContext2D): void {

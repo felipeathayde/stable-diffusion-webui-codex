@@ -74,7 +74,7 @@
     color: hsla(210, 84%, 92%, 1);
   }
 
-  .cdx-hover-tooltip:is(:hover, :focus-within) .cdx-hover-tooltip__panel {
+  .cdx-hover-tooltip:is(:hover, :focus-visible, :has(:focus-visible)) .cdx-hover-tooltip__panel {
     opacity: 1;
     transform: scale(1);
   }

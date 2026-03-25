@@ -19,6 +19,11 @@ If two ecosystems use different names for the same conceptual weight, the keymap
 If the layout is unsupported, ambiguous, or structurally incompatible, you fail loud and extend the keymap properly.
 You do **not** "normalize" a checkpoint by rewriting layer names in memory. Ever.
 
+Lazy mappings are law too.
+Checkpoint/state-dict seams stay lazy by default.
+Keymaps and loaders inspect checkpoints through mapping/view APIs first (`shape_of(...)`, lookup views, computed views) and only touch real tensor values at the owner seam that actually needs them.
+You do **not** materialize eager `dict(...)` copies of checkpoint mappings as convenience glue.
+
 ---
 
 ### ACT II – WHERE THE TRUTH LIVES: `.sangoi` AND REUSE

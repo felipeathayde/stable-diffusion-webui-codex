@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 VAE key-style detection + strict canonical keyspace resolvers for 2D/3D lanes.
-Owns WAN22 VAE source-key validation and canonical keyspace resolution without stored-key rewrites, keeping resolver logic out of
-router/payload seams. Supports 2D native LDM VAE keys and 3D Codex/Diffusers
-keyspaces with fail-loud mixed-style/collision guards.
+Owns WAN22 VAE source-key validation, lane detection, and canonical keyspace resolution without stored-key rewrites, keeping resolver logic
+out of router/payload seams. Supports 2D native LDM VAE keys and 3D Codex/Diffusers keyspaces with fail-loud mixed-style/collision guards.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `resolve_wan22_vae_keyspace` (function): Detects the WAN22 VAE lane from validated raw source keys and resolves the canonical lookup view.
 - `resolve_wan22_vae_2d_keyspace` (function): Validates WAN22 2D VAE source keys and resolves canonical lookup ownership.
 - `resolve_wan22_vae_3d_keyspace` (function): Validates WAN22 3D VAE source keys and resolves canonical codex keyspace (`diffusers|codex` → codex).
 """
@@ -127,6 +127,92 @@ def _source_keys_to_source(state_dict: MutableMapping[str, Any], *, detector_nam
     return source_key_map
 
 
+def _shape_of(state_dict: MutableMapping[str, Any], source_key: str) -> tuple[int, ...] | None:
+    shape_getter = getattr(state_dict, "shape_of", None)
+    if callable(shape_getter):
+        shape = shape_getter(source_key)
+        if shape is not None:
+            try:
+                return tuple(int(dim) for dim in shape)
+            except Exception:
+                return None
+    value = state_dict[source_key]
+    shape = getattr(value, "shape", None)
+    if shape is None:
+        return None
+    try:
+        return tuple(int(dim) for dim in shape)
+    except Exception:
+        return None
+
+
+def _lane_from_shape(*, key: str, shape: tuple[int, ...]) -> str:
+    ndim = len(shape)
+    if ndim == 4:
+        return "2d_native"
+    if ndim == 5:
+        return "3d_native"
+    raise KeyMappingError(
+        "wan22_vae_key_style: unsupported core VAE kernel rank "
+        f"key={key!r} shape={shape} (expected rank 4 or 5)."
+    )
+
+
+def _detect_wan22_vae_lane_from_source_keys(
+    state_dict: MutableMapping[str, Any],
+    *,
+    source_key_map: dict[str, str],
+) -> str:
+    evidence_keys = (
+        "encoder.conv_in.weight",
+        "decoder.conv_in.weight",
+        "encoder.conv1.weight",
+        "decoder.conv1.weight",
+    )
+    observed: set[str] = set()
+    seen: list[tuple[str, tuple[int, ...]]] = []
+
+    for key in evidence_keys:
+        source_key = source_key_map.get(key)
+        if source_key is None:
+            continue
+        shape = _shape_of(state_dict, source_key)
+        if shape is None:
+            continue
+        seen.append((key, shape))
+        observed.add(_lane_from_shape(key=key, shape=shape))
+
+    if not seen:
+        fallback_seen: list[tuple[str, tuple[int, ...]]] = []
+        for key, source_key in source_key_map.items():
+            if not key.endswith(".weight"):
+                continue
+            if not (
+                key.startswith("encoder.conv")
+                or key.startswith("decoder.conv")
+                or key.startswith("encoder.head.2")
+                or key.startswith("decoder.head.2")
+            ):
+                continue
+            shape = _shape_of(state_dict, source_key)
+            if shape is None:
+                continue
+            fallback_seen.append((key, shape))
+            observed.add(_lane_from_shape(key=key, shape=shape))
+        if not fallback_seen:
+            raise KeyMappingError(
+                "wan22_vae_key_style: cannot detect lane (missing canonical core convolution weights)."
+            )
+        seen = fallback_seen
+
+    if len(observed) != 1:
+        raise KeyMappingError(
+            "wan22_vae_key_style: mixed VAE lane evidence in core kernels "
+            f"(lanes={sorted(observed)} evidence={seen[:8]})."
+        )
+    return next(iter(observed))
+
+
 def _map_encoder_down_block_key(key: str) -> str:
     if ".resnets." in key:
         raise KeyMappingError(
@@ -196,8 +282,11 @@ def _map_decoder_up_block_key(key: str) -> str:
     )
 
 
-def resolve_wan22_vae_2d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
-    source_key_map = _source_keys_to_source(state_dict, detector_name="wan22_vae_2d_key_style")
+def _resolve_wan22_vae_2d_keyspace_from_source_keys(
+    state_dict: MutableMapping[str, Any],
+    *,
+    source_key_map: dict[str, str],
+) -> ResolvedKeyspace[Any]:
     keys = tuple(source_key_map.keys())
     keys_set = frozenset(keys)
 
@@ -233,8 +322,16 @@ def resolve_wan22_vae_2d_keyspace(state_dict: MutableMapping[str, Any]) -> Resol
     )
 
 
-def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
-    source_key_map = _source_keys_to_source(state_dict, detector_name="wan22_vae_3d_key_style")
+def resolve_wan22_vae_2d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
+    source_key_map = _source_keys_to_source(state_dict, detector_name="wan22_vae_2d_key_style")
+    return _resolve_wan22_vae_2d_keyspace_from_source_keys(state_dict, source_key_map=source_key_map)
+
+
+def _resolve_wan22_vae_3d_keyspace_from_source_keys(
+    state_dict: MutableMapping[str, Any],
+    *,
+    source_key_map: dict[str, str],
+) -> ResolvedKeyspace[Any]:
     source_key_view = KeyspaceLookupView(state_dict, source_key_map)
 
     has_codex = any(
@@ -314,4 +411,23 @@ def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> Resol
     )
 
 
-__all__ = ["resolve_wan22_vae_2d_keyspace", "resolve_wan22_vae_3d_keyspace"]
+def resolve_wan22_vae_3d_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
+    source_key_map = _source_keys_to_source(state_dict, detector_name="wan22_vae_3d_key_style")
+    return _resolve_wan22_vae_3d_keyspace_from_source_keys(state_dict, source_key_map=source_key_map)
+
+
+def resolve_wan22_vae_keyspace(state_dict: MutableMapping[str, Any]) -> ResolvedKeyspace[Any]:
+    source_key_map = _source_keys_to_source(state_dict, detector_name="wan22_vae_key_style")
+    lane = _detect_wan22_vae_lane_from_source_keys(state_dict, source_key_map=source_key_map)
+    if lane == "2d_native":
+        return _resolve_wan22_vae_2d_keyspace_from_source_keys(state_dict, source_key_map=source_key_map)
+    if lane == "3d_native":
+        return _resolve_wan22_vae_3d_keyspace_from_source_keys(state_dict, source_key_map=source_key_map)
+    raise KeyMappingError(f"wan22_vae_key_style: unsupported lane={lane!r}.")
+
+
+__all__ = [
+    "resolve_wan22_vae_keyspace",
+    "resolve_wan22_vae_2d_keyspace",
+    "resolve_wan22_vae_3d_keyspace",
+]

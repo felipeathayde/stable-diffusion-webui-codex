@@ -72,9 +72,9 @@
     position: absolute;
     box-sizing: border-box;
     pointer-events: none;
-    border: 0.0625rem solid hsla(197, 92%, 68%, 0.95);
-    background: hsla(197, 92%, 62%, 0.12);
-    box-shadow: 0 0 0 0.0625rem hsla(0, 0%, 0%, 0.35);
+    border: 0.0625rem solid var(--cdx-inpaint-preview-crop-border);
+    background: var(--cdx-inpaint-preview-crop-fill);
+    box-shadow: var(--cdx-inpaint-preview-crop-shadow);
   }
 
   .img2img-params-card .img2img-mask-slider-row {
@@ -108,9 +108,9 @@
     gap: 0.35rem;
     padding: 0.18rem 0.55rem;
     border-radius: 999px;
-    border: 0.0625rem solid hsla(0, 0%, 100%, 0.12);
-    background: hsla(0, 0%, 100%, 0.06);
-    color: hsla(0, 0%, 100%, 0.82);
+    border: 0.0625rem solid var(--cdx-inpaint-preview-pill-border);
+    background: var(--cdx-inpaint-preview-pill-bg);
+    color: var(--cdx-inpaint-preview-pill-fg);
     line-height: 1.2;
   }
 
@@ -123,23 +123,21 @@
     height: 0.7rem;
     flex: 0 0 auto;
     border-radius: 999px;
-    box-shadow: inset 0 0 0 0.0625rem hsla(0, 0%, 0%, 0.28);
+    box-shadow: var(--cdx-inpaint-preview-swatch-ring);
   }
 
   .img2img-params-card .img2img-preview-legend__swatch--mask {
-    background: hsla(6, 92%, 60%, 0.72);
+    background: var(--cdx-inpaint-preview-mask-swatch);
   }
 
   .img2img-params-card .img2img-preview-legend__swatch--blur {
-    background: hsla(38, 100%, 64%, 0.58);
+    background: var(--cdx-inpaint-preview-blur-swatch);
   }
 
   .img2img-params-card .img2img-preview-legend__swatch--crop {
     border-radius: 0.14rem;
-    background: hsla(197, 92%, 62%, 0.12);
-    box-shadow:
-      inset 0 0 0 0.0625rem hsla(197, 92%, 68%, 0.95),
-      0 0 0 0.0625rem hsla(0, 0%, 0%, 0.18);
+    background: var(--cdx-inpaint-preview-crop-swatch-bg);
+    box-shadow: var(--cdx-inpaint-preview-crop-swatch-shadow);
   }
 
   .img2img-params-card .img2img-caption--init-name {

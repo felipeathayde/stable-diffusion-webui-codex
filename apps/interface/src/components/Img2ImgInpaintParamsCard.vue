@@ -12,6 +12,7 @@ including dropzone/thumb/zoom handling for init images, rejected-file pass-throu
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
 Saved inpaint masks can preview their effective mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail, anchored to the same image-bounds wrapper as the base preview, with footer legend copy that makes the final blue crop box explicit in the UI.
+Keeps `Split mask regions` / `Invert mask` interlocked in the card and suppresses preview/editor entry until truthful natural init-image + processing dimensions are available.
 Init-image filename captions are centered in the footer area for clearer media identification.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -167,7 +168,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskRegionSplit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
                 type="button"
                 :aria-pressed="maskRegionSplit"
-                :disabled="disabled"
+                :disabled="splitMaskRegionToggleDisabled"
                 @click="emit('toggle:maskRegionSplit')"
               >
                 Split mask regions
@@ -184,7 +185,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', maskInvert ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
                 type="button"
                 :aria-pressed="maskInvert"
-                :disabled="disabled"
+                :disabled="invertMaskToggleDisabled"
                 @click="emit('toggle:maskInvert')"
               >
                 Invert mask
@@ -303,7 +304,7 @@ const INPAINT_PARAMETER_TOOLTIPS = {
       'Runs disconnected mask islands as separate inpaint passes instead of one combined masked region.',
       '[[Enabled:]] isolated holes stay decoupled, which can reduce one region bleeding into another.',
       '[[Disabled:]] the full masked area is processed as one region.',
-      'Requires batch size = 1, does not work with Invert mask, and unsupported engines still fail loud.',
+      '[[Unavailable with Invert mask:]] the UI now blocks that pair before Generate, and unsupported engines still fail loud.',
     ],
   },
   invertMask: {
@@ -312,7 +313,7 @@ const INPAINT_PARAMETER_TOOLTIPS = {
       'Swaps the editable and preserved sides of the current mask.',
       '[[Enabled:]] everything outside the painted mask becomes editable, and the thumbnail/editor previews switch to that effective mask immediately.',
       '[[Disabled:]] only the painted mask stays editable.',
-      'Still incompatible with Split mask regions; that combination keeps failing loud at run time.',
+      '[[Unavailable with Split mask regions:]] the UI now blocks that pair before Generate, and the runtime guard still stays fail-loud.',
     ],
   },
   previewCrop: {
@@ -405,16 +406,32 @@ const previewHasBlurSpill = ref(false)
 let previewOverlayRenderRafId = 0
 let previewOverlayCanvas: HTMLCanvasElement | null = null
 
+const hasNaturalImageDimensions = computed(() => {
+  const imageWidth = Math.trunc(Number(props.imageWidth))
+  const imageHeight = Math.trunc(Number(props.imageHeight))
+  return Number.isFinite(imageWidth) && imageWidth > 0 && Number.isFinite(imageHeight) && imageHeight > 0
+})
+
 const effectiveProcessingWidth = computed(() => {
   const width = Number(props.processingWidth)
-  if (Number.isFinite(width) && width > 0) return Math.trunc(width)
-  return Math.max(1, Math.trunc(props.imageWidth))
+  return Number.isFinite(width) && width > 0 ? Math.trunc(width) : 0
 })
 
 const effectiveProcessingHeight = computed(() => {
   const height = Number(props.processingHeight)
-  if (Number.isFinite(height) && height > 0) return Math.trunc(height)
-  return Math.max(1, Math.trunc(props.imageHeight))
+  return Number.isFinite(height) && height > 0 ? Math.trunc(height) : 0
+})
+
+const hasProcessingDimensions = computed(() => effectiveProcessingWidth.value > 0 && effectiveProcessingHeight.value > 0)
+
+const splitMaskRegionToggleDisabled = computed(() => {
+  if (props.disabled) return true
+  return props.maskInvert && !props.maskRegionSplit
+})
+
+const invertMaskToggleDisabled = computed(() => {
+  if (props.disabled) return true
+  return props.maskRegionSplit && !props.maskInvert
 })
 
 const effectivePreviewMaskPlane = computed<Uint8Array | Uint8ClampedArray | null>(() => {
@@ -426,6 +443,7 @@ const effectivePreviewMaskPlane = computed<Uint8Array | Uint8ClampedArray | null
 const previewGeometry = computed(() => {
   const maskPlane = effectivePreviewMaskPlane.value
   if (!maskPlane) return null
+  if (!hasNaturalImageDimensions.value || !hasProcessingDimensions.value) return null
   try {
     return computeInpaintMaskPreviewGeometry(maskPlane, {
       imageWidth: props.imageWidth,
@@ -596,6 +614,14 @@ function onMaskEditorApply(maskDataUrl: string): void {
 
 function onInitPreviewClick(isDisabled: boolean, imageData: string): void {
   if (isDisabled || !imageData) return
+  if (!hasNaturalImageDimensions.value) {
+    emit('notice:maskEditorReset', 'Mask editor unavailable: init image dimensions are unavailable.')
+    return
+  }
+  if (!hasProcessingDimensions.value) {
+    emit('notice:maskEditorReset', 'Mask editor unavailable: processing dimensions are not ready yet.')
+    return
+  }
   maskEditorOpen.value = true
 }
 

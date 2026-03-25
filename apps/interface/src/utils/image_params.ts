@@ -7,19 +7,25 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Pure normalization helpers for image-tab parameter controls.
-Centralizes normalization used by img2img/inpaint UI updates and capability-driven hires visibility so parent handlers stay explicit and unit-testable.
+Centralizes normalization used by img2img/inpaint UI updates, inpaint-toggle interlocks, and capability-driven hires visibility so parent handlers stay explicit and unit-testable.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `MaskEnforcement` (type): Allowed mask enforcement values.
+- `InpaintMaskToggleState` (interface): Normalized interlock state for invert-mask and split-mask toggles.
 - `normalizeMaskEnforcement` (function): Normalizes a raw select value into a strict mask-enforcement enum.
 - `normalizeInpaintingFill` (function): Clamps masked-content fill mode to backend-supported integer range `[0, 3]`.
 - `normalizeNonNegativeInt` (function): Truncates and clamps any numeric input to `>= 0`.
+- `normalizeInpaintMaskToggleState` (function): Preserves `maskInvert` while clearing the invalid `maskRegionSplit + maskInvert` combination.
 - `resolveTextOverride` (function): Uses override text when non-blank; otherwise falls back to base text.
 - `isHiresVisibleForMode` (function): Returns whether hires controls should be visible for the active mode/engine/mask combination.
 - `resolveHiresModePolicy` (function): Resolves hires panel visibility and reset behavior for the active mode/engine/mask combination.
 */
 
 export type MaskEnforcement = 'post_blend' | 'per_step_clamp'
+export interface InpaintMaskToggleState {
+  maskInvert: boolean
+  maskRegionSplit: boolean
+}
 
 export function normalizeMaskEnforcement(value: string): MaskEnforcement {
   return value === 'post_blend' ? 'post_blend' : 'per_step_clamp'
@@ -31,6 +37,22 @@ export function normalizeInpaintingFill(value: number): number {
 
 export function normalizeNonNegativeInt(value: number): number {
   return Math.max(0, Math.trunc(value))
+}
+
+export function normalizeInpaintMaskToggleState(
+  maskInvert: boolean,
+  maskRegionSplit: boolean,
+): InpaintMaskToggleState {
+  if (maskInvert && maskRegionSplit) {
+    return {
+      maskInvert: true,
+      maskRegionSplit: false,
+    }
+  }
+  return {
+    maskInvert,
+    maskRegionSplit,
+  }
 }
 
 export function resolveTextOverride(baseText: string, overrideText?: string): string {

@@ -10,7 +10,7 @@ Status: Active
 ## Notes
 - Keep helpers pure and framework-agnostic so manual validation remains deterministic.
 - For utility changes, run `cd apps/interface && npm run typecheck` and validate impacted UI flows manually.
-- 2026-03-24: Added `inpaint_mask_preview.ts` as the canonical pure helper for inpaint preview geometry and blur-spill raster math (mask bbox, blur-support expansion, masked-padding crop expansion, outward blur-spill alpha generation, display-only invert-mask resolution, and tint packing) shared by `Img2ImgInpaintParamsCard.vue` and `InpaintMaskEditorOverlay.vue`; thumbnail-space containment now belongs to `InitialImageCard.vue`, not this helper.
+- 2026-03-24: Added `inpaint_mask_preview.ts` as the canonical pure helper for inpaint preview geometry and blur-spill raster math (mask bbox, blur-support expansion, masked-padding crop expansion, outward blur-spill alpha generation, display/storage invert-mask resolution, and tint packing) shared by `Img2ImgInpaintParamsCard.vue` and `InpaintMaskEditorOverlay.vue`; thumbnail-space containment now belongs to `InitialImageCard.vue`, not this helper, and crop math now requires explicit processing dimensions instead of hidden image-dimension fallback.
 - 2026-03-21: `img2img_resize.ts` now owns engine-scoped truthful resize-mode subsets; unmasked ZImage img2img reuses the same helper for UI filtering and payload normalization, exposing only the pixel-space modes that `image_init.py` actually implements.
 - 2026-03-20: Added `image_request_contract.ts` as the canonical pure helper for frontend image request selector/extras resolution; `useGeneration.ts` and `xyz.ts` must both reuse it for checkpoint metadata, FLUX.2 guidance mode, asset-contract-backed `tenc_sha`/`vae_sha`, `vae_source`, and ZImage variant extras instead of duplicating that logic.
 - 2025-12-03: Added XYZ helpers (`xyz.ts`) for axis parsing/combo building used by the sweep view/store.
@@ -24,7 +24,7 @@ Status: Active
 - 2026-02-06: Added `engine_taxonomy.ts` as canonical frontend engine taxonomy mapping (tab-family aliases, request engine-id resolution, semantic-engine resolution, and centralized sampler/scheduler fallback defaults).
 - 2026-03-08: `engine_taxonomy.ts` fallback sampling defaults keep `sd15` on live executable defaults (`ddim`/`ddim`).
 - 2026-02-07: Updated Anima fallback sampling defaults to `euler/simple` in `engine_taxonomy.ts`.
-- 2026-02-08: Added `image_params.ts` for pure img2img/inpaint normalization helpers (`normalizeMaskEnforcement`, `normalizeInpaintingFill`, `normalizeNonNegativeInt`) used by `ImageModelTab.vue`.
+- 2026-02-08: Added `image_params.ts` for pure img2img/inpaint normalization helpers (`normalizeMaskEnforcement`, `normalizeInpaintingFill`, `normalizeNonNegativeInt`, `normalizeInpaintMaskToggleState`) used by `ImageModelTab.vue`.
 - 2026-02-25: `image_params.normalizeMaskEnforcement(...)` now defaults unknown values to `per_step_clamp` (Forge-engine baseline), while preserving explicit `post_blend` as legacy opt-in.
 - 2026-03-06: `image_params.ts` now also exposes hires policy/text helpers (`resolveTextOverride`, `resolveHiresModePolicy`) used by payload/view wiring to keep prompt fallback deterministic and hires visibility/reset mask-aware for img2img.
 - 2026-02-18: Added `img2img_resize.ts` as the canonical img2img resize-mode contract (`just_resize`, `crop_and_resize`, `resize_and_fill`, `just_resize_latent_upscale`, `upscaler`) with a shared normalizer for store/view/composable wiring.

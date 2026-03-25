@@ -57,9 +57,9 @@
     position: absolute;
     box-sizing: border-box;
     pointer-events: none;
-    border: 0.0625rem solid hsla(197, 92%, 68%, 0.95);
-    background: hsla(197, 92%, 62%, 0.12);
-    box-shadow: 0 0 0 0.0625rem hsla(0, 0%, 0%, 0.35);
+    border: 0.0625rem solid var(--cdx-inpaint-preview-crop-border);
+    background: var(--cdx-inpaint-preview-crop-fill);
+    box-shadow: var(--cdx-inpaint-preview-crop-shadow);
   }
 
   .inpaint-mask-editor-cursor {

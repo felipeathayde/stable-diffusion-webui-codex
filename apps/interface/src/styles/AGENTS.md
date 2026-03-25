@@ -37,7 +37,7 @@ Rules:
 - Don’t hard-code colors/shadows in feature CSS. Use existing `--color-*` variables or add a token.
 - When adding a new token, define it in `styles.css` and keep dark-mode parity.
 - For new component/view-scoped tokens, use a `cdx` prefix: `--cdx-<scope>-<name>`.
-- 2026-03-24: `styles/components/img2img-inpaint-params-card.css` now owns the compact stacked toggle lane for `Split mask regions` + `Invert mask`; keep those controls aligned in the first inpaint row instead of reintroducing ad-hoc inline button spacing in the Vue template.
+- 2026-03-24: `styles/components/img2img-inpaint-params-card.css` now owns the compact stacked toggle lane for `Split mask regions` + `Invert mask`; keep those controls aligned in the first inpaint row instead of reintroducing ad-hoc inline button spacing in the Vue template. The inpaint preview legend/crop colors now come from `styles.css` `--cdx-inpaint-preview-*` tokens; do not reintroduce hard-coded preview colors/shadows in feature CSS.
 
 ## Naming (replace “ab” → “cdx”)
 - Avoid creating new unprefixed “global-ish” classes. This repo already has legacy primitives (`.btn`, `.panel`, `.ui-input`, …) — don’t create more.
@@ -110,7 +110,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2026-03-02: `quicksettings.css` now supports right-anchored family controls (`qs-group-mode-toggle--end`, `qs-group-wan-refresh--end`) so ZImage mode toggles sit before Refresh on the right edge and WAN Refresh aligns to the right edge.
 - 2026-02-17: `result-viewer.css` removed zoom legend styles; zoom UI now relies on icon-only controls in the shared overlay.
 - 2026-03-01: `result-viewer.css` now styles WAN zoom frame-guide editing UX in `ImageZoomOverlay.vue` (conditional wider toolbar for guide mode, draggable frame-guide rectangle state, guide resize-mode/size controls, and compact source/scaled/frame/crop metadata rows).
-- 2026-03-02: `styles.css` now positions `InitialImageCard` dropzone remove action inside the dotted zone (`.init-dropzone-remove` absolute top-right), and `img2img-inpaint-params-card.css` adds `.img2img-caption--init-name` for centered init-image filename captions. On 2026-03-24 that same stylesheet also gained the compact inpaint preview legend chips that label the mask, blur range, and final blue crop box under the thumbnail.
+- 2026-03-02: `styles.css` now positions `InitialImageCard` dropzone remove action inside the dotted zone (`.init-dropzone-remove` absolute top-right), and `img2img-inpaint-params-card.css` adds `.img2img-caption--init-name` for centered init-image filename captions. On 2026-03-24 that same stylesheet also gained the compact inpaint preview legend chips that label the mask, blur range, and final blue crop box under the thumbnail; the preview-chip/crop palette now lives in `styles.css` `--cdx-inpaint-preview-*` tokens with dark-mode parity.
 - 2026-03-02: `styles/views/wan.css` now includes compact toggle helpers for temporal reset-anchor (`.wan-temporal-anchor-toggle*`) and reflow helpers for upscaling card rows (`.wan-upscaling-*`), keeping toggle buttons content-width and reducing uneven row stretching.
 - 2026-02-20: `styles/views/wan.css` adds opt-in clickable `wan-subheader` states (`--clickable` hover/focus) for full-row header toggles; `xyz-sweep-card.css` adds `.xyz-card-body` for collapsed-body layout grouping.
 - 2026-02-20: `styles.css` sets `.btn-destructive` height to `2rem` for size parity with adjacent `.btn-outline` controls in compact toolbars.

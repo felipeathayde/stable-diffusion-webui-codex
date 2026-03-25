@@ -10,7 +10,7 @@ Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-fa
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base and FLUX.2 Klein distilled/base-4B are variant-dependent:
 CFG label + negative prompt gating follow the selected checkpoint/tab state, while img2img denoise + hires visibility stay truthful to the active capability/mask contract).
-When inpaint masking is active, it also forwards natural init-image dimensions, current processing target dimensions, and the current invert-mask state to the shared card/editor preview seam.
+When inpaint masking is active, it also forwards natural init-image dimensions, current processing target dimensions, and the current invert-mask state to the shared card/editor preview seam, treats unresolved natural dims as unavailable instead of falling back to processing dims, and normalizes the invalid `maskInvert + maskRegionSplit` pair in the shared parent-owned param path.
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with honest img2img control visibility).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
@@ -35,7 +35,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `saveProfile` (function): Saves current params as a profile in localStorage.
 - `setParams` (function): Applies partial updates to the current tab params state.
 - `normalizeImageDimension` (function): Snaps width/height updates to the active engine grid before they reach tab state.
-- `normalizeImageParamPatch` (function): Applies engine-aware width/height + img2img resize-mode normalization to partial param patches.
+- `normalizeImageParamPatch` (function): Applies engine-aware width/height + img2img resize-mode normalization plus inpaint toggle interlock cleanup to partial param patches.
 - `syncImageContractToEngine` (function): Reconciles persisted width/height/resize-mode state with the active engine contract.
 - `normalizeGuidanceAdvancedPatch` (function): Sanitizes/normalizes advanced-guidance payload fragments (profile + UI patch merges).
 - `setGuidanceAdvanced` (function): Applies partial advanced-guidance updates into `params.guidanceAdvanced`.
@@ -545,7 +545,13 @@ import {
   img2imgResizeModeOptionsForEngine,
   normalizeImg2ImgResizeModeForEngine,
 } from '../utils/img2img_resize'
-import { normalizeInpaintingFill, normalizeMaskEnforcement, normalizeNonNegativeInt, resolveHiresModePolicy } from '../utils/image_params'
+import {
+  normalizeInpaintMaskToggleState,
+  normalizeInpaintingFill,
+  normalizeMaskEnforcement,
+  normalizeNonNegativeInt,
+  resolveHiresModePolicy,
+} from '../utils/image_params'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import Img2ImgBasicParametersCard from '../components/Img2ImgBasicParametersCard.vue'
@@ -674,23 +680,23 @@ const initImageNaturalHeight = ref(0)
 const initImageDimsToken = ref(0)
 
 const maskEditorImageWidth = computed(() => {
-  if (!String(params.value.initImageData || '').trim()) return params.value.width
+  if (!String(params.value.initImageData || '').trim()) return 0
   const w = Math.trunc(Number(initImageNaturalWidth.value))
-  return Number.isFinite(w) && w > 0 ? w : params.value.width
+  return Number.isFinite(w) && w > 0 ? w : 0
 })
 const maskEditorImageHeight = computed(() => {
-  if (!String(params.value.initImageData || '').trim()) return params.value.height
+  if (!String(params.value.initImageData || '').trim()) return 0
   const h = Math.trunc(Number(initImageNaturalHeight.value))
-  return Number.isFinite(h) && h > 0 ? h : params.value.height
+  return Number.isFinite(h) && h > 0 ? h : 0
 })
 
 watch(
   () => String(params.value.initImageData || '').trim(),
   (src) => {
     const token = (initImageDimsToken.value += 1)
+    initImageNaturalWidth.value = 0
+    initImageNaturalHeight.value = 0
     if (!src) {
-      initImageNaturalWidth.value = 0
-      initImageNaturalHeight.value = 0
       return
     }
 
@@ -1518,6 +1524,14 @@ function normalizeImageParamPatch(patch: Partial<ImageBaseParams>): Partial<Imag
   if (patch.img2imgResizeMode !== undefined) {
     next.img2imgResizeMode = normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode.value, patch.img2imgResizeMode)
   }
+  if (patch.maskInvert !== undefined || patch.maskRegionSplit !== undefined) {
+    const normalizedMaskToggles = normalizeInpaintMaskToggleState(
+      patch.maskInvert ?? params.value.maskInvert,
+      patch.maskRegionSplit ?? params.value.maskRegionSplit,
+    )
+    next.maskInvert = normalizedMaskToggles.maskInvert
+    next.maskRegionSplit = normalizedMaskToggles.maskRegionSplit
+  }
   return next
 }
 
@@ -1540,6 +1554,21 @@ watch(
   resolvedEngineForMode,
   () => {
     syncImageContractToEngine()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [params.value.maskInvert, params.value.maskRegionSplit] as const,
+  ([maskInvert, maskRegionSplit]) => {
+    const normalizedMaskToggles = normalizeInpaintMaskToggleState(maskInvert, maskRegionSplit)
+    if (
+      normalizedMaskToggles.maskInvert === maskInvert
+      && normalizedMaskToggles.maskRegionSplit === maskRegionSplit
+    ) {
+      return
+    }
+    setParams(normalizedMaskToggles)
   },
   { immediate: true },
 )

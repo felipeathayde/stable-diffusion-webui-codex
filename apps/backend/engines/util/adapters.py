@@ -11,6 +11,7 @@ Builds Codex processing objects from API request DTOs, including Hires, first-pa
 per-job smart runtime flags, and strict pass-through overrides like `extras.er_sde` for sampler runtime wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_require_non_negative_int` (function): Validates an explicit integer `>= 0` for fail-loud request→processing transfer seams.
 - `_build_swap_model_config` (function): Builds a typed `SwapModelConfig` from request payload data.
 - `_build_swap_stage_config` (function): Builds a typed `SwapStageConfig` for the global first-pass `swap_model` stage.
 - `_build_hires_config` (function): Builds a `CodexHiresConfig` from request payload data (including hires tile config + nested hires refiner).
@@ -77,6 +78,24 @@ def _parse_optional_finite_float(value: Any, *, field: str) -> float | None:
         raise ValueError(f"Invalid '{field}': expected finite number, got {value!r}.") from exc
     if not math.isfinite(parsed):
         raise ValueError(f"Invalid '{field}': expected finite number, got {value!r}.")
+    return parsed
+
+
+def _require_non_negative_int(value: Any, *, field: str) -> int:
+    if value is None:
+        raise ValueError(f"Invalid '{field}': expected integer >= 0, got None.")
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid '{field}': expected integer >= 0, got boolean.")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"Invalid '{field}': expected integer >= 0, got {value!r}.")
+        parsed = int(value)
+    else:
+        raise ValueError(f"Invalid '{field}': expected integer >= 0, got {type(value).__name__}.")
+    if parsed < 0:
+        raise ValueError(f"Invalid '{field}': expected integer >= 0, got {parsed}.")
     return parsed
 
 
@@ -376,6 +395,10 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         raise ValueError("Img2ImgRequest.per_step_blend_strength must be provided explicitly")
     if per_step_blend_strength < 0.0 or per_step_blend_strength > 1.0:
         raise ValueError("Img2ImgRequest.per_step_blend_strength must be between 0.0 and 1.0")
+    per_step_blend_steps = _require_non_negative_int(
+        req.per_step_blend_steps,
+        field="Img2ImgRequest.per_step_blend_steps",
+    )
 
     mask_round = bool(getattr(req, "mask_round", True))
     processing = CodexProcessingImg2Img(
@@ -395,6 +418,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         mask=req.mask,
         mask_enforcement=getattr(req, "mask_enforcement", None),
         per_step_blend_strength=per_step_blend_strength,
+        per_step_blend_steps=per_step_blend_steps,
         mask_region_split=bool(getattr(req, "mask_region_split", False)),
         mask_blur=int(getattr(req, "mask_blur", 4) or 0),
         mask_blur_x=int(getattr(req, "mask_blur_x", getattr(req, "mask_blur", 4)) or 0),

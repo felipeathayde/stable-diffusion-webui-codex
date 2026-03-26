@@ -79,6 +79,7 @@ class LatentMaskEnforcer:
         latent_masked: torch.Tensor,
         latent_unmasked: torch.Tensor,
         per_step_blend_strength: float,
+        per_step_blend_steps: int | None,
         noise_scaling: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
         noise_seeds: Sequence[int] | None = None,
     ) -> None:
@@ -87,10 +88,12 @@ class LatentMaskEnforcer:
             raise ValueError("per_step_blend_strength must be finite")
         if strength < 0.0 or strength > 1.0:
             raise ValueError("per_step_blend_strength must be between 0.0 and 1.0")
+        configured_steps = self._parse_configured_steps(per_step_blend_steps)
         self._init_latent = init_latent
         self._latent_masked = latent_masked
         self._latent_unmasked = latent_unmasked
         self._per_step_blend_strength = strength
+        self._per_step_blend_steps = configured_steps
         self._noise_scaling = noise_scaling
         raw_seeds = [int(seed) for seed in (noise_seeds or [0])]
         if not raw_seeds:
@@ -190,8 +193,63 @@ class LatentMaskEnforcer:
             sigma = sigma.expand(batch)
         return sigma.to(device=device, dtype=dtype).view(batch, 1, 1, 1)
 
+    @staticmethod
+    def _parse_configured_steps(per_step_blend_steps: int | None) -> int:
+        if per_step_blend_steps is None:
+            raise ValueError("per_step_blend_steps must be provided explicitly")
+        if isinstance(per_step_blend_steps, bool):
+            raise ValueError("per_step_blend_steps must be an integer >= 0, got boolean")
+        if isinstance(per_step_blend_steps, int):
+            parsed = per_step_blend_steps
+        elif isinstance(per_step_blend_steps, float):
+            if not per_step_blend_steps.is_integer():
+                raise ValueError(f"per_step_blend_steps must be an integer >= 0, got {per_step_blend_steps!r}")
+            parsed = int(per_step_blend_steps)
+        else:
+            raise ValueError(
+                f"per_step_blend_steps must be an integer >= 0, got {type(per_step_blend_steps).__name__}"
+            )
+        if parsed < 0:
+            raise ValueError(f"per_step_blend_steps must be >= 0, got {parsed}")
+        return parsed
+
+    @staticmethod
+    def _parse_step_index(step: int) -> int:
+        if isinstance(step, bool):
+            raise ValueError("step must be an integer >= 1, got boolean")
+        parsed = int(step)
+        if parsed < 1:
+            raise ValueError(f"step must be >= 1, got {parsed}")
+        return parsed
+
+    @staticmethod
+    def _parse_total_steps(steps: int | None) -> int | None:
+        if steps is None:
+            return None
+        if isinstance(steps, bool):
+            raise ValueError("steps must be an integer >= 1 when provided, got boolean")
+        parsed = int(steps)
+        if parsed < 1:
+            raise ValueError(f"steps must be >= 1 when provided, got {parsed}")
+        return parsed
+
+    def resolve_active_step_limit(self, steps: int | None) -> int | None:
+        total_steps = self._parse_total_steps(steps)
+        if self._per_step_blend_steps == 0:
+            return total_steps
+        if total_steps is None:
+            return self._per_step_blend_steps
+        return min(self._per_step_blend_steps, total_steps)
+
+    def is_step_active(self, *, step: int, steps: int | None) -> bool:
+        current_step = self._parse_step_index(step)
+        active_limit = self.resolve_active_step_limit(steps)
+        if active_limit is None:
+            return True
+        return current_step <= active_limit
+
     def uses_legacy_per_step_clamp(self) -> bool:
-        return self._per_step_blend_strength == 1.0
+        return self._per_step_blend_strength == 1.0 and self._per_step_blend_steps == 0
 
     @staticmethod
     def _blend_toward_target(
@@ -206,7 +264,7 @@ class LatentMaskEnforcer:
         current.add_((target - current) * unmasked * strength)
         return current
 
-    def pre_denoiser(self, x: torch.Tensor, sigma: torch.Tensor, step: int, steps: int) -> torch.Tensor:  # noqa: ARG002
+    def pre_denoiser(self, x: torch.Tensor, sigma: torch.Tensor, step: int, steps: int | None) -> torch.Tensor:  # noqa: ARG002
         masked, unmasked, init_latent, _init_unmasked, base_noise = self._materialize(x)
         sigma_view = self._sigma_to_latent_shape(
             sigma,
@@ -222,13 +280,15 @@ class LatentMaskEnforcer:
         x.add_(noisy_init * unmasked)
         return x
 
-    def post_denoiser(self, denoised: torch.Tensor, sigma: torch.Tensor, step: int, steps: int) -> torch.Tensor:  # noqa: ARG002
+    def post_denoiser(self, denoised: torch.Tensor, sigma: torch.Tensor, step: int, steps: int | None) -> torch.Tensor:  # noqa: ARG002
         masked, _unmasked, _init_latent, init_unmasked, _base_noise = self._materialize(denoised)
         denoised.mul_(masked)
         denoised.add_(init_unmasked)
         return denoised
 
-    def post_step(self, x: torch.Tensor, step: int, steps: int) -> None:  # noqa: ARG002 - hook signature
+    def post_step(self, x: torch.Tensor, step: int, steps: int | None) -> None:
+        if not self.is_step_active(step=step, steps=steps):
+            return
         _masked, unmasked, init_latent, _init_unmasked, _base_noise = self._materialize(x)
         self._blend_toward_target(
             x,
@@ -600,6 +660,7 @@ def prepare_masked_img2img_bundle(
     init_tensor = pil_to_tensor([image_for_sampling])
     round_conditioning_mask = bool(getattr(processing, "round_image_mask", True))
     per_step_blend_strength = float(getattr(processing, "per_step_blend_strength"))
+    per_step_blend_steps = LatentMaskEnforcer._parse_configured_steps(getattr(processing, "per_step_blend_steps", None))
     if not math.isfinite(per_step_blend_strength):
         raise ValueError("processing.per_step_blend_strength must be finite")
     if per_step_blend_strength < 0.0 or per_step_blend_strength > 1.0:
@@ -673,12 +734,17 @@ def prepare_masked_img2img_bundle(
 
     if str(enforce_mode).strip() == MASK_ENFORCEMENT_PER_STEP_CLAMP:
         processing.update_extra_param("Per-step blend strength", float(per_step_blend_strength))
+        processing.update_extra_param(
+            "Per-step blend steps",
+            "all" if per_step_blend_steps == 0 else int(per_step_blend_steps),
+        )
 
     enforcer = LatentMaskEnforcer(
         init_latent=init_latent,
         latent_masked=latent_masked,
         latent_unmasked=latent_unmasked,
         per_step_blend_strength=per_step_blend_strength,
+        per_step_blend_steps=per_step_blend_steps,
         noise_scaling=noise_scaling,
         noise_seeds=noise_seeds,
     )

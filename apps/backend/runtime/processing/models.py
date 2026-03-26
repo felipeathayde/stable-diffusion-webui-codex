@@ -545,6 +545,7 @@ class CodexProcessingImg2Img(CodexProcessingBase):
     image_cfg_scale: Optional[float] = None
     mask: Any = None
     per_step_blend_strength: float = 1.0
+    per_step_blend_steps: int | None = None
     mask_blur: int = 4
     mask_blur_x: int = 4
     mask_blur_y: int = 4

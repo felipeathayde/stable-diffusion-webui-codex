@@ -175,6 +175,7 @@ def build_router(
         "maskImageName",
         "maskEnforcement",
         "perStepBlendStrength",
+        "perStepBlendSteps",
         "inpaintFullResPadding",
         "inpaintingFill",
         "maskInvert",

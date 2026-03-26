@@ -369,7 +369,12 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
       const perStepBlendStrength = Number.isFinite(rawPerStepBlendStrength)
         ? Math.max(0, Math.min(1, rawPerStepBlendStrength))
         : 1
+      const rawPerStepBlendSteps = Number(params.perStepBlendSteps)
+      const perStepBlendSteps = Number.isFinite(rawPerStepBlendSteps)
+        ? Math.max(0, Math.trunc(rawPerStepBlendSteps))
+        : 0
       payload.img2img_per_step_blend_strength = perStepBlendStrength
+      payload.img2img_per_step_blend_steps = perStepBlendSteps
     }
 
     const wantsRegionSplit = maskRegionSplit

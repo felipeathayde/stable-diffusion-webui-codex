@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/fill + masked padding + mask blur + invert/region-splitting toggles),
+Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
 - `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select, slider, and split-toggle controls.
 - `perStepBlendStrength` (prop): Scales how strongly `Per-step blend` restores preserved outside-mask content each outer sampling step.
+- `perStepBlendSteps` (prop): Limits how many outer sampling steps `Per-step blend` stays active before the final preserved-content close.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `InitialImageCard` zoom overlay.
 - `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent WAN state.
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
@@ -213,6 +214,22 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </div>
 
+      <div v-if="maskEnforcement === 'per_step_clamp'" class="gc-row img2img-mask-slider-row">
+        <SliderField
+          class="gc-col gc-col--wide"
+          label="Per-step blend steps"
+          :tooltip="INPAINT_PARAMETER_TOOLTIPS.perStepBlendSteps.content"
+          :tooltipTitle="INPAINT_PARAMETER_TOOLTIPS.perStepBlendSteps.title"
+          :modelValue="perStepBlendSteps"
+          :min="0"
+          :step="1"
+          :inputStep="1"
+          inputClass="cdx-input-w-xs"
+          :disabled="disabled"
+          @update:modelValue="(value) => emit('update:perStepBlendSteps', value)"
+        />
+      </div>
+
       <div class="gc-row img2img-mask-slider-row">
         <SliderField
           class="gc-col gc-col--wide"
@@ -326,6 +343,17 @@ const INPAINT_PARAMETER_TOOLTIPS = {
       '[[Decrease:]] gives the model more freedom between steps before the final preserved-content blend closes the result.',
     ],
   },
+  perStepBlendSteps: {
+    title: 'Per-step blend steps',
+    content: [
+      'Limits for how many outer sampling steps `Per-step blend` keeps pulling preserved outside-mask content back toward the source latent.',
+      '[[0:]] applies that pull-back on every outer sampling step, which preserves the current default behavior.',
+      '[[Positive values:]] apply the pull-back only on the first `N` outer sampling steps.',
+      '[[Values above current sampling steps:]] are allowed; the runtime resolves the effective window instead of the UI silently clamping it.',
+      '[[Increase:]] keeps the preserved-content pull-back active longer into sampling.',
+      '[[Decrease:]] stops the pull-back earlier, leaving more late-step freedom before the final preserved-content close.',
+    ],
+  },
   splitMaskRegions: {
     title: 'Split mask regions',
     content: [
@@ -390,6 +418,7 @@ const props = withDefaults(defineProps<{
   maskImageName?: string
   maskEnforcement: MaskEnforcement
   perStepBlendStrength?: number
+  perStepBlendSteps?: number
   inpaintingFill: number
   inpaintFullResPadding: number
   maskBlur: number
@@ -410,6 +439,7 @@ const props = withDefaults(defineProps<{
   maskImageName: '',
   maskEnforcement: 'per_step_clamp',
   perStepBlendStrength: 1,
+  perStepBlendSteps: 0,
   maskInvert: false,
   maskRegionSplit: false,
   zoomFrameGuide: null,
@@ -424,6 +454,7 @@ const emit = defineEmits<{
   (e: 'notice:maskEditorReset', message: string): void
   (e: 'update:maskEnforcement', value: string): void
   (e: 'update:perStepBlendStrength', value: number): void
+  (e: 'update:perStepBlendSteps', value: number): void
   (e: 'update:inpaintingFill', value: number): void
   (e: 'update:inpaintFullResPadding', value: number): void
   (e: 'toggle:maskRegionSplit'): void

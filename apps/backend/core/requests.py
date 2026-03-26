@@ -97,6 +97,7 @@ class Img2ImgRequest(BaseRequest):
     mask: Any = None
     mask_enforcement: Optional[str] = None
     per_step_blend_strength: float = 1.0
+    per_step_blend_steps: int | None = None
     mask_region_split: bool = False
     inpainting_fill: int = 1
     inpaint_full_res_padding: int = 32

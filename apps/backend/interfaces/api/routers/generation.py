@@ -165,6 +165,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "img2img_mask_blur_x",
         "img2img_mask_blur_y",
         "img2img_per_step_blend_strength",
+        "img2img_per_step_blend_steps",
         "img2img_mask_enforcement",
         "img2img_mask_region_split",
         "img2img_mask_round",
@@ -3883,6 +3884,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         mask_round = True
         mask_region_split = False
         per_step_blend_strength = 1.0
+        per_step_blend_steps = 0
 
         if mask_image is not None:
             raw_enforcement = payload.get("img2img_mask_enforcement")
@@ -3936,6 +3938,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     minimum=0.0,
                     maximum=1.0,
                 )
+            if "img2img_per_step_blend_steps" in payload:
+                if mask_enforcement != "per_step_clamp":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'img2img_per_step_blend_steps' requires 'img2img_mask_enforcement' = 'per_step_clamp'",
+                    )
+                per_step_blend_steps = _require_int_field(
+                    payload,
+                    "img2img_per_step_blend_steps",
+                    minimum=0,
+                )
 
             if "img2img_mask_round" in payload:
                 mask_round = _require_bool_field(payload, "img2img_mask_round")
@@ -3949,6 +3962,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(
                     status_code=400,
                     detail="'img2img_per_step_blend_strength' requires 'img2img_mask'",
+                )
+            if "img2img_per_step_blend_steps" in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_per_step_blend_steps' requires 'img2img_mask'",
                 )
             if "img2img_mask_region_split" in payload:
                 raise HTTPException(status_code=400, detail="'img2img_mask_region_split' requires 'img2img_mask'")
@@ -4262,6 +4280,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             mask=mask_image,
             mask_enforcement=mask_enforcement,
             per_step_blend_strength=per_step_blend_strength,
+            per_step_blend_steps=per_step_blend_steps,
             mask_region_split=mask_region_split,
             inpainting_fill=inpainting_fill,
             inpaint_full_res_padding=inpaint_full_res_padding,

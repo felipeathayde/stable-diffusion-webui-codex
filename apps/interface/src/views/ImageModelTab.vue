@@ -105,6 +105,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :maskImageName="params.maskImageName"
             :maskEnforcement="params.maskEnforcement"
             :perStepBlendStrength="params.perStepBlendStrength"
+            :perStepBlendSteps="params.perStepBlendSteps"
             :inpaintingFill="params.inpaintingFill"
             :inpaintFullResPadding="params.inpaintFullResPadding"
             :maskBlur="params.maskBlur"
@@ -118,6 +119,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @notice:maskEditorReset="onMaskEditorResetNotice"
             @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
             @update:perStepBlendStrength="(v) => setParams({ perStepBlendStrength: clampFloat(v, 0, 1) })"
+            @update:perStepBlendSteps="(v) => setParams({ perStepBlendSteps: normalizeNonNegativeInt(v) })"
             @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
             @update:inpaintFullResPadding="(v) => setParams({ inpaintFullResPadding: normalizeNonNegativeInt(v) })"
             @update:maskBlur="(v) => setParams({ maskBlur: normalizeNonNegativeInt(v) })"
@@ -1587,6 +1589,9 @@ function normalizeImageParamPatch(patch: Partial<ImageBaseParams>): Partial<Imag
   if (patch.height !== undefined) next.height = normalizeImageDimension(patch.height)
   if (patch.perStepBlendStrength !== undefined) {
     next.perStepBlendStrength = clampFloat(Number(patch.perStepBlendStrength), 0, 1)
+  }
+  if (patch.perStepBlendSteps !== undefined) {
+    next.perStepBlendSteps = normalizeNonNegativeInt(patch.perStepBlendSteps)
   }
   if (patch.img2imgResizeMode !== undefined) {
     next.img2imgResizeMode = normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode.value, patch.img2imgResizeMode)

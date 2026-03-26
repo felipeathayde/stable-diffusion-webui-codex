@@ -271,6 +271,7 @@ export interface ImageBaseParams {
   maskImageName: string
   maskEnforcement: 'post_blend' | 'per_step_clamp'
   perStepBlendStrength: number
+  perStepBlendSteps: number
   inpaintFullResPadding: number
   inpaintingFill: number
   maskInvert: boolean
@@ -367,6 +368,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'maskImageName',
   'maskEnforcement',
   'perStepBlendStrength',
+  'perStepBlendSteps',
   'inpaintFullResPadding',
   'inpaintingFill',
   'maskInvert',
@@ -614,6 +616,7 @@ function defaultParams<T extends BaseTabType>(
     maskImageName: '',
     maskEnforcement: 'per_step_clamp',
     perStepBlendStrength: 1,
+    perStepBlendSteps: 0,
     inpaintFullResPadding: 32,
     inpaintingFill: 1,
     maskInvert: false,
@@ -1276,6 +1279,9 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
     typeof merged.maskEnforcement === 'string' ? merged.maskEnforcement : defaults.maskEnforcement,
   )
   merged.perStepBlendStrength = clampFiniteNumber(merged.perStepBlendStrength, defaults.perStepBlendStrength, 0, 1)
+  merged.perStepBlendSteps = Math.trunc(
+    clampFiniteNumber(merged.perStepBlendSteps, defaults.perStepBlendSteps, 0),
+  )
   merged.img2imgResizeMode = normalizeImg2ImgResizeMode(merged.img2imgResizeMode)
   merged.img2imgUpscaler = String(merged.img2imgUpscaler || '').trim() || defaults.img2imgUpscaler
   merged.textEncoders = Array.isArray(merged.textEncoders)

@@ -18,7 +18,7 @@ backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both s
 queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
 `flux2/*` Qwen selector without overriding shared img2img denoise state. LTX normalization treats `mode` as the canonical owner of txt2vid/img2vid,
 persists explicit `executionProfile` state, rewrites the compatibility boolean `useInitImage` from that normalized mode, and leaves stale/blank
-profile values visible until the active checkpoint metadata or user choice resolves them truthfully.
+profile values visible until the active checkpoint metadata or user choice resolves them truthfully without silently rewriting stored raw profile ids.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -706,13 +706,6 @@ function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams 
   merged.steps = normalizePositiveInt(merged.steps, defaults.steps)
   merged.cfgScale = Number.isFinite(Number(merged.cfgScale)) ? Number(merged.cfgScale) : defaults.cfgScale
   merged.executionProfile = String(merged.executionProfile || '').trim()
-  if (!merged.executionProfile) {
-    const legacySampler = String(patch.sampler || '').trim().toLowerCase()
-    const legacyScheduler = String(patch.scheduler || '').trim().toLowerCase()
-    if (legacySampler && !(legacySampler === 'euler' && (legacyScheduler === '' || legacyScheduler === 'simple'))) {
-      merged.executionProfile = legacySampler
-    }
-  }
   merged.seed = Number.isFinite(Number(merged.seed)) ? Math.trunc(Number(merged.seed)) : defaults.seed
   merged.checkpoint = String(merged.checkpoint || '').trim()
   merged.vae = String(merged.vae || '').trim()

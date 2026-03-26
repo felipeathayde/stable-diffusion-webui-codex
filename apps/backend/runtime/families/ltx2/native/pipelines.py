@@ -9,13 +9,16 @@ Required Notice: see NOTICE
 Purpose: Native LTX2 txt2vid/img2vid execution helpers.
 Owns direct native execution against loaded LTX2 components (text encoder, connectors, transformer, VAEs, vocoder,
 and native FlowMatch-Euler scheduler), including deterministic generation-boundary cleanup for streamed transformers,
-truthful request-owned seed/guidance handling, returns raw `(video, audio)` tuples that runtime.py can normalize into
-the family-local result contract, and threads the explicit zero-timestep decode input required by timestep-conditioned
-LTX video VAEs.
+truthful request-owned seed/guidance handling, explicit latent-stage sampling/decode primitives for the `two_stage`
+runtime path, returns raw `(video, audio)` tuples that runtime.py can normalize into the family-local result contract,
+and threads the explicit zero-timestep decode input required by timestep-conditioned LTX video VAEs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_build_seed_generator` (function): Normalize LTX native seed ownership into truthful generator-or-random semantics.
+- `Ltx2NativeLatentStageResult` (dataclass): Native latent-stage bridge contract for two-stage orchestration.
 - `_resolve_guidance_scale` (function): Preserve explicit `cfg_scale=0` while defaulting only missing guidance values.
+- `sample_ltx2_txt2vid_native` (function): Execute the native txt2vid sampler and return the latent-stage result.
+- `sample_ltx2_img2vid_native` (function): Execute the native img2vid sampler and return the latent-stage result.
+- `decode_ltx2_native_stage_result` (function): Decode a native latent-stage result into raw `(video, audio)` outputs.
 - `run_ltx2_txt2vid_native` (function): Execute the native LTX2 txt2vid path and return raw `(video, audio)`.
 - `run_ltx2_img2vid_native` (function): Execute the native LTX2 img2vid path and return raw `(video, audio)`.
 """
@@ -23,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -35,23 +39,20 @@ from .scheduler import Ltx2FlowMatchEulerScheduler
 from .text import encode_ltx2_prompt_pair
 
 
+@dataclass(frozen=True, slots=True)
+class Ltx2NativeLatentStageResult:
+    video_latents_unpacked_unnormalized: torch.Tensor
+    audio_latents_packed_normalized: torch.Tensor
+    latent_num_frames: int
+    latent_height: int
+    latent_width: int
+    audio_num_frames: int
+    latent_mel_bins: int
+    batch_size: int
+
+
 def _resolve_device(native: Any) -> torch.device:
     return torch.device(str(getattr(native, "device_label", "cpu") or "cpu"))
-
-
-
-
-def _build_seed_generator(seed: int | None, *, device: torch.device) -> torch.Generator | None:
-    if seed is None:
-        return None
-    seed_value = int(seed)
-    if seed_value < 0:
-        raise RuntimeError(f"LTX2 native seed must be >= 0 or None, got {seed_value}.")
-    generator_device = device.type if device.type == "cuda" else "cpu"
-    generator = torch.Generator(device=generator_device)
-    generator.manual_seed(seed_value)
-    return generator
-
 
 def _resolve_execution_profile(request: Any) -> str | None:
     extras = getattr(request, "extras", None)
@@ -68,6 +69,18 @@ def _resolve_guidance_scale(request: Any) -> float:
             return 1.0
         return 4.0
     return float(guidance_scale)
+
+
+def _build_scheduler_config(
+    native: Any,
+    *,
+    preserve_custom_sigmas: bool,
+) -> dict[str, Any]:
+    scheduler_config = dict(getattr(native, "scheduler_config", {}) or {})
+    if preserve_custom_sigmas:
+        scheduler_config["use_dynamic_shifting"] = False
+        scheduler_config["shift_terminal"] = None
+    return scheduler_config
 
 def _resolve_dtype(native: Any) -> torch.dtype:
     native_dtype = getattr(native, "torch_dtype", None)
@@ -463,6 +476,33 @@ def _prepare_img2vid_video_latents(
         conditioning_mask = latents.new_zeros(mask_shape)
         conditioning_mask[:, :, 0] = 1.0
         if latents.ndim == 5:
+            if init_image is not None:
+                image_tensor = _coerce_image_batch(
+                    init_image,
+                    batch_size=int(batch_size),
+                    device=device,
+                    dtype=dtype,
+                    height=int(height),
+                    width=int(width),
+                )
+                if isinstance(generator, Sequence) and not isinstance(generator, (bytes, str)):
+                    if len(generator) != int(batch_size):
+                        raise RuntimeError(
+                            "LTX2 img2vid expected one generator per batch item when generator is a sequence; "
+                            f"got batch={int(batch_size)} generators={len(generator)}."
+                        )
+                    init_latents = [
+                        _retrieve_latents(native.vae.encode(image_tensor[index : index + 1].unsqueeze(2)), generator[index], "argmax")
+                        for index in range(int(batch_size))
+                    ]
+                else:
+                    init_latents = [
+                        _retrieve_latents(native.vae.encode(image_tensor[index : index + 1].unsqueeze(2)), generator, "argmax")
+                        for index in range(int(batch_size))
+                    ]
+                conditioned_init_latents = torch.cat(init_latents, dim=0).to(device=device, dtype=dtype)
+                latents = latents.clone()
+                latents[:, :, :1] = conditioned_init_latents
             latents = _normalize_video_latents(
                 latents,
                 latents_mean=native.vae.latents_mean,
@@ -546,8 +586,29 @@ def _validate_run_args(*, width: int, height: int, num_frames: int, num_inferenc
         raise RuntimeError(f"LTX2 frame_rate must be finite > 0; got {frame_rate!r}.")
 
 
+def _resolve_sigma_schedule(
+    *,
+    num_inference_steps: int,
+    sigmas: Sequence[float] | None,
+) -> tuple[int, np.ndarray]:
+    if sigmas is None:
+        steps = int(num_inference_steps)
+        sigma_values = np.linspace(1.0, 1.0 / float(steps), steps, dtype=np.float32)
+        return steps, sigma_values
+
+    sigma_values = np.asarray(list(sigmas), dtype=np.float32)
+    if sigma_values.ndim != 1 or int(sigma_values.size) <= 0:
+        raise RuntimeError(
+            "LTX2 sigma schedule override must be a non-empty 1D sequence of finite floats; "
+            f"got shape={tuple(int(dim) for dim in sigma_values.shape)!r}."
+        )
+    if not np.isfinite(sigma_values).all():
+        raise RuntimeError("LTX2 sigma schedule override must contain only finite floats.")
+    return int(sigma_values.size), sigma_values
+
+
 @torch.no_grad()
-def _run_ltx2_native(
+def _sample_ltx2_native_latents(
     *,
     native: Any,
     prompt: str | Sequence[str],
@@ -564,15 +625,23 @@ def _run_ltx2_native(
     noise_scale: float = 0.0,
     latents: torch.Tensor | None = None,
     audio_latents: torch.Tensor | None = None,
+    sigmas: Sequence[float] | None = None,
+    transformer: Any | None = None,
     attention_kwargs: Mapping[str, Any] | None = None,
     max_sequence_length: int = 1024,
     prompt_scale_factor: int = 8,
-) -> tuple[Any, Any]:
+) -> Ltx2NativeLatentStageResult:
+    effective_transformer = native.transformer if transformer is None else transformer
+    preserve_custom_sigmas = sigmas is not None
+    effective_num_inference_steps, sigma_values = _resolve_sigma_schedule(
+        num_inference_steps=int(num_inference_steps),
+        sigmas=sigmas,
+    )
     _validate_run_args(
         width=int(width),
         height=int(height),
         num_frames=int(num_frames),
-        num_inference_steps=int(num_inference_steps),
+        num_inference_steps=int(effective_num_inference_steps),
         frame_rate=float(frame_rate),
     )
 
@@ -597,8 +666,8 @@ def _run_ltx2_native(
     temporal_ratio = int(getattr(native.vae, "temporal_compression_ratio", 8) or 8)
     mel_ratio = int(getattr(native.audio_vae, "mel_compression_ratio", 4) or 4)
     audio_temporal_ratio = int(getattr(native.audio_vae, "temporal_compression_ratio", 4) or 4)
-    patch_size = int(getattr(native.transformer.config, "patch_size", 1) or 1)
-    patch_size_t = int(getattr(native.transformer.config, "patch_size_t", 1) or 1)
+    patch_size = int(getattr(effective_transformer.config, "patch_size", 1) or 1)
+    patch_size_t = int(getattr(effective_transformer.config, "patch_size_t", 1) or 1)
     audio_sampling_rate = int(getattr(getattr(native.audio_vae, "config", None), "sample_rate", 16000) or 16000)
     audio_hop_length = int(getattr(getattr(native.audio_vae, "config", None), "mel_hop_length", 160) or 160)
 
@@ -607,7 +676,7 @@ def _run_ltx2_native(
     latent_width = int(width) // spatial_ratio
     video_sequence_length = latent_num_frames * latent_height * latent_width
 
-    num_channels_latents = int(getattr(native.transformer.config, "in_channels", 0) or 0)
+    num_channels_latents = int(getattr(effective_transformer.config, "in_channels", 0) or 0)
     if num_channels_latents <= 0:
         raise RuntimeError("LTX2 transformer config is missing a positive in_channels value.")
 
@@ -661,23 +730,23 @@ def _run_ltx2_native(
         latents=audio_latents,
     )
 
-    scheduler = Ltx2FlowMatchEulerScheduler.from_config(native.scheduler_config)
-    audio_scheduler = Ltx2FlowMatchEulerScheduler.from_config(native.scheduler_config)
-    sigmas = np.linspace(1.0, 1.0 / float(int(num_inference_steps)), int(num_inference_steps), dtype=np.float32)
+    scheduler_config = _build_scheduler_config(native, preserve_custom_sigmas=preserve_custom_sigmas)
+    scheduler = Ltx2FlowMatchEulerScheduler.from_config(scheduler_config)
+    audio_scheduler = Ltx2FlowMatchEulerScheduler.from_config(scheduler_config)
     scheduler.set_timesteps(
-        int(num_inference_steps),
+        int(effective_num_inference_steps),
         device=device,
-        sigmas=sigmas,
+        sigmas=sigma_values,
         sequence_length=int(video_sequence_length),
     )
     audio_scheduler.set_timesteps(
-        int(num_inference_steps),
+        int(effective_num_inference_steps),
         device=device,
-        sigmas=sigmas,
+        sigmas=sigma_values,
         sequence_length=int(video_sequence_length),
     )
 
-    video_coords = native.transformer.rope.prepare_video_coords(
+    video_coords = effective_transformer.rope.prepare_video_coords(
         int(video_latents.shape[0]),
         int(latent_num_frames),
         int(latent_height),
@@ -685,7 +754,7 @@ def _run_ltx2_native(
         video_latents.device,
         fps=float(frame_rate),
     )
-    audio_coords = native.transformer.audio_rope.prepare_audio_coords(
+    audio_coords = effective_transformer.audio_rope.prepare_audio_coords(
         int(audio_latents_tensor.shape[0]),
         int(audio_num_frames),
         audio_latents_tensor.device,
@@ -731,8 +800,8 @@ def _run_ltx2_native(
             transformer_kwargs["timestep"] = timestep_batch.unsqueeze(-1) * (1.0 - conditioning_mask_for_model)
             transformer_kwargs["audio_timestep"] = timestep_batch
 
-        with _transformer_cache_context(native.transformer):
-            noise_pred_video, noise_pred_audio = native.transformer(**transformer_kwargs)
+        with _transformer_cache_context(effective_transformer):
+            noise_pred_video, noise_pred_audio = effective_transformer(**transformer_kwargs)
         noise_pred_video = noise_pred_video.float()
         noise_pred_audio = noise_pred_audio.float()
 
@@ -821,14 +890,43 @@ def _run_ltx2_native(
         latent_length=int(audio_num_frames),
         num_mel_bins=int(latent_mel_bins),
     )
+    return Ltx2NativeLatentStageResult(
+        video_latents_unpacked_unnormalized=unpacked_video_latents,
+        audio_latents_packed_normalized=audio_latents_tensor,
+        latent_num_frames=int(latent_num_frames),
+        latent_height=int(latent_height),
+        latent_width=int(latent_width),
+        audio_num_frames=int(audio_num_frames),
+        latent_mel_bins=int(latent_mel_bins),
+        batch_size=int(batch_size),
+    )
 
+
+@torch.no_grad()
+def decode_ltx2_native_stage_result(
+    *,
+    native: Any,
+    stage_result: Ltx2NativeLatentStageResult,
+) -> tuple[Any, Any]:
+    device = _resolve_device(native)
+    execution_dtype = _resolve_dtype(native)
     vae_dtype = _module_dtype(native.vae, execution_dtype)
     audio_vae_dtype = _module_dtype(native.audio_vae, execution_dtype)
-    decoded_video_latents = unpacked_video_latents.to(dtype=encoded_prompt.video_prompt_embeds.dtype)
+    unpacked_audio_latents = _denormalize_audio_latents(
+        stage_result.audio_latents_packed_normalized,
+        latents_mean=native.audio_vae.latents_mean,
+        latents_std=native.audio_vae.latents_std,
+    )
+    unpacked_audio_latents = _unpack_audio_latents(
+        unpacked_audio_latents,
+        latent_length=int(stage_result.audio_num_frames),
+        num_mel_bins=int(stage_result.latent_mel_bins),
+    )
+    decoded_video_latents = stage_result.video_latents_unpacked_unnormalized.to(dtype=execution_dtype)
 
     decode_timestep = None
     if bool(getattr(getattr(native.vae, "config", None), "timestep_conditioning", False)):
-        decode_timestep = torch.zeros(int(batch_size), device=device, dtype=decoded_video_latents.dtype)
+        decode_timestep = torch.zeros(int(stage_result.batch_size), device=device, dtype=decoded_video_latents.dtype)
 
     video = native.vae.decode(
         decoded_video_latents.to(dtype=vae_dtype),
@@ -844,11 +942,103 @@ def _run_ltx2_native(
 
 
 @torch.no_grad()
+def _run_ltx2_native(
+    *,
+    native: Any,
+    prompt: str | Sequence[str],
+    negative_prompt: str | Sequence[str] | None,
+    width: int,
+    height: int,
+    num_frames: int,
+    frame_rate: float,
+    num_inference_steps: int,
+    guidance_scale: float,
+    init_image: Any | None,
+    generator: torch.Generator | Sequence[torch.Generator] | None,
+    guidance_rescale: float = 0.0,
+    noise_scale: float = 0.0,
+    latents: torch.Tensor | None = None,
+    audio_latents: torch.Tensor | None = None,
+    sigmas: Sequence[float] | None = None,
+    transformer: Any | None = None,
+    attention_kwargs: Mapping[str, Any] | None = None,
+    max_sequence_length: int = 1024,
+    prompt_scale_factor: int = 8,
+) -> tuple[Any, Any]:
+    stage_result = _sample_ltx2_native_latents(
+        native=native,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        num_frames=num_frames,
+        frame_rate=frame_rate,
+        num_inference_steps=num_inference_steps,
+        guidance_scale=guidance_scale,
+        init_image=init_image,
+        generator=generator,
+        guidance_rescale=guidance_rescale,
+        noise_scale=noise_scale,
+        latents=latents,
+        audio_latents=audio_latents,
+        sigmas=sigmas,
+        transformer=transformer,
+        attention_kwargs=attention_kwargs,
+        max_sequence_length=max_sequence_length,
+        prompt_scale_factor=prompt_scale_factor,
+    )
+    return decode_ltx2_native_stage_result(native=native, stage_result=stage_result)
+
+
+@torch.no_grad()
+def sample_ltx2_txt2vid_native(
+    *,
+    native: Any,
+    request: Any,
+    plan: Any,
+    width: int | None = None,
+    height: int | None = None,
+    num_frames: int | None = None,
+    frame_rate: float | None = None,
+    num_inference_steps: int | None = None,
+    guidance_scale: float | None = None,
+    noise_scale: float = 0.0,
+    latents: torch.Tensor | None = None,
+    audio_latents: torch.Tensor | None = None,
+    sigmas: Sequence[float] | None = None,
+    transformer: Any | None = None,
+    generator: torch.Generator | Sequence[torch.Generator] | None = None,
+) -> Ltx2NativeLatentStageResult:
+    effective_transformer = native.transformer if transformer is None else transformer
+    effective_generator = generator
+    with _transformer_streaming_lifecycle(effective_transformer):
+        return _sample_ltx2_native_latents(
+            native=native,
+            prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
+            negative_prompt=getattr(request, "negative_prompt", None),
+            width=int(getattr(plan, "width", 0) if width is None else width),
+            height=int(getattr(plan, "height", 0) if height is None else height),
+            num_frames=int(getattr(plan, "frames", 0) if num_frames is None else num_frames),
+            frame_rate=float(int(getattr(plan, "fps", 0)) if frame_rate is None else frame_rate),
+            num_inference_steps=int(getattr(plan, "steps", 0) if num_inference_steps is None else num_inference_steps),
+            guidance_scale=float(_resolve_guidance_scale(request) if guidance_scale is None else guidance_scale),
+            init_image=None,
+            generator=effective_generator,
+            noise_scale=float(noise_scale),
+            latents=latents,
+            audio_latents=audio_latents,
+            sigmas=sigmas,
+            transformer=effective_transformer,
+        )
+
+
+@torch.no_grad()
 def run_ltx2_txt2vid_native(
     *,
     native: Any,
     request: Any,
     plan: Any,
+    generator: torch.Generator | Sequence[torch.Generator] | None = None,
 ) -> tuple[Any, Any]:
     with _transformer_streaming_lifecycle(native.transformer):
         return _run_ltx2_native(
@@ -862,7 +1052,52 @@ def run_ltx2_txt2vid_native(
             num_inference_steps=int(getattr(plan, "steps", 0) or 0),
             guidance_scale=_resolve_guidance_scale(request),
             init_image=None,
-            generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
+            generator=generator,
+        )
+
+
+@torch.no_grad()
+def sample_ltx2_img2vid_native(
+    *,
+    native: Any,
+    request: Any,
+    plan: Any,
+    width: int | None = None,
+    height: int | None = None,
+    num_frames: int | None = None,
+    frame_rate: float | None = None,
+    num_inference_steps: int | None = None,
+    guidance_scale: float | None = None,
+    noise_scale: float = 0.0,
+    latents: torch.Tensor | None = None,
+    audio_latents: torch.Tensor | None = None,
+    sigmas: Sequence[float] | None = None,
+    transformer: Any | None = None,
+    generator: torch.Generator | Sequence[torch.Generator] | None = None,
+) -> Ltx2NativeLatentStageResult:
+    init_image = getattr(request, "init_image", None)
+    if init_image is None:
+        raise RuntimeError("LTX2 native img2vid requires `request.init_image`.")
+    effective_transformer = native.transformer if transformer is None else transformer
+    effective_generator = generator
+    with _transformer_streaming_lifecycle(effective_transformer):
+        return _sample_ltx2_native_latents(
+            native=native,
+            prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
+            negative_prompt=getattr(request, "negative_prompt", None),
+            width=int(getattr(plan, "width", 0) if width is None else width),
+            height=int(getattr(plan, "height", 0) if height is None else height),
+            num_frames=int(getattr(plan, "frames", 0) if num_frames is None else num_frames),
+            frame_rate=float(int(getattr(plan, "fps", 0)) if frame_rate is None else frame_rate),
+            num_inference_steps=int(getattr(plan, "steps", 0) if num_inference_steps is None else num_inference_steps),
+            guidance_scale=float(_resolve_guidance_scale(request) if guidance_scale is None else guidance_scale),
+            init_image=init_image,
+            generator=effective_generator,
+            noise_scale=float(noise_scale),
+            latents=latents,
+            audio_latents=audio_latents,
+            sigmas=sigmas,
+            transformer=effective_transformer,
         )
 
 
@@ -872,6 +1107,7 @@ def run_ltx2_img2vid_native(
     native: Any,
     request: Any,
     plan: Any,
+    generator: torch.Generator | Sequence[torch.Generator] | None = None,
 ) -> tuple[Any, Any]:
     init_image = getattr(request, "init_image", None)
     if init_image is None:
@@ -888,11 +1124,15 @@ def run_ltx2_img2vid_native(
             num_inference_steps=int(getattr(plan, "steps", 0) or 0),
             guidance_scale=_resolve_guidance_scale(request),
             init_image=init_image,
-            generator=_build_seed_generator(getattr(request, "seed", None), device=_resolve_device(native)),
+            generator=generator,
         )
 
 
 __all__ = [
+    "Ltx2NativeLatentStageResult",
+    "decode_ltx2_native_stage_result",
+    "sample_ltx2_img2vid_native",
+    "sample_ltx2_txt2vid_native",
     "run_ltx2_img2vid_native",
     "run_ltx2_txt2vid_native",
 ]

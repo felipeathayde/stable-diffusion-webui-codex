@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-16
+Last Review: 2026-03-26
 Status: Active
 
 ## Purpose
@@ -36,7 +36,8 @@ Status: Active
 - 2026-03-08: `/api/samplers` is the executable sampler surface: backend support flags are implementation-backed (not enum/catalog-only), the route must fail loud if a `supported=true` sampler is missing registry metadata, and frontend filtering is expected to honor `supported !== false`.
 - `/api/models/file-metadata` is intended for UI/debug; it returns `flat` plus a nested view of dotted keys. Codex-generated GGUF files use `model.*`, `codex.*`, and `gguf.*` keys (no legacy `general.*` provenance fields).
 - 2026-03-20: `/api/models` checkpoint serialization now includes explicit selector metadata (`format`, `core_only`, `core_only_reason`, optional `family_hint`) so image clients can validate request selectors from inventory truth instead of guessing from filenames.
-- 2026-03-20: the generic LTX video route no longer inherits WAN geometry/frame assumptions: `generation.py` now treats LTX width/height as strict `32px` multiples, treats frame counts as strict `8n+1`, and uses explicit safe geometry/frame defaults instead of the old WAN-style `768x432` / `17` fallback.
+- 2026-03-20: the generic LTX video route no longer inherits WAN geometry/frame assumptions: `generation.py` now treats LTX width/height as strict `32px` multiples and frame counts as strict `8n+1`, while the later explicit `two_stage` lane keeps width/height as final output dimensions and requires both divisible by `64`; the route uses explicit safe geometry/frame defaults instead of the old WAN-style `768x432` / `17` fallback.
+- 2026-03-26: the generic LTX video route now requires explicit `ltx_execution_profile` on direct requests and derives the canonical `euler` / `simple` lane internally; raw LTX `*_sampler` / `*_scheduler` request fields are no longer part of the public wire contract.
 - 2026-01-18: `/api/engines/capabilities` now also includes `engine_id_to_semantic_engine` so UI callers can keep engine-id and semantic-engine key spaces explicit.
 - 2026-01-20: Removed unreferenced API helper modules (`media_helpers.py`, `script_models.py`) (no call sites).
 - 2026-01-21: WAN stage LoRA inputs are stage arrays (`loras[]` with `{sha, weight}` entries); legacy single-field stage keys (`lora_sha`/`lora_weight`) and raw-path stage `lora_path` are rejected during payload normalization/validation.
@@ -70,6 +71,7 @@ Status: Active
 - 2026-03-13: API device selection stays explicit (`device_selection.py`): missing payload device is rejected fail-loud, and per-request device overrides that diverge from the configured main device are also rejected.
 - 2026-03-13: `dependency_checks.py` now describes LTX2 checkpoint mixes in terms of the canonical asset contract: every LTX2 checkpoint still requires exactly 1 external Gemma3-12B text encoder, while core-only GGUF checkpoints additionally require an external video VAE; embeddings connectors and the combined audio bundle resolve from configured LTX2 roots.
 - 2026-03-16: `dependency_checks.py` now exposes an explicit LTX2 `vendored_metadata` readiness row backed by the same fail-loud vendored-runtime validator used by loader assembly: the local `Lightricks/LTX-2` repo must provide `model_index.json`, tokenizer assets, and readable config dirs for `text_encoder`, `scheduler`, `connectors`, `transformer`, `vae`, `audio_vae`, and `vocoder` before the frontend unblocks LTX generation.
+- 2026-03-26: LTX `two_stage` vendor gating is profile-scoped, not global: the common `vendored_metadata` row stays on shared runtime metadata, while `latent_upsampler/config.json` is enforced only when `/api/models` admissibility or the router-owned `ltx_execution_profile='two_stage'` lane actually asks for that profile.
 - 2026-02-23: `device_selection.configured_main_device()` now resolves main-device from live memory-manager authority first (`manager.primary_device()`), then args/env fallback; this removes stale bootstrap-only device reads after hot device updates.
 - 2026-02-23: `routers/supir.py` now resolves canonical request device before SUPIR payload parsing and passes the resolved value into `parse_supir_enhance_config(..., device=...)`, removing duplicate device-authority parsing inside SUPIR config.
 - 2026-02-23: `run_api.py` now logs effective allocator bootstrap state at startup (`PYTORCH_CUDA_ALLOC_CONF`, resolved `backend`, and `--cuda-malloc` flag).

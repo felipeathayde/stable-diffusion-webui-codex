@@ -9,12 +9,20 @@ Required Notice: see NOTICE
 Purpose: Typed bundle rehydration, native runtime assembly, and run-result contracts for the LTX2 seam.
 Rebuilds the loader-produced LTX2 planning contract from a generic diffusion bundle, assembles the dedicated native
 runtime from local `apps/**` modules (including optional wrapper-backed transformer-core streaming), enforces the
-truthful single-lane `euler` / `simple` execution contract, and normalizes execution results into the family-local
-`frames + AudioExportAsset + metadata` contract consumed by the canonical video use-cases.
+truthful `euler` / `simple` execution contract, exposes explicit latent-stage / upsample / refine primitives for the
+`two_stage` profile, and normalizes execution results into the family-local `frames + AudioExportAsset + metadata`
+contract consumed by the canonical video use-cases.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2RunResult` (dataclass): Family-local execution result consumed by canonical video use-cases.
 - `Ltx2NativeComponents` (dataclass): Loaded LTX2 runtime components reused across txt2vid/img2vid runs.
+- `build_ltx2_request_generator` (function): Builds the shared request-scoped RNG owner reused across LTX2 stage boundaries.
+- `sample_ltx2_txt2vid_stage` (function): Execute a native LTX2 txt2vid latent stage and return the typed stage-result contract.
+- `sample_ltx2_img2vid_stage` (function): Execute a native LTX2 img2vid latent stage and return the typed stage-result contract.
+- `upsample_ltx2_two_stage_video_latents` (function): Run the native x2 latent upsampler for the explicit LTX2 `two_stage` profile.
+- `refine_ltx2_txt2vid_two_stage` (function): Execute the stage-2 distilled refinement step for LTX2 txt2vid.
+- `refine_ltx2_img2vid_two_stage` (function): Execute the stage-2 distilled refinement step for LTX2 img2vid.
+- `decode_ltx2_stage_result` (function): Decode a native latent-stage result into the family-local `Ltx2RunResult`.
 - `build_ltx2_run_result` (function): Normalize `frames + audio_asset + metadata` into an immutable LTX2 result object.
 - `build_ltx2_native_components` (function): Assemble the loaded native LTX2 runtime components from a typed bundle.
 - `run_ltx2_txt2vid` (function): Execute the native LTX2 txt2vid pipeline and normalize the result contract.
@@ -24,19 +32,25 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import threading
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 from PIL import Image
 import torch
 
-from apps.backend.runtime.checkpoint.io import read_arbitrary_config
+from apps.backend.runtime.checkpoint.io import load_torch_file, read_arbitrary_config, read_safetensors_metadata
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.pipeline_stages.video import AudioExportAsset, GeneratedAudioExportPolicy
+from apps.backend.runtime.pipeline_stages.video import (
+    AudioExportAsset,
+    GeneratedAudioExportPolicy,
+    Ltx2TwoStageGeometry,
+)
 
 from .audio import is_ltx2_wrapped_vocoder_state, materialize_ltx2_generated_audio_asset
 from .model import Ltx2BundleInputs, Ltx2ComponentStates, Ltx2TextEncoderAsset, Ltx2VendorPaths
@@ -74,6 +88,16 @@ class Ltx2NativeComponents:
     runtime_impl: str
     transformers_version: str
     core_streaming_enabled: bool
+    transformer_execution_lock: threading.RLock
+
+
+@dataclass(frozen=True, slots=True)
+class _Ltx2TransformerLoraSpec:
+    target_parameter_name: str
+    lora_a_key: str
+    lora_b_key: str
+    alpha: float
+    rank: int
 
 
 def _resolve_ltx2_sampler_contract(request: Any) -> tuple[str | None, str | None, str, str]:
@@ -107,6 +131,25 @@ def _read_ltx2_execution_extra(source: Any, key: str) -> str | None:
     raw_value = extras.get(key)
     normalized = str(raw_value or "").strip()
     return normalized or None
+
+
+def _denormalize_ltx2_packed_audio_latents(
+    latents: torch.Tensor,
+    *,
+    native: Ltx2NativeComponents,
+) -> torch.Tensor:
+    return (
+        latents * native.audio_vae.latents_std.to(device=latents.device, dtype=latents.dtype)
+    ) + native.audio_vae.latents_mean.to(device=latents.device, dtype=latents.dtype)
+
+
+@contextmanager
+def _ltx2_transformer_execution_context(native: Ltx2NativeComponents):
+    native.transformer_execution_lock.acquire()
+    try:
+        yield
+    finally:
+        native.transformer_execution_lock.release()
 
 
 def build_ltx2_run_result(
@@ -169,14 +212,19 @@ def _import_native_ltx2_runtime_symbols() -> dict[str, Any]:
     try:
         from apps.backend.runtime.families.ltx2.native import (
             Ltx2AudioAutoencoder,
+            Ltx2LatentUpsamplerModel,
+            Ltx2NativeLatentStageResult,
             Ltx2TextConnectors,
             Ltx2VideoAutoencoder,
             Ltx2VideoTransformer3DModel,
             Ltx2Vocoder,
+            decode_ltx2_native_stage_result,
             load_ltx2_connectors,
             load_ltx2_vocoder,
             run_ltx2_img2vid_native,
             run_ltx2_txt2vid_native,
+            sample_ltx2_img2vid_native,
+            sample_ltx2_txt2vid_native,
         )
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(
@@ -192,14 +240,19 @@ def _import_native_ltx2_runtime_symbols() -> dict[str, Any]:
 
     return {
         "Ltx2AudioAutoencoder": Ltx2AudioAutoencoder,
+        "Ltx2LatentUpsamplerModel": Ltx2LatentUpsamplerModel,
+        "Ltx2NativeLatentStageResult": Ltx2NativeLatentStageResult,
         "Ltx2TextConnectors": Ltx2TextConnectors,
         "Ltx2VideoAutoencoder": Ltx2VideoAutoencoder,
         "Ltx2VideoTransformer3DModel": Ltx2VideoTransformer3DModel,
         "Ltx2Vocoder": Ltx2Vocoder,
+        "decode_ltx2_native_stage_result": decode_ltx2_native_stage_result,
         "load_ltx2_connectors": load_ltx2_connectors,
         "load_ltx2_vocoder": load_ltx2_vocoder,
         "run_ltx2_img2vid_native": run_ltx2_img2vid_native,
         "run_ltx2_txt2vid_native": run_ltx2_txt2vid_native,
+        "sample_ltx2_img2vid_native": sample_ltx2_img2vid_native,
+        "sample_ltx2_txt2vid_native": sample_ltx2_txt2vid_native,
         "transformers_version": getattr(transformers, "__version__", "unknown"),
     }
 
@@ -387,6 +440,7 @@ def build_ltx2_native_components(
         runtime_impl="native",
         transformers_version=str(symbols["transformers_version"]),
         core_streaming_enabled=streaming_config.enabled,
+        transformer_execution_lock=threading.RLock(),
     )
 
 
@@ -498,6 +552,496 @@ def _build_pipeline_metadata(
     }
 
 
+def _coerce_native_stage_result(stage_result: Any, *, mode_label: str) -> Any:
+    stage_result_type = _import_native_ltx2_runtime_symbols()["Ltx2NativeLatentStageResult"]
+    if not isinstance(stage_result, stage_result_type):
+        raise RuntimeError(
+            f"LTX2 {mode_label} native sampler must return `Ltx2NativeLatentStageResult`; "
+            f"got {type(stage_result).__name__}."
+        )
+    return stage_result
+
+
+def build_ltx2_request_generator(*, native: Ltx2NativeComponents, request: Any) -> torch.Generator | None:
+    seed = getattr(request, "seed", None)
+    resolved_device = torch.device(native.device_label)
+    generator_device = resolved_device.type if resolved_device.type == "cuda" else "cpu"
+    generator = torch.Generator(device=generator_device)
+    if seed is None:
+        generator.seed()
+        return generator
+    seed_value = int(seed)
+    if seed_value < 0:
+        raise RuntimeError(f"LTX2 request seed must be >= 0 or None at runtime, got {seed_value}.")
+    generator.manual_seed(seed_value)
+    return generator
+
+
+def _require_ltx2_path_extra(request: Any, key: str, *, label: str) -> str:
+    value = _read_ltx2_execution_extra(request, key)
+    if value is None:
+        raise RuntimeError(
+            f"LTX2 runtime is missing request extras[{key!r}] for {label}. "
+            "This path must be resolved by the router-owned checkpoint admissibility seam."
+        )
+    return value
+
+
+def _parse_ltx2_default_lora_alpha(path: str) -> float | None:
+    if not Path(path).is_file():
+        return None
+    suffix = Path(path).suffix.lower()
+    if suffix not in {".safetensor", ".safetensors"}:
+        return None
+    metadata = read_safetensors_metadata(path)
+    for key in ("lora_alpha", "ss_network_alpha"):
+        raw_value = str(metadata.get(key) or "").strip()
+        if not raw_value:
+            continue
+        try:
+            return float(raw_value)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"LTX2 distilled LoRA metadata field {key!r} must be a finite float string; got {raw_value!r} in {path!r}."
+            ) from exc
+    return None
+
+
+def _strip_ltx2_lora_target_prefix(target: str) -> str:
+    for prefix in ("model.diffusion_model.", "diffusion_model."):
+        if target.startswith(prefix):
+            return target[len(prefix) :]
+    return target
+
+
+def _parse_ltx2_transformer_lora_specs(
+    state_dict: Mapping[str, object],
+    *,
+    source_path: str,
+) -> tuple[_Ltx2TransformerLoraSpec, ...]:
+    default_alpha = _parse_ltx2_default_lora_alpha(source_path)
+    grouped: dict[str, dict[str, str]] = {}
+    unexpected: list[str] = []
+    alpha_keys: list[str] = []
+    for raw_key in state_dict.keys():
+        key = str(raw_key)
+        if key.endswith(".lora_A.weight"):
+            grouped.setdefault(key[: -len(".lora_A.weight")], {})["a"] = key
+            continue
+        if key.endswith(".lora_B.weight"):
+            grouped.setdefault(key[: -len(".lora_B.weight")], {})["b"] = key
+            continue
+        if key.endswith(".alpha") or key.endswith(".lora_alpha"):
+            alpha_keys.append(key)
+            continue
+        unexpected.append(key)
+
+    if unexpected:
+        raise RuntimeError(
+            "LTX2 two_stage distilled LoRA includes unsupported tensor keys. "
+            f"Expected only standard `.lora_A.weight` / `.lora_B.weight` pairs; got sample={unexpected[:20]!r}."
+        )
+
+    specs: list[_Ltx2TransformerLoraSpec] = []
+    for prefix, pair in sorted(grouped.items()):
+        lora_a_key = pair.get("a")
+        lora_b_key = pair.get("b")
+        if lora_a_key is None or lora_b_key is None:
+            raise RuntimeError(
+                "LTX2 two_stage distilled LoRA contains an incomplete A/B pair for "
+                f"{prefix!r} in {source_path!r}."
+            )
+        lora_a = state_dict[lora_a_key]
+        lora_b = state_dict[lora_b_key]
+        if not isinstance(lora_a, torch.Tensor) or not isinstance(lora_b, torch.Tensor):
+            raise RuntimeError(
+                "LTX2 two_stage distilled LoRA expects tensor A/B weights; "
+                f"got A={type(lora_a).__name__} B={type(lora_b).__name__} for {prefix!r}."
+            )
+        rank = int(lora_a.shape[0])
+        if rank <= 0:
+            raise RuntimeError(f"LTX2 two_stage distilled LoRA rank must be > 0 for {prefix!r}.")
+        alpha_value: float | None = None
+        for alpha_key in (f"{prefix}.alpha", f"{prefix}.lora_alpha"):
+            if alpha_key not in state_dict:
+                continue
+            alpha_tensor = state_dict[alpha_key]
+            if isinstance(alpha_tensor, torch.Tensor):
+                if alpha_tensor.numel() != 1:
+                    raise RuntimeError(
+                        f"LTX2 two_stage distilled LoRA alpha tensor must be scalar for {prefix!r}; got shape={tuple(alpha_tensor.shape)!r}."
+                    )
+                alpha_value = float(alpha_tensor.item())
+            else:
+                alpha_value = float(alpha_tensor)  # type: ignore[arg-type]
+            break
+        if alpha_value is None:
+            alpha_value = float(default_alpha if default_alpha is not None else rank)
+        specs.append(
+            _Ltx2TransformerLoraSpec(
+                target_parameter_name=f"{_strip_ltx2_lora_target_prefix(prefix)}.weight",
+                lora_a_key=lora_a_key,
+                lora_b_key=lora_b_key,
+                alpha=float(alpha_value),
+                rank=rank,
+            )
+        )
+    if not specs:
+        raise RuntimeError(f"LTX2 two_stage distilled LoRA produced zero valid A/B pairs from {source_path!r}.")
+    return tuple(specs)
+
+
+def _materialize_ltx2_lora_delta(
+    *,
+    parameter: torch.nn.Parameter,
+    state_dict: Mapping[str, object],
+    spec: _Ltx2TransformerLoraSpec,
+) -> torch.Tensor:
+    if parameter.ndim < 2:
+        raise RuntimeError(
+            f"LTX2 two_stage distilled LoRA target {spec.target_parameter_name!r} must have ndim >= 2; got {parameter.ndim}."
+        )
+    lora_a = state_dict[spec.lora_a_key]
+    lora_b = state_dict[spec.lora_b_key]
+    if not isinstance(lora_a, torch.Tensor) or not isinstance(lora_b, torch.Tensor):
+        raise RuntimeError(
+            f"LTX2 two_stage distilled LoRA target {spec.target_parameter_name!r} resolved non-tensor A/B weights."
+        )
+    a_matrix = lora_a.to(device=parameter.device, dtype=torch.float32).reshape(int(lora_a.shape[0]), -1)
+    b_matrix = lora_b.to(device=parameter.device, dtype=torch.float32).reshape(-1, int(lora_b.shape[-1]))
+    if int(a_matrix.shape[0]) != int(spec.rank) or int(b_matrix.shape[1]) != int(spec.rank):
+        raise RuntimeError(
+            f"LTX2 two_stage distilled LoRA rank mismatch for target {spec.target_parameter_name!r}: "
+            f"expected rank={spec.rank}, got A={tuple(int(dim) for dim in a_matrix.shape)!r} "
+            f"B={tuple(int(dim) for dim in b_matrix.shape)!r}."
+        )
+    target_matrix = parameter.data.reshape(int(parameter.shape[0]), -1)
+    if int(a_matrix.shape[1]) != int(target_matrix.shape[1]) or int(b_matrix.shape[0]) != int(target_matrix.shape[0]):
+        raise RuntimeError(
+            f"LTX2 two_stage distilled LoRA target shape mismatch for {spec.target_parameter_name!r}: "
+            f"target={tuple(int(dim) for dim in parameter.shape)!r} "
+            f"A={tuple(int(dim) for dim in lora_a.shape)!r} "
+            f"B={tuple(int(dim) for dim in lora_b.shape)!r}."
+        )
+    scale = float(spec.alpha) / float(spec.rank)
+    delta = torch.matmul(b_matrix, a_matrix) * scale
+    return delta.reshape(parameter.shape)
+
+
+def _resolve_ltx2_transformer_lora_owner(transformer: Any) -> Any:
+    owner = transformer
+    visited: set[int] = set()
+    while True:
+        current_id = id(owner)
+        if current_id in visited:
+            break
+        visited.add(current_id)
+        base_model = getattr(owner, "base_model", None)
+        if base_model is None or base_model is owner:
+            break
+        owner = base_model
+    return owner
+
+
+def _apply_ltx2_transformer_lora_specs(
+    *,
+    transformer: Any,
+    state_dict: Mapping[str, object],
+    specs: Sequence[_Ltx2TransformerLoraSpec],
+    sign: float,
+) -> None:
+    target_owner = _resolve_ltx2_transformer_lora_owner(transformer)
+    parameters = dict(target_owner.named_parameters())
+    for spec in specs:
+        parameter = parameters.get(spec.target_parameter_name)
+        if parameter is None:
+            raise RuntimeError(
+                f"LTX2 two_stage distilled LoRA target {spec.target_parameter_name!r} does not exist on the native transformer."
+            )
+        delta = _materialize_ltx2_lora_delta(parameter=parameter, state_dict=state_dict, spec=spec)
+        parameter.data.add_(delta.to(dtype=parameter.dtype), alpha=float(sign))
+
+
+@contextmanager
+def _temporary_ltx2_two_stage_transformer(*, request: Any, native: Ltx2NativeComponents):
+    lora_path = _require_ltx2_path_extra(
+        request,
+        "ltx_two_stage_distilled_lora_path",
+        label="LTX2 two_stage distilled LoRA",
+    )
+    state_dict = load_torch_file(lora_path, device="cpu")
+    if not isinstance(state_dict, Mapping):
+        raise RuntimeError(
+            f"LTX2 two_stage distilled LoRA must resolve to a mapping state_dict, got {type(state_dict).__name__}: {lora_path!r}."
+        )
+    specs = _parse_ltx2_transformer_lora_specs(state_dict, source_path=lora_path)
+    applied: list[_Ltx2TransformerLoraSpec] = []
+    try:
+        for spec in specs:
+            _apply_ltx2_transformer_lora_specs(
+                transformer=native.transformer,
+                state_dict=state_dict,
+                specs=(spec,),
+                sign=1.0,
+            )
+            applied.append(spec)
+    except Exception:
+        for spec in reversed(applied):
+            _apply_ltx2_transformer_lora_specs(
+                transformer=native.transformer,
+                state_dict=state_dict,
+                specs=(spec,),
+                sign=-1.0,
+            )
+        raise
+    try:
+        yield native.transformer
+    finally:
+        for spec in reversed(applied):
+            _apply_ltx2_transformer_lora_specs(
+                transformer=native.transformer,
+                state_dict=state_dict,
+                specs=(spec,),
+                sign=-1.0,
+            )
+
+
+def _load_ltx2_two_stage_spatial_upsampler(
+    *,
+    bundle_inputs: Ltx2BundleInputs,
+    native: Ltx2NativeComponents,
+    request: Any,
+) -> Any:
+    repo_dir = Path(bundle_inputs.vendor_paths.repo_dir)
+    config = _read_component_config(repo_dir, "latent_upsampler")
+    state_dict = load_torch_file(
+        _require_ltx2_path_extra(
+            request,
+            "ltx_two_stage_spatial_upsampler_path",
+            label="LTX2 two_stage spatial upsampler",
+        ),
+        device="cpu",
+    )
+    if not isinstance(state_dict, Mapping):
+        raise RuntimeError("LTX2 two_stage spatial upsampler must resolve to a mapping state_dict.")
+    symbols = _import_native_ltx2_runtime_symbols()
+    return _load_native_component_module(
+        label="latent_upsampler",
+        module_cls=symbols["Ltx2LatentUpsamplerModel"],
+        config=config,
+        state_dict=state_dict,
+        device=torch.device(native.device_label),
+        torch_dtype=native.torch_dtype,
+    )
+
+
+def sample_ltx2_txt2vid_stage(
+    *,
+    native: Ltx2NativeComponents,
+    request: Any,
+    plan: Any,
+    width: int,
+    height: int,
+    num_inference_steps: int,
+    guidance_scale: float,
+    noise_scale: float = 0.0,
+    latents: torch.Tensor | None = None,
+    audio_latents: torch.Tensor | None = None,
+    sigmas: Sequence[float] | None = None,
+    transformer: Any | None = None,
+    generator: torch.Generator | None = None,
+) -> Any:
+    with _ltx2_transformer_execution_context(native):
+        stage_result = _import_native_ltx2_runtime_symbols()["sample_ltx2_txt2vid_native"](
+            native=native,
+            request=request,
+            plan=plan,
+            width=int(width),
+            height=int(height),
+            num_inference_steps=int(num_inference_steps),
+            guidance_scale=float(guidance_scale),
+            noise_scale=float(noise_scale),
+            latents=latents,
+            audio_latents=audio_latents,
+            sigmas=sigmas,
+            transformer=transformer,
+            generator=generator,
+        )
+    return _coerce_native_stage_result(stage_result, mode_label="txt2vid")
+
+
+def sample_ltx2_img2vid_stage(
+    *,
+    native: Ltx2NativeComponents,
+    request: Any,
+    plan: Any,
+    width: int,
+    height: int,
+    num_inference_steps: int,
+    guidance_scale: float,
+    noise_scale: float = 0.0,
+    latents: torch.Tensor | None = None,
+    audio_latents: torch.Tensor | None = None,
+    sigmas: Sequence[float] | None = None,
+    transformer: Any | None = None,
+    generator: torch.Generator | None = None,
+) -> Any:
+    with _ltx2_transformer_execution_context(native):
+        stage_result = _import_native_ltx2_runtime_symbols()["sample_ltx2_img2vid_native"](
+            native=native,
+            request=request,
+            plan=plan,
+            width=int(width),
+            height=int(height),
+            num_inference_steps=int(num_inference_steps),
+            guidance_scale=float(guidance_scale),
+            noise_scale=float(noise_scale),
+            latents=latents,
+            audio_latents=audio_latents,
+            sigmas=sigmas,
+            transformer=transformer,
+            generator=generator,
+        )
+    return _coerce_native_stage_result(stage_result, mode_label="img2vid")
+
+
+def upsample_ltx2_two_stage_video_latents(
+    *,
+    bundle_inputs: Ltx2BundleInputs,
+    native: Ltx2NativeComponents,
+    request: Any,
+    stage_result: Any,
+    geometry: Ltx2TwoStageGeometry,
+) -> torch.Tensor:
+    upsampler = _load_ltx2_two_stage_spatial_upsampler(
+        bundle_inputs=bundle_inputs,
+        native=native,
+        request=request,
+    )
+    try:
+        upsampled = upsampler(stage_result.video_latents_unpacked_unnormalized.to(dtype=native.torch_dtype))
+    finally:
+        del upsampler
+        memory_management.manager.soft_empty_cache()
+
+    spatial_ratio = int(getattr(native.vae, "spatial_compression_ratio", 32) or 32)
+    expected_height = int(geometry.final_height) // spatial_ratio
+    expected_width = int(geometry.final_width) // spatial_ratio
+    actual_shape = tuple(int(dim) for dim in upsampled.shape)
+    if actual_shape[-2:] != (expected_height, expected_width):
+        raise RuntimeError(
+            "LTX2 two_stage latent upsample produced the wrong final latent geometry: "
+            f"expected (*, {expected_height}, {expected_width}) got {actual_shape!r}."
+        )
+    return upsampled
+
+
+def refine_ltx2_txt2vid_two_stage(
+    *,
+    native: Ltx2NativeComponents,
+    request: Any,
+    plan: Any,
+    geometry: Ltx2TwoStageGeometry,
+    upscaled_video_latents: torch.Tensor,
+    stage1_result: Any,
+    generator: torch.Generator | None = None,
+) -> Any:
+    with _ltx2_transformer_execution_context(native):
+        with _temporary_ltx2_two_stage_transformer(request=request, native=native) as transformer:
+            return sample_ltx2_txt2vid_stage(
+                native=native,
+                request=request,
+                plan=plan,
+                width=geometry.final_width,
+                height=geometry.final_height,
+                num_inference_steps=len(geometry.stage2_sigmas),
+                guidance_scale=geometry.stage2_guidance_scale,
+                noise_scale=geometry.stage2_noise_scale,
+                latents=upscaled_video_latents,
+                audio_latents=_denormalize_ltx2_packed_audio_latents(
+                    stage1_result.audio_latents_packed_normalized,
+                    native=native,
+                ),
+                sigmas=geometry.stage2_sigmas,
+                transformer=transformer,
+                generator=generator,
+            )
+
+
+def refine_ltx2_img2vid_two_stage(
+    *,
+    native: Ltx2NativeComponents,
+    request: Any,
+    plan: Any,
+    geometry: Ltx2TwoStageGeometry,
+    upscaled_video_latents: torch.Tensor,
+    stage1_result: Any,
+    generator: torch.Generator | None = None,
+) -> Any:
+    with _ltx2_transformer_execution_context(native):
+        with _temporary_ltx2_two_stage_transformer(request=request, native=native) as transformer:
+            return sample_ltx2_img2vid_stage(
+                native=native,
+                request=request,
+                plan=plan,
+                width=geometry.final_width,
+                height=geometry.final_height,
+                num_inference_steps=len(geometry.stage2_sigmas),
+                guidance_scale=geometry.stage2_guidance_scale,
+                noise_scale=geometry.stage2_noise_scale,
+                latents=upscaled_video_latents,
+                audio_latents=_denormalize_ltx2_packed_audio_latents(
+                    stage1_result.audio_latents_packed_normalized,
+                    native=native,
+                ),
+                sigmas=geometry.stage2_sigmas,
+                transformer=transformer,
+                generator=generator,
+            )
+
+
+def decode_ltx2_stage_result(
+    *,
+    native: Ltx2NativeComponents,
+    request: Any,
+    plan: Any,
+    stage_result: Any,
+    generated_audio_export_policy: GeneratedAudioExportPolicy,
+    pipeline_name: str,
+    metadata_extra: Mapping[str, Any] | None = None,
+) -> Ltx2RunResult:
+    sampler_requested, scheduler_requested, sampler_effective, scheduler_effective = _resolve_ltx2_sampler_contract(
+        request
+    )
+    outputs = _import_native_ltx2_runtime_symbols()["decode_ltx2_native_stage_result"](
+        native=native,
+        stage_result=stage_result,
+    )
+    video, audio = _coerce_native_media_outputs(outputs, mode_label=pipeline_name)
+    frames = _normalize_video_frames(video)
+    audio_asset = None
+    if generated_audio_export_policy.materialize_audio_asset:
+        audio_asset = materialize_ltx2_generated_audio_asset(
+            audio,
+            sample_rate_hz=native.audio_sample_rate_hz,
+        )
+    metadata = _build_pipeline_metadata(
+        native=native,
+        pipeline_name=pipeline_name,
+        request=request,
+        plan=plan,
+        frame_count=len(frames),
+        has_audio=audio_asset is not None,
+        sampler_requested=sampler_requested,
+        scheduler_requested=scheduler_requested,
+        sampler_effective=sampler_effective,
+        scheduler_effective=scheduler_effective,
+    )
+    if metadata_extra:
+        metadata.update(dict(metadata_extra))
+    return build_ltx2_run_result(frames=frames, audio_asset=audio_asset, metadata=metadata)
+
+
 def run_ltx2_txt2vid(
     *,
     native: Ltx2NativeComponents,
@@ -508,11 +1052,14 @@ def run_ltx2_txt2vid(
     sampler_requested, scheduler_requested, sampler_effective, scheduler_effective = _resolve_ltx2_sampler_contract(
         request
     )
-    outputs = _import_native_ltx2_runtime_symbols()["run_ltx2_txt2vid_native"](
-        native=native,
-        request=request,
-        plan=plan,
-    )
+    generator = build_ltx2_request_generator(native=native, request=request)
+    with _ltx2_transformer_execution_context(native):
+        outputs = _import_native_ltx2_runtime_symbols()["run_ltx2_txt2vid_native"](
+            native=native,
+            request=request,
+            plan=plan,
+            generator=generator,
+        )
     video, audio = _coerce_native_media_outputs(outputs, mode_label="txt2vid")
     frames = _normalize_video_frames(video)
     audio_asset = None
@@ -550,11 +1097,14 @@ def run_ltx2_img2vid(
     sampler_requested, scheduler_requested, sampler_effective, scheduler_effective = _resolve_ltx2_sampler_contract(
         request
     )
-    outputs = _import_native_ltx2_runtime_symbols()["run_ltx2_img2vid_native"](
-        native=native,
-        request=request,
-        plan=plan,
-    )
+    generator = build_ltx2_request_generator(native=native, request=request)
+    with _ltx2_transformer_execution_context(native):
+        outputs = _import_native_ltx2_runtime_symbols()["run_ltx2_img2vid_native"](
+            native=native,
+            request=request,
+            plan=plan,
+            generator=generator,
+        )
     video, audio = _coerce_native_media_outputs(outputs, mode_label="img2vid")
     frames = _normalize_video_frames(video)
     audio_asset = None

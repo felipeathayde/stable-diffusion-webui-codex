@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Backend-owned engine dependency check contract for WebUI readiness surfaces.
 Builds deterministic per-engine check rows from backend inventory/model-registry state so the frontend can render a strict
 "Dependency Check" panel and disable generation when required assets are missing. Semantic-engine asset checks resolve through the
-canonical contract owner seam (`contract_owner_for_semantic_engine`) to prevent drift between API surfaces.
+canonical contract owner seam (`contract_owner_for_semantic_engine`) to prevent drift between API surfaces, including the
+vendored LTX2 metadata/config readiness required by explicit execution profiles.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DependencyCheckRow` (dataclass): One backend dependency row (`id/label/ok/message`) rendered by the frontend.
@@ -181,7 +182,8 @@ def _ltx2_vendored_metadata_check() -> DependencyCheckRow:
             f"model_index={vendor_paths.model_index_path}, "
             f"tokenizer={vendor_paths.tokenizer_dir}, "
             f"connectors_config={vendor_paths.connectors_config_path}, "
-            "component_configs=text_encoder|scheduler|connectors|transformer|vae|audio_vae|vocoder."
+            "component_configs=text_encoder|scheduler|connectors|transformer|vae|audio_vae|vocoder. "
+            "The explicit two_stage lane additionally requires latent_upsampler/config.json."
         ),
     )
 

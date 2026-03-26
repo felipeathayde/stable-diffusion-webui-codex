@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/ltx2 Overview
 <!-- tags: backend, runtime, families, ltx2, video, audio, gemma3 -->
 Date: 2026-03-11
-Last Review: 2026-03-23
+Last Review: 2026-03-26
 Status: Active
 
 ## Purpose
@@ -25,6 +25,8 @@ Status: Active
 - The external text encoder is exactly one `gemma3_12b` asset. Any ambiguous or missing override resolution must fail loud.
 - Native execution is strict: no active-code LTX2 path may import LTX2-specific Diffusers runtime/model/pipeline classes. Keep model, scheduler, and pipeline execution inside `apps/backend/runtime/families/ltx2/**`.
 - The local LTX slice does not implement pad/crop adaptation for non-aligned geometry/frame counts. Frontend/router layers must reject invalid `32px` / `8n+1` requests instead of silently snapping or pretending the runtime will fix them.
+- The explicit `two_stage` profile is truthful-only: it is limited to dev/full SafeTensors checkpoints, requires one resolved `distilled-lora-384` asset plus one resolved `spatial-upscaler-x2` asset, additionally requires vendored `latent_upsampler/config.json`, and keeps public width/height as final output dimensions with a hard `%64` boundary because stage 1 runs at half resolution.
+- `runtime.py` now owns the single request-scoped generator seam for both `one_stage` and `two_stage`: native helpers consume caller-owned generators only, stage 1 and stage 2 must reuse the same `torch.Generator`, stage-2 LoRA application stays temporary/in-place on the unwrapped native transformer owner even when core streaming wraps that transformer under `_base`, and the x2 latent upsampler stays in `native/latent_upsampler.py`.
 - The external text-encoder seam stays text-only for the current backend lane. `text_encoder.py` accepts exactly one `gemma3_12b` asset, rejects `mmproj` projectors, and for GGUF assets must load through the strict Gemma3 text keyspace resolver plus the Codex-aware embedding shim under GGUF operations support.
 - `runtime.py` must assemble through the local native package only: `load_ltx2_connectors(...)`, `load_ltx2_vocoder(...)`, and `load_strict_state_dict(...)` on transformer/video/audio VAEs. `load_ltx2_connectors(...)` owns optional `connectors.*` wrapper handling, must load the real 2.3 merged connector surface (`video_embeddings_connector.*` + `audio_embeddings_connector.*` + `text_embedding_projection.*`) without renaming keys, and must fail loud on mixed direct/wrapped surfaces. Do not reintroduce a generic `from_config(...)+load_state_dict(...)` path.
 - The current core-streaming tranche is transformer-only and wrapper-backed. `runtime.py` may conditionally wrap only the native transformer when normalized `core_streaming_enabled` is true; `native/pipelines.py` owns generation-boundary reset/evict cleanup, and this slice must not add public result-metadata fields for streaming state.

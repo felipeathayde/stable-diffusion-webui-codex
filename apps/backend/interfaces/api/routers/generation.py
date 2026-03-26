@@ -30,10 +30,11 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses backend API-owned WAN video request key allowlists from `interfaces/api/wan_video_request_keys.py`,
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
-The generic LTX video route now owns its own request contract (`32px` geometry, `8n+1` frames, explicit safe defaults, `euler` / `simple`,
-negative-seed random semantics, and required `img2vid_init_image`) instead of inheriting WAN `%16` / `4n+1` assumptions.
+The generic LTX video route now owns its own request contract (checkpoint-owned `ltx_execution_profile`, `32px` base geometry or `%64` final geometry
+for `two_stage`, `8n+1` frames, explicit safe defaults, derived `euler` / `simple`, negative-seed random semantics, and required `img2vid_init_image`)
+instead of inheriting WAN `%16` / `4n+1` assumptions.
 FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
-Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; canonical request keys are `txt2vid_sampler` and `img2vid_sampler`.
+Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; WAN keeps `txt2vid_sampler` and `img2vid_sampler` as its canonical request keys, while LTX derives its fixed runtime lane from explicit `ltx_execution_profile`.
 WAN sampler fields are strict at API parse-time: values must resolve to real WAN22 runtime lanes (`uni-pc` with metadata-compatible optional solver hint, `euler`, or `euler a`); scheduler fields remain strict (`simple`) for WAN22 requests.
 Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|sliding|svi2|svi2_pro`) with mode-scoped validation for chunk/window fields,
 and no-stretch guide controls (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) are parsed into WAN extras for runtime preprocessing.
@@ -183,6 +184,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     }
     _TXT2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.TXT2VID_ALL)
     _IMG2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.IMG2VID_ALL)
+    _LTX2_EXECUTION_PROFILE_KEY = "ltx_execution_profile"
+    _LTX2_GENERIC_DERIVED_KEYS = frozenset(
+        {
+            "txt2vid_sampler",
+            "txt2vid_scheduler",
+            "img2vid_sampler",
+            "img2vid_scheduler",
+        }
+    )
     _VIDEO_GENERIC_SELECTOR_KEYS = {"engine", "model", "model_sha", "vae_sha", "tenc_sha", "lora_sha"}
     _VIDEO_GENERIC_COMMON_ALLOWED_KEYS = (
         set(WAN_VIDEO_REQUEST_KEYS.DEVICE)
@@ -194,6 +204,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         | _VIDEO_GENERIC_SELECTOR_KEYS
     )
     _TXT2VID_GENERIC_ALLOWED_KEYS = _VIDEO_GENERIC_COMMON_ALLOWED_KEYS | set(WAN_VIDEO_REQUEST_KEYS.TXT2VID)
+    _LTX2_TXT2VID_GENERIC_ALLOWED_KEYS = (_TXT2VID_GENERIC_ALLOWED_KEYS - _LTX2_GENERIC_DERIVED_KEYS) | {
+        _LTX2_EXECUTION_PROFILE_KEY
+    }
     _IMG2VID_GENERIC_CORE_KEYS = {
         "img2vid_prompt",
         "img2vid_neg_prompt",
@@ -210,6 +223,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "img2vid_init_image",
     }
     _IMG2VID_GENERIC_ALLOWED_KEYS = _VIDEO_GENERIC_COMMON_ALLOWED_KEYS | _IMG2VID_GENERIC_CORE_KEYS
+    _LTX2_IMG2VID_GENERIC_ALLOWED_KEYS = (_IMG2VID_GENERIC_ALLOWED_KEYS - _LTX2_GENERIC_DERIVED_KEYS) | {
+        _LTX2_EXECUTION_PROFILE_KEY
+    }
     _WAN_STAGE_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
@@ -3343,30 +3359,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_cfg_scale=7.0,
         )
 
-    def _validate_ltx2_generic_video_sampler_field(field_name: str, value: str) -> str:
-        normalized = str(value or "").strip().lower()
-        if normalized != "euler":
-            raise HTTPException(
-                status_code=400,
-                detail=f"'{field_name}' for engine 'ltx2' must be 'euler', got {value!r}.",
-            )
-        return normalized
-
-    def _validate_ltx2_generic_video_scheduler_field(field_name: str, value: str) -> str:
-        normalized = str(value or "").strip().lower()
-        if normalized != "simple":
-            raise HTTPException(
-                status_code=400,
-                detail=f"'{field_name}' for engine 'ltx2' must be 'simple', got {value!r}.",
-            )
-        return normalized
-
     def _ltx2_require_dims_multiple_of_32(*, task: str, width: int, height: int) -> None:
         if height % 32 == 0 and width % 32 == 0:
             return
         raise HTTPException(
             status_code=400,
             detail=f"LTX2 {task}: width/height must be divisible by 32. Got {int(width)}x{int(height)}.",
+        )
+
+    def _ltx2_require_dims_multiple_of_64(*, task: str, width: int, height: int) -> None:
+        if height % 64 == 0 and width % 64 == 0:
+            return
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"LTX2 {task} two_stage: final width/height must be divisible by 64 because stage 1 runs at half resolution. "
+                f"Got {int(width)}x{int(height)}."
+            ),
         )
 
     def _ltx2_require_frames_8n_plus_1(*, task: str, frames: int) -> None:
@@ -3381,15 +3390,76 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 detail=f"'{task}_num_frames' must satisfy 8n+1, got {frames}.",
             )
 
+    def _resolve_ltx2_requested_execution_profile(
+        *,
+        payload: Dict[str, Any],
+        checkpoint_record: Any,
+        defaults: Any,
+    ) -> tuple[str, Any | None]:
+        from apps.backend.runtime.model_registry.ltx2_execution import (
+            LTX2_PROFILE_TWO_STAGE,
+            build_ltx2_execution_surface,
+            resolve_ltx2_two_stage_assets,
+        )
+
+        if _LTX2_EXECUTION_PROFILE_KEY not in payload:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{_LTX2_EXECUTION_PROFILE_KEY}' is required for engine 'ltx2'.",
+            )
+        raw_profile = _require_str_field(payload, _LTX2_EXECUTION_PROFILE_KEY)
+        execution_profile = raw_profile.strip()
+
+        allowed_surface_profiles = set(build_ltx2_execution_surface().allowed_execution_profiles)
+        if execution_profile not in allowed_surface_profiles:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{_LTX2_EXECUTION_PROFILE_KEY}' for engine 'ltx2' must be one of "
+                    f"{sorted(allowed_surface_profiles)!r}, got {execution_profile!r}."
+                ),
+            )
+
+        allowed_checkpoint_profiles = tuple(getattr(defaults, "allowed_execution_profiles", ()) or ())
+        if execution_profile not in allowed_checkpoint_profiles:
+            if execution_profile == LTX2_PROFILE_TWO_STAGE:
+                stage2_assets = resolve_ltx2_two_stage_assets(checkpoint_record)
+                reason = stage2_assets.blocked_reason or "Selected LTX2 checkpoint does not allow the two_stage profile."
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Execution profile 'two_stage' is unsupported for the selected LTX2 checkpoint. {reason}",
+                )
+            raise HTTPException(
+                status_code=409,
+                detail=f"Execution profile {execution_profile!r} is unsupported for the selected LTX2 checkpoint.",
+            )
+
+        if execution_profile == LTX2_PROFILE_TWO_STAGE:
+            stage2_assets = resolve_ltx2_two_stage_assets(checkpoint_record)
+            if not stage2_assets.available:
+                raise HTTPException(
+                    status_code=409,
+                    detail=stage2_assets.blocked_reason or "Execution profile 'two_stage' is unavailable for the selected LTX2 checkpoint.",
+                )
+            return execution_profile, stage2_assets
+
+        return execution_profile, None
+
     def _parse_ltx2_generic_video_core_dto(
         payload: Dict[str, Any],
         *,
         task_prefix: str,
+        execution_profile: str,
         default_steps: int,
         default_cfg_scale: float,
-        default_sampler: str = "euler",
-        default_scheduler: str = "simple",
     ) -> _VideoCoreDTO:
+        if task_prefix == "txt2vid":
+            _reject_unknown_keys(payload, _LTX2_TXT2VID_GENERIC_ALLOWED_KEYS, "txt2vid")
+        elif task_prefix == "img2vid":
+            _reject_unknown_keys(payload, _LTX2_IMG2VID_GENERIC_ALLOWED_KEYS, "img2vid")
+        else:
+            raise RuntimeError(f"Unsupported LTX2 generic video task_prefix: {task_prefix!r}")
+
         prompt_key = f"{task_prefix}_prompt"
         negative_prompt_key = f"{task_prefix}_neg_prompt"
         width_key = f"{task_prefix}_width"
@@ -3397,8 +3467,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         steps_key = f"{task_prefix}_steps"
         fps_key = f"{task_prefix}_fps"
         frames_key = f"{task_prefix}_num_frames"
-        sampler_key = f"{task_prefix}_sampler"
-        scheduler_key = f"{task_prefix}_scheduler"
         seed_key = f"{task_prefix}_seed"
         cfg_key = f"{task_prefix}_cfg_scale"
 
@@ -3407,14 +3475,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         width_val = _require_int_field(payload, width_key, minimum=32, maximum=8192) if width_key in payload else 768
         height_val = _require_int_field(payload, height_key, minimum=32, maximum=8192) if height_key in payload else 512
         _ltx2_require_dims_multiple_of_32(task=task_prefix, width=width_val, height=height_val)
+        if execution_profile == "two_stage":
+            _ltx2_require_dims_multiple_of_64(task=task_prefix, width=width_val, height=height_val)
         steps_val = _require_int_field(payload, steps_key, minimum=1) if steps_key in payload else int(default_steps)
         fps_val = _require_int_field(payload, fps_key, minimum=1) if fps_key in payload else 24
         frames_val = _require_int_field(payload, frames_key, minimum=9, maximum=401) if frames_key in payload else 121
         _ltx2_require_frames_8n_plus_1(task=task_prefix, frames=frames_val)
-        sampler_name = _require_str_field(payload, sampler_key) if sampler_key in payload else str(default_sampler)
-        scheduler_name = _require_str_field(payload, scheduler_key) if scheduler_key in payload else str(default_scheduler)
-        sampler_name = _validate_ltx2_generic_video_sampler_field(sampler_key, sampler_name)
-        scheduler_name = _validate_ltx2_generic_video_scheduler_field(scheduler_key, scheduler_name)
         seed_raw = _require_int_field(payload, seed_key) if seed_key in payload else -1
         seed_val = None if seed_raw < 0 else seed_raw
         guidance_scale = _require_float_field(payload, cfg_key, minimum=0.0) if cfg_key in payload else float(default_cfg_scale)
@@ -3427,8 +3493,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             steps=steps_val,
             fps=fps_val,
             num_frames=frames_val,
-            sampler_name=sampler_name,
-            scheduler_name=scheduler_name,
+            sampler_name="euler",
+            scheduler_name="simple",
             seed=seed_val,
             guidance_scale=guidance_scale,
         )
@@ -4255,10 +4321,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
             ltx_defaults = _require_ltx2_checkpoint_execution_defaults(checkpoint_record=checkpoint_record)
             extras["ltx_checkpoint_kind"] = ltx_defaults.checkpoint_kind
-            extras["ltx_execution_profile"] = ltx_defaults.default_execution_profile
+            ltx_execution_profile, ltx_two_stage_assets = _resolve_ltx2_requested_execution_profile(
+                payload=payload,
+                checkpoint_record=checkpoint_record,
+                defaults=ltx_defaults,
+            )
+            extras["ltx_execution_profile"] = ltx_execution_profile
+            if ltx_two_stage_assets is not None:
+                extras["ltx_two_stage_distilled_lora_path"] = str(ltx_two_stage_assets.distilled_lora_path)
+                extras["ltx_two_stage_spatial_upsampler_path"] = str(ltx_two_stage_assets.spatial_upsampler_path)
             parsed = _parse_ltx2_generic_video_core_dto(
                 payload,
                 task_prefix="txt2vid",
+                execution_profile=ltx_execution_profile,
                 default_steps=int(ltx_defaults.default_steps),
                 default_cfg_scale=float(ltx_defaults.default_guidance_scale),
             )
@@ -4568,10 +4643,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             )
             ltx_defaults = _require_ltx2_checkpoint_execution_defaults(checkpoint_record=checkpoint_record)
             extras["ltx_checkpoint_kind"] = ltx_defaults.checkpoint_kind
-            extras["ltx_execution_profile"] = ltx_defaults.default_execution_profile
+            ltx_execution_profile, ltx_two_stage_assets = _resolve_ltx2_requested_execution_profile(
+                payload=payload,
+                checkpoint_record=checkpoint_record,
+                defaults=ltx_defaults,
+            )
+            extras["ltx_execution_profile"] = ltx_execution_profile
+            if ltx_two_stage_assets is not None:
+                extras["ltx_two_stage_distilled_lora_path"] = str(ltx_two_stage_assets.distilled_lora_path)
+                extras["ltx_two_stage_spatial_upsampler_path"] = str(ltx_two_stage_assets.spatial_upsampler_path)
             parsed = _parse_ltx2_generic_video_core_dto(
                 payload,
                 task_prefix="img2vid",
+                execution_profile=ltx_execution_profile,
                 default_steps=int(ltx_defaults.default_steps),
                 default_cfg_scale=float(ltx_defaults.default_guidance_scale),
             )

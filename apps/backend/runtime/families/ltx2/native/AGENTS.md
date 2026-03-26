@@ -1,7 +1,7 @@
 <!-- tags: backend, runtime, families, ltx2, native, transformer, vae, audio -->
 # apps/backend/runtime/families/ltx2/native Overview
 Date: 2026-03-12
-Last Review: 2026-03-20
+Last Review: 2026-03-26
 Status: Active
 
 ## Purpose
@@ -18,7 +18,8 @@ Status: Active
 - `apps/backend/runtime/families/ltx2/native/vocoder.py` — Native legacy raw vocoder loader plus the real 2.3 wrapped `VocoderWithBWE` owner for `bwe_generator.*` + `mel_stft.*` + `vocoder.*`.
 - `apps/backend/runtime/families/ltx2/native/text.py` — Prompt normalization and connector-backed text embedding helpers.
 - `apps/backend/runtime/families/ltx2/native/scheduler.py` — Native FlowMatchEuler scheduler implementation.
-- `apps/backend/runtime/families/ltx2/native/pipelines.py` — Native `txt2vid` / `img2vid` execution loops that return frames plus optional generated audio and own generation-boundary streaming cleanup for wrapped transformers.
+- `apps/backend/runtime/families/ltx2/native/pipelines.py` — Native `txt2vid` / `img2vid` execution loops plus explicit latent-stage sampling/decode primitives for the `two_stage` runtime path; also owns generation-boundary streaming cleanup for wrapped transformers.
+- `apps/backend/runtime/families/ltx2/native/latent_upsampler.py` — Native x2 latent upsampler used by the explicit `two_stage` profile, loaded from the vendored config/state contract without Diffusers runtime imports.
 
 ## Expectations
 - Keep this directory native-only. Do not import official LTX2 Diffusers runtime/model/pipeline classes here.
@@ -31,3 +32,4 @@ Status: Active
 - `video_vae.py::decode(...)` now owns the explicit decode-timestep contract: when `config.timestep_conditioning=True`, callers must provide a batch-matched `timestep` tensor instead of relying on positional mismatch or hidden fallback glue. `native/pipelines.py` owns the current zero-timestep default for generation.
 - `pipelines.py` may rely on the local scheduler/text/native module contracts, but canonical API/result/export ownership stays outside this directory in the canonical use-cases.
 - `pipelines.py` directly touches `native.transformer.config`, `native.transformer.rope`, `native.transformer.audio_rope`, and `cache_context(...)`; any streamed wrapper must proxy those surfaces honestly and cleanup must live here, not in public metadata.
+- `pipelines.py` is now the only native owner for the LTX two-stage latent bridge contract: stage sampling returns unpacked/unnormalized video latents plus packed/normalized audio latents, decode stays explicit, and one-stage wrappers must continue to route through the same refactored primitives instead of forking behavior.

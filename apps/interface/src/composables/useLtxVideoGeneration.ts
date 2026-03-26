@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Dedicated LTX video generation composable for the generic backend video contract.
 Owns per-tab runtime state for `ltx2` txt2vid/img2vid runs, validates LTX-specific frontend assumptions against the backend capability/asset
-contracts, preflights the strict LTX request contract (`32px` dimensions, `8n+1` frames, integer `steps` / `fps` / `seed`, finite `cfgScale`),
-builds generic payloads, starts `/api/txt2vid` or `/api/img2vid` tasks, and consumes task SSE events to surface progress/results.
+contracts, preflights the strict LTX request contract (profile-aware `32px` / `64px` dimensions, `8n+1` frames, integer `steps` / `fps` / `seed`,
+finite `cfgScale`), builds generic payloads, starts `/api/txt2vid` or `/api/img2vid` tasks, and consumes task SSE events to surface progress/results.
 Unlike the WAN composable, this lane has no queue/history/stage orchestration; it stays fail-loud on unsupported generic-video assumptions.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -32,6 +32,7 @@ import {
   buildLtxImg2VidPayload,
   buildLtxTxt2VidPayload,
   normalizeDevice,
+  resolveLtxDimAlignmentForExecutionProfile,
   normalizeLtxExecutionProfile,
   requireFiniteNumber,
   requireLtxDim,
@@ -331,8 +332,9 @@ export function useLtxVideoGeneration(tabId: string) {
     }
     const currentProfile = String(currentParams.executionProfile || '').trim()
     if (!currentProfile) return 'Select an LTX execution profile for this checkpoint.'
+    let executionProfile = currentProfile
     try {
-      normalizeLtxExecutionProfile(currentProfile)
+      executionProfile = normalizeLtxExecutionProfile(currentProfile)
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
@@ -348,13 +350,14 @@ export function useLtxVideoGeneration(tabId: string) {
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
+    const requiredDimAlignment = resolveLtxDimAlignmentForExecutionProfile(executionProfile)
     try {
-      requireLtxDim(currentParams.width, 'Width')
+      requireLtxDim(currentParams.width, 'Width', requiredDimAlignment)
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
     try {
-      requireLtxDim(currentParams.height, 'Height')
+      requireLtxDim(currentParams.height, 'Height', requiredDimAlignment)
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
@@ -429,9 +432,10 @@ export function useLtxVideoGeneration(tabId: string) {
     if (checkpointExecution.checkpointKind === 'unknown') {
       throw new Error('Selected LTX checkpoint is not executable on the current LTX tranche.')
     }
-    const executionProfile = normalizeLtxExecutionProfile(currentParams.executionProfile)
-    if (!checkpointExecution.allowedExecutionProfiles.includes(executionProfile)) {
-      throw new Error(`Execution profile '${executionProfile}' is unsupported for the selected LTX checkpoint.`)
+    const rawExecutionProfile = String(currentParams.executionProfile || '').trim()
+    const executionProfile = normalizeLtxExecutionProfile(rawExecutionProfile)
+    if (!checkpointExecution.allowedExecutionProfiles.includes(rawExecutionProfile)) {
+      throw new Error(`Execution profile '${rawExecutionProfile}' is unsupported for the selected LTX checkpoint.`)
     }
 
     const contract = assetContract.value

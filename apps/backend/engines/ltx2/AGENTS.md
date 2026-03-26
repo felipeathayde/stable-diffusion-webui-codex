@@ -1,7 +1,7 @@
 # apps/backend/engines/ltx2 Overview
 <!-- tags: backend, engines, ltx2, video, gemma3 -->
 Date: 2026-03-11
-Last Review: 2026-03-16
+Last Review: 2026-03-26
 Status: Active
 
 ## Purpose
@@ -19,5 +19,6 @@ Status: Active
 - `txt2vid` / `img2vid` ownership remains canonical in `apps/backend/use_cases/*`.
 - Canonical video use-cases now consume the family-local `Ltx2RunResult` contract (`frames + AudioExportAsset + metadata`) and own cleanup of generated temp audio after export paths finish or fail.
 - 2026-03-16: `spec.py` now threads an explicit generated-audio export policy from the canonical video use-cases into `run_txt2vid()` / `run_img2vid()` so runtime audio materialization follows saved-output truth instead of blindly writing temp WAVs.
+- 2026-03-26: `spec.py` now exposes the explicit LTX `two_stage` lane through the same runtime seam as `one_stage`; profile truth stays in the router/checkpoint metadata, while runtime internals keep the request-scoped generator and stage-2 asset paths out of the public engine contract.
 - The current core-streaming tranche stays backend-internal. `spec.py` may pass only the normalized boolean `core_streaming_enabled` into runtime assembly; it must not widen the public engine/result contract with streaming tuning or metadata in this slice.
 - Do not route LTX2 through generic engine helpers or runtime key remap shims. The dedicated family runtime must stay native-only under `apps/**`.

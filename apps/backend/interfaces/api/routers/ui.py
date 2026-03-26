@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: UI persistence and metadata API routes.
     Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`
-    while filtering stale unsupported top-level tab params during load/create/update instead of rejecting them.
+    while filtering stale unsupported top-level tab params during stored-tab load and rejecting unknown top-level LTX keys on create/update.
     Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type and accepts
     a dedicated `ltx2` video workspace tab type.
 
@@ -205,8 +205,7 @@ def build_router(
         "frames",
         "steps",
         "cfgScale",
-        "sampler",
-        "scheduler",
+        "executionProfile",
         "seed",
         "checkpoint",
         "vae",
@@ -521,7 +520,7 @@ def build_router(
                 tab_type=ttype,
                 raw_params=payload.get("params"),
                 field="params",
-                reject_unknown=False,
+                reject_unknown=(ttype == "ltx2"),
             )
         else:
             params = {}
@@ -564,7 +563,7 @@ def build_router(
                         tab_type=tab_type,
                         raw_params=payload.get("params"),
                         field="params",
-                        reject_unknown=False,
+                        reject_unknown=(tab_type == "ltx2"),
                     )
                     sanitized_current_params = _sanitize_stored_tab_params(
                         tab_type=tab_type,

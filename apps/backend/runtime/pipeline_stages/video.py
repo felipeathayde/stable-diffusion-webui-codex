@@ -17,6 +17,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `GeneratedAudioExportPolicy` (dataclass): Normalized policy for mux-capable generated-audio export decisions.
 - `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
 - `build_ltx2_video_plan` (function): Builds a strict LTX2 `VideoPlan` that requires explicit router-owned fields instead of generic fallbacks.
+- `Ltx2TwoStageGeometry` (dataclass): Execution-only geometry/scalar contract for the explicit LTX2 `two_stage` profile.
+- `build_ltx2_two_stage_geometry` (function): Derives the fixed stage-1/stage-2 execution geometry from final public LTX2 output dimensions.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
 - `read_video_interpolation_options` (function): Parses `extras.video_interpolation` into typed interpolation options when present.
@@ -51,6 +53,14 @@ from apps.backend.video.upscaling.seedvr2 import run_seedvr2_upscaling
 
 logger = logging.getLogger(__name__)
 _VIDEO_UPSCALING_COLOR_CORRECTIONS = {"lab", "wavelet", "wavelet_adaptive", "hsv", "adain", "none"}
+_LTX2_INTERNAL_EXTRA_KEYS = frozenset(
+    {
+        "ltx_two_stage_distilled_lora_path",
+        "ltx_two_stage_spatial_upsampler_path",
+    }
+)
+_LTX2_TWO_STAGE_STAGE2_SIGMAS = (0.909375, 0.725, 0.421875)
+_LTX2_TWO_STAGE_STAGE2_GUIDANCE_SCALE = 1.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -71,6 +81,19 @@ class GeneratedAudioExportPolicy:
     format: str
     container: str | None
     materialize_audio_asset: bool
+
+
+@dataclass(slots=True, frozen=True)
+class Ltx2TwoStageGeometry:
+    """Execution-only geometry/scalars for the explicit LTX2 `two_stage` profile."""
+
+    final_width: int
+    final_height: int
+    stage1_width: int
+    stage1_height: int
+    stage2_sigmas: tuple[float, ...]
+    stage2_noise_scale: float
+    stage2_guidance_scale: float
 
 
 def build_video_plan(request: Any) -> VideoPlan:
@@ -105,6 +128,8 @@ def build_ltx2_video_plan(request: Any) -> VideoPlan:
         extras = dict(extras_raw)
     else:
         extras = {}
+    for key in _LTX2_INTERNAL_EXTRA_KEYS:
+        extras.pop(key, None)
 
     required_ints = {
         "steps": getattr(request, "steps", None),
@@ -132,6 +157,31 @@ def build_ltx2_video_plan(request: Any) -> VideoPlan:
         height=normalized["height"],
         guidance_scale=getattr(request, "guidance_scale", None),
         extras=extras,
+    )
+
+
+def build_ltx2_two_stage_geometry(plan: VideoPlan) -> Ltx2TwoStageGeometry:
+    """Derive the execution-only two-stage LTX2 geometry from final public output dimensions."""
+
+    final_width = int(plan.width)
+    final_height = int(plan.height)
+    if final_width <= 0 or final_height <= 0:
+        raise RuntimeError(
+            f"LTX2 two_stage requires positive final width/height; got {final_width}x{final_height}."
+        )
+    if final_width % 64 != 0 or final_height % 64 != 0:
+        raise RuntimeError(
+            "LTX2 two_stage requires final width/height divisible by 64 because stage 1 runs at half resolution; "
+            f"got {final_width}x{final_height}."
+        )
+    return Ltx2TwoStageGeometry(
+        final_width=final_width,
+        final_height=final_height,
+        stage1_width=final_width // 2,
+        stage1_height=final_height // 2,
+        stage2_sigmas=_LTX2_TWO_STAGE_STAGE2_SIGMAS,
+        stage2_noise_scale=float(_LTX2_TWO_STAGE_STAGE2_SIGMAS[0]),
+        stage2_guidance_scale=_LTX2_TWO_STAGE_STAGE2_GUIDANCE_SCALE,
     )
 
 
@@ -898,7 +948,10 @@ def build_video_result(
 __all__ = [
     "AudioExportAsset",
     "GeneratedAudioExportPolicy",
+    "Ltx2TwoStageGeometry",
     "apply_engine_loras",
+    "build_ltx2_two_stage_geometry",
+    "build_ltx2_video_plan",
     "build_video_plan",
     "configure_sampler",
     "read_video_interpolation_options",

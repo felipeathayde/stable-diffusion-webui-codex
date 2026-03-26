@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-03-22
+Last Review: 2026-03-26
 Status: Active
 
 ## Purpose
@@ -16,7 +16,7 @@ Status: Active
 - `hires_fix.py` — Hires-fix helpers (denoise→start_at_step mapping + init latents/conditioning prep via global upscalers).
 - `image_init.py` — Utilities for encoding img2img/img2vid init images into tensor+latent bundles.
 - `masked_img2img.py` — Masked img2img (“inpaint”) helpers: mask normalize/invert/blur + full-res crop plan + latent mask enforcement inputs.
-- `video.py` — Video plan builder, LoRA/sampler configuration, shared interpolation stage helpers, and metadata assembly.
+- `video.py` — Video plan builder, LoRA/sampler configuration, shared interpolation stage helpers, metadata assembly, strict `build_ltx2_video_plan(...)`, and execution-only `build_ltx2_two_stage_geometry(...)` for the explicit LTX `two_stage` profile.
 - `__init__.py` — Package marker (intentionally no re-export facade; callers import modules directly).
 
 ## Notes
@@ -26,6 +26,7 @@ Status: Active
 - Modules in this directory must stay dependency-light and only import from `apps.*` namespaces.
 - Prefer adding new pipeline stages here rather than duplicating logic inside `apps/backend/use_cases/`.
 - Helper functions should raise explicit errors; avoid silent fallbacks or catching broad exceptions.
+- Internal LTX two-stage asset paths (`ltx_two_stage_distilled_lora_path`, `ltx_two_stage_spatial_upsampler_path`) are request/runtime-owner details only; `video.py` must strip them before `VideoPlan.extras` is handed to shared stage helpers.
 - 2025-12-14: `build_video_plan()` reads `steps` + `guidance_scale` directly from the request; LoRA application uses a lazy import to keep the module dependency-light for non-LoRA users.
 - 2025-12-14: Video plan defaults `steps` to 30 when an ad-hoc caller omits it (matching `/api/{txt2vid,img2vid}` defaults) to avoid drifting configs.
 - 2026-01-01: `apply_prompt_context(...)` remains the owner for applying request-owned `clip_skip` before conditioning is computed.

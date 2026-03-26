@@ -7,9 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Canonical txt2vid orchestration for backend video engines.
-Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native LTX2 branch), applies
-shared SeedVR2 upscaling/interpolation stages when requested, exports the resulting video, and yields
-progress/result events.
+Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native LTX2 branch), including the
+truthful LTX2 `executionProfile` stage flow (`one_stage` or `two_stage` with `stage1_sampling -> latent_upsample ->
+stage2_refine -> decode`), applies shared SeedVR2 upscaling/interpolation stages when requested, exports the
+resulting video, and yields progress/result events.
 WAN22 Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when
 provided and falls back to request negative only when missing. The native LTX2 branch consumes a local
 `Ltx2RunResult` (`frames + AudioExportAsset + metadata`) and owns cleanup of generated temp audio after export.
@@ -19,7 +20,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_emit_pipeline_event` (function): Emits canonical structured pipeline telemetry events (`pipeline.*`) for txt2vid.
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_cleanup_owned_audio_asset` (function): Deletes owned temporary generated-audio artifacts after LTX2 export completes or fails.
-- `_run_ltx2_txt2vid` (function): Runs the native backend-only LTX2 txt2vid branch and threads generated audio through the shared export seam.
+- `_ltx_execution_profile` (function): Reads the normalized LTX execution profile from the shared `VideoPlan`.
+- `_run_ltx2_txt2vid` (function): Runs the native LTX2 txt2vid branch, including explicit `two_stage` stage orchestration, and threads generated audio through the shared export seam.
 - `_run_pipeline` (function): Runs a Diffusers txt2vid pipeline and returns generated frames.
 - `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
@@ -47,6 +49,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
     apply_video_interpolation,
     apply_video_upscaling,
+    build_ltx2_two_stage_geometry,
     build_ltx2_video_plan,
     build_video_request_effective_snapshot,
     build_video_plan,
@@ -178,6 +181,13 @@ def _cleanup_owned_audio_asset(audio_asset: AudioExportAsset | None, *, logger: 
             logger.warning("%s: failed to remove owned temp audio asset '%s': %s", task, path, exc)
 
 
+def _ltx_execution_profile(plan: VideoPlan) -> str:
+    extras = getattr(plan, "extras", None)
+    if not isinstance(extras, Mapping):
+        return ""
+    return str(extras.get("ltx_execution_profile") or "").strip()
+
+
 def _run_ltx2_txt2vid(
     *,
     engine: Any,
@@ -205,13 +215,103 @@ def _run_ltx2_txt2vid(
             task="txt2vid",
         )
         apply_engine_loras(engine, logger)
+        if _ltx_execution_profile(plan) == "two_stage":
+            geometry = build_ltx2_two_stage_geometry(plan)
+            request_generator = comp.build_request_generator(request=request)
+            yield ProgressEvent(stage="stage1_sampling", percent=5.0, message="Running LTX2 stage 1 sampling")
+            stage1_result = comp.sample_txt2vid_stage(
+                request=request,
+                plan=plan,
+                width=geometry.stage1_width,
+                height=geometry.stage1_height,
+                num_inference_steps=int(plan.steps),
+                guidance_scale=float(plan.guidance_scale if plan.guidance_scale is not None else 4.0),
+                generator=request_generator,
+            )
+            _emit_pipeline_event(
+                telemetry_scope,
+                "pipeline.stage.complete",
+                stage="stage1_sampling.complete",
+                stage_name="stage1_sampling",
+                backend="ltx2",
+                width=int(geometry.stage1_width),
+                height=int(geometry.stage1_height),
+                latent_height=int(stage1_result.latent_height),
+                latent_width=int(stage1_result.latent_width),
+            )
 
-        yield ProgressEvent(stage="run", percent=5.0, message="Running LTX2 txt2vid")
-        runtime_result = comp.run_txt2vid(
-            request=request,
-            plan=plan,
-            generated_audio_export_policy=generated_audio_export_policy,
-        )
+            yield ProgressEvent(stage="latent_upsample", percent=35.0, message="Upsampling LTX2 latents")
+            upscaled_video_latents = comp.upsample_two_stage_video_latents(
+                request=request,
+                stage_result=stage1_result,
+                geometry=geometry,
+            )
+            _emit_pipeline_event(
+                telemetry_scope,
+                "pipeline.stage.complete",
+                stage="latent_upsample.complete",
+                stage_name="latent_upsample",
+                backend="ltx2",
+                upscaled_latents_shape=tuple(int(dim) for dim in upscaled_video_latents.shape),
+            )
+
+            yield ProgressEvent(stage="stage2_refine", percent=55.0, message="Running LTX2 stage 2 refinement")
+            stage2_result = comp.refine_txt2vid_two_stage(
+                request=request,
+                plan=plan,
+                geometry=geometry,
+                upscaled_video_latents=upscaled_video_latents,
+                stage1_result=stage1_result,
+                generator=request_generator,
+            )
+            _emit_pipeline_event(
+                telemetry_scope,
+                "pipeline.stage.complete",
+                stage="stage2_refine.complete",
+                stage_name="stage2_refine",
+                backend="ltx2",
+                latent_height=int(stage2_result.latent_height),
+                latent_width=int(stage2_result.latent_width),
+                sigmas=tuple(float(value) for value in geometry.stage2_sigmas),
+            )
+
+            yield ProgressEvent(stage="decode", percent=80.0, message="Decoding LTX2 outputs")
+            runtime_result = comp.decode_stage_result(
+                request=request,
+                plan=plan,
+                stage_result=stage2_result,
+                generated_audio_export_policy=generated_audio_export_policy,
+                pipeline_name="ltx2_native_txt2vid_two_stage",
+                metadata_extra={
+                    "ltx_two_stage": {
+                        "stage1_width": int(geometry.stage1_width),
+                        "stage1_height": int(geometry.stage1_height),
+                        "final_width": int(geometry.final_width),
+                        "final_height": int(geometry.final_height),
+                        "stage2_sigmas": [float(value) for value in geometry.stage2_sigmas],
+                        "stage2_guidance_scale": float(geometry.stage2_guidance_scale),
+                        "stage2_noise_scale": float(geometry.stage2_noise_scale),
+                        "distilled_lora": os.path.basename(str(getattr(request, "extras", {}).get("ltx_two_stage_distilled_lora_path") or "")),
+                        "spatial_upsampler": os.path.basename(str(getattr(request, "extras", {}).get("ltx_two_stage_spatial_upsampler_path") or "")),
+                    }
+                },
+            )
+            _emit_pipeline_event(
+                telemetry_scope,
+                "pipeline.stage.complete",
+                stage="decode.complete",
+                stage_name="decode",
+                backend="ltx2",
+                frame_count=int(len(runtime_result.frames)),
+                has_audio=bool(runtime_result.audio_asset is not None),
+            )
+        else:
+            yield ProgressEvent(stage="run", percent=5.0, message="Running LTX2 txt2vid")
+            runtime_result = comp.run_txt2vid(
+                request=request,
+                plan=plan,
+                generated_audio_export_policy=generated_audio_export_policy,
+            )
         if not isinstance(runtime_result, Ltx2RunResult):
             raise RuntimeError(
                 "LTX2 txt2vid runtime must return `Ltx2RunResult`; "

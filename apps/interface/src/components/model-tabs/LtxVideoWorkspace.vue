@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Family-owned LTX video workspace backed by the generic video endpoints.
 Uses the shared video-family presentation baseline so `ltx2` reads like the same 2vid surface as WAN22 while keeping LTX-specific controls
-truthful to the strict LTX generic backend contract (`32px` geometry, `8n+1` frames, checkpoint-aware execution profiles, no silent snapping).
+truthful to the strict LTX generic backend contract (profile-aware `32px` / `64px` geometry, `8n+1` frames, checkpoint-aware execution profiles,
+no silent snapping).
 Stale persisted unsupported execution profiles stay visible as blocking state until the user repairs them. Checkpoint/VAE/text-encoder selection
 stays in QuickSettings; the workspace owns prompt/init-image, generation parameters, run/cancel, progress, exported video, and optional
 returned frames.
@@ -87,31 +88,31 @@ Symbols (top-level; keep in sync; no ghosts):
               <span class="label-muted">Video</span>
             </div>
             <div class="grid gap-3 md:grid-cols-2 mb-3">
-              <SliderField
-                label="Width (px)"
-                :modelValue="params.width"
-                :min="LTX_DIM_MIN"
-                :max="LTX_DIM_MAX"
-                :step="LTX_DIM_ALIGNMENT"
-                :inputStep="1"
-                :nudgeStep="LTX_DIM_ALIGNMENT"
-                inputClass="cdx-input-w-md"
-                :disabled="isRunning"
-                @update:modelValue="(value) => updateParamsPatch({ width: normalizePositiveInt(value, params?.width ?? LTX_DIM_MIN, LTX_DIM_MIN, LTX_DIM_MAX) })"
-              />
-              <SliderField
-                label="Height (px)"
-                :modelValue="params.height"
-                :min="LTX_DIM_MIN"
-                :max="LTX_DIM_MAX"
-                :step="LTX_DIM_ALIGNMENT"
-                :inputStep="1"
-                :nudgeStep="LTX_DIM_ALIGNMENT"
-                inputClass="cdx-input-w-md"
-                :disabled="isRunning"
-                @update:modelValue="(value) => updateParamsPatch({ height: normalizePositiveInt(value, params?.height ?? LTX_DIM_MIN, LTX_DIM_MIN, LTX_DIM_MAX) })"
-              />
-            </div>
+	              <SliderField
+	                label="Width (px)"
+	                :modelValue="params.width"
+	                :min="LTX_DIM_MIN"
+	                :max="LTX_DIM_MAX"
+	                :step="dimensionAlignment"
+	                :inputStep="1"
+	                :nudgeStep="dimensionAlignment"
+	                inputClass="cdx-input-w-md"
+	                :disabled="isRunning"
+	                @update:modelValue="(value) => updateParamsPatch({ width: normalizePositiveInt(value, params?.width ?? LTX_DIM_MIN, LTX_DIM_MIN, LTX_DIM_MAX) })"
+	              />
+	              <SliderField
+	                label="Height (px)"
+	                :modelValue="params.height"
+	                :min="LTX_DIM_MIN"
+	                :max="LTX_DIM_MAX"
+	                :step="dimensionAlignment"
+	                :inputStep="1"
+	                :nudgeStep="dimensionAlignment"
+	                inputClass="cdx-input-w-md"
+	                :disabled="isRunning"
+	                @update:modelValue="(value) => updateParamsPatch({ height: normalizePositiveInt(value, params?.height ?? LTX_DIM_MIN, LTX_DIM_MIN, LTX_DIM_MAX) })"
+	              />
+	            </div>
             <VideoSettingsCard
               embedded
               :frames="params.frames"
@@ -123,10 +124,12 @@ Symbols (top-level; keep in sync; no ghosts):
               frameRuleLabel="8n+1"
               :minFps="1"
               :maxFps="60"
-              @update:frames="(value) => updateParamsPatch({ frames: normalizePositiveInt(value, params?.frames ?? LTX_FRAMES_MIN, LTX_FRAMES_MIN, LTX_FRAMES_MAX) })"
-              @update:fps="(value) => updateParamsPatch({ fps: normalizePositiveInt(value, params?.fps ?? 24, 1, 240) })"
-            />
-          </div>
+	              @update:frames="(value) => updateParamsPatch({ frames: normalizePositiveInt(value, params?.frames ?? LTX_FRAMES_MIN, LTX_FRAMES_MIN, LTX_FRAMES_MAX) })"
+	              @update:fps="(value) => updateParamsPatch({ fps: normalizePositiveInt(value, params?.fps ?? 24, 1, 240) })"
+	            />
+	            <p class="caption mt-2">{{ dimensionRuleCaption }}</p>
+	            <p v-if="dimensionWarning" class="panel-status mt-2">{{ dimensionWarning }}</p>
+	          </div>
 
           <div class="gen-card mb-3">
             <div class="row-split mb-2">
@@ -179,23 +182,21 @@ Symbols (top-level; keep in sync; no ghosts):
                   :value="params.executionProfile"
                   :disabled="isRunning"
                   @change="(event) => updateParamsPatch({ executionProfile: (event.target as HTMLSelectElement).value })"
-                >
-                  <option value="">Select profile</option>
+	                >
+	                  <option value="">Select profile</option>
                   <option
                     v-for="option in executionProfileOptions"
                     :key="option.value"
                     :value="option.value"
                     :disabled="!option.supported"
                   >
-                    {{ option.label }}
-                  </option>
-                </select>
-                <p class="caption mt-2">
-                  Sampler and scheduler are derived from the selected execution profile on the current LTX slice.
-                </p>
-              </div>
-            </div>
-            <p v-if="executionProfileWarning" class="panel-status mt-2">{{ executionProfileWarning }}</p>
+	                    {{ option.label }}
+	                  </option>
+	                </select>
+	                <p class="caption mt-2">{{ executionProfileCaption }}</p>
+	              </div>
+	            </div>
+	            <p v-if="executionProfileWarning" class="panel-status mt-2">{{ executionProfileWarning }}</p>
           </div>
 
           <div class="gen-card">
@@ -337,6 +338,8 @@ import {
   LTX_FRAME_ALIGNMENT,
   LTX_FRAMES_MAX,
   LTX_FRAMES_MIN,
+  LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT,
+  resolveLtxDimAlignmentForExecutionProfile,
 } from '../../api/payloads_ltx_video'
 import Img2ImgInpaintParamsCard from '../../components/Img2ImgInpaintParamsCard.vue'
 import PromptFields from '../../components/prompt/PromptFields.vue'
@@ -392,17 +395,22 @@ function normalizeExecutionProfileName(rawValue: string): string {
 function executionProfileLabel(value: string): string {
   const normalized = normalizeExecutionProfileName(value)
   if (normalized === 'one_stage') return 'One-stage'
+  if (normalized === 'two_stage') return 'Two-stage'
   if (normalized === 'distilled') return 'Distilled'
   return value || 'Unknown'
 }
 
 function ensureExecutionProfileVisible(options: ExecutionProfileOption[], currentValue: string): ExecutionProfileOption[] {
-  const current = normalizeExecutionProfileName(currentValue)
+  const current = String(currentValue || '').trim()
   if (!current) return options
-  if (options.some((entry) => normalizeExecutionProfileName(entry.value) === current)) return options
+  if (options.some((entry) => entry.value === current)) return options
+  const normalizedCurrent = normalizeExecutionProfileName(current)
+  const canonicalMatch = options.find((entry) => normalizeExecutionProfileName(entry.value) === normalizedCurrent)
   return [{
     value: current,
-    label: `${executionProfileLabel(current)} (unsupported; reselect a supported profile)`,
+    label: canonicalMatch
+      ? `${executionProfileLabel(current)} (stored raw value; reselect the canonical profile)`
+      : `${executionProfileLabel(current)} (unsupported; reselect a supported profile)`,
     supported: false,
   }, ...options]
 }
@@ -420,7 +428,57 @@ const executionProfileOptions = computed<ExecutionProfileOption[]>(() => {
   return ensureExecutionProfileVisible(base, String(params.value?.executionProfile || ''))
 })
 
+const selectedExecutionProfile = computed(() => String(params.value?.executionProfile || '').trim())
+const dimensionAlignment = computed(() => {
+  if (selectedExecutionProfile.value !== 'two_stage') return LTX_DIM_ALIGNMENT
+  return resolveLtxDimAlignmentForExecutionProfile(selectedExecutionProfile.value)
+})
+const executionProfileCaption = computed(() => {
+  const profile = selectedExecutionProfile.value
+  if (!profile) {
+    return 'Execution profiles choose the truthful LTX lane. Sampler and scheduler stay derived from the selected profile; they are not raw sampler controls.'
+  }
+  if (profile === 'one_stage') {
+    return 'One-stage runs a single-stage lane to final output resolution. Sampler and scheduler stay derived from this profile.'
+  }
+  if (profile === 'two_stage') {
+    return 'Two-stage runs stage 1 at half final resolution, then a fixed x2 latent upscale plus a fixed stage-2 distilled refine. Steps and CFG control only stage 1; this is not a raw sampler lane.'
+  }
+  if (profile === 'distilled') {
+    return 'Distilled runs the fixed distilled one-stage lane. Sampler and scheduler stay derived from this profile.'
+  }
+  return `Stored profile '${profile}' is not a supported LTX execution-profile id on this frontend slice. Re-select a supported checkpoint/profile pair.`
+})
+const dimensionRuleCaption = computed(() => {
+  if (selectedExecutionProfile.value === 'two_stage') {
+    return `Width and height stay the final output dimensions. two_stage runs stage 1 at half resolution, so both final dimensions must be divisible by ${LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT}.`
+  }
+  return `Width and height stay the final output dimensions. one_stage and distilled require multiples of ${LTX_DIM_ALIGNMENT}.`
+})
+const dimensionWarning = computed(() => {
+  const current = params.value
+  if (!current || selectedExecutionProfile.value !== 'two_stage') return ''
+  if (
+    current.width % LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT === 0
+    && current.height % LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT === 0
+  ) {
+    return ''
+  }
+  return `two_stage requires final width and height divisible by ${LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT}. Current size ${current.width}×${current.height} is blocking.`
+})
 const executionProfileWarning = computed(() => {
+  const currentProfile = selectedExecutionProfile.value
+  const currentOption = executionProfileOptions.value.find((entry) => entry.value === currentProfile)
+  if (currentProfile && currentOption && !currentOption.supported) {
+    const normalized = normalizeExecutionProfileName(currentProfile)
+    const canonicalMatch = executionProfileOptions.value.find(
+      (entry) => entry.supported && normalizeExecutionProfileName(entry.value) === normalized,
+    )
+    if (canonicalMatch) {
+      return `Stored raw profile '${currentProfile}' is blocking because the canonical supported value is '${canonicalMatch.value}'. Re-select the supported profile instead of relying on silent remapping.`
+    }
+    return `Stored profile '${currentProfile}' is unsupported for the selected checkpoint. Re-select a supported profile.`
+  }
   const message = String(blockedReason.value || '')
   if (
     message.includes('execution profile')
@@ -437,7 +495,6 @@ const vaeDisplay = computed(() => String(params.value?.vae || '').trim() || (che
 const textEncoderDisplay = computed(() => String(params.value?.textEncoder || '').trim() || 'Not selected')
 const runGenerateDisabled = computed(() => isRunning.value || Boolean(blockedReason.value))
 const runGenerateTitle = computed(() => (isRunning.value ? '' : blockedReason.value))
-let pendingCheckpointRepairCheckpoint = ''
 const runSummary = computed(() => {
   const current = params.value
   if (!current) return ''
@@ -466,20 +523,13 @@ watch(
   },
   (nextState, previousState) => {
     const current = params.value
-    const previousCheckpoint = String(previousState?.checkpoint || '').trim()
-    const checkpointChanged = previousCheckpoint !== nextState.checkpoint
     const isInitialRun = previousState === undefined
-    if (!isInitialRun && checkpointChanged) {
-      pendingCheckpointRepairCheckpoint = nextState.checkpoint
-    }
 
     const metadata = checkpointExecutionMetadata.value
     if (!current || !metadata) return
     if (metadata.checkpointKind === 'unknown') return
     const defaultProfile = String(metadata.defaultExecutionProfile || '').trim()
     if (!defaultProfile) return
-    const allowed = new Set(metadata.allowedExecutionProfiles.map((entry: string) => normalizeExecutionProfileName(entry)))
-    const currentProfile = normalizeExecutionProfileName(current.executionProfile)
     const metadataArrived = !String(previousState?.checkpointKind || '').trim() && Boolean(nextState.checkpointKind)
     const defaultsReady = nextState.defaultProfile !== '' && nextState.defaultStepsKey !== '' && nextState.defaultGuidanceKey !== ''
     const previousDefaultsReady =
@@ -487,17 +537,12 @@ watch(
       && String(previousState?.defaultStepsKey || '').trim() !== ''
       && String(previousState?.defaultGuidanceKey || '').trim() !== ''
     const defaultsCompleted = defaultsReady && !previousDefaultsReady
-    const pendingCheckpointRepair = pendingCheckpointRepairCheckpoint !== '' && pendingCheckpointRepairCheckpoint === nextState.checkpoint
-    const shouldApplyDefaults = !currentProfile
-      ? isInitialRun || metadataArrived || checkpointChanged || pendingCheckpointRepair || defaultsCompleted
-      : !allowed.has(currentProfile) && ((!isInitialRun && checkpointChanged) || pendingCheckpointRepair)
-
-    if (!shouldApplyDefaults) {
-      if (pendingCheckpointRepair && currentProfile && allowed.has(currentProfile)) {
-        pendingCheckpointRepairCheckpoint = ''
-      }
-      return
-    }
+    const previousCheckpoint = String(previousState?.checkpoint || '').trim()
+    const checkpointChanged = previousCheckpoint !== nextState.checkpoint
+    const currentProfile = String(current.executionProfile || '').trim()
+    if (currentProfile) return
+    const shouldApplyDefaults = isInitialRun || metadataArrived || checkpointChanged || defaultsCompleted
+    if (!shouldApplyDefaults) return
 
     const patch: Partial<LtxTabParams> = {}
     if (current.executionProfile !== defaultProfile) patch.executionProfile = defaultProfile
@@ -509,7 +554,6 @@ watch(
       patch.cfgScale = metadata.defaultGuidanceScale
     }
     if (Object.keys(patch).length > 0) updateParamsPatch(patch)
-    pendingCheckpointRepairCheckpoint = ''
   },
   { immediate: true },
 )

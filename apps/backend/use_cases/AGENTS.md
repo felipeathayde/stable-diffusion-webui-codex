@@ -1,13 +1,13 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-03-11
+Last Review: 2026-03-26
 Status: Active
 
 ## Purpose
 - Defines high-level orchestration flows for each supported task (txt2img, img2img, txt2vid, img2vid). Each module prepares inputs, invokes the appropriate engine, and handles post-processing.
 
 ## Key Files
-- `txt2img.py`, `img2img.py`, `txt2vid.py`, `img2vid.py`, `vid2vid.py` — Task-specific pipelines that bind request parameters, engines, runtimes, and services (`vid2vid.py` implementation remains in-tree, but `/api/vid2vid` is currently disabled at router level).
+- `txt2img.py`, `img2img.py`, `txt2vid.py`, `img2vid.py`, `vid2vid.py` — Task-specific pipelines that bind request parameters, engines, runtimes, and services (`vid2vid.py` implementation remains in-tree, but `/api/vid2vid` is currently disabled at router level). `txt2vid.py` / `img2vid.py` now own the truthful LTX2 `two_stage` stage flow (`stage1_sampling -> latent_upsample -> stage2_refine -> decode -> export`) in addition to the existing one-stage branch.
 - `upscale.py` — Standalone upscaling pipeline (Spandrel/builtin upscalers) used by `/api/upscale`.
 - `txt2img_pipeline/` — Stage-based runner used by `txt2img.py` to prepare prompts, execute base sampling, and handle HiRes passes without monolithic functions.
 - `__init__.py` — Exposes helpers to orchestrator modules in `apps/backend/core`.
@@ -68,6 +68,7 @@ Status: Active
 - 2026-03-04: WAN video GGUF progress mappers (`txt2vid.py::_yield_wan22_gguf_progress`, `img2vid.py::_yield_wan22_gguf_progress`) now preserve runtime coarse/fine diagnostics in `ProgressEvent.data` (`progress_adapter`, `progress_granularity`, `coarse_reason`) and forward optional runtime progress messages instead of dropping non-core payload fields.
 - 2026-03-11: Shared video execution snapshots now use `audio_source_kind` (`none|input|generated`) instead of `audio_input`; `vid2vid.py` reports source-audio passthrough via that shared field.
 - 2026-03-11: `txt2vid.py` / `img2vid.py` now own explicit staged LTX2 branches before WAN-specific routing. Those branches consume a family-local `Ltx2RunResult` (`frames + AudioExportAsset + metadata`), pass generated audio through the shared export seam, clean owned temp audio in the use-case layer, and now report the actual fixed LTX2 sampler/scheduler contract from the dedicated family runtime instead of echoing request defaults.
+- 2026-03-26: `txt2vid.py` / `img2vid.py` now own the explicit LTX2 `two_stage` public profile on top of that branch: use-cases stage the canonical progress/event sequence (`stage1_sampling`, `latent_upsample`, `stage2_refine`, `decode`, `export`), preserve the shared request generator across stages, and keep stage-2 asset names in executed metadata without leaking internal full paths into `VideoPlan`.
 - 2026-03-24: masked `img2img.py` hook wiring now owns `per_step_blend_strength` selection explicitly: exact `1.0` keeps the blend-total trio (`pre_denoiser` + `post_denoiser` + `post_sample`), while lower strengths switch the partial pull-back to `post_step_hook` and leave re-entrant denoiser hooks unset. Keep classic img2img and split-region masked passes on that same owner seam.
 - 2026-03-26: classic `img2img.py` now treats prompt parsing as LoRA-only on both base and hires paths, delegates masked hook selection to `resolve_mask_enforcer_hooks(...)`, and uses proportional non-flow denoise-step semantics by default while hires second passes explicitly opt into the internal fixed-step continuation seam.
 - 2026-03-26: hires prompt contexts in `img2img.py`, `txt2img_pipeline/runner.py`, and the dedicated FLUX.2 img2img seam must inherit base/request LoRAs from the base `PromptContext` when the hires prompt does not restate them; prompt-local hires tags only override same-path weights, they do not clear inherited LoRAs by omission.

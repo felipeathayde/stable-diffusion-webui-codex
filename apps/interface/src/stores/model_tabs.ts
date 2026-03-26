@@ -62,6 +62,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeWanVideoParams` (function): Sanitizes WAN video nested params (frames/window/attention controls) with `img2vidMode` as source of truth.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params, enforcing canonical WAN stage scheduler `simple`.
 - `shouldPersistWanStageSamplingBackfill` (function): Detects persisted WAN params requiring High/Low stage sampler/scheduler migration (`sampler='uni-pc bh2'`, `scheduler='simple'`).
+- `buildImageTopLevelBackfillPatch` (function): Builds a missing-top-level-only image-tab backfill patch from the normalized owner shape so hydration can persist absent canonical keys without widening into unrelated nested drift.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler and mask-enforcement fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
@@ -1140,6 +1141,23 @@ function shouldPersistWanStageSamplingBackfill(raw: unknown): boolean {
   return needsSamplerBackfill || needsSchedulerBackfill
 }
 
+function buildImageTopLevelBackfillPatch(
+  raw: unknown,
+  normalized: ImageBaseParams,
+): Partial<ImageBaseParams> | null {
+  const patch = asRecordObject(raw)
+  const backfillPatch: Partial<ImageBaseParams> = {}
+  let needsBackfill = false
+  for (const key of IMAGE_PARAM_TOP_LEVEL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) continue
+    const normalizedValue = normalized[key as keyof ImageBaseParams]
+    if (normalizedValue === undefined) continue
+    ;(backfillPatch as Record<string, unknown>)[key] = normalizedValue
+    needsBackfill = true
+  }
+  return needsBackfill ? backfillPatch : null
+}
+
 function normalizeGuidanceAdvancedParams(raw: unknown, defaults: GuidanceAdvancedParams): GuidanceAdvancedParams {
   const patch = asRecordObject(raw)
   const toFiniteNumber = (value: unknown, fallback: number): number => {
@@ -1744,15 +1762,42 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       tabs.value = rawTabs.map((tab) => normalizeTab(tab as BaseTab, defaultParamsForType))
       for (let index = 0; index < rawTabs.length; index += 1) {
         const tab = tabs.value[index]
-        if (!tab || tab.type !== 'wan') continue
         const rawTab = asRecordObject(rawTabs[index])
-        if (!shouldPersistWanStageSamplingBackfill(rawTab.params)) continue
-        const params = tab.params as TabParamsByType['wan']
-        void updateParams<Record<string, unknown>>(tab.id, {
-          high: params.high,
-          low: params.low,
-        }).catch((error) => {
-          console.warn('[model_tabs] Failed to persist WAN stage sampler/scheduler migration backfill; continuing load.', {
+        if (!tab) continue
+        if (tab.type === 'wan') {
+          if (!shouldPersistWanStageSamplingBackfill(rawTab.params)) continue
+          const params = tab.params as TabParamsByType['wan']
+          void updateParams<Record<string, unknown>>(tab.id, {
+            high: params.high,
+            low: params.low,
+          }).catch((error) => {
+            console.warn('[model_tabs] Failed to persist WAN stage sampler/scheduler migration backfill; continuing load.', {
+              tabId: tab.id,
+              error,
+            })
+          })
+          continue
+        }
+        if (tab.type === 'ltx2') continue
+        const normalizedParams = tab.params as unknown as ImageBaseParams
+        const imageBackfillPatch = buildImageTopLevelBackfillPatch(rawTab.params, normalizedParams)
+        if (!imageBackfillPatch) continue
+        let serializedBackfillPatch: Record<string, unknown>
+        try {
+          serializedBackfillPatch = cloneParamsForPersist(
+            tab.id,
+            'patch',
+            imageBackfillPatch as unknown as Record<string, unknown>,
+          )
+        } catch (error) {
+          console.warn('[model_tabs] Failed to serialize image-tab top-level params backfill; continuing load.', {
+            tabId: tab.id,
+            error,
+          })
+          continue
+        }
+        void updateTabApi(tab.id, { params: serializedBackfillPatch }).catch((error) => {
+          console.warn('[model_tabs] Failed to persist image-tab top-level params backfill; continuing load.', {
             tabId: tab.id,
             error,
           })

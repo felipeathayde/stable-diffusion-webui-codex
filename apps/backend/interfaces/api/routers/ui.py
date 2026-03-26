@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: UI persistence and metadata API routes.
-    Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`.
+    Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`
+    while filtering stale unsupported top-level tab params during load/create/update instead of rejecting them.
     Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type and accepts
     a dedicated `ltx2` video workspace tab type.
 
@@ -516,7 +517,12 @@ def build_router(
             or ("FLUX.1" if ttype == "flux1" else "FLUX.2" if ttype == "flux2" else ttype.upper())
         )
         if "params" in payload:
-            params = _sanitize_tab_params_patch(tab_type=ttype, raw_params=payload.get("params"), field="params")
+            params = _sanitize_tab_params_patch(
+                tab_type=ttype,
+                raw_params=payload.get("params"),
+                field="params",
+                reject_unknown=False,
+            )
         else:
             params = {}
         new_id = str(payload.get("id") or "").strip() or f"tab-{int(time.time()*1000)}"
@@ -554,7 +560,12 @@ def build_router(
                         tab_type = _normalize_tab_type(t.get("type"))
                     except ValueError as exc:
                         raise HTTPException(status_code=500, detail=f"tabs.json contains {exc}") from exc
-                    params_patch = _sanitize_tab_params_patch(tab_type=tab_type, raw_params=payload.get("params"), field="params")
+                    params_patch = _sanitize_tab_params_patch(
+                        tab_type=tab_type,
+                        raw_params=payload.get("params"),
+                        field="params",
+                        reject_unknown=False,
+                    )
                     sanitized_current_params = _sanitize_stored_tab_params(
                         tab_type=tab_type,
                         raw_params=t.get("params"),

@@ -20,7 +20,7 @@ Status: Active
 ## Notes / Decisions
 - 2026-03-22: `ZImageEngine.encode_first_stage(...)` still uses the shared Flow16 first-stage lane, but now forwards optional `encode_seed` so img2img init-latent posterior sampling stays deterministic without a ZImage-only encode fork.
 - 2026-03-20: `ZImageEngine` now treats `extras.zimage_variant` as the authoritative selector for Base vs Turbo; GGUF metadata is only a fallback when the request omitted the variant, and Z Image img2img must not inherit SD-family inpaint heuristics from checkpoint metadata.
-- **Variant contract:** UI sends `extras.zimage_variant="turbo"|"base"`; the backend forwards it to `engine_options["zimage_variant"]` so the orchestrator reloads the engine when the variant changes.
+- **Variant contract:** UI sends `extras.zimage_variant="turbo"|"base"` for the base request, and generic swap seams may also carry the same selector on `extras.swap_model` / `extras.hires.swap_model`; the backend forwards it to `engine_options["zimage_variant"]` so the orchestrator reloads the engine when the variant changes.
   - For Codex-produced GGUFs, the engine may also trust `codex.zimage.variant` metadata when it matches Codex provenance.
 - **CFG semantics (diffusers parity):** Z-Image uses classic CFG; unconditional conditioning is used when `guidance_scale > 1` and negative prompts are supported for both variants.
 - **VAE normalization:** decode must apply `vae.first_stage_model.process_out(latents)` before `vae.decode(...)` (Flux/Z-Image latent format).

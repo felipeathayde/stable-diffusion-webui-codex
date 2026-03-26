@@ -10,6 +10,8 @@ Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
 Contains request parsing and payload validation (including hires tile config via `extras.hires.tile` / `img2img_hires_tile`, Z-Image Turbo/Base
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
+Txt2img model-stage ownership is explicit: top-level `extras.swap_model` is the first-pass mid-generation stage config, `extras.hires.swap_model`
+is the selector-only second-pass replacement seam, and `extras.refiner` / `extras.hires.refiner` remain SDXL-native refiner stages.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
 Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), and supports optional multi-region inpaint passes via
 `img2img_mask_region_split`.
@@ -18,7 +20,8 @@ prompt `<sampler:...>` control tags (Anima-only rollout). Hires prompt sampler c
 runtime applies hires-prompt sampler/scheduler and size controls before explicit hires request overrides are resolved. Image-request sampler/scheduler
 validation also enforces family-scoped `supported_*` / `excluded_*` capability contracts (base pair, hires overrides, and hires prompt controls)
 without promoting recommendation hints into allowlists.
-Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
+Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`, plus SDXL-native `tenc1_sha` / `tenc2_sha`) and enforces WAN video
+`height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
 Validates `extras.vae_sha` against VAE inventory ownership (rejects non-VAE asset SHAs before runtime load) to keep Flux core-only causality fail-loud at request time.
 Image request selectors are explicit: the router validates `model_sha`, `checkpoint_core_only`, `model_format`, and `vae_source`
@@ -161,6 +164,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "img2img_mask_blur",
         "img2img_mask_blur_x",
         "img2img_mask_blur_y",
+        "img2img_per_step_blend_strength",
         "img2img_mask_enforcement",
         "img2img_mask_region_split",
         "img2img_mask_round",
@@ -674,6 +678,28 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(
                 status_code=400,
                 detail=f"'{field_name}' must be one of: checkpoint, diffusers, gguf",
+            )
+        return normalized
+
+    def _parse_optional_zimage_variant_selector(
+        *,
+        payload: Mapping[str, Any],
+        key: str,
+        field_name: str,
+    ) -> Optional[str]:
+        if key not in payload or payload.get(key) is None:
+            return None
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be one of: turbo, base",
+            )
+        normalized = value.strip().lower()
+        if normalized not in {"turbo", "base"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be one of: turbo, base",
             )
         return normalized
 
@@ -1484,6 +1510,210 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return parsed
 
 
+    def _parse_text_encoder_override_payload(value: Any, *, field_name: str) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
+        _reject_unknown_keys(value, {"family", "label", "components"}, field_name)
+        family_raw = value.get("family")
+        label_raw = value.get("label")
+        if not isinstance(family_raw, str) or not family_raw.strip():
+            raise HTTPException(status_code=400, detail=f"'{field_name}.family' must be a non-empty string")
+        if not isinstance(label_raw, str) or not label_raw.strip():
+            raise HTTPException(status_code=400, detail=f"'{field_name}.label' must be a non-empty string")
+        family = family_raw.strip()
+        label = label_raw.strip()
+        if "/" in label and not label.startswith(f"{family}/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field_name}.label must start with '<family>/'",
+            )
+        components_val = value.get("components")
+        components: list[str] | None = None
+        if components_val is not None:
+            if not isinstance(components_val, list) or any(not isinstance(c, str) for c in components_val):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{field_name}.components' must be an array of strings",
+                )
+            components = [c.strip() for c in components_val if isinstance(c, str) and c.strip()]
+        parsed: Dict[str, Any] = {"family": family, "label": label}
+        if components:
+            parsed["components"] = components
+        return parsed
+
+
+    def _parse_swap_model_payload(
+        value: Any,
+        *,
+        field_name: str,
+        allow_zimage_variant: bool = False,
+    ) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
+        allowed_keys = {
+            "model",
+            "model_sha",
+            "checkpoint_core_only",
+            "model_format",
+            "vae_source",
+            "vae_sha",
+            "tenc_sha",
+            "tenc1_sha",
+            "tenc2_sha",
+            "text_encoder_override",
+        }
+        if allow_zimage_variant:
+            allowed_keys.add("zimage_variant")
+        _reject_unknown_keys(
+            value,
+            allowed_keys,
+            field_name,
+        )
+        model_raw = value.get("model")
+        model = str(model_raw).strip() if isinstance(model_raw, str) else ""
+        model_sha_raw = value.get("model_sha")
+        model_sha = str(model_sha_raw).strip().lower() if isinstance(model_sha_raw, str) else ""
+        if not model and not model_sha:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' requires 'model' or '{field_name}.model_sha'",
+            )
+        parsed: Dict[str, Any] = {}
+        if model:
+            parsed["model"] = model
+        if model_sha:
+            parsed["model_sha"] = model_sha
+        checkpoint_core_only = _parse_optional_bool_selector(
+            payload=value,
+            key="checkpoint_core_only",
+            field_name=f"{field_name}.checkpoint_core_only",
+        )
+        if checkpoint_core_only is not None:
+            parsed["checkpoint_core_only"] = checkpoint_core_only
+        model_format = _parse_optional_model_format_selector(
+            payload=value,
+            key="model_format",
+            field_name=f"{field_name}.model_format",
+        )
+        if model_format is not None:
+            parsed["model_format"] = model_format
+        vae_source = _parse_optional_vae_source_selector(
+            payload=value,
+            key="vae_source",
+            field_name=f"{field_name}.vae_source",
+        )
+        if vae_source is not None:
+            parsed["vae_source"] = vae_source
+        if "vae_sha" in value:
+            vae_sha_raw = value.get("vae_sha")
+            if vae_sha_raw is not None:
+                if not isinstance(vae_sha_raw, str) or not vae_sha_raw.strip():
+                    raise HTTPException(status_code=400, detail=f"'{field_name}.vae_sha' must be a non-empty string")
+                parsed["vae_sha"] = vae_sha_raw.strip().lower()
+        if "tenc_sha" in value:
+            tenc_raw = value.get("tenc_sha")
+            if isinstance(tenc_raw, str):
+                tenc_sha = tenc_raw.strip().lower()
+                if tenc_sha:
+                    parsed["tenc_sha"] = tenc_sha
+            elif isinstance(tenc_raw, list):
+                tenc_shas: list[str] = []
+                for entry in tenc_raw:
+                    if not isinstance(entry, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"'{field_name}.tenc_sha' must be a string or array of strings",
+                        )
+                    normalized = entry.strip().lower()
+                    if normalized:
+                        tenc_shas.append(normalized)
+                if tenc_shas:
+                    parsed["tenc_sha"] = tenc_shas
+            elif tenc_raw is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{field_name}.tenc_sha' must be a string or array of strings",
+                )
+        for numbered_key in ("tenc1_sha", "tenc2_sha"):
+            if numbered_key not in value:
+                continue
+            numbered_raw = value.get(numbered_key)
+            if numbered_raw is None:
+                continue
+            if not isinstance(numbered_raw, str) or not numbered_raw.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{field_name}.{numbered_key}' must be a non-empty string",
+                )
+            parsed[numbered_key] = numbered_raw.strip().lower()
+        if "text_encoder_override" in value and value.get("text_encoder_override") is not None:
+            parsed["text_encoder_override"] = _parse_text_encoder_override_payload(
+                value.get("text_encoder_override"),
+                field_name=f"{field_name}.text_encoder_override",
+            )
+        if allow_zimage_variant:
+            zimage_variant = _parse_optional_zimage_variant_selector(
+                payload=value,
+                key="zimage_variant",
+                field_name=f"{field_name}.zimage_variant",
+            )
+            if zimage_variant is not None:
+                parsed["zimage_variant"] = zimage_variant
+        return parsed
+
+
+    def _parse_swap_stage_payload(
+        value: Any,
+        *,
+        field_name: str,
+        allow_zimage_variant: bool = False,
+    ) -> Dict[str, Any] | None:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
+        allowed_keys = {
+            "enable",
+            "switch_at_step",
+            "cfg",
+            "seed",
+            "model",
+            "model_sha",
+            "checkpoint_core_only",
+            "model_format",
+            "vae_source",
+            "vae_sha",
+            "tenc_sha",
+            "tenc1_sha",
+            "tenc2_sha",
+            "text_encoder_override",
+        }
+        if allow_zimage_variant:
+            allowed_keys.add("zimage_variant")
+        _reject_unknown_keys(
+            value,
+            allowed_keys,
+            field_name,
+        )
+        if _optional_bool_field(value, "enable") is not True:
+            return None
+        parsed = _parse_swap_model_payload(
+            value,
+            field_name=field_name,
+            allow_zimage_variant=allow_zimage_variant,
+        )
+        parsed.update(
+            {
+                "switch_at_step": _require_int_field(value, "switch_at_step", minimum=1),
+                "cfg": _require_float_field(value, "cfg"),
+                "seed": _require_int_field(value, "seed"),
+            }
+        )
+        return parsed
+
+
+    def _parse_refiner_payload(value: Any, *, field_name: str) -> Dict[str, Any] | None:
+        return _parse_swap_stage_payload(value, field_name=field_name, allow_zimage_variant=False)
+
+
     def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         raw = payload.get('extras')
         if raw is None:
@@ -1600,21 +1830,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 else:
                     modules_list = []
                 refiner_raw = hires.get('refiner')
-                refiner_cfg: Optional[Dict[str, Any]] = None
-                if refiner_raw is not None:
-                    if not isinstance(refiner_raw, dict):
-                        raise HTTPException(status_code=400, detail="'extras.hires.refiner' must be an object")
-                    _reject_unknown_keys(refiner_raw, {"enable", "switch_at_step", "cfg", "seed", "model", "vae"}, "extras.hires.refiner")
-                    if _optional_bool_field(refiner_raw, "enable") is True:
-                        refiner_cfg = {
-                            "switch_at_step": _require_int_field(refiner_raw, 'switch_at_step', minimum=1),
-                            "cfg": _require_float_field(refiner_raw, 'cfg'),
-                            "seed": _require_int_field(refiner_raw, 'seed'),
-                        }
-                        if 'model' in refiner_raw:
-                            refiner_cfg['model'] = str(refiner_raw['model'])
-                        if 'vae' in refiner_raw:
-                            refiner_cfg['vae'] = str(refiner_raw['vae'])
+                refiner_cfg = (
+                    _parse_refiner_payload(refiner_raw, field_name="extras.hires.refiner")
+                    if refiner_raw is not None
+                    else None
+                )
+                swap_model_cfg = (
+                    _parse_swap_model_payload(
+                        hires.get("swap_model"),
+                        field_name="extras.hires.swap_model",
+                        allow_zimage_variant=True,
+                    )
+                    if hires.get("swap_model") is not None
+                    else None
+                )
                 try:
                     tile_cfg = tile_config_from_payload(hires.get("tile"), context="extras.hires.tile")
                 except ValueError as exc:
@@ -1637,7 +1866,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "steps": _require_int_field(hires, 'steps', minimum=0),
                     "upscaler": _require_str_field(hires, 'upscaler', allow_empty=False, trim=True),
                     "tile": tile,
-                    "checkpoint": hires.get('checkpoint'),
+                    "swap_model": swap_model_cfg,
                     "modules": modules_list,
                     "sampler": hires.get('sampler'),
                     "scheduler": hires.get('scheduler'),
@@ -1648,63 +1877,29 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "refiner": refiner_cfg,
                 }
 
-        # Swap-model options (global)
+        swap_model = raw.get("swap_model")
+        if swap_model is not None:
+            swap_stage_cfg = _parse_swap_stage_payload(
+                swap_model,
+                field_name="extras.swap_model",
+                allow_zimage_variant=True,
+            )
+            if swap_stage_cfg is not None:
+                extras["swap_model"] = swap_stage_cfg
+
         refiner = raw.get('refiner')
         if refiner is not None:
-            if not isinstance(refiner, dict):
-                raise HTTPException(status_code=400, detail="'extras.refiner' must be an object")
-            _reject_unknown_keys(refiner, {"enable", "switch_at_step", "cfg", "seed", "model", "vae"}, "extras.refiner")
-            if _optional_bool_field(refiner, "enable") is True:
-                ref_cfg: Dict[str, Any] = {
-                    "switch_at_step": _require_int_field(refiner, 'switch_at_step', minimum=1),
-                    "cfg": _require_float_field(refiner, 'cfg'),
-                    "seed": _require_int_field(refiner, 'seed'),
-                }
-                if 'model' in refiner:
-                    ref_cfg['model'] = str(refiner['model'])
-                if 'vae' in refiner:
-                    ref_cfg['vae'] = str(refiner['vae'])
+            ref_cfg = _parse_refiner_payload(refiner, field_name="extras.refiner")
+            if ref_cfg is not None:
                 extras['refiner'] = ref_cfg
 
         # Text encoder override (family + label [+ optional components])
         te_override = raw.get('text_encoder_override')
         if te_override is not None:
-            if not isinstance(te_override, dict):
-                raise HTTPException(status_code=400, detail="'extras.text_encoder_override' must be an object")
-            _reject_unknown_keys(te_override, {"family", "label", "components"}, "extras.text_encoder_override")
-            family_raw = te_override.get("family")
-            label_raw = te_override.get("label")
-            if not isinstance(family_raw, str) or not family_raw.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="'extras.text_encoder_override.family' must be a non-empty string",
-                )
-            if not isinstance(label_raw, str) or not label_raw.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="'extras.text_encoder_override.label' must be a non-empty string",
-                )
-            family = family_raw.strip()
-            label = label_raw.strip()
-            # Cheap sanity: UI labels use the pattern '<family>/<path>' (paths.json via /api/paths).
-            if "/" in label and not label.startswith(f"{family}/"):
-                raise HTTPException(
-                    status_code=400,
-                    detail="extras.text_encoder_override.label must start with '<family>/'",
-                )
-            components_val = te_override.get("components")
-            components: list[str] | None = None
-            if components_val is not None:
-                if not isinstance(components_val, list) or any(not isinstance(c, str) for c in components_val):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="'extras.text_encoder_override.components' must be an array of strings",
-                    )
-                components = [c.strip() for c in components_val if isinstance(c, str) and c.strip()]
-            te_cfg: Dict[str, Any] = {"family": family, "label": label}
-            if components:
-                te_cfg["components"] = components
-            extras["text_encoder_override"] = te_cfg
+            extras["text_encoder_override"] = _parse_text_encoder_override_payload(
+                te_override,
+                field_name="extras.text_encoder_override",
+            )
 
         return extras, hires_cfg
 
@@ -1897,14 +2092,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "steps": 0,
                 "resize_x": width,
                 "resize_y": height,
-                "hr_checkpoint_name": "Use same checkpoint",
-                "hr_additional_modules": [],
-                "hr_sampler_name": None,
-                "hr_scheduler": None,
-                "hr_prompt": "",
-                "hr_negative_prompt": "",
-                "hr_cfg": fallback_cfg,
-                "hr_distilled_cfg": fallback_distilled,
+                "swap_model": None,
+                "additional_modules": [],
+                "sampler_name": None,
+                "scheduler": None,
+                "prompt": "",
+                "negative_prompt": "",
+                "cfg": fallback_cfg,
+                "distilled_cfg": fallback_distilled,
                 "refiner": None,
             }
         return {
@@ -1916,14 +2111,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             "steps": cfg["steps"],
             "resize_x": cfg["resize_x"],
             "resize_y": cfg["resize_y"],
-            "hr_checkpoint_name": cfg.get("checkpoint") or "Use same checkpoint",
-            "hr_additional_modules": cfg.get("modules") or [],
-            "hr_sampler_name": cfg.get("sampler"),
-            "hr_scheduler": cfg.get("scheduler"),
-            "hr_prompt": cfg.get("prompt") or "",
-            "hr_negative_prompt": cfg.get("negative_prompt") or "",
-            "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
-            "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
+            "swap_model": cfg.get("swap_model"),
+            "additional_modules": cfg.get("modules") or [],
+            "sampler_name": cfg.get("sampler"),
+            "scheduler": cfg.get("scheduler"),
+            "prompt": cfg.get("prompt") or "",
+            "negative_prompt": cfg.get("negative_prompt") or "",
+            "cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
+            "distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
             "refiner": cfg.get("refiner"),
         }
 
@@ -2328,6 +2523,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         vae_field = _asset_field_label(field_prefix=field_prefix, field_name="vae_sha")
         vae_source_field = _asset_field_label(field_prefix=field_prefix, field_name="vae_source")
         tenc_field = _asset_field_label(field_prefix=field_prefix, field_name="tenc_sha")
+        tenc1_field = _asset_field_label(field_prefix=field_prefix, field_name="tenc1_sha")
+        tenc2_field = _asset_field_label(field_prefix=field_prefix, field_name="tenc2_sha")
         lora_field = _asset_field_label(field_prefix=field_prefix, field_name="lora_sha")
         text_encoder_override_field = _asset_field_label(field_prefix=field_prefix, field_name="text_encoder_override")
         path_scope = f"{field_prefix}.*_path" if field_prefix else "*_path"
@@ -2343,6 +2540,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(
                 status_code=400,
                 detail=f"Do not send {text_encoder_override_field} for Flux.1; use {tenc_field} only.",
+            )
+        if engine_id in ("sdxl", "sdxl_refiner") and "text_encoder_override" in extras:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Do not send {text_encoder_override_field} for SDXL; use explicit "
+                    f"{tenc1_field}/{tenc2_field} for core-only checkpoints or {tenc_field} otherwise."
+                ),
             )
 
         checkpoint_core_only, _model_format = _resolve_checkpoint_contract_from_request(
@@ -2383,6 +2588,51 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=f"Missing '{vae_source_field}'")
         tenc_shas = _normalize_sha_list_field(extras.get("tenc_sha"), field_label=tenc_field)
         lora_shas = _normalize_sha_list_field(extras.get("lora_sha"), field_label=lora_field)
+        explicit_tenc1_sha = _normalize_sha_field(extras.get("tenc1_sha"), field_label=tenc1_field)
+        explicit_tenc2_sha = _normalize_sha_field(extras.get("tenc2_sha"), field_label=tenc2_field)
+
+        uses_explicit_sdxl_tenc_fields = engine_id in ("sdxl", "sdxl_refiner") and checkpoint_core_only
+        if uses_explicit_sdxl_tenc_fields:
+            if tenc_shas:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Do not send '{tenc_field}' for SDXL core-only checkpoints; use '{tenc1_field}'/'{tenc2_field}'.",
+                )
+            expected_slots = tuple(contract.tenc_slots or ())
+            if len(expected_slots) == 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Internal error: SDXL core-only asset contract for engine '{engine_id}' is missing text encoder slots.",
+                )
+            explicit_fields = [explicit_tenc1_sha, explicit_tenc2_sha]
+            required_fields = [tenc1_field, tenc2_field]
+            tenc_shas = []
+            for index, slot in enumerate(expected_slots):
+                if index >= len(explicit_fields):
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Internal error: unsupported SDXL core-only slot count for engine '{engine_id}'.",
+                    )
+                explicit_sha = explicit_fields[index]
+                if not explicit_sha:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Engine '{engine_id}' requires '{required_fields[index]}' "
+                            f"for text encoder slot '{slot}'."
+                        ),
+                    )
+                tenc_shas.append(explicit_sha)
+            if len(expected_slots) < 2 and explicit_tenc2_sha:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Engine '{engine_id}' does not allow '{tenc2_field}'.",
+                )
+        elif explicit_tenc1_sha or explicit_tenc2_sha:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{tenc1_field}' and '{tenc2_field}' are only allowed for SDXL core-only checkpoints.",
+            )
 
         if vae_source == "external" and not vae_sha:
             raise HTTPException(
@@ -2544,6 +2794,97 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 seen_lora_paths.add(canonical)
             if resolved_lora_paths:
                 extras["lora_path"] = resolved_lora_paths[0] if len(resolved_lora_paths) == 1 else resolved_lora_paths
+
+    def _resolve_stage_model_selection_in_place(
+        *,
+        engine_id: str,
+        selection: Dict[str, Any],
+        field_prefix: str,
+        models_api: Any,
+        resolve_asset_by_sha,
+        resolve_vae_path_by_sha,
+    ) -> None:
+        model_override = selection.get("model")
+        resolved_model_ref, checkpoint_record = _resolve_checkpoint_selection(
+            model_override=model_override,
+            extras=selection,
+            field_prefix=field_prefix,
+            models_api=models_api,
+        )
+        selection["model"] = resolved_model_ref
+        selection.pop("model_path", None)
+        _apply_asset_contract_to_extras(
+            engine_id=engine_id,
+            checkpoint_record=checkpoint_record,
+            extras=selection,
+            field_prefix=field_prefix,
+            require_explicit_checkpoint_contract=True,
+            resolve_asset_by_sha=resolve_asset_by_sha,
+            resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+        )
+
+
+    def _resolve_nested_stage_model_payloads(
+        *,
+        engine_id: str,
+        extras: Dict[str, Any],
+        hires_cfg: Dict[str, Any] | None,
+        models_api: Any,
+        resolve_asset_by_sha,
+        resolve_vae_path_by_sha,
+    ) -> None:
+        if isinstance(extras.get("swap_model"), dict):
+            _resolve_stage_model_selection_in_place(
+                engine_id=engine_id,
+                selection=extras["swap_model"],
+                field_prefix="extras.swap_model",
+                models_api=models_api,
+                resolve_asset_by_sha=resolve_asset_by_sha,
+                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+            )
+
+        semantic_engine = semantic_engine_for_engine_id(engine_id)
+        refiner_engine_id = "sdxl_refiner"
+        if isinstance(extras.get("refiner"), dict):
+            if not ENGINE_SURFACES[semantic_engine].supports_refiner:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'extras.refiner' is unsupported for engine '{engine_id}'.",
+                )
+            _resolve_stage_model_selection_in_place(
+                engine_id=refiner_engine_id,
+                selection=extras["refiner"],
+                field_prefix="extras.refiner",
+                models_api=models_api,
+                resolve_asset_by_sha=resolve_asset_by_sha,
+                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+            )
+
+        if not isinstance(hires_cfg, dict):
+            return
+        if isinstance(hires_cfg.get("swap_model"), dict):
+            _resolve_stage_model_selection_in_place(
+                engine_id=engine_id,
+                selection=hires_cfg["swap_model"],
+                field_prefix="extras.hires.swap_model",
+                models_api=models_api,
+                resolve_asset_by_sha=resolve_asset_by_sha,
+                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+            )
+        if isinstance(hires_cfg.get("refiner"), dict):
+            if not ENGINE_SURFACES[semantic_engine].supports_refiner:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'extras.hires.refiner' is unsupported for engine '{engine_id}'.",
+                )
+            _resolve_stage_model_selection_in_place(
+                engine_id=refiner_engine_id,
+                selection=hires_cfg["refiner"],
+                field_prefix="extras.hires.refiner",
+                models_api=models_api,
+                resolve_asset_by_sha=resolve_asset_by_sha,
+                resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+            )
 
     @dataclass(frozen=True, slots=True)
     class _Txt2ImgPayloadDTO:
@@ -3359,6 +3700,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     total_steps=hires_total_steps,
                     field_name="extras.hires.refiner.switch_at_step",
                 )
+        global_swap_model_cfg = extras.get("swap_model")
+        if isinstance(global_swap_model_cfg, dict):
+            _validate_swap_at_step_pointer(
+                pointer=int(global_swap_model_cfg.get("switch_at_step", 0)),
+                total_steps=int(steps_val),
+                field_name="extras.swap_model.switch_at_step",
+            )
         global_refiner_cfg = extras.get("refiner")
         if isinstance(global_refiner_cfg, dict):
             _validate_swap_at_step_pointer(
@@ -3395,6 +3743,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             extras=extras,
             field_prefix="extras",
             require_explicit_checkpoint_contract=True,
+            resolve_asset_by_sha=resolve_asset_by_sha,
+            resolve_vae_path_by_sha=resolve_vae_path_by_sha,
+        )
+        _resolve_nested_stage_model_payloads(
+            engine_id=engine_id,
+            extras=extras,
+            hires_cfg=hires_cfg,
+            models_api=_models_api,
             resolve_asset_by_sha=resolve_asset_by_sha,
             resolve_vae_path_by_sha=resolve_vae_path_by_sha,
         )
@@ -3526,6 +3882,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         mask_blur_y = 4
         mask_round = True
         mask_region_split = False
+        per_step_blend_strength = 1.0
 
         if mask_image is not None:
             raw_enforcement = payload.get("img2img_mask_enforcement")
@@ -3567,6 +3924,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if mask_blur_x < 0 or mask_blur_y < 0:
                 raise HTTPException(status_code=400, detail="'img2img_mask_blur' must be >= 0")
 
+            if "img2img_per_step_blend_strength" in payload:
+                if mask_enforcement != "per_step_clamp":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'img2img_per_step_blend_strength' requires 'img2img_mask_enforcement' = 'per_step_clamp'",
+                    )
+                per_step_blend_strength = _require_float_field(
+                    payload,
+                    "img2img_per_step_blend_strength",
+                    minimum=0.0,
+                    maximum=1.0,
+                )
+
             if "img2img_mask_round" in payload:
                 mask_round = _require_bool_field(payload, "img2img_mask_round")
             if "img2img_mask_region_split" in payload:
@@ -3575,6 +3945,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raw_enforcement = payload.get("img2img_mask_enforcement")
             if isinstance(raw_enforcement, str) and raw_enforcement.strip():
                 raise HTTPException(status_code=400, detail="'img2img_mask_enforcement' requires 'img2img_mask'")
+            if "img2img_per_step_blend_strength" in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_per_step_blend_strength' requires 'img2img_mask'",
+                )
             if "img2img_mask_region_split" in payload:
                 raise HTTPException(status_code=400, detail="'img2img_mask_region_split' requires 'img2img_mask'")
 
@@ -3693,21 +4068,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "denoise": _require_float_field(payload, 'img2img_hires_denoise', minimum=0.0, maximum=1.0) if 'img2img_hires_denoise' in payload else denoise,
                 "upscaler": payload.get('img2img_hires_upscaler', 'Latent'),
                 "tile": hr_tile,
-                "hr_sampler_name": hr_sampler_name,
-                "hr_scheduler": hr_scheduler,
-                "hr_prompt": payload.get('img2img_hires_prompt', ''),
-                "hr_negative_prompt": payload.get('img2img_hires_neg_prompt', ''),
-                "hr_cfg": _require_float_field(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
-                "hr_distilled_cfg": _require_float_field(payload, 'img2img_hires_distilled_cfg') if 'img2img_hires_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
+                "additional_modules": [],
+                "sampler_name": hr_sampler_name,
+                "scheduler": hr_scheduler,
+                "prompt": payload.get('img2img_hires_prompt', ''),
+                "negative_prompt": payload.get('img2img_hires_neg_prompt', ''),
+                "cfg": _require_float_field(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
+                "distilled_cfg": _require_float_field(payload, 'img2img_hires_distilled_cfg') if 'img2img_hires_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
             }
             _validate_prompt_sampler_controls(
                 engine_key=engine_key,
-                prompt=str(hires_data.get("hr_prompt") or ""),
+                prompt=str(hires_data.get("prompt") or ""),
                 field_name="img2img_hires_prompt",
             )
             _validate_hires_prompt_family_sampling_controls(
                 engine_key=engine_key,
-                prompt=str(hires_data.get("hr_prompt") or ""),
+                prompt=str(hires_data.get("prompt") or ""),
                 field_name="img2img_hires_prompt",
                 base_sampler=str(sampler_name),
                 base_scheduler=str(scheduler_name),
@@ -3885,6 +4261,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             init_image=init_image,
             mask=mask_image,
             mask_enforcement=mask_enforcement,
+            per_step_blend_strength=per_step_blend_strength,
             mask_region_split=mask_region_split,
             inpainting_fill=inpainting_fill,
             inpaint_full_res_padding=inpaint_full_res_padding,

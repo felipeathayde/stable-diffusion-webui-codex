@@ -11,7 +11,7 @@ Resolves a `DiffusionModelBundle`, instantiates the matching engine via the regi
 (attention/accelerator) for engines backed by diffusers pipelines with explicit failures on invalid attention backend configuration.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `EngineLoadOptions` (dataclass): Optional engine load overrides (device/dtype/attention backend/accelerator/VAE override).
+- `EngineLoadOptions` (dataclass): Optional engine load overrides (runtime device/dtype/attention + explicit model/asset selectors).
 - `_ensure_registry_ready` (function): Ensures the engine registry has the default engines registered (idempotent).
 - `_instantiate_engine` (function): Creates an engine instance for a resolved diffusion bundle (family → engine key).
 - `_options_to_kwargs` (function): Converts `EngineLoadOptions` into `engine.load(...)` keyword arguments.
@@ -51,6 +51,13 @@ class EngineLoadOptions:
     attention_backend: Optional[str] = None  # 'pytorch'|'xformers'|'split'|'quad'
     accelerator: Optional[str] = None  # 'tensorrt'|'none'
     vae_path: Optional[str] = None  # optional override
+    vae_source: Optional[str] = None
+    tenc_source: Optional[str] = None
+    tenc_path: Any = None
+    text_encoder_override: Optional[Mapping[str, Any]] = None
+    checkpoint_core_only: Optional[bool] = None
+    model_format: Optional[str] = None
+    zimage_variant: Optional[str] = None
 
 
 def _ensure_registry_ready() -> None:
@@ -75,6 +82,20 @@ def _options_to_kwargs(opts: EngineLoadOptions | None) -> Dict[str, Any]:
         payload["dtype"] = str(opts.dtype)
     if opts.vae_path is not None:
         payload["vae_path"] = str(opts.vae_path)
+    if opts.vae_source is not None:
+        payload["vae_source"] = str(opts.vae_source)
+    if opts.tenc_source is not None:
+        payload["tenc_source"] = str(opts.tenc_source)
+    if opts.tenc_path is not None:
+        payload["tenc_path"] = opts.tenc_path
+    if opts.text_encoder_override is not None:
+        payload["text_encoder_override"] = dict(opts.text_encoder_override)
+    if opts.checkpoint_core_only is not None:
+        payload["checkpoint_core_only"] = bool(opts.checkpoint_core_only)
+    if opts.model_format is not None:
+        payload["model_format"] = str(opts.model_format)
+    if opts.zimage_variant is not None:
+        payload["zimage_variant"] = str(opts.zimage_variant)
     if opts.attention_backend is not None:
         payload["attention_backend"] = str(opts.attention_backend)
     if opts.accelerator is not None:

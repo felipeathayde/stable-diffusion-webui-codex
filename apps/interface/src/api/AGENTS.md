@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-23
+Last Review: 2026-03-25
 Status: Active
 
 ## Purpose
@@ -9,6 +9,9 @@ Status: Active
 
 ## Notes
 - 2026-03-20: image payload DTOs now treat `model_format` as a first-class selector alongside `model_sha`, `checkpoint_core_only`, and `vae_source`; frontend/backend image contracts must keep these selectors explicit and inventory-validated.
+- 2026-03-25: SDXL core-only image contracts now use explicit numbered text-encoder selectors (`tenc1_sha`, `tenc2_sha`) instead of generic `tenc_sha`; frontend contract builders must resolve them from inventory slot metadata (`InventoryResponse.text_encoders[].slot`) and keep `extras.refiner` scoped to the native SDXL refiner while generic model swapping stays under `swap_model`.
+- 2026-03-25: `payloads.ts` now splits generic swap ownership truthfully: top-level `extras.swap_model` is the first-pass stage config (`enable + switch_at_step + cfg + seed + selector truth`), while `extras.hires.swap_model` stays selector-only for the whole second-pass replacement.
+- 2026-03-25: family-native selectors on generic swap seams must stay on the generic swap seams end-to-end. Example: Z-Image `zimage_variant` is valid on `extras.swap_model` / `extras.hires.swap_model`, but it must never leak into `extras.refiner` / `extras.hires.refiner`.
 - Keep request/response types synchronized with `.sangoi/backend/interfaces/schemas/`.
 - Regenerate or update the client whenever backend schemas change.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).

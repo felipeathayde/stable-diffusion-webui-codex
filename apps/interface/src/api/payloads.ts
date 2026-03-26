@@ -18,6 +18,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DISTILLED_CFG_ENGINES` (const): Engine ids treated as distilled-guidance engines (use `distilled_cfg`; CFG/negative prompt omitted).
 - `DEVICE_VALUES` (const): Allowed device tokens for requests.
 - `DeviceEnum` (const): Zod enum built from `DEVICE_VALUES`.
+- `TextEncoderOverrideSchema` (const): Zod schema for server-owned text encoder override selectors.
+- `SwapModelOptionsSchema` (const): Zod schema for selector-authoritative stage-local model swaps.
+- `SwapStageOptionsSchema` (const): Zod schema for the top-level first-pass `swap_model` stage.
 - `RefinerOptionsSchema` (const): Zod schema for refiner options.
 - `UpscalerTileSchema` (const): Zod schema for upscaler tiling config (tile/overlap + OOM fallback + min tile).
 - `HiresOptionsSchema` (const): Zod schema for hires options (including nested refiner).
@@ -26,8 +29,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `Txt2ImgRequest` (type): Inferred request type from `Txt2ImgRequestSchema`.
 - `UpscalerTileFormState` (interface): UI form state for tile config used by upscaler-driven stages.
 - `HiresFormState` (interface): UI form state for hires options.
+- `SwapStageFormState` (interface): UI form state for the global first-pass `swap_model` stage.
 - `RefinerFormState` (interface): UI form state for refiner options.
-- `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
+ - `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
+ - `NestedStageSelectorPayloads` (interface): Optional resolved selector payloads for nested stage-local `swap_model` / `refiner` seams.
+ - `BuildImagePayloadOptions` (interface): Shared payload-builder options for hires normalization and nested selector injection.
 - `normalizeDevice` (function): Normalizes and validates a device token.
 - `buildNormalizedHiresOptions` (function): Normalizes shared hires form state into the canonical hires payload shape used by txt2img/img2img builders.
 - `buildImg2ImgHiresPayloadFields` (function): Flattens normalized hires state into the img2img `img2img_hires_*` contract.
@@ -46,16 +52,85 @@ const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
 const FLUX2_BASE_VARIANT_MARKERS = ['flux.2-klein-base-4b', 'flux2-klein-base-4b', 'base-4b', 'base_4b', '/base/'] as const
 
-const RefinerOptionsSchema = z
+const TextEncoderOverrideSchema = z
   .object({
+    family: z.string().min(1),
+    label: z.string().min(1),
+    components: z.array(z.string().min(1)).optional(),
+  })
+  .strict()
+
+const GenericSwapModelOptionsBaseSchema = z
+  .object({
+    model: z.string().min(1).optional(),
+    model_sha: z.string().min(1).optional(),
+    checkpoint_core_only: z.boolean().optional(),
+    model_format: z.enum(['checkpoint', 'diffusers', 'gguf']).optional(),
+    vae_source: z.enum(['built_in', 'external']).optional(),
+    vae_sha: z.string().min(1).optional(),
+    tenc_sha: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
+    tenc1_sha: z.string().min(1).optional(),
+    tenc2_sha: z.string().min(1).optional(),
+    zimage_variant: z.enum(['turbo', 'base']).optional(),
+    text_encoder_override: TextEncoderOverrideSchema.optional(),
+  })
+  .strict()
+
+const RefinerModelOptionsBaseSchema = z
+  .object({
+    model: z.string().min(1).optional(),
+    model_sha: z.string().min(1).optional(),
+    checkpoint_core_only: z.boolean().optional(),
+    model_format: z.enum(['checkpoint', 'diffusers', 'gguf']).optional(),
+    vae_source: z.enum(['built_in', 'external']).optional(),
+    vae_sha: z.string().min(1).optional(),
+    tenc_sha: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
+    tenc1_sha: z.string().min(1).optional(),
+    tenc2_sha: z.string().min(1).optional(),
+    text_encoder_override: TextEncoderOverrideSchema.optional(),
+  })
+  .strict()
+
+const SwapModelOptionsSchema = GenericSwapModelOptionsBaseSchema
+  .superRefine((value, ctx) => {
+    const model = String(value.model ?? '').trim()
+    const modelSha = String(value.model_sha ?? '').trim()
+    if (!model && !modelSha) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "swap_model requires 'model' or 'model_sha'" })
+    }
+  })
+
+const SwapStageOptionsSchema = GenericSwapModelOptionsBaseSchema
+  .extend({
     enable: z.literal(true),
     switch_at_step: z.number().int().min(1),
     cfg: z.number(),
     seed: z.number().int(),
-    model: z.string().min(1).optional(),
-    vae: z.string().min(1).optional(),
   })
   .strict()
+  .superRefine((value, ctx) => {
+    const model = String(value.model ?? '').trim()
+    const modelSha = String(value.model_sha ?? '').trim()
+    if (!model && !modelSha) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "swap_model requires 'model' or 'model_sha'" })
+    }
+  })
+
+const RefinerOptionsSchema = RefinerModelOptionsBaseSchema
+  .extend({
+    enable: z.literal(true),
+    switch_at_step: z.number().int().min(1),
+    cfg: z.number(),
+    seed: z.number().int(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const model = String(value.model ?? '').trim()
+    const modelSha = String(value.model_sha ?? '').trim()
+    if (!model && !modelSha) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "refiner requires 'model' or 'model_sha'" })
+    }
+  })
 
 const UpscalerTileSchema = z
   .object({
@@ -89,7 +164,7 @@ const HiresOptionsSchema = z
         message: "hires.upscaler must be an id like 'latent:*' or 'spandrel:*'",
       }),
     tile: UpscalerTileSchema.optional(),
-    checkpoint: z.string().min(1).optional(),
+    swap_model: SwapModelOptionsSchema.optional(),
     modules: z.array(z.string().min(1)).optional(),
     sampler: z.string().min(1).optional(),
     scheduler: z.string().min(1).optional(),
@@ -128,19 +203,18 @@ export const Txt2ImgRequestSchema = z
     extras: z
       .object({
         hires: HiresOptionsSchema.optional(),
+        swap_model: SwapStageOptionsSchema.optional(),
         refiner: RefinerOptionsSchema.optional(),
         text_encoder_override: z
-          .object({
-            family: z.string().min(1),
-            label: z.string().min(1),
-            components: z.array(z.string().min(1)).optional(),
-          })
+          .lazy(() => TextEncoderOverrideSchema)
           .optional(),
         // Batch params
         batch_size: z.number().int().min(1).optional(),
         batch_count: z.number().int().min(1).optional(),
         // SHA-based model selection
         tenc_sha: z.union([z.string(), z.array(z.string())]).optional(),
+        tenc1_sha: z.string().optional(),
+        tenc2_sha: z.string().optional(),
         vae_sha: z.string().optional(),
         vae_source: z.enum(['built_in', 'external']),
         lora_sha: z.union([z.string(), z.array(z.string())]).optional(),
@@ -170,7 +244,7 @@ export interface HiresFormState {
   steps: number
   upscaler: string
   tile: UpscalerTileFormState
-  checkpoint?: string
+  swapModel?: SwapModelFormState
   modules?: string[]
   sampler?: string
   scheduler?: string
@@ -181,13 +255,24 @@ export interface HiresFormState {
   refiner?: RefinerFormState
 }
 
+export interface SwapModelFormState {
+  model?: string
+}
+
+export interface SwapStageFormState {
+  enabled: boolean
+  swapAtStep: number
+  cfg: number
+  seed: number
+  model?: string
+}
+
 export interface RefinerFormState {
   enabled: boolean
   swapAtStep: number
   cfg: number
   seed: number
   model?: string
-  vae?: string
 }
 
 export interface Txt2ImgFormState {
@@ -209,9 +294,93 @@ export interface Txt2ImgFormState {
   engine?: string
   model?: string
   guidanceMode?: Txt2ImgGuidanceMode
+  swapModel: SwapStageFormState
   hires?: HiresFormState
   refiner?: RefinerFormState
   extras?: Record<string, unknown>
+}
+
+export interface NestedStageSelectorPayloads {
+  swapModel?: z.infer<typeof SwapModelOptionsSchema>
+  refiner?: z.infer<typeof RefinerOptionsSchema>
+  hiresSwapModel?: z.infer<typeof SwapModelOptionsSchema>
+  hiresRefiner?: z.infer<typeof RefinerOptionsSchema>
+}
+
+export interface BuildImagePayloadOptions {
+  hiresFallbackOnOom?: boolean
+  hiresMinTile?: number
+  nestedSelectorPayloads?: NestedStageSelectorPayloads
+}
+
+function buildMinimalSwapModelPayload(
+  state: SwapModelFormState | null | undefined,
+): z.infer<typeof SwapModelOptionsSchema> | undefined {
+  const model = String(state?.model ?? '').trim()
+  if (!model) return undefined
+  return { model }
+}
+
+function buildMinimalSwapStagePayload(
+  state: SwapStageFormState | null | undefined,
+): z.infer<typeof SwapStageOptionsSchema> | undefined {
+  if (!state?.enabled) return undefined
+  const payload: z.infer<typeof SwapStageOptionsSchema> = {
+    enable: true,
+    switch_at_step: state.swapAtStep,
+    cfg: state.cfg,
+    seed: state.seed,
+  }
+  const model = String(state.model ?? '').trim()
+  if (model) payload.model = model
+  return payload
+}
+
+function buildMinimalRefinerPayload(
+  state: RefinerFormState | null | undefined,
+): z.infer<typeof RefinerOptionsSchema> | undefined {
+  if (!state?.enabled) return undefined
+  const payload: z.infer<typeof RefinerOptionsSchema> = {
+    enable: true,
+    switch_at_step: state.swapAtStep,
+    cfg: state.cfg,
+    seed: state.seed,
+  }
+  const model = String(state.model ?? '').trim()
+  if (model) payload.model = model
+  return payload
+}
+
+function resolveStageSwapModelPayload(
+  state: SwapModelFormState | null | undefined,
+  resolved: z.infer<typeof SwapModelOptionsSchema> | undefined,
+): z.infer<typeof SwapModelOptionsSchema> | undefined {
+  const payload = resolved ?? buildMinimalSwapModelPayload(state)
+  if (!payload) return undefined
+  return SwapModelOptionsSchema.parse(payload)
+}
+
+function resolveSwapStagePayload(
+  state: SwapStageFormState | null | undefined,
+  resolved: z.infer<typeof SwapModelOptionsSchema> | undefined,
+): z.infer<typeof SwapStageOptionsSchema> | undefined {
+  if (!state?.enabled) return undefined
+  const basePayload = buildMinimalSwapStagePayload(state)
+  if (!basePayload) return undefined
+  return SwapStageOptionsSchema.parse({
+    ...basePayload,
+    ...(resolved ?? {}),
+  })
+}
+
+function resolveStageRefinerPayload(
+  state: RefinerFormState | null | undefined,
+  resolved: z.infer<typeof RefinerOptionsSchema> | undefined,
+): z.infer<typeof RefinerOptionsSchema> | undefined {
+  if (!state?.enabled) return undefined
+  const payload = resolved ?? buildMinimalRefinerPayload(state)
+  if (!payload) return undefined
+  return RefinerOptionsSchema.parse(payload)
 }
 
 function normalizeDevice(device: string): Txt2ImgRequest['device'] {
@@ -252,9 +421,9 @@ function resolveGuidanceMode(state: Txt2ImgFormState): Txt2ImgGuidanceMode {
 }
 
 function buildNormalizedHiresOptions(
-  state: Pick<Txt2ImgFormState, 'prompt' | 'negativePrompt' | 'hires'>,
+  state: Pick<Txt2ImgFormState, 'prompt' | 'negativePrompt' | 'hires'> & Partial<Pick<Txt2ImgFormState, 'steps'>>,
   guidanceMode: Txt2ImgGuidanceMode,
-  opts: { hiresFallbackOnOom?: boolean; hiresMinTile?: number } = {},
+  opts: BuildImagePayloadOptions = {},
 ): z.infer<typeof HiresOptionsSchema> | null {
   if (!state.hires?.enabled) return null
 
@@ -269,7 +438,6 @@ function buildNormalizedHiresOptions(
   const tileSize = Math.max(1, Math.trunc(Number(tile.tile)))
   const overlap = Math.max(0, Math.trunc(Number(tile.overlap)))
   const minTile = Math.max(1, Math.min(tileSize, hiresMinTilePref))
-  const checkpoint = String(state.hires.checkpoint ?? '').trim()
   const sampler = String(state.hires.sampler ?? '').trim()
   const scheduler = String(state.hires.scheduler ?? '').trim()
   const modules = Array.isArray(state.hires.modules)
@@ -278,6 +446,17 @@ function buildNormalizedHiresOptions(
   const guidanceValue = guidanceMode === 'distilled_cfg'
     ? state.hires.distilledCfg
     : state.hires.cfg
+  const baseSteps = Math.max(0, Math.trunc(Number(state.steps ?? 0)))
+  const secondPassSteps = Math.max(0, Math.trunc(Number(state.hires.steps)))
+  const resolvedSecondPassSteps = secondPassSteps > 0 ? secondPassSteps : baseSteps
+  if (state.hires.refiner?.enabled) {
+    const swapAtStep = Math.max(1, Math.trunc(Number(state.hires.refiner.swapAtStep)))
+    if (resolvedSecondPassSteps < 2 || swapAtStep >= resolvedSecondPassSteps) {
+      throw new Error(
+        `Hires refiner requires 'Swap At Step' in [1, ${Math.max(1, resolvedSecondPassSteps - 1)}].`,
+      )
+    }
+  }
 
   return HiresOptionsSchema.parse({
     enable: true,
@@ -293,7 +472,10 @@ function buildNormalizedHiresOptions(
       fallback_on_oom: Boolean(hiresFallbackOnOom),
       min_tile: minTile,
     },
-    checkpoint: checkpoint || undefined,
+    swap_model: resolveStageSwapModelPayload(
+      state.hires.swapModel,
+      opts.nestedSelectorPayloads?.hiresSwapModel,
+    ),
     modules: modules.length > 0 ? modules : undefined,
     sampler: sampler || undefined,
     scheduler: scheduler || undefined,
@@ -304,22 +486,17 @@ function buildNormalizedHiresOptions(
           ? { distilled_cfg: Number(guidanceValue) }
           : { cfg: Number(guidanceValue) })
       : {}),
-    refiner: state.hires.refiner?.enabled
-      ? {
-          enable: true,
-          switch_at_step: state.hires.refiner.swapAtStep,
-          cfg: state.hires.refiner.cfg,
-          seed: state.hires.refiner.seed,
-          model: String(state.hires.refiner.model ?? '').trim() || undefined,
-        }
-      : undefined,
+    refiner: resolveStageRefinerPayload(
+      state.hires.refiner,
+      opts.nestedSelectorPayloads?.hiresRefiner,
+    ),
   })
 }
 
 export function buildImg2ImgHiresPayloadFields(
   state: Pick<Txt2ImgFormState, 'prompt' | 'negativePrompt' | 'hires'>,
   guidanceMode: Txt2ImgGuidanceMode,
-  opts: { hiresFallbackOnOom?: boolean; hiresMinTile?: number } = {},
+  opts: BuildImagePayloadOptions = {},
 ): Record<string, unknown> {
   const hires = buildNormalizedHiresOptions(state, guidanceMode, opts)
   if (!hires) return {}
@@ -345,10 +522,23 @@ export function buildImg2ImgHiresPayloadFields(
 
 export function buildTxt2ImgPayload(
   state: Txt2ImgFormState,
-  opts: { hiresFallbackOnOom?: boolean; hiresMinTile?: number } = {},
+  opts: BuildImagePayloadOptions = {},
 ): Txt2ImgRequest {
   const guidanceMode = resolveGuidanceMode(state)
   const isDistilledCfgModel = guidanceMode === 'distilled_cfg'
+  const totalSteps = Math.max(0, Math.trunc(Number(state.steps)))
+  if (state.swapModel.enabled) {
+    const swapAtStep = Math.max(1, Math.trunc(Number(state.swapModel.swapAtStep)))
+    if (totalSteps < 2 || swapAtStep >= totalSteps) {
+      throw new Error(`First-pass swap_model requires 'Swap At Step' in [1, ${Math.max(1, totalSteps - 1)}].`)
+    }
+  }
+  if (state.refiner?.enabled) {
+    const swapAtStep = Math.max(1, Math.trunc(Number(state.refiner.swapAtStep)))
+    if (totalSteps < 2 || swapAtStep >= totalSteps) {
+      throw new Error(`Refiner requires 'Swap At Step' in [1, ${Math.max(1, totalSteps - 1)}].`)
+    }
+  }
 
   const payload: Record<string, unknown> = {
     device: normalizeDevice(state.device),
@@ -397,14 +587,13 @@ export function buildTxt2ImgPayload(
   if (hires) {
     extras.hires = hires
   }
-  if (state.refiner?.enabled) {
-    extras.refiner = {
-      enable: true,
-      switch_at_step: state.refiner.swapAtStep,
-      cfg: state.refiner.cfg,
-      seed: state.refiner.seed,
-      model: state.refiner.model,
-    }
+  const swapModelPayload = resolveSwapStagePayload(state.swapModel, opts.nestedSelectorPayloads?.swapModel)
+  if (swapModelPayload) {
+    extras.swap_model = swapModelPayload
+  }
+  const refinerPayload = resolveStageRefinerPayload(state.refiner, opts.nestedSelectorPayloads?.refiner)
+  if (refinerPayload) {
+    extras.refiner = refinerPayload
   }
   // Merge engine-specific extras from state (e.g., tenc_sha for Z Image)
   if (state.extras) {

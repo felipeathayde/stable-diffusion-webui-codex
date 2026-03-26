@@ -1,7 +1,7 @@
 # apps/backend/engines/util Overview
 <!-- tags: backend, engines, util, adapters -->
 Date: 2025-10-28
-Last Review: 2026-03-08
+Last Review: 2026-03-25
 Status: Active
 
 ## Purpose
@@ -9,7 +9,8 @@ Status: Active
 
 ## Notes
 - Add shared utilities here instead of duplicating helpers inside specific engine packages.
-- `adapters.py` builds typed `RefinerConfig` for txt2img (global) and for hires payloads; `build_txt2img_processing` now populates `processing.refiner` and `CodexHiresConfig.refiner` when `extras.hires.refiner` is enabled.
+- `adapters.py` now keeps the stage owners split truthfully: top-level `extras.swap_model` becomes `SwapStageConfig` on `CodexProcessingTxt2Img.swap_model`, `extras.hires.swap_model` stays selector-only on `CodexHiresConfig.swap_model`, and `extras.refiner` / `extras.hires.refiner` become typed `RefinerConfig` owners only for the native SDXL refiner seams.
+- Generic swap selectors must preserve family-native load selectors instead of flattening them away. Example: Z-Image `zimage_variant` belongs on `SwapModelConfig` for `swap_model` seams and must not be widened into refiner configs.
 - `build_txt2img_processing` also wires smart flags from `Txt2ImgRequest` (`smart_offload`, `smart_fallback`, `smart_cache`) into `CodexProcessingTxt2Img` so pipeline stages can make per-job decisions.
 - 2025-12-31: `build_img2img_processing` now wires `distilled_cfg_scale`/`image_cfg_scale` from request metadata and propagates smart flags into `CodexProcessingImg2Img` (needed for Flux/Kontext parity with txt2img).
 - 2026-01-01: `build_{txt2img,img2img}_processing` now carries `clip_skip` into `processing.metadata` so workflows can treat it as a prompt control (without prompt-tag injection).
@@ -22,3 +23,4 @@ Status: Active
 - 2026-02-27: `adapters.build_img2img_processing(...)` now propagates `image_mask` and `round_image_mask` alongside `mask`/`mask_round` to keep masked img2img (inpaint) semantics consistent in hires/conditioning paths.
 - 2026-03-08: `schedulers.apply_sampler_scheduler(...)` now maps the bridge-supported sampler set (`euler`, `euler a`, `heun`, `lms`, `ddim`, `dpm++ 2m`, `dpm++ 2m sde`, `dpm++ 2m sde heun`, `dpm 2`, `dpm 2 ancestral`, `uni-pc`) and rejects unsupported native-only lanes such as `uni-pc bh2` and `dpm++ 2s ancestral` explicitly with bridge-capability errors.
 - 2026-03-09: `adapters._build_hires_config(...)` now preserves omitted hires sampler/scheduler overrides as `None` so inheritance is represented by omission instead of legacy `Use same*` sentinels or eager fallback to base sampling fields.
+- 2026-03-24: `build_img2img_processing(...)` now validates and transfers `Img2ImgRequest.per_step_blend_strength` explicitly into `CodexProcessingImg2Img`; the adapter must not re-default or alias this masked `per_step_clamp` scalar downstream.

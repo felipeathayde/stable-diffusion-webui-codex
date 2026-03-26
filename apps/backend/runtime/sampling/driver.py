@@ -14,7 +14,8 @@ while emitting timeline/diagnostic hooks (and optional global profiling sections
     `dpm fast` execution, dedicated `dpm++ sde` / `dpm++ 2m sde` / `dpm++ 2m sde heun` / `dpm++ 2m sde gpu` / `dpm++ 2m sde heun gpu` / `dpm++ 3m sde`,
 and dedicated `uni-pc` / `uni-pc bh2`
 multistep predictor/corrector handling, strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring
-(APG/rescale/trunc/renorm), and emits explicit runtime telemetry for console block-progress activation state.
+(APG/rescale/trunc/renorm), emits explicit runtime telemetry for console block-progress activation state, and owns the
+shared img2img denoise-step split between proportional base execution and internal fixed-step hires continuations.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
@@ -297,7 +298,6 @@ _GUIDANCE_ALLOWED_KEYS = {
     "renorm_cfg",
 }
 
-_FULL_DENOISE_THRESHOLD = 0.9999
 _MAX_DENOISE_REBUILD_STEPS = 10000
 _ER_SDE_CONST_SNR_PERCENT_OFFSET = 1e-4
 _SEEDS_2_DEFAULT_ETA = 1.0
@@ -530,6 +530,30 @@ class CodexSampler:
             raise ValueError("denoise_strength must be in [0, 1]")
         return value
 
+    @classmethod
+    def uses_img2img_continuation(cls, denoise_strength: float | None) -> bool:
+        normalized = cls._normalize_denoise_strength(denoise_strength)
+        if normalized is None:
+            return False
+        return not math.isclose(normalized, 1.0, rel_tol=0.0, abs_tol=0.0)
+
+    @staticmethod
+    def _forge_img2img_denoise_fraction(denoise_strength: float) -> float:
+        return min(float(denoise_strength), 0.999)
+
+    @classmethod
+    def _nonflow_partial_denoise_effective_steps(cls, *, steps: int, denoise_strength: float) -> int:
+        t_enc = int(cls._forge_img2img_denoise_fraction(denoise_strength) * float(steps))
+        return max(1, min(int(steps), t_enc + 1))
+
+    @classmethod
+    def _nonflow_partial_denoise_start_index(cls, *, steps: int, denoise_strength: float) -> int:
+        effective_steps = cls._nonflow_partial_denoise_effective_steps(
+            steps=int(steps),
+            denoise_strength=float(denoise_strength),
+        )
+        return max(int(steps) - effective_steps, 0)
+
     @staticmethod
     def _flow_partial_denoise_start_index(*, steps: int, denoise_strength: float) -> int:
         init_timestep = min(float(steps) * float(denoise_strength), float(steps))
@@ -593,7 +617,7 @@ class CodexSampler:
             )
         return tail
 
-    def _build_partial_denoise_sigmas(
+    def _build_fixed_step_partial_denoise_sigmas(
         self,
         *,
         processing: Any,
@@ -602,19 +626,7 @@ class CodexSampler:
         noise: torch.Tensor,
         steps: int,
         denoise_strength: float,
-        discard_penultimate_sigma: bool = False,
     ) -> torch.Tensor:
-        if denoise_strength > _FULL_DENOISE_THRESHOLD:
-            return active_context.sigmas.to(device=noise.device, dtype=torch.float32)
-        if str(getattr(active_context, "prediction_type", "") or "").lower() == "const":
-            return self._build_flow_partial_denoise_sigmas(
-                active_context=active_context,
-                noise=noise,
-                steps=steps,
-                denoise_strength=denoise_strength,
-                discard_penultimate_sigma=discard_penultimate_sigma,
-            )
-
         new_steps = int(float(steps) / float(denoise_strength))
         if new_steps < 1:
             raise RuntimeError(
@@ -654,6 +666,7 @@ class CodexSampler:
                 "sampling.denoise_schedule",
                 steps=int(steps),
                 denoise=float(denoise_strength),
+                mode="fixed_rebuild",
                 new_steps=int(new_steps),
                 selected=int(required),
                 first=float(tail[0].item()),
@@ -976,6 +989,7 @@ class CodexSampler:
         init_latent: Optional[torch.Tensor] = None,
         start_at_step: int | None = None,
         denoise_strength: float | None = None,
+        img2img_fix_steps: bool = False,
         pre_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
         post_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
         preview_callback: Optional[Callable[[torch.Tensor, int, int | None], None]] = None,
@@ -1015,13 +1029,6 @@ class CodexSampler:
             if init_latent is not None and init_latent.dtype != noise.dtype:
                 init_latent = init_latent.to(dtype=noise.dtype)
             normalized_denoise = self._normalize_denoise_strength(denoise_strength)
-            if normalized_denoise is not None and math.isclose(normalized_denoise, 0.0):
-                if self._log_enabled:
-                    self._emit_event("sampling.denoise_noop", reason="denoise_zero", has_init_latent=init_latent is not None)
-                samples_noop = init_latent if init_latent is not None else torch.zeros_like(noise)
-                if post_sample_hook is not None:
-                    samples_noop = post_sample_hook(samples_noop)
-                return samples_noop
 
             block_progress_controller: RichBlockProgressController | None = None
             retry = False
@@ -1128,15 +1135,45 @@ class CodexSampler:
                 schedule_steps = int(active_context.steps)
                 flow_partial_denoise = (
                     normalized_denoise is not None
-                    and normalized_denoise <= _FULL_DENOISE_THRESHOLD
+                    and self.uses_img2img_continuation(normalized_denoise)
                     and str(getattr(active_context, "prediction_type", "") or "").lower() == "const"
                 )
-                if normalized_denoise is None:
+                fixed_step_partial_denoise = (
+                    normalized_denoise is not None
+                    and bool(img2img_fix_steps)
+                    and self.uses_img2img_continuation(normalized_denoise)
+                    and not flow_partial_denoise
+                )
+                proportional_partial_denoise = (
+                    normalized_denoise is not None
+                    and not bool(img2img_fix_steps)
+                    and not flow_partial_denoise
+                )
+                if normalized_denoise is None or proportional_partial_denoise:
                     sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
-                else:
-                    sigmas = self._build_partial_denoise_sigmas(
+                    if proportional_partial_denoise and self._log_enabled:
+                        proportional_steps = self._nonflow_partial_denoise_effective_steps(
+                            steps=int(requested_steps),
+                            denoise_strength=float(normalized_denoise),
+                        )
+                        self._emit_event(
+                            "sampling.denoise_schedule",
+                            steps=int(requested_steps),
+                            denoise=float(normalized_denoise),
+                            mode="nonflow_proportional",
+                            selected=int(proportional_steps + 1),
+                        )
+                elif fixed_step_partial_denoise:
+                    sigmas = self._build_fixed_step_partial_denoise_sigmas(
                         processing=processing,
                         model=model,
+                        active_context=active_context,
+                        noise=noise,
+                        steps=schedule_steps,
+                        denoise_strength=normalized_denoise,
+                    )
+                else:
+                    sigmas = self._build_flow_partial_denoise_sigmas(
                         active_context=active_context,
                         noise=noise,
                         steps=schedule_steps,
@@ -1149,39 +1186,39 @@ class CodexSampler:
                 sigma_count = int(sigmas.numel())
                 if sigma_count > schedule_steps + 1:
                     raise RuntimeError(
-                        "sigma schedule length unexpectedly exceeds requested build length: "
-                        f"got {sigma_count}, max_expected {schedule_steps + 1} (schedule_steps={schedule_steps})."
-                    )
+                            "sigma schedule length unexpectedly exceeds requested build length: "
+                            f"got {sigma_count}, max_expected {schedule_steps + 1} (schedule_steps={schedule_steps})."
+                        )
                 if discard_penultimate_sigma and not flow_partial_denoise:
                     sigmas = self._discard_penultimate_sigma_ladder(sigmas)
                 sigma_count = int(sigmas.numel())
-                effective_steps = sigma_count - 1
-                if effective_steps <= 0:
+                total_schedule_steps = sigma_count - 1
+                if total_schedule_steps <= 0:
                     raise RuntimeError(
                         f"sigma schedule must expose at least one denoise step; got sigma_count={sigma_count}."
                     )
-                expected_effective_steps = int(requested_steps)
+                expected_total_schedule_steps = int(requested_steps)
                 if flow_partial_denoise:
-                    expected_effective_steps = self._flow_partial_denoise_effective_steps(
+                    expected_total_schedule_steps = self._flow_partial_denoise_effective_steps(
                         steps=int(schedule_steps) - (1 if discard_penultimate_sigma else 0),
                         denoise_strength=float(normalized_denoise),
                     )
                 ddpm_beta_dedup = (
                     active_context.sampler_kind is SamplerKind.DDPM and active_context.scheduler_name == "beta"
                 )
-                if effective_steps != expected_effective_steps:
+                if total_schedule_steps != expected_total_schedule_steps:
                     if not ddpm_beta_dedup:
                         raise RuntimeError(
                             "post-adjust sigma schedule length mismatch: "
-                            f"got {sigma_count}, expected {expected_effective_steps + 1} "
-                            f"(requested_steps={requested_steps} effective_expected={expected_effective_steps})."
+                            f"got {sigma_count}, expected {expected_total_schedule_steps + 1} "
+                            f"(requested_steps={requested_steps} effective_expected={expected_total_schedule_steps})."
                         )
-                    if effective_steps > expected_effective_steps:
+                    if total_schedule_steps > expected_total_schedule_steps:
                         raise RuntimeError(
                             "beta scheduler produced more steps than requested for ddpm: "
-                            f"requested_steps={expected_effective_steps}, effective_steps={effective_steps}."
+                            f"requested_steps={expected_total_schedule_steps}, effective_steps={total_schedule_steps}."
                         )
-                steps = effective_steps
+                steps = total_schedule_steps
 
                 if self._log_sigmas or self._log_enabled:
                     schedule_first = float(sigmas[0]) if len(sigmas) > 0 else float("nan")
@@ -1200,6 +1237,11 @@ class CodexSampler:
                     )
 
                 start_idx = int(start_at_step or 0)
+                if proportional_partial_denoise:
+                    start_idx += self._nonflow_partial_denoise_start_index(
+                        steps=int(steps),
+                        denoise_strength=float(normalized_denoise),
+                    )
                 start_idx = max(0, min(start_idx, steps - 1))
                 sigmas_run = sigmas[start_idx:]
                 restart_step_plan: list[RestartStepPlan] | None = None

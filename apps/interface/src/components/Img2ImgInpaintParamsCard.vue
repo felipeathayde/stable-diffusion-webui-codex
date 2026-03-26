@@ -10,6 +10,7 @@ Purpose: Presentational parameter card for image init/mask workflows.
 Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
+When `Per-step blend` is active, the strength/step-limit sliders share one proportional desktop row instead of stacking as separate full-width rows.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
 Saved inpaint masks can preview their effective mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail, anchored to the same image-bounds wrapper as the base preview, with footer legend copy that makes the final blue crop box explicit in the UI.
 Keeps `Split mask regions` / `Invert mask` interlocked in the card and suppresses preview/editor entry until truthful natural init-image + processing dimensions are available.
@@ -212,9 +213,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :disabled="disabled"
           @update:modelValue="(value) => emit('update:perStepBlendStrength', value)"
         />
-      </div>
 
-      <div v-if="maskEnforcement === 'per_step_clamp'" class="gc-row img2img-mask-slider-row">
         <SliderField
           class="gc-col gc-col--wide"
           label="Per-step blend steps"

@@ -13,7 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `run_process_scripts` (function): Run processing scripts (legacy-compatible) when present.
 - `activate_extra_networks` (function): Apply globally selected extra networks (LoRAs) to the current engine.
 - `set_shared_job` (function): Update shared job metadata for batch runs.
-- `collect_lora_selections` (function): Merge global selections with prompt-local LoRA descriptors.
+- `collect_lora_selections` (function): Merge global selections with prompt-local LoRA descriptors, with prompt-local same-path weights winning.
 - `run_before_sampling_hooks` (function): Invoke before-sampling hooks (scripts + shared job metadata).
 - `run_post_sample_hooks` (function): Invoke post-sample hooks, returning potentially modified samples.
 """
@@ -67,19 +67,21 @@ def set_shared_job(processing: Any) -> None:
 
 def collect_lora_selections(prompt_loras: Sequence[Any]) -> list[Any]:
     """Merge global selections with prompt-local LoRA descriptors."""
-    selections: list[Any] = []
-    seen: set[str] = set()
+    ordered_paths: list[str] = []
+    last_by_path: dict[str, Any] = {}
     try:
         all_selections: Iterable[Any] = list(lora_selections.get_selections()) + list(prompt_loras)
     except Exception:
         all_selections = list(prompt_loras)
     for sel in all_selections:
         path = getattr(sel, "path", None)
-        if not path or path in seen:
+        if not path:
             continue
-        seen.add(path)
-        selections.append(sel)
-    return selections
+        path_key = str(path)
+        if path_key not in last_by_path:
+            ordered_paths.append(path_key)
+        last_by_path[path_key] = sel
+    return [last_by_path[path] for path in ordered_paths]
 
 
 def run_before_sampling_hooks(

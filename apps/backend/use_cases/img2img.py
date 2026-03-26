@@ -10,10 +10,12 @@ Purpose: Image-to-image use case orchestration and canonical streaming wrapper (
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass with family-specific continuation semantics.
 Masked img2img (“inpaint”) uses Forge/A1111 “Only masked” semantics and supports optional ADetailer-style multi-region passes for disconnected masks.
 The hires pass init is prepared via the global family-dispatched hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
-When configured, the hires second pass applies hires-prompt sampler/scheduler + dimension controls and then resolves explicit hires request overrides by deriving a dedicated `SamplingPlan` for the hires pass.
+When configured, the hires second pass parses LoRA tags from the hires prompt/negative prompt pair, inherits base/request LoRAs when the hires
+prompt omits them, and resolves explicit hires request overrides by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 The wrapper executes sampling + decode + post-cleanup inside the same worker-thread envelope so model residency/offload policies remain single-owner per job.
 Worker-thread smart runtime overrides are propagated through `_image_streaming._run_inference_worker(...)` and decode/cleanup hooks run under a `finally` contract.
+Base img2img/inpaint now use the shared proportional denoise-step contract, while hires continuations opt into the internal fixed-step seam explicitly.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
@@ -22,7 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_smart_cache_bucket_snapshot` (function): Snapshot hit/miss counters for selected Smart Cache buckets.
 - `_smart_cache_call_hit` (function): Compute whether a conditioning call was a pure cache hit from bucket deltas.
 - `_resolve_hires_execution` (function): Resolves the hires second-pass execution scalars directly from `processing.hires`.
-- `_build_hr_prompt_context` (function): Builds the prompt context used for the hires second pass (supports prompt overrides).
+- `_build_hr_prompt_context` (function): Builds the hires prompt context while inheriting base/request LoRAs unless hires tags override them.
 - `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples (init prepared via global hires-fix stage; supports `init_latent` and Kontext `image_latents` continuation modes).
 - `_compute_conditioning_payload` (function): Ensure (cond/uncond) conditioning exists for a prompt context.
 - `_generate_kontext_img2img` (function): Flux Kontext img2img implementation (init image as `image_latents`, no denoise schedule).
@@ -66,7 +68,6 @@ from apps.backend.runtime.processing.datatypes import (
     SamplingPlan,
 )
 from apps.backend.runtime.processing.models import CodexProcessingImg2Img
-from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 from apps.backend.runtime.pipeline_stages.image_init import prepare_init_bundle
 from apps.backend.runtime.pipeline_stages.image_io import latents_to_pil, pil_to_tensor
 from apps.backend.runtime.pipeline_stages.hires_fix import (
@@ -75,26 +76,23 @@ from apps.backend.runtime.pipeline_stages.hires_fix import (
     resolve_pipeline_telemetry_context,
 )
 from apps.backend.runtime.pipeline_stages.masked_img2img import (
-    MASK_ENFORCEMENT_PER_STEP_CLAMP,
-    MASK_ENFORCEMENT_POST_BLEND,
     apply_inpaint_full_res_composite,
     compute_mask_connected_component_bboxes,
     prepare_masked_img2img_bundle,
+    resolve_mask_enforcer_hooks,
 )
 from apps.backend.runtime.pipeline_stages.prompt_context import (
-    apply_dimension_overrides,
     apply_prompt_context,
+    build_hires_prompt_context,
     build_prompt_context,
 )
 from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
 from apps.backend.runtime.pipeline_stages.sampling_plan import (
-    apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
     resolve_sampler_scheduler_override,
 )
 from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
-from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
 from apps.backend.runtime.sampling.driver import CodexSampler
 from PIL import Image
 
@@ -324,7 +322,6 @@ def _generate_kontext_img2img(
 
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
-    apply_dimension_overrides(processing, prompt_context.controls)
 
     overrides = getattr(processing, "override_settings", {})
     auto_resize = True
@@ -364,7 +361,6 @@ def _generate_kontext_img2img(
         subseed_value = float(subseed_strength)
 
     plan = build_sampling_plan(processing, seed_list, subseed_list, subseed_value)
-    plan = apply_sampling_overrides(processing, prompt_context.controls, plan)
     rng = ensure_sampler_and_rng(processing, plan)
 
     processing.seeds = list(plan.seeds)
@@ -399,22 +395,18 @@ def _generate_kontext_img2img(
         image_latents_shape=tuple(int(dim) for dim in image_latents.shape),
     )
 
-    tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
-    try:
-        samples = execute_sampling(
-            processing,
-            plan,
-            payload,
-            prompt_context,
-            prompt_context.loras,
-            prompt_context.controls,
-            rng=rng,
-            init_latent=None,
-            start_at_step=0,
-            allow_txt2img_conditioning_fallback=False,
-        )
-    finally:
-        finalize_tiling(tiling_applied, old_tiled)
+    samples = execute_sampling(
+        processing,
+        plan,
+        payload,
+        prompt_context,
+        prompt_context.loras,
+        rng=rng,
+        init_latent=None,
+        start_at_step=0,
+        allow_txt2img_conditioning_fallback=False,
+        img2img_fix_steps=False,
+    )
     _emit_pipeline_event(
         processing,
         "pipeline.stage.complete",
@@ -498,26 +490,14 @@ def _build_hr_prompt_context(
     processing: CodexProcessingImg2Img, base_context: PromptContext
 ) -> PromptContext:
     hi_cfg = processing.hires
-    prompt_seed = hi_cfg.prompt if hi_cfg.prompt else base_context.prompts
-    if isinstance(prompt_seed, str):
-        hr_prompts_source = [prompt_seed]
-    else:
-        hr_prompts_source = list(prompt_seed)
-    if not hr_prompts_source:
-        hr_prompts_source = list(base_context.prompts)
-    hr_cleaned_prompts, hr_prompt_loras, hr_prompt_controls = parse_prompts_with_extras(
-        hr_prompts_source
-    )
-    negative = (
-        [hi_cfg.negative_prompt]
-        if hi_cfg.negative_prompt
-        else list(base_context.negative_prompts)
-    )
-    return PromptContext(
-        prompts=hr_cleaned_prompts,
-        negative_prompts=negative,
-        loras=hr_prompt_loras,
-        controls=dict(hr_prompt_controls),
+    return build_hires_prompt_context(
+        prompt_seed=hi_cfg.prompt if hi_cfg.prompt else base_context.prompts,
+        negative_seed=(
+            [hi_cfg.negative_prompt]
+            if hi_cfg.negative_prompt
+            else list(base_context.negative_prompts)
+        ),
+        base_context=base_context,
     )
 
 
@@ -555,29 +535,17 @@ def _run_hires_pass(
         processing.negative_prompts = hi_prompt_context.negative_prompts
         processing.width = target_width
         processing.height = target_height
-        apply_dimension_overrides(processing, hi_prompt_context.controls)
         effective_target_width = int(processing.width)
         effective_target_height = int(processing.height)
         processing.guidance_scale = float(hi_cfg.cfg or processing.guidance_scale)
         processing.cfg_scale = processing.guidance_scale
         processing.steps = int(steps)
         processing.denoising_strength = denoise
-        hires_prompt_sampling_controls: dict[str, object] = {}
-        if "sampler" in hi_prompt_context.controls:
-            hires_prompt_sampling_controls["sampler"] = hi_prompt_context.controls["sampler"]
-        if "scheduler" in hi_prompt_context.controls:
-            hires_prompt_sampling_controls["scheduler"] = hi_prompt_context.controls["scheduler"]
         hires_runtime_plan = replace(
             plan,
             steps=int(processing.steps),
             guidance_scale=float(processing.guidance_scale),
         )
-        if hires_prompt_sampling_controls:
-            hires_runtime_plan = apply_sampling_overrides(
-                processing,
-                hires_prompt_sampling_controls,
-                hires_runtime_plan,
-            )
         hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
             base_sampler=str(hires_runtime_plan.sampler_name or ""),
             base_scheduler=str(hires_runtime_plan.scheduler_name or ""),
@@ -709,7 +677,6 @@ def _run_hires_pass(
             hires_payload,
             hi_prompt_context,
             hi_prompt_context.loras,
-            hi_prompt_context.controls,
             rng=rng,
             noise=noise,
             image_conditioning=sampling_image_conditioning,
@@ -717,6 +684,7 @@ def _run_hires_pass(
             start_at_step=start_index,
             denoise_strength=denoise_strength,
             allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
+            img2img_fix_steps=True,
         )
         _emit_pipeline_event(
             processing,
@@ -802,7 +770,6 @@ def generate_img2img(
 
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
-    apply_dimension_overrides(processing, prompt_context.controls)
 
     seed_list, subseed_list, subseed_value = _derive_seeds(processing)
     if seeds is not None:
@@ -813,10 +780,6 @@ def generate_img2img(
         subseed_value = float(subseed_strength)
 
     plan = build_sampling_plan(processing, seed_list, subseed_list, subseed_value)
-    plan = apply_sampling_overrides(processing, prompt_context.controls, plan)
-
-    if "denoise" in prompt_context.controls:
-        processing.denoising_strength = float(prompt_context.controls["denoise"])
 
     rng = ensure_sampler_and_rng(processing, plan)
 
@@ -905,27 +868,11 @@ def generate_img2img(
 
                     processing.init_latent = masked_bundle.init_latent
                     processing.image_conditioning = masked_bundle.image_conditioning
-
-                    enforcement_value = str(enforcement).strip()
-                    if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
-                        pre_denoiser_hook = None
-                        post_denoiser_hook = None
-                        post_step_hook = None
-                        if enforcer.uses_legacy_per_step_clamp():
-                            pre_denoiser_hook = enforcer.pre_denoiser
-                            post_denoiser_hook = enforcer.post_denoiser
-                        else:
-                            post_step_hook = enforcer.post_step
-                        post_sample_hook = enforcer.post_sample
-                    elif enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
-                        pre_denoiser_hook = None
-                        post_denoiser_hook = None
-                        post_step_hook = None
-                        post_sample_hook = enforcer.post_sample
-                    else:
-                        raise ValueError(
-                            f"Unknown mask enforcement '{enforcement_value}' (internal validation bug)"
-                        )
+                    hooks = resolve_mask_enforcer_hooks(enforcer, enforce_mode=enforcement)
+                    pre_denoiser_hook = hooks.pre_denoiser
+                    post_denoiser_hook = hooks.post_denoiser
+                    post_step_hook = hooks.post_step
+                    post_sample_hook = hooks.post_sample
 
                     init_latent = masked_bundle.init_latent
                     image_conditioning = masked_bundle.image_conditioning
@@ -933,28 +880,24 @@ def generate_img2img(
                     noise = pass_rng.next().to(init_latent)
                     denoise_strength = float(getattr(processing, "denoising_strength", 0.5) or 0.5)
 
-                    tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
-                    try:
-                        samples = execute_sampling(
-                            processing,
-                            plan,
-                            payload,
-                            prompt_context,
-                            prompt_context.loras,
-                            prompt_context.controls,
-                            rng=pass_rng,
-                            noise=noise,
-                            image_conditioning=image_conditioning,
-                            init_latent=init_latent,
-                            start_at_step=0,
-                            denoise_strength=denoise_strength,
-                            pre_denoiser_hook=pre_denoiser_hook,
-                            post_denoiser_hook=post_denoiser_hook,
-                            post_step_hook=post_step_hook,
-                            post_sample_hook=post_sample_hook,
-                        )
-                    finally:
-                        finalize_tiling(tiling_applied, old_tiled)
+                    samples = execute_sampling(
+                        processing,
+                        plan,
+                        payload,
+                        prompt_context,
+                        prompt_context.loras,
+                        rng=pass_rng,
+                        noise=noise,
+                        image_conditioning=image_conditioning,
+                        init_latent=init_latent,
+                        start_at_step=0,
+                        denoise_strength=denoise_strength,
+                        img2img_fix_steps=False,
+                        pre_denoiser_hook=pre_denoiser_hook,
+                        post_denoiser_hook=post_denoiser_hook,
+                        post_step_hook=post_step_hook,
+                        post_sample_hook=post_sample_hook,
+                    )
 
                     last_samples = samples
                     gc.collect()
@@ -1007,26 +950,11 @@ def generate_img2img(
         processing.init_latent = masked_bundle.init_latent
         processing.image_conditioning = masked_bundle.image_conditioning
         full_res_plan = masked_bundle.full_res
-        enforcement_value = str(enforcement).strip()
-        if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
-            pre_denoiser_hook = None
-            post_denoiser_hook = None
-            post_step_hook = None
-            if enforcer.uses_legacy_per_step_clamp():
-                pre_denoiser_hook = enforcer.pre_denoiser
-                post_denoiser_hook = enforcer.post_denoiser
-            else:
-                post_step_hook = enforcer.post_step
-            post_sample_hook = enforcer.post_sample
-        elif enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
-            pre_denoiser_hook = None
-            post_denoiser_hook = None
-            post_step_hook = None
-            post_sample_hook = enforcer.post_sample
-        else:
-            raise ValueError(
-                f"Unknown mask enforcement '{enforcement_value}' (internal validation bug)"
-            )
+        hooks = resolve_mask_enforcer_hooks(enforcer, enforce_mode=enforcement)
+        pre_denoiser_hook = hooks.pre_denoiser
+        post_denoiser_hook = hooks.post_denoiser
+        post_step_hook = hooks.post_step
+        post_sample_hook = hooks.post_sample
         init_latent = masked_bundle.init_latent
         image_conditioning = masked_bundle.image_conditioning
     else:
@@ -1048,28 +976,24 @@ def generate_img2img(
     start_step = 0
     denoise_strength = denoise_value
 
-    tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
-    try:
-        samples = execute_sampling(
-            processing,
-            plan,
-            payload,
-            prompt_context,
-            prompt_context.loras,
-            prompt_context.controls,
-            rng=rng,
-            noise=noise,
-            image_conditioning=image_conditioning,
-            init_latent=init_latent,
-            start_at_step=start_step,
-            denoise_strength=denoise_strength,
-            pre_denoiser_hook=pre_denoiser_hook,
-            post_denoiser_hook=post_denoiser_hook,
-            post_step_hook=post_step_hook,
-            post_sample_hook=post_sample_hook,
-        )
-    finally:
-        finalize_tiling(tiling_applied, old_tiled)
+    samples = execute_sampling(
+        processing,
+        plan,
+        payload,
+        prompt_context,
+        prompt_context.loras,
+        rng=rng,
+        noise=noise,
+        image_conditioning=image_conditioning,
+        init_latent=init_latent,
+        start_at_step=start_step,
+        denoise_strength=denoise_strength,
+        img2img_fix_steps=False,
+        pre_denoiser_hook=pre_denoiser_hook,
+        post_denoiser_hook=post_denoiser_hook,
+        post_step_hook=post_step_hook,
+        post_sample_hook=post_sample_hook,
+    )
     _emit_pipeline_event(
         processing,
         "pipeline.stage.complete",

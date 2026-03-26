@@ -15,11 +15,9 @@ is the selector-only second-pass replacement seam, and `extras.refiner` / `extra
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
 Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), and supports optional multi-region inpaint passes via
 `img2img_mask_region_split`.
-Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope enforcement for sampler fields and
-prompt `<sampler:...>` control tags (Anima-only rollout). Hires prompt sampler controls are release-scope validated at parse-time, while hires
-runtime applies hires-prompt sampler/scheduler and size controls before explicit hires request overrides are resolved. Image-request sampler/scheduler
-validation also enforces family-scoped `supported_*` / `excluded_*` capability contracts (base pair, hires overrides, and hires prompt controls)
-without promoting recommendation hints into allowlists.
+Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope
+enforcement for sampler fields. Image-request sampler/scheduler validation also enforces family-scoped `supported_*` / `excluded_*` capability contracts
+(base pair + hires overrides) without promoting recommendation hints into allowlists.
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`, plus SDXL-native `tenc1_sha` / `tenc2_sha`) and enforces WAN video
 `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Resolves WAN `wan_vae_sha` through VAE inventory ownership and validates VAE config availability before runtime dispatch (`bundle_dir/config.json` for directory VAEs, or sibling/metadata `vae/config.json` for file VAEs).
@@ -226,14 +224,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "cfg_trunc_ratio",
         "renorm_cfg",
     }
-    _PROMPT_SAMPLER_CONTROL_RE = re.compile(
-        r"<\s*sampler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
-        re.IGNORECASE,
-    )
-    _PROMPT_SCHEDULER_CONTROL_RE = re.compile(
-        r"<\s*scheduler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
-        re.IGNORECASE,
-    )
     _WAN_PROMPT_LORA_TAG_RE = re.compile(r"<\s*lora\s*:", re.IGNORECASE)
     from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
@@ -2317,55 +2307,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 ),
             )
 
-    def _validate_hires_prompt_family_sampling_controls(
-        *,
-        engine_key: str,
-        prompt: str,
-        field_name: str,
-        base_sampler: str,
-        base_scheduler: str,
-        family_name: str | None,
-        family_capability: Mapping[str, object] | None,
-    ) -> None:
-        if family_capability is None:
-            return
-
-        prompt_sampler_control: str | None = None
-        for match in _PROMPT_SAMPLER_CONTROL_RE.finditer(prompt):
-            sampler_value = str(match.group(1) or "").strip()
-            if sampler_value:
-                prompt_sampler_control = sampler_value
-
-        prompt_scheduler_control: str | None = None
-        for match in _PROMPT_SCHEDULER_CONTROL_RE.finditer(prompt):
-            scheduler_value = str(match.group(1) or "").strip()
-            if scheduler_value:
-                prompt_scheduler_control = scheduler_value
-
-        if prompt_sampler_control is None and prompt_scheduler_control is None:
-            return
-
-        effective_sampler = prompt_sampler_control or str(base_sampler or "").strip()
-        effective_scheduler = prompt_scheduler_control or str(base_scheduler or "").strip()
-        if not effective_sampler or not effective_scheduler:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"Unable to resolve hires prompt sampler/scheduler controls for '{field_name}' "
-                    f"(engine='{engine_key}')."
-                ),
-            )
-
-        _enforce_family_sampler_scheduler_support(
-            engine_key=engine_key,
-            family_name=family_name,
-            family_capability=family_capability,
-            sampler_name=effective_sampler,
-            scheduler_name=effective_scheduler,
-            sampler_field_name=f"{field_name} (prompt <sampler:...> control)",
-            scheduler_field_name=f"{field_name} (prompt <scheduler:...> control)",
-        )
-
     def _parse_optional_sampler_field(*, value: object, field_name: str) -> str | None:
         if value is None:
             return None
@@ -2408,18 +2349,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(
                 status_code=400,
                 detail=f"'{field_name}' must be in [1, {total_steps - 1}] (got {pointer})",
-            )
-
-    def _validate_prompt_sampler_controls(*, engine_key: str, prompt: str, field_name: str) -> None:
-        for match in _PROMPT_SAMPLER_CONTROL_RE.finditer(prompt):
-            sampler_raw = match.group(1)
-            sampler = str(sampler_raw or "").strip().lower()
-            if not sampler:
-                continue
-            _validate_er_sde_release_scope(
-                engine_key=engine_key,
-                sampler=sampler,
-                field_name=f"{field_name} (prompt <sampler:...> control)",
             )
 
     def _resolve_hires_sampler_scheduler_override(
@@ -2949,11 +2878,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         prompt = _require_str_field(payload, 'prompt', allow_empty=True)
         negative_prompt = str(payload.get('negative_prompt') or '')
-        _validate_prompt_sampler_controls(
-            engine_key=engine_key,
-            prompt=prompt,
-            field_name="prompt",
-        )
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
@@ -3049,11 +2973,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         prompt = _require_str_field(payload, "img2img_prompt", allow_empty=True)
         negative_prompt = _require_str_field(payload, "img2img_neg_prompt", allow_empty=True)
-        _validate_prompt_sampler_controls(
-            engine_key=engine_key,
-            prompt=str(prompt),
-            field_name="img2img_prompt",
-        )
         styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
         batch_count = _require_int_field(payload, "img2img_batch_count", minimum=1) if "img2img_batch_count" in payload else 1
         batch_size = _require_int_field(payload, "img2img_batch_size", minimum=1) if "img2img_batch_size" in payload else 1
@@ -3643,21 +3562,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         metadata = _parse_metadata(payload)
         extras, hires_cfg = _parse_txt2img_extras(payload)
         if hires_cfg is not None:
-            hires_prompt = str(hires_cfg.get("prompt") or "")
-            _validate_prompt_sampler_controls(
-                engine_key=engine_key,
-                prompt=hires_prompt,
-                field_name="extras.hires.prompt",
-            )
-            _validate_hires_prompt_family_sampling_controls(
-                engine_key=engine_key,
-                prompt=hires_prompt,
-                field_name="extras.hires.prompt",
-                base_sampler=str(sampler_name),
-                base_scheduler=str(scheduler_name),
-                family_name=family_name,
-                family_capability=family_capability,
-            )
             hires_sampler = _parse_optional_sampler_field(value=hires_cfg.get("sampler"), field_name="extras.hires.sampler")
             if hires_sampler is not None:
                 hires_cfg["sampler"] = hires_sampler
@@ -4094,20 +3998,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "cfg": _require_float_field(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
                 "distilled_cfg": _require_float_field(payload, 'img2img_hires_distilled_cfg') if 'img2img_hires_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
             }
-            _validate_prompt_sampler_controls(
-                engine_key=engine_key,
-                prompt=str(hires_data.get("prompt") or ""),
-                field_name="img2img_hires_prompt",
-            )
-            _validate_hires_prompt_family_sampling_controls(
-                engine_key=engine_key,
-                prompt=str(hires_data.get("prompt") or ""),
-                field_name="img2img_hires_prompt",
-                base_sampler=str(sampler_name),
-                base_scheduler=str(scheduler_name),
-                family_name=family_name,
-                family_capability=family_capability,
-            )
         else:
             hires_data = {"enable": False}
 

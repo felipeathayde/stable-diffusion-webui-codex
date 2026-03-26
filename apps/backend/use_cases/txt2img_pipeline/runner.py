@@ -7,10 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Stage-based txt2img pipeline orchestrator (sampling + first-pass swap-model + hi-res + optional refiner).
-Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, generic first-pass model-swap execution, and optional refiner stages while producing images and metadata, with fail-loud conditioning guards that avoid embedding raw prompt text in raised errors.
+Coordinates prompt parsing, conditioning, sampling execution, generic first-pass model-swap execution, and optional refiner stages while producing images and metadata, with fail-loud conditioning guards that avoid embedding raw prompt text in raised errors.
 Conditioning smart-cache entries are keyed by model/load identity plus wrapped prompt metadata and stored detached on CPU to avoid stale hits and cross-request GPU pinning.
 The hires stage delegates family-dispatched init preparation and continuation semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
-When configured, the hires second pass applies hires-prompt sampler/scheduler + dimension controls and then resolves explicit hires request overrides by deriving a dedicated `SamplingPlan` for the hires pass.
+When configured, the hires second pass parses LoRA-only prompt tags, inherits base/request LoRAs when the hires prompt omits them, resolves explicit hires request overrides by deriving a dedicated `SamplingPlan` for the hires pass, and calls the shared sampler with the internal fixed-step img2img continuation flag only from this hires seam.
 First-pass base decode before hires is now upscaler-aware (`latent:*` skips decode; pixel upscalers decode).
 When smart offload is enabled, keeps required text-encoder patchers loaded across cond+uncond and unloads them after conditioning.
 
@@ -60,7 +60,6 @@ from apps.backend.runtime.processing.datatypes import (
 )
 from apps.backend.runtime.processing.conditioners import encode_image_batch
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
-from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 from apps.backend.runtime.pipeline_stages.image_io import maybe_decode_for_hr
 from apps.backend.runtime.pipeline_stages.hires_fix import (
     prepare_hires_latents_and_conditioning,
@@ -68,13 +67,12 @@ from apps.backend.runtime.pipeline_stages.hires_fix import (
     resolve_pipeline_telemetry_context,
 )
 from apps.backend.runtime.pipeline_stages.prompt_context import (
-    apply_dimension_overrides,
     apply_prompt_context,
+    build_hires_prompt_context,
     build_prompt_context,
 )
 from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
 from apps.backend.runtime.pipeline_stages.sampling_plan import (
-    apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
     resolve_sampler_scheduler_override,
@@ -82,7 +80,6 @@ from apps.backend.runtime.pipeline_stages.sampling_plan import (
 from apps.backend.patchers.lora_apply import selection_hash_for_request
 from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.pipeline_stages.scripts import collect_lora_selections, run_process_scripts
-from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.use_cases.txt2img_pipeline.refiner import (
@@ -373,12 +370,11 @@ class Txt2ImgPipelineRunner:
         key = None
         if cache_enabled:
             try:
-                clip_skip = int(context.controls.get("clip_skip")) if "clip_skip" in context.controls else None
                 key = (
                     self._conditioning_model_identity(sd_model),
                     self._freeze_cache_value(prompts_payload),
                     self._freeze_cache_value(negative_payload),
-                    clip_skip,
+                    context.clip_skip,
                 )
             except Exception:
                 key = None
@@ -765,10 +761,8 @@ class Txt2ImgPipelineRunner:
     ) -> PrepareState:
         prompt_context = build_prompt_context(processing, prompts)
         apply_prompt_context(processing, prompt_context)
-        apply_dimension_overrides(processing, prompt_context.controls)
 
         plan = build_sampling_plan(processing, seeds, subseeds, subseed_strength)
-        plan = apply_sampling_overrides(processing, prompt_context.controls, plan)
         rng = ensure_sampler_and_rng(processing, plan)
 
         processing.seeds = list(plan.seeds)
@@ -815,25 +809,20 @@ class Txt2ImgPipelineRunner:
         decoded_samples = state.init_decoded
 
         if base_samples is None and decoded_samples is None:
-            tiling_applied, previous_tiling = apply_tiling_if_requested(processing, state.prompt_context.controls)
-            try:
-                base_samples = execute_sampling(
-                    processing,
-                    state.sampling_plan,
-                    state.payload,
-                    state.prompt_context,
-                    state.prompt_context.loras,
-                    state.prompt_context.controls,
-                    rng=state.rng,
-                    denoise_strength=1.0,
-                )
-                decoded_samples = maybe_decode_for_hr(
-                    processing,
-                    base_samples,
-                    hires_upscaler_id=processing.hires.require_upscaler_id() if processing.hires.enabled else None,
-                )
-            finally:
-                finalize_tiling(tiling_applied, previous_tiling)
+            base_samples = execute_sampling(
+                processing,
+                state.sampling_plan,
+                state.payload,
+                state.prompt_context,
+                state.prompt_context.loras,
+                rng=state.rng,
+                denoise_strength=1.0,
+            )
+            decoded_samples = maybe_decode_for_hr(
+                processing,
+                base_samples,
+                hires_upscaler_id=processing.hires.require_upscaler_id() if processing.hires.enabled else None,
+            )
         elif base_samples is None and decoded_samples is not None:
             tensor = self._to_device_dtype_if_needed(
                 decoded_samples,
@@ -932,13 +921,11 @@ class Txt2ImgPipelineRunner:
             or processing.all_prompts
             or state.prompt_context.prompts
         )
-        hr_cleaned_prompts, hr_prompt_loras, hr_prompt_controls = parse_prompts_with_extras(list(hr_prompts_source))
-        hr_negative = processing.hires_negative_prompts or original_attrs["negative_prompts"]
-        hires_prompt_context = PromptContext(
-            prompts=hr_cleaned_prompts,
-            negative_prompts=hr_negative,
-            loras=hr_prompt_loras,
-            controls=dict(hr_prompt_controls),
+        hr_negative_source = processing.hires_negative_prompts or original_attrs["negative_prompts"]
+        hires_prompt_context = build_hires_prompt_context(
+            prompt_seed=list(hr_prompts_source),
+            negative_seed=list(hr_negative_source),
+            base_context=state.prompt_context,
         )
         state.hires_prompt_context = hires_prompt_context
 
@@ -947,28 +934,16 @@ class Txt2ImgPipelineRunner:
             processing.negative_prompts = hires_prompt_context.negative_prompts
             processing.width = target_width
             processing.height = target_height
-            apply_dimension_overrides(processing, hires_prompt_context.controls)
             effective_target_width = int(processing.width)
             effective_target_height = int(processing.height)
             processing.guidance_scale = float(hires_cfg.cfg or processing.guidance_scale)
             processing.cfg_scale = processing.guidance_scale
             processing.steps = int(steps)
-            hires_prompt_sampling_controls: dict[str, object] = {}
-            if "sampler" in hires_prompt_context.controls:
-                hires_prompt_sampling_controls["sampler"] = hires_prompt_context.controls["sampler"]
-            if "scheduler" in hires_prompt_context.controls:
-                hires_prompt_sampling_controls["scheduler"] = hires_prompt_context.controls["scheduler"]
             hires_runtime_plan = replace(
                 state.sampling_plan,
                 steps=int(processing.steps),
                 guidance_scale=float(processing.guidance_scale),
             )
-            if hires_prompt_sampling_controls:
-                hires_runtime_plan = apply_sampling_overrides(
-                    processing,
-                    hires_prompt_sampling_controls,
-                    hires_runtime_plan,
-                )
             hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
                 base_sampler=str(hires_runtime_plan.sampler_name or ""),
                 base_scheduler=str(hires_runtime_plan.scheduler_name or ""),
@@ -1135,13 +1110,13 @@ class Txt2ImgPipelineRunner:
                 state.payload,
                 hires_prompt_context,
                 hires_prompt_context.loras,
-                hires_prompt_context.controls,
                 rng=rng_hr,
                 noise=noise,
                 image_conditioning=sampling_image_conditioning,
                 init_latent=init_latent,
                 start_at_step=start_index,
                 denoise_strength=denoise_strength,
+                img2img_fix_steps=True,
                 allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
             )
 

@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_clear_lora_state` (function): Clears `lora_patches` on a patcher with fail-loud contract checks.
 - `_clear_and_refresh_lora_state` (function): Clears `lora_patches` and refreshes a patcher with fail-loud contract checks.
 - `_refresh_lora_state` (function): Refreshes LoRA-merged weights on a patcher with fail-loud contract checks.
-- `_normalize_selection` (function): Validates and normalizes a LoRA selection into `(path, weight)`.
+- `_normalize_selection` (function): Validates and normalizes a LoRA selection into `(path, text_encoder_weight, unet_weight)`.
 - `_serialize_selection_hash` (function): Serializes deterministic LoRA selection identity for cache keys.
 - `_set_engine_lora_hash` (function): Updates `engine.current_lora_hash` with fail-loud checks.
 - `_reset_engine_lora_state` (function): Clears+refreshes all patchers and persists empty LoRA hash.
@@ -157,57 +157,76 @@ def _refresh_lora_state(patcher: Any, *, label: str) -> None:
     patcher.refresh_loras()
 
 
-def _normalize_selection(selection: dict | Any) -> tuple[str, float] | None:
-    """Return `(path, weight)` for one selection entry, or `None` when path is empty."""
+def _normalize_selection(selection: dict | Any) -> tuple[str, float, float] | None:
+    """Return `(path, text_encoder_weight, unet_weight)` or `None` when path is empty."""
 
     path: str
     weight_raw: Any
+    unet_weight_raw: Any
     if isinstance(selection, Mapping):
         path = str(selection.get("path") or "").strip()
         weight_raw = selection.get("weight", 1.0)
+        unet_weight_raw = selection.get("unet_weight", None)
     else:
         path = str(getattr(selection, "path", "") or "").strip()
         weight_raw = getattr(selection, "weight", 1.0)
+        unet_weight_raw = getattr(selection, "unet_weight", None)
     if not path:
         return None
     try:
-        weight = float(weight_raw)
+        text_encoder_weight = float(weight_raw)
     except Exception as exc:  # noqa: BLE001 - strict fail-loud selection contract
         raise RuntimeError(
-            f"LoRA selection for '{path}' has non-numeric weight: {weight_raw!r}."
+            f"LoRA selection for '{path}' has non-numeric text-encoder weight: {weight_raw!r}."
         ) from exc
-    return path, weight
+    if unet_weight_raw in (None, ""):
+        unet_weight = text_encoder_weight
+    else:
+        try:
+            unet_weight = float(unet_weight_raw)
+        except Exception as exc:  # noqa: BLE001 - strict fail-loud selection contract
+            raise RuntimeError(
+                f"LoRA selection for '{path}' has non-numeric UNet weight: {unet_weight_raw!r}."
+            ) from exc
+    return path, text_encoder_weight, unet_weight
 
 
 def _serialize_selection_hash(
-    normalized: Iterable[tuple[str, float]],
+    normalized: Iterable[tuple[str, float, float]],
     *,
     apply_mode: LoraApplyMode,
 ) -> str:
     """Build deterministic LoRA selection identity for cache keys."""
 
-    rows = [{"path": path, "weight": float(weight)} for path, weight in normalized]
+    rows = [
+        {
+            "path": path,
+            "weight": float(text_encoder_weight),
+            "unet_weight": float(unet_weight),
+        }
+        for path, text_encoder_weight, unet_weight in normalized
+    ]
     if not rows:
         return "[]"
-    rows.sort(key=lambda item: (item["path"], item["weight"]))
+    rows.sort(key=lambda item: (item["path"], item["weight"], item["unet_weight"]))
     payload = {"apply_mode": apply_mode.value, "selections": rows}
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def _normalize_unique_selections(selections: Iterable[dict | Any]) -> list[tuple[str, float]]:
+def _normalize_unique_selections(selections: Iterable[dict | Any]) -> list[tuple[str, float, float]]:
     """Normalize selections and de-duplicate by path while preserving first-seen order."""
 
-    normalized_unique: list[tuple[str, float]] = []
+    normalized_unique: list[tuple[str, float, float]] = []
     seen_paths: set[str] = set()
     for sel in selections:
         normalized = _normalize_selection(sel)
         if normalized is None:
             continue
-        path, weight = normalized
+        path, text_encoder_weight, unet_weight = normalized
         if path in seen_paths:
             continue
         seen_paths.add(path)
-        normalized_unique.append((path, weight))
+        normalized_unique.append((path, text_encoder_weight, unet_weight))
     return normalized_unique
 
 
@@ -309,7 +328,7 @@ def _apply_patches(patcher, filename: str, patch_dict: Dict[PatchTarget, Any], s
 def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedStats:
     """Apply a list of LoRA selections to the engine (UNet + primary text encoder).
 
-    Each selection item must carry `path` and optional `weight` fields.
+    Each selection item must carry `path`, optional `weight` (text encoder/default), and optional `unet_weight`.
     """
     stats = AppliedStats()
     selected = list(selections or [])
@@ -355,7 +374,7 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
             _clear_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
 
         unet_map, text_map = _build_to_load_maps(engine, text_encoder_key=text_encoder_key)
-        for path, weight in normalized_selected:
+        for path, text_encoder_weight, unet_weight in normalized_selected:
 
             # Load weights once
             try:
@@ -377,14 +396,14 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
                 unet_patcher,
                 filename=path,
                 patch_dict=unet_patch,
-                strength=weight,
+                strength=unet_weight,
                 online_mode=online_mode,
             )
             text_touched = _apply_patches(
                 text_patcher,
                 filename=path,
                 patch_dict=text_patch,
-                strength=weight,
+                strength=text_encoder_weight,
                 online_mode=online_mode,
             )
             touched_total = unet_touched + text_touched

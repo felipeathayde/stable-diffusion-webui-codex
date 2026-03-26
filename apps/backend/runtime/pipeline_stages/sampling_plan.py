@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampling plan construction helpers for pipeline orchestration.
-Validates sampler/scheduler selection, resolves noise settings, builds/overrides a `SamplingPlan`, and prepares the sampler + RNG.
+Validates sampler/scheduler selection, resolves noise settings, builds a `SamplingPlan`, and prepares the sampler + RNG.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_normalize_scheduler_name` (function): Validate a scheduler name for the given sampler.
@@ -15,14 +15,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolve_noise_settings` (function): Derive `NoiseSettings` for a run from processing overrides and env.
 - `resolve_er_sde_options` (function): Build normalized typed ER-SDE options from processing overrides.
 - `build_sampling_plan` (function): Build a `SamplingPlan` from processing state and explicit seeds/subseeds.
-- `apply_sampling_overrides` (function): Apply prompt-derived overrides to a `SamplingPlan` (and reflect them into processing state).
 - `ensure_sampler_and_rng` (function): Ensure `processing.sampler` and `processing.rng` exist for the current sampling plan.
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
 from apps.backend.runtime.processing.datatypes import ErSdeOptions, SamplingPlan
@@ -30,9 +28,6 @@ from apps.backend.runtime.sampling import SUPPORTED_SCHEDULERS
 from apps.backend.runtime.sampling.context import SchedulerName
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.runtime.sampling.registry import get_sampler_spec
-
-logger = logging.getLogger(__name__)
-
 
 def _normalize_scheduler_name(sampler: str, scheduler: str) -> str:
     if scheduler not in SUPPORTED_SCHEDULERS:
@@ -198,55 +193,6 @@ def build_sampling_plan(
         noise_settings=noise_settings,
         er_sde=resolve_er_sde_options(processing) if er_sde_in_use else None,
     )
-
-
-def apply_sampling_overrides(
-    processing: Any,
-    controls: Mapping[str, Any],
-    plan: SamplingPlan,
-) -> SamplingPlan:
-    """Apply prompt-derived overrides to the sampling plan."""
-    sampler_raw = controls.get("sampler")
-    scheduler_raw = controls.get("scheduler")
-    sampler_changed = False
-    scheduler_changed = False
-    if sampler_raw:
-        processing.sampler_name = str(sampler_raw)
-        plan.sampler_name = str(sampler_raw)
-        sampler_changed = True
-    if scheduler_raw:
-        processing.scheduler = str(scheduler_raw)
-        plan.scheduler_name = str(scheduler_raw)
-        scheduler_changed = True
-    if sampler_changed or scheduler_changed:
-        normalized_scheduler = _normalize_scheduler_name(str(plan.sampler_name), str(plan.scheduler_name))
-        processing.scheduler = normalized_scheduler
-        plan.scheduler_name = normalized_scheduler
-
-    try:
-        if "cfg" in controls:
-            cfg = float(controls["cfg"])
-            processing.guidance_scale = cfg
-            processing.cfg_scale = cfg
-            plan.guidance_scale = cfg
-        if "steps" in controls:
-            steps = int(float(controls["steps"]))
-            processing.steps = steps
-            plan.steps = steps
-        if "seed" in controls:
-            seed = int(float(controls["seed"]))
-            plan.seeds = [seed]
-            processing.seeds = [seed]
-    except Exception:
-        logger.debug("Failed to apply sampling overrides", exc_info=True)
-    hr_sampler_name = getattr(processing, "hr_sampler_name", None)
-    er_sde_in_use = (
-        isinstance(plan.sampler_name, str) and plan.sampler_name.strip().lower() == "er sde"
-    ) or (
-        isinstance(hr_sampler_name, str) and hr_sampler_name.strip().lower() == "er sde"
-    )
-    plan.er_sde = resolve_er_sde_options(processing) if er_sde_in_use else None
-    return plan
 
 
 def ensure_sampler_and_rng(

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Latent model-swap stages for the txt2img pipeline.
 Implements the generic first-pass `swap_model` stage plus SDXL refiner stages (global + hires), loading the selected engine, rebuilding
-conditioning, and running an additional sampling pass over existing latents.
+conditioning, and running an additional sampling pass over existing latents through the shared sampler without prompt-control ownership.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SwapModelStage` (dataclass): Executable generic first-pass model-swap stage with selector-authoritative engine loading.
@@ -171,7 +171,6 @@ class RefinerStage:
                 payload,
                 prompt_context,
                 prompt_context.loras,
-                prompt_context.controls,
                 rng=rng,
                 noise=noise,
                 init_latent=samples,
@@ -323,7 +322,6 @@ class SwapModelStage:
                 payload,
                 prompt_context,
                 prompt_context.loras,
-                prompt_context.controls,
                 rng=rng,
                 noise=noise,
                 init_latent=samples,

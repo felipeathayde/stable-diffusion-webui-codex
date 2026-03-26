@@ -1028,10 +1028,10 @@
     text-align: center;
   }
   .init-dropzone-actions {
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 2;
+    position: static;
+    align-self: stretch;
+    justify-content: flex-end;
+    flex-wrap: wrap;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;

@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Sampling execution helper for pipeline orchestrators.
 Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics (including ER-SDE option
-propagation into the sampler and diagnostic metadata dumps), with explicit control over txt2img image-conditioning fallback injection.
+propagation into the sampler and diagnostic metadata dumps), with explicit control over txt2img image-conditioning fallback injection and the
+internal img2img fixed-step execution seam used by hires continuations.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_maybe_dump_latents` (function): Dump latents to disk when enabled via env flags (debug diagnostics + effective ER-SDE metadata).
@@ -22,7 +23,7 @@ import logging
 import math
 import os
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Sequence
 
 import torch
 
@@ -113,12 +114,12 @@ def execute_sampling(
     payload: ConditioningPayload,
     prompt_context: PromptContext,
     prompt_loras: Sequence[Any],
-    prompt_controls: Mapping[str, Any],
     *,
     rng: ImageRNG,
     noise: torch.Tensor | None = None,
     image_conditioning: torch.Tensor | None = None,
     allow_txt2img_conditioning_fallback: bool = True,
+    img2img_fix_steps: bool = False,
     init_latent: torch.Tensor | None = None,
     start_at_step: int | None = None,
     denoise_strength: float | None = None,
@@ -243,6 +244,7 @@ def execute_sampling(
         init_latent=init_latent,
         start_at_step=start_at_step,
         denoise_strength=denoise_strength,
+        img2img_fix_steps=img2img_fix_steps,
         pre_denoiser_hook=pre_denoiser_hook,
         post_denoiser_hook=post_denoiser_hook,
         preview_callback=_preview_cb,

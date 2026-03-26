@@ -11,7 +11,7 @@ These structures are consumed by engines and workflow builders to describe runs 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ExtraNetworkDescriptor` (dataclass): Parsed extra network descriptor (e.g. LoRA path/weight + metadata).
-- `PromptContext` (dataclass): Normalized prompt state after preprocessing (prompts/negatives/loras/controls/metadata).
+- `PromptContext` (dataclass): Normalized prompt state after preprocessing (prompts/negatives/loras/request-owned clip_skip/metadata).
 - `ConditioningPayload` (dataclass): Conditioning tensors assembled for a generation pass (cond/uncond + extras).
 - `ErSdeOptions` (dataclass): Native ER-SDE runtime options (`solver_type`, `max_stage`, `eta`, `s_noise`).
 - `SamplingPlan` (dataclass): Complete specification of a sampling run (sampler/scheduler/steps/seeds/noise settings + optional ER-SDE options).
@@ -25,27 +25,12 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Sequence, TypedDict
+from typing import Any, Literal, Mapping, Sequence
 
 from apps.backend.core.rng import NoiseSettings
 
 
 _InitImageMode = Literal["pixel", "latent"]
-
-
-class _PromptControls(TypedDict, total=False):
-    """Normalized prompt-control keys supported by extra-net parsing."""
-
-    clip_skip: int
-    sampler: str
-    scheduler: str
-    width: int
-    height: int
-    cfg: float
-    steps: int
-    seed: int
-    denoise: float
-    tiling: bool
 
 
 @dataclass(slots=True)
@@ -64,7 +49,7 @@ class PromptContext:
     prompts: list[str]
     negative_prompts: list[str]
     loras: Sequence[Any]
-    controls: _PromptControls
+    clip_skip: int | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
 

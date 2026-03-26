@@ -12,8 +12,9 @@ or Flux Kontext semantics. This wrapper keeps the existing event/progress envelo
 to match `Flux2KleinPipeline(image=...)`, and reuses the shared masked bundle/full-res composite path when FLUX.2 inpaint
 is requested instead of pretending SD-family `image_conditioning` semantics apply directly. Partial denoise now uses
 clean `image_latents` plus sampler-native continuation from `init_latent`, and unmasked hires reuses shared hires prep
-while keeping masked hires fail-loud; hires-prompt sampler/scheduler + dimension controls are applied before explicit
-hires request overrides.
+while keeping masked hires fail-loud; hires prompt parsing is LoRA-only, base/request LoRAs stay inherited unless prompt-local hires tags
+override them, explicit hires request overrides stay request-owned, and the shared mask-enforcement hook owner is reused instead of
+re-implementing it here.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_flux2_sampling_inputs` (function): Resolves noise/init-latent/denoise args for FLUX.2 continuation sampling.
@@ -41,32 +42,28 @@ from apps.backend.runtime.pipeline_stages.hires_fix import (
     resolve_hires_family_strategy,
 )
 from apps.backend.runtime.pipeline_stages.masked_img2img import (
-    MASK_ENFORCEMENT_PER_STEP_CLAMP,
-    MASK_ENFORCEMENT_POST_BLEND,
     apply_inpaint_full_res_composite,
     prepare_masked_img2img_bundle,
+    resolve_mask_enforcer_hooks,
 )
 from apps.backend.runtime.pipeline_stages.prompt_context import (
-    apply_dimension_overrides,
     apply_prompt_context,
+    build_hires_prompt_context,
     build_prompt_context,
 )
 from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
 from apps.backend.runtime.pipeline_stages.sampling_plan import (
-    apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
     resolve_sampler_scheduler_override,
 )
 from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
-from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
 from apps.backend.runtime.processing.datatypes import GenerationResult, PromptContext, SamplingPlan
 from apps.backend.runtime.processing.models import CodexProcessingImg2Img
 from apps.backend.runtime.text_processing import (
     clear_last_extra_generation_params,
     snapshot_last_extra_generation_params,
 )
-from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.use_cases._image_streaming import (
     _build_common_info,
@@ -117,7 +114,7 @@ def _resolve_flux2_sampling_inputs(
     rng: Any,
     denoise_strength: float,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, float | None]:
-    if math.isclose(float(denoise_strength), 1.0, rel_tol=0.0, abs_tol=1e-6):
+    if not CodexSampler.uses_img2img_continuation(denoise_strength):
         return None, None, None
     noise = rng.next().to(init_latent)
     return noise, init_latent, float(denoise_strength)
@@ -186,26 +183,14 @@ def _build_flux2_hr_prompt_context(
     base_context: PromptContext,
 ) -> PromptContext:
     hi_cfg = processing.hires
-    prompt_seed = hi_cfg.prompt if hi_cfg.prompt else base_context.prompts
-    if isinstance(prompt_seed, str):
-        hr_prompts_source = [prompt_seed]
-    else:
-        hr_prompts_source = list(prompt_seed)
-    if not hr_prompts_source:
-        hr_prompts_source = list(base_context.prompts)
-    hr_cleaned_prompts, hr_prompt_loras, hr_prompt_controls = parse_prompts_with_extras(
-        hr_prompts_source
-    )
-    negative = (
-        [hi_cfg.negative_prompt]
-        if hi_cfg.negative_prompt
-        else list(base_context.negative_prompts)
-    )
-    return PromptContext(
-        prompts=hr_cleaned_prompts,
-        negative_prompts=negative,
-        loras=hr_prompt_loras,
-        controls=dict(hr_prompt_controls),
+    return build_hires_prompt_context(
+        prompt_seed=hi_cfg.prompt if hi_cfg.prompt else base_context.prompts,
+        negative_seed=(
+            [hi_cfg.negative_prompt]
+            if hi_cfg.negative_prompt
+            else list(base_context.negative_prompts)
+        ),
+        base_context=base_context,
     )
 
 
@@ -245,7 +230,6 @@ def _run_flux2_hires_pass(
         processing.negative_prompts = hi_prompt_context.negative_prompts
         processing.width = target_width
         processing.height = target_height
-        apply_dimension_overrides(processing, hi_prompt_context.controls)
         effective_target_width = int(processing.width)
         effective_target_height = int(processing.height)
         processing.guidance_scale = float(hi_cfg.cfg or processing.guidance_scale)
@@ -256,22 +240,11 @@ def _run_flux2_hires_pass(
         processing.cfg_scale = processing.guidance_scale
         processing.steps = int(steps)
         processing.denoising_strength = denoise
-        hires_prompt_sampling_controls: dict[str, object] = {}
-        if "sampler" in hi_prompt_context.controls:
-            hires_prompt_sampling_controls["sampler"] = hi_prompt_context.controls["sampler"]
-        if "scheduler" in hi_prompt_context.controls:
-            hires_prompt_sampling_controls["scheduler"] = hi_prompt_context.controls["scheduler"]
         hires_runtime_plan = replace(
             plan,
             steps=int(processing.steps),
             guidance_scale=float(processing.guidance_scale),
         )
-        if hires_prompt_sampling_controls:
-            hires_runtime_plan = apply_sampling_overrides(
-                processing,
-                hires_prompt_sampling_controls,
-                hires_runtime_plan,
-            )
         hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
             base_sampler=str(hires_runtime_plan.sampler_name or ""),
             base_scheduler=str(hires_runtime_plan.scheduler_name or ""),
@@ -348,12 +321,12 @@ def _run_flux2_hires_pass(
             hires_payload,
             hi_prompt_context,
             hi_prompt_context.loras,
-            hi_prompt_context.controls,
             rng=rng,
             noise=noise,
             init_latent=sampling_init_latent,
             denoise_strength=denoise,
             start_at_step=0,
+            img2img_fix_steps=True,
             allow_txt2img_conditioning_fallback=False,
         )
     finally:
@@ -393,7 +366,6 @@ def generate_flux2_img2img(
 
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
-    apply_dimension_overrides(processing, prompt_context.controls)
 
     seed_list, subseed_list, subseed_value = _derive_seeds(processing)
     if seeds is not None:
@@ -404,7 +376,6 @@ def generate_flux2_img2img(
         subseed_value = float(subseed_strength)
 
     plan = build_sampling_plan(processing, seed_list, subseed_list, subseed_value)
-    plan = apply_sampling_overrides(processing, prompt_context.controls, plan)
     rng = ensure_sampler_and_rng(processing, plan)
 
     processing.seeds = list(plan.seeds)
@@ -429,6 +400,7 @@ def generate_flux2_img2img(
             processing,
             plan,
             enforce_mode=enforcement,
+            include_image_conditioning=False,
         )
         image_latents = encode_image_batch(
             processing.sd_model,
@@ -438,26 +410,11 @@ def generate_flux2_img2img(
         )
         continuation_latent = masked_bundle.init_latent
         full_res_plan = masked_bundle.full_res
-        enforcement_value = str(enforcement).strip()
-        if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
-            pre_denoiser_hook = None
-            post_denoiser_hook = None
-            post_step_hook = None
-            if enforcer.uses_legacy_per_step_clamp():
-                pre_denoiser_hook = enforcer.pre_denoiser
-                post_denoiser_hook = enforcer.post_denoiser
-            else:
-                post_step_hook = enforcer.post_step
-            post_sample_hook = enforcer.post_sample
-        elif enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
-            pre_denoiser_hook = None
-            post_denoiser_hook = None
-            post_step_hook = None
-            post_sample_hook = enforcer.post_sample
-        else:
-            raise ValueError(
-                f"Unknown mask enforcement '{enforcement_value}' (internal validation bug)"
-            )
+        hooks = resolve_mask_enforcer_hooks(enforcer, enforce_mode=enforcement)
+        pre_denoiser_hook = hooks.pre_denoiser
+        post_denoiser_hook = hooks.post_denoiser
+        post_step_hook = hooks.post_step
+        post_sample_hook = hooks.post_sample
     else:
         init_bundle = prepare_init_bundle(processing)
         image_latents = init_bundle.latents
@@ -486,28 +443,24 @@ def generate_flux2_img2img(
         denoise_strength=denoise_strength,
     )
 
-    tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
-    try:
-        samples = execute_sampling(
-            processing,
-            plan,
-            payload,
-            prompt_context,
-            prompt_context.loras,
-            prompt_context.controls,
-            rng=rng,
-            noise=noise,
-            init_latent=init_latent,
-            denoise_strength=sampling_denoise_strength,
-            start_at_step=0,
-            allow_txt2img_conditioning_fallback=False,
-            pre_denoiser_hook=pre_denoiser_hook,
-            post_denoiser_hook=post_denoiser_hook,
-            post_step_hook=post_step_hook,
-            post_sample_hook=post_sample_hook,
-        )
-    finally:
-        finalize_tiling(tiling_applied, old_tiled)
+    samples = execute_sampling(
+        processing,
+        plan,
+        payload,
+        prompt_context,
+        prompt_context.loras,
+        rng=rng,
+        noise=noise,
+        init_latent=init_latent,
+        denoise_strength=sampling_denoise_strength,
+        start_at_step=0,
+        img2img_fix_steps=False,
+        allow_txt2img_conditioning_fallback=False,
+        pre_denoiser_hook=pre_denoiser_hook,
+        post_denoiser_hook=post_denoiser_hook,
+        post_step_hook=post_step_hook,
+        post_sample_hook=post_sample_hook,
+    )
 
     if hires_execution is not None:
         if full_res_plan is not None:

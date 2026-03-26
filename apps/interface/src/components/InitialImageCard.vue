@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Initial image file picker for img2img-style workflows.
 Provides a file input, preview, and remove action and emits the selected `File` back to the parent.
-In dropzone mode, top-right actions render inside the dotted zone (including `Remove`) to keep picker controls close to the preview.
+In dropzone mode, top-right actions render inside the dotted zone (including `Remove`) in a dedicated top row so picker controls stay close to the preview without covering it.
 Exposes `dropzone-actions` and `preview-overlay` slots for caller-defined preview actions/overlays; `preview-overlay` now renders inside an image-bounds media wrapper so overlays align to the actual contained preview image.
 Supports optional pass-through WAN frame-guide config for zoom-overlay no-stretch projection metadata.
 

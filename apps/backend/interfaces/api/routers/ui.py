@@ -162,6 +162,7 @@ def build_router(
         "guidanceAdvanced",
         "hires",
         "highres",  # legacy alias persisted by older clients
+        "swapModel",
         "refiner",
         "checkpoint",
         "textEncoders",
@@ -173,6 +174,7 @@ def build_router(
         "maskImageData",
         "maskImageName",
         "maskEnforcement",
+        "perStepBlendStrength",
         "inpaintFullResPadding",
         "inpaintingFill",
         "maskInvert",
@@ -216,6 +218,7 @@ def build_router(
         "guidanceAdvanced",
         "hires",
         "highres",
+        "swapModel",
         "refiner",
         "high",
         "low",

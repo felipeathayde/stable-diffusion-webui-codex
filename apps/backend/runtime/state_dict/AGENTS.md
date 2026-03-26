@@ -24,6 +24,7 @@ Notes:
 - Views should stay lightweight and avoid eagerly materializing large state dicts.
 - 2026-03-21: `key_mapping.py` now fail-loud rejects any attempt to rewrite stored layer names during generic preprocessing (including prefix stripping / punctuation edits); keymaps must map source keyspaces explicitly through lookup views or computed views instead of mutating key strings.
 - 2026-03-20: `keymap_sdxl_vae.py` now exposes the shared metadata-filter seam used by external override prep; only known SDXL/Flow bookkeeping keys are dropped before strict keyspace resolution.
+- 2026-03-25: `keymap_sdxl_clip.py` now treats missing CLIP `logit_scale` as an omitted-source case and lazily synthesizes the canonical `ln(100)` default, while duplicate native `logit_scale` sources still fail loud.
 - 2026-01-25: `LazySafetensorsDict` is now truly lazy on non-Windows (persistent `safe_open` handle) and implements `__contains__` so key checks don’t load tensors; `KeyspaceLookupView` also implements `__contains__` for the same reason.
 - Helpers should remain generic and not import model-family runtime code.
 - Keyspace resolution must be explicit and strict: unknown/ambiguous layouts raise (no silent fallbacks). Use the family-specific keymap modules from loaders.

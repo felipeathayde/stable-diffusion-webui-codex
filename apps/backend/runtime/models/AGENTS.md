@@ -17,7 +17,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
   - Interpret known wrapper/container surfaces explicitly per key before conversion; do not rewrite stored keys.
   - Always attempt Codex converters (`convert_sdxl_clip_*`, fallback to `convert_sd20_clip`, `convert_sd15_clip`); treat success as “essential tensors present”.
   - Lift `text_model.*` into `transformer.text_model.*`, map `text_projection` into `transformer.text_projection.weight`, and forward `final_layer_norm.*` similarly.
-  - Drop HF-only buffers (`*.position_ids`) and canonicalize `logit_scale` into the `IntegratedCLIP` keyspace (no `transformer.*` aliases).
+  - Drop HF-only buffers (`*.position_ids`) and canonicalize `logit_scale` into the `IntegratedCLIP` keyspace (no `transformer.*` aliases); when the source omits it, keep the canonical `ln(100)` default instead of failing the load.
   - Abort with a `RuntimeError` when essential tensors (`token_embedding`, `position_embedding`, first-layer q_proj, `final_layer_norm`) remain missing after keyspace resolution — no silent degradation.
 
 ## UNet State‑Dict Keyspace Interpretation
@@ -67,7 +67,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-14: Flux expected-family loads now use vendored HF metadata to build the signature (selecting `FLUX.1-dev` vs `FLUX.1-schnell` by guidance key presence), avoiding registry detection failures on prefixed Flux checkpoints.
 - 2026-01-18: `CheckpointRecord` now includes `core_only`, `core_only_reason` (e.g. `gguf_suffix`, `gguf_magic`), and optional `family_hint`; `/api/models` surfaces these so UIs stop guessing core-only status by suffix alone.
 - 2026-01-18: `loader.py` now lazily imports `diffusers`/`transformers` (keeps `create_api_app` import-light for health/models endpoints and torch-stub validation paths).
-- 2026-01-25: SDXL loads are strict on missing/unexpected keys (fail loud); CLIP normalization now drops `position_ids`, canonicalizes `logit_scale`, and keeps only `transformer.text_projection.weight`.
+- 2026-01-25: SDXL loads are strict on missing/unexpected keys (fail loud); CLIP normalization now drops `position_ids`, canonicalizes `logit_scale` (synthesizing the canonical `ln(100)` default when omitted), and keeps only `transformer.text_projection.weight`.
 - 2026-01-25: Loader dtype selection no longer overrides memory-manager role defaults using a whole-file SafeTensors “primary dtype” guess; the hint is now debug-only (prevents TE bf16 vs UNet fp16 drift under AUTO).
 - 2026-01-25: SDXL/Flow16 VAE key normalization now lives in `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`; `_maybe_convert_sdxl_vae_state_dict` delegates to the keymap (single source of truth) and drops `model_ema.decay` / `model_ema.num_updates` metadata keys.
 - 2026-01-25: SDXL base CLIP loads now reuse `apps/backend/runtime/state_dict/keymap_sdxl_clip.py` (HF/OpenCLIP → Codex IntegratedCLIP), including lazy in-proj QKV slicing and projection canonicalization.

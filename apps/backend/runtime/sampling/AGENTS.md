@@ -42,6 +42,9 @@ Status: Active
   - `driver.py` trims the already-built sigma ladder with diffusers-style flow semantics (`t_start = int(steps - min(steps * strength, steps))`) instead of rebuilding a longer ladder.
   - For `discard_penultimate` samplers, flow partial denoise trims the already-discarded ladder so low-strength runs keep the last real denoise step instead of collapsing to zero steps.
   - Init-latent startup for `img2img` now goes through predictor-owned `noise_scaling(...)`; raw `init_latent + sigma * noise` is invalid for flow/const predictors.
+- Base non-flow img2img partial denoise:
+  - `driver.py` now matches the Forge default owner split: effective steps are proportional to denoise (`t_enc = int(min(denoise, 0.999) * steps)`, `effective_steps = t_enc + 1`) instead of rebuilding a longer ladder to preserve the requested count.
+  - Internal fixed-step continuation is still available, but only through explicit callers such as hires second passes that pass `img2img_fix_steps=True`.
 - Canonical names are strict:
   - No alias mapping.
   - Empty or unknown sampler/scheduler names fail fast.
@@ -50,7 +53,7 @@ Status: Active
 - `ddpm + beta` seam:
   - `ddpm` executes natively in `driver.py`.
   - `beta` is predictor-ladder based and no longer uses continuous sigma interpolation.
-  - Effective denoise-step count matches the requested step count exactly; if the ladder cannot satisfy the count invariant, schedule construction fails loud.
+  - Base non-flow img2img follows the same proportional effective-step contract as the rest of the driver; only explicit fixed-step callers preserve requested-count semantics.
 - `dpm++ 2m cfg++` seam:
   - `dpm++ 2m cfg++` executes natively in `driver.py`.
   - The driver captures `uncond_denoised` through the sampler post-CFG hook and uses the dedicated CFG++ recurrence instead of aliasing plain `dpm++ 2m`.

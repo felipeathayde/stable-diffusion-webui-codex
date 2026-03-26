@@ -15,6 +15,7 @@ Status: Active
 
 ## Notes
 - Keep this pipeline aligned with `apps/backend/patchers/lora_apply.py` and the options service so selections remain consistent.
+- Prompt-owned LoRA selections may carry a text-encoder/default `weight` plus an optional `unet_weight`; when `unet_weight` is omitted, the UNet side inherits the text-encoder weight.
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `mapping.py`, `pipeline.py`, and `types.py` (doc-only change; part of rollout).
 - 2026-02-18: `mapping.py` now builds UNet LoRA aliases from runtime state keys plus canonical SDXL checkpoint keymap normalization (`keymap_sdxl_checkpoint`) so SDXL `model.diffusion_model.*` wrappers and runtime-native key layouts resolve without custom fallback translation paths.
 - 2026-03-07: `loader.py` now parses WAN22 modulation DIFF tensors (`*.diff_m`) only when the caller provides an explicit modulation logical target (`blocks.N.modulation` / `head.modulation`); do not add runtime remap or compatibility shims outside the caller/keyspace seam.

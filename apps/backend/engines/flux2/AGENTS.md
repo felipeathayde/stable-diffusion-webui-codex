@@ -17,7 +17,7 @@ Status: Active
 ## Notes
 - 2026-03-22: `Flux2Engine.encode_first_stage(...)` now forwards the shared optional `encode_seed` into the FLUX.2 external-latent VAE encode helper, and `img2img.py` threads the same shared seed into masked `image_latents` conditioning so FLUX.2 img2img/inpaint no longer drops posterior-seed requests on either encode branch.
 - 2026-03-08: `img2img.py` now preserves truthful open-ended sampling progress for native samplers without an honest bounded total (for example `dpm adaptive`) by emitting `percent=None`, `total_steps=None`, and non-fake sampling/decode metadata instead of coercing unknown totals to integers.
-- 2026-03-09: `img2img.py` hires path now applies hires-prompt sampler/scheduler and width/height controls before explicit hires request overrides, and records effective hires sampler/scheduler/steps/denoise/size metadata for the shared img2img response surface.
+- 2026-03-09: `img2img.py` hires path records effective hires sampler/scheduler/steps/denoise/size metadata for the shared img2img response surface; hires sampler/scheduler/size stay request-owned overrides and prompt parsing is LoRA-only.
 - Loader/parser already own FLUX.2 checkpoint detection + component loading; engine code must reuse the resolved bundle instead of inventing new loading paths.
 - The active FLUX.2 backend seam is **txt2img + image-conditioned img2img/inpaint** for Klein 4B/base-4B:
   - `supports_img2img=true`
@@ -33,4 +33,6 @@ Status: Active
   - `FLUX.2-klein-4B` → distilled checkpoint; non-empty negative prompts fail loud and the engine uses the request's distilled guidance scale as the effective sampling CFG.
   - `FLUX.2-klein-base-4B` → classic CFG / negative prompts
 - Use `img2img.py` for FLUX.2 image-conditioned generation; the common `apps/backend/use_cases/img2img.py` route still models classic init-latent denoise / Kontext continuation and is not truthful for FLUX.2.
-- 2026-03-24: FLUX.2 masked img2img now matches the classic owner split for `per_step_blend_strength`: exact `1.0` keeps legacy `pre_denoiser` + `post_denoiser` + `post_sample`, while lower strengths must use `post_step_hook` + `post_sample` only.
+- 2026-03-24: FLUX.2 masked img2img now matches the classic owner split for `per_step_blend_strength`: exact `1.0` keeps the blend-total trio (`pre_denoiser` + `post_denoiser` + `post_sample`), while lower strengths must use `post_step_hook` + `post_sample` only.
+- 2026-03-26: `img2img.py` now treats prompt parsing as LoRA-only on both base and hires paths, reuses `resolve_mask_enforcer_hooks(...)` instead of local branch duplication, opts out of SD-style masked `image_conditioning`, and passes the internal fixed-step continuation flag only from the hires second-pass seam.
+- 2026-03-26: FLUX.2 hires prompt parsing stays LoRA-only, but second-pass prompt contexts must still inherit base/request LoRAs when the hires prompt omits them; prompt-local hires tags only override same-path weights, they do not clear inherited LoRAs by omission.

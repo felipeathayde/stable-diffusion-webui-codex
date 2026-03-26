@@ -31,7 +31,8 @@ Uses backend API-owned WAN video request key allowlists from `interfaces/api/wan
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
 The generic LTX video route now owns its own request contract (checkpoint-owned `ltx_execution_profile`, `32px` base geometry or `%64` final geometry
-for `two_stage`, `8n+1` frames, explicit safe defaults, derived `euler` / `simple`, negative-seed random semantics, and required `img2vid_init_image`)
+for `two_stage`, `8n+1` frames, explicit safe defaults, derived `euler` / `simple`, negative-seed random semantics, required `img2vid_init_image`,
+and rejection of WAN-only `*_styles` baggage plus raw LTX `*_sampler` / `*_scheduler` wire keys)
 instead of inheriting WAN `%16` / `4n+1` assumptions.
 FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; WAN keeps `txt2vid_sampler` and `img2vid_sampler` as its canonical request keys, while LTX derives its fixed runtime lane from explicit `ltx_execution_profile`.
@@ -185,12 +186,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _TXT2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.TXT2VID_ALL)
     _IMG2VID_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.IMG2VID_ALL)
     _LTX2_EXECUTION_PROFILE_KEY = "ltx_execution_profile"
-    _LTX2_GENERIC_DERIVED_KEYS = frozenset(
+    _LTX2_GENERIC_BLOCKED_KEYS = frozenset(
         {
             "txt2vid_sampler",
             "txt2vid_scheduler",
+            "txt2vid_styles",
             "img2vid_sampler",
             "img2vid_scheduler",
+            "img2vid_styles",
         }
     )
     _VIDEO_GENERIC_SELECTOR_KEYS = {"engine", "model", "model_sha", "vae_sha", "tenc_sha", "lora_sha"}
@@ -204,7 +207,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         | _VIDEO_GENERIC_SELECTOR_KEYS
     )
     _TXT2VID_GENERIC_ALLOWED_KEYS = _VIDEO_GENERIC_COMMON_ALLOWED_KEYS | set(WAN_VIDEO_REQUEST_KEYS.TXT2VID)
-    _LTX2_TXT2VID_GENERIC_ALLOWED_KEYS = (_TXT2VID_GENERIC_ALLOWED_KEYS - _LTX2_GENERIC_DERIVED_KEYS) | {
+    _LTX2_TXT2VID_GENERIC_ALLOWED_KEYS = (_TXT2VID_GENERIC_ALLOWED_KEYS - _LTX2_GENERIC_BLOCKED_KEYS) | {
         _LTX2_EXECUTION_PROFILE_KEY
     }
     _IMG2VID_GENERIC_CORE_KEYS = {
@@ -223,7 +226,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "img2vid_init_image",
     }
     _IMG2VID_GENERIC_ALLOWED_KEYS = _VIDEO_GENERIC_COMMON_ALLOWED_KEYS | _IMG2VID_GENERIC_CORE_KEYS
-    _LTX2_IMG2VID_GENERIC_ALLOWED_KEYS = (_IMG2VID_GENERIC_ALLOWED_KEYS - _LTX2_GENERIC_DERIVED_KEYS) | {
+    _LTX2_IMG2VID_GENERIC_ALLOWED_KEYS = (_IMG2VID_GENERIC_ALLOWED_KEYS - _LTX2_GENERIC_BLOCKED_KEYS) | {
         _LTX2_EXECUTION_PROFILE_KEY
     }
     _WAN_STAGE_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_STAGE_ALLOWED)

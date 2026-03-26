@@ -7,8 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Native LTX2 latent x2 upsampler used by the explicit two-stage execution profile.
-Rebuilds the LTX2 spatial latent-upsample model under `apps/**` from the vendored config surface, keeps the implementation
-native-only, and exposes strict config/state loading without importing Diffusers runtime/model classes.
+Rebuilds the LTX2 spatial latent-upsample model under `apps/**` from exact config owners carried by the vendored metadata
+or the side-asset SafeTensors header, keeps the implementation native-only, and exposes strict config/state loading
+without importing Diffusers runtime/model classes.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LTX2_RATIONAL_RESAMPLER_SCALE_MAPPING` (constant): Supported rational spatial resample factors.
@@ -31,6 +32,8 @@ LTX2_RATIONAL_RESAMPLER_SCALE_MAPPING: dict[float, tuple[int, int]] = {
     2.0: (2, 1),
     4.0: (4, 1),
 }
+_LTX2_DIFFUSERS_UPSAMPLER_CLASS = "LTX2LatentUpsamplerModel"
+_LTX2_LEGACY_UPSAMPLER_CLASS = "LatentUpsampler"
 
 
 def _as_int(value: object, *, name: str) -> int:
@@ -70,6 +73,34 @@ def _reject_unexpected_keys(raw: Mapping[str, Any], *, allowed: set[str]) -> Non
             "LTX2 latent upsampler config includes unsupported keys: "
             f"{unexpected!r}."
         )
+
+
+def _resolve_rational_spatial_scale(raw: Mapping[str, Any], *, class_name: str) -> float | None:
+    if class_name == _LTX2_DIFFUSERS_UPSAMPLER_CLASS:
+        legacy_keys = [key for key in ("spatial_scale", "rational_resampler") if key in raw]
+        if legacy_keys:
+            raise RuntimeError(
+                "LTX2 latent upsampler diffusers-style config must not mix legacy keys "
+                f"{legacy_keys!r}."
+            )
+        return _as_optional_float(raw.get("rational_spatial_scale", 2.0), name="rational_spatial_scale")
+
+    if class_name == _LTX2_LEGACY_UPSAMPLER_CLASS:
+        if "rational_spatial_scale" in raw:
+            raise RuntimeError(
+                "LTX2 latent upsampler legacy config must not declare `rational_spatial_scale`; "
+                "use `spatial_scale` plus `rational_resampler` instead."
+            )
+        rational_resampler = _as_bool(raw.get("rational_resampler", False), name="rational_resampler")
+        spatial_scale = _as_optional_float(raw.get("spatial_scale", 2.0), name="spatial_scale")
+        if spatial_scale is None:
+            spatial_scale = 2.0
+        return float(spatial_scale) if rational_resampler else None
+
+    raise RuntimeError(
+        "LTX2 latent upsampler config requires `_class_name` in "
+        f"{[_LTX2_DIFFUSERS_UPSAMPLER_CLASS, _LTX2_LEGACY_UPSAMPLER_CLASS]!r}; got {class_name!r}."
+    )
 
 
 class _ResBlock(nn.Module):
@@ -246,12 +277,7 @@ class Ltx2LatentUpsamplerModel(nn.Module):
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "Ltx2LatentUpsamplerModel":
         raw = _require_mapping(config)
-        class_name = str(raw.get("_class_name", "LTX2LatentUpsamplerModel") or "LTX2LatentUpsamplerModel").strip()
-        if class_name != "LTX2LatentUpsamplerModel":
-            raise RuntimeError(
-                "LTX2 latent upsampler config requires `_class_name='LTX2LatentUpsamplerModel'`; "
-                f"got {class_name!r}."
-            )
+        class_name = str(raw.get("_class_name", _LTX2_DIFFUSERS_UPSAMPLER_CLASS) or _LTX2_DIFFUSERS_UPSAMPLER_CLASS).strip()
         allowed = {
             "_class_name",
             "_diffusers_version",
@@ -260,6 +286,8 @@ class Ltx2LatentUpsamplerModel(nn.Module):
             "mid_channels",
             "num_blocks_per_stage",
             "rational_spatial_scale",
+            "spatial_scale",
+            "rational_resampler",
             "spatial_upsample",
             "temporal_upsample",
         }
@@ -271,7 +299,7 @@ class Ltx2LatentUpsamplerModel(nn.Module):
             dims=_as_int(raw.get("dims", 3), name="dims"),
             spatial_upsample=_as_bool(raw.get("spatial_upsample", True), name="spatial_upsample"),
             temporal_upsample=_as_bool(raw.get("temporal_upsample", False), name="temporal_upsample"),
-            rational_spatial_scale=_as_optional_float(raw.get("rational_spatial_scale", 2.0), name="rational_spatial_scale"),
+            rational_spatial_scale=_resolve_rational_spatial_scale(raw, class_name=class_name),
         )
 
     def load_strict_state_dict(self, state_dict: Mapping[str, Any]) -> None:

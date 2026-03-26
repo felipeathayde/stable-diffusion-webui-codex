@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-03-23
+Last Review: 2026-03-26
 Status: Draft
 
 ## Purpose
@@ -38,6 +38,8 @@ Status: Draft
 - 2026-03-07: WAN22 detector now recognizes the current local I2V base surface by `patch_embedding.weight` input channels (`C_in=36` for the 36-channel concat I2V path) instead of relying only on upstream `img_emb.proj.*` keys, which are absent from the current local WAN22 GGUF base artifacts.
 - 2026-03-23: Strict monolithic LTX2 detection (`detectors/ltx2.py`) and parser dispatch/planner support (`model_parser/families/ltx2.py`) are now part of the live advertised `txt2vid` / `img2vid` slice. The detector accepts connector evidence only under `model.diffusion_model.*`, keeps checkpoint provenance truthful (`repo_hint=None` when filepath evidence is absent), and must stay aligned with the live semantic capability surface.
 - 2026-03-23: LTX2 model inventory/capability metadata now includes a checkpoint-aware execution/default seam. `models/registry.py` forwards namespaced per-checkpoint metadata (`ltx_checkpoint_kind`, allowed/default execution profiles, default steps, default guidance), and `capabilities.py` exposes one nested LTX-only `ltx_execution_surface` object under `/api/engines/capabilities`. `unknown` LTX checkpoints stay blocked in this tranche instead of being guessed into executable kinds.
+- 2026-03-26: LTX2 `two_stage` side-asset admissibility stays exact-file based, but the x2 spatial upsampler may live under either `ltx2_ckpt` or `ltx2_connectors` roots in current local layouts; `ltx2_execution.py` must search only those explicit sanctioned roots and never widen into generic filename heuristics.
+- 2026-03-26: LTX2 family-hint recovery remains path-root aware, but checkpoint blocking must still reject exact side-asset path tokens (`lora|loras|upscaler|upscalers`) without substring soup; `flora`-style names must not false-block, and basename-only blocking is too weak for nested side-asset subtrees.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

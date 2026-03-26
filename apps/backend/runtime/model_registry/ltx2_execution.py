@@ -10,7 +10,8 @@ Purpose: Truthful LTX 2.3 execution-profile and checkpoint-default resolution.
 Classifies discoverable LTX checkpoints from explicit local signals, enforces the
 SafeTensors-only tranche gate for the explicit `two_stage` profile, emits the
 checkpoint-scoped metadata forwarded by `/api/models`, and defines the single
-engine-scoped execution surface exposed by `/api/engines/capabilities`.
+engine-scoped execution surface exposed by `/api/engines/capabilities`, with
+exact side-asset discovery limited to the sanctioned LTX local roots.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LTX2_KIND_DEV` (constant): Classified generatable dev/full checkpoint kind.
@@ -37,6 +38,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import os
 from pathlib import Path, PurePosixPath
+import re
 from typing import Any, Mapping
 
 from apps.backend.infra.config.paths import get_paths_for
@@ -66,6 +68,7 @@ _BLOCKED_MARKERS = (
     "temporal-upscaler",
     "temporal_upscaler",
 )
+_BLOCKED_PATH_TOKENS = ("lora", "loras", "upscaler", "upscalers")
 _DISTILLED_MARKERS = ("distilled",)
 _LTX_IDENTITY_MARKERS = ("ltx-2.3", "ltx2.3", "ltx-2", "ltx2")
 _SIDE_ASSET_SUFFIXES = (".safetensor", ".safetensors", ".pt", ".bin")
@@ -110,6 +113,13 @@ def _basename_or_self(raw_value: object) -> str:
     return PurePosixPath(normalized).name or normalized
 
 
+def _tokenize_marker_candidate(raw_value: object) -> tuple[str, ...]:
+    normalized = _normalize_marker_input(raw_value)
+    if not normalized:
+        return ()
+    return tuple(token for token in re.split(r"[^a-z0-9]+", normalized) if token)
+
+
 def _candidate_strings(record: CheckpointRecord) -> tuple[str, ...]:
     candidates: list[str] = []
     raw_values = (
@@ -144,8 +154,9 @@ def _blocked_detection_candidates(record: CheckpointRecord) -> tuple[str, ...]:
         record.name,
         record.model_name,
         record.filename,
+        record.path,
     ):
-        normalized = _basename_or_self(raw_value)
+        normalized = _normalize_marker_input(raw_value)
         if normalized:
             candidates.append(normalized)
     for raw_key in (
@@ -154,10 +165,19 @@ def _blocked_detection_candidates(record: CheckpointRecord) -> tuple[str, ...]:
         "source_checkpoint_repo_id",
         "_name_or_path",
     ):
-        normalized = _basename_or_self(record.metadata.get(raw_key))
+        normalized = _normalize_marker_input(record.metadata.get(raw_key))
         if normalized:
             candidates.append(normalized)
     return tuple(dict.fromkeys(candidates))
+
+
+def _has_blocked_checkpoint_marker(record: CheckpointRecord) -> bool:
+    for candidate in _blocked_detection_candidates(record):
+        if any(marker in candidate for marker in _BLOCKED_MARKERS):
+            return True
+        if any(token in _BLOCKED_PATH_TOKENS for token in _tokenize_marker_candidate(candidate)):
+            return True
+    return False
 
 
 def _normalized_checkpoint_format(record: CheckpointRecord) -> str:
@@ -174,50 +194,65 @@ def _record_uses_safetensors(record: CheckpointRecord) -> bool:
     return Path(candidate).suffix.lower() in {".safetensor", ".safetensors"}
 
 
+def _normalize_side_asset_keys(raw_keys: str | tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(raw_keys, str):
+        keys = (raw_keys,)
+    else:
+        keys = tuple(str(key or "").strip() for key in raw_keys)
+    normalized = tuple(key for key in keys if key)
+    if not normalized:
+        raise RuntimeError("LTX2 side-asset resolution requires at least one non-empty paths.json key.")
+    return normalized
+
+
 @lru_cache(maxsize=None)
 def _resolve_unique_side_asset_path(
     *,
-    key: str,
+    key: str | tuple[str, ...],
     fragment: str,
     label: str,
 ) -> tuple[str | None, str | None]:
     candidates: list[str] = []
     seen: set[str] = set()
+    keys = _normalize_side_asset_keys(key)
     normalized_fragment = str(fragment or "").strip().lower()
 
-    for raw_root in get_paths_for(key):
-        root = Path(os.path.expanduser(str(raw_root).strip()))
-        if root.is_file():
-            lower_name = root.name.lower()
-            if root.suffix.lower() in _SIDE_ASSET_SUFFIXES and normalized_fragment in lower_name:
-                resolved = str(root.resolve(strict=False))
-                if resolved not in seen:
-                    seen.add(resolved)
-                    candidates.append(resolved)
-            continue
-        if not root.is_dir():
-            continue
-        for path in sorted(root.rglob("*"), key=lambda item: str(item).lower()):
-            if not path.is_file():
+    for path_key in keys:
+        for raw_root in get_paths_for(path_key):
+            root = Path(os.path.expanduser(str(raw_root).strip()))
+            if root.is_file():
+                lower_name = root.name.lower()
+                if root.suffix.lower() in _SIDE_ASSET_SUFFIXES and normalized_fragment in lower_name:
+                    resolved = str(root.resolve(strict=False))
+                    if resolved not in seen:
+                        seen.add(resolved)
+                        candidates.append(resolved)
                 continue
-            if path.suffix.lower() not in _SIDE_ASSET_SUFFIXES:
+            if not root.is_dir():
                 continue
-            lower_name = path.name.lower()
-            if normalized_fragment not in lower_name:
-                continue
-            resolved = str(path.resolve(strict=False))
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            candidates.append(resolved)
+            for path in sorted(root.rglob("*"), key=lambda item: str(item).lower()):
+                if not path.is_file():
+                    continue
+                if path.suffix.lower() not in _SIDE_ASSET_SUFFIXES:
+                    continue
+                lower_name = path.name.lower()
+                if normalized_fragment not in lower_name:
+                    continue
+                resolved = str(path.resolve(strict=False))
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                candidates.append(resolved)
+
+    keys_label = "|".join(repr(path_key) for path_key in keys)
 
     if not candidates:
         return None, (
-            f"LTX2 two_stage blocked: no {label} containing {fragment!r} was found under paths.json[{key!r}]."
+            f"LTX2 two_stage blocked: no {label} containing {fragment!r} was found under paths.json[{keys_label}]."
         )
     if len(candidates) != 1:
         return None, (
-            f"LTX2 two_stage blocked: expected exactly one {label} containing {fragment!r} under paths.json[{key!r}], "
+            f"LTX2 two_stage blocked: expected exactly one {label} containing {fragment!r} under paths.json[{keys_label}], "
             f"got {len(candidates)} candidates: {candidates!r}."
         )
     return candidates[0], None
@@ -274,7 +309,7 @@ def resolve_ltx2_two_stage_assets(record: CheckpointRecord) -> Ltx2TwoStageAsset
         )
 
     spatial_upsampler_path, upscaler_error = _resolve_unique_side_asset_path(
-        key="ltx2_ckpt",
+        key=("ltx2_ckpt", "ltx2_connectors"),
         fragment=_TWO_STAGE_SPATIAL_UPSCALER_FRAGMENT,
         label="x2 spatial upscaler",
     )
@@ -297,10 +332,7 @@ def resolve_ltx2_two_stage_assets(record: CheckpointRecord) -> Ltx2TwoStageAsset
 def resolve_ltx2_checkpoint_execution_defaults(record: CheckpointRecord) -> Ltx2CheckpointExecutionDefaults:
     candidates = _candidate_strings(record)
     has_ltx_identity = any(marker in candidate for candidate in candidates for marker in _LTX_IDENTITY_MARKERS)
-    blocked_candidates = _blocked_detection_candidates(record)
-    if (
-        any(marker in candidate for candidate in blocked_candidates for marker in _BLOCKED_MARKERS)
-    ):
+    if _has_blocked_checkpoint_marker(record):
         return Ltx2CheckpointExecutionDefaults(
             checkpoint_kind=LTX2_KIND_UNKNOWN,
             allowed_execution_profiles=(),

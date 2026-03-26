@@ -10,7 +10,8 @@ Purpose: Typed bundle rehydration, native runtime assembly, and run-result contr
 Rebuilds the loader-produced LTX2 planning contract from a generic diffusion bundle, assembles the dedicated native
 runtime from local `apps/**` modules (including optional wrapper-backed transformer-core streaming), enforces the
 truthful `euler` / `simple` execution contract, exposes explicit latent-stage / upsample / refine primitives for the
-`two_stage` profile, and normalizes execution results into the family-local `frames + AudioExportAsset + metadata`
+`two_stage` profile, honors side-asset-carried SafeTensors config metadata for the x2 latent upsampler when present,
+and normalizes execution results into the family-local `frames + AudioExportAsset + metadata`
 contract consumed by the canonical video use-cases.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 import logging
 from pathlib import Path
 import threading
@@ -607,6 +609,33 @@ def _parse_ltx2_default_lora_alpha(path: str) -> float | None:
     return None
 
 
+def _read_ltx2_side_asset_config_from_metadata(
+    side_asset_path: str,
+    *,
+    label: str,
+) -> Mapping[str, Any] | None:
+    suffix = Path(side_asset_path).suffix.lower()
+    if suffix not in {".safetensor", ".safetensors"}:
+        return None
+    metadata = read_safetensors_metadata(side_asset_path)
+    raw_config_json = str(metadata.get("config") or "").strip()
+    if not raw_config_json:
+        return None
+    try:
+        payload = json.loads(raw_config_json)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"LTX2 {label} metadata contains invalid JSON in the `config` field: "
+            f"path={side_asset_path!r} error={exc}"
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise RuntimeError(
+            f"LTX2 {label} metadata `config` must decode to a mapping. "
+            f"Got {type(payload).__name__} from {side_asset_path!r}."
+        )
+    return dict(payload)
+
+
 def _strip_ltx2_lora_target_prefix(target: str) -> str:
     for prefix in ("model.diffusion_model.", "diffusion_model."):
         if target.startswith(prefix):
@@ -813,13 +842,19 @@ def _load_ltx2_two_stage_spatial_upsampler(
     request: Any,
 ) -> Any:
     repo_dir = Path(bundle_inputs.vendor_paths.repo_dir)
-    config = _read_component_config(repo_dir, "latent_upsampler")
+    side_asset_path = _require_ltx2_path_extra(
+        request,
+        "ltx_two_stage_spatial_upsampler_path",
+        label="LTX2 two_stage spatial upsampler",
+    )
+    vendored_config = _read_component_config(repo_dir, "latent_upsampler")
+    metadata_config = _read_ltx2_side_asset_config_from_metadata(
+        side_asset_path,
+        label="two_stage spatial upsampler",
+    )
+    config = metadata_config or vendored_config
     state_dict = load_torch_file(
-        _require_ltx2_path_extra(
-            request,
-            "ltx_two_stage_spatial_upsampler_path",
-            label="LTX2 two_stage spatial upsampler",
-        ),
+        side_asset_path,
         device="cpu",
     )
     if not isinstance(state_dict, Mapping):
@@ -848,7 +883,6 @@ def sample_ltx2_txt2vid_stage(
     latents: torch.Tensor | None = None,
     audio_latents: torch.Tensor | None = None,
     sigmas: Sequence[float] | None = None,
-    transformer: Any | None = None,
     generator: torch.Generator | None = None,
 ) -> Any:
     with _ltx2_transformer_execution_context(native):
@@ -864,7 +898,6 @@ def sample_ltx2_txt2vid_stage(
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=transformer,
             generator=generator,
         )
     return _coerce_native_stage_result(stage_result, mode_label="txt2vid")
@@ -883,7 +916,6 @@ def sample_ltx2_img2vid_stage(
     latents: torch.Tensor | None = None,
     audio_latents: torch.Tensor | None = None,
     sigmas: Sequence[float] | None = None,
-    transformer: Any | None = None,
     generator: torch.Generator | None = None,
 ) -> Any:
     with _ltx2_transformer_execution_context(native):
@@ -899,7 +931,6 @@ def sample_ltx2_img2vid_stage(
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=transformer,
             generator=generator,
         )
     return _coerce_native_stage_result(stage_result, mode_label="img2vid")
@@ -947,7 +978,7 @@ def refine_ltx2_txt2vid_two_stage(
     generator: torch.Generator | None = None,
 ) -> Any:
     with _ltx2_transformer_execution_context(native):
-        with _temporary_ltx2_two_stage_transformer(request=request, native=native) as transformer:
+        with _temporary_ltx2_two_stage_transformer(request=request, native=native):
             return sample_ltx2_txt2vid_stage(
                 native=native,
                 request=request,
@@ -963,7 +994,6 @@ def refine_ltx2_txt2vid_two_stage(
                     native=native,
                 ),
                 sigmas=geometry.stage2_sigmas,
-                transformer=transformer,
                 generator=generator,
             )
 
@@ -979,7 +1009,7 @@ def refine_ltx2_img2vid_two_stage(
     generator: torch.Generator | None = None,
 ) -> Any:
     with _ltx2_transformer_execution_context(native):
-        with _temporary_ltx2_two_stage_transformer(request=request, native=native) as transformer:
+        with _temporary_ltx2_two_stage_transformer(request=request, native=native):
             return sample_ltx2_img2vid_stage(
                 native=native,
                 request=request,
@@ -995,7 +1025,6 @@ def refine_ltx2_img2vid_two_stage(
                     native=native,
                 ),
                 sigmas=geometry.stage2_sigmas,
-                transformer=transformer,
                 generator=generator,
             )
 

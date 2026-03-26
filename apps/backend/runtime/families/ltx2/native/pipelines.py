@@ -10,7 +10,8 @@ Purpose: Native LTX2 txt2vid/img2vid execution helpers.
 Owns direct native execution against loaded LTX2 components (text encoder, connectors, transformer, VAEs, vocoder,
 and native FlowMatch-Euler scheduler), including deterministic generation-boundary cleanup for streamed transformers,
 truthful request-owned seed/guidance handling, explicit latent-stage sampling/decode primitives for the `two_stage`
-runtime path, returns raw `(video, audio)` tuples that runtime.py can normalize into the family-local result contract,
+runtime path, keeps public stage sampling pinned to the locked `native.transformer` owner, returns raw `(video, audio)`
+tuples that runtime.py can normalize into the family-local result contract,
 and threads the explicit zero-timestep decode input required by timestep-conditioned LTX video VAEs.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -1006,12 +1007,9 @@ def sample_ltx2_txt2vid_native(
     latents: torch.Tensor | None = None,
     audio_latents: torch.Tensor | None = None,
     sigmas: Sequence[float] | None = None,
-    transformer: Any | None = None,
     generator: torch.Generator | Sequence[torch.Generator] | None = None,
 ) -> Ltx2NativeLatentStageResult:
-    effective_transformer = native.transformer if transformer is None else transformer
-    effective_generator = generator
-    with _transformer_streaming_lifecycle(effective_transformer):
+    with _transformer_streaming_lifecycle(native.transformer):
         return _sample_ltx2_native_latents(
             native=native,
             prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
@@ -1023,12 +1021,12 @@ def sample_ltx2_txt2vid_native(
             num_inference_steps=int(getattr(plan, "steps", 0) if num_inference_steps is None else num_inference_steps),
             guidance_scale=float(_resolve_guidance_scale(request) if guidance_scale is None else guidance_scale),
             init_image=None,
-            generator=effective_generator,
+            generator=generator,
             noise_scale=float(noise_scale),
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=effective_transformer,
+            transformer=native.transformer,
         )
 
 
@@ -1072,15 +1070,12 @@ def sample_ltx2_img2vid_native(
     latents: torch.Tensor | None = None,
     audio_latents: torch.Tensor | None = None,
     sigmas: Sequence[float] | None = None,
-    transformer: Any | None = None,
     generator: torch.Generator | Sequence[torch.Generator] | None = None,
 ) -> Ltx2NativeLatentStageResult:
     init_image = getattr(request, "init_image", None)
     if init_image is None:
         raise RuntimeError("LTX2 native img2vid requires `request.init_image`.")
-    effective_transformer = native.transformer if transformer is None else transformer
-    effective_generator = generator
-    with _transformer_streaming_lifecycle(effective_transformer):
+    with _transformer_streaming_lifecycle(native.transformer):
         return _sample_ltx2_native_latents(
             native=native,
             prompt=("" if getattr(request, "prompt", None) is None else getattr(request, "prompt")),
@@ -1092,12 +1087,12 @@ def sample_ltx2_img2vid_native(
             num_inference_steps=int(getattr(plan, "steps", 0) if num_inference_steps is None else num_inference_steps),
             guidance_scale=float(_resolve_guidance_scale(request) if guidance_scale is None else guidance_scale),
             init_image=init_image,
-            generator=effective_generator,
+            generator=generator,
             noise_scale=float(noise_scale),
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=effective_transformer,
+            transformer=native.transformer,
         )
 
 

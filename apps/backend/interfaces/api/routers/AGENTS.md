@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-25
+Last Review: 2026-03-26
 Status: Active
 
 ## Purpose
@@ -22,6 +22,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/models.py` also exposes `/api/models/checkpoint-metadata` (UI metadata modal payload for a checkpoint selection).
 
 ## Notes
+- 2026-03-26: `ui.py` no longer 400s on stale unsupported top-level tab params during `/api/ui/tabs` create/update; load/create/update all filter those keys out, while tab-type validation stays fail-loud.
 - 2026-03-21: `generation.py` now accepts top-level `img2img_resize_mode` only for the truthful unmasked pixel-space resize modes, rejects masked ZImage callers that try to submit it, and normalizes ZImage img2img width/height onto the shared `16px` request contract (floor/downscale for in-range values, clamp up to the minimum valid `16px` size for undersized direct callers) instead of letting odd latent patch grids fail later in the runtime.
 - 2026-03-20: `generation.py` image routes now require explicit request selectors for `checkpoint_core_only`, `model_format`, and `vae_source` and validate them against checkpoint inventory metadata; the image lane no longer guesses family/core-only/inpaint behavior from checkpoint suffixes, shapes, or `model`-as-SHA fallbacks.
 - 2026-03-25: `generation.py` now treats SDXL core-only text encoders as numbered selectors (`tenc1_sha`, `tenc2_sha`) instead of generic `tenc_sha`, rejects `text_encoder_override` on SDXL public surfaces, and keeps the router-owned slot validation path authoritative when translating SHA selectors into canonical `tenc_path`.

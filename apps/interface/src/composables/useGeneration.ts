@@ -45,7 +45,12 @@ import {
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useUpscalersStore } from '../stores/upscalers'
-import { buildImg2ImgHiresPayloadFields, buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
+import {
+  buildImg2ImgHiresPayloadFields,
+  buildTxt2ImgPayload,
+  type NestedStageSelectorPayloads,
+  type Txt2ImgRequest,
+} from '../api/payloads'
 import { cancelTask, fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '../api/types'
 import { resolveImageRequestEngineId, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
@@ -291,8 +296,20 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
   if (hiresEnabled && !args.supportsHires) {
     throw new Error(`This engine does not support img2img hires (${args.engineId}).`)
   }
+  if (Boolean(params.swapModel?.enabled)) {
+    throw new Error('img2img swap_model is not supported yet. Disable the generic model swap or switch back to txt2img.')
+  }
   if (hiresEnabled && useMask) {
     throw new Error('Masked img2img hires is not supported yet. Disable the mask or hires before generating.')
+  }
+  if (hiresEnabled && String(params.hires?.swapModel?.model || '').trim()) {
+    throw new Error('img2img hires swap_model is not supported yet. Disable the second-pass model or switch back to txt2img.')
+  }
+  if (hiresEnabled && params.hires?.refiner?.enabled) {
+    throw new Error('img2img hires refiner is not supported yet. Disable the hires refiner or switch back to txt2img.')
+  }
+  if (params.refiner?.enabled) {
+    throw new Error('img2img refiner is not supported yet. Disable the refiner or switch back to txt2img.')
   }
   const payload: Record<string, unknown> = {
     img2img_init_image: params.initImageData,
@@ -340,12 +357,20 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
       throw new Error('INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.')
     }
     payload.img2img_mask = maskData
-    payload.img2img_mask_enforcement = normalizeMaskEnforcement(params.maskEnforcement)
+    const maskEnforcement = normalizeMaskEnforcement(params.maskEnforcement)
+    payload.img2img_mask_enforcement = maskEnforcement
     payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(params.inpaintingFill))))
     payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(params.inpaintFullResPadding)))
     payload.img2img_inpainting_mask_invert = maskInvert ? 1 : 0
     payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(params.maskBlur)))
     payload.img2img_mask_round = maskRound
+    if (maskEnforcement === 'per_step_clamp') {
+      const rawPerStepBlendStrength = Number(params.perStepBlendStrength)
+      const perStepBlendStrength = Number.isFinite(rawPerStepBlendStrength)
+        ? Math.max(0, Math.min(1, rawPerStepBlendStrength))
+        : 1
+      payload.img2img_per_step_blend_strength = perStepBlendStrength
+    }
 
     const wantsRegionSplit = maskRegionSplit
     if (wantsRegionSplit) {
@@ -488,6 +513,7 @@ export function useGeneration(tabId: string) {
       guidanceAdvanced: p.guidanceAdvanced,
 
       hires: p.hires,
+      swapModel: p.swapModel,
       refiner: p.refiner,
 
       useInitImage: p.useInitImage,
@@ -609,6 +635,88 @@ export function useGeneration(tabId: string) {
     const textEncoders = Array.isArray((p as any).textEncoders)
       ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
       : []
+    const requestContractResolvers = {
+      requireModelInfo: quicksettings.requireModelInfo,
+      resolveFlux2CheckpointVariant: quicksettings.resolveFlux2CheckpointVariant,
+      resolveTextEncoderSha: quicksettings.resolveTextEncoderSha,
+      resolveTextEncoderSlot: quicksettings.resolveTextEncoderSlot,
+      requireVaeSelection: quicksettings.requireVaeSelection,
+      resolveVaeSha: quicksettings.resolveVaeSha,
+      getAssetContract: backendCaps.getAssetContract,
+    }
+    const resolveStageSwapModelPayload = (
+      modelLabel: string,
+      options: { engineKey: string },
+    ): NonNullable<NestedStageSelectorPayloads['swapModel']> => {
+      const { engineKey } = options
+      const resolvedModelLabel = String(modelLabel || '').trim()
+      if (!resolvedModelLabel) {
+        throw new Error(`Missing model selection for '${engineKey}'.`)
+      }
+      const stageContract = buildExplicitImageRequestContract({
+        modelLabel: resolvedModelLabel,
+        engineKey,
+        textEncoderLabels: textEncoders,
+        zimageTurbo: engineKey === 'zimage'
+          ? Boolean((p as any)?.zimageTurbo ?? true)
+          : false,
+        fallbackGuidanceMode: usesStaticDistilledCfgEngine(engineKey) ? 'distilled_cfg' : 'cfg',
+        resolvers: requestContractResolvers,
+      })
+      return {
+        model: resolvedModelLabel,
+        ...stageContract.extras,
+      }
+    }
+    const buildNestedSelectorPayloads = (): NestedStageSelectorPayloads | undefined => {
+      const nested: NestedStageSelectorPayloads = {}
+      if (p.swapModel?.enabled) {
+        const topLevelSwapModel = String(p.swapModel.model || '').trim()
+        if (!topLevelSwapModel) {
+          throw new Error('Select a first-pass swap model before generating.')
+        }
+        nested.swapModel = resolveStageSwapModelPayload(topLevelSwapModel, { engineKey: engineOverrideForRequest })
+      }
+      if (p.refiner?.enabled) {
+        if (!engineSurface.supports_refiner) {
+          throw new Error(`This engine does not support refiner (${engineOverrideForRequest}).`)
+        }
+        const refinerModel = String(p.refiner.model || '').trim()
+        if (!refinerModel) {
+          throw new Error('Select a refiner model before generating.')
+        }
+        nested.refiner = {
+          enable: true,
+          switch_at_step: p.refiner.swapAtStep,
+          cfg: p.refiner.cfg,
+          seed: p.refiner.seed,
+          ...resolveStageSwapModelPayload(refinerModel, { engineKey: 'sdxl_refiner' }),
+        }
+      }
+      if (p.hires?.enabled) {
+        const hiresSwapModel = String(p.hires.swapModel?.model || '').trim()
+        if (hiresSwapModel) {
+          nested.hiresSwapModel = resolveStageSwapModelPayload(hiresSwapModel, { engineKey: engineOverrideForRequest })
+        }
+        if (p.hires.refiner?.enabled) {
+          if (!engineSurface.supports_refiner) {
+            throw new Error(`This engine does not support refiner (${engineOverrideForRequest}).`)
+          }
+          const hiresRefinerModel = String(p.hires.refiner.model || '').trim()
+          if (!hiresRefinerModel) {
+            throw new Error('Select a hires refiner model before generating.')
+          }
+          nested.hiresRefiner = {
+            enable: true,
+            switch_at_step: p.hires.refiner.swapAtStep,
+            cfg: p.hires.refiner.cfg,
+            seed: p.hires.refiner.seed,
+            ...resolveStageSwapModelPayload(hiresRefinerModel, { engineKey: 'sdxl_refiner' }),
+          }
+        }
+      }
+      return Object.keys(nested).length > 0 ? nested : undefined
+    }
     let guidanceMode: 'cfg' | 'distilled_cfg'
     let extras: Record<string, unknown>
     try {
@@ -620,14 +728,7 @@ export function useGeneration(tabId: string) {
           ? Boolean((p as any)?.zimageTurbo ?? true)
           : false,
         fallbackGuidanceMode: usesStaticDistilledCfgEngine(engineOverrideForRequest) ? 'distilled_cfg' : 'cfg',
-        resolvers: {
-          requireModelInfo: quicksettings.requireModelInfo,
-          resolveFlux2CheckpointVariant: quicksettings.resolveFlux2CheckpointVariant,
-          resolveTextEncoderSha: quicksettings.resolveTextEncoderSha,
-          requireVaeSelection: quicksettings.requireVaeSelection,
-          resolveVaeSha: quicksettings.resolveVaeSha,
-          getAssetContract: backendCaps.getAssetContract,
-        },
+        resolvers: requestContractResolvers,
       })
       if (requestContract.guidanceMode !== 'cfg' && requestContract.guidanceMode !== 'distilled_cfg') {
         throw new Error(`Image guidance mode is missing for '${engineOverrideForRequest}'.`)
@@ -704,6 +805,7 @@ export function useGeneration(tabId: string) {
       } else {
         let payload: Txt2ImgRequest
         try {
+          const nestedSelectorPayloads = buildNestedSelectorPayloads()
           payload = buildTxt2ImgPayload({
             prompt: p.prompt,
             negativePrompt: supportsNegative ? p.negativePrompt : '',
@@ -723,10 +825,15 @@ export function useGeneration(tabId: string) {
             engine: engineOverrideForRequest,
             model: modelRef,
             guidanceMode,
+            swapModel: p.swapModel,
             hires: p.hires,
             refiner: p.refiner,
             extras,
-          }, { hiresFallbackOnOom: Boolean(upscalersStore.fallbackOnOom), hiresMinTile: Number(upscalersStore.minTile) })
+          }, {
+            hiresFallbackOnOom: Boolean(upscalersStore.fallbackOnOom),
+            hiresMinTile: Number(upscalersStore.minTile),
+            nestedSelectorPayloads,
+          })
         } catch (error) {
           state.value.status = 'error'
           state.value.errorMessage = error instanceof Error ? error.message : String(error)

@@ -6,13 +6,13 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Swap-model configuration card (first pass or hires second pass).
-Renders a compact enable switch, checkpoint selector, and slider-based swap controls (`Swap At Step` + `CFG`) in a single row,
+Purpose: SDXL refiner configuration card (global or hires second pass).
+Renders a compact enable switch, refiner-model selector, and slider-based refiner controls (`Swap At Step` + `CFG`) in a single row,
 with optional advanced APG controls gated by capabilities and emitted as guidance-advanced patches.
 Uses the shared `WanSubHeader` title pattern with full-row click toggle parity to match the BASIC PARAMETERS card header style.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RefinerSettingsCard` (component): Swap-model settings panel component.
+- `RefinerSettingsCard` (component): SDXL refiner settings panel component.
 - `toggle` (function): Toggles `enabled` via `update:enabled`.
 - `hasGuidanceSupport` (function): Returns whether the active capability map enables a specific APG control.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
@@ -39,7 +39,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </WanSubHeader>
     <div v-if="enabled" class="rf-grid">
       <div class="field rf-field--full">
-        <label class="label-muted">Checkpoint Swap</label>
+        <label class="label-muted">Refiner Model</label>
         <select class="select-md" :value="model" @change="onModelChange">
           <option value="">Keep current model</option>
           <option v-if="showCurrentModelOption" :value="model">{{ model }}</option>
@@ -278,7 +278,7 @@ const props = withDefaults(defineProps<{
   maxCfg?: number
   cfgStep?: number
 }>(), {
-  label: 'Swap Model',
+  label: 'Refiner',
   dense: false,
   guidanceSupport: null,
   maxSteps: 150,

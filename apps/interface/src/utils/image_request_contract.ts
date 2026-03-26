@@ -27,6 +27,7 @@ export interface ImageRequestContractResolvers {
   requireModelInfo: (label: string) => ModelInfo
   resolveFlux2CheckpointVariant: (source: string | ModelInfo) => 'base' | 'distilled' | null
   resolveTextEncoderSha: (label: string | null | undefined) => string | undefined
+  resolveTextEncoderSlot: (label: string | null | undefined) => string | undefined
   requireVaeSelection: (label?: string | null) => string
   resolveVaeSha: (label: string | null | undefined) => string | undefined
   getAssetContract: (
@@ -57,6 +58,13 @@ function requiredTextEncoderMessage(contract: EngineAssetContract): string {
     return `This engine requires exactly ${requiredCount} text encoder(s) (${kindLabel}).`
   }
   return `This engine requires exactly ${requiredCount} text encoder(s).`
+}
+
+function usesExplicitSdxlTextEncoderSelectors(
+  engineKey: string,
+  checkpointCoreOnly: boolean,
+): boolean {
+  return checkpointCoreOnly && (engineKey === 'sdxl' || engineKey === 'sdxl_refiner')
 }
 
 export function buildExplicitImageRequestContract(
@@ -112,21 +120,58 @@ export function buildExplicitImageRequestContract(
     : []
   const requiredTencCount = Math.max(0, Math.trunc(Number(assetContract.tenc_count ?? 0)))
   if (requiredTencCount > 0) {
-    const shas: string[] = []
-    for (const label of textEncoderLabels) {
-      const sha = args.resolvers.resolveTextEncoderSha(label)
-      if (!sha) {
-        throw new Error(`Text encoder SHA not found for '${label}'.`)
-      }
-      shas.push(sha)
-    }
-    if (shas.length === 0) {
-      throw new Error('Select a text encoder so the request can include tenc_sha.')
-    }
-    if (shas.length !== requiredTencCount) {
+    if (textEncoderLabels.length === 0) {
       throw new Error(requiredTextEncoderMessage(assetContract))
     }
-    extras.tenc_sha = shas.length === 1 ? shas[0] : shas
+    if (usesExplicitSdxlTextEncoderSelectors(args.engineKey, checkpointCoreOnly)) {
+      const expectedSlots = Array.isArray(assetContract.tenc_slots)
+        ? assetContract.tenc_slots
+            .map((value) => String(value || '').trim())
+            .filter((value) => value.length > 0)
+        : []
+      if (expectedSlots.length !== requiredTencCount) {
+        throw new Error(`SDXL core-only asset contract for '${args.engineKey}' is missing truthful text-encoder slots.`)
+      }
+      const slotToSha = new Map<string, string>()
+      for (const label of textEncoderLabels) {
+        const sha = args.resolvers.resolveTextEncoderSha(label)
+        if (!sha) {
+          throw new Error(`Text encoder SHA not found for '${label}'.`)
+        }
+        const slot = String(args.resolvers.resolveTextEncoderSlot(label) || '').trim()
+        if (!slot) {
+          throw new Error(`Text encoder slot metadata not found for '${label}'. Refresh inventory and retry.`)
+        }
+        if (!expectedSlots.includes(slot)) {
+          continue
+        }
+        const previousSha = slotToSha.get(slot)
+        if (previousSha && previousSha !== sha) {
+          throw new Error(`Multiple text encoders selected for SDXL slot '${slot}'.`)
+        }
+        slotToSha.set(slot, sha)
+      }
+      const missingSlots = expectedSlots.filter((slot) => !slotToSha.has(slot))
+      if (missingSlots.length > 0) {
+        throw new Error(requiredTextEncoderMessage(assetContract))
+      }
+      expectedSlots.forEach((slot, index) => {
+        extras[`tenc${index + 1}_sha`] = slotToSha.get(slot)
+      })
+    } else {
+      const shas: string[] = []
+      for (const label of textEncoderLabels) {
+        const sha = args.resolvers.resolveTextEncoderSha(label)
+        if (!sha) {
+          throw new Error(`Text encoder SHA not found for '${label}'.`)
+        }
+        shas.push(sha)
+      }
+      if (shas.length !== requiredTencCount) {
+        throw new Error(requiredTextEncoderMessage(assetContract))
+      }
+      extras.tenc_sha = shas.length === 1 ? shas[0] : shas
+    }
   }
 
   const selectedVae = args.resolvers.requireVaeSelection(args.selectedVaeLabel)

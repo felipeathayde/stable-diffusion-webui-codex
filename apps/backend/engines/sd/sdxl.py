@@ -12,7 +12,6 @@ When smart offload is enabled, CLIP patcher unload is stage-scoped (only unload 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Computes basic tensor statistics for debug logging (shape/dtype/device + min/max/mean/std).
-- `_opts` (function): Builds an SDXL options namespace (crop defaults and related SDXL processing defaults).
 - `_validate_conditioning_payload` (function): Validates conditioning-related payload fields against the assembled runtime/spec.
 - `_SDXLPrompt` (class): Prompt marker type used for internal prompt/meta handling.
 - `_prompt_meta` (function): Computes metadata for a prompt batch (length/count flags) used in caching and diagnostics.
@@ -24,7 +23,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import torch
@@ -79,13 +77,8 @@ def _tensor_stats(tensor: torch.Tensor) -> dict[str, object]:
         }
 
 
-def _opts() -> SimpleNamespace:
-    return SimpleNamespace(
-        sdxl_crop_left=0,
-        sdxl_crop_top=0,
-        sdxl_refiner_low_aesthetic_score=2.5,
-        sdxl_refiner_high_aesthetic_score=6.0,
-    )
+_SDXL_DEFAULT_CROP_LEFT = 0
+_SDXL_DEFAULT_CROP_TOP = 0
 
 
 def _validate_conditioning_payload(runtime: SDEngineRuntime, payload: Mapping[str, Any], *, label: str) -> None:
@@ -187,13 +180,12 @@ def _prompt_meta(prompts: Sequence[str]) -> Tuple[int, int, int, int, int, int, 
             value = getattr(prompts, attr, None)
         return int(value if value not in (None, "") else default)
 
-    fallback = _opts()
     width = _meta("width", 1024)
     height = _meta("height", 1024)
     target_width = _meta("target_width", width)
     target_height = _meta("target_height", height)
-    crop_left = _meta("crop_left", getattr(fallback, "sdxl_crop_left", 0))
-    crop_top = _meta("crop_top", getattr(fallback, "sdxl_crop_top", 0))
+    crop_left = _meta("crop_left", _SDXL_DEFAULT_CROP_LEFT)
+    crop_top = _meta("crop_top", _SDXL_DEFAULT_CROP_TOP)
     is_negative = bool(getattr(reference, "is_negative_prompt", getattr(prompts, "is_negative_prompt", False)))
     return width, height, target_width, target_height, crop_left, crop_top, is_negative
 
@@ -353,11 +345,11 @@ class StableDiffusionXL(CodexDiffusionEngine):
     ) -> List[_SDXLPrompt]:
         width = int(getattr(proc, "width", 1024) or 1024)
         height = int(getattr(proc, "height", 1024) or 1024)
-        target_width = int(getattr(proc, "hr_upscale_to_x", 0) or width)
-        target_height = int(getattr(proc, "hr_upscale_to_y", 0) or height)
-        opts = _opts()
-        crop_left = int(getattr(proc, "sdxl_crop_left", getattr(opts, "sdxl_crop_left", 0)) or 0)
-        crop_top = int(getattr(proc, "sdxl_crop_top", getattr(opts, "sdxl_crop_top", 0)) or 0)
+        hires_cfg = getattr(proc, "hires", None)
+        target_width = int(getattr(hires_cfg, "resize_x", 0) or width)
+        target_height = int(getattr(hires_cfg, "resize_y", 0) or height)
+        crop_left = int(getattr(proc, "sdxl_crop_left", _SDXL_DEFAULT_CROP_LEFT) or 0)
+        crop_top = int(getattr(proc, "sdxl_crop_top", _SDXL_DEFAULT_CROP_TOP) or 0)
         smart_cache = getattr(proc, "smart_cache", None)
 
         wrappers: List[_SDXLPrompt] = []

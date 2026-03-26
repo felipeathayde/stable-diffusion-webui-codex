@@ -33,3 +33,4 @@ Status: Active
   - `FLUX.2-klein-4B` → distilled checkpoint; non-empty negative prompts fail loud and the engine uses the request's distilled guidance scale as the effective sampling CFG.
   - `FLUX.2-klein-base-4B` → classic CFG / negative prompts
 - Use `img2img.py` for FLUX.2 image-conditioned generation; the common `apps/backend/use_cases/img2img.py` route still models classic init-latent denoise / Kontext continuation and is not truthful for FLUX.2.
+- 2026-03-24: FLUX.2 masked img2img now matches the classic owner split for `per_step_blend_strength`: exact `1.0` keeps legacy `pre_denoiser` + `post_denoiser` + `post_sample`, while lower strengths must use `post_step_hook` + `post_sample` only.

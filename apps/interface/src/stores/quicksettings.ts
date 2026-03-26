@@ -11,7 +11,8 @@ Loads lists from `/api/*`, persists option changes via `/api/options`, and maint
 resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options,
 and caches the current `/api/options` revision for generation payload contracts (`settings_revision`).
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
-sanitized so `tenc_sha` resolution remains deterministic across families (including Anima and LTX2). VAE state defaults to canonical `built-in`
+sanitized so `tenc_sha` resolution remains deterministic across families (including Anima and LTX2). Inventory slot metadata is cached alongside
+SHA mappings so SDXL core-only requests can emit explicit `tenc1_sha` / `tenc2_sha` selectors without guessing label order. VAE state defaults to canonical `built-in`
 when no persisted value exists, request preflight can enforce fail-loud non-empty selection via `requireVaeSelection`, and LoRA SHA mappings
 are refreshed through the store-owned inventory flow (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`). FLUX.2 override persistence
 stays truthful to the current Klein 4B / base-4B slice by keeping at most one `flux2/*` Qwen selector.
@@ -19,7 +20,7 @@ stays truthful to the current Klein 4B / base-4B slice by keeping at most one `f
 Symbols (top-level; keep in sync; no ghosts):
 - `normalizeTextEncoderSelectionLabels` (function): Normalizes persisted/current TE override labels, deduping values and capping FLUX.2 to one selector.
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
-  setters that call API updates, inventory hydrators (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers, including LoRA).
+  setters that call API updates, inventory hydrators (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA/slot (`resolve*Sha` helpers plus `resolveTextEncoderSlot`, including LoRA).
   It also exports checkpoint helpers (`resolveModelInfo`, `requireModelInfo`, `resolveFlux2CheckpointVariant`, `resolveLtxCheckpointExecutionMetadata`) so image/video requests can fail loud on stale checkpoint picks
   and FLUX.2 guidance semantics can be derived from the selected model without extra request fields.
 */
@@ -307,6 +308,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const textEncoderRootLabels = ref<Set<string>>(new Set())
   // SHA256 lookup maps populated from inventory
   const textEncoderShaMap = ref<Map<string, string>>(new Map())
+  const textEncoderSlotMap = ref<Map<string, string>>(new Map())
   const vaeShaMap = ref<Map<string, string>>(new Map())
   const loraShaMap = ref<Map<string, string>>(new Map())
   const wanGgufShaMap = ref<Map<string, string>>(new Map())
@@ -737,6 +739,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
     const labels = new Set<string>()
     const shaMap = new Map<string, string>()
+    const slotMap = new Map<string, string>()
     for (const te of inv.text_encoders || []) {
       const sha = typeof te.sha256 === 'string' ? te.sha256.trim().toLowerCase() : ''
       if (!sha || !/^[0-9a-f]{64}$/.test(sha)) continue
@@ -744,6 +747,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       const rawPath = typeof te.path === 'string' ? te.path.trim() : ''
       const normPath = normalizePath(rawPath)
       const basename = normPath ? normPath.split('/').pop() || '' : ''
+      const slot = typeof te.slot === 'string' ? te.slot.trim() : ''
 
       const matchedFamilies: string[] = []
       if (normPath) {
@@ -770,10 +774,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       }
       for (const key of mapKeys) {
         shaMap.set(key, sha)
+        if (slot) slotMap.set(key, slot)
       }
     }
     textEncoderChoices.value = Array.from(labels).sort()
     textEncoderShaMap.value = shaMap
+    textEncoderSlotMap.value = slotMap
 
     // Also populate VAE SHA map
     const vaeMap = new Map<string, string>()
@@ -850,6 +856,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
 
     return lookupTextEncoderShaFromMap(textEncoderShaMap.value, normalized)
+  }
+
+  function resolveTextEncoderSlot(label: string | null | undefined): string | undefined {
+    if (!label) return undefined
+    const normalized = label.replace(/\\+/g, '/')
+    return textEncoderSlotMap.value.get(normalized)
   }
 
   function resolveModelInfo(label: string | null | undefined): ModelInfo | undefined {
@@ -1253,6 +1265,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     // SHA maps for asset resolution
     textEncoderShaMap,
     resolveTextEncoderSha,
+    resolveTextEncoderSlot,
     resolveModelInfo,
     requireModelInfo,
     resolveFlux2CheckpointVariant,

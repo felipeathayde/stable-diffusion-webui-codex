@@ -15,6 +15,7 @@ Status: Active
 - Derive computed state for components instead of mutating raw backend payloads.
 - 2025-12-03: Result `info` now includes prompt, negative prompt, resolved seed, and default save directory so the UI surfaces real generation inputs/outputs.
 - 2025-12-03: Stores track two refiner configs: a global `refiner` (for post-base pass) and `hires.refiner` nested under the hires options for a hires-coupled refiner stage.
+- 2026-03-25: `model_tabs.ts` now treats top-level `swapModel` as the first-pass stage owner (`enabled + swapAtStep + cfg + seed + model`) and keeps `hires.swapModel` selector-only. Do not drop top-level `swapModel` from image-param allowlists or hydration; a public state seam without a runtime owner is forbidden.
 - 2025-12-03: `xyz.ts` store runs frontend-driven XYZ sweeps (X/Y/Z axes) using the active image model tab as the baseline, with stop support and per-cell status.
 - 2025-12-03: XYZ store now enqueues payload snapshots, supports stop-after-current vs stop-now (calling `/api/tasks/{id}/cancel`), and preserves hires/refiner in each job payload.
 - 2025-12-04: `engine_capabilities.ts` hydrates `/engines/capabilities` (under `/api` via `API_BASE`) once and exposes a cached map keyed by semantic engine tag (sd15, sdxl, flux1, wan22, hunyuan_video, svd) so views/components can hide Hires/Refiner/video-specific UI when the backend declares a surface as unsupported.
@@ -73,6 +74,8 @@ Status: Active
 - 2026-02-06: `model_tabs.reorder(...)` now rejects duplicate ids explicitly, and `model_tabs.updateParams(...)` rollback snapshots only touched keys (avoids full deep-clone cost for large tab params like init-image payloads).
 - 2026-02-17: `model_tabs.ts` WAN video params now include `attentionMode` + windowed img2vid temporal controls (`img2vid_window_*`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`), and normalization clamps/snap-normalizes WAN frame/window counts to the `4n+1` domain within `[9,401]` during hydration/persistence.
 - 2026-02-18: `model_tabs.ts` image-tab params now include `img2imgResizeMode` (default `just_resize`) and `img2imgUpscaler` (default `latent:bicubic-aa`) with normalization via `utils/img2img_resize.ts` for img2img UI layout/state parity.
+- 2026-03-25: image-tab second-pass model state now lives under `params.hires.swapModel` (and optional top-level `params.swapModel` for the generic seam); `params.hires.checkpoint` is dead and must not be reintroduced through hydration, defaults, or migration glue.
+- 2026-03-25: image-tab refiner state stays native (`params.refiner`, `params.hires.refiner`); generic swap ownership must not leak into refiner objects or into flat `hr_*` mirror fields.
 - 2026-02-18: `model_tabs.ts` image-tab params now include `guidanceAdvanced` (APG/rescale/trunc/renorm controls), with strict numeric/boolean normalization and defaults used by CFG Advanced UI + request extras wiring.
 - 2026-02-20: `quicksettings.ts` now defaults VAE selection to canonical `built-in` when nothing is persisted and exposes `requireVaeSelection()` for fail-loud request preflight on empty VAE selections.
 - 2026-02-20: `xyz.ts` run preflight now blocks sweeps when VAE selection is empty (shared fail-loud guard via `quicksettings.requireVaeSelection()`).
@@ -92,3 +95,4 @@ Status: Active
 - 2026-02-27: `model_tabs.ts` WAN `video` params removed obsolete output flags (`filenamePrefix`, `trimToAudio`, `saveMetadata`, `saveOutput`) and migrated interpolation state to one `interpolationFps` field (`0` off, active values normalized as output-FPS targets mapped to backend interpolation times).
 - 2026-02-27: `model_tabs.ts` WAN `video.fps` default is now `15` (was `24`) to align initial WAN runs with the updated UI baseline.
 - 2026-02-27: `model_tabs.ts` WAN `video` params now include SeedVR2 upscaling controls (`upscaling*` fields) with strict normalization (`batch_size` as `4n+1`, noise scales clamped to `[0,1]`, color-correction enum validation).
+- 2026-03-24: `model_tabs.ts` image params now persist `perStepBlendStrength` with default `1` and hydrate-time `[0,1]` clamping; this is additive state on the existing inpaint enforcement mode, not a new enum or migrated alias surface.

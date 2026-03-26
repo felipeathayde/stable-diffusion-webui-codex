@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_default_hf_root` (function): Returns the default Hugging Face vendor cache root under `CODEX_ROOT` (when used).
 - `_sha256` (function): Computes sha256 digest for a file path.
 - `detect_safetensors_primary_dtype` (function): Best-effort safetensors dtype hint reader (header-only parse; used for defaults/telemetry).
+- `_detect_sdxl_core_only_checkpoint` (function): Header-only SDXL checkpoint classifier for UNet-only `.safetensors` assets discovered under SDXL roots.
 - `_HashCacheEntry` (dataclass): Cache entry for one file (sha + mtime + size) used to avoid re-hashing unchanged files.
 - `LayoutMetadata` (dataclass): Typed CLIP layout metadata entry (`qkv_layout`, `projection_orientation`, optional `source_style`).
 - `_load_hash_cache` (function): Loads `.hashes.json` cache from disk (v1/v2 migration aware).
@@ -46,7 +47,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Tuple
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime import trace as _trace
-from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
+from apps.backend.runtime.checkpoint.safetensors_header import (
+    detect_safetensors_primary_dtype,
+    read_safetensors_header,
+)
 from apps.backend.runtime.model_registry.ltx2_execution import build_ltx2_checkpoint_metadata
 
 from .types import (
@@ -99,6 +103,21 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _detect_sdxl_core_only_checkpoint(path: Path) -> bool:
+    suffix = path.suffix.lower()
+    if suffix not in {".safetensor", ".safetensors"}:
+        return False
+    try:
+        header = read_safetensors_header(path)
+    except Exception:
+        return False
+    keys = [key for key in header.keys() if isinstance(key, str) and key != "__metadata__"]
+    has_unet = any(key.startswith("model.diffusion_model.") for key in keys)
+    has_vae = any(key.startswith("first_stage_model.") or key.startswith("vae.") for key in keys)
+    has_text_encoders = any(key.startswith("conditioner.embedders.") for key in keys)
+    return has_unet and not has_vae and not has_text_encoders
 
 
 @dataclass
@@ -513,6 +532,9 @@ class ModelRegistry:
                         "anima": "anima",
                         "wan22": "wan22",
                     }.get(top)
+            if not core_only and family_hint == "sdxl" and _detect_sdxl_core_only_checkpoint(file):
+                core_only = True
+                core_only_reason = "sdxl_header_unet_only"
             sha256, short_hash = self._hash_for(file)
             stat = file.stat()
             metadata: dict[str, object] = {}

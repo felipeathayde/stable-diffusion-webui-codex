@@ -189,7 +189,7 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
             }
 
             mode_info: dict[str, object] = {}
-            if bool(getattr(proc, "enable_hr", False)):
+            if bool(getattr(getattr(proc, "hires", None), "enabled", False)):
                 try:
                     mode_info["hires"] = getattr(proc, "hires", None).as_dict()
                 except Exception:  # noqa: BLE001

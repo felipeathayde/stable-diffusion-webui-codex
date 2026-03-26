@@ -29,7 +29,7 @@ from typing import FrozenSet
 class ShaKeys:
     """SHA256 keys for asset selection."""
     MODEL: FrozenSet[str] = frozenset({"model_sha"})
-    TENC: FrozenSet[str] = frozenset({"tenc_sha"})
+    TENC: FrozenSet[str] = frozenset({"tenc_sha", "tenc1_sha", "tenc2_sha"})
     VAE: FrozenSet[str] = frozenset({"vae_sha"})
     LORA: FrozenSet[str] = frozenset({"lora_sha"})
     
@@ -76,7 +76,7 @@ class Txt2ImgKeys:
         "resize_y",
         "upscaler",
         "tile",
-        "checkpoint",
+        "swap_model",
         "modules",
         "refiner",
         "distilled_cfg",
@@ -107,6 +107,7 @@ class ExtrasKeys:
     
     COMMON: FrozenSet[str] = frozenset({
         "hires",
+        "swap_model",
         "refiner",
         "text_encoder_override",
         "batch_size",

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/fill + masked padding + mask blur + invert/region-splitting toggles),
+Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/fill + masked padding + mask blur + invert/region-splitting toggles),
 including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
@@ -18,6 +18,7 @@ Init-image filename captions are centered in the footer area for clearer media i
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
 - `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select, slider, and split-toggle controls.
+- `perStepBlendStrength` (prop): Scales how strongly `Per-step blend` restores preserved outside-mask content each outer sampling step.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `InitialImageCard` zoom overlay.
 - `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent WAN state.
 - `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
@@ -195,6 +196,23 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
 
+      <div v-if="maskEnforcement === 'per_step_clamp'" class="gc-row img2img-mask-slider-row">
+        <SliderField
+          class="gc-col gc-col--wide"
+          label="Per-step blend strength"
+          :tooltip="INPAINT_PARAMETER_TOOLTIPS.perStepBlendStrength.content"
+          :tooltipTitle="INPAINT_PARAMETER_TOOLTIPS.perStepBlendStrength.title"
+          :modelValue="perStepBlendStrength"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          inputClass="cdx-input-w-xs"
+          :disabled="disabled"
+          @update:modelValue="(value) => emit('update:perStepBlendStrength', value)"
+        />
+      </div>
+
       <div class="gc-row img2img-mask-slider-row">
         <SliderField
           class="gc-col gc-col--wide"
@@ -298,6 +316,16 @@ const INPAINT_PARAMETER_TOOLTIPS = {
       '[[Latent nothing:]] starts from that same filled image scaffold, then zeros the masked latent for the most destructive reset.',
     ],
   },
+  perStepBlendStrength: {
+    title: 'Per-step blend strength',
+    content: [
+      'Controls how strongly `Per-step blend` pulls preserved outside-mask content back during sampling.',
+      '[[1.0:]] preserves the current legacy `Per-step blend` behavior.',
+      '[[0.0:]] disables the once-per-step pull-back, but the final preserved-content blend still happens at the end.',
+      '[[Increase:]] pulls the result back toward preserved content more each outer sampling step.',
+      '[[Decrease:]] gives the model more freedom between steps before the final preserved-content blend closes the result.',
+    ],
+  },
   splitMaskRegions: {
     title: 'Split mask regions',
     content: [
@@ -361,6 +389,7 @@ const props = withDefaults(defineProps<{
   maskImageData?: string
   maskImageName?: string
   maskEnforcement: MaskEnforcement
+  perStepBlendStrength?: number
   inpaintingFill: number
   inpaintFullResPadding: number
   maskBlur: number
@@ -380,6 +409,7 @@ const props = withDefaults(defineProps<{
   maskImageData: '',
   maskImageName: '',
   maskEnforcement: 'per_step_clamp',
+  perStepBlendStrength: 1,
   maskInvert: false,
   maskRegionSplit: false,
   zoomFrameGuide: null,
@@ -393,6 +423,7 @@ const emit = defineEmits<{
   (e: 'apply:maskImageData', value: string): void
   (e: 'notice:maskEditorReset', message: string): void
   (e: 'update:maskEnforcement', value: string): void
+  (e: 'update:perStepBlendStrength', value: number): void
   (e: 'update:inpaintingFill', value: number): void
   (e: 'update:inpaintFullResPadding', value: number): void
   (e: 'toggle:maskRegionSplit'): void

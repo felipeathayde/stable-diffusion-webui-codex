@@ -8,7 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the WebUI.
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
-default parameter shapes per tab type (image vs WAN/LTX video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
+default parameter shapes per tab type (image vs WAN/LTX video) using engine defaults and form-state schemas. Image-tab second-pass model state lives
+under typed `swapModel` owners (global `swapModel`, hires `hires.swapModel`), and stale legacy `hires.checkpoint` / refiner-embedded `vae` snapshot
+fields are dropped during hydration instead of being preserved as rename glue. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
 `img2imgUpscaler`) decoupled from backend hires dispatch. WAN video normalization persists no-stretch img2vid guide controls
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
@@ -74,7 +76,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, toRaw } from 'vue'
 import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
 import type { ApiTab } from '../api/types'
-import type { HiresFormState, RefinerFormState } from '../api/payloads'
+import type { HiresFormState, RefinerFormState, SwapModelFormState, SwapStageFormState } from '../api/payloads'
 import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_config'
 import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, type TabFamily } from '../utils/engine_taxonomy'
@@ -256,6 +258,7 @@ export interface ImageBaseParams {
   img2imgUpscaler: string
   guidanceAdvanced: GuidanceAdvancedParams
   hires: HiresFormState
+  swapModel: SwapStageFormState
   refiner: RefinerFormState
   checkpoint: string
   textEncoders: string[]
@@ -267,6 +270,7 @@ export interface ImageBaseParams {
   maskImageData: string
   maskImageName: string
   maskEnforcement: 'post_blend' | 'per_step_clamp'
+  perStepBlendStrength: number
   inpaintFullResPadding: number
   inpaintingFill: number
   maskInvert: boolean
@@ -330,7 +334,7 @@ type ModelTabsStorageState = {
 
 export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v2'
 const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
-const TAB_PARAMS_SCHEMA_VERSION = 2
+const TAB_PARAMS_SCHEMA_VERSION = 3
 
 const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'schemaVersion',
@@ -350,7 +354,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'img2imgUpscaler',
   'guidanceAdvanced',
   'hires',
-  'highres', // legacy alias
+  'swapModel',
   'refiner',
   'checkpoint',
   'textEncoders',
@@ -362,6 +366,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'maskImageData',
   'maskImageName',
   'maskEnforcement',
+  'perStepBlendStrength',
   'inpaintFullResPadding',
   'inpaintingFill',
   'maskInvert',
@@ -551,7 +556,13 @@ function defaultParams<T extends BaseTabType>(
     cfg: 3.5,
     seed: -1,
     model: undefined,
-    vae: undefined,
+  }
+  const swapStageDefaults: SwapStageFormState = {
+    enabled: false,
+    swapAtStep: 1,
+    cfg: guidance,
+    seed: -1,
+    model: undefined,
   }
   const hiresDefaults: HiresFormState = {
     enabled: false,
@@ -562,7 +573,7 @@ function defaultParams<T extends BaseTabType>(
     steps: 0,
     upscaler: 'latent:bicubic-aa',
     tile: { tile: 256, overlap: 16 },
-    checkpoint: undefined,
+    swapModel: undefined,
     modules: [],
     sampler: undefined,
     scheduler: undefined,
@@ -590,6 +601,7 @@ function defaultParams<T extends BaseTabType>(
     img2imgUpscaler: 'latent:bicubic-aa',
     guidanceAdvanced: { ...DEFAULT_GUIDANCE_ADVANCED_PARAMS },
     hires: { ...hiresDefaults },
+    swapModel: { ...swapStageDefaults },
     refiner: { ...refinerDefaults },
     checkpoint: '',
     textEncoders: [],
@@ -601,6 +613,7 @@ function defaultParams<T extends BaseTabType>(
     maskImageData: '',
     maskImageName: '',
     maskEnforcement: 'per_step_clamp',
+    perStepBlendStrength: 1,
     inpaintFullResPadding: 32,
     inpaintingFill: 1,
     maskInvert: false,
@@ -733,10 +746,25 @@ function migrateImageParamsPatch(rawPatch: Record<string, unknown>): {
     }
     patch[key] = value
   }
-  if (!Object.prototype.hasOwnProperty.call(patch, 'hires') && isPlainRecord(patch.highres)) {
-    patch.hires = patch.highres
+  if (isPlainRecord(patch.swapModel)) {
+    const rawSwapModel = patch.swapModel as Record<string, unknown>
+    const hasStageKeys = (
+      Object.prototype.hasOwnProperty.call(rawSwapModel, 'enabled')
+      || Object.prototype.hasOwnProperty.call(rawSwapModel, 'swapAtStep')
+      || Object.prototype.hasOwnProperty.call(rawSwapModel, 'cfg')
+      || Object.prototype.hasOwnProperty.call(rawSwapModel, 'seed')
+    )
+    if (!hasStageKeys) {
+      const migratedModel = String(rawSwapModel.model || '').trim()
+      patch.swapModel = {
+        enabled: migratedModel.length > 0,
+        swapAtStep: 1,
+        cfg: clampFiniteNumber(rawPatch.cfgScale, 7, 0, Number.POSITIVE_INFINITY),
+        seed: -1,
+        model: migratedModel || undefined,
+      }
+    }
   }
-  delete patch.highres
   const fromVersion = parseParamsSchemaVersion(rawPatch.schemaVersion)
   patch.schemaVersion = TAB_PARAMS_SCHEMA_VERSION
   return {
@@ -1142,6 +1170,14 @@ function normalizeGuidanceAdvancedParams(raw: unknown, defaults: GuidanceAdvance
   }
 }
 
+function clampFiniteNumber(value: unknown, fallback: number, min?: number, max?: number): number {
+  const numeric = Number(value)
+  const finiteValue = Number.isFinite(numeric) ? numeric : fallback
+  if (min !== undefined && finiteValue < min) return min
+  if (max !== undefined && finiteValue > max) return max
+  return finiteValue
+}
+
 function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBaseParams {
   const rawPatch = asRecordObject(raw)
   const migration = migrateImageParamsPatch(rawPatch)
@@ -1153,13 +1189,18 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   }
   const patch = migration.patch
   const hiresPatch = asRecordObject(patch.hires)
+  const hiresSwapModelPatch = asRecordObject(hiresPatch.swapModel)
   const hiresRefinerPatch = asRecordObject(hiresPatch.refiner)
   const hiresTilePatch = asRecordObject(hiresPatch.tile)
+  const swapModelPatch = asRecordObject(patch.swapModel)
   const refinerPatch = asRecordObject(patch.refiner)
 
   const mergedHires: HiresFormState = {
     ...defaults.hires,
     ...(hiresPatch as Partial<HiresFormState>),
+    swapModel: Object.keys(hiresSwapModelPatch).length > 0
+      ? (hiresSwapModelPatch as Partial<SwapModelFormState>) as SwapModelFormState
+      : defaults.hires.swapModel,
     refiner: {
       ...(asRecordObject(defaults.hires.refiner) as Partial<RefinerFormState>),
       ...(hiresRefinerPatch as Partial<RefinerFormState>),
@@ -1173,12 +1214,22 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   const merged: ImageBaseParams = {
     ...defaults,
     ...patch,
+    swapModel: Object.keys(swapModelPatch).length > 0
+      ? {
+          ...defaults.swapModel,
+          ...(swapModelPatch as Partial<SwapStageFormState>),
+        }
+      : defaults.swapModel,
     hires: mergedHires,
     refiner: {
       ...defaults.refiner,
       ...(refinerPatch as Partial<RefinerFormState>),
     },
   }
+
+  delete (merged.hires as unknown as Record<string, unknown>).checkpoint
+  delete (merged.refiner as unknown as Record<string, unknown>).vae
+  delete (merged.hires.refiner as unknown as Record<string, unknown>).vae
 
   merged.useInitImage = normalizeBoolean(merged.useInitImage, defaults.useInitImage)
   merged.useMask = normalizeBoolean(merged.useMask, defaults.useMask)
@@ -1193,6 +1244,21 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   merged.refiner.swapAtStep = Number.isFinite(globalSwapAtStep) && globalSwapAtStep >= 1
     ? Math.trunc(globalSwapAtStep)
     : 1
+  merged.swapModel.enabled = normalizeBoolean(merged.swapModel.enabled, defaults.swapModel.enabled)
+  const globalModelSwapAtStep = Number(merged.swapModel.swapAtStep)
+  merged.swapModel.swapAtStep = Number.isFinite(globalModelSwapAtStep) && globalModelSwapAtStep >= 1
+    ? Math.trunc(globalModelSwapAtStep)
+    : 1
+  merged.swapModel.cfg = clampFiniteNumber(
+    merged.swapModel.cfg,
+    merged.cfgScale,
+    0,
+    Number.POSITIVE_INFINITY,
+  )
+  merged.swapModel.seed = Number.isFinite(Number(merged.swapModel.seed))
+    ? Math.trunc(Number(merged.swapModel.seed))
+    : defaults.swapModel.seed
+  merged.swapModel.model = String(merged.swapModel.model || '').trim() || undefined
   if (merged.hires.refiner) {
     const hiresSwapAtStep = Number(merged.hires.refiner.swapAtStep)
     merged.hires.refiner.swapAtStep = Number.isFinite(hiresSwapAtStep) && hiresSwapAtStep >= 1
@@ -1209,6 +1275,7 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   merged.maskEnforcement = normalizeMaskEnforcement(
     typeof merged.maskEnforcement === 'string' ? merged.maskEnforcement : defaults.maskEnforcement,
   )
+  merged.perStepBlendStrength = clampFiniteNumber(merged.perStepBlendStrength, defaults.perStepBlendStrength, 0, 1)
   merged.img2imgResizeMode = normalizeImg2ImgResizeMode(merged.img2imgResizeMode)
   merged.img2imgUpscaler = String(merged.img2imgUpscaler || '').trim() || defaults.img2imgUpscaler
   merged.textEncoders = Array.isArray(merged.textEncoders)

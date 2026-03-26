@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 Notes: Target keyspace matches `apps/backend/runtime/common/nn/clip.py:IntegratedCLIP` (and related Codex CLIP wrappers).
 Key policies (non-exhaustive): interpret known wrapper/container surfaces explicitly per key; drop HF-only buffers (`*.position_ids`) and refuse other unknown non-weight keys;
-map `logit_scale` into the canonical destination (default `ln(100)`); map optional projection weights into `transformer.text_projection.weight` (CLIP-G; lazy transpose);
+require exactly one native `logit_scale` source and map it into the canonical destination; map optional projection weights into `transformer.text_projection.weight` (CLIP-G; lazy transpose);
 for OpenCLIP-style fused attention weights (`attn.in_proj_{weight,bias}`), expose either split Q/K/V projections or fused `in_proj` keys.
 The QKV layout can be selected via the `qkv_impl` argument (`"auto"`, `"split"` or `"fused"`).
 `"auto"` keeps the native layout: OpenCLIP-style weights stay fused, HF/Codex weights stay split.
@@ -33,7 +33,6 @@ from __future__ import annotations
 
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
-from math import log
 from typing import Literal, TypeVar
 
 from apps.backend.infra.config.weight_structural_conversion import (
@@ -156,12 +155,7 @@ class _Transpose:
     key: str
 
 
-@dataclass(frozen=True, slots=True)
-class _DefaultLogitScale:
-    value: float
-
-
-_Spec = _Direct | _SliceQKV | _ConcatQKV | _Transpose | _DefaultLogitScale
+_Spec = _Direct | _SliceQKV | _ConcatQKV | _Transpose
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,13 +252,6 @@ class _SDXLCLIPKeymapView(MutableMapping[str, _T]):
             if cached is not None:
                 return cached
             v = self._transpose_2d(self._base[spec.key])
-        elif isinstance(spec, _DefaultLogitScale):
-            cached = self._derived_cache.get(k)
-            if cached is not None:
-                return cached
-            import torch
-
-            v = torch.tensor(float(spec.value))  # type: ignore[assignment]
         else:  # pragma: no cover - defensive
             raise KeyError(k)
 
@@ -389,8 +376,6 @@ def _spec_source(spec: _Spec) -> str:
         return f"{spec.q_key}|{spec.k_key}|{spec.v_key}"
     if isinstance(spec, _Transpose):
         return str(spec.key)
-    if isinstance(spec, _DefaultLogitScale):
-        return "__default__:logit_scale"
     raise KeyMappingError(f"sdxl_clip: unsupported mapping spec type={type(spec).__name__}")
 
 
@@ -573,9 +558,9 @@ def _resolve_clip_keyspace(
 
         if key in _LOGIT_KEYS:
             if seen_logit is not None:
-                # Keep the first logit source and ignore aliases to preserve
-                # deterministic behavior across wrapper layouts.
-                continue
+                raise KeyMappingError(
+                    f"sdxl_clip: multiple logit_scale sources: {seen_logit!r},{key!r}"
+                )
             seen_logit = key
             _put("logit_scale", _Direct(raw_key))
             continue
@@ -673,7 +658,10 @@ def _resolve_clip_keyspace(
         raise KeyMappingError(f"sdxl_clip: unsupported detected style={style.value!r}")
 
     if "logit_scale" not in mapping:
-        _put("logit_scale", _DefaultLogitScale(log(100.0)))
+        raise KeyMappingError(
+            "sdxl_clip: missing required logit_scale source "
+            f"(expected one of: {', '.join(_LOGIT_KEYS)})"
+        )
 
     if keep_projection and require_projection and "transformer.text_projection.weight" not in mapping:
         raise KeyMappingError(

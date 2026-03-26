@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence, Tuple
 
@@ -77,12 +78,19 @@ class LatentMaskEnforcer:
         init_latent: torch.Tensor,
         latent_masked: torch.Tensor,
         latent_unmasked: torch.Tensor,
+        per_step_blend_strength: float,
         noise_scaling: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
         noise_seeds: Sequence[int] | None = None,
     ) -> None:
+        strength = float(per_step_blend_strength)
+        if not math.isfinite(strength):
+            raise ValueError("per_step_blend_strength must be finite")
+        if strength < 0.0 or strength > 1.0:
+            raise ValueError("per_step_blend_strength must be between 0.0 and 1.0")
         self._init_latent = init_latent
         self._latent_masked = latent_masked
         self._latent_unmasked = latent_unmasked
+        self._per_step_blend_strength = strength
         self._noise_scaling = noise_scaling
         raw_seeds = [int(seed) for seed in (noise_seeds or [0])]
         if not raw_seeds:
@@ -182,6 +190,22 @@ class LatentMaskEnforcer:
             sigma = sigma.expand(batch)
         return sigma.to(device=device, dtype=dtype).view(batch, 1, 1, 1)
 
+    def uses_legacy_per_step_clamp(self) -> bool:
+        return self._per_step_blend_strength == 1.0
+
+    @staticmethod
+    def _blend_toward_target(
+        current: torch.Tensor,
+        *,
+        target: torch.Tensor,
+        unmasked: torch.Tensor,
+        strength: float,
+    ) -> torch.Tensor:
+        if strength <= 0.0:
+            return current
+        current.add_((target - current) * unmasked * strength)
+        return current
+
     def pre_denoiser(self, x: torch.Tensor, sigma: torch.Tensor, step: int, steps: int) -> torch.Tensor:  # noqa: ARG002
         masked, unmasked, init_latent, _init_unmasked, base_noise = self._materialize(x)
         sigma_view = self._sigma_to_latent_shape(
@@ -205,9 +229,13 @@ class LatentMaskEnforcer:
         return denoised
 
     def post_step(self, x: torch.Tensor, step: int, steps: int) -> None:  # noqa: ARG002 - hook signature
-        masked, _unmasked, _init_latent, init_unmasked, _base_noise = self._materialize(x)
-        x.mul_(masked)
-        x.add_(init_unmasked)
+        _masked, unmasked, init_latent, _init_unmasked, _base_noise = self._materialize(x)
+        self._blend_toward_target(
+            x,
+            target=init_latent,
+            unmasked=unmasked,
+            strength=self._per_step_blend_strength,
+        )
 
     def post_sample(self, x: torch.Tensor) -> torch.Tensor:
         masked, _unmasked, _init_latent, init_unmasked, _base_noise = self._materialize(x)
@@ -571,6 +599,11 @@ def prepare_masked_img2img_bundle(
 
     init_tensor = pil_to_tensor([image_for_sampling])
     round_conditioning_mask = bool(getattr(processing, "round_image_mask", True))
+    per_step_blend_strength = float(getattr(processing, "per_step_blend_strength"))
+    if not math.isfinite(per_step_blend_strength):
+        raise ValueError("processing.per_step_blend_strength must be finite")
+    if per_step_blend_strength < 0.0 or per_step_blend_strength > 1.0:
+        raise ValueError("processing.per_step_blend_strength must be between 0.0 and 1.0")
     init_latent = encode_image_batch(
         processing.sd_model,
         init_tensor,
@@ -638,10 +671,14 @@ def prepare_masked_img2img_bundle(
 
         noise_scaling = _predictor_noise_scaling
 
+    if str(enforce_mode).strip() == MASK_ENFORCEMENT_PER_STEP_CLAMP:
+        processing.update_extra_param("Per-step blend strength", float(per_step_blend_strength))
+
     enforcer = LatentMaskEnforcer(
         init_latent=init_latent,
         latent_masked=latent_masked,
         latent_unmasked=latent_unmasked,
+        per_step_blend_strength=per_step_blend_strength,
         noise_scaling=noise_scaling,
         noise_seeds=noise_seeds,
     )

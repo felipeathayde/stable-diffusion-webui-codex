@@ -90,6 +90,8 @@ If you touch dependencies or configs, you update the proper manifest or lockfile
 - The default core for attention is PyTorch SDPA.
 - You list risks, side effects, globals.
 - Codex prefix or suffix is used where it actually adds meaning.
+- `Codex` is an intentional project naming convention. Do **not** strip it just because a symbol looks long.
+- If naming or structure is bad, fix the fake namespace, owner shape, module boundary, or alias soup. Do **not** "clean it up" by deleting the `Codex` prefix, and do **not** invent pseudo-namespaces like `CodexProcessing.Txt2Img` unless a real namespace or module exists.
 - You always code in Codex style:
   - Dataclasses, enums and similar.
   - Small modules with clear seams.
@@ -118,6 +120,47 @@ Drift Also counts as drift when any of this changes per engine for the same mode
 - The orchestrator stays the coordinator: resolve engine/device, cache/reload, run, and emit events.
 - Shared, reusable stages live in `apps/backend/runtime/pipeline_stages/`. If it's shared, it goes there. If it's not shared, it stays in the canonical use-case.
 
+**Ownership law: one concept, one owner path.**
+
+- If a concept already lives under a typed nested owner, it stays there. You do **not** mirror it into flat shadow fields for convenience.
+- Examples of forbidden shadow-owner drift:
+  - `processing.hires.swap_model` plus `processing.hires_swap_model`
+  - `processing.hires.refiner` plus `processing.hires_refiner`
+  - `processing.hires.*` plus `processing.hr_*`
+  - nested selector/config ownership plus sibling `*_name` / `*_path` aliases
+- If a callsite wants a flatter shape, redesign the callsite. Do **not** duplicate the owner.
+
+**Native names stay native.**
+
+- If a field is named after a native concept, it carries only that concept.
+- `refiner` is the native SDXL refiner seam. It is **not** a generic model-swap bucket.
+- Generic model swap must live under explicitly generic naming such as `swap_model`, with its own typed owner.
+- `extras.swap_model` is the top-level first-pass stage config:
+  - it owns `enable` + `switch_at_step` semantics for mid-generation base-pass swapping;
+  - it is **not** selector-only.
+- `extras.hires.swap_model` is the selector-only second-pass owner:
+  - it replaces the whole hires engine for the second pass;
+  - it does **not** grow stage-pointer fields.
+- `extras.refiner` / `extras.hires.refiner` remain SDXL-native refiner stages only.
+- When a public/runtime seam is renamed to the native owner, the old name dies everywhere in the same tranche: router payloads, frontend state, component props/emits, run helpers, docs, and AGENTS.
+- `hires.checkpoint`-style ghosts are forbidden once `hires.swap_model` exists.
+
+**Derived-plan law: execution-only, selector-free.**
+
+- A derived plan/helper struct may carry computed execution values such as target size, step count, denoise, or chosen upscaler.
+- A derived plan/helper struct must **not** own selectors, model references, checkpoint names, swap-model config, refiner config, modules, or any other request-shaped contract data.
+- If a plan/helper struct needs to carry those fields, that struct should not exist; compute from the canonical typed owner instead.
+- `HiResPlan`-style shadow containers are forbidden as a destination for contract ownership.
+
+**Unsupported seams fail loud.**
+
+- If a mode/surface does not support a typed seam yet, you do **not** hide the payload and continue.
+- Hide or clear the control in the UI when possible, and still fail loud at request build/runtime boundaries if stale state survives.
+- Example: img2img must not silently drop `swap_model` / refiner state that only exists for txt2img hires.
+- Public-state law: if a seam exists in frontend state, request payloads, or router parsing, it must also have a real execution owner.
+  - No hidden/store-only `swap_model` surfaces.
+  - No request/runtime surfaces that quietly do nothing.
+
 If an engine needs special behavior, you add a hook that the canonical use-case calls.
 If you can't express it as a hook, you stop and redesign until you can.
 No engine-specific pipelines. No zoo.
@@ -133,6 +176,9 @@ NotImplementedError("<feature> not yet implemented")
 
 Model loading is a minefield you cross with a map.
 You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`.
+- Supporting a family in `diffusers` format does **not** delegate contract truth to external `diffusers` helpers/imports.
+- If this repo supports a `diffusers` surface, classification, component requirements, and family-specific constraints stay in repo-owned loader/detector/parser seams.
+- Family-native external asset slots stay explicit and named. Do **not** collapse multi-slot families into generic selector bags when the contract depends on slot identity.
 
 Keymap law: see **ABSOLUTE LAW — DO NOT TOUCH LAYER NAMES** at the top of this file.
 The same no-rename/no-strip/no-punctuation-rewrite rule applies during model loading and engine/runtime keyspace interpretation.

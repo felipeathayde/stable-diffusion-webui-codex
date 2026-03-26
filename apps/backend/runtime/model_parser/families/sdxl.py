@@ -35,12 +35,13 @@ from ..quantization import validate_component_dtypes
 
 def build_plan(signature: ModelSignature) -> ParserPlanBundle:
     is_refiner = signature.family is ModelFamily.SDXL_REFINER
+    is_core_only = bool(signature.extras.get("core_only"))
     if is_refiner:
         plan = ParserPlan(
             splits=[
                 SplitSpec(name="unet", prefixes=("model.diffusion_model.",)),
                 SplitSpec(name="vae", prefixes=("first_stage_model.", "vae."), required=False),
-                SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.model.",)),
+                SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.model.",), required=not is_core_only),
             ],
             converters=(),
             validations=(
@@ -55,8 +56,16 @@ def build_plan(signature: ModelSignature) -> ParserPlanBundle:
         splits=[
             SplitSpec(name="unet", prefixes=("model.diffusion_model.",)),
             SplitSpec(name="vae", prefixes=("first_stage_model.", "vae."), required=False),
-            SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.model.", "conditioner.embedders.0.")),
-            SplitSpec(name="text_encoder_2", prefixes=("conditioner.embedders.1.model.", "conditioner.embedders.1.")),
+            SplitSpec(
+                name="text_encoder",
+                prefixes=("conditioner.embedders.0.model.", "conditioner.embedders.0."),
+                required=not is_core_only,
+            ),
+            SplitSpec(
+                name="text_encoder_2",
+                prefixes=("conditioner.embedders.1.model.", "conditioner.embedders.1."),
+                required=not is_core_only,
+            ),
         ],
         converters=(),
         validations=(

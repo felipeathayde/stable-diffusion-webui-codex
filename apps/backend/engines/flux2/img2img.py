@@ -60,7 +60,7 @@ from apps.backend.runtime.pipeline_stages.sampling_plan import (
 )
 from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
 from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
-from apps.backend.runtime.processing.datatypes import GenerationResult, HiResPlan, PromptContext, SamplingPlan
+from apps.backend.runtime.processing.datatypes import GenerationResult, PromptContext, SamplingPlan
 from apps.backend.runtime.processing.models import CodexProcessingImg2Img
 from apps.backend.runtime.text_processing import (
     clear_last_extra_generation_params,
@@ -130,10 +130,13 @@ def _read_denoise_strength(processing: CodexProcessingImg2Img, *, default: float
     return float(raw_value)
 
 
-def _build_flux2_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | None:
+def _resolve_flux2_hires_execution(
+    processing: CodexProcessingImg2Img,
+    *,
+    emit_plan_event: bool,
+) -> tuple[str, int, int, int, float]:
     if not _hires_enabled(processing):
-        return None
-
+        raise RuntimeError("Hires execution was requested but processing.hires.enabled is false.")
     model = getattr(processing, "sd_model", None)
     engine_id = str(getattr(model, "engine_id", "") or "").strip()
     if engine_id == "":
@@ -142,13 +145,7 @@ def _build_flux2_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | N
     setattr(processing, "_codex_hires_strategy", hires_strategy)
 
     hi_cfg = processing.hires
-    raw_upscaler = getattr(hi_cfg, "upscaler", None)
-    if not isinstance(raw_upscaler, str) or not raw_upscaler.strip():
-        raise ValueError(
-            "Hires is enabled but 'hires.upscaler' is missing. "
-            "Choose an upscaler id from GET /api/upscalers (e.g. 'latent:bicubic-aa')."
-        )
-    upscaler_id = raw_upscaler.strip()
+    upscaler_id = hi_cfg.require_upscaler_id()
     from apps.backend.runtime.vision.upscalers.specs import LATENT_UPSCALE_MODES
 
     if upscaler_id not in LATENT_UPSCALE_MODES and not upscaler_id.startswith("spandrel:"):
@@ -157,54 +154,31 @@ def _build_flux2_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | N
             "Expected a 'latent:*' or 'spandrel:*' upscaler id from GET /api/upscalers."
         )
 
-    resize_x = int(hi_cfg.resize_x) if hi_cfg.resize_x is not None else 0
-    resize_y = int(hi_cfg.resize_y) if hi_cfg.resize_y is not None else 0
-    if resize_x < 0:
-        raise ValueError("Hires is enabled but 'hires.resize_x' must be >= 0 (0 means fallback to scale).")
-    if resize_y < 0:
-        raise ValueError("Hires is enabled but 'hires.resize_y' must be >= 0 (0 means fallback to scale).")
-
-    scale = float(hi_cfg.scale) if hi_cfg.scale is not None else None
-    if resize_x > 0:
-        target_width = resize_x
-    else:
-        if scale is None or scale <= 0.0:
-            raise ValueError(
-                "Hires is enabled but neither 'hires.resize_x' nor a valid positive 'hires.scale' is set. "
-                "Provide explicit dimensions or a scale."
-            )
-        target_width = int(processing.width * scale)
-
-    if resize_y > 0:
-        target_height = resize_y
-    else:
-        if scale is None or scale <= 0.0:
-            raise ValueError(
-                "Hires is enabled but neither 'hires.resize_y' nor a valid positive 'hires.scale' is set. "
-                "Provide explicit dimensions or a scale."
-            )
-        target_height = int(processing.height * scale)
-
-    second_pass_steps = int(hi_cfg.second_pass_steps) if hi_cfg.second_pass_steps is not None else 0
-    if second_pass_steps < 0:
-        raise ValueError("Hires is enabled but 'hires.steps' must be >= 0 (0 means reuse first-pass steps).")
-    steps = second_pass_steps if second_pass_steps > 0 else int(processing.steps)
-    if steps <= 0:
-        raise ValueError("Hires is enabled but resolved 'steps' must be > 0.")
+    target_width, target_height = hi_cfg.resolve_target_dimensions(
+        base_width=int(processing.width),
+        base_height=int(processing.height),
+    )
+    steps = hi_cfg.resolve_second_pass_steps(base_steps=int(processing.steps))
 
     denoise = float(hi_cfg.denoise)
-    cfg_scale = hi_cfg.cfg
-    return HiResPlan(
-        enabled=True,
-        target_width=target_width,
-        target_height=target_height,
-        upscaler_id=upscaler_id,
-        steps=int(steps),
-        denoise=denoise,
-        cfg_scale=float(cfg_scale) if cfg_scale is not None else None,
-        checkpoint_name=getattr(hi_cfg, "checkpoint_name", None),
-        additional_modules=getattr(hi_cfg, "additional_modules", None),
-    )
+    if emit_plan_event:
+        emit_backend_event(
+            "pipeline.hires.plan",
+            logger=_LOG.name,
+            mode=str(getattr(processing, "_codex_mode", "img2img") or "img2img"),
+            stage="hires.plan",
+            task_id=getattr(processing, "_codex_task_id", None),
+            correlation_id=getattr(processing, "_codex_correlation_id", None),
+            correlation_source=getattr(processing, "_codex_correlation_source", None),
+            engine_id=engine_id,
+            strategy=hires_strategy,
+            upscaler_id=upscaler_id,
+            target_width=target_width,
+            target_height=target_height,
+            steps=int(steps),
+            denoise=float(denoise),
+        )
+    return upscaler_id, int(target_width), int(target_height), int(steps), float(denoise)
 
 
 def _build_flux2_hr_prompt_context(
@@ -237,16 +211,17 @@ def _build_flux2_hr_prompt_context(
 
 def _run_flux2_hires_pass(
     processing: CodexProcessingImg2Img,
-    hires_plan: HiResPlan,
     plan: SamplingPlan,
     base_samples: torch.Tensor,
     base_context: PromptContext,
+    *,
+    upscaler_id: str,
+    target_width: int,
+    target_height: int,
+    steps: int,
+    denoise: float,
 ) -> torch.Tensor:
     hi_cfg = processing.hires
-    target_width = int(hires_plan.target_width)
-    target_height = int(hires_plan.target_height)
-    steps = int(hires_plan.steps)
-    denoise = float(hires_plan.denoise)
 
     original = {
         "prompts": processing.prompts,
@@ -318,17 +293,14 @@ def _run_flux2_hires_pass(
         if callable(request_contract):
             request_contract(processing)
         processing.prepare_prompt_data()
-        effective_hires_plan = replace(
-            hires_plan,
-            target_width=int(effective_target_width),
-            target_height=int(effective_target_height),
-        )
 
         hires_inputs = prepare_hires_latents_and_conditioning(
             processing,
             base_samples=base_samples,
             base_decoded=None,
-            hires_plan=effective_hires_plan,
+            target_width=int(effective_target_width),
+            target_height=int(effective_target_height),
+            upscaler_id=upscaler_id,
             tile=getattr(hi_cfg, "tile", None),
         )
         if hires_inputs.continuation_mode not in {"image_latents", "image_latents_denoise"}:
@@ -443,7 +415,7 @@ def generate_flux2_img2img(
     processing.prepare_prompt_data()
 
     run_process_scripts(processing)
-    hires_plan = _build_flux2_hires_plan(processing)
+    hires_execution = _resolve_flux2_hires_execution(processing, emit_plan_event=True) if _hires_enabled(processing) else None
 
     pre_denoiser_hook = None
     post_denoiser_hook = None
@@ -468,10 +440,19 @@ def generate_flux2_img2img(
         full_res_plan = masked_bundle.full_res
         enforcement_value = str(enforcement).strip()
         if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
-            pre_denoiser_hook = enforcer.pre_denoiser
-            post_denoiser_hook = enforcer.post_denoiser
+            pre_denoiser_hook = None
+            post_denoiser_hook = None
+            post_step_hook = None
+            if enforcer.uses_legacy_per_step_clamp():
+                pre_denoiser_hook = enforcer.pre_denoiser
+                post_denoiser_hook = enforcer.post_denoiser
+            else:
+                post_step_hook = enforcer.post_step
             post_sample_hook = enforcer.post_sample
         elif enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
+            pre_denoiser_hook = None
+            post_denoiser_hook = None
+            post_step_hook = None
             post_sample_hook = enforcer.post_sample
         else:
             raise ValueError(
@@ -528,12 +509,23 @@ def generate_flux2_img2img(
     finally:
         finalize_tiling(tiling_applied, old_tiled)
 
-    if hires_plan is not None:
+    if hires_execution is not None:
         if full_res_plan is not None:
             raise NotImplementedError(
                 "FLUX.2 masked img2img hires does not support masks/inpaint in this backend seam yet."
             )
-        samples = _run_flux2_hires_pass(processing, hires_plan, plan, samples, prompt_context)
+        upscaler_id, target_width, target_height, steps, denoise = hires_execution
+        samples = _run_flux2_hires_pass(
+            processing,
+            plan,
+            samples,
+            prompt_context,
+            upscaler_id=upscaler_id,
+            target_width=int(target_width),
+            target_height=int(target_height),
+            steps=int(steps),
+            denoise=float(denoise),
+        )
 
     metadata = dict(_conditioning_cache_hit_metadata(processing))
     if full_res_plan is not None:

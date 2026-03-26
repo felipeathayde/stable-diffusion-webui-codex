@@ -34,7 +34,6 @@ import torch
 from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.runtime.processing.conditioners import decode_latent_batch, encode_image_batch
-from apps.backend.runtime.processing.datatypes import HiResPlan
 from apps.backend.runtime.vision.upscalers.registry import upscale_image_tensor, upscale_latent_tensor
 from apps.backend.runtime.vision.upscalers.specs import LATENT_UPSCALE_MODES, TileConfig, default_tile_config
 
@@ -383,7 +382,9 @@ def prepare_hires_latents_and_conditioning(
     *,
     base_samples: torch.Tensor,
     base_decoded: torch.Tensor | None,
-    hires_plan: HiResPlan,
+    target_width: int,
+    target_height: int,
+    upscaler_id: str,
     tile: TileConfig | None = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> HiresPreparation:
@@ -401,8 +402,8 @@ def prepare_hires_latents_and_conditioning(
     resize_plan = compute_hires_fill_crop_plan(
         base_width=base_latent_w * 8,
         base_height=base_latent_h * 8,
-        target_width=int(hires_plan.target_width),
-        target_height=int(hires_plan.target_height),
+        target_width=int(target_width),
+        target_height=int(target_height),
     )
     if resize_plan.needs_crop():
         processing.update_extra_param(
@@ -425,7 +426,7 @@ def prepare_hires_latents_and_conditioning(
         task_id=telemetry.task_id,
         engine_id=engine_id,
         strategy=backend,
-        upscaler_id=str(hires_plan.upscaler_id),
+        upscaler_id=str(upscaler_id),
         target_width=int(resize_plan.target_width),
         target_height=int(resize_plan.target_height),
     )
@@ -439,7 +440,7 @@ def prepare_hires_latents_and_conditioning(
             base_decoded=base_decoded,
             target_width=int(resize_plan.target_width),
             target_height=int(resize_plan.target_height),
-            upscaler_id=str(hires_plan.upscaler_id),
+            upscaler_id=str(upscaler_id),
             tile=tile,
             image_mask=getattr(processing, "image_mask", None),
             round_mask=bool(getattr(processing, "round_image_mask", True)),
@@ -475,7 +476,7 @@ def prepare_hires_latents_and_conditioning(
             sd_model,
             base_samples=base_samples,
             base_decoded=base_decoded,
-            upscaler_id=str(hires_plan.upscaler_id),
+            upscaler_id=str(upscaler_id),
             tile=tile,
             progress_callback=progress_callback,
             resize_plan=resize_plan,
@@ -505,7 +506,7 @@ def prepare_hires_latents_and_conditioning(
             sd_model,
             base_samples=base_samples,
             base_decoded=base_decoded,
-            upscaler_id=str(hires_plan.upscaler_id),
+            upscaler_id=str(upscaler_id),
             tile=tile,
             progress_callback=progress_callback,
             resize_plan=resize_plan,
@@ -545,7 +546,7 @@ def prepare_hires_latents_and_conditioning(
             sd_model,
             base_samples=base_samples,
             base_decoded=base_decoded,
-            upscaler_id=str(hires_plan.upscaler_id),
+            upscaler_id=str(upscaler_id),
             tile=tile,
             progress_callback=progress_callback,
             resize_plan=resize_plan,

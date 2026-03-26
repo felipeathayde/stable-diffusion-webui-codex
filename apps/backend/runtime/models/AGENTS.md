@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-03-21
+Last Review: 2026-03-25
 Status: Active
 
 ## Scope
@@ -40,6 +40,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 
 ## Updates
 - 2026-03-21: `loader.py` now validates that VAE state dicts do not require wrapper-prefix rewriting before layout detection/lane resolution; any such path is now an explicit stop-ship failure instead of a silent key rewrite seam.
+- 2026-03-25: `loader.py` now resolves SDXL diffusers base vs refiner truth from native `model_index.json` + `unet/config.json` evidence (no Diffusers config helper), expected-family SDXL checkpoint parsing can mark UNet-only checkpoints as `core_only`, SDXL CLIP slots no longer retype T5/CLIP payloads across family boundaries, and `ModelRegistry` marks SDXL UNet-only `.safetensors` checkpoints as `core_only` via header-only detection.
 - 2026-03-20: `loader.py` no longer exports/consumes a loader-side `inpaint_model()` checkpoint heuristic; image runtime behavior must come from explicit request selectors plus validated inventory metadata, not channel-count guesses.
 - 2025-11-22: VAE selection now prefers diffusers `AutoencoderKL` on diffusers-native layouts; native `AutoencoderKL_LDM` is selected only on native-LDM lane resolution (WAN22 constrained, other supported families policy-driven).
 - 2025-11-23: VAE loader now fails fast when weights are missing (e.g., pruned checkpoints without VAE); error names missing key count and asks for a compatible VAE.

@@ -15,7 +15,8 @@ When `useInitImage=true`, generation parameters render through `Img2ImgBasicPara
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
 Also shares the global `min_tile` preference (tiled lower bound) with `/upscale`.
-Swap-model cards (global + second-pass) share the same capability-gated advanced guidance/APG state surface.
+The generic first-pass model-swap stage lives under `params.swapModel`, the generic second-pass model selector lives under `params.hires.swapModel`,
+and global + hires refiner cards stay on the SDXL-native `refiner` seams with the shared capability-gated advanced guidance/APG state surface.
 Sampler/scheduler selectors normalize current selections against the executable `/api/samplers` + `/api/schedulers` inventory, keep base sampler/scheduler real, and scrub invalid hires overrides while still using backend recommendation lists for grouped option rendering (`Recommended` vs `Use at your own risk`) with inline technical warnings on out-of-recommendation selections.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
@@ -40,6 +41,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeGuidanceAdvancedPatch` (function): Sanitizes/normalizes advanced-guidance payload fragments (profile + UI patch merges).
 - `setGuidanceAdvanced` (function): Applies partial advanced-guidance updates into `params.guidanceAdvanced`.
 - `setHires` (function): Applies partial updates to the hires config object.
+- `setHiresSwapModel` (function): Applies the canonical nested hires `swapModel` selection without leaking flat alias fields.
 - `setHiresRefiner` (function): Applies partial updates to the hires-refiner config object.
 - `setRefiner` (function): Applies partial updates to the refiner config object.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
@@ -102,6 +104,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"
             :maskEnforcement="params.maskEnforcement"
+            :perStepBlendStrength="params.perStepBlendStrength"
             :inpaintingFill="params.inpaintingFill"
             :inpaintFullResPadding="params.inpaintFullResPadding"
             :maskBlur="params.maskBlur"
@@ -114,6 +117,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @apply:maskImageData="onMaskEditorApply"
             @notice:maskEditorReset="onMaskEditorResetNotice"
             @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
+            @update:perStepBlendStrength="(v) => setParams({ perStepBlendStrength: clampFloat(v, 0, 1) })"
             @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
             @update:inpaintFullResPadding="(v) => setParams({ inpaintFullResPadding: normalizeNonNegativeInt(v) })"
             @update:maskBlur="(v) => setParams({ maskBlur: normalizeNonNegativeInt(v) })"
@@ -227,10 +231,24 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:guidanceAdvanced="setGuidanceAdvanced"
             @random-seed="randomizeSeed"
             @reuse-seed="reuseSeed"
-          />
+	          />
 
-          <HiresSettingsCard
-            v-if="showHires"
+		          <SwapStageSettingsCard
+		            v-if="showGlobalSwapModel"
+		            :enabled="params.swapModel.enabled"
+		            :swapAtStep="params.swapModel.swapAtStep"
+		            :maxSteps="Math.max(1, params.steps - 1)"
+		            :cfg="params.swapModel.cfg"
+		            :model="params.swapModel.model"
+		            :modelChoices="swapModelChoices"
+	            @update:enabled="(v) => setSwapModel({ enabled: v })"
+	            @update:swapAtStep="(v) => setSwapModel({ swapAtStep: Math.max(1, Math.trunc(v)) })"
+	            @update:cfg="(v) => setSwapModel({ cfg: v })"
+	            @update:model="(v) => setSwapModel({ model: v })"
+	          />
+
+	          <HiresSettingsCard
+	            v-if="showHires"
             :disabled="isRunning"
             :enabled="params.hires.enabled"
             :samplers="filteredSamplers"
@@ -246,8 +264,9 @@ Symbols (top-level; keep in sync; no ghosts):
             :cfg="hiresCfgValue"
             :resize-x="params.hires.resizeX"
             :resize-y="params.hires.resizeY"
-            :checkpoint="params.hires.checkpoint"
-            :model-choices="swapModelChoices"
+            :swap-model="params.hires.swapModel?.model"
+            :swap-model-choices="swapModelChoices"
+            :show-swap-model="!params.useInitImage"
             :prompt="params.hires.prompt ?? ''"
             :negative-prompt="params.hires.negativePrompt ?? ''"
             :supports-negative="supportsNegative"
@@ -264,6 +283,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :refinerCfg="showHiresRefiner ? params.hires.refiner?.cfg : undefined"
             :refinerModel="showHiresRefiner ? params.hires.refiner?.model : undefined"
             :refinerModelChoices="showHiresRefiner ? swapModelChoices : undefined"
+            :refinerMaxSteps="showHiresRefiner ? Math.max(1, (params.hires.steps > 0 ? params.hires.steps : params.steps) - 1) : undefined"
             :guidanceAdvanced="params.guidanceAdvanced"
             :guidanceSupport="guidanceAdvancedSupport"
             @update:enabled="(v) => setHires({ enabled: v })"
@@ -273,7 +293,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:cfg="onHiresCfgChange"
             @update:resizeX="(v) => setHires({ resizeX: Math.max(0, Math.trunc(v)) })"
             @update:resizeY="(v) => setHires({ resizeY: Math.max(0, Math.trunc(v)) })"
-            @update:checkpoint="(v) => setHires({ checkpoint: String(v || '').trim() || undefined })"
+            @update:swapModel="setHiresSwapModel"
             @update:prompt="(v) => setHires({ prompt: String(v || '') })"
             @update:negativePrompt="(v) => setHires({ negativePrompt: String(v || '') })"
             @update:sampler="onHiresSamplerChange"
@@ -292,6 +312,7 @@ Symbols (top-level; keep in sync; no ghosts):
             v-if="showGlobalRefiner"
             :enabled="params.refiner.enabled"
             :swapAtStep="params.refiner.swapAtStep"
+            :maxSteps="Math.max(1, params.steps - 1)"
             :cfg="params.refiner.cfg"
             :model="params.refiner.model"
             :modelChoices="swapModelChoices"
@@ -558,6 +579,7 @@ import Img2ImgBasicParametersCard from '../components/Img2ImgBasicParametersCard
 import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
+import SwapStageSettingsCard from '../components/SwapStageSettingsCard.vue'
 import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import ResultViewer from '../components/ResultViewer.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
@@ -866,9 +888,18 @@ const hiresModePolicy = computed(() => resolveHiresModePolicy(
 ))
 const showHires = computed(() => hiresModePolicy.value.showCard)
 
-const showHiresRefiner = computed(() => !Boolean(params.value.useInitImage))
+const showGlobalSwapModel = computed(() => !Boolean(params.value.useInitImage))
+
+const showHiresRefiner = computed(() => {
+  if (params.value.useInitImage) return false
+  if (props.type === 'zimage') return false
+  const surf = engineSurface.value
+  if (!surf) return true
+  return surf.supports_refiner
+})
 
 const showGlobalRefiner = computed(() => {
+  if (params.value.useInitImage) return false
   if (props.type === 'zimage') return false
   const surf = engineSurface.value
   if (!surf) return true
@@ -1183,9 +1214,24 @@ watch(showGlobalRefiner, (show) => {
   setRefiner({ enabled: false })
 })
 
+watch(showGlobalSwapModel, (show) => {
+  if (show) return
+  if (!params.value.swapModel.enabled) return
+  setSwapModel({ enabled: false })
+})
+
+watch(showHiresRefiner, (show) => {
+  if (show) return
+  if (!params.value.hires.refiner?.enabled) return
+  setHiresRefiner({ enabled: false })
+})
+
 watch(
   () => params.value.useInitImage,
   (enabled, wasEnabled) => {
+    if (enabled && params.value.hires.swapModel?.model) {
+      setHires({ swapModel: undefined })
+    }
     if (!enabled || wasEnabled) return
     maybeApplyKontextDefaults()
   },
@@ -1466,6 +1512,24 @@ function setHires(patch: Partial<ImageBaseParams['hires']>): void {
   setParams({ hires: { ...params.value.hires, ...patch } })
 }
 
+function setHiresSwapModel(value: string): void {
+  const model = String(value || '').trim()
+  setHires({ swapModel: model ? { model } : undefined })
+}
+
+function setSwapModel(patch: Partial<ImageBaseParams['swapModel']>): void {
+  const nextSwapModel = {
+    ...params.value.swapModel,
+    ...patch,
+  }
+  if (patch.enabled === true && !params.value.swapModel.enabled && patch.cfg === undefined) {
+    nextSwapModel.cfg = params.value.cfgScale
+  }
+  const swapAtStep = Number(nextSwapModel.swapAtStep)
+  nextSwapModel.swapAtStep = Number.isFinite(swapAtStep) && swapAtStep >= 1 ? Math.trunc(swapAtStep) : 1
+  setParams({ swapModel: nextSwapModel })
+}
+
 function setHiresRefiner(patch: Partial<NonNullable<ImageBaseParams['hires']['refiner']>>): void {
   const nextRefiner = {
     enabled: false,
@@ -1521,6 +1585,9 @@ function normalizeImageParamPatch(patch: Partial<ImageBaseParams>): Partial<Imag
   const next: Partial<ImageBaseParams> = { ...patch }
   if (patch.width !== undefined) next.width = normalizeImageDimension(patch.width)
   if (patch.height !== undefined) next.height = normalizeImageDimension(patch.height)
+  if (patch.perStepBlendStrength !== undefined) {
+    next.perStepBlendStrength = clampFloat(Number(patch.perStepBlendStrength), 0, 1)
+  }
   if (patch.img2imgResizeMode !== undefined) {
     next.img2imgResizeMode = normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode.value, patch.img2imgResizeMode)
   }

@@ -38,11 +38,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_attach_checkpoint_inspection` (function): Wires safetensors inspection metadata onto lazy mappings when supported.
 - `_load_state_dict` (function): Loads a state dict from disk using inspection metadata and emits materialization events for non-safetensors.
 - `_read_json` (function): Reads a required JSON metadata file with explicit errors (used by vendored-HF signature builders).
+- `_load_diffusers_model_index` (function): Reads a diffusers `model_index.json` natively from disk (no Diffusers config helper).
 - `_zimage_signature_from_vendored_hf` (function): Builds a Z-Image `ModelSignature` from vendored HF metadata (`Tongyi-MAI/Z-Image-Turbo` layout; no state-dict detector).
 - `_flux_signature_from_vendored_hf` (function): Builds a Flux `ModelSignature` from vendored HF metadata (no state-dict detector).
 - `_resolve_flux2_repo_id_from_path` (function): Chooses the supported FLUX.2 4B/base-4B vendored repo id from a checkpoint path hint.
 - `_validate_supported_flux2_transformer_config` (function): Validates that a FLUX.2 transformer config matches the supported Klein 4B/base-4B slice.
 - `_flux2_signature_from_vendored_hf` (function): Builds a FLUX.2 `ModelSignature` from vendored HF metadata for the supported 4B/base-4B slice.
+- `_sdxl_expected_signature_from_state_dict` (function): Builds an SDXL/SDXL refiner signature from expected-family checkpoint truth, including core-only detection.
 - `_requires_sdxl_checkpoint_keymap` (function): Determines whether SDXL checkpoint keyspace resolution must run for a checkpoint parse call.
 - `_maybe_resolve_expected_family_keyspace` (function): Applies family-scoped GGUF/native keyspace interpretation for expected-family loads.
 - `_parse_checkpoint` (function): Parses one checkpoint (plus optional addons) into `ParsedCheckpoint` for bundle assembly.
@@ -63,6 +65,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution (incl. `tenc_path` shorthand),
   VAE layout handling, dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
 - `_SimpleEstimated` (class): Minimal estimate container used for config detection/compat when only partial metadata is available.
+- `resolve_sdxl_diffusers_surface` (function): Resolves SDXL base vs refiner diffusers repos from native JSON/config evidence and expected-family truth.
 - `_detect_engine_from_config` (function): Detects engine identifier from a diffusers config dict.
 - `load_engine_from_diffusers` (function): Loads a `DiffusionModelBundle` directly from a diffusers repo directory.
 - `resolve_diffusion_bundle` (function): Resolves and loads a diffusion bundle from either checkpoint paths or diffusers repos based on inputs.
@@ -110,6 +113,7 @@ from apps.backend.runtime.families.ltx2.config import LTX2_REQUIRED_TEXT_ENCODER
 from apps.backend.runtime.families.ltx2.loader import build_ltx2_bundle_metadata, prepare_ltx2_bundle_inputs
 from apps.backend.runtime.model_registry.errors import ModelRegistryError
 from apps.backend.runtime.model_registry.loader import detect_from_state_dict as registry_detect
+from apps.backend.runtime.model_registry.signals import build_bundle, count_blocks
 from apps.backend.runtime.model_registry.specs import (
     CodexCoreArchitecture,
     CodexCoreSignature,
@@ -497,6 +501,10 @@ def _read_json(path: Path) -> Dict[str, Any]:
     return data
 
 
+def _load_diffusers_model_index(repo_dir: str) -> Dict[str, Any]:
+    return _read_json(Path(repo_dir) / "model_index.json")
+
+
 def _zimage_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
     """Build a Z-Image `ModelSignature` from vendored HF metadata (no state-dict detection)."""
 
@@ -852,6 +860,106 @@ def _ltx2_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
     )
 
 
+def _shape_from_bundle(
+    bundle,
+    key: str,
+    dim: int,
+    *,
+    default: int | None = None,
+) -> int | None:
+    shape = bundle.shape(key)
+    if not shape:
+        return default
+    try:
+        return int(shape[dim])
+    except Exception:
+        return default
+
+
+def _sdxl_expected_signature_from_state_dict(
+    *,
+    state_dict: Mapping[str, Any],
+    expected_family: ModelFamily,
+) -> ModelSignature:
+    bundle = build_bundle(state_dict)
+    channels_in = _shape_from_bundle(bundle, "model.diffusion_model.input_blocks.0.0.weight", 1, default=4) or 4
+    channels_out = _shape_from_bundle(bundle, "model.diffusion_model.out.2.weight", 0, default=4) or 4
+    depth = count_blocks(bundle.keys, "model.diffusion_model.output_blocks.{}.")
+    has_vae = bundle.has_prefix("first_stage_model.") or bundle.has_prefix("vae.")
+
+    if expected_family is ModelFamily.SDXL_REFINER:
+        has_text_encoder = bundle.has_prefix("conditioner.embedders.0.")
+        core_only = (not has_vae) and (not has_text_encoder)
+        extras: Dict[str, object] = {"sdxl_variant": "refiner"}
+        if core_only:
+            extras["core_only"] = True
+        return ModelSignature(
+            family=ModelFamily.SDXL_REFINER,
+            repo_hint="stabilityai/stable-diffusion-xl-refiner-1.0",
+            prediction=PredictionKind.EPSILON,
+            latent_format=LatentFormat.SD_XL,
+            quantization=QuantizationHint(),
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.UNET,
+                channels_in=channels_in,
+                channels_out=channels_out,
+                context_dim=1280,
+                temporal=False,
+                depth=depth,
+                key_prefixes=["model.diffusion_model."],
+            ),
+            text_encoders=[
+                TextEncoderSignature(
+                    name="clip_g",
+                    key_prefix="conditioner.embedders.0.model.",
+                    expected_dim=1280,
+                    tokenizer_hint="openclip/ViT-bigG-14",
+                ),
+            ],
+            vae=None if core_only else VAESignature(key_prefix="first_stage_model.", latent_channels=channels_out),
+            extras=extras,
+        )
+
+    has_clip_l = bundle.has_prefix("conditioner.embedders.0.")
+    has_clip_g = bundle.has_prefix("conditioner.embedders.1.")
+    core_only = (not has_vae) and (not has_clip_l) and (not has_clip_g)
+    extras = {"sdxl_variant": "base"}
+    if core_only:
+        extras["core_only"] = True
+    return ModelSignature(
+        family=ModelFamily.SDXL,
+        repo_hint="stabilityai/stable-diffusion-xl-base-1.0",
+        prediction=PredictionKind.EPSILON,
+        latent_format=LatentFormat.SD_XL,
+        quantization=QuantizationHint(),
+        core=CodexCoreSignature(
+            architecture=CodexCoreArchitecture.UNET,
+            channels_in=channels_in,
+            channels_out=channels_out,
+            context_dim=2048,
+            temporal=False,
+            depth=depth,
+            key_prefixes=["model.diffusion_model."],
+        ),
+        text_encoders=[
+            TextEncoderSignature(
+                name="clip_l",
+                key_prefix="conditioner.embedders.0.transformer.",
+                expected_dim=768,
+                tokenizer_hint="openai/clip-vit-large-patch14",
+            ),
+            TextEncoderSignature(
+                name="clip_g",
+                key_prefix="conditioner.embedders.1.model.",
+                expected_dim=1280,
+                tokenizer_hint="openclip/ViT-bigG-14",
+            ),
+        ],
+        vae=None if core_only else VAESignature(key_prefix="first_stage_model.", latent_channels=channels_out),
+        extras=extras,
+    )
+
+
 def _requires_sdxl_checkpoint_keymap(
     state_dict: Mapping[str, Any],
     *,
@@ -940,6 +1048,11 @@ def _parse_checkpoint(
         signature = _flux2_signature_from_vendored_hf(model_path=primary_path)
     elif expected_family is ModelFamily.LTX2:
         signature = _ltx2_signature_from_vendored_hf(model_path=primary_path)
+    elif expected_family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+        signature = _sdxl_expected_signature_from_state_dict(
+            state_dict=base_state,
+            expected_family=expected_family,
+        )
     elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
         guidance_key = "guidance_in.in_layer.weight"
         has_guidance = any(
@@ -974,6 +1087,11 @@ def _parse_checkpoint(
                 extra_signature = _flux2_signature_from_vendored_hf(model_path=extra)
             elif expected_family is ModelFamily.LTX2:
                 extra_signature = _ltx2_signature_from_vendored_hf(model_path=extra)
+            elif expected_family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+                extra_signature = _sdxl_expected_signature_from_state_dict(
+                    state_dict=extra_state,
+                    expected_family=expected_family,
+                )
             elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
                 guidance_key = "guidance_in.in_layer.weight"
                 has_guidance = any(
@@ -1076,12 +1194,24 @@ def _detect_sdxl_vae_projection_lane(
         return "linear_2d"
 
     observed: set[str] = set()
+    shape_getter = getattr(state_dict, "shape_of", None)
     for key in _SDXL_VAE_CANONICAL_PROJECTION_KEYS:
         if key not in state_dict:
             continue
-        tensor = state_dict[key]
-        ndim = getattr(tensor, "ndim", None)
-        shape = getattr(tensor, "shape", None)
+        shape = None
+        ndim = None
+        if callable(shape_getter):
+            try:
+                raw_shape = shape_getter(key)
+            except Exception:
+                raw_shape = None
+            if raw_shape is not None:
+                shape = tuple(int(value) for value in raw_shape)
+                ndim = len(shape)
+        if shape is None:
+            tensor = state_dict[key]
+            ndim = getattr(tensor, "ndim", None)
+            shape = getattr(tensor, "shape", None)
         if ndim == 2 and shape and len(shape) == 2:
             observed.add("linear_2d")
             continue
@@ -1148,9 +1278,9 @@ def _maybe_convert_sdxl_vae_state_dict(
 
     This is a thin wrapper around the strict, string-only keymap in
     `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`. It:
-    - Strips wrapper prefixes (`first_stage_model.`, `vae.`, `model.`, `module.`).
+    - Rejects wrapper-prefix rewrite attempts (`first_stage_model.`, `vae.`, `model.`, `module.`) instead of normalizing them away.
     - Detects diffusers vs. LDM-style SDXL layouts and resolves LDM keys into diffusers lookup space.
-    - Validates canonical mid-attention projection lanes (`linear_2d` or `conv1x1_4d`).
+    - Validates canonical mid-attention projection lanes (`linear_2d` or `conv1x1_4d`) using lazy shape metadata first.
     - Drops known non-weight training metadata (`model_ema.decay`, `model_ema.num_updates`).
 
     Unknown/ambiguous layouts raise (fail loud). Families outside the Flow/SDXL lane are returned
@@ -1570,6 +1700,10 @@ def _load_huggingface_component(
             for k in list(state_dict.keys())[:100]
         )
         if _is_actually_t5:
+            if family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+                raise ValueError(
+                    f"SDXL slot '{component_name}' requires CLIP weights; received T5-style state dict instead."
+                )
             # Load as T5 using T5 handler but keep in same slot
             # The spec.py will detect the correct type later
             _LOG.info(
@@ -1803,6 +1937,10 @@ def _load_huggingface_component(
             for k in list(state_dict.keys())[:100]
         )
         if _is_actually_clip:
+            if family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+                raise ValueError(
+                    f"SDXL slot '{component_name}' must stay CLIP-only; received CLIP weights in a non-CLIP slot."
+                )
             # Load as CLIP using CLIP handler but keep in same slot
             # The spec.py will detect the correct type later
             _LOG.info(
@@ -2544,7 +2682,79 @@ class _SimpleEstimated:
         self.pipeline_class = pipeline_class
 
 
-def _detect_engine_from_config(config: dict) -> str:
+def resolve_sdxl_diffusers_surface(
+    *,
+    config: Mapping[str, Any],
+    repo_dir: str,
+    expected_family: ModelFamily | None = None,
+) -> str | None:
+    def _has_present_component(name: str) -> bool:
+        value = config.get(name)
+        return (
+            isinstance(value, list)
+            and len(value) == 2
+            and isinstance(value[0], str)
+            and bool(value[0].strip())
+            and isinstance(value[1], str)
+            and bool(value[1].strip())
+        )
+
+    has_unet = _has_present_component("unet")
+    has_text_encoder = _has_present_component("text_encoder")
+    has_text_encoder_2 = _has_present_component("text_encoder_2")
+    if not has_unet or (not has_text_encoder and not has_text_encoder_2):
+        return None
+
+    unet_config_path = Path(repo_dir) / "unet" / "config.json"
+    unet_config = _read_json(unet_config_path) if unet_config_path.is_file() else {}
+    pipeline_cls = str(config.get("_class_name") or "").strip().lower()
+    text_encoder_spec = config.get("text_encoder")
+    text_encoder_cls = (
+        text_encoder_spec[1].strip()
+        if isinstance(text_encoder_spec, list)
+        and len(text_encoder_spec) == 2
+        and isinstance(text_encoder_spec[1], str)
+        else ""
+    )
+    cross_attention_dim_raw = unet_config.get("cross_attention_dim")
+    cross_attention_dim = None
+    if isinstance(cross_attention_dim_raw, (int, float, str)) and str(cross_attention_dim_raw).strip():
+        cross_attention_dim = int(cross_attention_dim_raw)
+
+    if has_text_encoder_2:
+        detected_engine = "sdxl"
+    elif (
+        has_text_encoder
+        and text_encoder_cls == "CLIPTextModelWithProjection"
+        and (cross_attention_dim == 1280 or pipeline_cls == "stablediffusionxlimg2imgpipeline")
+    ):
+        detected_engine = "sdxl_refiner"
+    elif cross_attention_dim == 1280:
+        detected_engine = "sdxl_refiner"
+    elif cross_attention_dim == 2048:
+        detected_engine = "sdxl"
+    elif expected_family is ModelFamily.SDXL_REFINER:
+        detected_engine = "sdxl_refiner"
+    elif expected_family is ModelFamily.SDXL:
+        detected_engine = "sdxl"
+    else:
+        raise ValueError(
+            f"Unable to determine SDXL diffusers surface from native metadata: repo={repo_dir} cross_attention_dim={cross_attention_dim!r}"
+        )
+
+    if expected_family is ModelFamily.SDXL and detected_engine != "sdxl":
+        raise ValueError(f"Expected SDXL base diffusers repo, but '{repo_dir}' matches the SDXL refiner surface.")
+    if expected_family is ModelFamily.SDXL_REFINER and detected_engine != "sdxl_refiner":
+        raise ValueError(f"Expected SDXL refiner diffusers repo, but '{repo_dir}' matches the SDXL base surface.")
+    return detected_engine
+
+
+def _detect_engine_from_config(
+    config: dict,
+    *,
+    repo_dir: str,
+    expected_family: ModelFamily | None = None,
+) -> str:
     pipeline_cls = str(config.get("_class_name") or "").strip().lower()
     if pipeline_cls == "fluxkontextpipeline":
         return "flux1_kontext"
@@ -2554,8 +2764,13 @@ def _detect_engine_from_config(config: dict) -> str:
         raise ValueError("Unsupported FLUX.2 pipeline config: only Flux2KleinPipeline (4B/base-4B) is supported.")
     comps = {k: v for k, v in config.items() if isinstance(v, list) and len(v) == 2}
     cls_by_name = {k: v[1] for k, v in comps.items()}
-    if "text_encoder_2" in comps and "unet" in comps:
-        return "sdxl"
+    sdxl_surface = resolve_sdxl_diffusers_surface(
+        config=config,
+        repo_dir=repo_dir,
+        expected_family=expected_family,
+    )
+    if sdxl_surface is not None:
+        return sdxl_surface
     if cls_by_name.get("transformer") in ("FluxTransformer2DModel",):
         return "flux1"
     if cls_by_name.get("transformer") in ("Flux2Transformer2DModel",):
@@ -2572,10 +2787,12 @@ def _detect_engine_from_config(config: dict) -> str:
     raise ValueError("Unable to determine engine from diffusers config")
 
 
-def load_engine_from_diffusers(repo_dir: str) -> DiffusionModelBundle:
-    from diffusers import DiffusionPipeline
-
-    config: dict = DiffusionPipeline.load_config(repo_dir)
+def load_engine_from_diffusers(
+    repo_dir: str,
+    *,
+    expected_family: ModelFamily | None = None,
+) -> DiffusionModelBundle:
+    config = _load_diffusers_model_index(repo_dir)
     comps = {}
     for name, (lib_name, cls_name) in (
         (k, v) for k, v in config.items() if isinstance(v, list) and len(v) == 2
@@ -2591,7 +2808,11 @@ def load_engine_from_diffusers(repo_dir: str) -> DiffusionModelBundle:
         cls = getattr(importlib.import_module(lib_name), cls_name)
         comps[name] = cls.from_pretrained(os.path.join(repo_dir, name), local_files_only=True)
 
-    engine_key = _detect_engine_from_config(config)
+    engine_key = _detect_engine_from_config(
+        config,
+        repo_dir=repo_dir,
+        expected_family=expected_family,
+    )
     family = ENGINE_KEY_TO_FAMILY.get(engine_key)
     if family is None:
         raise ValueError(f"Unsupported engine key from diffusers config: {engine_key}")
@@ -2640,7 +2861,7 @@ def resolve_diffusion_bundle(
     if os.path.isdir(model_ref):
         index = os.path.join(model_ref, "model_index.json")
         if os.path.isfile(index):
-            return load_engine_from_diffusers(model_ref)
+            return load_engine_from_diffusers(model_ref, expected_family=expected_family)
         raise ValueError(f"Not a diffusers repository (missing model_index.json): {model_ref}")
 
     if os.path.isfile(model_ref):
@@ -2660,11 +2881,11 @@ def resolve_diffusion_bundle(
     # Determine format via metadata or filesystem inspection
     metadata = getattr(record, "metadata", {}) or {}
     if isinstance(metadata, dict) and metadata.get("format") == "diffusers":
-        return load_engine_from_diffusers(record.path)
+        return load_engine_from_diffusers(record.path, expected_family=expected_family)
 
     repo_index = os.path.join(record.path, "model_index.json")
     if os.path.isfile(repo_index):
-        return load_engine_from_diffusers(record.path)
+        return load_engine_from_diffusers(record.path, expected_family=expected_family)
     return codex_loader(
         record.filename,
         additional_state_dicts=additional_state_dicts,

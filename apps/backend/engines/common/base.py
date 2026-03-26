@@ -664,11 +664,16 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         if explicit_model_format == "diffusers" and checkpoint_is_core_only is True:
             raise RuntimeError("model_format='diffusers' is incompatible with checkpoint_core_only=True.")
 
+        api_tenc_selector_hint = (
+            "'extras.tenc1_sha'/'extras.tenc2_sha'"
+            if bundle.family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER} and checkpoint_is_core_only
+            else "'extras.tenc_sha'"
+        )
         if checkpoint_is_core_only and self.required_text_encoders and tenc_source != "external":
             raise RuntimeError(
                 "Core-only checkpoint requires external text encoder(s). "
                 "Provide them via engine option 'tenc_path' or 'text_encoder_override' "
-                "(or via the API 'extras.tenc_sha' selector)."
+                f"(or via the API {api_tenc_selector_hint} selector)."
             )
 
         emit_backend_event(
@@ -700,7 +705,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                     "Core-only checkpoint requires external text encoder(s). "
                     f"Missing: {', '.join(missing_tenc)}. "
                     "Provide them via engine option 'tenc_path' or 'text_encoder_override' "
-                    "(or via the API 'extras.tenc_sha' selector)."
+                    f"(or via the API {api_tenc_selector_hint} selector)."
                 )
 
         # VAE selection/override

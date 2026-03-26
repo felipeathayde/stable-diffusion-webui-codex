@@ -8,13 +8,13 @@ Status: Active
 
 ## Notes
 - 2026-03-22: shared `CodexDiffusionEngine.encode_first_stage(...)` now accepts optional `encode_seed` and forwards it into the VAE wrapper; image engines that use the canonical first-stage lane inherit deterministic img2img posterior sampling without custom engine-side logic, and callers that retry from seed must recreate the generator from that same seed.
-- 2026-03-20: `base.py` load-path selectors are now request/inventory-authoritative for image runs (`checkpoint_core_only`, `model_format`, `vae_source`); missing selector truth fails loud instead of falling back from suffix/path presence, inpaint is no longer inferred from checkpoint shape/channels, and external SDXL VAE overrides strip known wrapper/metadata keys before strict keyspace resolution.
+- 2026-03-20: `base.py` load-path selectors are now request/inventory-authoritative for image runs (`checkpoint_core_only`, `model_format`, `vae_source`); missing selector truth fails loud instead of falling back from suffix/path presence, inpaint is no longer inferred from checkpoint shape/channels, and external SDXL VAE overrides reject wrapper-prefix rewrite attempts while still dropping the known non-weight metadata keys (`model_ema.decay`, `model_ema.num_updates`).
 - `CodexDiffusionEngine` now subclasses `BaseInferenceEngine`; implement `_build_components(bundle, *, options)` to assemble runtime objects during `load()`.
 - Engines receive pre-materialised `DiffusionModelBundle` instances; avoid invoking legacy loaders inside subclasses.
 - Model family flags (`is_sd1`, `is_sd2`, `is_sd3`, `is_sdxl`) remain read-only; call `register_model_family(...)` inside `_build_components` after deriving the runtime.
 - Lifecycle hooks: `_on_unload()` lets subclasses clear caches, while `status()` now reports `model_ref`, bundle source, and registered families.
 - Tiling/CFG scale toggles remain available but emit structured logs when changed.
-- 2026-01-25: SDXL VAE overrides (`vae_path`) now run through the SDXL VAE keymap (LDM→diffusers, wrapper prefix stripping, drop `model_ema.decay` / `model_ema.num_updates`); SDXL override unexpected keys are fatal to prevent silent drift.
+- 2026-01-25: SDXL VAE overrides (`vae_path`) now run through the SDXL VAE keymap (LDM→diffusers, no wrapper-prefix rewrite, drop `model_ema.decay` / `model_ema.num_updates`); SDXL override unexpected keys are fatal to prevent silent drift.
 - 2026-01-22: `CodexDiffusionEngine.txt2img` now delegates to the canonical mode wrapper `apps/backend/use_cases/txt2img.py:run_txt2img` (Option A: engines are adapters; mode orchestration lives in use-cases).
 - 2025-12-30: `CodexDiffusionEngine.load()` now calls `unload()` when already loaded, and `unload()` clears bound components from the memory manager (prevents duplicate model instances accumulating when reloading with different overrides).
 - 2026-01-01: Engine docs note that `get_learned_conditioning(...)` may return either a dict or a cross-attn tensor (both supported by `compile_conditions`).

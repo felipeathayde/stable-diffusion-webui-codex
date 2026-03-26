@@ -15,7 +15,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ConditioningPayload` (dataclass): Conditioning tensors assembled for a generation pass (cond/uncond + extras).
 - `ErSdeOptions` (dataclass): Native ER-SDE runtime options (`solver_type`, `max_stage`, `eta`, `s_noise`).
 - `SamplingPlan` (dataclass): Complete specification of a sampling run (sampler/scheduler/steps/seeds/noise settings + optional ER-SDE options).
-- `HiResPlan` (dataclass): High-resolution second pass configuration (target size + upscaler id + steps/denoise/cfg).
 - `InitImageBundle` (dataclass): Inputs derived from an initial image (pixels/latents + optional mask).
 - `AppliedExtra` (dataclass): Record of applied extra network or post-processing effect.
 - `GenerationResult` (dataclass): Outputs and diagnostics from a generation pass (samples/decoded + metadata/applied_extras/decode owner).
@@ -101,21 +100,6 @@ class SamplingPlan:
     subseed_strength: float
     noise_settings: NoiseSettings
     er_sde: ErSdeOptions | None = None
-
-
-@dataclass(slots=True)
-class HiResPlan:
-    """High-resolution second pass configuration."""
-
-    enabled: bool
-    target_width: int
-    target_height: int
-    upscaler_id: str
-    steps: int
-    denoise: float
-    cfg_scale: float | None
-    checkpoint_name: str | None
-    additional_modules: Sequence[str] | None = None
 
 
 @dataclass(slots=True)

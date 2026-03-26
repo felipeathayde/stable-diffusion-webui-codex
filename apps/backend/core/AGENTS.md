@@ -53,3 +53,4 @@ Status: Active
 - 2026-02-28: `InferenceOrchestrator._purge_vram(...)` removed the optional `operations_gguf.clear_cache` import/call path; cleanup now relies on orchestrator unload + memory-manager unload/soft-empty + GC + CUDA cache release.
 - 2026-03-02: `BackendState` now tracks VAE phase progress (`vae_phase`, `vae_block_index`, `vae_block_total`) with explicit snapshot/update helpers so image use-cases can stream encode/decode block progress alongside sampling.
 - 2026-03-08: `BackendState.sampling_steps` may now be unknown (`None`) for open-ended native samplers such as `dpm adaptive`; progress consumers must treat missing totals as an honest unbounded-progress signal instead of coercing them to zero.
+- 2026-03-24: `Img2ImgRequest` now carries additive `per_step_blend_strength` (`0..1`, default `1.0`) for masked `per_step_clamp`; this is a scalar on the existing enforcement mode, not a new enum or alias surface.

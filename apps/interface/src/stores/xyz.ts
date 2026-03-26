@@ -152,6 +152,7 @@ export const useXyzStore = defineStore('xyz', () => {
         requireModelInfo: quick.requireModelInfo,
         resolveFlux2CheckpointVariant: quick.resolveFlux2CheckpointVariant,
         resolveTextEncoderSha: quick.resolveTextEncoderSha,
+        resolveTextEncoderSlot: quick.resolveTextEncoderSlot,
         requireVaeSelection: quick.requireVaeSelection,
         resolveVaeSha: quick.resolveVaeSha,
         getAssetContract: caps.getAssetContract,

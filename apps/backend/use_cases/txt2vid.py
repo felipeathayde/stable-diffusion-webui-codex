@@ -8,9 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Canonical txt2vid orchestration for backend video engines.
 Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native LTX2 branch), including the
-truthful LTX2 `executionProfile` stage flow (`one_stage` or `two_stage` with `stage1_sampling -> latent_upsample ->
-stage2_refine -> decode`), applies shared SeedVR2 upscaling/interpolation stages when requested, exports the
-resulting video, and yields progress/result events.
+truthful LTX2 `executionProfile` stage flow (`distilled` and `one_stage` execute the one-stage native lane; `two_stage`
+runs `stage1_sampling -> latent_upsample -> stage2_refine -> decode`), applies shared SeedVR2
+upscaling/interpolation stages when requested, exports the resulting video, and yields progress/result events.
 WAN22 Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when
 provided and falls back to request negative only when missing. The native LTX2 branch consumes a local
 `Ltx2RunResult` (`frames + AudioExportAsset + metadata`) and owns cleanup of generated temp audio after export.

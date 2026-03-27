@@ -1552,7 +1552,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return parsed
 
 
-    def _parse_swap_model_payload(
+    def _parse_swap_model_selection_fields(
         value: Any,
         *,
         field_name: str,
@@ -1560,25 +1560,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     ) -> Dict[str, Any]:
         if not isinstance(value, dict):
             raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
-        allowed_keys = {
-            "model",
-            "model_sha",
-            "checkpoint_core_only",
-            "model_format",
-            "vae_source",
-            "vae_sha",
-            "tenc_sha",
-            "tenc1_sha",
-            "tenc2_sha",
-            "text_encoder_override",
-        }
-        if allow_zimage_variant:
-            allowed_keys.add("zimage_variant")
-        _reject_unknown_keys(
-            value,
-            allowed_keys,
-            field_name,
-        )
         model_raw = value.get("model")
         model = str(model_raw).strip() if isinstance(model_raw, str) else ""
         model_sha_raw = value.get("model_sha")
@@ -1672,6 +1653,40 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return parsed
 
 
+    def _parse_swap_model_payload(
+        value: Any,
+        *,
+        field_name: str,
+        allow_zimage_variant: bool = False,
+    ) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
+        allowed_keys = {
+            "model",
+            "model_sha",
+            "checkpoint_core_only",
+            "model_format",
+            "vae_source",
+            "vae_sha",
+            "tenc_sha",
+            "tenc1_sha",
+            "tenc2_sha",
+            "text_encoder_override",
+        }
+        if allow_zimage_variant:
+            allowed_keys.add("zimage_variant")
+        _reject_unknown_keys(
+            value,
+            allowed_keys,
+            field_name,
+        )
+        return _parse_swap_model_selection_fields(
+            value,
+            field_name=field_name,
+            allow_zimage_variant=allow_zimage_variant,
+        )
+
+
     def _parse_swap_stage_payload(
         value: Any,
         *,
@@ -1705,13 +1720,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
         if _optional_bool_field(value, "enable") is not True:
             return None
-        parsed = _parse_swap_model_payload(
+        parsed = _parse_swap_model_selection_fields(
             value,
             field_name=field_name,
             allow_zimage_variant=allow_zimage_variant,
         )
         parsed.update(
             {
+                "enable": True,
                 "switch_at_step": _require_int_field(value, "switch_at_step", minimum=1),
                 "cfg": _require_float_field(value, "cfg"),
                 "seed": _require_int_field(value, "seed"),
@@ -5369,6 +5385,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 engine_opts: dict[str, object] = {
                     "export_video": _require_options_bool(options_snapshot, "codex_export_video")
                 }
+                if _require_options_bool(options_snapshot, "codex_core_streaming"):
+                    engine_opts["core_streaming_enabled"] = True
                 if compute_dtype is not None:
                     engine_opts["dtype"] = compute_dtype
                 from apps.backend.interfaces.api.tasks.generation_tasks import (

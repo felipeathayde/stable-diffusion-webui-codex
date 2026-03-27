@@ -159,7 +159,7 @@ def build_engine_options(*, req: Any, opts_snapshot: Callable[[], Any]) -> dict[
         default=False,
     )
     if core_streaming_enabled:
-        engine_options["codex_core_streaming"] = True
+        engine_options["core_streaming_enabled"] = True
 
     return engine_options
 

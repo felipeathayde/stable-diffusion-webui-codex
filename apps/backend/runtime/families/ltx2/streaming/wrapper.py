@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import logging
 from typing import Any
 
@@ -72,13 +73,12 @@ class StreamedLtx2Transformer(nn.Module):
             raise exc
 
     def forward(self, *args: Any, **kwargs: Any):
-        self.reset_controller()
         return self._base(*args, **kwargs)
 
     def cache_context(self, *args: Any, **kwargs: Any):
         cache_context = getattr(self._base, "cache_context", None)
         if not callable(cache_context):
-            raise AttributeError("Wrapped LTX2 transformer does not expose cache_context().")
+            return nullcontext()
         return cache_context(*args, **kwargs)
 
     def reset_controller(self) -> None:

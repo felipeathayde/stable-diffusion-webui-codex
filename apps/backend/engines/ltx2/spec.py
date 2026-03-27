@@ -85,7 +85,6 @@ class Ltx2EngineRuntime:
         latents: Any | None = None,
         audio_latents: Any | None = None,
         sigmas: Sequence[float] | None = None,
-        transformer: Any | None = None,
         generator: Any | None = None,
     ) -> Any:
         return sample_ltx2_txt2vid_stage(
@@ -100,7 +99,6 @@ class Ltx2EngineRuntime:
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=transformer,
             generator=generator,
         )
 
@@ -131,7 +129,6 @@ class Ltx2EngineRuntime:
         latents: Any | None = None,
         audio_latents: Any | None = None,
         sigmas: Sequence[float] | None = None,
-        transformer: Any | None = None,
         generator: Any | None = None,
     ) -> Any:
         return sample_ltx2_img2vid_stage(
@@ -146,7 +143,6 @@ class Ltx2EngineRuntime:
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=transformer,
             generator=generator,
         )
 

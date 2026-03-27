@@ -28,7 +28,7 @@ Status: Active
 - 2026-02-21: `generation_tasks.py` now exposes `force_runtime_memory_cleanup(...)` and invokes it on image worker exceptions to force best-effort cleanup of orchestrator cache, runtime memory manager state, and CUDA cache.
 - 2026-02-28: `generation_tasks.py::force_runtime_memory_cleanup(...)` removed the optional `operations_gguf.clear_cache` import/call path to avoid stale helper warnings after GGUF cache-hook removal.
 - 2026-02-22: `generation_tasks.py::force_runtime_memory_cleanup(...)` now logs cleanup failures without traceback payload (`exc_info=False`), preventing repeated stacktrace floods when CUDA is already in OOM/error state after engine failure.
-- 2026-02-21: `generation_tasks.py::build_engine_options(...)` now parses `codex_core_streaming` via shared strict bool parsing before emitting engine options (no truthiness coercion from malformed option snapshots).
+- 2026-02-21: `generation_tasks.py::build_engine_options(...)` now parses settings key `codex_core_streaming` via shared strict bool parsing and emits canonical engine option `core_streaming_enabled` (no truthiness coercion from malformed option snapshots).
 - 2026-02-21: `generation_tasks.py` now parses `samples_save` via shared strict bool parsing before output persistence, removing permissive `bool("false")==True` behavior.
 - 2026-02-22: task workers now log warning-level diagnostics when inference-gate release fails (`generation_tasks.py`, `upscale_tasks.py`, `supir_tasks.py`) instead of silently swallowing release errors.
 - 2026-03-02: `generation_tasks.py` now preserves `ProgressEvent.message` and `ProgressEvent.data` in streamed `progress` task events, so frontend consumers can render phase-aware total-progress metadata from backend-emitted payloads.

@@ -627,12 +627,11 @@ def _sample_ltx2_native_latents(
     latents: torch.Tensor | None = None,
     audio_latents: torch.Tensor | None = None,
     sigmas: Sequence[float] | None = None,
-    transformer: Any | None = None,
     attention_kwargs: Mapping[str, Any] | None = None,
     max_sequence_length: int = 1024,
     prompt_scale_factor: int = 8,
 ) -> Ltx2NativeLatentStageResult:
-    effective_transformer = native.transformer if transformer is None else transformer
+    effective_transformer = native.transformer
     preserve_custom_sigmas = sigmas is not None
     effective_num_inference_steps, sigma_values = _resolve_sigma_schedule(
         num_inference_steps=int(num_inference_steps),
@@ -961,7 +960,6 @@ def _run_ltx2_native(
     latents: torch.Tensor | None = None,
     audio_latents: torch.Tensor | None = None,
     sigmas: Sequence[float] | None = None,
-    transformer: Any | None = None,
     attention_kwargs: Mapping[str, Any] | None = None,
     max_sequence_length: int = 1024,
     prompt_scale_factor: int = 8,
@@ -983,7 +981,6 @@ def _run_ltx2_native(
         latents=latents,
         audio_latents=audio_latents,
         sigmas=sigmas,
-        transformer=transformer,
         attention_kwargs=attention_kwargs,
         max_sequence_length=max_sequence_length,
         prompt_scale_factor=prompt_scale_factor,
@@ -1026,7 +1023,6 @@ def sample_ltx2_txt2vid_native(
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=native.transformer,
         )
 
 
@@ -1092,7 +1088,6 @@ def sample_ltx2_img2vid_native(
             latents=latents,
             audio_latents=audio_latents,
             sigmas=sigmas,
-            transformer=native.transformer,
         )
 
 

@@ -8,9 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Canonical img2vid orchestration for backend video engines.
 Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus the native LTX2 branch), including the
-truthful LTX2 `executionProfile` stage flow (`one_stage` or `two_stage` with `stage1_sampling -> latent_upsample ->
-stage2_refine -> decode`), applies shared SeedVR2 upscaling/interpolation stages when requested, exports video, and
-yields progress/result events.
+truthful LTX2 `executionProfile` stage flow (`distilled` and `one_stage` execute the one-stage native lane; `two_stage`
+runs `stage1_sampling -> latent_upsample -> stage2_refine -> decode`), applies shared SeedVR2
+upscaling/interpolation stages when requested, exports video, and yields progress/result events.
 WAN22 Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and
 `extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when
 missing. Temporal routing requires explicit `extras.img2vid_mode` (`solo|sliding|svi2|svi2_pro`) and rejects implicit

@@ -1,6 +1,6 @@
 # apps/backend/runtime/kernels/attention_sram_v1 Overview
 Date: 2026-03-19
-Last Review: 2026-03-20
+Last Review: 2026-03-28
 Status: Active
 
 ## Purpose
@@ -18,6 +18,7 @@ Status: Active
 - `rope_blhd_` is optional scaffolding and must stay separate from the `attn_fwd` hot path.
 - 2026-03-19: Kernel-side validation now mirrors the bridge on K/V sequence-length agreement, and the tile loop uses explicit `std::min(...)` selection so the first cut stays compileable under the narrow CUDA contract.
 - 2026-03-20: The CUDA path now consumes stride-based `[B,H,S,D]` views directly and writes the output with the input layout, instead of forcing caller-side Q/K/V materialization just to satisfy the first SRAM cut.
+- 2026-03-28: Rectangular causal masking is bottom-right aligned in the kernel (`kv_index <= q_index + (kv_len - q_len)`); if `q_len > kv_len`, fully masked early rows remain valid and produce zeros.
 - 2026-03-20: The manual smoke harness keeps build ownership explicit:
   - `build` is the only stage that may compile the extension,
   - `warmup` / `parity` / `fallback` / `full` run the bridge with `CODEX_ATTENTION_SRAM_JIT=0`,

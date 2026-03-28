@@ -226,6 +226,9 @@ __global__ void attention_sram_fwd_kernel_fp16(
 
   const int64_t k_head_offset = batch_index * k_stride_batch + head_index * k_stride_head;
   const int64_t v_head_offset = batch_index * v_stride_batch + head_index * v_stride_head;
+  // Bottom-right-aligned rectangular causal mask:
+  // keep kv_index <= q_index + (kv_len - q_len), which reduces to the square-case rule when q_len == kv_len.
+  const int64_t causal_last_kv_index = q_index + (kv_len - q_len);
   for (int64_t kv_tile_start = 0; kv_tile_start < kv_len; kv_tile_start += KvTileTokens) {
     const int tile_tokens = static_cast<int>(std::min<int64_t>(KvTileTokens, kv_len - kv_tile_start));
     const int tile_elements = tile_tokens * static_cast<int>(kAttentionSramHeadDim);
@@ -243,11 +246,11 @@ __global__ void attention_sram_fwd_kernel_fp16(
     __syncthreads();
 
     if (warp_active) {
-      const bool tile_is_past_causal_limit = is_causal && kv_tile_start > q_index;
+      const bool tile_is_past_causal_limit = is_causal && kv_tile_start > causal_last_kv_index;
       if (!tile_is_past_causal_limit) {
         for (int token_index = 0; token_index < tile_tokens; ++token_index) {
           const int64_t kv_index = kv_tile_start + token_index;
-          if (is_causal && kv_index > q_index) {
+          if (is_causal && kv_index > causal_last_kv_index) {
             break;
           }
 

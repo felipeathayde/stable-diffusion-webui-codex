@@ -1,7 +1,7 @@
 <!-- tags: prompt, components, tiptap -->
 # apps/interface/src/components/prompt Overview
 Date: 2025-12-03
-Last Review: 2026-02-28
+Last Review: 2026-03-28
 Status: Active
 
 ## Purpose
@@ -9,6 +9,7 @@ Status: Active
 
 ## Notes
 - PromptEditor is built on Tiptap StarterKit plus the custom `PromptToken` node.
+- `PromptToken` is an inline atomic node rendered through `PromptTokenChip`/`VueNodeViewRenderer`; keep its `renderHTML()` leaf-safe and never expose a ProseMirror content hole/contentDOM for that node.
 - Serialization supports both ProseMirror JSON and Node shapes; validate prompt-token changes with `cd apps/interface && npm run typecheck` plus manual prompt round-trip checks in the UI.
 - 2025-12-17: `PromptBox.vue` hides the char-count badge when empty (`0 chars`) to reduce visual noise in the WAN tab.
 - 2025-12-22: `PromptBox.vue` badge now shows whitespace token count (`tok`) instead of raw character count.

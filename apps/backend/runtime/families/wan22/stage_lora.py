@@ -9,11 +9,13 @@ Required Notice: see NOTICE
 Purpose: Apply per-stage LoRA patches to WAN22 GGUF stage models (merge or online).
 Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys via
 `resolve_wan22_lora_logical_key` from `keymap_wan22_transformer.py` (canonical keymap authority),
-with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO`
-and structured no-remap diagnostics for logical misses plus unsupported tensor suffix families.
+with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO`,
+structured no-remap diagnostics for logical misses plus unsupported tensor suffix families, and
+fail-loud structural validation against the mounted WAN22 stage model before patch construction.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_stage_lora_offload_device` (function): Resolves stage-LoRA offload device from memory-manager policy.
+- `_validate_standard_lora_shapes` (function): Verifies mapped standard LoRA pair tensor shapes against mounted WAN22 target parameter shapes and raises explicit structural incompatibility errors.
 - `apply_wan22_stage_lora` (function): Applies an ordered LoRA sequence to a loaded stage model (merge or online).
 """
 
@@ -32,6 +34,7 @@ from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_apply_mode
 from apps.backend.patchers.lora_loader import CodexLoraLoader
 from apps.backend.runtime.adapters.lora.pipeline import build_patch_dicts
+from apps.backend.runtime.adapters.lora.loader import STANDARD_LORA_TENSOR_CANDIDATES
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.state_dict.keymap_wan22_transformer import resolve_wan22_lora_logical_key
 
@@ -41,10 +44,12 @@ from .paths import normalize_win_path
 _WAN22_LORA_PREFIXES = (
     "transformer_2.",
     "transformer.",
+    "model.model.diffusion_model.",
     "model.diffusion_model.",
     "diffusion_model.",
     "model.",
 )
+_WAN22_LORA_WRAPPER_PREFIXES = ("lora_unet_", "lycoris_")
 
 _LORA_LOGICAL_SUFFIXES: tuple[str, ...] = (
     # Standard LoRA (multiple conventions)
@@ -94,6 +99,12 @@ _DIAGNOSTIC_EXAMPLE_LIMIT = 5
 _RX_BLOCK_MODULATION_ROOT = re.compile(r"^blocks\.(?P<idx>\d+)$")
 
 _ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO = "CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO"
+_WAN22_14B_ATTN_SHAPE = (5120, 5120)
+_WAN22_14B_FFN0_SHAPE = (13824, 5120)
+_WAN22_14B_FFN2_SHAPE = (5120, 13824)
+_WAN21_480P_ATTN_SHAPE = (1536, 1536)
+_WAN21_480P_FFN0_SHAPE = (8960, 1536)
+_WAN21_480P_FFN2_SHAPE = (1536, 8960)
 
 
 @dataclass
@@ -117,6 +128,16 @@ class _StageLoraInspection:
         combined = dict(self.logical_to_load)
         combined.update(self.extra_to_load)
         return combined
+
+
+@dataclass(frozen=True, slots=True)
+class _StandardLoraShapeRecord:
+    logical_key: str
+    target_key: str
+    up_tensor_shape: tuple[int, ...]
+    down_tensor_shape: tuple[int, ...]
+    expected_target_shape: tuple[int, ...]
+    actual_target_shape: tuple[int, ...]
 
 
 def _read_min_match_ratio() -> float:
@@ -172,7 +193,12 @@ def _strip_known_prefixes(name: str) -> str:
 
 
 def _display_logical_key(logical_key: str) -> str:
-    return _strip_known_prefixes(logical_key)
+    key = str(logical_key)
+    for prefix in _WAN22_LORA_WRAPPER_PREFIXES:
+        if key.startswith(prefix):
+            key = key[len(prefix) :]
+            break
+    return _strip_known_prefixes(key)
 
 
 def _record_example(store: dict[str, list[str]], bucket: str, value: str) -> None:
@@ -233,15 +259,10 @@ def _is_unsupported_i2v_branch(logical_key: str) -> bool:
 
 def _resolve_candidate_targets(logical_key: str) -> tuple[str, list[tuple[str, str]]]:
     stripped = _display_logical_key(logical_key)
-    candidates = (logical_key, stripped) if stripped != logical_key else (logical_key,)
     resolved: list[tuple[str, str]] = []
-    seen_targets: set[str] = set()
-    for candidate in candidates:
-        target = resolve_wan22_lora_logical_key(candidate)
-        if target is None or target in seen_targets:
-            continue
-        resolved.append((candidate, target))
-        seen_targets.add(target)
+    target = resolve_wan22_lora_logical_key(logical_key)
+    if target is not None:
+        resolved.append((logical_key, target))
     return stripped, resolved
 
 
@@ -380,6 +401,186 @@ def _format_stage_lora_diagnostics(inspection: _StageLoraInspection) -> str:
     return "; ".join(parts)
 
 
+def _shape_tuple(tensor: torch.Tensor) -> tuple[int, ...]:
+    return tuple(int(dim) for dim in tensor.shape)
+
+
+def _collect_target_shape_by_key(model: torch.nn.Module) -> dict[str, tuple[int, ...]]:
+    state_dict = model.state_dict()
+    return {str(key): _shape_tuple(tensor) for key, tensor in state_dict.items()}
+
+
+def _expected_target_shape_from_standard_lora(
+    *, logical_key: str, up_tensor_shape: tuple[int, ...], down_tensor_shape: tuple[int, ...]
+) -> tuple[int, ...]:
+    if len(up_tensor_shape) != 2 or len(down_tensor_shape) != 2:
+        raise RuntimeError(
+            "WAN22 GGUF stage LoRA standard pair tensors must be rank-2. "
+            f"logical_key={logical_key!r} up_shape={up_tensor_shape!r} down_shape={down_tensor_shape!r}"
+        )
+    rank = up_tensor_shape[1]
+    if down_tensor_shape[0] != rank:
+        raise RuntimeError(
+            "WAN22 GGUF stage LoRA standard pair rank mismatch. "
+            f"logical_key={logical_key!r} up_shape={up_tensor_shape!r} down_shape={down_tensor_shape!r}"
+        )
+    return (int(up_tensor_shape[0]), int(down_tensor_shape[1]))
+
+
+def _iter_standard_lora_shape_records(
+    *,
+    tensors: Mapping[str, torch.Tensor],
+    logical_to_target: Mapping[str, str],
+    target_shape_by_key: Mapping[str, tuple[int, ...]],
+) -> list[_StandardLoraShapeRecord]:
+    records: list[_StandardLoraShapeRecord] = []
+    for logical_key in sorted(logical_to_target):
+        up_tensor_shape: tuple[int, ...] | None = None
+        down_tensor_shape: tuple[int, ...] | None = None
+        for up_suffix, down_suffix, _mid_suffix in STANDARD_LORA_TENSOR_CANDIDATES:
+            up_key = f"{logical_key}{up_suffix}"
+            down_key = f"{logical_key}{down_suffix}"
+            if up_key in tensors and down_key in tensors:
+                up_tensor_shape = _shape_tuple(tensors[up_key])
+                down_tensor_shape = _shape_tuple(tensors[down_key])
+                break
+        if up_tensor_shape is None or down_tensor_shape is None:
+            continue
+        target_key = logical_to_target[logical_key]
+        target_shape = target_shape_by_key.get(target_key)
+        if target_shape is None:
+            continue
+        expected_target_shape = _expected_target_shape_from_standard_lora(
+            logical_key=logical_key,
+            up_tensor_shape=up_tensor_shape,
+            down_tensor_shape=down_tensor_shape,
+        )
+        records.append(
+            _StandardLoraShapeRecord(
+                logical_key=logical_key,
+                target_key=target_key,
+                up_tensor_shape=up_tensor_shape,
+                down_tensor_shape=down_tensor_shape,
+                expected_target_shape=expected_target_shape,
+                actual_target_shape=target_shape,
+            )
+        )
+    return records
+
+
+def _is_wan22_14b_profile(target_shape_by_key: Mapping[str, tuple[int, ...]]) -> bool:
+    return (
+        target_shape_by_key.get("blocks.0.cross_attn.k.weight") == _WAN22_14B_ATTN_SHAPE
+        and target_shape_by_key.get("blocks.0.ffn.0.weight") == _WAN22_14B_FFN0_SHAPE
+        and target_shape_by_key.get("blocks.0.ffn.2.weight") == _WAN22_14B_FFN2_SHAPE
+    )
+
+
+def _matches_wan21_480p_shape(record: _StandardLoraShapeRecord) -> bool:
+    if record.target_key.endswith((".self_attn.q.weight", ".self_attn.k.weight", ".self_attn.v.weight", ".self_attn.o.weight")):
+        return record.expected_target_shape == _WAN21_480P_ATTN_SHAPE
+    if record.target_key.endswith((".cross_attn.q.weight", ".cross_attn.k.weight", ".cross_attn.v.weight", ".cross_attn.o.weight")):
+        return record.expected_target_shape == _WAN21_480P_ATTN_SHAPE
+    if record.target_key.endswith(".ffn.0.weight"):
+        return record.expected_target_shape == _WAN21_480P_FFN0_SHAPE
+    if record.target_key.endswith(".ffn.2.weight"):
+        return record.expected_target_shape == _WAN21_480P_FFN2_SHAPE
+    return False
+
+
+def _format_shape_record_samples(records: Sequence[_StandardLoraShapeRecord]) -> str:
+    samples = []
+    for record in records[:_DIAGNOSTIC_EXAMPLE_LIMIT]:
+        samples.append(
+            "{logical}->{target} up={a} down={b} expected={expected} actual={actual}".format(
+                logical=_display_logical_key(record.logical_key),
+                target=record.target_key,
+                a=record.up_tensor_shape,
+                b=record.down_tensor_shape,
+                expected=record.expected_target_shape,
+                actual=record.actual_target_shape,
+            )
+        )
+    return "; ".join(samples)
+
+
+def _validate_standard_lora_shapes(
+    *,
+    tensors: Mapping[str, torch.Tensor],
+    logical_to_target: Mapping[str, str],
+    target_shape_by_key: Mapping[str, tuple[int, ...]],
+    stage: str,
+    resolved_path: str,
+) -> None:
+    records = _iter_standard_lora_shape_records(
+        tensors=tensors,
+        logical_to_target=logical_to_target,
+        target_shape_by_key=target_shape_by_key,
+    )
+    if not records:
+        return
+
+    compatible_records = [record for record in records if record.expected_target_shape == record.actual_target_shape]
+    if len(compatible_records) == len(records):
+        return
+
+    mismatched_records = [record for record in records if record.expected_target_shape != record.actual_target_shape]
+    if _is_wan22_14b_profile(target_shape_by_key):
+        saw_attention = any(
+            record.target_key.endswith(
+                (
+                    ".self_attn.q.weight",
+                    ".self_attn.k.weight",
+                    ".self_attn.v.weight",
+                    ".self_attn.o.weight",
+                    ".cross_attn.q.weight",
+                    ".cross_attn.k.weight",
+                    ".cross_attn.v.weight",
+                    ".cross_attn.o.weight",
+                )
+            )
+            and record.expected_target_shape == _WAN21_480P_ATTN_SHAPE
+            for record in mismatched_records
+        )
+        saw_ffn0 = any(
+            record.target_key.endswith(".ffn.0.weight") and record.expected_target_shape == _WAN21_480P_FFN0_SHAPE
+            for record in mismatched_records
+        )
+        saw_ffn2 = any(
+            record.target_key.endswith(".ffn.2.weight") and record.expected_target_shape == _WAN21_480P_FFN2_SHAPE
+            for record in mismatched_records
+        )
+        if (
+            not compatible_records
+            and mismatched_records
+            and saw_attention
+            and saw_ffn0
+            and saw_ffn2
+            and all(_matches_wan21_480p_shape(record) for record in mismatched_records)
+        ):
+            raise RuntimeError(
+                "WAN22 GGUF stage '{stage}': structural LoRA mismatch for wan22_14b. "
+                "This adapter matches the Wan2.1 480p profile (hidden=1536, ffn=8960), but the mounted wan22_14b stage expects the 720p-style 14B profile "
+                "(hidden=5120, ffn=13824). wan22_14b does not support Wan2.1 480p LoRAs; use a 720p-style adapter instead. "
+                "samples={samples} file={path}".format(
+                    stage=stage,
+                    samples=_format_shape_record_samples(mismatched_records),
+                    path=resolved_path,
+                )
+            )
+
+    raise RuntimeError(
+        "WAN22 GGUF stage '{stage}': LoRA target-shape mismatch after key resolution. "
+        "shape_compatible_standard_targets={compatible}/{total}. samples={samples} file={path}".format(
+            stage=stage,
+            compatible=len(compatible_records),
+            total=len(records),
+            samples=_format_shape_record_samples(mismatched_records),
+            path=resolved_path,
+        )
+    )
+
+
 def apply_wan22_stage_lora(
     model: torch.nn.Module,
     *,
@@ -394,7 +595,8 @@ def apply_wan22_stage_lora(
 
     log = get_logger(logger)
     min_match_ratio = _read_min_match_ratio()
-    model_keys = set(str(k) for k in model.state_dict().keys())
+    target_shape_by_key = _collect_target_shape_by_key(model)
+    model_keys = set(target_shape_by_key.keys())
     parsed_loras: list[tuple[str, float, dict[str, list[tuple]], int]] = []
     for index, raw_spec in enumerate(loras):
         if not isinstance(raw_spec, (tuple, list)) or len(raw_spec) != 2:
@@ -441,6 +643,14 @@ def apply_wan22_stage_lora(
         coverage = (matched_count / logical_key_count) if logical_key_count > 0 else 0.0
         diagnostics = _format_stage_lora_diagnostics(inspection)
         unsupported_suffix_summary = _format_unsupported_tensor_suffix_counts(inspection)
+
+        _validate_standard_lora_shapes(
+            tensors=tensors,
+            logical_to_target=inspection.logical_to_load,
+            target_shape_by_key=target_shape_by_key,
+            stage=stage,
+            resolved_path=resolved_path,
+        )
 
         if not to_load:
             raise RuntimeError(

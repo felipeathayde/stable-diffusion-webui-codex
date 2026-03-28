@@ -13,6 +13,7 @@ and logs missing keys for diagnostics. Patch targets may be plain parameter name
 patches (e.g. fused-QKV text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):
+- `STANDARD_LORA_TENSOR_CANDIDATES` (constant): Supported standard LoRA up/down[/mid] tensor suffix families, in parser priority order.
 - `_bias_target_for` (function): Derives a bias patch target from a weight patch target (preserving offset slices when present).
 - `_tensor_item` (function): Converts scalar tensors (alpha/dora_scale) into Python floats.
 - `_maybe_convert_bfl_control` (function): Normalizes certain BFL/Control-style tensor key patterns into Codex naming.
@@ -46,6 +47,13 @@ from apps.backend.runtime.adapters.lora.types import (
 
 LOGGER = logging.getLogger(__name__)
 _RX_BLOCK_MODULATION_LOGICAL_KEY = re.compile(r"^blocks_(?P<idx>\d+)_modulation$")
+STANDARD_LORA_TENSOR_CANDIDATES = (
+    (".lora_up.weight", ".lora_down.weight", ".lora_mid.weight"),
+    ("_lora.up.weight", "_lora.down.weight", None),
+    (".lora_B.weight", ".lora_A.weight", None),
+    (".lora.up.weight", ".lora.down.weight", None),
+    (".lora_linear_layer.up.weight", ".lora_linear_layer.down.weight", None),
+)
 
 
 def _bias_target_for(target: PatchTarget) -> PatchTarget:
@@ -101,16 +109,12 @@ def _extract_lora(
     tensors: Mapping[str, torch.Tensor],
     loaded: set[str],
 ) -> PatchSpec | None:
-    candidates = [
-        (f"{logical_key}.lora_up.weight", f"{logical_key}.lora_down.weight", f"{logical_key}.lora_mid.weight"),
-        (f"{logical_key}_lora.up.weight", f"{logical_key}_lora.down.weight", None),
-        (f"{logical_key}.lora_B.weight", f"{logical_key}.lora_A.weight", None),
-        (f"{logical_key}.lora.up.weight", f"{logical_key}.lora.down.weight", None),
-        (f"{logical_key}.lora_linear_layer.up.weight", f"{logical_key}.lora_linear_layer.down.weight", None),
-    ]
     A = B = mid = None
     a_name = b_name = m_name = None
-    for up_name, down_name, mid_name in candidates:
+    for up_suffix, down_suffix, mid_suffix in STANDARD_LORA_TENSOR_CANDIDATES:
+        up_name = f"{logical_key}{up_suffix}"
+        down_name = f"{logical_key}{down_suffix}"
+        mid_name = f"{logical_key}{mid_suffix}" if mid_suffix is not None else None
         if up_name in tensors and down_name in tensors:
             a_name, b_name = up_name, down_name
             A, B = tensors[up_name], tensors[down_name]

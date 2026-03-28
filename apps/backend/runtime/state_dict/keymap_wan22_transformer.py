@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN22 transformer key-style detection + keyspace resolution (Diffusers/WAN-export/Codex).
-Resolves multiple upstream key layouts into the canonical Codex WAN22 runtime keyspace via lookup views and fails loud on unknown/ambiguous inputs or wrapper/prefix rewrite attempts.
+Purpose: WAN22 transformer key-style detection + keyspace resolution (Diffusers/WAN-export/Codex) plus explicit WAN LoRA logical-key mapping.
+Resolves multiple upstream key layouts into the canonical Codex WAN22 runtime keyspace via lookup views, models supported WAN LoRA source-key families explicitly, and fails loud on unknown/ambiguous transformer inputs or unsupported wrapper/prefix rewrite attempts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `resolve_wan22_lora_logical_key` (function): Maps WAN22 LoRA logical keys to canonical WAN22 transformer target keys.
@@ -92,7 +92,15 @@ _RX_LORA_DIFFUSERS_OUT_DOT = re.compile(r"^blocks\.(?P<idx>\d+)\.(?P<which>attn1
 _RX_LORA_DIFFUSERS_OUT_UNDERSCORE = re.compile(r"^blocks_(?P<idx>\d+)_(?P<which>attn1|attn2)_to_out_0$")
 _RX_LORA_DIFFUSERS_FFN_DOT = re.compile(r"^blocks\.(?P<idx>\d+)\.ffn\.net\.(?P<which>0\.proj|2)$")
 _RX_LORA_DIFFUSERS_FFN_UNDERSCORE = re.compile(r"^blocks_(?P<idx>\d+)_ffn_net_(?P<which>0_proj|2)$")
-_LORA_LOGICAL_PREFIXES = ("lora_unet_", "lycoris_")
+_LEGACY_LORA_LOGICAL_WRAPPER_PREFIXES = ("lora_unet_", "lycoris_")
+_LORA_SOURCE_PREFIXES = (
+    "model.model.diffusion_model.",
+    "model.diffusion_model.",
+    "diffusion_model.",
+    "transformer_2.",
+    "transformer.",
+    "model.",
+)
 _LORA_TOP_LEVEL_TARGETS = {
     "patch_embedding": "patch_embed.weight",
     "patch_embed": "patch_embed.weight",
@@ -170,17 +178,36 @@ def resolve_wan22_lora_logical_key(logical_key: str) -> str | None:
       `time_projection.1`, `time_proj.1`, `text_embedding.0`, `text_embed.0`, `head.head`, `head`)
     - Diffusers style (`blocks.N.attn1.to_q`, `blocks_N_attn1_to_q`, `blocks.N.attn1.to_out.0`, `blocks_N_attn1_to_out_0`,
       `blocks.N.ffn.net.0.proj`, `blocks_N_ffn_net_0_proj`)
-    - Optional LoRA wrappers (`lora_unet_`, `lycoris_`)
+    - Explicit wrapper source families (`diffusion_model.`, `model.diffusion_model.`, `model.model.diffusion_model.`,
+      `transformer.`, `transformer_2.`, `model.`)
+    - Legacy trainer wrapper tags (`lora_unet_`, `lycoris_`); these are source-key wrappers, not WAN architecture owners
     """
 
-    key = fail_on_key_name_rewrite(str(logical_key), _PREFIXES)
+    key = str(logical_key)
     if key.endswith(".weight"):
         key = key[: -len(".weight")]
-    for prefix in _LORA_LOGICAL_PREFIXES:
+    for prefix in _LEGACY_LORA_LOGICAL_WRAPPER_PREFIXES:
         if key.startswith(prefix):
             key = key[len(prefix) :]
             break
 
+    target = _resolve_wan22_lora_core_key(key)
+    if target is not None:
+        return target
+
+    for source_prefix in _LORA_SOURCE_PREFIXES:
+        if not key.startswith(source_prefix):
+            continue
+        inner_key = key[len(source_prefix) :]
+        target = _resolve_wan22_lora_core_key(inner_key)
+        if target is not None:
+            return target
+        break
+
+    return None
+
+
+def _resolve_wan22_lora_core_key(key: str) -> str | None:
     target = _LORA_TOP_LEVEL_TARGETS.get(key)
     if target is not None:
         return target

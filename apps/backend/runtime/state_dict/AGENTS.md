@@ -23,6 +23,7 @@ Key files:
 Notes:
 - Views should stay lightweight and avoid eagerly materializing large state dicts.
 - 2026-03-21: `key_mapping.py` now fail-loud rejects any attempt to rewrite stored layer names during generic preprocessing (including prefix stripping / punctuation edits); keymaps must map source keyspaces explicitly through lookup views or computed views instead of mutating key strings.
+- 2026-03-28: `keymap_wan22_transformer.py` now owns explicit Wan LoRA wrapper-keyspace families (`diffusion_model.*`, `model.diffusion_model.*`, `model.model.diffusion_model.*`, `transformer.*`, `transformer_2.*`, `model.*`) for logical-key resolution; `stage_lora.py` no longer owns target-resolution fallback stripping for those families.
 - 2026-03-20: `keymap_sdxl_vae.py` now exposes the shared metadata-filter seam used by external override prep; only known SDXL/Flow bookkeeping keys are dropped before strict keyspace resolution.
 - 2026-03-25: `keymap_sdxl_clip.py` now treats missing CLIP `logit_scale` as an omitted-source case and lazily synthesizes the canonical `ln(100)` default, while duplicate native `logit_scale` sources still fail loud.
 - 2026-01-25: `LazySafetensorsDict` is now truly lazy on non-Windows (persistent `safe_open` handle) and implements `__contains__` so key checks don’t load tensors; `KeyspaceLookupView` also implements `__contains__` for the same reason.
@@ -49,4 +50,4 @@ Notes:
 - 2026-03-12: Added strict Gemma3 text-only GGUF keyspace resolution in `keymap_gemma3_text_encoder.py` for the LTX2 Gemma3 external loader path; it accepts llama.cpp GGUF text keys or already-native `Gemma3TextModel` keys and exposes only a lookup view.
 - 2026-03-21: `keymap_gemma3_text_encoder.py` now rejects documented wrapper-prefix rewrite inputs (`model.`, `language_model.`, `base_text_encoder.`) until the source layout is modeled explicitly; the strict lookup view remains canonical GGUF-or-native-HF only.
 
-Last Review: 2026-03-21
+Last Review: 2026-03-28

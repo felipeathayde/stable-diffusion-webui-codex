@@ -22,6 +22,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_raise_if_cancelled` (function): Checks cancellation state and raises `_SamplingCancelled` when requested.
 - `_PrecisionFallbackRequest` (exception): Signals the caller to retry sampling with a different precision policy.
 - `_resolve_guidance_policy` (function): Resolves and validates optional guidance policy overrides (env + request extras) for APG/rescale/trunc/renorm.
+- `SamplingBoundaryState` (dataclass): Opaque sampler-owned boundary carrier for exact same-latent mid-schedule resume.
+- `SamplingResult` (dataclass): Sampler return object carrying final latents plus an optional captured boundary state.
 - `CodexSampler` (class): Main sampler driver; builds `SamplingContext`, resolves sampler specs, runs the native sampler loop, and integrates
   memory-management/timeline diagnostics.
 """
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 # tags: sampling, diagnostics
 
+from dataclasses import dataclass
 from typing import Any, Optional, Callable, List, Mapping
 import math
 import logging
@@ -37,6 +40,7 @@ import os
 
 import torch
 
+from apps.backend.core.philox import PhiloxGenerator
 from apps.backend.core.rng import ImageRNG, NoiseSettings
 from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
@@ -91,6 +95,139 @@ def _raise_if_cancelled() -> None:
 
 _MAX_LMS_ORDER = 4
 _MAX_IPNDM_ORDER = 4
+
+
+@dataclass(slots=True)
+class SamplingBoundaryState:
+    """Opaque exact-resume carrier for one fixed-step sampling boundary."""
+
+    completed_steps: int
+    total_steps: int
+    sampler_name: str
+    scheduler_name: str
+    prediction_type: str | None
+    engine_id: str
+    full_sigmas: torch.Tensor
+    latent: torch.Tensor
+    old_denoised: torch.Tensor | None = None
+    older_denoised: torch.Tensor | None = None
+    old_denoised_d: torch.Tensor | None = None
+    gradient_estimation_prev_d: torch.Tensor | None = None
+    t_prev: float | None = None
+    h_prev: float | None = None
+    h_prev_2: float | None = None
+    eps_history: tuple[torch.Tensor, ...] = ()
+    res_multistep_old_sigma_down: float | None = None
+    uni_pc_history_denoised: tuple[torch.Tensor, ...] = ()
+    uni_pc_history_lambdas: tuple[float, ...] = ()
+    sa_solver_pred_list: tuple[torch.Tensor, ...] = ()
+    sa_solver_prev_noise: torch.Tensor | None = None
+    sa_solver_prev_h: float = 0.0
+    sa_solver_prev_tau_t: float = 0.0
+    guidance_apg_momentum_buffer: torch.Tensor | None = None
+    seeded_step_rng: ImageRNG | None = None
+
+
+@dataclass(slots=True)
+class SamplingResult:
+    """Sampling return object with an optional captured boundary state."""
+
+    samples: torch.Tensor
+    boundary_state: SamplingBoundaryState | None = None
+
+
+_EXACT_BOUNDARY_RESUME_SUPPORTED_SAMPLERS: frozenset[SamplerKind] = frozenset(
+    {
+        SamplerKind.EULER,
+        SamplerKind.EULER_A,
+        SamplerKind.EULER_CFG_PP,
+        SamplerKind.EULER_A_CFG_PP,
+        SamplerKind.HEUN,
+        SamplerKind.HEUNPP2,
+        SamplerKind.LMS,
+        SamplerKind.DDIM,
+        SamplerKind.DDPM,
+        SamplerKind.DPM2M,
+        SamplerKind.DPM2M_CFG_PP,
+        SamplerKind.DPMPP_SDE,
+        SamplerKind.DPM2S_ANCESTRAL,
+        SamplerKind.DPM2S_ANCESTRAL_CFG_PP,
+        SamplerKind.DPM3M_SDE,
+        SamplerKind.DPM2,
+        SamplerKind.DPM2_ANCESTRAL,
+        SamplerKind.IPNDM,
+        SamplerKind.IPNDM_V,
+        SamplerKind.DEIS,
+        SamplerKind.RES_MULTISTEP,
+        SamplerKind.RES_MULTISTEP_CFG_PP,
+        SamplerKind.RES_MULTISTEP_ANCESTRAL,
+        SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+        SamplerKind.GRADIENT_ESTIMATION,
+        SamplerKind.GRADIENT_ESTIMATION_CFG_PP,
+        SamplerKind.SA_SOLVER,
+        SamplerKind.SA_SOLVER_PECE,
+        SamplerKind.SEEDS_2,
+        SamplerKind.SEEDS_3,
+        SamplerKind.UNI_PC,
+        SamplerKind.UNI_PC_BH2,
+        SamplerKind.ER_SDE,
+    }
+)
+
+_EXACT_BOUNDARY_RESUME_UNSUPPORTED_REASONS: dict[SamplerKind, str] = {
+    SamplerKind.DPM_FAST: (
+        "Sampler 'dpm fast' is unsupported for exact top-level swap_model resume because its dedicated fast-solver path "
+        "does not expose an honest mid-schedule boundary-state seam yet."
+    ),
+    SamplerKind.DPM_ADAPTIVE: (
+        "Sampler 'dpm adaptive' is unsupported for exact top-level swap_model resume because adaptive execution does not "
+        "have an honest fixed total-step boundary contract."
+    ),
+    SamplerKind.RESTART: (
+        "Sampler 'restart' is unsupported for exact top-level swap_model resume because its renoise planner does not expose "
+        "an honest mid-schedule boundary-state seam yet."
+    ),
+    SamplerKind.DPM2M_SDE: (
+        "Sampler 'dpm++ 2m sde' is unsupported for exact top-level swap_model resume because its half-logSNR "
+        "runtime state is not restored from the captured boundary yet."
+    ),
+    SamplerKind.DPM2M_SDE_HEUN: (
+        "Sampler 'dpm++ 2m sde heun' is unsupported for exact top-level swap_model resume because its half-logSNR "
+        "runtime state is not restored from the captured boundary yet."
+    ),
+    SamplerKind.DPM2M_SDE_GPU: (
+        "Sampler 'dpm++ 2m sde gpu' is unsupported for exact top-level swap_model resume because its half-logSNR "
+        "runtime state is not restored from the captured boundary yet."
+    ),
+    SamplerKind.DPM2M_SDE_HEUN_GPU: (
+        "Sampler 'dpm++ 2m sde heun gpu' is unsupported for exact top-level swap_model resume because its half-logSNR "
+        "runtime state is not restored from the captured boundary yet."
+    ),
+}
+
+_SEEDED_STEP_RNG_SAMPLERS: frozenset[SamplerKind] = frozenset(
+    {
+        SamplerKind.EULER_A,
+        SamplerKind.EULER_A_CFG_PP,
+        SamplerKind.DDPM,
+        SamplerKind.ER_SDE,
+        SamplerKind.DPMPP_SDE,
+        SamplerKind.DPM2M_SDE,
+        SamplerKind.DPM2M_SDE_HEUN,
+        SamplerKind.DPM2M_SDE_GPU,
+        SamplerKind.DPM2M_SDE_HEUN_GPU,
+        SamplerKind.DPM3M_SDE,
+        SamplerKind.DPM2_ANCESTRAL,
+        SamplerKind.DPM2S_ANCESTRAL,
+        SamplerKind.DPM2S_ANCESTRAL_CFG_PP,
+        SamplerKind.RES_MULTISTEP_ANCESTRAL,
+        SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
+        SamplerKind.SA_SOLVER,
+        SamplerKind.SA_SOLVER_PECE,
+        SamplerKind.SEEDS_2,
+        SamplerKind.SEEDS_3,
+    }
+)
 
 _IPNDM_MULTISTEP_COEFFS: dict[int, tuple[float, ...]] = {
     1: (1.0,),
@@ -977,6 +1114,230 @@ class CodexSampler:
             )
         return sampled.to(device=reference.device, dtype=reference.dtype)
 
+    @staticmethod
+    def _clone_boundary_tensor(value: torch.Tensor | None) -> torch.Tensor | None:
+        if value is None:
+            return None
+        return value.detach().clone()
+
+    @classmethod
+    def _clone_image_rng(cls, value: ImageRNG | None) -> ImageRNG | None:
+        if value is None:
+            return None
+
+        cloned = ImageRNG(
+            tuple(int(dim) for dim in value.shape),
+            [int(seed) for seed in value.seeds],
+            subseeds=[int(seed) for seed in value.subseeds],
+            subseed_strength=float(value.subseed_strength),
+            seed_resize_from_h=int(value.seed_resize_from_h),
+            seed_resize_from_w=int(value.seed_resize_from_w),
+            settings=cls._clone_noise_settings(value.settings),
+            device=value.device,
+        )
+        cloned._is_first = bool(value._is_first)
+
+        if len(cloned._generators) != len(value._generators):
+            raise RuntimeError(
+                "ImageRNG generator count mismatch while cloning seeded-step RNG state: "
+                f"cloned={len(cloned._generators)} source={len(value._generators)}."
+            )
+
+        restored_generators: list[PhiloxGenerator | torch.Generator] = []
+        for source_generator, cloned_generator in zip(value._generators, cloned._generators, strict=True):
+            if isinstance(source_generator, PhiloxGenerator):
+                restored_generators.append(
+                    PhiloxGenerator(
+                        seed=int(source_generator.seed),
+                        offset=int(source_generator.offset),
+                    )
+                )
+                continue
+
+            if isinstance(cloned_generator, PhiloxGenerator):
+                raise RuntimeError("ImageRNG clone produced incompatible generator types during state restore.")
+
+            cloned_generator.set_state(source_generator.get_state().clone())
+            restored_generators.append(cloned_generator)
+
+        cloned._generators = restored_generators
+        return cloned
+
+    @classmethod
+    def _clone_boundary_tensor_tuple(cls, values: list[torch.Tensor] | tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
+        return tuple(cls._clone_boundary_tensor(value) for value in values if value is not None)
+
+    def _ensure_exact_boundary_resume_supported(self, sampler_kind: SamplerKind) -> None:
+        reason = _EXACT_BOUNDARY_RESUME_UNSUPPORTED_REASONS.get(sampler_kind)
+        if reason is not None:
+            raise RuntimeError(reason)
+        if sampler_kind not in _EXACT_BOUNDARY_RESUME_SUPPORTED_SAMPLERS:
+            raise RuntimeError(
+                f"Sampler '{sampler_kind.value}' is unsupported for exact top-level swap_model resume "
+                "until its boundary-state continuation is implemented explicitly."
+            )
+
+    def _build_sampling_boundary_state(
+        self,
+        *,
+        processing: Any,
+        active_context: SamplingContext,
+        steps: int,
+        current_step: int,
+        prediction_type: str | None,
+        sigmas: torch.Tensor,
+        latent: torch.Tensor,
+        old_denoised: torch.Tensor | None,
+        older_denoised: torch.Tensor | None,
+        old_denoised_d: torch.Tensor | None,
+        gradient_estimation_prev_d: torch.Tensor | None,
+        t_prev: float | None,
+        h_prev: float | None,
+        h_prev_2: float | None,
+        eps_history: list[torch.Tensor],
+        res_multistep_old_sigma_down: float | None,
+        uni_pc_history_denoised: list[torch.Tensor],
+        uni_pc_history_lambdas: list[float],
+        sa_solver_pred_list: list[torch.Tensor],
+        sa_solver_prev_noise: torch.Tensor | None,
+        sa_solver_prev_h: float,
+        sa_solver_prev_tau_t: float,
+        guidance_apg_momentum_buffer: torch.Tensor | None,
+        seeded_step_rng: ImageRNG | None,
+    ) -> SamplingBoundaryState:
+        engine_id = str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "")
+        return SamplingBoundaryState(
+            completed_steps=int(current_step),
+            total_steps=int(steps),
+            sampler_name=str(self.algorithm),
+            scheduler_name=str(active_context.scheduler_name),
+            prediction_type=prediction_type,
+            engine_id=engine_id,
+            full_sigmas=sigmas.detach().to(device="cpu", dtype=torch.float32).clone(),
+            latent=self._clone_boundary_tensor(latent),
+            old_denoised=self._clone_boundary_tensor(old_denoised),
+            older_denoised=self._clone_boundary_tensor(older_denoised),
+            old_denoised_d=self._clone_boundary_tensor(old_denoised_d),
+            gradient_estimation_prev_d=self._clone_boundary_tensor(gradient_estimation_prev_d),
+            t_prev=t_prev,
+            h_prev=h_prev,
+            h_prev_2=h_prev_2,
+            eps_history=self._clone_boundary_tensor_tuple(eps_history),
+            res_multistep_old_sigma_down=res_multistep_old_sigma_down,
+            uni_pc_history_denoised=self._clone_boundary_tensor_tuple(uni_pc_history_denoised),
+            uni_pc_history_lambdas=tuple(float(value) for value in uni_pc_history_lambdas),
+            sa_solver_pred_list=self._clone_boundary_tensor_tuple(sa_solver_pred_list),
+            sa_solver_prev_noise=self._clone_boundary_tensor(sa_solver_prev_noise),
+            sa_solver_prev_h=float(sa_solver_prev_h),
+            sa_solver_prev_tau_t=float(sa_solver_prev_tau_t),
+            guidance_apg_momentum_buffer=self._clone_boundary_tensor(guidance_apg_momentum_buffer),
+            seeded_step_rng=self._clone_image_rng(seeded_step_rng),
+        )
+
+    def _validate_resume_boundary_state(
+        self,
+        *,
+        boundary_state: SamplingBoundaryState,
+        noise: torch.Tensor,
+        sigmas: torch.Tensor,
+        active_context: SamplingContext,
+        steps: int,
+        start_at_step: int | None,
+        prediction_type: str | None,
+    ) -> None:
+        if int(boundary_state.total_steps) != int(steps):
+            raise RuntimeError(
+                "resume_boundary_state total-step mismatch: "
+                f"state_total_steps={boundary_state.total_steps} runtime_total_steps={steps}."
+            )
+        if int(boundary_state.completed_steps) < 1 or int(boundary_state.completed_steps) >= int(steps):
+            raise RuntimeError(
+                "resume_boundary_state completed_steps is outside the valid pointer range: "
+                f"completed_steps={boundary_state.completed_steps} total_steps={steps}."
+            )
+        if start_at_step is not None and int(start_at_step) != int(boundary_state.completed_steps):
+            raise RuntimeError(
+                "resume_boundary_state/start_at_step mismatch: "
+                f"resume_boundary_state.completed_steps={boundary_state.completed_steps} start_at_step={start_at_step}."
+            )
+        if str(boundary_state.sampler_name) != str(self.algorithm):
+            raise RuntimeError(
+                "resume_boundary_state sampler mismatch: "
+                f"state_sampler={boundary_state.sampler_name!r} runtime_sampler={self.algorithm!r}."
+            )
+        if str(boundary_state.scheduler_name) != str(active_context.scheduler_name):
+            raise RuntimeError(
+                "resume_boundary_state scheduler mismatch: "
+                f"state_scheduler={boundary_state.scheduler_name!r} runtime_scheduler={active_context.scheduler_name!r}."
+            )
+        if boundary_state.prediction_type != prediction_type:
+            raise RuntimeError(
+                "resume_boundary_state prediction-type mismatch: "
+                f"state_prediction={boundary_state.prediction_type!r} runtime_prediction={prediction_type!r}."
+            )
+        expected_shape = tuple(int(dim) for dim in noise.shape)
+        state_shape = tuple(int(dim) for dim in boundary_state.latent.shape)
+        if state_shape != expected_shape:
+            raise RuntimeError(
+                "resume_boundary_state latent shape mismatch: "
+                f"state_shape={state_shape} runtime_shape={expected_shape}."
+            )
+        runtime_sigmas = sigmas.detach().to(device="cpu", dtype=torch.float32)
+        if tuple(boundary_state.full_sigmas.shape) != tuple(runtime_sigmas.shape):
+            raise RuntimeError(
+                "resume_boundary_state sigma schedule shape mismatch: "
+                f"state_shape={tuple(boundary_state.full_sigmas.shape)} runtime_shape={tuple(runtime_sigmas.shape)}."
+            )
+        if not torch.allclose(boundary_state.full_sigmas, runtime_sigmas, rtol=1e-6, atol=1e-6):
+            raise RuntimeError(
+                "resume_boundary_state sigma schedule mismatch: exact top-level swap_model resume requires "
+                "identical full schedules across both same-family engines."
+            )
+
+    @torch.no_grad()
+    def sample_result(
+        self,
+        processing: Any,
+        noise: torch.Tensor,
+        cond: Any,
+        uncond: Optional[Any],
+        image_conditioning: Optional[torch.Tensor] = None,
+        *,
+        init_latent: Optional[torch.Tensor] = None,
+        resume_boundary_state: SamplingBoundaryState | None = None,
+        capture_boundary_state_at_step: int | None = None,
+        start_at_step: int | None = None,
+        denoise_strength: float | None = None,
+        img2img_fix_steps: bool = False,
+        pre_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
+        post_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
+        preview_callback: Optional[Callable[[torch.Tensor, int, int | None], None]] = None,
+        post_step_hook: Optional[Callable[[torch.Tensor, int, int | None], None]] = None,
+        post_sample_hook: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        context: SamplingContext | None = None,
+        er_sde_options: Any = None,
+    ) -> SamplingResult:
+        return self._sample_impl(
+            processing,
+            noise,
+            cond,
+            uncond,
+            image_conditioning=image_conditioning,
+            init_latent=init_latent,
+            resume_boundary_state=resume_boundary_state,
+            capture_boundary_state_at_step=capture_boundary_state_at_step,
+            start_at_step=start_at_step,
+            denoise_strength=denoise_strength,
+            img2img_fix_steps=img2img_fix_steps,
+            pre_denoiser_hook=pre_denoiser_hook,
+            post_denoiser_hook=post_denoiser_hook,
+            preview_callback=preview_callback,
+            post_step_hook=post_step_hook,
+            post_sample_hook=post_sample_hook,
+            context=context,
+            er_sde_options=er_sde_options,
+        )
+
     @torch.no_grad()
     def sample(
         self,
@@ -998,11 +1359,53 @@ class CodexSampler:
         context: SamplingContext | None = None,
         er_sde_options: Any = None,
     ) -> torch.Tensor:
+        return self._sample_impl(
+            processing,
+            noise,
+            cond,
+            uncond,
+            image_conditioning=image_conditioning,
+            init_latent=init_latent,
+            start_at_step=start_at_step,
+            denoise_strength=denoise_strength,
+            img2img_fix_steps=img2img_fix_steps,
+            pre_denoiser_hook=pre_denoiser_hook,
+            post_denoiser_hook=post_denoiser_hook,
+            preview_callback=preview_callback,
+            post_step_hook=post_step_hook,
+            post_sample_hook=post_sample_hook,
+            context=context,
+            er_sde_options=er_sde_options,
+        ).samples
+
+    def _sample_impl(
+        self,
+        processing: Any,
+        noise: torch.Tensor,
+        cond: Any,
+        uncond: Optional[Any],
+        image_conditioning: Optional[torch.Tensor] = None,
+        *,
+        init_latent: Optional[torch.Tensor] = None,
+        resume_boundary_state: SamplingBoundaryState | None = None,
+        capture_boundary_state_at_step: int | None = None,
+        start_at_step: int | None = None,
+        denoise_strength: float | None = None,
+        img2img_fix_steps: bool = False,
+        pre_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
+        post_denoiser_hook: Optional[Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor]] = None,
+        preview_callback: Optional[Callable[[torch.Tensor, int, int | None], None]] = None,
+        post_step_hook: Optional[Callable[[torch.Tensor, int, int | None], None]] = None,
+        post_sample_hook: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        context: SamplingContext | None = None,
+        er_sde_options: Any = None,
+    ) -> SamplingResult:
         base_noise = noise.detach()
         base_context = context
         warned_full_preview = False
 
         spec = get_sampler_spec(self.algorithm)
+        captured_boundary_state: SamplingBoundaryState | None = None
 
         while True:
             denoiser = self.sd_model.codex_objects.denoiser
@@ -1026,9 +1429,37 @@ class CodexSampler:
             target_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
             noise = base_noise.to(dtype=target_dtype)
 
+            if resume_boundary_state is not None and init_latent is not None:
+                raise RuntimeError("resume_boundary_state and init_latent are mutually exclusive.")
+            if resume_boundary_state is not None and capture_boundary_state_at_step is not None:
+                raise RuntimeError("resume_boundary_state and capture_boundary_state_at_step are mutually exclusive.")
             if init_latent is not None and init_latent.dtype != noise.dtype:
                 init_latent = init_latent.to(dtype=noise.dtype)
             normalized_denoise = self._normalize_denoise_strength(denoise_strength)
+            exact_boundary_resume_requested = (
+                resume_boundary_state is not None or capture_boundary_state_at_step is not None
+            )
+            if exact_boundary_resume_requested:
+                if bool(img2img_fix_steps):
+                    raise RuntimeError(
+                        "Exact top-level swap_model boundary capture/resume is incompatible with img2img fixed-step continuation."
+                    )
+                if normalized_denoise is not None and not math.isclose(float(normalized_denoise), 1.0):
+                    raise RuntimeError(
+                        "Exact top-level swap_model boundary capture/resume requires full-strength denoise (1.0)."
+                    )
+                if capture_boundary_state_at_step is not None:
+                    capture_step = int(capture_boundary_state_at_step)
+                    if capture_step < 1 or capture_step >= steps:
+                        raise RuntimeError(
+                            "capture_boundary_state_at_step must be inside the original total-step pointer range "
+                            f"[1, {steps - 1}] (got {capture_step})."
+                        )
+                    if int(start_at_step or 0) != 0:
+                        raise RuntimeError(
+                            "capture_boundary_state_at_step must run on the original full schedule; do not combine it "
+                            f"with start_at_step={start_at_step}."
+                        )
 
             block_progress_controller: RichBlockProgressController | None = None
             retry = False
@@ -1236,6 +1667,10 @@ class CodexSampler:
                         ladder=schedule_summary,
                     )
 
+                sampler_kind = active_context.sampler_kind
+                if exact_boundary_resume_requested:
+                    self._ensure_exact_boundary_resume_supported(sampler_kind)
+
                 start_idx = int(start_at_step or 0)
                 if proportional_partial_denoise:
                     start_idx += self._nonflow_partial_denoise_start_index(
@@ -1245,7 +1680,7 @@ class CodexSampler:
                 start_idx = max(0, min(start_idx, steps - 1))
                 sigmas_run = sigmas[start_idx:]
                 restart_step_plan: list[RestartStepPlan] | None = None
-                if active_context.sampler_kind is SamplerKind.RESTART:
+                if sampler_kind is SamplerKind.RESTART:
                     if active_context.scheduler_name != "karras":
                         raise RuntimeError(
                             f"Restart requires scheduler 'karras'; got {active_context.scheduler_name!r}."
@@ -1253,7 +1688,26 @@ class CodexSampler:
                     restart_step_plan = build_restart_step_plan(sigmas_run)
                     if not restart_step_plan:
                         raise RuntimeError("Restart planner produced an empty execution plan.")
-                if init_latent is not None:
+                resume_prediction_type = getattr(active_context, "prediction_type", None)
+                if resume_prediction_type is None:
+                    resume_prediction_type = getattr(getattr(model, "predictor", None), "prediction_type", None)
+                if isinstance(resume_prediction_type, str):
+                    resume_prediction_type = resume_prediction_type.lower()
+                exact_resume_active = resume_boundary_state is not None
+                if exact_resume_active:
+                    self._validate_resume_boundary_state(
+                        boundary_state=resume_boundary_state,
+                        noise=noise,
+                        sigmas=sigmas,
+                        active_context=active_context,
+                        steps=steps,
+                        start_at_step=start_at_step,
+                        prediction_type=resume_prediction_type,
+                    )
+                    start_idx = int(resume_boundary_state.completed_steps)
+                    sigmas_run = sigmas
+                    x = resume_boundary_state.latent.to(device=noise.device, dtype=noise.dtype)
+                elif init_latent is not None:
                     sigma0 = sigmas_run[:1].to(device=noise.device, dtype=noise.dtype)
                     init_latent = init_latent.to(device=noise.device, dtype=noise.dtype)
                     x = model.predictor.noise_scaling(
@@ -1314,8 +1768,11 @@ class CodexSampler:
                             for entry in compiled_uncond:
                                 entry["model_conds"]["c_concat"] = Condition(image_conditioning)
 
-                sampler_kind = active_context.sampler_kind
-                run_total_steps = len(restart_step_plan) if restart_step_plan is not None else steps - start_idx
+                run_total_steps = (
+                    steps
+                    if exact_resume_active
+                    else (len(restart_step_plan) if restart_step_plan is not None else steps - start_idx)
+                )
                 reported_total_steps: int | None = None if sampler_kind is SamplerKind.DPM_ADAPTIVE else run_total_steps
                 guidance_policy = _resolve_guidance_policy(processing)
                 if guidance_policy is None:
@@ -1345,6 +1802,18 @@ class CodexSampler:
                         apg_rescale=float(guidance_policy.get("apg_rescale", 0.0) or 0.0),
                         renorm_cfg=float(guidance_policy.get("renorm_cfg", 0.0) or 0.0),
                     )
+                if exact_resume_active:
+                    assert resume_boundary_state is not None
+                    guidance_apg_momentum_buffer = self._clone_boundary_tensor(
+                        resume_boundary_state.guidance_apg_momentum_buffer
+                    )
+                    if guidance_apg_momentum_buffer is not None:
+                        denoiser.model_options[_GUIDANCE_APG_MOMENTUM_BUFFER_KEY] = guidance_apg_momentum_buffer.to(
+                            device=x.device,
+                            dtype=x.dtype,
+                        )
+                    else:
+                        denoiser.model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
                 backend_state.start(job_count=1, sampling_steps=reported_total_steps)
                 state_started = True
                 transformer_options = denoiser.model_options.get("transformer_options", None)
@@ -1476,6 +1945,45 @@ class CodexSampler:
                 dpm3m_sde_s_noise = 1.0
                 lms_sigmas_run: list[float] | None = None
                 seeded_step_rng: ImageRNG | None = None
+                if exact_resume_active:
+                    assert resume_boundary_state is not None
+                    old_denoised = self._clone_boundary_tensor(resume_boundary_state.old_denoised)
+                    if old_denoised is not None:
+                        old_denoised = old_denoised.to(device=x.device, dtype=x.dtype)
+                    older_denoised = self._clone_boundary_tensor(resume_boundary_state.older_denoised)
+                    if older_denoised is not None:
+                        older_denoised = older_denoised.to(device=x.device, dtype=x.dtype)
+                    old_denoised_d = self._clone_boundary_tensor(resume_boundary_state.old_denoised_d)
+                    if old_denoised_d is not None:
+                        old_denoised_d = old_denoised_d.to(device=x.device, dtype=x.dtype)
+                    gradient_estimation_prev_d = self._clone_boundary_tensor(
+                        resume_boundary_state.gradient_estimation_prev_d
+                    )
+                    if gradient_estimation_prev_d is not None:
+                        gradient_estimation_prev_d = gradient_estimation_prev_d.to(device=x.device, dtype=x.dtype)
+                    t_prev = resume_boundary_state.t_prev
+                    h_prev = resume_boundary_state.h_prev
+                    h_prev_2 = resume_boundary_state.h_prev_2
+                    eps_history = [
+                        tensor.to(device=x.device, dtype=x.dtype)
+                        for tensor in self._clone_boundary_tensor_tuple(resume_boundary_state.eps_history)
+                    ]
+                    res_multistep_old_sigma_down = resume_boundary_state.res_multistep_old_sigma_down
+                    uni_pc_history_denoised = [
+                        tensor.to(device=x.device, dtype=x.dtype)
+                        for tensor in self._clone_boundary_tensor_tuple(resume_boundary_state.uni_pc_history_denoised)
+                    ]
+                    uni_pc_history_lambdas = [float(value) for value in resume_boundary_state.uni_pc_history_lambdas]
+                    sa_solver_pred_list = [
+                        tensor.to(device=x.device, dtype=x.dtype)
+                        for tensor in self._clone_boundary_tensor_tuple(resume_boundary_state.sa_solver_pred_list)
+                    ]
+                    sa_solver_prev_noise = self._clone_boundary_tensor(resume_boundary_state.sa_solver_prev_noise)
+                    if sa_solver_prev_noise is not None:
+                        sa_solver_prev_noise = sa_solver_prev_noise.to(device=x.device, dtype=x.dtype)
+                    sa_solver_prev_h = float(resume_boundary_state.sa_solver_prev_h)
+                    sa_solver_prev_tau_t = float(resume_boundary_state.sa_solver_prev_tau_t)
+                    seeded_step_rng = self._clone_image_rng(resume_boundary_state.seeded_step_rng)
                 if sampler_kind in {SamplerKind.UNI_PC, SamplerKind.UNI_PC_BH2}:
                     uni_pc_order_cap = max(1, min(3, int(sigmas_run.numel()) - 2))
                 if sampler_kind is SamplerKind.ER_SDE:
@@ -1517,7 +2025,7 @@ class CodexSampler:
                         dpm_sde_sigmas,
                         prediction_type=prediction_type,
                     )
-                if sampler_kind in {
+                if (not exact_resume_active) and sampler_kind in {
                     SamplerKind.DPM2M_SDE,
                     SamplerKind.DPM2M_SDE_HEUN,
                     SamplerKind.DPM2M_SDE_GPU,
@@ -1823,107 +2331,94 @@ class CodexSampler:
                         _capture_dpm2s_ancestral_cfg_pp,
                         disable_cfg1_optimization=True,
                     )
-                if sampler_kind in {
-                    SamplerKind.EULER_A,
-                    SamplerKind.EULER_A_CFG_PP,
-                    SamplerKind.DDPM,
-                    SamplerKind.ER_SDE,
-                    SamplerKind.DPMPP_SDE,
-                    SamplerKind.DPM2M_SDE,
-                    SamplerKind.DPM2M_SDE_HEUN,
-                    SamplerKind.DPM2M_SDE_GPU,
-                    SamplerKind.DPM2M_SDE_HEUN_GPU,
-                    SamplerKind.DPM3M_SDE,
-                    SamplerKind.DPM2_ANCESTRAL,
-                    SamplerKind.DPM2S_ANCESTRAL,
-                    SamplerKind.DPM2S_ANCESTRAL_CFG_PP,
-                    SamplerKind.RES_MULTISTEP_ANCESTRAL,
-                    SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
-                    SamplerKind.SA_SOLVER,
-                    SamplerKind.SA_SOLVER_PECE,
-                    SamplerKind.SEEDS_2,
-                    SamplerKind.SEEDS_3,
-                }:
-                    seeded_step_rng = self._build_seeded_step_rng(
-                        processing=processing,
-                        active_context=active_context,
-                        noise=base_noise,
-                    )
-                    for skip_index in range(start_idx):
-                        sigma_skip_next = float(sigmas[skip_index + 1])
-                        if sigma_skip_next <= 0.0:
-                            continue
-                        if sampler_kind in {
-                            SamplerKind.DPM2M_SDE,
-                            SamplerKind.DPM2M_SDE_HEUN,
-                            SamplerKind.DPM2M_SDE_GPU,
-                            SamplerKind.DPM2M_SDE_HEUN_GPU,
-                        }:
-                            if dpm2m_sde_lambdas is None:
-                                raise RuntimeError("DPM++ 2M SDE seeded noise RNG setup missing half-logSNR state.")
-                            if dpm2m_sde_eta <= 0.0 or dpm2m_sde_s_noise <= 0.0:
+                if sampler_kind in _SEEDED_STEP_RNG_SAMPLERS:
+                    if exact_resume_active:
+                        if seeded_step_rng is None:
+                            raise RuntimeError(
+                                f"resume_boundary_state is missing seeded_step_rng for exact stochastic resume with sampler "
+                                f"'{sampler_kind.value}'."
+                            )
+                    else:
+                        seeded_step_rng = self._build_seeded_step_rng(
+                            processing=processing,
+                            active_context=active_context,
+                            noise=base_noise,
+                        )
+                        for skip_index in range(start_idx):
+                            sigma_skip_next = float(sigmas[skip_index + 1])
+                            if sigma_skip_next <= 0.0:
                                 continue
-                            lambda_skip_s = float(dpm2m_sde_lambdas[skip_index])
-                            lambda_skip_t = float(dpm2m_sde_lambdas[skip_index + 1])
-                            h_skip = lambda_skip_t - lambda_skip_s
-                            if not math.isfinite(h_skip) or h_skip <= 0.0:
-                                raise RuntimeError(
-                                    "DPM++ 2M SDE skip-burn produced an invalid half-logSNR step size "
-                                    f"h={h_skip} at skip_index={skip_index}."
-                                )
-                            noise_scale_sq = -math.expm1(-2.0 * h_skip * dpm2m_sde_eta)
-                            if noise_scale_sq < -1e-8:
-                                raise RuntimeError(
-                                    "DPM++ 2M SDE skip-burn produced a negative stochastic noise scale "
-                                    f"({noise_scale_sq}) at skip_index={skip_index}."
-                                )
-                            if noise_scale_sq <= 0.0:
-                                continue
-                        if sampler_kind is SamplerKind.DPMPP_SDE:
-                            if dpm_sde_eta <= 0.0 or dpm_sde_s_noise <= 0.0:
-                                continue
+                            if sampler_kind in {
+                                SamplerKind.DPM2M_SDE,
+                                SamplerKind.DPM2M_SDE_HEUN,
+                                SamplerKind.DPM2M_SDE_GPU,
+                                SamplerKind.DPM2M_SDE_HEUN_GPU,
+                            }:
+                                if dpm2m_sde_lambdas is None:
+                                    raise RuntimeError("DPM++ 2M SDE seeded noise RNG setup missing half-logSNR state.")
+                                if dpm2m_sde_eta <= 0.0 or dpm2m_sde_s_noise <= 0.0:
+                                    continue
+                                lambda_skip_s = float(dpm2m_sde_lambdas[skip_index])
+                                lambda_skip_t = float(dpm2m_sde_lambdas[skip_index + 1])
+                                h_skip = lambda_skip_t - lambda_skip_s
+                                if not math.isfinite(h_skip) or h_skip <= 0.0:
+                                    raise RuntimeError(
+                                        "DPM++ 2M SDE skip-burn produced an invalid half-logSNR step size "
+                                        f"h={h_skip} at skip_index={skip_index}."
+                                    )
+                                noise_scale_sq = -math.expm1(-2.0 * h_skip * dpm2m_sde_eta)
+                                if noise_scale_sq < -1e-8:
+                                    raise RuntimeError(
+                                        "DPM++ 2M SDE skip-burn produced a negative stochastic noise scale "
+                                        f"({noise_scale_sq}) at skip_index={skip_index}."
+                                    )
+                                if noise_scale_sq <= 0.0:
+                                    continue
+                            if sampler_kind is SamplerKind.DPMPP_SDE:
+                                if dpm_sde_eta <= 0.0 or dpm_sde_s_noise <= 0.0:
+                                    continue
+                                seeded_step_rng.next()
+                            if sampler_kind is SamplerKind.DPM3M_SDE:
+                                if dpm3m_sde_lambdas is None:
+                                    raise RuntimeError("DPM++ 3M SDE seeded noise RNG setup missing half-logSNR state.")
+                                if dpm3m_sde_eta <= 0.0 or dpm3m_sde_s_noise <= 0.0:
+                                    continue
+                                lambda_skip_s = float(dpm3m_sde_lambdas[skip_index])
+                                lambda_skip_t = float(dpm3m_sde_lambdas[skip_index + 1])
+                                h_skip = lambda_skip_t - lambda_skip_s
+                                if not math.isfinite(h_skip) or h_skip <= 0.0:
+                                    raise RuntimeError(
+                                        "DPM++ 3M SDE skip-burn produced an invalid half-logSNR step size "
+                                        f"h={h_skip} at skip_index={skip_index}."
+                                    )
+                                noise_scale_sq = -math.expm1(-2.0 * h_skip * dpm3m_sde_eta)
+                                if noise_scale_sq < -1e-8:
+                                    raise RuntimeError(
+                                        "DPM++ 3M SDE skip-burn produced a negative stochastic noise scale "
+                                        f"({noise_scale_sq}) at skip_index={skip_index}."
+                                    )
+                                if noise_scale_sq <= 0.0:
+                                    continue
+                            if sampler_kind is SamplerKind.ER_SDE:
+                                if er_sde_params is None:
+                                    raise RuntimeError("ER-SDE seeded noise RNG setup missing runtime parameters.")
+                                if float(er_sde_params["s_noise"]) <= 0.0:
+                                    continue
+                            if sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
+                                if sa_solver_tau_func is None:
+                                    raise RuntimeError("SA-Solver seeded noise RNG setup missing tau interval function.")
+                                if float(sa_solver_tau_func(sigma_skip_next)) <= 0.0:
+                                    continue
+                            if sampler_kind is SamplerKind.SEEDS_2:
+                                if seeds2_s_noise <= 0.0:
+                                    continue
+                                seeded_step_rng.next()
+                            if sampler_kind is SamplerKind.SEEDS_3:
+                                if seeds3_s_noise <= 0.0:
+                                    continue
+                                seeded_step_rng.next()
+                                seeded_step_rng.next()
                             seeded_step_rng.next()
-                        if sampler_kind is SamplerKind.DPM3M_SDE:
-                            if dpm3m_sde_lambdas is None:
-                                raise RuntimeError("DPM++ 3M SDE seeded noise RNG setup missing half-logSNR state.")
-                            if dpm3m_sde_eta <= 0.0 or dpm3m_sde_s_noise <= 0.0:
-                                continue
-                            lambda_skip_s = float(dpm3m_sde_lambdas[skip_index])
-                            lambda_skip_t = float(dpm3m_sde_lambdas[skip_index + 1])
-                            h_skip = lambda_skip_t - lambda_skip_s
-                            if not math.isfinite(h_skip) or h_skip <= 0.0:
-                                raise RuntimeError(
-                                    "DPM++ 3M SDE skip-burn produced an invalid half-logSNR step size "
-                                    f"h={h_skip} at skip_index={skip_index}."
-                                )
-                            noise_scale_sq = -math.expm1(-2.0 * h_skip * dpm3m_sde_eta)
-                            if noise_scale_sq < -1e-8:
-                                raise RuntimeError(
-                                    "DPM++ 3M SDE skip-burn produced a negative stochastic noise scale "
-                                    f"({noise_scale_sq}) at skip_index={skip_index}."
-                                )
-                            if noise_scale_sq <= 0.0:
-                                continue
-                        if sampler_kind is SamplerKind.ER_SDE:
-                            if er_sde_params is None:
-                                raise RuntimeError("ER-SDE seeded noise RNG setup missing runtime parameters.")
-                            if float(er_sde_params["s_noise"]) <= 0.0:
-                                continue
-                        if sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
-                            if sa_solver_tau_func is None:
-                                raise RuntimeError("SA-Solver seeded noise RNG setup missing tau interval function.")
-                            if float(sa_solver_tau_func(sigma_skip_next)) <= 0.0:
-                                continue
-                        if sampler_kind is SamplerKind.SEEDS_2:
-                            if seeds2_s_noise <= 0.0:
-                                continue
-                            seeded_step_rng.next()
-                        if sampler_kind is SamplerKind.SEEDS_3:
-                            if seeds3_s_noise <= 0.0:
-                                continue
-                            seeded_step_rng.next()
-                            seeded_step_rng.next()
-                        seeded_step_rng.next()
 
                 def _dpm_sigma_from_time(time_value: torch.Tensor) -> torch.Tensor:
                     return torch.exp(-time_value)
@@ -2780,9 +3275,10 @@ class CodexSampler:
                     for i in range(start_idx, steps):
                         if backend_state.should_stop:
                             raise _SamplingCancelled("cancelled")
-                        step_index = i - start_idx
+                        run_step_index = i - start_idx
+                        history_step_index = i if exact_resume_active else run_step_index
                         if sampler_kind in {SamplerKind.DPM_FAST, SamplerKind.DPM_ADAPTIVE, SamplerKind.RESTART}:
-                            if step_index != 0:
+                            if run_step_index != 0:
                                 break
                             if sampler_kind is SamplerKind.DPM_FAST:
                                 x, t0 = _run_native_dpm_fast(x, start_time=t0)
@@ -2793,35 +3289,35 @@ class CodexSampler:
                             break
                         backend_state.reset_sampling_blocks()
                         if guidance_policy is not None:
-                            denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = step_index
-                        with profiler.section(f"sampling.step/{step_index + 1}"):
+                            denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = history_step_index
+                        with profiler.section(f"sampling.step/{history_step_index + 1}"):
                             sigma = sigmas[i]
                             sigma_next = sigmas[i + 1]
                             if sampler_kind is SamplerKind.SEEDS_2:
                                 if seeds2_sigmas is None:
                                     raise RuntimeError("SEEDS-2 missing adjusted sigma schedule.")
-                                sigma = seeds2_sigmas[step_index]
-                                sigma_next = seeds2_sigmas[step_index + 1]
+                                sigma = seeds2_sigmas[history_step_index]
+                                sigma_next = seeds2_sigmas[history_step_index + 1]
                             if sampler_kind is SamplerKind.SEEDS_3:
                                 if seeds3_sigmas is None:
                                     raise RuntimeError("SEEDS-3 missing adjusted sigma schedule.")
-                                sigma = seeds3_sigmas[step_index]
-                                sigma_next = seeds3_sigmas[step_index + 1]
+                                sigma = seeds3_sigmas[history_step_index]
+                                sigma_next = seeds3_sigmas[history_step_index + 1]
                             if sampler_kind in {SamplerKind.SA_SOLVER, SamplerKind.SA_SOLVER_PECE}:
                                 if sa_solver_sigmas is None:
                                     raise RuntimeError("SA-Solver missing adjusted sigma schedule.")
-                                sigma = sa_solver_sigmas[step_index]
-                                sigma_next = sa_solver_sigmas[step_index + 1]
+                                sigma = sa_solver_sigmas[history_step_index]
+                                sigma_next = sa_solver_sigmas[history_step_index + 1]
                             if sampler_kind is SamplerKind.DPMPP_SDE:
                                 if dpm_sde_sigmas is None:
                                     raise RuntimeError("DPM++ SDE missing adjusted sigma schedule.")
-                                sigma = dpm_sde_sigmas[step_index]
-                                sigma_next = dpm_sde_sigmas[step_index + 1]
+                                sigma = dpm_sde_sigmas[history_step_index]
+                                sigma_next = dpm_sde_sigmas[history_step_index + 1]
                             if sampler_kind is SamplerKind.DPM3M_SDE:
                                 if dpm3m_sde_sigmas is None:
                                     raise RuntimeError("DPM++ 3M SDE missing adjusted sigma schedule.")
-                                sigma = dpm3m_sde_sigmas[step_index]
-                                sigma_next = dpm3m_sde_sigmas[step_index + 1]
+                                sigma = dpm3m_sde_sigmas[history_step_index]
+                                sigma_next = dpm3m_sde_sigmas[history_step_index + 1]
                             if sampler_kind in {
                                 SamplerKind.RES_MULTISTEP_CFG_PP,
                                 SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP,
@@ -2836,7 +3332,8 @@ class CodexSampler:
                             if sampler_kind is SamplerKind.DPM2S_ANCESTRAL_CFG_PP:
                                 dpm2s_ancestral_cfg_pp_capture = None
                             sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=torch.float32)
-                            current_step = step_index + 1
+                            current_step = history_step_index + 1
+                            step_index = history_step_index
 
                             if pre_denoiser_hook is not None:
                                 x = pre_denoiser_hook(x, sigma_batch, current_step, run_total_steps)
@@ -3112,7 +3609,7 @@ class CodexSampler:
                             elif sampler_kind is SamplerKind.HEUNPP2:
                                 sigma_f = float(sigma)
                                 sigma_next_f = float(sigma_next)
-                                local_step_index = i - start_idx
+                                local_step_index = step_index
                                 final_step_index = int(sigmas_run.numel()) - 1
                                 if final_step_index < 1:
                                     raise RuntimeError("HEUNPP2 requires at least one sigma transition.")
@@ -3174,7 +3671,7 @@ class CodexSampler:
                             elif sampler_kind is SamplerKind.LMS:
                                 if lms_sigmas_run is None:
                                     raise RuntimeError("LMS sigma ladder cache is not initialized.")
-                                local_step_index = i - start_idx
+                                local_step_index = step_index
                                 current_order = min(local_step_index + 1, _MAX_LMS_ORDER)
                                 sigma_nodes = [
                                     float(lms_sigmas_run[local_step_index - offset]) for offset in range(current_order)
@@ -3196,7 +3693,7 @@ class CodexSampler:
                                 if sigma_next_f <= 0.0:
                                     x = denoised
                                 else:
-                                    local_step_index = i - start_idx
+                                    local_step_index = step_index
                                     x = x + (sigma_next_f - sigma_f) * _compute_ipndm_v_derivative(
                                         sigmas_run,
                                         local_step_index,
@@ -3205,7 +3702,7 @@ class CodexSampler:
                             elif sampler_kind is SamplerKind.DEIS:
                                 if deis_coefficients is None:
                                     raise RuntimeError("DEIS coefficient cache is not initialized.")
-                                local_step_index = i - start_idx
+                                local_step_index = step_index
                                 sigma_f = float(sigma)
                                 sigma_next_f = float(sigma_next)
                                 order = min(3, local_step_index + 1)
@@ -4687,7 +5184,7 @@ class CodexSampler:
                                         )
                                     current_history_denoised = [*uni_pc_history_denoised, denoised.detach()]
                                     current_history_lambdas = [*uni_pc_history_lambdas, lambda_s]
-                                    local_step_index = i - start_idx
+                                    local_step_index = step_index
                                     remaining_active_steps = max(1, run_total_steps - local_step_index)
                                     step_order = min(
                                         uni_pc_order_cap,
@@ -4822,6 +5319,39 @@ class CodexSampler:
 
                             backend_state.tick(sampling_step=current_step)
                             backend_state.reset_sampling_blocks()
+                            if (
+                                capture_boundary_state_at_step is not None
+                                and current_step == int(capture_boundary_state_at_step)
+                            ):
+                                captured_boundary_state = self._build_sampling_boundary_state(
+                                    processing=processing,
+                                    active_context=active_context,
+                                    steps=steps,
+                                    current_step=current_step,
+                                    prediction_type=prediction_type,
+                                    sigmas=sigmas,
+                                    latent=x,
+                                    old_denoised=old_denoised,
+                                    older_denoised=older_denoised,
+                                    old_denoised_d=old_denoised_d,
+                                    gradient_estimation_prev_d=gradient_estimation_prev_d,
+                                    t_prev=t_prev,
+                                    h_prev=h_prev,
+                                    h_prev_2=h_prev_2,
+                                    eps_history=eps_history,
+                                    res_multistep_old_sigma_down=res_multistep_old_sigma_down,
+                                    uni_pc_history_denoised=uni_pc_history_denoised,
+                                    uni_pc_history_lambdas=uni_pc_history_lambdas,
+                                    sa_solver_pred_list=sa_solver_pred_list,
+                                    sa_solver_prev_noise=sa_solver_prev_noise,
+                                    sa_solver_prev_h=sa_solver_prev_h,
+                                    sa_solver_prev_tau_t=sa_solver_prev_tau_t,
+                                    guidance_apg_momentum_buffer=denoiser.model_options.get(
+                                        _GUIDANCE_APG_MOMENTUM_BUFFER_KEY
+                                    ),
+                                    seeded_step_rng=seeded_step_rng,
+                                )
+                                break
                         profiler.step()
 
                 sampling_cleanup(denoiser)
@@ -4830,10 +5360,12 @@ class CodexSampler:
                 backend_state.end()
                 state_started = False
 
+                if captured_boundary_state is not None:
+                    return SamplingResult(samples=x, boundary_state=captured_boundary_state)
                 if post_sample_hook is not None:
                     x = post_sample_hook(x)
 
-                return x
+                return SamplingResult(samples=x)
             except _PrecisionFallbackRequest:
                 self._logger.warning("Precision fallback requested for diffusion core; retrying with next dtype.")
             except _SamplingCancelled:

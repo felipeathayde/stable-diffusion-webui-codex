@@ -1,7 +1,7 @@
 # apps/backend/use_cases/txt2img_pipeline Overview
 <!-- tags: backend, use-case, txt2img, pipeline, refiner -->
 Date: 2025-10-31
-Last Review: 2026-03-25
+Last Review: 2026-03-28
 Status: Active
 
 ## Purpose
@@ -27,6 +27,8 @@ Status: Active
 - 2026-02-20: `_run_hires_pass(...)` now logs explicit transition checkpoints for the 1st->2nd pass handoff (`[hires] transition base_to_hires` and `[hires] upscale_ready`) with upscaler, target size, sampler/scheduler, latent/image-conditioning shapes, and computed `start_at_step`.
 - 2026-02-20: `_log_conditioning(...)` now emits cond/uncond diagnostics via `emit_backend_event(...)` (`conditioning.cond` / `conditioning.uncond`) with normalized shape tokens (`BxSxC`) so high-field conditioning logs use the same structured multiline formatting as other backend telemetry (no hardcoded family label in event name).
 - 2026-02-23: `runner.py::Txt2ImgPipelineRunner.run(...)` no longer enforces hard CUDA-only guards (`torch.cuda.is_available()` / `model_device.type == "cuda"`); device authority remains canonicalized at API/memory-manager boundaries.
+- 2026-03-28: top-level `swap_model` now uses exact same-latent pointer semantics: base sampling captures `SamplingOutput.boundary_state` at `switch_at_step`, `GlobalSwapModelStage` resumes only from that boundary state, and the seam fails loud when first-pass sampling was bypassed or when the resumed engine is not same-family compatible.
+- 2026-03-28 follow-up: `GlobalSwapModelStage` now proves same-family compatibility from the boundary-state engine id via primary-family authority only (no live `processing.sd_model` fallback), inherits base RNG continuity for exact resume, and rejects explicit top-level `swap_model.seed` overrides because the resumed trajectory comes from the captured boundary state rather than a new stage seed/noise draw.
 - 2026-03-02: `_run_hires_pass(...)` now consumes typed hires-prep outputs (`latents`, optional `image_conditioning`, `continuation_mode`) and supports Flux Kontext hires continuation by injecting `image_latents` into dict conditioning, running sampling with `init_latent=None` and `start_at_step=0` (denoise schedule ignored for this mode with explicit warning log).
 - 2026-03-02: `_run_hires_pass(...)` now disables `execute_sampling` txt2img conditioning fallback specifically for `continuation_mode='image_latents'`, preventing implicit `c_concat` injection when `image_conditioning` is intentionally unset in Kontext-style continuation.
 - 2026-03-09: `_run_hires_pass(...)` records the effective hires sampler/scheduler/steps/denoise/size payload on the processing object for final response metadata; hires sampler/scheduler/size stay request-owned overrides and prompt parsing is LoRA-only.

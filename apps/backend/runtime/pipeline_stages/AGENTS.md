@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-03-26
+Last Review: 2026-03-28
 Status: Active
 
 ## Purpose
@@ -54,6 +54,8 @@ Status: Active
 - 2026-03-25: `masked_img2img.py::LatentMaskEnforcer` now owns both subordinate per-step clamp scalars: `per_step_blend_strength` and `per_step_blend_steps`. Exact pre/post-denoiser blend-total hooks stay reserved for the explicit default contract (`strength=1.0`, `steps=0`); any positive window or sub-unit strength uses `post_step_hook`, and `0` remains the runtime-owned `all accepted outer steps` sentinel.
 - 2026-03-26: `masked_img2img.py` now exposes `resolve_mask_enforcer_hooks(...)` as the single hook-selection owner for classic and FLUX.2 masked paths, and the masked pre-denoiser hook re-noises deterministically per invocation instead of reusing one cached base-noise tensor across all calls.
 - 2026-03-26: `prompt_context.py` now parses positive and negative prompt strings under a lora-only contract, carries request-owned `clip_skip` on `PromptContext.clip_skip`, and removes prompt-derived runtime control seams entirely. `sampling_execute.execute_sampling(...)` still carries the internal-only `img2img_fix_steps` flag used by hires continuations.
+- 2026-03-28: `sampling_execute.py` now exposes `execute_sampling_result(...)` for exact top-level swap-model boundary capture/resume. When a boundary capture is requested, the helper returns the sampler-owned `boundary_state` without running post-sample hooks or latent dumps so the swap seam resumes from the exact captured state.
+- 2026-03-28: exact top-level swap-model resume must not mint fresh initial noise. `sampling_execute.py` now rejects explicit noise overrides / `processing.modified_noise` / in-place noise mutation during exact resume, and `sampling_plan.py::ensure_sampler(...)` is the sampler-only helper for exact-resume lanes that must rebuild the active sampler without replacing `processing.rng`.
 - 2026-03-26: `build_hires_prompt_context(...)` now owns second-pass LoRA inheritance. Hires prompt parsing stays LoRA-only, but cleaned base/request LoRAs from `PromptContext.loras` must carry into hires unless prompt-local hires tags replace the same path with new weights.
 - 2026-02-25: `run_before_sampling_hooks(...)` no longer auto-applies extra-network LoRAs; sampling-path LoRA ownership is now single-source in `sampling_execute.execute_sampling(...)` to prevent duplicate apply in one sampling pass.
 - 2026-02-18: `prompt_context.py` now merges request override `lora_path` entries into `PromptContext.loras` (dedup by path, prompt-tag LoRAs keep precedence/weight) so API-resolved LoRA SHA selections can flow into sampling without exposing SHA tokens in prompt/UI.

@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-03-26
+Last Review: 2026-03-28
 Status: Draft
 
 ## Purpose
@@ -29,6 +29,7 @@ Status: Draft
 - 2026-02-20: Removed semantic-engine map entry for `wan22_14b_native`; WAN22 14B semantic ownership is now single-key (`wan22_14b`).
 - 2026-02-20: WAN22 animate semantic/loader key was renamed to `wan22_14b_animate` (old `wan22_animate_14b` removed).
 - 2026-02-21: `capabilities.engine_supports_cfg(engine_id)` now resolves family from explicit `engine_id -> ModelFamily` mapping (including WAN22 variants) instead of semantic-primary-family fallback, removing hidden `wan22 -> WAN22_5B` drift at capability checks.
+- 2026-03-28: `capabilities.primary_family_for_engine_id(engine_id)` is the canonical runtime owner for exact same-family checks. `SemanticEngine` remains UI/workflow gating only and must not be reused as proof for strict family-equality runtime contracts such as exact top-level `swap_model` resume.
 - 2026-03-02: `capabilities.py` semantic surfaces now declare `supports_hires=true` for non-SD image families implemented in the shared hires second-pass (`flux1`, `flux1_chroma`, `zimage`, `anima`).
 - 2026-03-04: Detector `SignalBundle` now carries source-format hints (`safetensors|gguf`) and header-backed `shape_of(...)` usage, so safetensors signature detection avoids full `state_dict.values()` scans/materialization during startup planning.
 - 2026-03-05: Added `detectors/flux2.py` for the truthful FLUX.2 Klein 4B/base-4B core-only SafeTensors layout (`double_blocks.*`, `single_blocks.*`, `img_in.*`, `txt_in.*`, `single_stream_modulation.*`, `final_layer.*`); unsupported FLUX.2 variants (for example 9B) intentionally do not match.

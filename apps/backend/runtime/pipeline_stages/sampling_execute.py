@@ -8,12 +8,14 @@ Required Notice: see NOTICE
 
 Purpose: Sampling execution helper for pipeline orchestrators.
 Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics (including ER-SDE option
-propagation into the sampler and diagnostic metadata dumps), with explicit control over txt2img image-conditioning fallback injection and the
-internal img2img fixed-step execution seam used by hires continuations.
+propagation into the sampler and diagnostic metadata dumps), with explicit control over txt2img image-conditioning fallback injection, exact
+same-latent boundary-state capture/resume for top-level swap-model continuations, and the internal img2img fixed-step execution seam used by
+hires continuations.
 Also wraps the active sampling pass with the shared IP-Adapter stage when `processing.ip_adapter` is configured.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_maybe_dump_latents` (function): Dump latents to disk when enabled via env flags (debug diagnostics + effective ER-SDE metadata).
+- `execute_sampling_result` (function): Execute sampling and return the sampled latents plus an optional captured boundary state for exact same-latent resume.
 - `execute_sampling` (function): Execute sampling given processing + plan + conditioning payload and return the sampled latents (supports explicit opt-out of default txt2img image-conditioning fallback).
 """
 
@@ -44,6 +46,7 @@ from apps.backend.runtime.live_preview import (
 from apps.backend.runtime.processing.conditioners import txt2img_conditioning
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext, SamplingPlan
 from apps.backend.runtime.sampling.context import build_sampling_context
+from apps.backend.runtime.sampling.driver import SamplingBoundaryState, SamplingResult
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config.repo_root import get_repo_root
 
@@ -110,7 +113,7 @@ def _maybe_dump_latents(
         logger.error("Failed to dump latents to %s: %s", target, exc)
 
 
-def execute_sampling(
+def execute_sampling_result(
     processing: Any,
     plan: SamplingPlan,
     payload: ConditioningPayload,
@@ -129,9 +132,18 @@ def execute_sampling(
     post_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor] | None = None,
     post_step_hook: Callable[[torch.Tensor, int, int | None], None] | None = None,
     post_sample_hook: Callable[[torch.Tensor], torch.Tensor] | None = None,
-) -> torch.Tensor:
+    capture_boundary_state_at_step: int | None = None,
+    resume_boundary_state: SamplingBoundaryState | None = None,
+) -> SamplingResult:
     """Execute the sampler using the provided configuration."""
-    if noise is None:
+    exact_resume_active = resume_boundary_state is not None
+    exact_resume_noise_baseline: torch.Tensor | None = None
+    if exact_resume_active:
+        if noise is not None:
+            raise RuntimeError("Exact boundary resume does not accept explicit initial-noise overrides.")
+        noise = resume_boundary_state.latent.detach().clone()
+        exact_resume_noise_baseline = noise.detach().clone()
+    elif noise is None:
         noise = rng.next()
 
     model = processing.sd_model
@@ -174,7 +186,17 @@ def execute_sampling(
                 uc=payload.unconditional,
             )
 
-        if getattr(processing, "modified_noise", None) is not None:
+        if exact_resume_active:
+            if getattr(processing, "modified_noise", None) is not None:
+                processing.modified_noise = None
+                raise RuntimeError(
+                    "Exact boundary resume rejects `processing.modified_noise`; initial-noise overrides are unsupported."
+                )
+            if exact_resume_noise_baseline is not None and not torch.equal(noise, exact_resume_noise_baseline):
+                raise RuntimeError(
+                    "Exact boundary resume rejects in-place initial-noise mutation during sampling hooks/scripts."
+                )
+        elif getattr(processing, "modified_noise", None) is not None:
             noise = processing.modified_noise
             processing.modified_noise = None
 
@@ -215,13 +237,15 @@ def execute_sampling(
             )
 
         if denoise_strength is not None and math.isclose(float(denoise_strength), 0.0):
+            if capture_boundary_state_at_step is not None or resume_boundary_state is not None:
+                raise RuntimeError("Exact boundary capture/resume is invalid when denoise_strength resolves to 0.0.")
             samples = init_latent if init_latent is not None else torch.zeros_like(noise)
             if post_sample_hook is not None:
                 samples = post_sample_hook(samples)
             samples = run_post_sample_hooks(processing, samples)
             _maybe_dump_latents(samples, processing, plan, prompt_context)
             devices.torch_gc()
-            return samples
+            return SamplingResult(samples=samples)
 
         sampler_name = plan.sampler_name
         scheduler_name = plan.scheduler_name
@@ -238,13 +262,15 @@ def execute_sampling(
             dtype=noise.dtype,
         )
 
-        samples = processing.sampler.sample(
+        result = processing.sampler.sample_result(
             processing,
             noise,
             payload.conditioning,
             payload.unconditional,
             image_conditioning=image_conditioning,
             init_latent=init_latent,
+            resume_boundary_state=resume_boundary_state,
+            capture_boundary_state_at_step=capture_boundary_state_at_step,
             start_at_step=start_at_step,
             denoise_strength=denoise_strength,
             img2img_fix_steps=img2img_fix_steps,
@@ -257,7 +283,52 @@ def execute_sampling(
             er_sde_options=plan.er_sde,
         )
 
-        samples = run_post_sample_hooks(processing, samples)
+        if result.boundary_state is not None:
+            devices.torch_gc()
+            return result
+
+        samples = run_post_sample_hooks(processing, result.samples)
         _maybe_dump_latents(samples, processing, plan, prompt_context)
         devices.torch_gc()
-        return samples
+        return SamplingResult(samples=samples)
+
+
+def execute_sampling(
+    processing: Any,
+    plan: SamplingPlan,
+    payload: ConditioningPayload,
+    prompt_context: PromptContext,
+    prompt_loras: Sequence[Any],
+    *,
+    rng: ImageRNG,
+    noise: torch.Tensor | None = None,
+    image_conditioning: torch.Tensor | None = None,
+    allow_txt2img_conditioning_fallback: bool = True,
+    img2img_fix_steps: bool = False,
+    init_latent: torch.Tensor | None = None,
+    start_at_step: int | None = None,
+    denoise_strength: float | None = None,
+    pre_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor] | None = None,
+    post_denoiser_hook: Callable[[torch.Tensor, torch.Tensor, int, int | None], torch.Tensor] | None = None,
+    post_step_hook: Callable[[torch.Tensor, int, int | None], None] | None = None,
+    post_sample_hook: Callable[[torch.Tensor], torch.Tensor] | None = None,
+) -> torch.Tensor:
+    return execute_sampling_result(
+        processing,
+        plan,
+        payload,
+        prompt_context,
+        prompt_loras,
+        rng=rng,
+        noise=noise,
+        image_conditioning=image_conditioning,
+        allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
+        img2img_fix_steps=img2img_fix_steps,
+        init_latent=init_latent,
+        start_at_step=start_at_step,
+        denoise_strength=denoise_strength,
+        pre_denoiser_hook=pre_denoiser_hook,
+        post_denoiser_hook=post_denoiser_hook,
+        post_step_hook=post_step_hook,
+        post_sample_hook=post_sample_hook,
+    ).samples

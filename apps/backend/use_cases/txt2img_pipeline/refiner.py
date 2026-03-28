@@ -9,8 +9,10 @@ Required Notice: see NOTICE
 Purpose: Latent model-swap stages for the txt2img pipeline.
 Implements the generic first-pass `swap_model` stage plus SDXL refiner stages (global + hires), loading the selected engine, rebuilding
 conditioning, and running an additional sampling pass over existing latents through the shared sampler without prompt-control ownership.
+The top-level `swap_model` seam now resumes only from an exact sampler-owned boundary state and enforces same-family compatibility before resume.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `resolve_swap_pointer_remaining_steps` (function): Validate a `switch_at_step` pointer against total steps and return the truthful remaining-step count.
 - `SwapModelStage` (dataclass): Executable generic first-pass model-swap stage with selector-authoritative engine loading.
 - `GlobalSwapModelStage` (class): First-pass swap-model stage for the global (base) scope.
 - `RefinerStage` (dataclass): Executable SDXL refiner stage implementing shared refiner sampling logic and selector-authoritative engine loading.
@@ -27,16 +29,27 @@ from typing import Callable
 
 import torch
 
+from apps.backend.core.rng import ImageRNG
 from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
+from apps.backend.runtime.model_registry.capabilities import primary_family_for_engine_id
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig, SwapStageConfig
-from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
-from apps.backend.runtime.pipeline_stages.sampling_plan import build_sampling_plan, ensure_sampler_and_rng
+from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling, execute_sampling_result
+from apps.backend.runtime.pipeline_stages.sampling_plan import build_sampling_plan, ensure_sampler, ensure_sampler_and_rng
+from apps.backend.runtime.sampling.driver import SamplingBoundaryState
 
 
 RefinerConditioningFn = Callable[[CodexProcessingTxt2Img, PromptContext], tuple[object, object]]
 RefinerLogFn = Callable[[object, object], None]
 RefinerTensorLogFn = Callable[[str, torch.Tensor | None], None]
+
+
+def resolve_swap_pointer_remaining_steps(*, label: str, swap_at_step: int, total_steps: int) -> int:
+    if total_steps < 2:
+        raise RuntimeError(f"{label} requires total steps >= 2 for swap semantics (got {total_steps}).")
+    if swap_at_step < 1 or swap_at_step >= total_steps:
+        raise RuntimeError(f"{label} 'switch_at_step' must be in [1, {total_steps - 1}] (got {swap_at_step}).")
+    return int(total_steps - swap_at_step)
 
 
 @dataclass(slots=True)
@@ -81,15 +94,11 @@ class RefinerStage:
 
         original_steps = int(processing.steps)
         swap_at_step = int(cfg.swap_at_step)
-        if original_steps < 2:
-            raise RuntimeError(
-                f"{self.label} requires total steps >= 2 for swap semantics (got {original_steps})."
-            )
-        if swap_at_step < 1 or swap_at_step >= original_steps:
-            raise RuntimeError(
-                f"{self.label} 'switch_at_step' must be in [1, {original_steps - 1}] (got {swap_at_step})."
-            )
-        effective_refiner_steps = original_steps - swap_at_step
+        effective_refiner_steps = resolve_swap_pointer_remaining_steps(
+            label=self.label,
+            swap_at_step=swap_at_step,
+            total_steps=original_steps,
+        )
 
         logger = logging.getLogger(f"backend.use_cases.txt2img.refiner.{self.label.replace(' ', '_').lower()}")
         logger.info(
@@ -206,11 +215,12 @@ class SwapModelStage:
         processing: CodexProcessingTxt2Img,
         prompt_context: PromptContext,
         noise_settings,
-        samples: torch.Tensor,
+        boundary_state: SamplingBoundaryState,
         compute_conditioning: RefinerConditioningFn,
         log_conditioning: RefinerLogFn,
         log_tensor_stats: RefinerTensorLogFn,
     ) -> torch.Tensor:
+        samples = boundary_state.latent
         if not self.is_enabled():
             return samples
 
@@ -225,31 +235,33 @@ class SwapModelStage:
                 "Provide a valid checkpoint for the first-pass swap stage."
             )
 
-        seed_value = int(cfg.seed)
-        if seed_value < 0:
-            seed_value = int(torch.randint(0, 2**31 - 1, (1,)).item())
+        if int(cfg.seed) != -1:
+            raise RuntimeError(
+                f"{self.label} exact resume does not support explicit stage seed overrides. "
+                "Leave `swap_model.seed` at -1 so the continuation inherits the already-captured base RNG continuity."
+            )
 
         original_steps = int(processing.steps)
         swap_at_step = int(cfg.swap_at_step)
-        if original_steps < 2:
+        remaining_steps = resolve_swap_pointer_remaining_steps(
+            label=self.label,
+            swap_at_step=swap_at_step,
+            total_steps=original_steps,
+        )
+        if int(boundary_state.completed_steps) != swap_at_step:
             raise RuntimeError(
-                f"{self.label} requires total steps >= 2 for swap semantics (got {original_steps})."
+                f"{self.label} resume boundary mismatch: captured completed_steps={boundary_state.completed_steps} "
+                f"but runtime switch_at_step={swap_at_step}."
             )
-        if swap_at_step < 1 or swap_at_step >= original_steps:
-            raise RuntimeError(
-                f"{self.label} 'switch_at_step' must be in [1, {original_steps - 1}] (got {swap_at_step})."
-            )
-        remaining_steps = original_steps - swap_at_step
 
         logger = logging.getLogger(f"backend.use_cases.txt2img.swap_model.{self.label.replace(' ', '_').lower()}")
         logger.info(
-            "[swap_model] starting %s model=%s swap_at_step=%d remaining_steps=%d cfg=%.3f seed=%d",
+            "[swap_model] starting %s model=%s swap_at_step=%d remaining_steps=%d cfg=%.3f seed=inherited",
             self.label,
             model_name,
             swap_at_step,
             remaining_steps,
             cfg.cfg,
-            seed_value,
         )
 
         load_opts = EngineLoadOptions(
@@ -271,11 +283,47 @@ class SwapModelStage:
             raise RuntimeError(f"Failed to load swap_model engine '{model_name}': {exc}") from exc
 
         original_sd_model = processing.sd_model
+        base_engine_id = str(boundary_state.engine_id or "")
+        swap_engine_id = str(getattr(swap_engine, "engine_id", "") or "")
+        try:
+            base_family = primary_family_for_engine_id(base_engine_id)
+        except KeyError as exc:
+            raise RuntimeError(
+                f"{self.label} exact resume requires boundary-state-only family proof, but the captured engine_id "
+                f"{base_engine_id or '<empty>'!r} has no primary family mapping."
+            ) from exc
+        try:
+            swap_family = primary_family_for_engine_id(swap_engine_id)
+        except KeyError as exc:
+            raise RuntimeError(
+                f"{self.label} exact resume requires a swap engine with a primary family mapping, but got "
+                f"{swap_engine_id or '<empty>'!r}."
+            ) from exc
+        if swap_family != base_family:
+            raise RuntimeError(
+                f"{self.label} exact resume requires same-family engines; "
+                f"captured={base_engine_id or '<unknown>'} ({base_family.value}) "
+                f"swap={swap_engine_id or '<unknown>'} ({swap_family.value})."
+            )
         original_width = processing.width
         original_height = processing.height
         original_cfg = processing.guidance_scale
         original_cfg_scale = getattr(processing, "cfg_scale", processing.guidance_scale)
+        original_sampler = getattr(processing, "sampler", None)
+        original_rng = getattr(processing, "rng", None)
+        if not isinstance(original_rng, ImageRNG):
+            raise RuntimeError(
+                f"{self.label} exact resume requires the captured base `processing.rng` ImageRNG; "
+                f"got {type(original_rng).__name__}."
+            )
+        inherited_seeds = [int(seed) for seed in original_rng.seeds]
+        inherited_subseeds = [int(seed) for seed in original_rng.subseeds]
+        inherited_subseed_strength = float(original_rng.subseed_strength)
+        primary_seed = inherited_seeds[0] if inherited_seeds else -1
 
+        active_sd_model = original_sd_model
+        active_sampler = original_sampler
+        active_rng = original_rng
         try:
             processing.sd_model = swap_engine
             latent_h, latent_w = samples.shape[-2], samples.shape[-1]
@@ -287,13 +335,12 @@ class SwapModelStage:
 
             plan = build_sampling_plan(
                 processing,
-                seeds=[seed_value],
-                subseeds=[seed_value],
-                subseed_strength=0.0,
+                seeds=inherited_seeds,
+                subseeds=inherited_subseeds,
+                subseed_strength=inherited_subseed_strength,
                 noise_settings=noise_settings,
             )
-            rng = ensure_sampler_and_rng(processing, plan, latent_channels=samples.shape[1])
-            noise = rng.next().to(samples)
+            ensure_sampler(processing, plan)
 
             cond_swap, uncond_swap = compute_conditioning(processing, prompt_context)
             if cond_swap is None or uncond_swap is None:
@@ -312,27 +359,32 @@ class SwapModelStage:
                     "remaining_steps": int(remaining_steps),
                     "total_steps": int(original_steps),
                     "cfg": float(cfg.cfg),
-                    "seed": int(seed_value),
+                    "seed": int(primary_seed),
+                    "seed_mode": "inherited_base_rng",
                 },
             )
 
-            swapped_samples = execute_sampling(
+            swapped_samples = execute_sampling_result(
                 processing,
                 plan,
                 payload,
                 prompt_context,
                 prompt_context.loras,
-                rng=rng,
-                noise=noise,
-                init_latent=samples,
+                rng=original_rng,
+                resume_boundary_state=boundary_state,
                 start_at_step=swap_at_step,
                 denoise_strength=1.0,
-            )
+            ).samples
+            active_sd_model = swap_engine
+            active_sampler = getattr(processing, "sampler", None)
+            active_rng = original_rng
             setattr(processing, "_codex_last_decode_engine", swap_engine)
             log_tensor_stats(f"{self.label.lower().replace(' ', '_')}_samples", swapped_samples)
             return swapped_samples
         finally:
-            processing.sd_model = swap_engine
+            processing.sd_model = active_sd_model
+            processing.sampler = active_sampler
+            processing.rng = active_rng
             processing.width = original_width
             processing.height = original_height
             processing.guidance_scale = original_cfg

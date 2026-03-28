@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampling plan construction helpers for pipeline orchestration.
-Validates sampler/scheduler selection, resolves noise settings, builds a `SamplingPlan`, and prepares the sampler + RNG.
+Validates sampler/scheduler selection, resolves noise settings, builds a `SamplingPlan`, and prepares the active sampler with optional RNG installation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_normalize_scheduler_name` (function): Validate a scheduler name for the given sampler.
@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolve_noise_settings` (function): Derive `NoiseSettings` for a run from processing overrides and env.
 - `resolve_er_sde_options` (function): Build normalized typed ER-SDE options from processing overrides.
 - `build_sampling_plan` (function): Build a `SamplingPlan` from processing state and explicit seeds/subseeds.
+- `ensure_sampler` (function): Ensure `processing.sampler` exists for the current sampling plan without installing a fresh RNG.
 - `ensure_sampler_and_rng` (function): Ensure `processing.sampler` and `processing.rng` exist for the current sampling plan.
 """
 
@@ -195,6 +196,13 @@ def build_sampling_plan(
     )
 
 
+def ensure_sampler(processing: Any, plan: SamplingPlan) -> CodexSampler:
+    """Ensure processing has a sampler configured for the current plan."""
+    algo = plan.sampler_name or getattr(processing, "sampler_name", None)
+    processing.sampler = CodexSampler(processing.sd_model, algorithm=algo)
+    return processing.sampler
+
+
 def ensure_sampler_and_rng(
     processing: Any,
     plan: SamplingPlan,
@@ -202,8 +210,7 @@ def ensure_sampler_and_rng(
     latent_channels: int | None = None,
 ) -> ImageRNG:
     """Ensure processing has a sampler + RNG configured for the current plan."""
-    algo = plan.sampler_name or getattr(processing, "sampler_name", None)
-    processing.sampler = CodexSampler(processing.sd_model, algorithm=algo)
+    ensure_sampler(processing, plan)
     if latent_channels is None:
         latent_channels = getattr(
             processing.sd_model.codex_objects_after_applying_lora.vae,

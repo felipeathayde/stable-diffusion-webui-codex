@@ -16,7 +16,7 @@ When smart offload is enabled, keeps required text-encoder patchers loaded acros
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PrepareState` (dataclass): Prepared per-run state (resolved engine + plans + prompt context) used across stages.
-- `SamplingOutput` (dataclass): Sampling result container (latents/images + metadata) passed between pipeline stages.
+- `SamplingOutput` (dataclass): Sampling result container (latents/images + optional swap-model boundary bridge) passed between pipeline stages.
 - `Txt2ImgPipelineRunner` (class): Main orchestrator; owns the stage pipeline (conditioning/sampling/first-pass swap/hires/refiner) and calls the runtime helpers
   (hires stage uses the global hires-fix stage for family-dispatched upscaling and continuation mode routing; integrates smart cache + pipeline tracing).
 - `GenerationResult` (dataclass): Standardized output container for the runner (`samples` + optional `decoded`).
@@ -71,7 +71,7 @@ from apps.backend.runtime.pipeline_stages.prompt_context import (
     build_hires_prompt_context,
     build_prompt_context,
 )
-from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
+from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling, execute_sampling_result
 from apps.backend.runtime.pipeline_stages.sampling_plan import (
     build_sampling_plan,
     ensure_sampler_and_rng,
@@ -80,14 +80,14 @@ from apps.backend.runtime.pipeline_stages.sampling_plan import (
 from apps.backend.patchers.lora_apply import selection_hash_for_request
 from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.pipeline_stages.scripts import collect_lora_selections, run_process_scripts
-from apps.backend.runtime.sampling.driver import CodexSampler
+from apps.backend.runtime.sampling.driver import CodexSampler, SamplingBoundaryState
 from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.use_cases.txt2img_pipeline.refiner import (
     GlobalRefinerStage,
     GlobalSwapModelStage,
     HiresRefinerStage,
     RefinerStage,
-    SwapModelStage,
+    resolve_swap_pointer_remaining_steps,
 )
 
 
@@ -112,6 +112,7 @@ class SamplingOutput:
 
     samples: torch.Tensor
     decoded: torch.Tensor | None
+    boundary_state: SamplingBoundaryState | None = None
 
 
 class Txt2ImgPipelineRunner:
@@ -557,7 +558,7 @@ class Txt2ImgPipelineRunner:
 
     def _apply_refiner_stage(
         self,
-        stage: RefinerStage | SwapModelStage,
+        stage: RefinerStage,
         processing: CodexProcessingTxt2Img,
         prompt_context: PromptContext,
         noise_settings,
@@ -657,8 +658,7 @@ class Txt2ImgPipelineRunner:
                 samples_shape=tuple(int(dim) for dim in base_result.samples.shape),
             )
 
-            final_samples = base_result.samples
-            final_samples = self._maybe_run_swap_model_pass(processing, state, final_samples)
+            final_samples = self._maybe_run_swap_model_pass(processing, state, base_result)
             if getattr(processing, "swap_model", None) is not None:
                 t_swap_end = time.perf_counter()
                 emit_backend_event(
@@ -807,9 +807,28 @@ class Txt2ImgPipelineRunner:
     def _execute_base_sampling(self, processing: CodexProcessingTxt2Img, state: PrepareState) -> SamplingOutput:
         base_samples = state.init_latents
         decoded_samples = state.init_decoded
+        boundary_state: SamplingBoundaryState | None = None
+        swap_stage = GlobalSwapModelStage(getattr(processing, "swap_model", None))
+        capture_boundary_state_at_step: int | None = None
+
+        if swap_stage.is_enabled():
+            if base_samples is not None or decoded_samples is not None:
+                raise RuntimeError(
+                    "Top-level swap_model exact resume requires a real first-pass sampling run; "
+                    "it is unsupported when first-pass latents/decoded images were precomputed before sampling."
+                )
+            swap_cfg = getattr(processing, "swap_model", None)
+            if swap_cfg is None:
+                raise RuntimeError("swap_model is enabled but processing.swap_model is missing.")
+            resolve_swap_pointer_remaining_steps(
+                label="Swap Model",
+                swap_at_step=int(swap_cfg.swap_at_step),
+                total_steps=int(state.sampling_plan.steps),
+            )
+            capture_boundary_state_at_step = int(swap_cfg.swap_at_step)
 
         if base_samples is None and decoded_samples is None:
-            base_samples = execute_sampling(
+            base_result = execute_sampling_result(
                 processing,
                 state.sampling_plan,
                 state.payload,
@@ -817,12 +836,20 @@ class Txt2ImgPipelineRunner:
                 state.prompt_context.loras,
                 rng=state.rng,
                 denoise_strength=1.0,
+                capture_boundary_state_at_step=capture_boundary_state_at_step,
             )
-            decoded_samples = maybe_decode_for_hr(
-                processing,
-                base_samples,
-                hires_upscaler_id=processing.hires.require_upscaler_id() if processing.hires.enabled else None,
-            )
+            base_samples = base_result.samples
+            boundary_state = base_result.boundary_state
+            if capture_boundary_state_at_step is not None and boundary_state is None:
+                raise RuntimeError(
+                    "Base sampling returned without a boundary_state for top-level swap_model exact resume."
+                )
+            if boundary_state is None:
+                decoded_samples = maybe_decode_for_hr(
+                    processing,
+                    base_samples,
+                    hires_upscaler_id=processing.hires.require_upscaler_id() if processing.hires.enabled else None,
+                )
         elif base_samples is None and decoded_samples is not None:
             tensor = self._to_device_dtype_if_needed(
                 decoded_samples,
@@ -841,7 +868,7 @@ class Txt2ImgPipelineRunner:
         self._log_tensor_stats("base_samples", base_samples)
         self._log_tensor_stats("base_decoded", decoded_samples)
 
-        return SamplingOutput(samples=base_samples, decoded=decoded_samples)
+        return SamplingOutput(samples=base_samples, decoded=decoded_samples, boundary_state=boundary_state)
 
     @pipeline_trace
     def _reload_for_hires(self, processing: CodexProcessingTxt2Img, state: PrepareState) -> None:
@@ -888,7 +915,7 @@ class Txt2ImgPipelineRunner:
         )
         self._log_tensor_stats("swap_model_hires_source_samples", samples)
         self._log_tensor_stats("swap_model_hires_source_decoded", decoded_samples)
-        return SamplingOutput(samples=samples, decoded=decoded_samples)
+        return SamplingOutput(samples=samples, decoded=decoded_samples, boundary_state=None)
 
     @pipeline_trace
     def _run_hires_pass(
@@ -1163,15 +1190,23 @@ class Txt2ImgPipelineRunner:
         self,
         processing: CodexProcessingTxt2Img,
         state: PrepareState,
-        samples: torch.Tensor,
+        base_result: SamplingOutput,
     ) -> torch.Tensor:
         stage = GlobalSwapModelStage(getattr(processing, "swap_model", None))
-        return self._apply_refiner_stage(
-            stage,
-            processing,
-            state.prompt_context,
-            state.sampling_plan.noise_settings,
-            samples,
+        if not stage.is_enabled():
+            return base_result.samples
+        if base_result.boundary_state is None:
+            raise RuntimeError(
+                "Top-level swap_model exact resume was requested but the base sampling stage did not provide a boundary_state bridge."
+            )
+        return stage.run(
+            processing=processing,
+            prompt_context=state.prompt_context,
+            noise_settings=state.sampling_plan.noise_settings,
+            boundary_state=base_result.boundary_state,
+            compute_conditioning=self._compute_conditioning,
+            log_conditioning=self._log_conditioning,
+            log_tensor_stats=self._log_tensor_stats,
         )
 
     # ------------------------------------------------------------------ helpers

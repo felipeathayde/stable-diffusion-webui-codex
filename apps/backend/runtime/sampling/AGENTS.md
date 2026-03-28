@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-03-22
+Last Review: 2026-03-28
 Status: Active
 
 ## Purpose
@@ -45,6 +45,12 @@ Status: Active
 - Base non-flow img2img partial denoise:
   - `driver.py` now matches the Forge default owner split: effective steps are proportional to denoise (`t_enc = int(min(denoise, 0.999) * steps)`, `effective_steps = t_enc + 1`) instead of rebuilding a longer ladder to preserve the requested count.
   - Internal fixed-step continuation is still available, but only through explicit callers such as hires second passes that pass `img2img_fix_steps=True`.
+- Exact top-level swap_model resume:
+  - `driver.py` now owns an opaque `SamplingBoundaryState` seam for exact same-latent mid-schedule resume.
+  - Boundary capture/resume is same-family only, uses primary-family proof from the captured boundary-state engine id, and skips img2img `predictor.noise_scaling(...)`; unsupported samplers (`dpm fast`, `dpm adaptive`, `restart`, and `dpm++ 2m sde*`) fail loud instead of approximating the handoff.
+  - Exact resume rejects fresh initial-noise overrides and explicit top-level `swap_model.seed` overrides; the seam inherits base RNG continuity from the captured run instead of pretending a new stage seed/noise can steer the resumed trajectory.
+  - `SamplingBoundaryState` now carries APG momentum state when present, so APG-enabled exact resume keeps guidance continuity instead of silently zeroing that buffer at the boundary.
+  - Supported exact-resume samplers are the driver-owned allow-list implemented in `driver.py`; changing that list is a runtime contract change, not a caller preference.
 - Canonical names are strict:
   - No alias mapping.
   - Empty or unknown sampler/scheduler names fail fast.

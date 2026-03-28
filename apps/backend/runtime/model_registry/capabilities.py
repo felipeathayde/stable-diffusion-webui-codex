@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `build_ltx2_capability_surface` (function): Build the truthful semantic capability surface for the live LTX2 lane.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
 - `semantic_engine_for_engine_id` (function): Resolve a semantic engine tag from an API engine id (fail-loud on unknown ids).
+- `primary_family_for_engine_id` (function): Resolve the exact primary `ModelFamily` authority for a runtime engine id (fail-loud on unknown ids).
 - `engine_supports_cfg` (function): Return whether the engine family supports classic CFG (`cfg`) via family capabilities.
 - `serialize_engine_capabilities` (function): Returns engine capability surfaces as JSON-serializable dicts.
 - `serialize_family_capabilities` (function): Returns model family capability surfaces as JSON-serializable dicts.
@@ -367,6 +368,16 @@ def semantic_engine_for_engine_id(engine_id: str) -> SemanticEngine:
     return ENGINE_ID_TO_SEMANTIC_ENGINE[normalized]
 
 
+def primary_family_for_engine_id(engine_id: str) -> ModelFamily:
+    normalized = str(engine_id or "").strip()
+    if normalized == "":
+        raise KeyError("Engine id is empty.")
+    family = _ENGINE_ID_PRIMARY_FAMILY.get(normalized)
+    if family is None:
+        raise KeyError(f"No primary family mapping for engine id {normalized!r}.")
+    return family
+
+
 def ip_adapter_support_error(engine_id: str) -> str | None:
     normalized = str(engine_id or "").strip().lower()
     if normalized == "":
@@ -393,13 +404,7 @@ def supports_ip_adapter_engine_id(engine_id: str) -> bool:
 def engine_supports_cfg(engine_id: str) -> bool:
     from apps.backend.runtime.model_registry.family_runtime import get_family_spec
 
-    normalized = str(engine_id or "").strip()
-    if normalized == "":
-        raise KeyError("Engine id is empty.")
-    family = _ENGINE_ID_PRIMARY_FAMILY.get(normalized)
-    if family is None:
-        raise KeyError(f"No primary family mapping for engine id {normalized!r}.")
-    spec = get_family_spec(family)
+    spec = get_family_spec(primary_family_for_engine_id(engine_id))
     return bool(spec.capabilities.supports_cfg)
 
 
@@ -439,6 +444,7 @@ __all__ = [
     "build_ltx2_capability_surface",
     "list_engine_capabilities",
     "semantic_engine_for_engine_id",
+    "primary_family_for_engine_id",
     "engine_supports_cfg",
     "serialize_engine_capabilities",
     "serialize_family_capabilities",

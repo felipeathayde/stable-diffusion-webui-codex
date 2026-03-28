@@ -136,20 +136,22 @@ def _load_image_encoder(path: str) -> ClipVisionEncoder:
     raw_state = load_torch_file(path, safe_load=True)
     if not isinstance(raw_state, Mapping):
         raise RuntimeError(f"IP-Adapter image encoder '{path}' did not load as a mapping.")
-    state_dict = _normalize_image_encoder_state_dict(dict(raw_state))
+    state_dict = _normalize_image_encoder_state_dict(raw_state)
     return ClipVisionEncoder.from_state_dict(state_dict)
 
 
-def _normalize_image_encoder_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+def _normalize_image_encoder_state_dict(state_dict: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     keys = tuple(state_dict.keys())
     if any(key.startswith("vision_model.") for key in keys):
         filtered = cleaned_state_dict(state_dict, keep_prefixes=("vision_model.", "visual_projection."))
         if not filtered:
             raise RuntimeError("IP-Adapter image encoder checkpoint is missing supported HF vision keys.")
+        filtered.pop("vision_model.embeddings.position_ids", None)
         return filtered
     if any(key.startswith("image_encoder.vision_model.") for key in keys):
         filtered = cleaned_state_dict(state_dict, keep_prefixes=("image_encoder.vision_model.", "image_encoder.visual_projection."))
         rekey_vision_state_dict(filtered, prefix="image_encoder.")
+        filtered.pop("vision_model.embeddings.position_ids", None)
         return filtered
     if "visual.transformer.resblocks.0.attn.in_proj_weight" in state_dict:
         converted = cleaned_state_dict(state_dict, keep_prefixes=("visual.",))

@@ -99,7 +99,8 @@
     "models/zimage-loras"
   ],
   "ip_adapter_models": [
-    "models/ip_adapter/models"
+    "models/ip_adapter/models/sd15",
+    "models/ip_adapter/models/sdxl"
   ],
   "ip_adapter_image_encoders": [
     "models/ip_adapter/image_encoders"

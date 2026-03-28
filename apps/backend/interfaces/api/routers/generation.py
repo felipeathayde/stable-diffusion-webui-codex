@@ -1849,8 +1849,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         reference_image_data = source_raw.get("reference_image_data")
         if source_kind != "server_folder":
             for folder_only_key in ("folder_path", "selection_mode", "count", "order", "sort_by"):
-                folder_value = source_raw.get(folder_only_key)
-                if folder_value not in (None, ""):
+                if folder_only_key in source_raw:
                     raise HTTPException(
                         status_code=400,
                         detail=f"'{field_name}.source.{folder_only_key}' is only valid when kind='server_folder'",
@@ -1894,7 +1893,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         selection_mode = source_raw.get("selection_mode")
         if selection_mode is None:
             selection_mode = "all"
-        elif not isinstance(selection_mode, str) or selection_mode.strip() not in {"all", "count"}:
+        elif not isinstance(selection_mode, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.source.selection_mode' must be one of: all, count",
+            )
+        else:
+            selection_mode = selection_mode.strip()
+        if selection_mode not in {"all", "count"}:
             raise HTTPException(
                 status_code=400,
                 detail=f"'{field_name}.source.selection_mode' must be one of: all, count",
@@ -1905,7 +1911,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         sort_by = source_raw.get("sort_by")
         if sort_by is None:
             sort_by = "name"
-        elif not isinstance(sort_by, str) or sort_by.strip() not in {"name", "size", "created_at", "modified_at"}:
+        elif not isinstance(sort_by, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.source.sort_by' must be one of: name, size, created_at, modified_at",
+            )
+        else:
+            sort_by = sort_by.strip()
+        if sort_by not in {"name", "size", "created_at", "modified_at"}:
             raise HTTPException(
                 status_code=400,
                 detail=f"'{field_name}.source.sort_by' must be one of: name, size, created_at, modified_at",
@@ -4233,7 +4246,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     selection_mode = init_source_raw.get("selection_mode")
                     if selection_mode is None:
                         selection_mode = "all"
-                    elif not isinstance(selection_mode, str) or selection_mode.strip() not in {"all", "count"}:
+                    elif not isinstance(selection_mode, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="'init_source.selection_mode' must be one of: all, count",
+                        )
+                    else:
+                        selection_mode = selection_mode.strip()
+                    if selection_mode not in {"all", "count"}:
                         raise HTTPException(
                             status_code=400,
                             detail="'init_source.selection_mode' must be one of: all, count",
@@ -4244,7 +4264,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     sort_by = init_source_raw.get("sort_by")
                     if sort_by is None:
                         sort_by = "name"
-                    elif not isinstance(sort_by, str) or sort_by.strip() not in {"name", "size", "created_at", "modified_at"}:
+                    elif not isinstance(sort_by, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="'init_source.sort_by' must be one of: name, size, created_at, modified_at",
+                        )
+                    else:
+                        sort_by = sort_by.strip()
+                    if sort_by not in {"name", "size", "created_at", "modified_at"}:
                         raise HTTPException(
                             status_code=400,
                             detail="'init_source.sort_by' must be one of: name, size, created_at, modified_at",

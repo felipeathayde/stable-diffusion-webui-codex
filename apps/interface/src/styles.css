@@ -848,9 +848,13 @@
   @import './styles/components/cdx-slider-field.css';
   @import './styles/components/cdx-hover-tooltip.css';
   @import './styles/components/cdx-dropzone.css';
+  @import './styles/components/cdx-segmented-control.css';
   @import './styles/components/guided-gen.css';
+  @import './styles/components/image-source-controls.css';
+  @import './styles/components/ip-adapter-card.css';
   @import './styles/components/prompt-box.css';
   @import './styles/components/prompt-chip.css';
+  @import './styles/components/run-card.css';
   @import './styles/components/settings-form.css';
   @import './styles/components/cdx-list.css';
   @import './styles/components/param-blocks.css';

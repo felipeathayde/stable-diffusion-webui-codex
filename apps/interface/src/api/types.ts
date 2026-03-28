@@ -8,8 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Frontend API DTOs and response/payload types.
 Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows), including options revision/apply metadata fields used by strict generation contracts.
-Add-path contracts expose explicit nullable `size_bytes` metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds, and
-engine capabilities now include the optional nested LTX execution-profile surface used by the current checkpoint-aware LTX defaults lane.
+Inventory DTOs now include first-class IP-Adapter model/image-encoder collections from `/api/models/inventory`, add-path contracts expose explicit nullable `size_bytes`
+metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds, and engine capabilities include the optional nested LTX
+execution-profile surface used by the current checkpoint-aware LTX defaults lane.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`, including explicit `format` and `core_only` checkpoint selectors.
@@ -184,6 +185,45 @@ export interface TaskStartResponse {
 
 export interface Txt2ImgStartResponse extends TaskStartResponse {}
 
+export interface ImageAutomationLoopRequest {
+  mode: 'count' | 'until_cancelled'
+  count?: number | null
+  delay_ms: number
+  stop_on_error: boolean
+}
+
+export interface ImageAutomationSeedPolicyRequest {
+  mode: 'fixed' | 'increment' | 'random'
+  increment_step: number
+}
+
+export interface ImageAutomationPromptSourceRequest {
+  kind: 'current' | 'list'
+  text?: string
+  insert_position: 'replace' | 'prepend' | 'append'
+  wildcard_root?: string
+  wildcard_mode: 'disabled' | 'expand'
+}
+
+export interface ImageAutomationFolderSourceRequest {
+  kind: 'uploaded_current' | 'server_folder'
+  folder_path?: string
+  selection_mode?: 'all' | 'count'
+  count?: number | null
+  order: 'random' | 'sorted'
+  sort_by?: 'name' | 'size' | 'created_at' | 'modified_at'
+  use_crop: boolean
+}
+
+export interface ImageAutomationRequest {
+  mode: 'txt2img' | 'img2img'
+  template: Record<string, unknown>
+  loop: ImageAutomationLoopRequest
+  seed_policy: ImageAutomationSeedPolicyRequest
+  prompt_source: ImageAutomationPromptSourceRequest
+  init_source?: ImageAutomationFolderSourceRequest
+}
+
 export type UpscalerKind = 'latent' | 'spandrel'
 
 export interface UpscalerDefinition {
@@ -260,6 +300,16 @@ export interface GeneratedImage {
   data: string
 }
 
+export interface AutomationIterationEvent {
+  type: 'automation_iteration'
+  iteration_index: number
+  images: GeneratedImage[]
+  info: unknown
+  seed: number | null
+  prompt_preview: string
+  source_label: string | null
+}
+
 export type TaskEvent =
   | { type: 'status'; stage: string }
   | {
@@ -274,6 +324,7 @@ export type TaskEvent =
       preview_image?: GeneratedImage
       preview_step?: number | null
     }
+  | AutomationIterationEvent
   | { type: 'gap'; oldest_event_id: number; newest_event_id: number; last_event_id: number }
   | { type: 'result'; images?: GeneratedImage[]; info: unknown; video?: { rel_path?: string | null; mime?: string | null } }
   | { type: 'error'; message: string }
@@ -294,6 +345,7 @@ export interface TaskResult {
   } | null
   preview_image?: GeneratedImage
   preview_step?: number | null
+  automation_gallery_images?: GeneratedImage[]
   last_event_id?: number
   buffer_oldest_event_id?: number
   buffer_newest_event_id?: number
@@ -387,6 +439,7 @@ export interface EngineCapabilities {
   supports_refiner: boolean
   supports_lora: boolean
   supports_controlnet: boolean
+  supports_ip_adapter: boolean
   // Optional: backend recommendation lists for UI hinting.
   recommended_samplers?: string[] | null
   recommended_schedulers?: string[] | null
@@ -605,6 +658,8 @@ export interface InventoryResponse {
   vaes: Array<{ name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>
   text_encoders: Array<{ name: string; path: string; sha256?: string; slot?: string }>
   loras: Array<{ name: string; path: string; sha256?: string }>
+  ip_adapter_models: Array<{ name: string; path: string; sha256?: string }>
+  ip_adapter_image_encoders: Array<{ name: string; path: string; sha256?: string }>
   wan22: { gguf: Array<{ name: string; path: string; sha256?: string; stage: 'high' | 'low' | 'unknown' }> }
   metadata: Array<{ name: string; path: string }>
 }

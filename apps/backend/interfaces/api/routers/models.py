@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories (sync + async refresh task start), path scan/add helpers (with file size metadata), executable sampler/scheduler
 surfaces, embeddings, and engine capabilities.
+Inventory payloads include first-class IP-Adapter model and image-encoder lists from the dedicated roots in `apps/paths.json`.
 Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
 so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
 (`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, LTX2, WAN22 animate engine ids, and
@@ -533,11 +534,15 @@ def build_router(
 
     def _log_inventory_refresh_summary(inv: Dict[str, Any]) -> None:
         wan22_count = len(inv.get("wan22", []))
+        ip_adapter_models_count = len(inv.get("ip_adapter_models", []))
+        ip_adapter_image_encoders_count = len(inv.get("ip_adapter_image_encoders", []))
         inventory_log.info(
-            "inventory: refreshed (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
+            "inventory: refreshed (vaes=%d, text_encoders=%d, loras=%d, ip_adapter_models=%d, ip_adapter_image_encoders=%d, wan22.gguf=%d, metadata=%d)",
             len(inv.get("vaes", [])),
             len(inv.get("text_encoders", [])),
             len(inv.get("loras", [])),
+            ip_adapter_models_count,
+            ip_adapter_image_encoders_count,
             wan22_count,
             len(inv.get("metadata", [])),
         )
@@ -557,6 +562,8 @@ def build_router(
             "vaes": _normalize_inventory_for_api(inv.get("vaes", [])),
             "text_encoders": _normalize_inventory_for_api(inv.get("text_encoders", [])),
             "loras": _normalize_inventory_for_api(inv.get("loras", [])),
+            "ip_adapter_models": _normalize_inventory_for_api(inv.get("ip_adapter_models", [])),
+            "ip_adapter_image_encoders": _normalize_inventory_for_api(inv.get("ip_adapter_image_encoders", [])),
             "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
             "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
         }
@@ -850,12 +857,14 @@ def build_router(
                 entry.result = {"result": {"inventory": payload, "models_revision": int(revision)}}
                 entry.mark_finished(success=True)
                 inventory_log.info(
-                    "inventory refresh task completed (task_id=%s revision=%d vaes=%d text_encoders=%d loras=%d wan22.gguf=%d metadata=%d)",
+                    "inventory refresh task completed (task_id=%s revision=%d vaes=%d text_encoders=%d loras=%d ip_adapter_models=%d ip_adapter_image_encoders=%d wan22.gguf=%d metadata=%d)",
                     task_id,
                     revision,
                     len(inv.get("vaes", [])),
                     len(inv.get("text_encoders", [])),
                     len(inv.get("loras", [])),
+                    len(inv.get("ip_adapter_models", [])),
+                    len(inv.get("ip_adapter_image_encoders", [])),
                     len(inv.get("wan22", [])),
                     len(inv.get("metadata", [])),
                 )

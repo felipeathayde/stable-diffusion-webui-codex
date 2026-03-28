@@ -10,6 +10,8 @@ Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-fa
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base and FLUX.2 Klein distilled/base-4B are variant-dependent:
 CFG label + negative prompt gating follow the selected checkpoint/tab state, while img2img denoise + hires visibility stay truthful to the active capability/mask contract).
+The RUN surface now owns a split-button `Generate` / `Infinite` action selector, the Initial Image seam owns the `DIR|IMG` source switch for img2img automation,
+and a dedicated IP-Adapter card sits between Prompt and Generation Parameters while staying fail-loud until the backend runtime module exists.
 When inpaint masking is active, it also forwards natural init-image dimensions, current processing target dimensions, and the current invert-mask state to the shared card/editor preview seam, treats unresolved natural dims as unavailable instead of falling back to processing dims, and normalizes the invalid `maskInvert + maskRegionSplit` pair in the shared parent-owned param path.
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with honest img2img control visibility).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
@@ -44,6 +46,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setHiresSwapModel` (function): Applies the canonical nested hires `swapModel` selection without leaking flat alias fields.
 - `setHiresRefiner` (function): Applies partial updates to the hires-refiner config object.
 - `setRefiner` (function): Applies partial updates to the refiner config object.
+- `setRunAction` (function): Persists the Run-card primary action mode (`generate` vs `infinite`) and normalizes automation batch constraints.
+- `setInitSource` (function): Applies Initial Image `DIR|IMG` source changes and clears stale mask / same-as-init dependents on DIR mode.
+- `setIpAdapter` (function): Applies partial updates to the dedicated IP-Adapter card state.
+- `setIpAdapterSource` (function): Applies IP-Adapter `DIR|IMG` source changes and enforces automation batch constraints.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
 - `setMinTile` (function): Updates the global `min_tile` preference used as the tiled OOM fallback lower bound (hires-fix + `/upscale`).
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to the active engine grid before reuse/sync.
@@ -51,6 +57,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onInitImageRejected` (function): Surfaces dropzone reject reasons for init-image input.
 - `clearInit` (function): Clears init image fields.
 - `clearMask` (function): Clears mask fields.
+- `onIpAdapterReferenceFileSet` (function): Reads an IP-Adapter reference image into the dedicated card source state (async).
+- `clearIpAdapterReference` (function): Clears the dedicated IP-Adapter reference image fields.
+- `onIpAdapterReferenceRejected` (function): Surfaces dropzone reject reasons for the IP-Adapter reference input.
 - `onMaskEditorApply` (function): Validates and stores an edited mask exported from the inpaint mask editor overlay.
 - `onMaskEditorResetNotice` (function): Surfaces inpaint mask editor source-reset notices as toasts.
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
@@ -65,6 +74,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `maybeApplyKontextDefaults` (function): Applies FLUX.1 Kontext-specific default params when relevant to the current engine/tab.
 - `onGenerate` (function): Run handler for the Run card; dispatches standard generation or XYZ sweep depending on XYZ enable state.
 - `runGenerateDisabled`/`runGenerateTitle` (const): Run CTA state/title derived from capabilities + active mode + XYZ running/enabled state.
+- `usesImageAutomation` / `infiniteXyzConflict` / `automationBatchConflict` (const): Derived automation guards for the split-button and backend-owned automation route.
+- `initFolderMissingPath` / `dirInitMaskConflict` / `ipAdapterDisabledReason` (const): Derived preflight guards for Initial Image DIR mode and the dedicated IP-Adapter card.
 - `missingInpaintMask` (const): Derived guard flag used to disable generation when INPAINT is enabled without an applied mask.
 - `supportsImg2ImgMasking` (const): Truthful engine-level mask/inpaint support gate for img2img engines.
 - `hideNegativePrompt` (const): Hides the base Negative Prompt field when the active checkpoint/model does not support it or effective base CFG is `<= 1`.
@@ -94,13 +105,20 @@ Symbols (top-level; keep in sync; no ghosts):
         <div v-if="supportsImg2Img && params.useInitImage" class="panel-section">
           <Img2ImgInpaintParamsCard
             :disabled="isRunning"
+            :initSourceMode="params.initSource.mode"
+            :initFolderPath="params.initSource.folderPath"
+            :initSelectionMode="params.initSource.selectionMode"
+            :initCount="params.initSource.count"
+            :initOrder="params.initSource.order"
+            :initSortBy="params.initSource.sortBy"
+            :initUseCrop="params.initSource.useCrop"
             :initImageData="params.initImageData"
             :initImageName="params.initImageName"
             :imageWidth="maskEditorImageWidth"
             :imageHeight="maskEditorImageHeight"
             :processingWidth="params.width"
             :processingHeight="params.height"
-            :useMask="supportsImg2ImgMasking ? params.useMask : false"
+            :useMask="supportsImg2ImgMasking && params.initSource.mode === 'img' ? params.useMask : false"
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"
             :maskEnforcement="params.maskEnforcement"
@@ -111,6 +129,13 @@ Symbols (top-level; keep in sync; no ghosts):
             :maskBlur="params.maskBlur"
             :maskInvert="params.maskInvert"
             :maskRegionSplit="params.maskRegionSplit"
+            @update:initSourceMode="(value) => setInitSource({ mode: value })"
+            @update:initFolderPath="(value) => setInitSource({ folderPath: value })"
+            @update:initSelectionMode="(value) => setInitSource({ selectionMode: value })"
+            @update:initCount="(value) => setInitSource({ count: Math.max(1, Math.trunc(value)) })"
+            @update:initOrder="(value) => setInitSource({ order: value })"
+            @update:initSortBy="(value) => setInitSource({ sortBy: value })"
+            @toggle:initUseCrop="setInitSource({ useCrop: !params.initSource.useCrop })"
             @set:initImage="onInitFileSet"
             @clear:initImage="clearInit"
             @reject:initImage="onInitImageRejected"
@@ -128,6 +153,44 @@ Symbols (top-level; keep in sync; no ghosts):
           />
         </div>
       </PromptCard>
+
+      <IpAdapterCard
+        v-if="ipAdapterSupported"
+        :disabled="isRunning"
+        :enabled="params.ipAdapter.enabled"
+        :img2imgMode="params.useInitImage"
+        :model="params.ipAdapter.model"
+        :imageEncoder="params.ipAdapter.imageEncoder"
+        :modelChoices="ipAdapterModelChoices"
+        :imageEncoderChoices="ipAdapterImageEncoderChoices"
+        :sourceMode="params.ipAdapter.source.mode"
+        :sameAsInit="params.ipAdapter.source.sameAsInit"
+        :referenceImageData="params.ipAdapter.source.referenceImageData"
+        :folderPath="params.ipAdapter.source.folderPath"
+        :selectionMode="params.ipAdapter.source.selectionMode"
+        :count="params.ipAdapter.source.count"
+        :order="params.ipAdapter.source.order"
+        :sortBy="params.ipAdapter.source.sortBy"
+        :weight="params.ipAdapter.weight"
+        :startAt="params.ipAdapter.startAt"
+        :endAt="params.ipAdapter.endAt"
+        @update:enabled="(value) => setIpAdapter({ enabled: value })"
+        @update:model="(value) => setIpAdapter({ model: value })"
+        @update:imageEncoder="(value) => setIpAdapter({ imageEncoder: value })"
+        @update:sourceMode="(value) => setIpAdapterSource({ mode: value })"
+        @update:sameAsInit="(value) => setIpAdapterSource({ sameAsInit: value })"
+        @update:folderPath="(value) => setIpAdapterSource({ folderPath: value })"
+        @update:selectionMode="(value) => setIpAdapterSource({ selectionMode: value })"
+        @update:count="(value) => setIpAdapterSource({ count: Math.max(1, Math.trunc(value)) })"
+        @update:order="(value) => setIpAdapterSource({ order: value })"
+        @update:sortBy="(value) => setIpAdapterSource({ sortBy: value })"
+        @update:weight="(value) => setIpAdapter({ weight: clampFloat(value, 0, 2) })"
+        @update:startAt="(value) => setIpAdapter({ startAt: clampFloat(value, 0, 1) })"
+        @update:endAt="(value) => setIpAdapter({ endAt: clampFloat(value, 0, 1) })"
+        @set:referenceImage="onIpAdapterReferenceFileSet"
+        @clear:referenceImage="clearIpAdapterReference"
+        @reject:referenceImage="onIpAdapterReferenceRejected"
+      />
 
       <div class="panel">
         <div class="panel-header">
@@ -341,11 +404,14 @@ Symbols (top-level; keep in sync; no ghosts):
         :generateLabel="generateLabel"
         :generateDisabled="runGenerateDisabled"
         :generateTitle="runGenerateTitle"
+        :actionMode="params.runAction"
+        :showActionMenu="!xyzStore.enabled"
         :isRunning="isRunBusy"
-        :showBatchControls="true"
+        :showBatchControls="!usesImageAutomation"
         :batchCount="params.batchCount"
         :batchSize="params.batchSize"
         :disabled="isRunBusy"
+        @update:actionMode="setRunAction"
         @generate="onGenerate"
         @cancel="onCancelRun"
         @update:batchCount="(v) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
@@ -546,6 +612,7 @@ import {
   useModelTabsStore,
   type GuidanceAdvancedParams,
   type ImageBaseParams,
+  type ImageRunAction,
   type ImageTabType,
   type TabByType,
 } from '../stores/model_tabs'
@@ -579,6 +646,7 @@ import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import Img2ImgBasicParametersCard from '../components/Img2ImgBasicParametersCard.vue'
 import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
+import IpAdapterCard from '../components/IpAdapterCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
 import SwapStageSettingsCard from '../components/SwapStageSettingsCard.vue'
@@ -827,6 +895,48 @@ const xyzRunning = computed(() => xyzStore.status === 'running')
 const isRunBusy = computed(() => isRunning.value || xyzRunning.value)
 const generateLabel = 'Generate'
 const supportsImg2ImgMasking = computed(() => supportsImg2ImgMaskingForEngineId(resolvedEngineForMode.value))
+const usesImageAutomation = computed(() => (
+  params.value.runAction === 'infinite'
+  || (params.value.useInitImage && params.value.initSource.mode === 'dir')
+  || (params.value.ipAdapter.enabled && params.value.ipAdapter.source.mode === 'dir')
+))
+const ipAdapterSupported = computed(() => {
+  if (engineSurface.value) return Boolean(engineSurface.value.supports_ip_adapter)
+  return props.type === 'sd15' || props.type === 'sdxl'
+})
+const toInventoryChoiceLabel = (value: string): string => {
+  const normalized = String(value || '').trim().replace(/\\/g, '/')
+  if (!normalized) return ''
+  return normalized.split('/').filter(Boolean).pop() || normalized
+}
+const ipAdapterModelChoices = computed(() => quicksettingsStore.ipAdapterModelChoices.map((value) => ({
+  value,
+  label: toInventoryChoiceLabel(value),
+})))
+const ipAdapterImageEncoderChoices = computed(() => quicksettingsStore.ipAdapterImageEncoderChoices.map((value) => ({
+  value,
+  label: toInventoryChoiceLabel(value),
+})))
+const infiniteXyzConflict = computed(() => params.value.runAction === 'infinite' && xyzStore.enabled)
+const automationBatchConflict = computed(() => (
+  usesImageAutomation.value
+  && (params.value.batchCount !== 1 || params.value.batchSize !== 1)
+))
+const initFolderMissingPath = computed(() => (
+  Boolean(params.value.useInitImage)
+  && params.value.initSource.mode === 'dir'
+  && !String(params.value.initSource.folderPath || '').trim()
+))
+const dirInitMaskConflict = computed(() => (
+  Boolean(params.value.useInitImage)
+  && params.value.initSource.mode === 'dir'
+  && Boolean(params.value.useMask)
+))
+const ipAdapterDisabledReason = computed(() => {
+  if (!params.value.ipAdapter.enabled) return ''
+  if (!ipAdapterSupported.value) return `${engineConfig.value.label} does not support IP-Adapter.`
+  return ''
+})
 const xyzProgressPercent = computed(() => {
   if (!xyzStore.progress.total) return null
   return (xyzStore.progress.completed / xyzStore.progress.total) * 100
@@ -834,20 +944,29 @@ const xyzProgressPercent = computed(() => {
 const missingInpaintMask = computed(() =>
   Boolean(params.value.useInitImage)
   && supportsImg2ImgMasking.value
+  && params.value.initSource.mode === 'img'
   && Boolean(params.value.useMask)
   && !String(params.value.maskImageData || '').trim(),
 )
 const runGenerateDisabled = computed(() => {
   if (isRunBusy.value) return true
+  if (infiniteXyzConflict.value) return true
+  if (automationBatchConflict.value) return true
   if (xyzStore.enabled) {
     return !(dependencyReady.value && Boolean(familyCapabilities.value) && supportsTxt2Img.value && filteredSamplers.value.length > 0 && filteredSchedulers.value.length > 0)
   }
+  if (initFolderMissingPath.value || dirInitMaskConflict.value || ipAdapterDisabledReason.value) return true
   if (missingInpaintMask.value) return true
   return !canGenerateForCurrentMode.value
 })
 const runGenerateTitle = computed(() => {
   if (xyzRunning.value) return 'XYZ sweep is running.'
+  if (infiniteXyzConflict.value) return 'Infinite generate cannot run while XYZ is enabled.'
   if (!xyzStore.enabled) {
+    if (automationBatchConflict.value) return 'Image automation requires batch count = 1 and batch size = 1.'
+    if (initFolderMissingPath.value) return 'Initial image folder mode requires a folder path.'
+    if (dirInitMaskConflict.value) return 'Mask editing is only available while the initial image source is set to IMG.'
+    if (ipAdapterDisabledReason.value) return ipAdapterDisabledReason.value
     if (missingInpaintMask.value) return 'INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.'
     return generateDisabledReason.value
   }
@@ -1234,9 +1353,22 @@ watch(
     if (enabled && params.value.hires.swapModel?.model) {
       setHires({ swapModel: undefined })
     }
+    if (!enabled && params.value.ipAdapter.source.sameAsInit) {
+      setIpAdapterSource({ sameAsInit: false })
+    }
     if (!enabled || wasEnabled) return
     maybeApplyKontextDefaults()
   },
+)
+
+watch(
+  () => params.value.runAction,
+  (actionMode) => {
+    if (actionMode !== 'infinite') return
+    if (params.value.batchCount === 1 && params.value.batchSize === 1) return
+    setParams({ batchCount: 1, batchSize: 1 })
+  },
+  { immediate: true },
 )
 
 const images = computed(() => gallery.value)
@@ -1279,7 +1411,14 @@ const runSummary = computed(() => {
   return `${params.value.width}×${params.value.height} px · ${params.value.steps} steps · ${cfgLabel.value} ${params.value.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel} · batch ${params.value.batchCount}×${params.value.batchSize}`
 })
 
-async function onGenerate(): Promise<void> {
+async function onGenerate(actionMode: ImageRunAction = params.value.runAction): Promise<void> {
+  if (actionMode !== params.value.runAction) {
+    setRunAction(actionMode)
+  }
+  if (infiniteXyzConflict.value) {
+    toast('Infinite generate cannot run while XYZ is enabled.')
+    return
+  }
   if (xyzStore.enabled) {
     await xyzStore.run()
     return
@@ -1502,6 +1641,14 @@ function setParams(patch: Partial<ImageBaseParams>): void {
   })
 }
 
+function setRunAction(actionMode: ImageRunAction): void {
+  if (actionMode === 'infinite') {
+    setParams({ runAction: actionMode, batchCount: 1, batchSize: 1 })
+    return
+  }
+  setParams({ runAction: actionMode })
+}
+
 function setGuidanceAdvanced(patch: Partial<GuidanceAdvancedParams>): void {
   const next = normalizeGuidanceAdvancedPatch(
     patch,
@@ -1552,6 +1699,69 @@ function setRefiner(patch: Partial<ImageBaseParams['refiner']>): void {
   const swapAtStep = Number(nextRefiner.swapAtStep)
   nextRefiner.swapAtStep = Number.isFinite(swapAtStep) && swapAtStep >= 1 ? Math.trunc(swapAtStep) : 1
   setParams({ refiner: nextRefiner })
+}
+
+function setInitSource(patch: Partial<ImageBaseParams['initSource']>): void {
+  const nextInitSource = {
+    ...params.value.initSource,
+    ...patch,
+  }
+  const nextPatch: Partial<ImageBaseParams> = { initSource: nextInitSource }
+  if (nextInitSource.mode !== 'img') {
+    nextPatch.batchCount = 1
+    nextPatch.batchSize = 1
+    nextPatch.useMask = false
+    nextPatch.maskImageData = ''
+    nextPatch.maskImageName = ''
+    if (params.value.ipAdapter.source.sameAsInit) {
+      nextPatch.ipAdapter = {
+        ...params.value.ipAdapter,
+        source: {
+          ...params.value.ipAdapter.source,
+          sameAsInit: false,
+        },
+      }
+    }
+  }
+  setParams(nextPatch)
+}
+
+function setIpAdapter(patch: Partial<ImageBaseParams['ipAdapter']>): void {
+  const nextSource = patch.source
+    ? {
+        ...params.value.ipAdapter.source,
+        ...patch.source,
+      }
+    : params.value.ipAdapter.source
+  const nextIpAdapter: ImageBaseParams['ipAdapter'] = {
+    ...params.value.ipAdapter,
+    ...patch,
+    source: nextSource,
+  }
+  if (nextIpAdapter.source.mode !== 'img' || !params.value.useInitImage) {
+    nextIpAdapter.source.sameAsInit = false
+  }
+  if (nextIpAdapter.endAt < nextIpAdapter.startAt) {
+    nextIpAdapter.endAt = nextIpAdapter.startAt
+  }
+  setParams({ ipAdapter: nextIpAdapter })
+}
+
+function setIpAdapterSource(patch: Partial<ImageBaseParams['ipAdapter']['source']>): void {
+  const nextSource = {
+    ...params.value.ipAdapter.source,
+    ...patch,
+  }
+  if (nextSource.mode === 'dir') {
+    setParams({ batchCount: 1, batchSize: 1 })
+  }
+  if (nextSource.mode !== 'img') {
+    nextSource.sameAsInit = false
+  }
+  if (!params.value.useInitImage) {
+    nextSource.sameAsInit = false
+  }
+  setIpAdapter({ source: nextSource })
 }
 
 function clampFloat(value: number, min: number, max: number): number {
@@ -1648,6 +1858,10 @@ watch(
 async function onInitFileSet(file: File): Promise<void> {
   const dataUrl = await readFileAsDataURL(file)
   const patch: Partial<ImageBaseParams> = {
+    initSource: {
+      ...params.value.initSource,
+      mode: 'img',
+    },
     initImageData: dataUrl,
     initImageName: file.name,
     useInitImage: true,
@@ -1671,17 +1885,50 @@ function onInitImageRejected(payload: { reason: string; files: File[] }): void {
 }
 
 function clearInit(): void {
-  setParams({
+  const nextPatch: Partial<ImageBaseParams> = {
     initImageData: '',
     initImageName: '',
     useMask: false,
     maskImageData: '',
     maskImageName: '',
-  })
+  }
+  if (params.value.ipAdapter.source.sameAsInit) {
+    nextPatch.ipAdapter = {
+      ...params.value.ipAdapter,
+      source: {
+        ...params.value.ipAdapter.source,
+        sameAsInit: false,
+      },
+    }
+  }
+  setParams(nextPatch)
 }
 
 function clearMask(): void {
   setParams({ maskImageData: '', maskImageName: '' })
+}
+
+async function onIpAdapterReferenceFileSet(file: File): Promise<void> {
+  const dataUrl = await readFileAsDataURL(file)
+  setIpAdapterSource({
+    mode: 'img',
+    sameAsInit: false,
+    referenceImageData: dataUrl,
+    referenceImageName: file.name,
+  })
+}
+
+function clearIpAdapterReference(): void {
+  setIpAdapterSource({
+    referenceImageData: '',
+    referenceImageName: '',
+    sameAsInit: false,
+  })
+}
+
+function onIpAdapterReferenceRejected(payload: { reason: string; files: File[] }): void {
+  const fileName = payload.files[0]?.name || 'file'
+  toast(`IP-Adapter reference rejected (${fileName}): ${payload.reason}`)
 }
 
 async function onMaskEditorApply(maskDataUrl: string): Promise<void> {

@@ -6,12 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
+Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint + automation).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
-starts `/api/txt2img` and `/api/img2img` (both can include hires settings when the backend capability allows it),
-includes `settings_revision` in payloads, handles
-stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
-Consumes rich progress payload metadata (`progress.message` + `progress.data`) and derives total-phase progress fields for dual run-card bars.
+starts `/api/txt2img`, `/api/img2img`, and `/api/image-automation` (when run action or source contracts require backend-owned looping),
+includes `settings_revision` in payloads, handles stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
+Consumes rich progress payload metadata (`progress.message` + `progress.data`) plus buffered `automation_iteration` events, and derives total-phase progress fields for dual run-card bars.
 Exposes task cancellation for active runs (`/api/tasks/:id/cancel`).
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 FLUX.2 img2img guidance emission is variant-aware (`img2img_cfg_scale` xor `img2img_distilled_cfg_scale`), and img2img hires emission is
@@ -28,6 +27,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BuildImg2ImgPayloadArgs` (interface): Input contract for deterministic img2img payload assembly.
 - `buildImg2ImgPayload` (function): Builds img2img start payload at the source, including capability-gated unmasked hires fields.
 - `buildGuidancePayload` (function): Builds `extras.guidance` payload from tab state + per-engine advanced-guidance support matrix.
+- `usesImageAutomation` (function): Detects when the current image-tab state must use backend-owned `/api/image-automation`.
+- `buildIpAdapterPayload` (function): Normalizes the nested IP-Adapter request owner into the route-local `extras.ip_adapter` carrier.
+- `resolveAutomationLoop` (function): Builds the bounded vs `until_cancelled` automation loop contract from tab state.
+- `buildImageAutomationRequest` (function): Wraps a one-shot image template payload in the automation request envelope.
 - `extractLoraNamesFromPrompt` (function): Extracts LoRA token names from prompt text (`<lora:name:weight>`).
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
@@ -51,8 +54,13 @@ import {
   type NestedStageSelectorPayloads,
   type Txt2ImgRequest,
 } from '../api/payloads'
-import { cancelTask, fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
-import type { GeneratedImage, GuidanceAdvancedCapabilities, TaskEvent } from '../api/types'
+import { cancelTask, fetchTaskResult, startImageAutomation, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
+import type {
+  GeneratedImage,
+  GuidanceAdvancedCapabilities,
+  ImageAutomationRequest,
+  TaskEvent,
+} from '../api/types'
 import { resolveImageRequestEngineId, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
 import { buildExplicitImageRequestContract } from '../utils/image_request_contract'
 import { normalizeMaskEnforcement } from '../utils/image_params'
@@ -479,6 +487,8 @@ export function useGeneration(tabId: string) {
   // Reactive state for this tab
   const state = ref(getTabState(tabId))
   const resumeNotice = ref('')
+  let currentEventId = 0
+  let skipAutomationReplayThroughEventId = 0
   
   // Tab info
   const tab = computed(() => modelTabs.tabs.find(t => t.id === tabId) as BaseTab | undefined)
@@ -492,6 +502,120 @@ export function useGeneration(tabId: string) {
     const clipSkipLabel = Number.isFinite(p.clipSkip) && p.clipSkip > 0 && p.clipSkip !== 1 ? ` · clip-skip ${p.clipSkip}` : ''
     const guidanceLabel = guidanceMode === 'distilled_cfg' ? 'distilled cfg' : 'cfg'
     return `${p.width}×${p.height} px · ${p.steps} steps · ${guidanceLabel} ${p.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel}${clipSkipLabel} · batch ${p.batchCount}×${p.batchSize}`
+  }
+
+  function usesImageAutomation(p: ImageBaseParams): boolean {
+    return (
+      p.runAction === 'infinite'
+      || (normalizeBooleanParam(p.useInitImage, false) && p.initSource.mode === 'dir')
+      || (p.ipAdapter.enabled && p.ipAdapter.source.mode === 'dir')
+    )
+  }
+
+  function buildIpAdapterPayload(
+    p: ImageBaseParams,
+    options: { useInitImage: boolean },
+  ): Record<string, unknown> | null {
+    if (!p.ipAdapter.enabled) return null
+    const source = p.ipAdapter.source
+    const payload: Record<string, unknown> = {
+      enabled: true,
+      model: p.ipAdapter.model,
+      image_encoder: p.ipAdapter.imageEncoder,
+      weight: p.ipAdapter.weight,
+      start_at: p.ipAdapter.startAt,
+      end_at: p.ipAdapter.endAt,
+    }
+    if (source.mode === 'dir') {
+      payload.source = {
+        kind: 'server_folder',
+        folder_path: source.folderPath,
+        selection_mode: source.selectionMode,
+        count: source.selectionMode === 'count' ? source.count : null,
+        order: source.order,
+        sort_by: source.sortBy,
+      }
+      return payload
+    }
+    if (source.sameAsInit) {
+      if (!options.useInitImage) {
+        throw new Error('Same as init image is only available for img2img runs.')
+      }
+      payload.source = { kind: 'same_as_init' }
+      return payload
+    }
+    payload.source = {
+      kind: 'uploaded',
+      reference_image_data: source.referenceImageData,
+    }
+    return payload
+  }
+
+  function resolveAutomationLoop(p: ImageBaseParams): ImageAutomationRequest['loop'] {
+    if (p.runAction === 'infinite') {
+      return {
+        mode: 'until_cancelled',
+        delay_ms: 0,
+        stop_on_error: true,
+      }
+    }
+
+    const candidateCounts: number[] = []
+    let hasAllSelection = false
+    if (normalizeBooleanParam(p.useInitImage, false) && p.initSource.mode === 'dir') {
+      if (p.initSource.selectionMode === 'all') hasAllSelection = true
+      else candidateCounts.push(Math.max(1, Math.trunc(Number(p.initSource.count || 1))))
+    }
+    if (p.ipAdapter.enabled && p.ipAdapter.source.mode === 'dir') {
+      if (p.ipAdapter.source.selectionMode === 'all') hasAllSelection = true
+      else candidateCounts.push(Math.max(1, Math.trunc(Number(p.ipAdapter.source.count || 1))))
+    }
+
+    return {
+      mode: 'count',
+      count: hasAllSelection ? null : Math.max(1, ...candidateCounts),
+      delay_ms: 0,
+      stop_on_error: true,
+    }
+  }
+
+  function buildImageAutomationRequest(args: {
+    mode: 'txt2img' | 'img2img'
+    template: Record<string, unknown>
+    params: ImageBaseParams
+  }): ImageAutomationRequest {
+    const request: ImageAutomationRequest = {
+      mode: args.mode,
+      template: args.template,
+      loop: resolveAutomationLoop(args.params),
+      seed_policy: {
+        mode: 'increment',
+        increment_step: 1,
+      },
+      prompt_source: {
+        kind: 'current',
+        insert_position: 'replace',
+        wildcard_mode: 'disabled',
+      },
+    }
+    if (args.mode === 'img2img') {
+      request.init_source = args.params.initSource.mode === 'dir'
+        ? {
+            kind: 'server_folder',
+            folder_path: args.params.initSource.folderPath,
+            selection_mode: args.params.initSource.selectionMode,
+            count: args.params.initSource.selectionMode === 'count' ? args.params.initSource.count : null,
+            order: args.params.initSource.order,
+            sort_by: args.params.initSource.sortBy,
+            use_crop: args.params.initSource.useCrop,
+          }
+        : {
+            kind: 'uploaded_current',
+            use_crop: false,
+            order: 'sorted',
+          }
+    }
+    return request
   }
 
   function buildParamsSnapshot(p: ImageBaseParams, engineId: string): Record<string, unknown> {
@@ -513,6 +637,7 @@ export function useGeneration(tabId: string) {
 
       batchSize: p.batchSize,
       batchCount: p.batchCount,
+      runAction: p.runAction,
       img2imgResizeMode: p.img2imgResizeMode,
       img2imgUpscaler: p.img2imgUpscaler,
       guidanceAdvanced: p.guidanceAdvanced,
@@ -522,14 +647,28 @@ export function useGeneration(tabId: string) {
       refiner: p.refiner,
 
       useInitImage: p.useInitImage,
+      initSource: p.initSource,
       initImageName: p.initImageName,
       denoiseStrength: p.denoiseStrength,
+      ipAdapter: p.ipAdapter,
     }
   }
 
   function pushHistory(item: ImageRunHistoryItem): void {
     state.value.history.unshift(item)
     if (state.value.history.length > MAX_HISTORY) state.value.history.length = MAX_HISTORY
+  }
+
+  function resetAutomationRecoveryReplayState(): void {
+    currentEventId = 0
+    skipAutomationReplayThroughEventId = 0
+  }
+
+  function markAutomationRecoveryWatermark(eventId: unknown): void {
+    if (typeof eventId !== 'number' || !Number.isFinite(eventId)) return
+    const normalized = Math.max(0, Math.trunc(eventId))
+    if (normalized <= 0) return
+    skipAutomationReplayThroughEventId = Math.max(skipAutomationReplayThroughEventId, normalized)
   }
   
   function stopStream(): void {
@@ -538,6 +677,7 @@ export function useGeneration(tabId: string) {
       unsub()
       unsubscribers.delete(tabId)
     }
+    resetAutomationRecoveryReplayState()
   }
   
   function resetProgress(): void {
@@ -581,6 +721,7 @@ export function useGeneration(tabId: string) {
     const p = params.value
     const checkpoint = String((p as any).checkpoint || '').trim()
     const useInitImage = normalizeBooleanParam(p.useInitImage, false)
+    const usesInitFolderSource = useInitImage && p.initSource.mode === 'dir'
     const useMask = normalizeBooleanParam(p.useMask, false)
     const tabType = String(engineType.value)
     const engineOverrideForRequest = resolveEngineForRequest(tabType, useInitImage)
@@ -618,12 +759,17 @@ export function useGeneration(tabId: string) {
         state.value.errorMessage = message
         return
       }
-      if (!p.initImageData) {
+      if (!usesInitFolderSource && !p.initImageData) {
         state.value.status = 'error'
         state.value.errorMessage = 'Select an initial image for img2img.'
         return
       }
       if (useMask) {
+        if (p.initSource.mode !== 'img') {
+          state.value.status = 'error'
+          state.value.errorMessage = 'Mask editing is only available while the initial image source is set to IMG.'
+          return
+        }
         if (!supportsImg2ImgMaskingForEngineId(engineOverrideForRequest)) {
           state.value.status = 'error'
           state.value.errorMessage = `Masking is not supported for ${engineOverrideForRequest} img2img yet.`
@@ -751,8 +897,11 @@ export function useGeneration(tabId: string) {
     const promptPreview = String(p.prompt || '').trim().slice(0, 120)
     const summary = buildRunSummary(p, guidanceMode)
     const paramsSnapshot = buildParamsSnapshot(p, engineOverrideForRequest)
+    const automationRun = usesImageAutomation(p)
     const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
     const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
+    const requestBatchSize = automationRun ? 1 : batchSize
+    const requestBatchCount = automationRun ? 1 : batchCount
     const settingsRevision = quicksettings.getSettingsRevision()
     const supportsNegative = familyCaps.supports_negative_prompt && !usesDistilledCfgModel
     const guidanceSupport = engineSurface.guidance_advanced ?? null
@@ -764,6 +913,17 @@ export function useGeneration(tabId: string) {
     const guidancePayload = buildGuidancePayload(p.guidanceAdvanced, guidanceSupport)
     if (guidancePayload) {
       extras.guidance = guidancePayload
+    }
+
+    try {
+      const ipAdapterPayload = buildIpAdapterPayload(p, { useInitImage })
+      if (ipAdapterPayload) {
+        extras.ip_adapter = ipAdapterPayload
+      }
+    } catch (error) {
+      state.value.status = 'error'
+      state.value.errorMessage = error instanceof Error ? error.message : String(error)
+      return
     }
 
     if (loraNames.length > 0) {
@@ -795,8 +955,8 @@ export function useGeneration(tabId: string) {
           supportsNegativePrompt: supportsNegative,
           supportsHires: Boolean(engineSurface.supports_hires),
           guidanceMode,
-          batchCount,
-          batchSize,
+          batchCount: requestBatchCount,
+          batchSize: requestBatchSize,
           device,
           settingsRevision,
           engineId: engineOverrideForRequest,
@@ -805,8 +965,20 @@ export function useGeneration(tabId: string) {
           hiresMinTile: Number(upscalersStore.minTile),
           extras,
         })
-        const { task_id } = await startImg2Img(payload)
-        taskId = task_id
+        if (automationRun) {
+          if (usesInitFolderSource) {
+            delete payload.img2img_init_image
+          }
+          const { task_id } = await startImageAutomation(buildImageAutomationRequest({
+            mode: 'img2img',
+            template: payload,
+            params: p,
+          }))
+          taskId = task_id
+        } else {
+          const { task_id } = await startImg2Img(payload)
+          taskId = task_id
+        }
       } else {
         let payload: Txt2ImgRequest
         try {
@@ -822,8 +994,8 @@ export function useGeneration(tabId: string) {
             scheduler: p.scheduler,
             seed: p.seed,
             clipSkip: p.clipSkip,
-            batchSize,
-            batchCount,
+            batchSize: requestBatchSize,
+            batchCount: requestBatchCount,
             styles: [],
             device,
             settingsRevision,
@@ -844,8 +1016,17 @@ export function useGeneration(tabId: string) {
           state.value.errorMessage = error instanceof Error ? error.message : String(error)
           return
         }
-        const { task_id } = await startTxt2Img(payload)
-        taskId = task_id
+        if (automationRun) {
+          const { task_id } = await startImageAutomation(buildImageAutomationRequest({
+            mode: 'txt2img',
+            template: payload as unknown as Record<string, unknown>,
+            params: p,
+          }))
+          taskId = task_id
+        } else {
+          const { task_id } = await startTxt2Img(payload)
+          taskId = task_id
+        }
       }
 
       state.value.taskId = taskId
@@ -864,8 +1045,12 @@ export function useGeneration(tabId: string) {
 
       const key = resumeKey(tabId)
       saveResumeState(key, { taskId, lastEventId: 0, createdAtMs, paramsSnapshot })
+      resetAutomationRecoveryReplayState()
       const unsub = subscribeTask(state.value.taskId, handleTaskEvent, undefined, {
         onMeta: ({ eventId }) => {
+          if (typeof eventId === 'number' && Number.isFinite(eventId)) {
+            currentEventId = Math.max(0, Math.trunc(eventId))
+          }
           if (typeof eventId === 'number') updateResumeEventId(key, eventId)
         },
       })
@@ -902,8 +1087,41 @@ export function useGeneration(tabId: string) {
           }
         }
         break
+      case 'automation_iteration': {
+        const iterationImages = Array.isArray(event.images) ? event.images : []
+        const shouldSkipReplayImages = currentEventId > 0 && currentEventId <= skipAutomationReplayThroughEventId
+        if (!shouldSkipReplayImages && iterationImages.length > 0) {
+          state.value.gallery = [...state.value.gallery, ...iterationImages]
+          if (state.value.currentRun?.taskId) {
+            state.value.currentRun.thumbnail = iterationImages[0]
+          }
+        }
+        if (event.info !== undefined) {
+          state.value.info = event.info ?? null
+        }
+        if (typeof event.seed === 'number' && Number.isFinite(event.seed)) {
+          state.value.lastSeed = event.seed
+        }
+        break
+      }
       case 'result':
-        state.value.gallery = event.images || []
+        let parsedInfo: Record<string, unknown> | null = null
+        try {
+          const candidate = typeof event.info === 'string' ? JSON.parse(event.info) : event.info
+          parsedInfo = candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+            ? candidate as Record<string, unknown>
+            : null
+        } catch {
+          parsedInfo = null
+        }
+        const automationSummary = parsedInfo && typeof parsedInfo.automation_summary === 'object'
+          ? parsedInfo.automation_summary
+          : null
+        if (automationSummary && state.value.gallery.length > 0) {
+          state.value.gallery = [...state.value.gallery]
+        } else {
+          state.value.gallery = event.images || []
+        }
         state.value.info = event.info ?? null
         const previewBeforeReset = state.value.previewImage
         const firstResultImage = Array.isArray(event.images) && event.images.length > 0 ? event.images[0] : null
@@ -921,8 +1139,9 @@ export function useGeneration(tabId: string) {
           state.value.currentRun = null
         }
         try {
-          const infoObj = (typeof event.info === 'string' ? JSON.parse(event.info) : event.info) as any
+          const infoObj = (parsedInfo ?? (typeof event.info === 'string' ? JSON.parse(event.info) : event.info)) as any
           const rawSeed = infoObj?.seed ?? infoObj?.all_seeds?.[0]
+            ?? infoObj?.automation_summary?.seed
           const resolvedSeed = typeof rawSeed === 'number' ? rawSeed : Number(rawSeed)
           if (Number.isFinite(resolvedSeed)) {
             state.value.lastSeed = resolvedSeed
@@ -972,17 +1191,35 @@ export function useGeneration(tabId: string) {
     }
   }
 
+  function applyAutomationRecoveryGallery(images: GeneratedImage[] | undefined): void {
+    if (!Array.isArray(images) || images.length === 0) return
+    state.value.gallery = [...images]
+  }
+
   async function refreshTaskSnapshot(taskId: string): Promise<void> {
     try {
       const res = await fetchTaskResult(taskId)
-      if (res.status !== 'running') return
-      if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
-      const p = res.progress
-      if (p && typeof p === 'object') {
-        state.value.progress = buildProgressStateFromPayload(p, { fallbackStage: state.value.progress.stage })
+      if (res.status === 'running') {
+        if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
+        const p = res.progress
+        if (p && typeof p === 'object') {
+          state.value.progress = buildProgressStateFromPayload(p, { fallbackStage: state.value.progress.stage })
+        }
+        if (res.preview_image) state.value.previewImage = res.preview_image
+        if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
+        applyAutomationRecoveryGallery(res.automation_gallery_images)
+        markAutomationRecoveryWatermark(res.buffer_newest_event_id ?? res.last_event_id)
+        return
       }
-      if (res.preview_image) state.value.previewImage = res.preview_image
-      if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
+      if (res.status === 'completed' && res.result) {
+        applyAutomationRecoveryGallery(res.automation_gallery_images)
+        if (Array.isArray(res.automation_gallery_images) && res.automation_gallery_images.length > 0) {
+          const bufferedNewestEventId = typeof res.last_event_id === 'number' && Number.isFinite(res.last_event_id)
+            ? Math.max(0, Math.trunc(res.last_event_id) - 2)
+            : 0
+          markAutomationRecoveryWatermark(bufferedNewestEventId)
+        }
+      }
     } catch {
       // ignore snapshot refresh failures
     }
@@ -1016,9 +1253,14 @@ export function useGeneration(tabId: string) {
       }
       if (res.preview_image) state.value.previewImage = res.preview_image
       if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
+      applyAutomationRecoveryGallery(res.automation_gallery_images)
+      markAutomationRecoveryWatermark(res.buffer_newest_event_id ?? res.last_event_id)
       const unsub = subscribeTask(saved.taskId, handleTaskEvent, undefined, {
         after: saved.lastEventId,
         onMeta: ({ eventId }) => {
+          if (typeof eventId === 'number' && Number.isFinite(eventId)) {
+            currentEventId = Math.max(0, Math.trunc(eventId))
+          }
           if (typeof eventId === 'number') updateResumeEventId(key, eventId)
         },
       })
@@ -1030,7 +1272,11 @@ export function useGeneration(tabId: string) {
     // Task is terminal; hydrate UI and clear resume marker.
     clearResumeState(key)
     if (res.status === 'completed' && res.result) {
-      state.value.gallery = res.result.images || []
+      if (Array.isArray(res.automation_gallery_images) && res.automation_gallery_images.length > 0) {
+        state.value.gallery = [...res.automation_gallery_images]
+      } else {
+        state.value.gallery = res.result.images || []
+      }
       state.value.info = res.result.info ?? null
       state.value.status = 'done'
       state.value.previewImage = null
@@ -1062,7 +1308,11 @@ export function useGeneration(tabId: string) {
         return
       }
       if (result.status === 'completed' && result.result) {
-        state.value.gallery = result.result.images || []
+        if (Array.isArray(result.automation_gallery_images) && result.automation_gallery_images.length > 0) {
+          state.value.gallery = [...result.automation_gallery_images]
+        } else {
+          state.value.gallery = result.result.images || []
+        }
         state.value.info = result.result.info ?? null
         state.value.status = 'done'
         state.value.selectedTaskId = taskId

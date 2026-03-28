@@ -1,0 +1,34 @@
+@layer components {
+  .run-primary-split {
+    display: inline-flex;
+    align-items: stretch;
+    border-radius: 999px;
+    overflow: hidden;
+    border: 0.0625rem solid transparent;
+  }
+
+  .run-primary-split > .results-generate {
+    border-radius: 0;
+  }
+
+  .run-primary-split__menu-toggle {
+    min-width: calc(var(--control-h-md) - 0.05rem);
+    padding-inline: 0.7rem;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: 0.0625rem solid color-mix(in srgb, var(--color-panel-foreground) 14%, transparent);
+  }
+
+  .run-primary-split__menu {
+    min-width: 10rem;
+    padding: 0.35rem;
+    display: grid;
+    gap: 0.25rem;
+    overflow: auto;
+  }
+
+  .run-primary-split__menu-button {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

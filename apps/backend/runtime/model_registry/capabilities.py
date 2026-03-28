@@ -18,9 +18,11 @@ WAN semantic capabilities are bound to explicit WAN22 variant families via prima
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
 - `GuidanceAdvancedSurface` (dataclass): Optional per-engine support map for advanced CFG/APG controls (`extras.guidance` keys).
-- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler recommendations).
+- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including IP-Adapter support + optional sampler/scheduler recommendations).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
+- `ip_adapter_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for IP-Adapter, or `None` when supported.
+- `supports_ip_adapter_engine_id` (function): Return whether the exact engine id is allowed to run IP-Adapter in tranche 1.
 - `build_ltx2_capability_surface` (function): Build the truthful semantic capability surface for the live LTX2 lane.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
 - `semantic_engine_for_engine_id` (function): Resolve a semantic engine tag from an API engine id (fail-loud on unknown ids).
@@ -96,6 +98,7 @@ class EngineParamSurface:
     supports_refiner: bool
     supports_lora: bool
     supports_controlnet: bool
+    supports_ip_adapter: bool
     # Optional: recommended sampler/scheduler lists for UI hinting.
     recommended_samplers: tuple[str, ...] | None = None
     recommended_schedulers: tuple[str, ...] | None = None
@@ -120,6 +123,7 @@ def build_ltx2_capability_surface() -> EngineParamSurface:
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
+        supports_ip_adapter=False,
         recommended_samplers=("euler",),
         recommended_schedulers=("simple",),
         default_sampler="euler",
@@ -152,6 +156,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
+        supports_ip_adapter=True,
         default_sampler="ddim",
         default_scheduler="ddim",
         guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
@@ -166,6 +171,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=True,
         supports_lora=True,
         supports_controlnet=False,
+        supports_ip_adapter=True,
         default_sampler="euler",
         default_scheduler="euler_discrete",
         guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
@@ -180,6 +186,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
+        supports_ip_adapter=False,
         recommended_samplers=("euler", "euler a", "dpm++ 2m"),
         recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
@@ -195,6 +202,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
+        supports_ip_adapter=False,
         recommended_samplers=("euler", "dpm++ 2m"),
         recommended_schedulers=("simple",),
         default_sampler="euler",
@@ -210,6 +218,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
+        supports_ip_adapter=False,
         recommended_samplers=("euler", "dpm++ 2m"),
         recommended_schedulers=("simple",),
         default_sampler="euler",
@@ -226,6 +235,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
+        supports_ip_adapter=False,
         recommended_samplers=("euler", "euler a", "dpm++ 2m", "er sde"),
         recommended_schedulers=("simple", "beta", "normal", "exponential"),
         default_sampler="euler",
@@ -242,6 +252,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
+        supports_ip_adapter=False,
         recommended_samplers=("euler", "dpm++ 2m"),
         recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
@@ -257,6 +268,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,  # high/low LoRA slots in WAN22 panel
         supports_controlnet=False,
+        supports_ip_adapter=False,
         recommended_samplers=("uni-pc bh2", "uni-pc", "euler", "euler a"),
         recommended_schedulers=("simple",),
         default_sampler="uni-pc bh2",
@@ -274,6 +286,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
+        supports_ip_adapter=False,
         default_sampler=None,
         default_scheduler=None,
     ),
@@ -287,6 +300,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
+        supports_ip_adapter=False,
     ),
 }
 
@@ -309,6 +323,12 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "ltx2": SemanticEngine.LTX2,
     "svd": SemanticEngine.SVD,
     "hunyuan_video": SemanticEngine.HUNYUAN_VIDEO,
+}
+
+_IP_ADAPTER_EXACT_ENGINE_REJECTS: Dict[str, str] = {
+    "sd20": "Engine 'sd20' is unsupported for IP-Adapter in tranche 1.",
+    "sd35": "Engine 'sd35' is unsupported for IP-Adapter in tranche 1.",
+    "sdxl_refiner": "Engine 'sdxl_refiner' is unsupported for IP-Adapter in tranche 1.",
 }
 
 _ENGINE_ID_PRIMARY_FAMILY: Dict[str, ModelFamily] = {
@@ -345,6 +365,29 @@ def semantic_engine_for_engine_id(engine_id: str) -> SemanticEngine:
     if normalized not in ENGINE_ID_TO_SEMANTIC_ENGINE:
         raise KeyError(f"Unknown engine id for semantic mapping: {normalized!r}")
     return ENGINE_ID_TO_SEMANTIC_ENGINE[normalized]
+
+
+def ip_adapter_support_error(engine_id: str) -> str | None:
+    normalized = str(engine_id or "").strip().lower()
+    if normalized == "":
+        return "IP-Adapter requires a non-empty engine id."
+    exact_reject = _IP_ADAPTER_EXACT_ENGINE_REJECTS.get(normalized)
+    if exact_reject is not None:
+        return exact_reject
+    try:
+        semantic_engine = semantic_engine_for_engine_id(normalized)
+    except KeyError:
+        return f"Engine '{normalized}' is unsupported for IP-Adapter in tranche 1."
+    if semantic_engine not in {SemanticEngine.SD15, SemanticEngine.SDXL}:
+        return (
+            f"Engine '{normalized}' is unsupported for IP-Adapter in tranche 1. "
+            "Supported semantic engines: sd15, sdxl."
+        )
+    return None
+
+
+def supports_ip_adapter_engine_id(engine_id: str) -> bool:
+    return ip_adapter_support_error(engine_id) is None
 
 
 def engine_supports_cfg(engine_id: str) -> bool:
@@ -391,6 +434,8 @@ __all__ = [
     "EngineParamSurface",
     "ENGINE_SURFACES",
     "ENGINE_ID_TO_SEMANTIC_ENGINE",
+    "ip_adapter_support_error",
+    "supports_ip_adapter_engine_id",
     "build_ltx2_capability_surface",
     "list_engine_capabilities",
     "semantic_engine_for_engine_id",

@@ -6,10 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
+Purpose: Generation API routes (txt2img/img2img/image-automation/txt2vid/img2vid/vid2vid).
 Contains request parsing and payload validation (including hires tile config via `extras.hires.tile` / `img2img_hires_tile`, Z-Image Turbo/Base
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
+Also owns the backend-owned `/api/image-automation` envelope (loop/seed/prompt/init-source parsing plus repo-fenced folder and wildcard roots) and
+validates nested IP-Adapter selectors/source kinds before delegating runtime application to the shared sampling stage.
 Txt2img model-stage ownership is explicit: top-level `extras.swap_model` is the first-pass mid-generation stage config, `extras.hires.swap_model`
 is the selector-only second-pass replacement seam, and `extras.refiner` / `extras.hires.refiner` remain SDXL-native refiner stages.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
@@ -68,7 +70,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
-from apps.backend.interfaces.api.path_utils import _path_from_api
+from apps.backend.interfaces.api.path_utils import _path_for_api, _path_from_api
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
 from apps.backend.interfaces.api.public_errors import public_http_error_detail, public_task_error_message
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, register_task, unregister_task
@@ -89,6 +91,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     from apps.backend.core.rng import NoiseSourceKind
     from apps.backend.core.orchestrator import InferenceOrchestrator
     from apps.backend.core.requests import (
+        ImageAutomationInitSource,
+        ImageAutomationLoopConfig,
+        ImageAutomationPromptSource,
+        ImageAutomationRequest,
+        ImageAutomationSeedPolicy,
         ProgressEvent,
         ResultEvent,
         Txt2ImgRequest,
@@ -106,6 +113,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         ENGINE_SURFACES,
         SemanticEngine,
         engine_supports_cfg,
+        ip_adapter_support_error,
         semantic_engine_for_engine_id,
     )
 
@@ -128,6 +136,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _IMG2IMG_EXTRAS_KEYS = (
         set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
     ) | _IMAGE_REQUEST_SELECTOR_KEYS
+    _IMAGE_AUTOMATION_ALLOWED_KEYS = {"mode", "template", "loop", "seed_policy", "prompt_source", "init_source"}
+    _IMAGE_AUTOMATION_LOOP_KEYS = {"mode", "count", "delay_ms", "stop_on_error"}
+    _IMAGE_AUTOMATION_SEED_POLICY_KEYS = {"mode", "increment_step"}
+    _IMAGE_AUTOMATION_PROMPT_SOURCE_KEYS = {"kind", "text", "insert_position", "wildcard_root", "wildcard_mode"}
+    _IMAGE_AUTOMATION_INIT_SOURCE_KEYS = {"kind", "folder_path", "selection_mode", "count", "order", "sort_by", "use_crop"}
+    _IP_ADAPTER_KEYS = {"enabled", "model", "image_encoder", "weight", "start_at", "end_at", "source"}
+    _IP_ADAPTER_SOURCE_KEYS = {"kind", "reference_image_data", "folder_path", "selection_mode", "count", "order", "sort_by"}
     _IMG2IMG_PIXEL_RESIZE_MODES = {"just_resize", "crop_and_resize", "resize_and_fill"}
     _IMG2IMG_ALLOWED_KEYS = {
         "device",
@@ -1740,6 +1755,203 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return _parse_swap_stage_payload(value, field_name=field_name, allow_zimage_variant=False)
 
 
+    def _resolve_inventory_scoped_path(
+        raw: object,
+        *,
+        field_name: str,
+        inventory_key: str,
+        inventory_label: str,
+    ) -> str:
+        if not isinstance(raw, str) or not raw.strip():
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be a non-empty string")
+        raw_value = raw.strip()
+        from apps.backend.inventory import cache as _inventory_cache
+
+        inventory = _inventory_cache.get()
+        try:
+            raw_absolute = str(Path(raw_value).expanduser().resolve(strict=False))
+        except Exception:
+            raw_absolute = ""
+
+        for item in inventory.get(inventory_key, []):
+            if not isinstance(item, dict):
+                continue
+            item_path = item.get("path")
+            if not isinstance(item_path, str) or not item_path.strip():
+                continue
+            absolute_path = str(Path(item_path).expanduser().resolve(strict=False))
+            api_path = _path_for_api(item_path)
+            if raw_value == api_path or (raw_absolute and raw_absolute == absolute_path):
+                return absolute_path
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{field_name}' must resolve to an inventory-backed {inventory_label} path from "
+                f"'/api/models' ({inventory_key})."
+            ),
+        )
+
+
+    def _parse_ip_adapter_payload(
+        value: Any,
+        *,
+        field_name: str,
+        allow_same_as_init: bool,
+        allow_server_folder: bool,
+    ) -> Dict[str, Any] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
+        _reject_unknown_keys(value, _IP_ADAPTER_KEYS, field_name)
+        if _optional_bool_field(value, "enabled") is not True:
+            return None
+
+        model_path = _resolve_inventory_scoped_path(
+            value.get("model"),
+            field_name=f"{field_name}.model",
+            inventory_key="ip_adapter_models",
+            inventory_label="IP-Adapter model",
+        )
+        image_encoder_path = _resolve_inventory_scoped_path(
+            value.get("image_encoder"),
+            field_name=f"{field_name}.image_encoder",
+            inventory_key="ip_adapter_image_encoders",
+            inventory_label="IP-Adapter image encoder",
+        )
+        weight = _require_float_field(value, "weight") if "weight" in value else 1.0
+        if not math.isfinite(weight) or weight < 0.0:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.weight' must be a finite number >= 0.0")
+        start_at = _require_float_field(value, "start_at") if "start_at" in value else 0.0
+        end_at = _require_float_field(value, "end_at") if "end_at" in value else 1.0
+        if not 0.0 <= start_at <= 1.0:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.start_at' must be between 0.0 and 1.0")
+        if not 0.0 <= end_at <= 1.0:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.end_at' must be between 0.0 and 1.0")
+        if start_at > end_at:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.start_at' must be <= '{field_name}.end_at'")
+
+        source_raw = value.get("source")
+        if not isinstance(source_raw, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}.source' must be an object")
+        _reject_unknown_keys(source_raw, _IP_ADAPTER_SOURCE_KEYS, f"{field_name}.source")
+        source_kind = _require_str_field(source_raw, "kind", allow_empty=False)
+        allowed_kinds = {"uploaded"}
+        if allow_same_as_init:
+            allowed_kinds.add("same_as_init")
+        if allow_server_folder:
+            allowed_kinds.add("server_folder")
+        if source_kind not in allowed_kinds:
+            allowed = ", ".join(sorted(allowed_kinds))
+            raise HTTPException(status_code=400, detail=f"'{field_name}.source.kind' must be one of: {allowed}")
+
+        reference_image_data = source_raw.get("reference_image_data")
+        if source_kind != "server_folder":
+            for folder_only_key in ("folder_path", "selection_mode", "count", "order", "sort_by"):
+                folder_value = source_raw.get(folder_only_key)
+                if folder_value not in (None, ""):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{field_name}.source.{folder_only_key}' is only valid when kind='server_folder'",
+                    )
+        if source_kind == "uploaded":
+            if not isinstance(reference_image_data, str) or not reference_image_data.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{field_name}.source.reference_image_data' is required when kind='uploaded'",
+                )
+            return {
+                "enabled": True,
+                "model": model_path,
+                "image_encoder": image_encoder_path,
+                "weight": float(weight),
+                "start_at": float(start_at),
+                "end_at": float(end_at),
+                "source": {
+                    "kind": "uploaded",
+                    "reference_image_data": reference_image_data.strip(),
+                },
+            }
+
+        if reference_image_data is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.source.reference_image_data' is only valid when kind='uploaded'",
+            )
+
+        if source_kind == "same_as_init":
+            return {
+                "enabled": True,
+                "model": model_path,
+                "image_encoder": image_encoder_path,
+                "weight": float(weight),
+                "start_at": float(start_at),
+                "end_at": float(end_at),
+                "source": {"kind": "same_as_init"},
+            }
+
+        selection_mode = source_raw.get("selection_mode")
+        if selection_mode is None:
+            selection_mode = "all"
+        elif not isinstance(selection_mode, str) or selection_mode.strip() not in {"all", "count"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.source.selection_mode' must be one of: all, count",
+            )
+        order = str(source_raw.get("order", "sorted") or "").strip()
+        if order not in {"random", "sorted"}:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.source.order' must be one of: random, sorted")
+        sort_by = source_raw.get("sort_by")
+        if sort_by is None:
+            sort_by = "name"
+        elif not isinstance(sort_by, str) or sort_by.strip() not in {"name", "size", "created_at", "modified_at"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.source.sort_by' must be one of: name, size, created_at, modified_at",
+            )
+        selection_count = None
+        if selection_mode == "count":
+            raw_count = source_raw.get("count")
+            if raw_count is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{field_name}.source.count' is required when selection_mode='count'",
+                )
+            selection_count = _require_int_field(source_raw, "count", minimum=1)
+        elif source_raw.get("count") is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.source.count' is only valid when selection_mode='count'",
+            )
+        folder_raw = source_raw.get("folder_path")
+        if not isinstance(folder_raw, str) or not folder_raw.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.source.folder_path' is required when kind='server_folder'",
+            )
+        try:
+            folder_path = _path_from_api(folder_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.source.folder_path' resolves outside CODEX_ROOT") from exc
+        return {
+            "enabled": True,
+            "model": model_path,
+            "image_encoder": image_encoder_path,
+            "weight": float(weight),
+            "start_at": float(start_at),
+            "end_at": float(end_at),
+            "source": {
+                "kind": "server_folder",
+                "folder_path": folder_path,
+                "selection_mode": str(selection_mode),
+                "count": selection_count,
+                "order": order,
+                "sort_by": str(sort_by),
+            },
+        }
+
+
     def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         raw = payload.get('extras')
         if raw is None:
@@ -1748,6 +1960,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="'extras' must be an object")
         _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
         extras: Dict[str, Any] = {}
+        ip_adapter_payload = _parse_ip_adapter_payload(
+            raw.get("ip_adapter"),
+            field_name="extras.ip_adapter",
+            allow_same_as_init=False,
+            allow_server_folder=False,
+        )
+        if ip_adapter_payload is not None:
+            extras["ip_adapter"] = ip_adapter_payload
         if 'randn_source' in raw:
             extras['randn_source'] = _parse_noise_source_field(
                 raw['randn_source'],
@@ -2262,6 +2482,35 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if isinstance(capability_contract, Mapping):
             return family.value, capability_contract
         return family.value, None
+
+    def _enforce_ip_adapter_engine_support(*, engine_key: str, field_name: str) -> None:
+        detail = ip_adapter_support_error(engine_key)
+        if detail is None:
+            return
+        raise HTTPException(status_code=400, detail=detail)
+
+    def _enforce_txt2img_ip_adapter_stage_support(
+        *,
+        engine_key: str,
+        extras: Mapping[str, Any],
+        hires_cfg: Mapping[str, Any] | None,
+    ) -> None:
+        if not isinstance(extras.get("ip_adapter"), dict):
+            return
+        _enforce_ip_adapter_engine_support(
+            engine_key=engine_key,
+            field_name="extras.ip_adapter",
+        )
+        if isinstance(extras.get("refiner"), dict):
+            _enforce_ip_adapter_engine_support(
+                engine_key="sdxl_refiner",
+                field_name="extras.refiner",
+            )
+        if isinstance(hires_cfg, Mapping) and isinstance(hires_cfg.get("refiner"), dict):
+            _enforce_ip_adapter_engine_support(
+                engine_key="sdxl_refiner",
+                field_name="extras.hires.refiner",
+            )
 
     def _normalize_capability_name_list(value: object) -> list[str]:
         if not isinstance(value, (list, tuple)):
@@ -3646,6 +3895,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
         extras, hires_cfg = _parse_txt2img_extras(payload)
+        _enforce_txt2img_ip_adapter_stage_support(
+            engine_key=engine_key,
+            extras=extras,
+            hires_cfg=hires_cfg,
+        )
         if hires_cfg is not None:
             hires_sampler = _parse_optional_sampler_field(value=hires_cfg.get("sampler"), field_name="extras.hires.sampler")
             if hires_sampler is not None:
@@ -3797,6 +4051,266 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid 'device' selection"),
             ) from None
+
+    def _require_bool_value(value: object, *, field_name: str) -> bool:
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be a boolean")
+        return value
+
+    def _parse_image_automation_request(payload: Dict[str, Any]) -> ImageAutomationRequest:
+        from apps.backend.runtime.text_processing import default_wildcard_root
+
+        _reject_unknown_keys(payload, _IMAGE_AUTOMATION_ALLOWED_KEYS, "image_automation")
+        mode = _require_str_field(payload, "mode", allow_empty=False)
+        if mode not in {"txt2img", "img2img"}:
+            raise HTTPException(status_code=400, detail="'mode' must be one of: txt2img, img2img")
+
+        template_raw = payload.get("template")
+        if not isinstance(template_raw, dict):
+            raise HTTPException(status_code=400, detail="'template' must be an object")
+        template = dict(template_raw)
+        _enforce_generation_settings_contract(template)
+        _validate_route_engine_capability(
+            template,
+            route_mode=GenerationRouteMode.TXT2IMG if mode == "txt2img" else GenerationRouteMode.IMG2IMG,
+        )
+
+        batch_count_field = "img2img_batch_count" if mode == "img2img" else "batch_count"
+        batch_size_field = "img2img_batch_size" if mode == "img2img" else "batch_size"
+        batch_count = _require_int_field(template, batch_count_field, minimum=1) if batch_count_field in template else 1
+        batch_size = _require_int_field(template, batch_size_field, minimum=1) if batch_size_field in template else 1
+        if batch_count != 1 or batch_size != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="image automation requires batch count = 1 and batch size = 1.",
+            )
+
+        extras_key = "img2img_extras" if mode == "img2img" else "extras"
+        extras_raw = template.get(extras_key)
+        if extras_raw is not None and not isinstance(extras_raw, dict):
+            raise HTTPException(status_code=400, detail=f"'{extras_key}' must be an object")
+        ip_adapter_folder_selects_all = False
+        if isinstance(extras_raw, dict):
+            normalized_extras = dict(extras_raw)
+            ip_adapter_payload = _parse_ip_adapter_payload(
+                normalized_extras.get("ip_adapter"),
+                field_name=f"{extras_key}.ip_adapter",
+                allow_same_as_init=(mode == "img2img"),
+                allow_server_folder=True,
+            )
+            if ip_adapter_payload is not None:
+                template_engine_key = _canonical_engine_key(template.get("engine"))
+                if template_engine_key:
+                    if mode == "txt2img":
+                        hires_cfg = normalized_extras.get("hires")
+                        _enforce_txt2img_ip_adapter_stage_support(
+                            engine_key=template_engine_key,
+                            extras=normalized_extras,
+                            hires_cfg=hires_cfg if isinstance(hires_cfg, dict) else None,
+                        )
+                    else:
+                        _enforce_ip_adapter_engine_support(
+                            engine_key=template_engine_key,
+                            field_name=f"{extras_key}.ip_adapter",
+                        )
+                normalized_extras["ip_adapter"] = ip_adapter_payload
+                source = ip_adapter_payload.get("source")
+                if (
+                    isinstance(source, dict)
+                    and source.get("kind") == "server_folder"
+                    and source.get("selection_mode") == "all"
+                ):
+                    ip_adapter_folder_selects_all = True
+            template[extras_key] = normalized_extras
+
+        loop_raw = payload.get("loop")
+        if loop_raw is None:
+            loop = ImageAutomationLoopConfig(mode="count", count=1)
+        else:
+            if not isinstance(loop_raw, dict):
+                raise HTTPException(status_code=400, detail="'loop' must be an object")
+            _reject_unknown_keys(loop_raw, _IMAGE_AUTOMATION_LOOP_KEYS, "loop")
+            loop_mode = _require_str_field(loop_raw, "mode", allow_empty=False)
+            if loop_mode not in {"count", "until_cancelled"}:
+                raise HTTPException(status_code=400, detail="'loop.mode' must be one of: count, until_cancelled")
+            loop_count = None
+            if loop_mode == "count":
+                raw_count = loop_raw.get("count")
+                if raw_count is not None:
+                    loop_count = _require_int_field(loop_raw, "count", minimum=1)
+            elif loop_raw.get("count") is not None:
+                raise HTTPException(status_code=400, detail="'loop.count' is only valid when loop.mode='count'")
+            delay_ms = _require_int_field(loop_raw, "delay_ms", minimum=0) if "delay_ms" in loop_raw else 0
+            stop_on_error = _require_bool_value(loop_raw.get("stop_on_error", False), field_name="loop.stop_on_error")
+            loop = ImageAutomationLoopConfig(
+                mode=loop_mode,
+                count=loop_count,
+                delay_ms=delay_ms,
+                stop_on_error=stop_on_error,
+            )
+
+        seed_policy_raw = payload.get("seed_policy")
+        if seed_policy_raw is None:
+            seed_policy = ImageAutomationSeedPolicy(mode="fixed", increment_step=1)
+        else:
+            if not isinstance(seed_policy_raw, dict):
+                raise HTTPException(status_code=400, detail="'seed_policy' must be an object")
+            _reject_unknown_keys(seed_policy_raw, _IMAGE_AUTOMATION_SEED_POLICY_KEYS, "seed_policy")
+            seed_mode = _require_str_field(seed_policy_raw, "mode", allow_empty=False)
+            if seed_mode not in {"fixed", "increment", "random"}:
+                raise HTTPException(status_code=400, detail="'seed_policy.mode' must be one of: fixed, increment, random")
+            increment_step = _require_int_field(seed_policy_raw, "increment_step", minimum=1) if "increment_step" in seed_policy_raw else 1
+            seed_policy = ImageAutomationSeedPolicy(mode=seed_mode, increment_step=increment_step)
+
+        prompt_source_raw = payload.get("prompt_source")
+        if prompt_source_raw is None:
+            prompt_source = ImageAutomationPromptSource(kind="current")
+        else:
+            if not isinstance(prompt_source_raw, dict):
+                raise HTTPException(status_code=400, detail="'prompt_source' must be an object")
+            _reject_unknown_keys(prompt_source_raw, _IMAGE_AUTOMATION_PROMPT_SOURCE_KEYS, "prompt_source")
+            prompt_kind = _require_str_field(prompt_source_raw, "kind", allow_empty=False)
+            if prompt_kind not in {"current", "list"}:
+                raise HTTPException(status_code=400, detail="'prompt_source.kind' must be one of: current, list")
+            insert_position = str(prompt_source_raw.get("insert_position", "replace") or "").strip()
+            if insert_position not in {"replace", "prepend", "append"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'prompt_source.insert_position' must be one of: replace, prepend, append",
+                )
+            wildcard_mode = str(prompt_source_raw.get("wildcard_mode", "disabled") or "").strip()
+            if wildcard_mode not in {"disabled", "expand"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'prompt_source.wildcard_mode' must be one of: disabled, expand",
+                )
+            wildcard_root = None
+            if wildcard_mode == "expand":
+                wildcard_root_raw = prompt_source_raw.get("wildcard_root")
+                wildcard_root = (
+                    _path_from_api(wildcard_root_raw)
+                    if isinstance(wildcard_root_raw, str) and wildcard_root_raw.strip()
+                    else str(default_wildcard_root())
+                )
+            prompt_text = prompt_source_raw.get("text")
+            if prompt_text is not None and not isinstance(prompt_text, str):
+                raise HTTPException(status_code=400, detail="'prompt_source.text' must be a string when provided")
+            prompt_source = ImageAutomationPromptSource(
+                kind=prompt_kind,
+                text=prompt_text,
+                insert_position=insert_position,
+                wildcard_root=wildcard_root,
+                wildcard_mode=wildcard_mode,
+            )
+
+        init_source: ImageAutomationInitSource | None = None
+        init_source_raw = payload.get("init_source")
+        if mode == "txt2img":
+            if init_source_raw is not None:
+                raise HTTPException(status_code=400, detail="'init_source' is only supported for img2img automation")
+        else:
+            if init_source_raw is None:
+                init_source = ImageAutomationInitSource(kind="uploaded_current")
+            else:
+                if not isinstance(init_source_raw, dict):
+                    raise HTTPException(status_code=400, detail="'init_source' must be an object")
+                _reject_unknown_keys(init_source_raw, _IMAGE_AUTOMATION_INIT_SOURCE_KEYS, "init_source")
+                init_kind = _require_str_field(init_source_raw, "kind", allow_empty=False)
+                if init_kind not in {"uploaded_current", "server_folder"}:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'init_source.kind' must be one of: uploaded_current, server_folder",
+                    )
+                selection_mode = init_source_raw.get("selection_mode")
+                if selection_mode is None:
+                    selection_mode = "all"
+                elif not isinstance(selection_mode, str) or selection_mode.strip() not in {"all", "count"}:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'init_source.selection_mode' must be one of: all, count",
+                    )
+                order = str(init_source_raw.get("order", "sorted") or "").strip()
+                if order not in {"random", "sorted"}:
+                    raise HTTPException(status_code=400, detail="'init_source.order' must be one of: random, sorted")
+                sort_by = init_source_raw.get("sort_by")
+                if sort_by is None:
+                    sort_by = "name"
+                elif not isinstance(sort_by, str) or sort_by.strip() not in {"name", "size", "created_at", "modified_at"}:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'init_source.sort_by' must be one of: name, size, created_at, modified_at",
+                    )
+                selection_count = None
+                if selection_mode == "count":
+                    raw_count = init_source_raw.get("count")
+                    if raw_count is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="'init_source.count' is required when init_source.selection_mode='count'",
+                        )
+                    selection_count = _require_int_field(init_source_raw, "count", minimum=1)
+                elif init_source_raw.get("count") is not None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'init_source.count' is only valid when init_source.selection_mode='count'",
+                    )
+                use_crop = _require_bool_value(init_source_raw.get("use_crop", False), field_name="init_source.use_crop")
+                folder_path = None
+                if init_kind == "server_folder":
+                    folder_raw = init_source_raw.get("folder_path")
+                    if not isinstance(folder_raw, str) or not folder_raw.strip():
+                        raise HTTPException(
+                            status_code=400,
+                            detail="'init_source.folder_path' is required when init_source.kind='server_folder'",
+                        )
+                    folder_path = _path_from_api(folder_raw)
+                    mask_value = template.get("img2img_mask")
+                    if isinstance(mask_value, str) and mask_value.strip():
+                        raise HTTPException(
+                            status_code=400,
+                            detail="img2img folder automation does not support masks. Set the initial-image source back to IMG or clear the mask.",
+                        )
+                init_source = ImageAutomationInitSource(
+                    kind=init_kind,
+                    folder_path=folder_path,
+                    selection_mode=str(selection_mode),
+                    count=selection_count,
+                    order=order,
+                    sort_by=str(sort_by),
+                    use_crop=use_crop,
+                )
+            if init_source.kind == "uploaded_current":
+                init_image_data = template.get("img2img_init_image")
+                if not isinstance(init_image_data, str) or not init_image_data.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="img2img automation with init_source.kind='uploaded_current' requires 'template.img2img_init_image'.",
+                    )
+
+        if loop.mode == "count" and loop.count is None:
+            init_folder_selects_all = (
+                mode == "img2img"
+                and init_source is not None
+                and init_source.kind == "server_folder"
+                and init_source.selection_mode == "all"
+            )
+            if not (init_folder_selects_all or ip_adapter_folder_selects_all):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "'loop.count' is required for loop.mode='count' unless a folder-backed init source "
+                        "or IP-Adapter source is selecting all images."
+                    ),
+                )
+
+        return ImageAutomationRequest(
+            mode=mode,
+            template=template,
+            loop=loop,
+            seed_policy=seed_policy,
+            prompt_source=prompt_source,
+            init_source=init_source,
+        )
 
     _ORCH = InferenceOrchestrator()
 
@@ -4106,6 +4620,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail="'img2img_extras' must be an object")
             _reject_unknown_keys(raw_extras, _IMG2IMG_EXTRAS_KEYS, "img2img_extras")
             raw_extras = dict(raw_extras)
+            ip_adapter_payload = _parse_ip_adapter_payload(
+                raw_extras.get("ip_adapter"),
+                field_name="img2img_extras.ip_adapter",
+                allow_same_as_init=True,
+                allow_server_folder=False,
+            )
             checkpoint_core_only = _parse_optional_bool_selector(
                 payload=raw_extras,
                 key="checkpoint_core_only",
@@ -4124,6 +4644,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raw_extras.pop("checkpoint_core_only", None)
             raw_extras.pop("model_format", None)
             raw_extras.pop("vae_source", None)
+            raw_extras.pop("ip_adapter", None)
 
             te_override = raw_extras.get("text_encoder_override")
             if te_override is not None:
@@ -4169,6 +4690,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     raw_extras.get("randn_source"),
                     field_name="img2img_extras.randn_source",
                 )
+            if ip_adapter_payload is not None:
+                raw_extras["ip_adapter"] = ip_adapter_payload
 
             extras.update(raw_extras)
             if checkpoint_core_only is not None:
@@ -4177,6 +4700,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 extras["model_format"] = model_format
             if vae_source is not None:
                 extras["vae_source"] = vae_source
+        if isinstance(extras.get("ip_adapter"), dict):
+            _enforce_ip_adapter_engine_support(
+                engine_key=engine_key,
+                field_name="img2img_extras.ip_adapter",
+            )
         # Z-Image variant selection (Turbo/Base) for img2img runs.
         if "zimage_variant" in extras:
             val = extras.get("zimage_variant")
@@ -5666,6 +6194,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         task_id = f"task(api-img2img-{uuid4().hex})"
         register_task(task_id, entry)
         run_img2img_task(task_id, payload, entry, device=device)
+        return {"task_id": task_id}
+
+    @router.post('/api/image-automation')
+    async def image_automation(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        request = _parse_image_automation_request(payload)
+        route_mode = GenerationRouteMode.TXT2IMG if request.mode == "txt2img" else GenerationRouteMode.IMG2IMG
+        device = _parse_explicit_device(dict(request.template), route_mode=route_mode)
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-image-automation-{uuid4().hex})"
+        register_task(task_id, entry)
+        from apps.backend.interfaces.api.tasks.generation_tasks import run_image_automation_task as _run_image_automation_task
+
+        _run_image_automation_task(
+            task_id=task_id,
+            request=request,
+            entry=entry,
+            device=device,
+            prepare_txt2img=prepare_txt2img,
+            prepare_img2img=prepare_img2img,
+            orch=_ORCH,
+            ensure_default_engines_registered=_ensure_default_engines_registered,
+            live_preview=live_preview,
+            opts_get=_opts_get,
+            opts_snapshot=_opts_snapshot,
+            generation_provenance=_GENERATION_PROVENANCE,
+            save_generated_images=_save_generated_images,
+        )
         return {"task_id": task_id}
 
     @router.post('/api/txt2vid')

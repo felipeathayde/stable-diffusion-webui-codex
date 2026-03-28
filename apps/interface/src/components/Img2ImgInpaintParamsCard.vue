@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
-including dropzone/thumb/zoom handling for init images, rejected-file pass-through emits for parent toasts, and optional
+Groups img2img controls (initial image upload or folder-backed `DIR|IMG` source selection) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
+including dropzone/thumb/zoom handling for init images, folder-source passthrough emits for parent state, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 When `Per-step blend` is active, the strength/step-limit sliders share one proportional desktop row instead of stacking as separate full-width rows.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
@@ -18,6 +18,8 @@ Init-image filename captions are centered in the footer area for clearer media i
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
+- `SOURCE_MODE_OPTIONS` (constant): Segmented-control options for init-image source mode switching.
+- `initSourceMode` (prop): Chooses between uploaded-image and server-folder init source controls.
 - `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select, slider, and split-toggle controls.
 - `perStepBlendStrength` (prop): Scales how strongly `Per-step blend` restores preserved outside-mask content each outer sampling step.
 - `perStepBlendSteps` (prop): Limits how many outer sampling steps `Per-step blend` stays active before the final preserved-content close.
@@ -42,9 +44,17 @@ Symbols (top-level; keep in sync; no ghosts):
       <template v-if="sectionSubtitle" #subtitle>
         <span class="caption">{{ sectionSubtitle }}</span>
       </template>
+      <CompactSegmentedControl
+        :modelValue="initSourceMode"
+        :options="SOURCE_MODE_OPTIONS"
+        :disabled="disabled"
+        ariaLabel="Initial image source mode"
+        @update:modelValue="(value) => emit('update:initSourceMode', value as 'img' | 'dir')"
+      />
     </WanSubHeader>
 
     <InitialImageCard
+      v-if="initSourceMode === 'img'"
       :label="initImageLabel"
       :src="initImageData"
       :has-image="Boolean(initImageData)"
@@ -57,7 +67,7 @@ Symbols (top-level; keep in sync; no ghosts):
       @set="(file) => emit('set:initImage', file)"
       @clear="() => emit('clear:initImage')"
       @rejected="(payload) => emit('reject:initImage', payload)"
-      @preview-click="onInitPreviewClick(disabled, initImageData)"
+      @preview-click="onInitPreviewClick"
       @update:zoom-frame-guide="onZoomFrameGuideUpdate"
     >
       <template #dropzone-actions>
@@ -111,7 +121,28 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
     </InitialImageCard>
 
-    <div v-if="useMask" class="img2img-mask-stack">
+    <ImageFolderSourceFields
+      v-else
+      :folderPath="initFolderPath"
+      :selectionMode="initSelectionMode"
+      :count="initCount"
+      :order="initOrder"
+      :sortBy="initSortBy"
+      :useCrop="initUseCrop"
+      :showUseCrop="true"
+      :disabled="disabled"
+      pathLabel="Folder path"
+      pathPlaceholder="input/img2img-source"
+      countLabel="Images to generate"
+      @update:folderPath="(value) => emit('update:initFolderPath', value)"
+      @update:selectionMode="(value) => emit('update:initSelectionMode', value)"
+      @update:count="(value) => emit('update:initCount', value)"
+      @update:order="(value) => emit('update:initOrder', value)"
+      @update:sortBy="(value) => emit('update:initSortBy', value)"
+      @toggle:useCrop="emit('toggle:initUseCrop')"
+    />
+
+    <div v-if="useMask && initSourceMode === 'img'" class="img2img-mask-stack">
       <WanSubHeader title="Inpaint Parameters">
         <template #subtitle>
           <span class="caption">Canvas mask tools + runtime parameters</span>
@@ -263,6 +294,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <InpaintMaskEditorOverlay
+      v-if="initSourceMode === 'img'"
       v-model="maskEditorOpen"
       :init-image-data="initImageData"
       :initial-mask-data="maskImageData"
@@ -283,7 +315,9 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
+import ImageFolderSourceFields from './ImageFolderSourceFields.vue'
 import InitialImageCard from './InitialImageCard.vue'
+import CompactSegmentedControl from './ui/CompactSegmentedControl.vue'
 import InpaintMaskEditorOverlay from './ui/InpaintMaskEditorOverlay.vue'
 import HoverTooltip from './ui/HoverTooltip.vue'
 import SliderField from './ui/SliderField.vue'
@@ -298,6 +332,11 @@ import {
 import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
 type MaskEnforcement = 'post_blend' | 'per_step_clamp'
+
+const SOURCE_MODE_OPTIONS = [
+  { value: 'dir', label: 'DIR' },
+  { value: 'img', label: 'IMG' },
+] as const
 
 const PREVIEW_SPILL_TINT = {
   red: 255,
@@ -408,6 +447,13 @@ const props = withDefaults(defineProps<{
   sectionTitle?: string
   sectionSubtitle?: string
   initImageLabel?: string
+  initSourceMode?: 'img' | 'dir'
+  initFolderPath?: string
+  initSelectionMode?: 'all' | 'count'
+  initCount?: number
+  initOrder?: 'random' | 'sorted'
+  initSortBy?: 'name' | 'size' | 'created_at' | 'modified_at'
+  initUseCrop?: boolean
   initImageData?: string
   initImageName?: string
   imageWidth: number
@@ -432,6 +478,13 @@ const props = withDefaults(defineProps<{
   sectionTitle: 'Img2Img Parameters',
   sectionSubtitle: 'Initial image',
   initImageLabel: 'Initial Image',
+  initSourceMode: 'img',
+  initFolderPath: '',
+  initSelectionMode: 'all',
+  initCount: 1,
+  initOrder: 'sorted',
+  initSortBy: 'name',
+  initUseCrop: false,
   initImageData: '',
   initImageName: '',
   maskImageData: '',
@@ -448,6 +501,13 @@ const emit = defineEmits<{
   (e: 'set:initImage', value: File): void
   (e: 'clear:initImage'): void
   (e: 'reject:initImage', payload: { reason: string; files: File[] }): void
+  (e: 'update:initSourceMode', value: 'img' | 'dir'): void
+  (e: 'update:initFolderPath', value: string): void
+  (e: 'update:initSelectionMode', value: 'all' | 'count'): void
+  (e: 'update:initCount', value: number): void
+  (e: 'update:initOrder', value: 'random' | 'sorted'): void
+  (e: 'update:initSortBy', value: 'name' | 'size' | 'created_at' | 'modified_at'): void
+  (e: 'toggle:initUseCrop'): void
   (e: 'clear:maskImage'): void
   (e: 'apply:maskImageData', value: string): void
   (e: 'notice:maskEditorReset', message: string): void
@@ -676,8 +736,8 @@ function onMaskEditorApply(maskDataUrl: string): void {
   emit('apply:maskImageData', maskDataUrl)
 }
 
-function onInitPreviewClick(isDisabled: boolean, imageData: string): void {
-  if (isDisabled || !imageData) return
+function onInitPreviewClick(): void {
+  if (props.disabled || props.initSourceMode !== 'img' || !props.initImageData) return
   if (!hasNaturalImageDimensions.value) {
     emit('notice:maskEditorReset', 'Mask editor unavailable: init image dimensions are unavailable.')
     return

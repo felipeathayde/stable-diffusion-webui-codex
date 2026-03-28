@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Settings panel for model search paths (`/api/paths`).
-Edits engine-specific checkpoint/VAE/LoRA/text-encoder/connectors roots (`sd15/sdxl/flux1/flux2/anima/ltx2/wan22`) and persists them via the backend paths API,
-using `PathList` to manage per-key lists.
+Edits engine-specific checkpoint/VAE/LoRA/text-encoder/connectors roots (`sd15/sdxl/flux1/flux2/anima/ltx2/wan22`) plus dedicated IP-Adapter model/image-encoder roots,
+using `PathList` to manage per-key lists and persisting them via the backend paths API.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SettingsPaths` (component): Settings panel for model and asset path roots.
@@ -177,6 +177,20 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
     </div>
 
+    <div class="panel-section">
+      <h3 class="label-muted">IP-Adapter</h3>
+      <div class="space-y-2">
+        <div>
+          <label class="label-muted">Models</label>
+          <PathList v-model="ipAdapterPaths.models" />
+        </div>
+        <div>
+          <label class="label-muted">Image Encoders</label>
+          <PathList v-model="ipAdapterPaths.imageEncoders" />
+        </div>
+      </div>
+    </div>
+
     <div class="settings-paths-actions">
       <button class="btn btn-md btn-outline" type="button" @click="reload">Reload</button>
       <button class="btn btn-md btn-primary" type="button" @click="save">Save</button>
@@ -192,6 +206,7 @@ import PathList from './widgets/PathList.vue'
 type EngineId = 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'anima' | 'ltx2' | 'wan22'
 type EnginePaths = { ckpt: string[]; vae: string[]; loras: string[]; tenc: string[]; connectors: string[] }
 type EnginePathsState = Record<EngineId, EnginePaths>
+type IpAdapterPaths = { models: string[]; imageEncoders: string[] }
 type RawPaths = Record<string, string[]>
 
 const paths = reactive<EnginePathsState>({
@@ -202,6 +217,11 @@ const paths = reactive<EnginePathsState>({
   anima: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
   ltx2: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
   wan22: { ckpt: [], vae: [], loras: [], tenc: [], connectors: [] },
+})
+
+const ipAdapterPaths = reactive<IpAdapterPaths>({
+  models: [],
+  imageEncoders: [],
 })
 
 const rawPaths = reactive<RawPaths>({})
@@ -261,6 +281,9 @@ async function reload(): Promise<void> {
     paths.wan22.loras = getList(loaded, 'wan22_loras')
     paths.wan22.tenc = getList(loaded, 'wan22_tenc')
     paths.wan22.connectors = []
+
+    ipAdapterPaths.models = getList(loaded, 'ip_adapter_models')
+    ipAdapterPaths.imageEncoders = getList(loaded, 'ip_adapter_image_encoders')
   } catch {
     // Keep existing state on failure; errors are surfaced elsewhere.
   }
@@ -310,6 +333,9 @@ async function save(): Promise<void> {
   next.wan22_vae = [...paths.wan22.vae]
   next.wan22_loras = [...paths.wan22.loras]
   next.wan22_tenc = [...paths.wan22.tenc]
+
+  next.ip_adapter_models = [...ipAdapterPaths.models]
+  next.ip_adapter_image_encoders = [...ipAdapterPaths.imageEncoders]
 
   await updatePaths(next)
 }

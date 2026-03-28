@@ -98,6 +98,12 @@
   "zimage_loras": [
     "models/zimage-loras"
   ],
+  "ip_adapter_models": [
+    "models/ip_adapter/models"
+  ],
+  "ip_adapter_image_encoders": [
+    "models/ip_adapter/image_encoders"
+  ],
   "supir_models": [
     "models/supir_models"
   ],

@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Processing model dataclasses (txt2img/img2img) used by engine runtimes and orchestration.
-Defines the stable “processing” parameter containers (hires, first-pass swap stages, refiner + common fields) and helpers that normalize
-list-like inputs so per-batch runs have consistent lengths.
+Defines the stable “processing” parameter containers (hires, first-pass swap stages, refiner, IP-Adapter + common fields) and helpers
+that normalize list-like inputs so per-batch runs have consistent lengths.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_repeat_to_length` (function): Expands/truncates a sequence to a target length (used for per-batch list normalization).
@@ -29,6 +29,7 @@ from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Sequen
 import logging
 import math
 
+from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig
 from apps.backend.runtime.vision.upscalers.specs import TileConfig, default_tile_config, tile_config_from_payload
 
 logger = logging.getLogger(__name__)
@@ -396,6 +397,7 @@ class CodexProcessingBase:
     metadata: Dict[str, Any] = field(default_factory=dict)
     extra_generation_params: Dict[str, Any] = field(default_factory=dict)
     override_settings: Dict[str, Any] = field(default_factory=dict)
+    ip_adapter: IpAdapterConfig | None = None
     eta_noise_seed_delta: int = 0
     # Smart runtime flags (per-job effective settings; callers decide defaults).
     smart_offload: bool = False

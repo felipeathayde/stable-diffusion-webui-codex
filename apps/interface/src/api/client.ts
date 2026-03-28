@@ -7,10 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Frontend API client (typed fetch helpers + endpoint wrappers).
-Provides JSON/Form fetch helpers and exports functions for models/options/inventory/tasks, UI tabs/workflows persistence, and UI schema/preset
+Provides JSON/Form fetch helpers and exports functions for models/options/inventory/tasks, image automation, UI tabs/workflows persistence, and UI schema/preset
 endpoints under `VITE_API_BASE` (default `/api`). Also caches `/api/options` revision and preserves structured HTTP error metadata (`status/detail/body`)
 for conflict-aware generation UX.
-Task SSE subscriptions support resume via `after=<event_id>` and expose the latest `lastEventId` for reconnect/replay persistence.
+Task SSE subscriptions support resume via `after=<event_id>` and expose the latest `lastEventId` for reconnect/replay persistence, including buffered
+`automation_iteration` events from `/api/image-automation`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `API_BASE` (const): Base URL prefix for backend endpoints (from Vite env, default `/api`).
@@ -30,6 +31,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fetchCheckpointMetadata` (function): Fetches the metadata modal payload for a checkpoint selection (`/models/checkpoint-metadata`).
 - `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
 - `startModelInventoryRefreshTask` (function): Starts an async inventory refresh task (`/models/inventory/refresh/async`).
+- `startImageAutomation` (function): Starts an image automation task (`POST /image-automation`) with nested template settings revision normalization.
 - `refreshModelInventoryAsync` (function): Runs async inventory refresh task (`/models/inventory/refresh/async`), recovers validated inventory from terminal snapshots after SSE gaps or `end` without a live result, and resolves as soon as the recovered task snapshot reports `completed`.
 - `cacheModelInventorySnapshot` (function): Writes an inventory snapshot into the local API cache (`/models/inventory`).
 - `fetchSamplers` (function): Fetches `/samplers`, preserves raw unsupported rows at the DTO boundary, and returns only supported entries after fail-loud metadata validation.
@@ -105,6 +107,7 @@ import type {
   UiBlocksResponse,
   UiPresetsResponse,
   UiPresetApplyResponse,
+  ImageAutomationRequest,
   InventoryResponse,
   EngineCapabilitiesResponse,
   PromptTokenCountRequest,
@@ -458,6 +461,8 @@ function parseInventoryTaskPayload(payload: unknown): InventoryResponse | null {
   if (!isRecordObject(payload)) return null
   if (
     Array.isArray(payload.vaes)
+    && Array.isArray(payload.ip_adapter_models)
+    && Array.isArray(payload.ip_adapter_image_encoders)
     && Array.isArray(payload.text_encoders)
     && Array.isArray(payload.loras)
     && Array.isArray(payload.metadata)
@@ -506,6 +511,16 @@ function requireInventoryArrayField(
 function ensureInventoryTaskPayloadShape(inventory: InventoryResponse): InventoryResponse {
   const payload = inventory as unknown as Record<string, unknown>
   requireInventoryArrayField(payload, 'vaes', 'inventory refresh task result payload missing inventory.vaes[]')
+  requireInventoryArrayField(
+    payload,
+    'ip_adapter_models',
+    'inventory refresh task result payload missing inventory.ip_adapter_models[]',
+  )
+  requireInventoryArrayField(
+    payload,
+    'ip_adapter_image_encoders',
+    'inventory refresh task result payload missing inventory.ip_adapter_image_encoders[]',
+  )
   requireInventoryArrayField(payload, 'text_encoders', 'inventory refresh task result payload missing inventory.text_encoders[]')
   requireInventoryArrayField(payload, 'loras', 'inventory refresh task result payload missing inventory.loras[]')
   requireInventoryArrayField(payload, 'metadata', 'inventory refresh task result payload missing inventory.metadata[]')
@@ -701,6 +716,16 @@ export function startImg2Img(payload: Record<string, unknown>): Promise<Txt2ImgS
   return requestJson<Txt2ImgStartResponse>('/img2img', {
     method: 'POST',
     body: JSON.stringify(withSettingsRevision(payload)),
+  })
+}
+
+export function startImageAutomation(payload: ImageAutomationRequest): Promise<Txt2ImgStartResponse> {
+  return requestJson<Txt2ImgStartResponse>('/image-automation', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...payload,
+      template: withSettingsRevision(payload.template),
+    }),
   })
 }
 

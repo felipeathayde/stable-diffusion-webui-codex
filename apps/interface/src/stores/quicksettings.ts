@@ -7,9 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: QuickSettings global store (models/options + asset SHA selection).
-Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
-resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options,
-and caches the current `/api/options` revision for generation payload contracts (`settings_revision`).
+Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains cached inventory-driven choice lists plus SHA maps for VAEs/text encoders/WAN GGUF
+so UI selections resolve to backend SHA-based assets (no raw-path inputs). It also caches IP-Adapter model/image-encoder option lists from the canonical inventory snapshot,
+owns global component overrides (device + storage/compute dtype) applied via options, and caches the current `/api/options` revision for generation payload contracts
+(`settings_revision`).
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
 sanitized so `tenc_sha` resolution remains deterministic across families (including Anima and LTX2). Inventory slot metadata is cached alongside
 SHA mappings so SDXL core-only requests can emit explicit `tenc1_sha` / `tenc2_sha` selectors without guessing label order. VAE state defaults to canonical `built-in`
@@ -22,7 +23,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
   setters that call API updates, inventory hydrators (`fetchInventoryWithLoraHydration` + `hydrateLoraShaMap`), and resolvers that map UI labels → inventory SHA/slot (`resolve*Sha` helpers plus `resolveTextEncoderSlot`, including LoRA).
   It also exports checkpoint helpers (`resolveModelInfo`, `requireModelInfo`, `resolveFlux2CheckpointVariant`, `resolveLtxCheckpointExecutionMetadata`) so image/video requests can fail loud on stale checkpoint picks
-  and FLUX.2 guidance semantics can be derived from the selected model without extra request fields.
+  and FLUX.2 guidance semantics can be derived from the selected model without extra request fields. Inventory-owned cached choice refs include VAEs, text encoders,
+  and IP-Adapter model/image-encoder lists.
 */
 
 import { defineStore } from 'pinia'
@@ -296,6 +298,25 @@ function buildLoraShaMapFromInventory(inventory: Pick<InventoryResponse, 'loras'
   return loraMap
 }
 
+function buildInventoryChoiceList(
+  items: Array<{ name?: string; path?: string }> | null | undefined,
+): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  if (!Array.isArray(items)) return out
+
+  for (const item of items) {
+    const path = normalizePath(String(item?.path || ''))
+    if (path) {
+      appendUniqueCandidate(out, seen, path)
+      continue
+    }
+    appendUniqueCandidate(out, seen, item?.name)
+  }
+
+  return out
+}
+
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
   const modelsFreshness = ref<ModelsFreshnessMarker | null>(null)
@@ -305,6 +326,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const vaeByFamily = ref<Partial<Record<VaeFamily, string>>>({})
   const textEncoderChoices = ref<string[]>([])
   const currentTextEncoders = ref<string[]>([])
+  const ipAdapterModelChoices = ref<string[]>([])
+  const ipAdapterImageEncoderChoices = ref<string[]>([])
   const textEncoderRootLabels = ref<Set<string>>(new Set())
   // SHA256 lookup maps populated from inventory
   const textEncoderShaMap = ref<Map<string, string>>(new Map())
@@ -707,17 +730,25 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     currentModel.value = title
   }
 
-  async function loadVaes(): Promise<void> {
-    const inv = await fetchModelInventory()
+  function hydrateInventoryChoiceCaches(
+    inventory: Pick<InventoryResponse, 'vaes' | 'ip_adapter_models' | 'ip_adapter_image_encoders'> | null | undefined,
+  ): void {
     const seen = new Set<string>()
-    const out: string[] = [DEFAULT_VAE_SELECTION, NONE_VAE_SELECTION]
-    for (const item of (inv as any)?.vaes || []) {
+    const vaeOut: string[] = [DEFAULT_VAE_SELECTION, NONE_VAE_SELECTION]
+    for (const item of inventory?.vaes || []) {
       const name = String(item?.name || '').trim()
       if (!name || seen.has(name)) continue
       seen.add(name)
-      if (!out.includes(name)) out.push(name)
+      if (!vaeOut.includes(name)) vaeOut.push(name)
     }
-    vaeChoices.value = out
+    vaeChoices.value = vaeOut
+    ipAdapterModelChoices.value = buildInventoryChoiceList(inventory?.ip_adapter_models)
+    ipAdapterImageEncoderChoices.value = buildInventoryChoiceList(inventory?.ip_adapter_image_encoders)
+  }
+
+  async function loadVaes(): Promise<void> {
+    const inv = await fetchModelInventory()
+    hydrateInventoryChoiceCaches(inv)
   }
 
   async function loadTextEncoders(): Promise<void> {
@@ -828,6 +859,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
     wanGgufShaMap.value = wanMap
 
+    hydrateInventoryChoiceCaches(inv)
     hydrateLoraShaMap(inv)
     sanitizeTextEncoderOverrides()
   }
@@ -842,6 +874,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     const inventory = options.refresh === true
       ? await refreshModelInventoryAsync({ signal: options.signal })
       : await fetchModelInventory()
+    hydrateInventoryChoiceCaches(inventory)
     hydrateLoraShaMap(inventory)
     return inventory
   }
@@ -1217,6 +1250,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     currentVae,
     textEncoderChoices,
     currentTextEncoders,
+    ipAdapterModelChoices,
+    ipAdapterImageEncoderChoices,
     deviceChoices,
     currentDevice,
     init,

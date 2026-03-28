@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Results run card wrapper (Generate button + batch controls popover).
-Renders a `ResultsCard` with a Generate CTA, an optional center-adjacent slot (for run badges), and an optional batch settings panel (count/size) that can be reused across image/video views.
+Purpose: Results run card wrapper (Generate/Infinite CTA + batch controls popovers).
+Renders a `ResultsCard` with a primary run CTA, an optional split-button action menu (`Generate`/`Infinite`), an optional center-adjacent slot (for run badges), and an optional batch settings panel (count/size) that can be reused across image/video views.
 When `isRunning=true`, the center CTA switches to a destructive cancel-confirm flow (click once -> `Are you sure?`, click again within timeout -> emit `cancel`).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -15,16 +15,21 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setBatchCount` (function): Emits a clamped batch-count update.
 - `setBatchSize` (function): Emits a clamped batch-size update.
 - `onPrimaryAction` (function): Handles the center CTA click (generate or two-click cancel confirm while running).
+- `selectActionMode` (function): Persists the current split-button mode and closes the action menu.
 - `armCancelConfirm` (function): Enables temporary cancel-confirm mode and schedules auto-reset.
 - `clearCancelConfirm` (function): Resets cancel-confirm mode and clears pending timeout.
+- `toggleActionMenu` (function): Toggles the run-action dropdown.
+- `openActionMenu` (function): Opens the run-action dropdown and schedules positioning.
+- `closeActionMenu` (function): Closes the run-action dropdown and clears handlers.
 - `toggleBatchMenu` (function): Toggles the batch settings popover.
 - `openBatchMenu` (function): Opens the batch settings popover and schedules positioning.
 - `closeBatchMenu` (function): Closes the batch settings popover and clears handlers.
-- `isEventInsideBatchMenu` (function): Checks whether a DOM event target is inside the menu panel/toggle.
+- `isEventInsideMenu` (function): Checks whether a DOM event target is inside a menu panel/toggle.
 - `onDocumentPointerDown` (function): Outside-click handler that closes the popover.
 - `onDocumentKeyDown` (function): Keydown handler (Escape closes the popover).
+- `updateActionMenuPosition` (function): Computes and applies the run-action menu position style.
 - `updateBatchMenuPosition` (function): Computes and applies the popover position style.
-- `scheduleBatchMenuPositionUpdate` (function): Debounced/nextTick positioning update helper.
+- `scheduleMenuPositionUpdate` (function): Debounced/nextTick positioning update helper.
 - `clampInt` (function): Clamps and truncates numeric values to an integer range.
 -->
 
@@ -34,16 +39,64 @@ Symbols (top-level; keep in sync; no ghosts):
     headerClass="three-cols run-sticky"
     headerCenterClass="run-header-center"
     headerRightClass="run-controls"
-    :showGenerate="true"
-    :generateId="props.generateId"
-    :generateButtonClass="primaryButtonClass"
-    :generateLabel="props.generateLabel"
-    :runningLabel="runningButtonLabel"
-    :generateDisabled="primaryButtonDisabled"
-    :generateTitle="primaryButtonTitle"
-    :isRunning="props.isRunning"
-    @generate="onPrimaryAction"
+    :showGenerate="false"
   >
+    <template #header-center>
+      <div class="run-primary-split">
+        <button
+          :id="props.generateId || undefined"
+          :class="primaryButtonClass"
+          type="button"
+          :disabled="primaryButtonDisabled"
+          :title="primaryButtonTitle"
+          @click="onPrimaryAction"
+        >
+          {{ primaryButtonLabel }}
+        </button>
+        <button
+          v-if="showActionMenuButton"
+          ref="actionMenuToggleEl"
+          class="btn btn-md btn-primary results-generate run-primary-split__menu-toggle"
+          type="button"
+          :disabled="inputsDisabled"
+          :aria-expanded="isActionMenuOpen ? 'true' : 'false'"
+          aria-haspopup="dialog"
+          title="Choose run action"
+          @click="toggleActionMenu"
+        >
+          ▾
+        </button>
+      </div>
+
+      <Teleport to="body">
+        <div
+          v-if="isActionMenuOpen"
+          ref="actionMenuPanelEl"
+          class="run-primary-split__menu panel"
+          :style="actionMenuStyle"
+          role="dialog"
+          aria-label="Run action menu"
+        >
+          <button
+            class="btn btn-sm btn-outline run-primary-split__menu-button"
+            type="button"
+            :disabled="inputsDisabled"
+            @click="selectActionMode('generate')"
+          >
+            {{ props.generateLabel }}
+          </button>
+          <button
+            class="btn btn-sm btn-outline run-primary-split__menu-button"
+            type="button"
+            :disabled="inputsDisabled"
+            @click="selectActionMode('infinite')"
+          >
+            {{ props.infiniteLabel }}
+          </button>
+        </div>
+      </Teleport>
+    </template>
+
     <template #header-center-after>
       <slot name="header-center-after" />
     </template>
@@ -131,6 +184,7 @@ const props = withDefaults(defineProps<{
   generateButtonClass?: string
   cancelButtonClass?: string
   generateLabel?: string
+  infiniteLabel?: string
   runningLabel?: string
   cancelLabel?: string
   cancelConfirmLabel?: string
@@ -138,8 +192,11 @@ const props = withDefaults(defineProps<{
   generateDisabled?: boolean
   cancelDisabled?: boolean
   generateTitle?: string
+  infiniteTitle?: string
   cancelTitle?: string
   isRunning?: boolean
+  actionMode?: 'generate' | 'infinite'
+  showActionMenu?: boolean
   showBatchControls?: boolean
   batchCount?: number
   batchSize?: number
@@ -154,6 +211,7 @@ const props = withDefaults(defineProps<{
   generateButtonClass: 'btn btn-md btn-primary results-generate',
   cancelButtonClass: 'btn btn-md btn-destructive results-generate',
   generateLabel: 'Generate',
+  infiniteLabel: 'Infinite',
   runningLabel: 'Running…',
   cancelLabel: 'Cancel',
   cancelConfirmLabel: 'Are you sure?',
@@ -161,8 +219,11 @@ const props = withDefaults(defineProps<{
   generateDisabled: false,
   cancelDisabled: false,
   generateTitle: '',
+  infiniteTitle: 'Keep generating until you stop the run.',
   cancelTitle: 'Click to cancel the current run.',
   isRunning: false,
+  actionMode: 'generate',
+  showActionMenu: false,
   showBatchControls: true,
   batchCount: 1,
   batchSize: 1,
@@ -174,8 +235,9 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  (e: 'generate'): void
+  (e: 'generate', mode: 'generate' | 'infinite'): void
   (e: 'cancel'): void
+  (e: 'update:actionMode', value: 'generate' | 'infinite'): void
   (e: 'update:batchCount', value: number): void
   (e: 'update:batchSize', value: number): void
 }>()
@@ -187,24 +249,34 @@ const maxBatchCount = computed(() => Number.isFinite(props.maxBatchCount) ? Math
 const minBatchSize = computed(() => Number.isFinite(props.minBatchSize) ? Math.trunc(Number(props.minBatchSize)) : 1)
 const maxBatchSize = computed(() => Number.isFinite(props.maxBatchSize) ? Math.trunc(Number(props.maxBatchSize)) : 999)
 
+const actionMenuToggleEl = ref<HTMLElement | null>(null)
+const actionMenuPanelEl = ref<HTMLElement | null>(null)
+const isActionMenuOpen = ref(false)
+const actionMenuStyle = ref<Record<string, string> | undefined>(undefined)
 const batchMenuToggleEl = ref<HTMLElement | null>(null)
 const batchMenuPanelEl = ref<HTMLElement | null>(null)
 const isBatchMenuOpen = ref(false)
 const batchMenuStyle = ref<Record<string, string> | undefined>(undefined)
-let batchMenuRAF: number | null = null
+let menuRAF: number | null = null
 
 const isCancelConfirmArmed = ref(false)
 let cancelConfirmTimerId: number | null = null
+
+watch(() => props.showActionMenu, (show) => {
+  if (!show) closeActionMenu()
+})
 
 watch(() => props.showBatchControls, (show) => {
   if (!show) closeBatchMenu()
 })
 
 watch(inputsDisabled, (disabled) => {
+  if (disabled) closeActionMenu()
   if (disabled) closeBatchMenu()
 })
 
 watch(() => props.isRunning, (running) => {
+  if (running) closeActionMenu()
   if (!running) clearCancelConfirm()
 })
 
@@ -218,16 +290,24 @@ const runningButtonLabel = computed(() => {
   return isCancelConfirmArmed.value ? props.cancelConfirmLabel : props.cancelLabel
 })
 
+const primaryButtonLabel = computed(() => {
+  if (props.isRunning) return runningButtonLabel.value
+  return props.actionMode === 'infinite' ? props.infiniteLabel : props.generateLabel
+})
+
 const primaryButtonDisabled = computed(() => {
   if (!props.isRunning) return Boolean(props.generateDisabled)
   return Boolean(props.cancelDisabled)
 })
 
 const primaryButtonTitle = computed(() => {
-  if (!props.isRunning) return props.generateTitle
+  if (!props.isRunning) return props.actionMode === 'infinite' ? props.infiniteTitle : props.generateTitle
   if (isCancelConfirmArmed.value) return 'Click again to confirm cancellation.'
   return props.cancelTitle
 })
+
+const showActionMenuButton = computed(() => Boolean(props.showActionMenu && !props.isRunning))
+
 const cancelConfirmWindowMs = computed(() => {
   const value = Number(props.cancelConfirmWindowMs)
   if (!Number.isFinite(value)) return 4000
@@ -236,7 +316,7 @@ const cancelConfirmWindowMs = computed(() => {
 
 function onPrimaryAction(): void {
   if (!props.isRunning) {
-    emit('generate')
+    emit('generate', props.actionMode)
     return
   }
   if (primaryButtonDisabled.value) return
@@ -246,6 +326,31 @@ function onPrimaryAction(): void {
   }
   clearCancelConfirm()
   emit('cancel')
+}
+
+function toggleActionMenu(): void {
+  if (isActionMenuOpen.value) {
+    closeActionMenu()
+    return
+  }
+  openActionMenu()
+}
+
+function openActionMenu(): void {
+  if (inputsDisabled.value || !showActionMenuButton.value) return
+  isActionMenuOpen.value = true
+  void nextTick(() => {
+    updateActionMenuPosition()
+  })
+}
+
+function closeActionMenu(): void {
+  isActionMenuOpen.value = false
+}
+
+function selectActionMode(value: 'generate' | 'infinite'): void {
+  emit('update:actionMode', value)
+  closeActionMenu()
 }
 
 function armCancelConfirm(): void {
@@ -302,26 +407,48 @@ function closeBatchMenu(): void {
   isBatchMenuOpen.value = false
 }
 
-function isEventInsideBatchMenu(event: Event): boolean {
+function isEventInsideMenu(event: Event, toggle: HTMLElement | null, panel: HTMLElement | null): boolean {
   const target = event.target
   if (!(target instanceof Node)) return false
-
-  const toggle = batchMenuToggleEl.value
-  const panel = batchMenuPanelEl.value
   return Boolean((toggle && toggle.contains(target)) || (panel && panel.contains(target)))
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
+  if (isActionMenuOpen.value && !isEventInsideMenu(event, actionMenuToggleEl.value, actionMenuPanelEl.value)) {
+    closeActionMenu()
+  }
   if (!isBatchMenuOpen.value) return
-  if (isEventInsideBatchMenu(event)) return
+  if (isEventInsideMenu(event, batchMenuToggleEl.value, batchMenuPanelEl.value)) return
   closeBatchMenu()
 }
 
 function onDocumentKeyDown(event: KeyboardEvent): void {
-  if (!isBatchMenuOpen.value) return
   if (event.key !== 'Escape') return
+  if (isActionMenuOpen.value) {
+    event.preventDefault()
+    closeActionMenu()
+  }
+  if (!isBatchMenuOpen.value) return
   event.preventDefault()
   closeBatchMenu()
+}
+
+function updateActionMenuPosition(): void {
+  const toggle = actionMenuToggleEl.value
+  if (!toggle) return
+  const rect = toggle.getBoundingClientRect()
+  const viewportPadding = 8
+  const gap = 6
+  const top = rect.bottom + gap
+  const right = Math.max(viewportPadding, window.innerWidth - rect.right)
+  const maxHeight = Math.max(120, window.innerHeight - top - viewportPadding)
+
+  actionMenuStyle.value = {
+    position: 'fixed',
+    top: `${top}px`,
+    right: `${right}px`,
+    maxHeight: `${maxHeight}px`,
+  }
 }
 
 function updateBatchMenuPosition(): void {
@@ -343,29 +470,30 @@ function updateBatchMenuPosition(): void {
   }
 }
 
-function scheduleBatchMenuPositionUpdate(): void {
-  if (!isBatchMenuOpen.value) return
-  if (batchMenuRAF !== null) return
+function scheduleMenuPositionUpdate(): void {
+  if (!isActionMenuOpen.value && !isBatchMenuOpen.value) return
+  if (menuRAF !== null) return
 
-  batchMenuRAF = window.requestAnimationFrame(() => {
-    batchMenuRAF = null
-    updateBatchMenuPosition()
+  menuRAF = window.requestAnimationFrame(() => {
+    menuRAF = null
+    if (isActionMenuOpen.value) updateActionMenuPosition()
+    if (isBatchMenuOpen.value) updateBatchMenuPosition()
   })
 }
 
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown)
   document.addEventListener('keydown', onDocumentKeyDown)
-  window.addEventListener('resize', scheduleBatchMenuPositionUpdate)
-  window.addEventListener('scroll', scheduleBatchMenuPositionUpdate, true)
+  window.addEventListener('resize', scheduleMenuPositionUpdate)
+  window.addEventListener('scroll', scheduleMenuPositionUpdate, true)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown)
   document.removeEventListener('keydown', onDocumentKeyDown)
-  window.removeEventListener('resize', scheduleBatchMenuPositionUpdate)
-  window.removeEventListener('scroll', scheduleBatchMenuPositionUpdate, true)
-  if (batchMenuRAF !== null) window.cancelAnimationFrame(batchMenuRAF)
+  window.removeEventListener('resize', scheduleMenuPositionUpdate)
+  window.removeEventListener('scroll', scheduleMenuPositionUpdate, true)
+  if (menuRAF !== null) window.cancelAnimationFrame(menuRAF)
   clearCancelConfirm()
 })
 

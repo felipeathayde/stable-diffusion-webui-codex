@@ -7,11 +7,12 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Model-asset inventory scanning and caching.
-Builds a snapshot of local model files (VAEs, text encoders, LoRAs, WAN22 GGUF) and exposes cached helpers used by backend inventory endpoints and asset resolution.
-Text encoder entries also include an optional `slot` field (e.g. `clip_l`, `clip_g`) derived via header-only inspection.
+Builds a snapshot of local model files (VAEs, text encoders, LoRAs, IP-Adapter models, IP-Adapter image encoders, WAN22 GGUF) and
+exposes cached helpers used by backend inventory endpoints and asset resolution. Text encoder entries also include an optional `slot`
+field (e.g. `clip_l`, `clip_g`) derived via header-only inspection.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Inventory` (dataclass): Container for scanned model inventories (vaes/text_encoders/loras/wan22/metadata).
+- `Inventory` (dataclass): Container for scanned model inventories (vaes/text_encoders/loras/ip_adapter_models/ip_adapter_image_encoders/wan22/metadata).
 - `_CACHE` (constant): Process-local cached `Inventory` instance.
 - `_repo_root` (function): Resolves the repository root used for scan defaults.
 - `_models_root` (function): Returns the default `models/` root path under the repo.
@@ -23,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolve_text_encoder_slot_by_sha` (function): Resolves a SHA256 hash to a cached text-encoder slot (when available).
 - `_SHA_TO_PATH` (constant): Lazy cache mapping `sha256 -> path` populated from the current inventory.
 - `_SHA_TO_VAE_PATH` (constant): Lazy cache mapping `sha256 -> vae_path` populated from the current inventory.
+- `_SHA_TO_TEXT_ENCODER_SLOT` (constant): Lazy cache mapping `sha256 -> text_encoder_slot` populated from the current inventory.
 - `scan_all` (function): Scans configured roots and returns an `Inventory` snapshot.
 - `invalidate` (function): Clears process-local inventory and SHA maps so the next read rescans from current roots.
 - `init` (function): Initializes the process-local inventory cache.
@@ -40,6 +42,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.inventory.scanners.ip_adapter import iter_ip_adapter_image_encoder_files, iter_ip_adapter_model_files
 from apps.backend.inventory.scanners.loras import iter_lora_files
 from apps.backend.inventory.scanners.text_encoders import iter_text_encoder_files
 from apps.backend.inventory.scanners.vendored_hf import iter_vendored_hf_repos
@@ -52,6 +55,8 @@ class Inventory:
     vaes: List[Dict[str, str]]
     text_encoders: List[Dict[str, str]]
     loras: List[Dict[str, str]]
+    ip_adapter_models: List[Dict[str, str]]
+    ip_adapter_image_encoders: List[Dict[str, str]]
     wan22: List[Dict[str, str]]  # .gguf files under WAN22 roots
     metadata: List[Dict[str, str]]  # org/repo roots under backend/huggingface
 
@@ -109,14 +114,21 @@ _SHA_TO_TEXT_ENCODER_SLOT: Dict[str, str] = {}
 
 def resolve_asset_by_sha(sha256: str) -> str | None:
     """Resolve a SHA256 hash to its file path from the inventory cache.
-    
-    Searches all model types: text encoders, VAEs, LoRAs, and WAN22 GGUF models.
+
+    Searches all model types: text encoders, VAEs, LoRAs, IP-Adapter assets, and WAN22 GGUF models.
     """
     global _SHA_TO_PATH
     if not _SHA_TO_PATH:
         # Populate cache from current inventory (all model types)
         inv = get()
-        for item in inv["text_encoders"] + inv["vaes"] + inv["loras"] + inv["wan22"]:
+        for item in (
+            inv.get("text_encoders", [])
+            + inv.get("vaes", [])
+            + inv.get("loras", [])
+            + inv.get("ip_adapter_models", [])
+            + inv.get("ip_adapter_image_encoders", [])
+            + inv.get("wan22", [])
+        ):
             sha = item.get("sha256")
             path = item.get("path")
             if sha and path:
@@ -198,6 +210,22 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
         loras.append(entry)
     loras.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
 
+    ip_adapter_models: List[Dict[str, str]] = []
+    for full in iter_ip_adapter_model_files(models_root=mr):
+        name = os.path.basename(full)
+        entry = {"name": name, "path": full}
+        entry["sha256"] = _get_file_sha256(full)
+        ip_adapter_models.append(entry)
+    ip_adapter_models.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
+
+    ip_adapter_image_encoders: List[Dict[str, str]] = []
+    for full in iter_ip_adapter_image_encoder_files(models_root=mr):
+        name = os.path.basename(full)
+        entry = {"name": name, "path": full}
+        entry["sha256"] = _get_file_sha256(full)
+        ip_adapter_image_encoders.append(entry)
+    ip_adapter_image_encoders.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
+
     wan22: List[Dict[str, str]] = []
     for full in iter_wan22_gguf_files(models_root=mr):
         name = os.path.basename(full)
@@ -224,7 +252,15 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
             exc.__class__.__name__,
         )
 
-    return Inventory(vaes=vaes, text_encoders=text_encoders, loras=loras, wan22=wan22, metadata=metadata)
+    return Inventory(
+        vaes=vaes,
+        text_encoders=text_encoders,
+        loras=loras,
+        ip_adapter_models=ip_adapter_models,
+        ip_adapter_image_encoders=ip_adapter_image_encoders,
+        wan22=wan22,
+        metadata=metadata,
+    )
 
 
 def invalidate() -> None:

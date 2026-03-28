@@ -1,0 +1,282 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: IP-Adapter asset loading and tranche-1 layout validation.
+Loads image encoders and adapter weights, validates supported SD15/SDXL layouts, and returns prepared runtime assets for the shared
+IP-Adapter stage.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `assert_ip_adapter_engine_supported` (function): Fail-loud guard for exact engine-id and semantic-engine IP-Adapter support.
+- `prepare_ip_adapter_assets` (function): Loads and caches the validated IP-Adapter asset bundle for one model/image-encoder pair.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from collections.abc import Mapping
+
+import torch
+
+from apps.backend.runtime.adapters.ip_adapter.modules import (
+    ImageProjectionModel,
+    IpAdapterKvProjectionSet,
+    MlpProjectionModel,
+    Resampler,
+)
+from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig, IpAdapterLayout, PreparedIpAdapterAssets
+from apps.backend.runtime.checkpoint.io import load_torch_file
+from apps.backend.runtime.model_registry.capabilities import ip_adapter_support_error
+from apps.backend.runtime.vision.clip.encoder import ClipVisionEncoder
+from apps.backend.runtime.vision.clip.state_dict import cleaned_state_dict, convert_openclip_checkpoint, rekey_vision_state_dict
+
+logger = logging.getLogger("backend.runtime.adapters.ip_adapter.assets")
+
+_ASSET_CACHE: dict[tuple[str, str], PreparedIpAdapterAssets] = {}
+_ASSET_CACHE_LOCK = threading.Lock()
+
+def assert_ip_adapter_engine_supported(engine_id: str) -> None:
+    detail = ip_adapter_support_error(engine_id)
+    if detail is not None:
+        raise RuntimeError(detail)
+
+
+def prepare_ip_adapter_assets(config: IpAdapterConfig) -> PreparedIpAdapterAssets:
+    cache_key = (str(config.model), str(config.image_encoder))
+    with _ASSET_CACHE_LOCK:
+        cached = _ASSET_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    image_encoder_runtime = _load_image_encoder(config.image_encoder)
+    image_proj_state, ip_adapter_state = _load_ip_adapter_checkpoint(config.model)
+    prepared = _prepare_assets(
+        model_path=config.model,
+        image_encoder_path=config.image_encoder,
+        image_encoder_runtime=image_encoder_runtime,
+        image_proj_state=image_proj_state,
+        ip_adapter_state=ip_adapter_state,
+    )
+    with _ASSET_CACHE_LOCK:
+        _ASSET_CACHE[cache_key] = prepared
+    return prepared
+
+
+def _prepare_assets(
+    *,
+    model_path: str,
+    image_encoder_path: str,
+    image_encoder_runtime: ClipVisionEncoder,
+    image_proj_state: dict[str, torch.Tensor],
+    ip_adapter_state: dict[str, torch.Tensor],
+) -> PreparedIpAdapterAssets:
+    if _is_face_or_instant_layout(image_proj_state=image_proj_state, ip_adapter_state=ip_adapter_state):
+        raise RuntimeError(
+            "Unsupported IP-Adapter layout. FaceID/portrait/full/Instant-ID variants are not implemented in tranche 1."
+        )
+    uses_hidden_states = _is_plus_layout(image_proj_state)
+    output_cross_attention_dim = _first_projection_input_dim(ip_adapter_state)
+    target_semantic_engine = _target_semantic_engine_for_cross_attention_dim(output_cross_attention_dim)
+    is_sdxl = target_semantic_engine == "sdxl"
+    token_count = 16 if uses_hidden_states else 4
+    internal_cross_attention_dim = 1280 if uses_hidden_states and is_sdxl else output_cross_attention_dim
+    image_projector = _build_image_projector(
+        image_proj_state=image_proj_state,
+        image_encoder_runtime=image_encoder_runtime,
+        uses_hidden_states=uses_hidden_states,
+        output_cross_attention_dim=output_cross_attention_dim,
+        internal_cross_attention_dim=internal_cross_attention_dim,
+        token_count=token_count,
+        is_sdxl=is_sdxl,
+    )
+    image_projector.eval()
+    ip_layers = IpAdapterKvProjectionSet(ip_adapter_state)
+    return PreparedIpAdapterAssets(
+        model_path=str(model_path),
+        image_encoder_path=str(image_encoder_path),
+        layout=IpAdapterLayout.PLUS if uses_hidden_states else IpAdapterLayout.BASE,
+        target_semantic_engine=target_semantic_engine,
+        slot_count=int(ip_layers.slot_count),
+        token_count=int(token_count),
+        output_cross_attention_dim=int(output_cross_attention_dim),
+        internal_cross_attention_dim=int(internal_cross_attention_dim),
+        uses_hidden_states=bool(uses_hidden_states),
+        image_encoder_runtime=image_encoder_runtime,
+        image_projector=image_projector,
+        ip_layers=ip_layers,
+    )
+
+
+def _load_image_encoder(path: str) -> ClipVisionEncoder:
+    raw_state = load_torch_file(path, safe_load=True)
+    if not isinstance(raw_state, Mapping):
+        raise RuntimeError(f"IP-Adapter image encoder '{path}' did not load as a mapping.")
+    state_dict = _normalize_image_encoder_state_dict(dict(raw_state))
+    return ClipVisionEncoder.from_state_dict(state_dict)
+
+
+def _normalize_image_encoder_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    keys = tuple(state_dict.keys())
+    if any(key.startswith("vision_model.") for key in keys):
+        filtered = cleaned_state_dict(state_dict, keep_prefixes=("vision_model.", "visual_projection."))
+        if not filtered:
+            raise RuntimeError("IP-Adapter image encoder checkpoint is missing supported HF vision keys.")
+        return filtered
+    if any(key.startswith("image_encoder.vision_model.") for key in keys):
+        filtered = cleaned_state_dict(state_dict, keep_prefixes=("image_encoder.vision_model.", "image_encoder.visual_projection."))
+        rekey_vision_state_dict(filtered, prefix="image_encoder.")
+        return filtered
+    if "visual.transformer.resblocks.0.attn.in_proj_weight" in state_dict:
+        converted = cleaned_state_dict(state_dict, keep_prefixes=("visual.",))
+        convert_openclip_checkpoint(converted, prefix="visual")
+        return converted
+    raise RuntimeError(
+        "Unsupported IP-Adapter image encoder layout. Expected HF 'vision_model.*' or explicit OpenCLIP 'visual.*' weights."
+    )
+
+
+def _load_ip_adapter_checkpoint(path: str) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    raw_state = load_torch_file(path, safe_load=True)
+    if not isinstance(raw_state, Mapping):
+        raise RuntimeError(f"IP-Adapter checkpoint '{path}' did not load as a mapping.")
+    image_proj_state, ip_adapter_state = _split_ip_adapter_state(raw_state)
+    if not image_proj_state:
+        raise RuntimeError(f"IP-Adapter checkpoint '{path}' is missing 'image_proj' weights.")
+    if not ip_adapter_state:
+        raise RuntimeError(f"IP-Adapter checkpoint '{path}' is missing 'ip_adapter' weights.")
+    return image_proj_state, ip_adapter_state
+
+
+def _split_ip_adapter_state(raw_state: Mapping[str, object]) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    nested_image_proj = raw_state.get("image_proj")
+    nested_ip_adapter = raw_state.get("ip_adapter")
+    if isinstance(nested_image_proj, Mapping) and isinstance(nested_ip_adapter, Mapping):
+        return _materialize_tensor_mapping(nested_image_proj, label="image_proj"), _materialize_tensor_mapping(
+            nested_ip_adapter,
+            label="ip_adapter",
+        )
+    image_proj_state: dict[str, torch.Tensor] = {}
+    ip_adapter_state: dict[str, torch.Tensor] = {}
+    other_tensor_keys: list[str] = []
+    for source_key, value in raw_state.items():
+        if not isinstance(source_key, str):
+            raise RuntimeError("IP-Adapter checkpoint keys must be strings.")
+        if not isinstance(value, torch.Tensor):
+            continue
+        if source_key.startswith("image_proj."):
+            image_proj_state[source_key[len("image_proj."):]] = value
+            continue
+        if source_key.startswith("ip_adapter."):
+            ip_adapter_state[source_key[len("ip_adapter."):]] = value
+            continue
+        other_tensor_keys.append(source_key)
+    if other_tensor_keys:
+        raise RuntimeError(
+            "Unsupported IP-Adapter checkpoint layout; unexpected tensor keys outside explicit 'image_proj.' / 'ip_adapter.' buckets: "
+            + ", ".join(sorted(other_tensor_keys)[:8])
+        )
+    return image_proj_state, ip_adapter_state
+
+
+def _materialize_tensor_mapping(mapping: Mapping[str, object], *, label: str) -> dict[str, torch.Tensor]:
+    materialized: dict[str, torch.Tensor] = {}
+    for source_key, value in mapping.items():
+        if not isinstance(source_key, str):
+            raise RuntimeError(f"IP-Adapter {label} keys must be strings.")
+        if not isinstance(value, torch.Tensor):
+            raise RuntimeError(f"IP-Adapter {label} entry '{source_key}' must be a torch.Tensor.")
+        materialized[source_key] = value
+    return materialized
+
+
+def _is_plus_layout(image_proj_state: Mapping[str, torch.Tensor]) -> bool:
+    return "latents" in image_proj_state and "proj_in.weight" in image_proj_state
+
+
+def _is_face_or_instant_layout(
+    *,
+    image_proj_state: Mapping[str, torch.Tensor],
+    ip_adapter_state: Mapping[str, torch.Tensor],
+) -> bool:
+    if "proj.3.weight" in image_proj_state:
+        return True
+    if "proj.2.weight" in image_proj_state:
+        return True
+    return any("to_q_lora" in key or "to_k_lora" in key or "to_v_lora" in key for key in ip_adapter_state.keys())
+
+
+def _first_projection_input_dim(ip_adapter_state: Mapping[str, torch.Tensor]) -> int:
+    first_key = "1.to_k_ip.weight"
+    if first_key not in ip_adapter_state:
+        raise RuntimeError(f"IP-Adapter checkpoint is missing required source key '{first_key}'.")
+    weight = ip_adapter_state[first_key]
+    if weight.ndim != 2:
+        raise RuntimeError(f"IP-Adapter source key '{first_key}' must be 2-D; got shape={tuple(weight.shape)}.")
+    return int(weight.shape[1])
+
+
+def _target_semantic_engine_for_cross_attention_dim(output_cross_attention_dim: int) -> str:
+    if int(output_cross_attention_dim) == 768:
+        return "sd15"
+    if int(output_cross_attention_dim) == 2048:
+        return "sdxl"
+    raise RuntimeError(
+        "Unsupported IP-Adapter family in tranche 1: "
+        f"expected cross-attention dim 768 (SD15) or 2048 (SDXL), got {int(output_cross_attention_dim)}."
+    )
+
+
+def _build_image_projector(
+    *,
+    image_proj_state: dict[str, torch.Tensor],
+    image_encoder_runtime: ClipVisionEncoder,
+    uses_hidden_states: bool,
+    output_cross_attention_dim: int,
+    internal_cross_attention_dim: int,
+    token_count: int,
+    is_sdxl: bool,
+) -> torch.nn.Module:
+    if uses_hidden_states:
+        embedding_dim = int(image_proj_state.get("proj_in.weight", torch.empty(0, 0)).shape[1])
+        expected_embedding_dim = int(image_encoder_runtime.spec.hidden_size)
+        if embedding_dim != expected_embedding_dim:
+            raise RuntimeError(
+                f"IP-Adapter image encoder hidden size mismatch: expected {expected_embedding_dim}, got {embedding_dim}."
+            )
+        image_projector = Resampler(
+            dim=int(internal_cross_attention_dim),
+            depth=4,
+            dim_head=64,
+            heads=20 if is_sdxl else 12,
+            num_queries=int(token_count),
+            embedding_dim=int(embedding_dim),
+            output_dim=int(output_cross_attention_dim),
+            ff_mult=4,
+        )
+        missing, unexpected = image_projector.load_state_dict(image_proj_state, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                f"IP-Adapter Plus image projector mismatch (missing={len(missing)}, unexpected={len(unexpected)})."
+            )
+        return image_projector
+    embedding_dim = int(image_proj_state.get("proj.weight", torch.empty(0, 0)).shape[1])
+    expected_embedding_dim = int(image_encoder_runtime.spec.projection_dim)
+    if embedding_dim != expected_embedding_dim:
+        raise RuntimeError(
+            f"IP-Adapter image encoder projection dim mismatch: expected {expected_embedding_dim}, got {embedding_dim}."
+        )
+    image_projector = ImageProjectionModel(
+        cross_attention_dim=int(output_cross_attention_dim),
+        clip_embeddings_dim=int(embedding_dim),
+        clip_extra_context_tokens=int(token_count),
+    )
+    missing, unexpected = image_projector.load_state_dict(image_proj_state, strict=False)
+    if missing or unexpected:
+        raise RuntimeError(
+            f"IP-Adapter base image projector mismatch (missing={len(missing)}, unexpected={len(unexpected)})."
+        )
+    return image_projector

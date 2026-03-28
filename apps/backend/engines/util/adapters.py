@@ -7,14 +7,15 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Request→processing adapters for txt2img/img2img (hires/swap-model/refiner/smart flags).
-Builds Codex processing objects from API request DTOs, including Hires, first-pass swap-model, and Refiner configs (with hires tile config),
-per-job smart runtime flags, and strict pass-through overrides like `extras.er_sde` for sampler runtime wiring.
+Builds Codex processing objects from API request DTOs, including Hires, first-pass swap-model, Refiner, and IP-Adapter configs (with hires
+tile config), per-job smart runtime flags, and strict pass-through overrides like `extras.er_sde` for sampler runtime wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_require_non_negative_int` (function): Validates an explicit integer `>= 0` for fail-loud request→processing transfer seams.
 - `_build_swap_model_config` (function): Builds a typed `SwapModelConfig` from request payload data.
 - `_build_swap_stage_config` (function): Builds a typed `SwapStageConfig` for the global first-pass `swap_model` stage.
 - `_build_hires_config` (function): Builds a `CodexHiresConfig` from request payload data (including hires tile config + nested hires refiner).
+- `_build_ip_adapter_config` (function): Builds a typed `IpAdapterConfig` from request payload data.
 - `_build_refiner_config` (function): Builds a `RefinerConfig` from request payload data.
 - `build_txt2img_processing` (function): Converts a `Txt2ImgRequest` into a fully-populated `CodexProcessingTxt2Img`.
 - `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img` (including inpaint mask wiring).
@@ -27,6 +28,7 @@ from typing import Any, Mapping
 import logging
 
 from apps.backend.core.requests import Img2ImgRequest, Txt2ImgRequest
+from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig, IpAdapterSourceConfig
 from apps.backend.runtime.processing.models import (
     CodexHiresConfig,
     CodexProcessingImg2Img,
@@ -254,6 +256,66 @@ def _build_refiner_config(data: Mapping[str, Any] | None, *, default_cfg: float,
     )
 
 
+def _build_ip_adapter_config(data: Mapping[str, Any] | None, *, context: str) -> IpAdapterConfig | None:
+    payload = data or {}
+    enabled = bool(payload.get("enabled", False))
+    if not enabled:
+        return None
+
+    model_raw = payload.get("model")
+    if not isinstance(model_raw, str) or not model_raw.strip():
+        raise ValueError(f"'{context}.model' is required when '{context}.enabled' is true.")
+    image_encoder_raw = payload.get("image_encoder")
+    if not isinstance(image_encoder_raw, str) or not image_encoder_raw.strip():
+        raise ValueError(f"'{context}.image_encoder' is required when '{context}.enabled' is true.")
+
+    weight = _parse_optional_finite_float(payload.get("weight"), field=f"{context}.weight")
+    if weight is None:
+        weight = 1.0
+    if weight < 0.0:
+        raise ValueError(f"'{context}.weight' must be >= 0.0.")
+
+    start_at = _parse_optional_finite_float(payload.get("start_at"), field=f"{context}.start_at")
+    if start_at is None:
+        start_at = 0.0
+    end_at = _parse_optional_finite_float(payload.get("end_at"), field=f"{context}.end_at")
+    if end_at is None:
+        end_at = 1.0
+    if not 0.0 <= start_at <= 1.0:
+        raise ValueError(f"'{context}.start_at' must be between 0.0 and 1.0.")
+    if not 0.0 <= end_at <= 1.0:
+        raise ValueError(f"'{context}.end_at' must be between 0.0 and 1.0.")
+    if start_at > end_at:
+        raise ValueError(f"'{context}.start_at' must be <= '{context}.end_at'.")
+
+    source_payload = payload.get("source")
+    if not isinstance(source_payload, Mapping):
+        raise ValueError(f"'{context}.source' must be an object when '{context}.enabled' is true.")
+    source_kind_raw = source_payload.get("kind")
+    source_kind = str(source_kind_raw or "").strip()
+    if source_kind not in {"uploaded", "same_as_init"}:
+        raise ValueError(f"Unsupported '{context}.source.kind': {source_kind_raw!r}.")
+    reference_image_data = source_payload.get("reference_image_data")
+    if source_kind == "uploaded":
+        if not isinstance(reference_image_data, str) or not reference_image_data.strip():
+            raise ValueError(f"'{context}.source.reference_image_data' is required when kind='uploaded'.")
+    elif source_kind == "same_as_init" and reference_image_data is not None:
+        raise ValueError(f"'{context}.source.reference_image_data' is invalid when kind='same_as_init'.")
+
+    return IpAdapterConfig(
+        enabled=True,
+        model=model_raw.strip(),
+        image_encoder=image_encoder_raw.strip(),
+        weight=float(weight),
+        start_at=float(start_at),
+        end_at=float(end_at),
+        source=IpAdapterSourceConfig(
+            kind=source_kind,
+            reference_image_data=reference_image_data.strip() if isinstance(reference_image_data, str) else None,
+        ),
+    )
+
+
 def _build_swap_stage_config(data: Mapping[str, Any] | None, *, default_cfg: float, context: str) -> SwapStageConfig | None:
     payload = data or {}
     enabled = bool(payload.get("enable", False))
@@ -329,6 +391,10 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         default_cfg=processing.guidance_scale,
         context="extras.swap_model",
     )
+    processing.ip_adapter = _build_ip_adapter_config(
+        extras.get("ip_adapter"),
+        context="extras.ip_adapter",
+    )
     refiner_cfg = _build_refiner_config(
         extras.get("refiner"),
         default_cfg=processing.guidance_scale,
@@ -338,6 +404,8 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
     if hires_cfg.enabled:
         processing.enable_hires(cfg=hires_cfg)
     for key, value in extras.items():
+        if key == "ip_adapter":
+            continue
         if key == "er_sde" and isinstance(value, Mapping):
             processing.update_override(key, dict(value))
         else:
@@ -436,6 +504,10 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         smart_fallback=smart_fallback,
         smart_cache=smart_cache,
     )
+    processing.ip_adapter = _build_ip_adapter_config(
+        extras.get("ip_adapter"),
+        context="img2img_extras.ip_adapter",
+    )
     if req.hires:
         hires_cfg = _build_hires_config(
             req.hires,
@@ -446,6 +518,8 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         if hires_cfg.enabled:
             processing.enable_hires(hires_cfg)
     for key, value in extras.items():
+        if key == "ip_adapter":
+            continue
         if key == "er_sde" and isinstance(value, Mapping):
             processing.update_override(key, dict(value))
         else:

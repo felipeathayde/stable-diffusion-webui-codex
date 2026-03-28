@@ -10,6 +10,7 @@ Purpose: Sampling execution helper for pipeline orchestrators.
 Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics (including ER-SDE option
 propagation into the sampler and diagnostic metadata dumps), with explicit control over txt2img image-conditioning fallback injection and the
 internal img2img fixed-step execution seam used by hires continuations.
+Also wraps the active sampling pass with the shared IP-Adapter stage when `processing.ip_adapter` is configured.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_maybe_dump_latents` (function): Dump latents to disk when enabled via env flags (debug diagnostics + effective ER-SDE metadata).
@@ -46,6 +47,7 @@ from apps.backend.runtime.sampling.context import build_sampling_context
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config.repo_root import get_repo_root
 
+from .ip_adapter import apply_processing_ip_adapter
 from .scripts import collect_lora_selections, run_before_sampling_hooks, run_post_sample_hooks
 
 logger = logging.getLogger(__name__)
@@ -162,99 +164,100 @@ def execute_sampling(
             "`codex_objects_after_applying_lora`."
         )
 
-    if processing.scripts is not None:
-        processing.scripts.process_before_every_sampling(
-            processing,
-            x=noise,
-            noise=noise,
-            c=payload.conditioning,
-            uc=payload.unconditional,
-        )
+    with apply_processing_ip_adapter(processing):
+        if processing.scripts is not None:
+            processing.scripts.process_before_every_sampling(
+                processing,
+                x=noise,
+                noise=noise,
+                c=payload.conditioning,
+                uc=payload.unconditional,
+            )
 
-    if getattr(processing, "modified_noise", None) is not None:
-        noise = processing.modified_noise
-        processing.modified_noise = None
+        if getattr(processing, "modified_noise", None) is not None:
+            noise = processing.modified_noise
+            processing.modified_noise = None
 
-    preview_method = live_preview_method(default=LivePreviewMethod.FULL)
-    preview_interval = int(preview_interval_steps(default=0))
-    debug_factors = debug_preview_factors_enabled()
-    preview_emitted = False
+        preview_method = live_preview_method(default=LivePreviewMethod.FULL)
+        preview_interval = int(preview_interval_steps(default=0))
+        debug_factors = debug_preview_factors_enabled()
+        preview_emitted = False
 
-    def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int | None) -> None:
-        nonlocal preview_emitted
-        if preview_interval <= 0:
-            return
-        # Skip preview decode on the final step only when at least one preview
-        # was already emitted; this preserves low-overhead long runs while still
-        # allowing short runs to emit one terminal preview.
-        try:
-            if total is not None and int(total) > 0 and int(step) >= int(total) and preview_emitted:
-                if debug_factors:
-                    maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total))
+        def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int | None) -> None:
+            nonlocal preview_emitted
+            if preview_interval <= 0:
                 return
-        except Exception:
-            # If step/total are malformed, fall back to best-effort preview.
-            pass
-        preview = decode_preview_image(processing, denoised_latent, method=preview_method)
-        if preview is None:
-            return
-        backend_state.set_current_image(preview, sampling_step=int(step))
-        preview_emitted = True
-        if debug_factors:
-            maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total or 0))
+            # Skip preview decode on the final step only when at least one preview
+            # was already emitted; this preserves low-overhead long runs while still
+            # allowing short runs to emit one terminal preview.
+            try:
+                if total is not None and int(total) > 0 and int(step) >= int(total) and preview_emitted:
+                    if debug_factors:
+                        maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total))
+                    return
+            except Exception:
+                # If step/total are malformed, fall back to best-effort preview.
+                pass
+            preview = decode_preview_image(processing, denoised_latent, method=preview_method)
+            if preview is None:
+                return
+            backend_state.set_current_image(preview, sampling_step=int(step))
+            preview_emitted = True
+            if debug_factors:
+                maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total or 0))
 
-    if image_conditioning is None and allow_txt2img_conditioning_fallback:
-        image_conditioning = txt2img_conditioning(
+        if image_conditioning is None and allow_txt2img_conditioning_fallback:
+            image_conditioning = txt2img_conditioning(
+                processing.sd_model,
+                noise,
+                processing.width,
+                processing.height,
+            )
+
+        if denoise_strength is not None and math.isclose(float(denoise_strength), 0.0):
+            samples = init_latent if init_latent is not None else torch.zeros_like(noise)
+            if post_sample_hook is not None:
+                samples = post_sample_hook(samples)
+            samples = run_post_sample_hooks(processing, samples)
+            _maybe_dump_latents(samples, processing, plan, prompt_context)
+            devices.torch_gc()
+            return samples
+
+        sampler_name = plan.sampler_name
+        scheduler_name = plan.scheduler_name
+        context = build_sampling_context(
             processing.sd_model,
-            noise,
-            processing.width,
-            processing.height,
+            sampler_name=sampler_name,
+            scheduler_name=scheduler_name,
+            steps=int(plan.steps),
+            noise_source=plan.noise_settings.source.value,
+            eta_noise_seed_delta=plan.noise_settings.eta_noise_seed_delta,
+            height=int(getattr(processing, "height", 0) or 0) or None,
+            width=int(getattr(processing, "width", 0) or 0) or None,
+            device=noise.device,
+            dtype=noise.dtype,
         )
 
-    if denoise_strength is not None and math.isclose(float(denoise_strength), 0.0):
-        samples = init_latent if init_latent is not None else torch.zeros_like(noise)
-        if post_sample_hook is not None:
-            samples = post_sample_hook(samples)
+        samples = processing.sampler.sample(
+            processing,
+            noise,
+            payload.conditioning,
+            payload.unconditional,
+            image_conditioning=image_conditioning,
+            init_latent=init_latent,
+            start_at_step=start_at_step,
+            denoise_strength=denoise_strength,
+            img2img_fix_steps=img2img_fix_steps,
+            pre_denoiser_hook=pre_denoiser_hook,
+            post_denoiser_hook=post_denoiser_hook,
+            preview_callback=_preview_cb,
+            post_step_hook=post_step_hook,
+            post_sample_hook=post_sample_hook,
+            context=context,
+            er_sde_options=plan.er_sde,
+        )
+
         samples = run_post_sample_hooks(processing, samples)
         _maybe_dump_latents(samples, processing, plan, prompt_context)
         devices.torch_gc()
         return samples
-
-    sampler_name = plan.sampler_name
-    scheduler_name = plan.scheduler_name
-    context = build_sampling_context(
-        processing.sd_model,
-        sampler_name=sampler_name,
-        scheduler_name=scheduler_name,
-        steps=int(plan.steps),
-        noise_source=plan.noise_settings.source.value,
-        eta_noise_seed_delta=plan.noise_settings.eta_noise_seed_delta,
-        height=int(getattr(processing, "height", 0) or 0) or None,
-        width=int(getattr(processing, "width", 0) or 0) or None,
-        device=noise.device,
-        dtype=noise.dtype,
-    )
-
-    samples = processing.sampler.sample(
-        processing,
-        noise,
-        payload.conditioning,
-        payload.unconditional,
-        image_conditioning=image_conditioning,
-        init_latent=init_latent,
-        start_at_step=start_at_step,
-        denoise_strength=denoise_strength,
-        img2img_fix_steps=img2img_fix_steps,
-        pre_denoiser_hook=pre_denoiser_hook,
-        post_denoiser_hook=post_denoiser_hook,
-        preview_callback=_preview_cb,
-        post_step_hook=post_step_hook,
-        post_sample_hook=post_sample_hook,
-        context=context,
-        er_sde_options=plan.er_sde,
-    )
-
-    samples = run_post_sample_hooks(processing, samples)
-    _maybe_dump_latents(samples, processing, plan, prompt_context)
-    devices.torch_gc()
-    return samples

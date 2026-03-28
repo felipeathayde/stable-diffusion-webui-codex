@@ -7,12 +7,12 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Payload validation key set definitions.
-Defines frozen key groups for SHA selection, txt2img, and extras payloads (including ER-SDE/guidance option envelopes and generation `settings_revision` contract key) and exposes singleton instances used by request validators.
+Defines frozen key groups for SHA selection, txt2img, and extras payloads (including ER-SDE/guidance/IP-Adapter option envelopes and generation `settings_revision` contract key) and exposes singleton instances used by request validators.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ShaKeys` (dataclass): Frozen key groups for SHA256-based asset selection payload fields.
 - `Txt2ImgKeys` (dataclass): Frozen key groups for txt2img payload fields (CORE/DIFFUSION/FLOW/HIRES, SMART flags, and `settings_revision` contract key).
-- `ExtrasKeys` (dataclass): Frozen key groups for `payload.extras` fields (includes Z-Image Turbo/Base `zimage_variant` and optional `er_sde`/`guidance` options).
+- `ExtrasKeys` (dataclass): Frozen key groups for `payload.extras` fields (includes Z-Image Turbo/Base `zimage_variant` plus optional `er_sde`/`guidance`/`ip_adapter` options).
 - `SHA_KEYS` (constant): Singleton instance of `ShaKeys`.
 - `TXT2IMG_KEYS` (constant): Singleton instance of `Txt2ImgKeys`.
 - `EXTRAS_KEYS` (constant): Singleton instance of `ExtrasKeys`.
@@ -109,6 +109,7 @@ class ExtrasKeys:
         "hires",
         "swap_model",
         "refiner",
+        "ip_adapter",
         "text_encoder_override",
         "batch_size",
         "batch_count",

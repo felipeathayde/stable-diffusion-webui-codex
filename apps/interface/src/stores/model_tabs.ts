@@ -12,7 +12,8 @@ default parameter shapes per tab type (image vs WAN/LTX video) using engine defa
 under typed `swapModel` owners (global `swapModel`, hires `hires.swapModel`), and stale legacy `hires.checkpoint` / refiner-embedded `vae` snapshot
 fields are dropped during hydration instead of being preserved as rename glue. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
-`img2imgUpscaler`) decoupled from backend hires dispatch. WAN video normalization persists no-stretch img2vid guide controls
+`img2imgUpscaler`) decoupled from backend hires dispatch. Image automation and IP-Adapter UI state now stay under canonical owners
+(`runAction`, `initSource`, `ipAdapter`) instead of drifting into flat helper fields. WAN video normalization persists no-stretch img2vid guide controls
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
 backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both scheduler/sampler backfills through the normal tab-persistence
 queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
@@ -37,7 +38,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Flux.2/Chroma/ZImage
   (includes optional family-specific fields like `zimageTurbo`, img2img layout state `img2imgResizeMode`/`img2imgUpscaler`,
-  inpaint mask controls (`maskRegionSplit` and related toggles), and advanced guidance policy controls).
+  inpaint mask controls (`maskRegionSplit` and related toggles), image automation owners (`runAction`, `initSource`, `ipAdapter`), and advanced guidance policy controls).
+- `ImageRunAction` (type): Run CTA mode discriminator (`generate|infinite`) persisted per image tab.
+- `ImageFolderSelectionMode` (type): Folder traversal amount discriminator (`all|count`) used by init/IP-Adapter directory sources.
+- `ImageFolderOrderMode` (type): Folder traversal order discriminator (`random|sorted`) used by init/IP-Adapter directory sources.
+- `ImageFolderSortBy` (type): Sort key discriminator for ordered directory traversal (`name|size|created_at|modified_at`).
+- `InitSourceFormState` (interface): Img2img initial-image source owner (`img|dir` plus directory traversal settings and crop toggle).
+- `IpAdapterSourceFormState` (interface): IP-Adapter source owner (`img|dir`, uploaded reference image, same-as-init shortcut, and directory traversal settings).
+- `IpAdapterFormState` (interface): IP-Adapter card state owner (enable flag, asset selectors, source owner, and strength range controls).
 - `GuidanceAdvancedParams` (interface): Per-tab advanced guidance policy state (APG/rescale/trunc/renorm).
 - `DEFAULT_GUIDANCE_ADVANCED_PARAMS` (constant): Canonical defaults for `ImageBaseParams.guidanceAdvanced`.
 - `TabParamsByType` (type): Canonical params map by tab type.
@@ -255,6 +263,7 @@ export interface ImageBaseParams {
   clipSkip: number
   batchSize: number
   batchCount: number
+  runAction: ImageRunAction
   img2imgResizeMode: Img2ImgResizeMode
   img2imgUpscaler: string
   guidanceAdvanced: GuidanceAdvancedParams
@@ -264,6 +273,7 @@ export interface ImageBaseParams {
   checkpoint: string
   textEncoders: string[]
   useInitImage: boolean
+  initSource: InitSourceFormState
   initImageData: string
   initImageName: string
   denoiseStrength: number
@@ -279,7 +289,45 @@ export interface ImageBaseParams {
   maskBlur: number
   maskRound: boolean
   maskRegionSplit: boolean
+  ipAdapter: IpAdapterFormState
   zimageTurbo?: boolean
+}
+
+export type ImageRunAction = 'generate' | 'infinite'
+export type ImageFolderSelectionMode = 'all' | 'count'
+export type ImageFolderOrderMode = 'random' | 'sorted'
+export type ImageFolderSortBy = 'name' | 'size' | 'created_at' | 'modified_at'
+
+export interface InitSourceFormState {
+  mode: 'img' | 'dir'
+  folderPath: string
+  selectionMode: ImageFolderSelectionMode
+  count: number
+  order: ImageFolderOrderMode
+  sortBy: ImageFolderSortBy
+  useCrop: boolean
+}
+
+export interface IpAdapterSourceFormState {
+  mode: 'img' | 'dir'
+  sameAsInit: boolean
+  referenceImageData: string
+  referenceImageName: string
+  folderPath: string
+  selectionMode: ImageFolderSelectionMode
+  count: number
+  order: ImageFolderOrderMode
+  sortBy: ImageFolderSortBy
+}
+
+export interface IpAdapterFormState {
+  enabled: boolean
+  model: string
+  imageEncoder: string
+  source: IpAdapterSourceFormState
+  weight: number
+  startAt: number
+  endAt: number
 }
 
 export interface GuidanceAdvancedParams {
@@ -336,7 +384,7 @@ type ModelTabsStorageState = {
 
 export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v2'
 const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
-const TAB_PARAMS_SCHEMA_VERSION = 3
+const TAB_PARAMS_SCHEMA_VERSION = 4
 
 const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'schemaVersion',
@@ -352,6 +400,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'clipSkip',
   'batchSize',
   'batchCount',
+  'runAction',
   'img2imgResizeMode',
   'img2imgUpscaler',
   'guidanceAdvanced',
@@ -361,6 +410,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'checkpoint',
   'textEncoders',
   'useInitImage',
+  'initSource',
   'initImageData',
   'initImageName',
   'denoiseStrength',
@@ -376,6 +426,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'maskBlur',
   'maskRound',
   'maskRegionSplit',
+  'ipAdapter',
   'zimageTurbo',
 ])
 
@@ -586,6 +637,35 @@ function defaultParams<T extends BaseTabType>(
     distilledCfg: undefined,
     refiner: { ...refinerDefaults },
   }
+  const initSourceDefaults: InitSourceFormState = {
+    mode: 'img',
+    folderPath: '',
+    selectionMode: 'all',
+    count: 1,
+    order: 'sorted',
+    sortBy: 'name',
+    useCrop: false,
+  }
+  const ipAdapterSourceDefaults: IpAdapterSourceFormState = {
+    mode: 'img',
+    sameAsInit: false,
+    referenceImageData: '',
+    referenceImageName: '',
+    folderPath: '',
+    selectionMode: 'all',
+    count: 1,
+    order: 'sorted',
+    sortBy: 'name',
+  }
+  const ipAdapterDefaults: IpAdapterFormState = {
+    enabled: false,
+    model: '',
+    imageEncoder: '',
+    source: { ...ipAdapterSourceDefaults },
+    weight: 1,
+    startAt: 0,
+    endAt: 1,
+  }
   const imageDefaults: ImageBaseParams = {
     schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
     prompt: '',
@@ -600,6 +680,7 @@ function defaultParams<T extends BaseTabType>(
     clipSkip: 0,
     batchSize: 1,
     batchCount: 1,
+    runAction: 'generate',
     img2imgResizeMode: DEFAULT_IMG2IMG_RESIZE_MODE,
     img2imgUpscaler: 'latent:bicubic-aa',
     guidanceAdvanced: { ...DEFAULT_GUIDANCE_ADVANCED_PARAMS },
@@ -609,6 +690,7 @@ function defaultParams<T extends BaseTabType>(
     checkpoint: '',
     textEncoders: [],
     useInitImage: false,
+    initSource: { ...initSourceDefaults },
     initImageData: '',
     initImageName: '',
     denoiseStrength: 0.75,
@@ -624,6 +706,7 @@ function defaultParams<T extends BaseTabType>(
     maskBlur: 4,
     maskRound: true,
     maskRegionSplit: true,
+    ipAdapter: { ...ipAdapterDefaults, source: { ...ipAdapterDefaults.source } },
   }
   if (type === 'zimage') {
     imageDefaults.zimageTurbo = true
@@ -873,6 +956,66 @@ function normalizeBoolean(rawValue: unknown, fallback: boolean): boolean {
     if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false
   }
   return fallback
+}
+
+function normalizeImageRunAction(rawValue: unknown, fallback: ImageRunAction): ImageRunAction {
+  return rawValue === 'infinite' ? 'infinite' : fallback
+}
+
+function normalizeImageFolderSelectionMode(rawValue: unknown, fallback: ImageFolderSelectionMode): ImageFolderSelectionMode {
+  return rawValue === 'count' ? 'count' : fallback
+}
+
+function normalizeImageFolderOrderMode(rawValue: unknown, fallback: ImageFolderOrderMode): ImageFolderOrderMode {
+  return rawValue === 'random' || rawValue === 'sorted' ? rawValue : fallback
+}
+
+function normalizeImageFolderSortBy(rawValue: unknown, fallback: ImageFolderSortBy): ImageFolderSortBy {
+  return rawValue === 'size' || rawValue === 'created_at' || rawValue === 'modified_at' || rawValue === 'name'
+    ? rawValue
+    : fallback
+}
+
+function normalizeInitSourceFormState(rawValue: unknown, defaults: InitSourceFormState): InitSourceFormState {
+  const patch = asRecordObject(rawValue)
+  return {
+    mode: patch.mode === 'dir' ? 'dir' : defaults.mode,
+    folderPath: String(patch.folderPath || '').trim(),
+    selectionMode: normalizeImageFolderSelectionMode(patch.selectionMode, defaults.selectionMode),
+    count: Math.max(1, Math.trunc(clampFiniteNumber(patch.count, defaults.count, 1))),
+    order: normalizeImageFolderOrderMode(patch.order, defaults.order),
+    sortBy: normalizeImageFolderSortBy(patch.sortBy, defaults.sortBy),
+    useCrop: normalizeBoolean(patch.useCrop, defaults.useCrop),
+  }
+}
+
+function normalizeIpAdapterSourceFormState(rawValue: unknown, defaults: IpAdapterSourceFormState): IpAdapterSourceFormState {
+  const patch = asRecordObject(rawValue)
+  const mode = patch.mode === 'dir' ? 'dir' : defaults.mode
+  return {
+    mode,
+    sameAsInit: mode === 'img' ? normalizeBoolean(patch.sameAsInit, defaults.sameAsInit) : false,
+    referenceImageData: String(patch.referenceImageData || ''),
+    referenceImageName: String(patch.referenceImageName || '').trim(),
+    folderPath: String(patch.folderPath || '').trim(),
+    selectionMode: normalizeImageFolderSelectionMode(patch.selectionMode, defaults.selectionMode),
+    count: Math.max(1, Math.trunc(clampFiniteNumber(patch.count, defaults.count, 1))),
+    order: normalizeImageFolderOrderMode(patch.order, defaults.order),
+    sortBy: normalizeImageFolderSortBy(patch.sortBy, defaults.sortBy),
+  }
+}
+
+function normalizeIpAdapterFormState(rawValue: unknown, defaults: IpAdapterFormState): IpAdapterFormState {
+  const patch = asRecordObject(rawValue)
+  return {
+    enabled: normalizeBoolean(patch.enabled, defaults.enabled),
+    model: String(patch.model || '').trim(),
+    imageEncoder: String(patch.imageEncoder || '').trim(),
+    source: normalizeIpAdapterSourceFormState(patch.source, defaults.source),
+    weight: clampFiniteNumber(patch.weight, defaults.weight, 0, 2),
+    startAt: normalizeUnitInterval(patch.startAt, defaults.startAt),
+    endAt: normalizeUnitInterval(patch.endAt, defaults.endAt),
+  }
 }
 
 function normalizeWanVideoParams(raw: Partial<WanVideoParams>, defaults: WanVideoParams): WanVideoParams {
@@ -1208,6 +1351,9 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   const hiresTilePatch = asRecordObject(hiresPatch.tile)
   const swapModelPatch = asRecordObject(patch.swapModel)
   const refinerPatch = asRecordObject(patch.refiner)
+  const initSourcePatch = asRecordObject(patch.initSource)
+  const ipAdapterPatch = asRecordObject(patch.ipAdapter)
+  const ipAdapterSourcePatch = asRecordObject(ipAdapterPatch.source)
 
   const mergedHires: HiresFormState = {
     ...defaults.hires,
@@ -1238,6 +1384,18 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
     refiner: {
       ...defaults.refiner,
       ...(refinerPatch as Partial<RefinerFormState>),
+    },
+    initSource: {
+      ...defaults.initSource,
+      ...(initSourcePatch as Partial<InitSourceFormState>),
+    },
+    ipAdapter: {
+      ...defaults.ipAdapter,
+      ...(ipAdapterPatch as Partial<IpAdapterFormState>),
+      source: {
+        ...defaults.ipAdapter.source,
+        ...(ipAdapterSourcePatch as Partial<IpAdapterSourceFormState>),
+      },
     },
   }
 
@@ -1304,6 +1462,12 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
     patch.guidanceAdvanced,
     defaults.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED_PARAMS,
   )
+  merged.runAction = normalizeImageRunAction(merged.runAction, defaults.runAction)
+  merged.initSource = normalizeInitSourceFormState(merged.initSource, defaults.initSource)
+  merged.ipAdapter = normalizeIpAdapterFormState(merged.ipAdapter, defaults.ipAdapter)
+  if (merged.ipAdapter.endAt < merged.ipAdapter.startAt) {
+    merged.ipAdapter.endAt = merged.ipAdapter.startAt
+  }
   merged.schemaVersion = TAB_PARAMS_SCHEMA_VERSION
   return merged
 }

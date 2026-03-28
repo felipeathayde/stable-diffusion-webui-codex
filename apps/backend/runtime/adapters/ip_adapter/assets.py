@@ -12,6 +12,7 @@ IP-Adapter stage.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `assert_ip_adapter_engine_supported` (function): Fail-loud guard for exact engine-id and semantic-engine IP-Adapter support.
+- `invalidate_ip_adapter_asset_cache` (function): Drops the process-local prepared-asset cache for IP-Adapter runtime bundles.
 - `prepare_ip_adapter_assets` (function): Loads and caches the validated IP-Adapter asset bundle for one model/image-encoder pair.
 """
 
@@ -23,6 +24,8 @@ from collections.abc import Mapping
 
 import torch
 
+from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.adapters.ip_adapter.modules import (
     ImageProjectionModel,
     IpAdapterKvProjectionSet,
@@ -37,7 +40,7 @@ from apps.backend.runtime.vision.clip.state_dict import cleaned_state_dict, conv
 
 logger = logging.getLogger("backend.runtime.adapters.ip_adapter.assets")
 
-_ASSET_CACHE: dict[tuple[str, str], PreparedIpAdapterAssets] = {}
+_ASSET_CACHE: dict[tuple[str, str, str, str, str], PreparedIpAdapterAssets] = {}
 _ASSET_CACHE_LOCK = threading.Lock()
 
 def assert_ip_adapter_engine_supported(engine_id: str) -> None:
@@ -46,8 +49,13 @@ def assert_ip_adapter_engine_supported(engine_id: str) -> None:
         raise RuntimeError(detail)
 
 
+def invalidate_ip_adapter_asset_cache() -> None:
+    with _ASSET_CACHE_LOCK:
+        _ASSET_CACHE.clear()
+
+
 def prepare_ip_adapter_assets(config: IpAdapterConfig) -> PreparedIpAdapterAssets:
-    cache_key = (str(config.model), str(config.image_encoder))
+    cache_key = _asset_cache_key(config)
     with _ASSET_CACHE_LOCK:
         cached = _ASSET_CACHE.get(cache_key)
         if cached is not None:
@@ -64,6 +72,19 @@ def prepare_ip_adapter_assets(config: IpAdapterConfig) -> PreparedIpAdapterAsset
     with _ASSET_CACHE_LOCK:
         _ASSET_CACHE[cache_key] = prepared
     return prepared
+
+
+def _asset_cache_key(config: IpAdapterConfig) -> tuple[str, str, str, str, str]:
+    load_device = str(memory_management.manager.get_device(DeviceRole.TEXT_ENCODER))
+    offload_device = str(memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER))
+    runtime_dtype = str(memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER))
+    return (
+        str(config.model),
+        str(config.image_encoder),
+        load_device,
+        offload_device,
+        runtime_dtype,
+    )
 
 
 def _prepare_assets(

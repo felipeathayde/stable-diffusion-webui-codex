@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Presentational IP-Adapter configuration card for supported image tabs.
-Provides a dedicated card with enable toggle, asset selectors, source-mode switching (`DIR|IMG`), same-as-init shortcut, optional reference-image dropzone, folder-source controls, and weight range sliders without owning store or API state.
+Purpose: Presentational IP-Adapter configuration card for image tabs.
+Provides a dedicated card with one nested `ipAdapter` owner prop, enable toggle, asset selectors, source-mode switching (`DIR|IMG`), same-as-init shortcut, optional reference-image dropzone, folder-source controls, weight range sliders, and an optional blocking-reason notice without owning store or API state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `IpAdapterCard` (component): Dedicated IP-Adapter UI card for supported image tabs.
@@ -18,36 +18,40 @@ Symbols (top-level; keep in sync; no ghosts):
   <div class="gen-card ip-adapter-card">
     <WanSubHeader title="IP-Adapter">
       <button
-        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', ipAdapter.enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
-        :aria-pressed="enabled"
-        @click="emit('update:enabled', !enabled)"
+        :aria-pressed="ipAdapter.enabled"
+        @click="emit('patch:ipAdapter', { enabled: !ipAdapter.enabled })"
       >
-        {{ enabled ? 'Enabled' : 'Disabled' }}
+        {{ ipAdapter.enabled ? 'Enabled' : 'Disabled' }}
       </button>
     </WanSubHeader>
 
-    <div v-if="enabled" class="ip-adapter-card__body">
+    <p v-if="ipAdapter.enabled && blockingReason" class="caption ip-adapter-card__hint">
+      {{ blockingReason }}
+    </p>
+
+    <div v-if="ipAdapter.enabled" class="ip-adapter-card__body">
       <div class="ip-adapter-card__top-row">
         <div class="field">
           <label class="label-muted">Source</label>
           <CompactSegmentedControl
-            :modelValue="sourceMode"
+            :modelValue="ipAdapter.source.mode"
             :options="SOURCE_MODE_OPTIONS"
             :disabled="disabled"
             ariaLabel="IP-Adapter source mode"
-            @update:modelValue="(value) => emit('update:sourceMode', value as 'dir' | 'img')"
+            @update:modelValue="(value) => emit('patch:ipAdapter', { source: { mode: value as IpAdapterFormState['source']['mode'] } })"
           />
         </div>
 
         <div v-if="img2imgMode" class="field ip-adapter-card__same-init-field">
           <label class="label-muted">Shortcut</label>
           <button
-            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', sameAsInit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', ipAdapter.source.sameAsInit ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
             type="button"
-            :aria-pressed="sameAsInit"
-            :disabled="disabled || sourceMode !== 'img'"
-            @click="emit('update:sameAsInit', !sameAsInit)"
+            :aria-pressed="ipAdapter.source.sameAsInit"
+            :disabled="disabled || ipAdapter.source.mode !== 'img'"
+            @click="emit('patch:ipAdapter', { source: { sameAsInit: !ipAdapter.source.sameAsInit } })"
           >
             Same as init image
           </button>
@@ -60,8 +64,8 @@ Symbols (top-level; keep in sync; no ghosts):
           <select
             class="select-md"
             :disabled="disabled"
-            :value="model"
-            @change="emit('update:model', ($event.target as HTMLSelectElement).value)"
+            :value="ipAdapter.model"
+            @change="emit('patch:ipAdapter', { model: ($event.target as HTMLSelectElement).value })"
           >
             <option value="">Select IP-Adapter model</option>
             <option v-for="choice in modelChoices" :key="choice.value" :value="choice.value">
@@ -75,8 +79,8 @@ Symbols (top-level; keep in sync; no ghosts):
           <select
             class="select-md"
             :disabled="disabled"
-            :value="imageEncoder"
-            @change="emit('update:imageEncoder', ($event.target as HTMLSelectElement).value)"
+            :value="ipAdapter.imageEncoder"
+            @change="emit('patch:ipAdapter', { imageEncoder: ($event.target as HTMLSelectElement).value })"
           >
             <option value="">Select image encoder</option>
             <option v-for="choice in imageEncoderChoices" :key="choice.value" :value="choice.value">
@@ -90,50 +94,50 @@ Symbols (top-level; keep in sync; no ghosts):
         <SliderField
           class="gc-col gc-col--wide"
           label="Weight"
-          :modelValue="weight"
+          :modelValue="ipAdapter.weight"
           :min="0"
           :max="2"
           :step="0.01"
           :inputStep="0.01"
           inputClass="cdx-input-w-xs"
           :disabled="disabled"
-          @update:modelValue="(value) => emit('update:weight', value)"
+          @update:modelValue="(value) => emit('patch:ipAdapter', { weight: value })"
         />
         <SliderField
           class="gc-col gc-col--wide"
           label="Start"
-          :modelValue="startAt"
+          :modelValue="ipAdapter.startAt"
           :min="0"
           :max="1"
           :step="0.01"
           :inputStep="0.01"
           inputClass="cdx-input-w-xs"
           :disabled="disabled"
-          @update:modelValue="(value) => emit('update:startAt', value)"
+          @update:modelValue="(value) => emit('patch:ipAdapter', { startAt: value })"
         />
         <SliderField
           class="gc-col gc-col--wide"
           label="End"
-          :modelValue="endAt"
+          :modelValue="ipAdapter.endAt"
           :min="0"
           :max="1"
           :step="0.01"
           :inputStep="0.01"
           inputClass="cdx-input-w-xs"
           :disabled="disabled"
-          @update:modelValue="(value) => emit('update:endAt', value)"
+          @update:modelValue="(value) => emit('patch:ipAdapter', { endAt: value })"
         />
       </div>
 
-      <p v-if="sourceMode === 'img' && sameAsInit" class="caption ip-adapter-card__hint">
+      <p v-if="ipAdapter.source.mode === 'img' && ipAdapter.source.sameAsInit" class="caption ip-adapter-card__hint">
         Uses the current init image as the IP-Adapter reference image.
       </p>
 
       <InitialImageCard
-        v-else-if="sourceMode === 'img'"
+        v-else-if="ipAdapter.source.mode === 'img'"
         label="Reference Image"
-        :src="referenceImageData"
-        :has-image="Boolean(referenceImageData)"
+        :src="ipAdapter.source.referenceImageData"
+        :has-image="Boolean(ipAdapter.source.referenceImageData)"
         :disabled="disabled"
         :dropzone="true"
         :thumbnail="true"
@@ -145,20 +149,12 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <ImageFolderSourceFields
         v-else
-        :folderPath="folderPath"
-        :selectionMode="selectionMode"
-        :count="count"
-        :order="order"
-        :sortBy="sortBy"
+        :source="ipAdapter.source"
         :disabled="disabled"
         pathLabel="Folder path"
         pathPlaceholder="input/ip-adapter-source"
         countLabel="Reference images"
-        @update:folderPath="(value) => emit('update:folderPath', value)"
-        @update:selectionMode="(value) => emit('update:selectionMode', value)"
-        @update:count="(value) => emit('update:count', value)"
-        @update:order="(value) => emit('update:order', value)"
-        @update:sortBy="(value) => emit('update:sortBy', value)"
+        @patch:source="(value) => emit('patch:ipAdapter', { source: value })"
       />
     </div>
   </div>
@@ -170,10 +166,15 @@ import ImageFolderSourceFields from './ImageFolderSourceFields.vue'
 import CompactSegmentedControl from './ui/CompactSegmentedControl.vue'
 import SliderField from './ui/SliderField.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
+import type { IpAdapterFormState } from '../stores/model_tabs'
 
 type SelectChoice = {
   value: string
   label: string
+}
+
+type IpAdapterPatch = Partial<Omit<IpAdapterFormState, 'source'>> & {
+  source?: Partial<IpAdapterFormState['source']>
 }
 
 const SOURCE_MODE_OPTIONS = [
@@ -183,42 +184,19 @@ const SOURCE_MODE_OPTIONS = [
 
 withDefaults(defineProps<{
   disabled?: boolean
-  enabled: boolean
   img2imgMode?: boolean
-  model: string
-  imageEncoder: string
+  ipAdapter: IpAdapterFormState
   modelChoices: SelectChoice[]
   imageEncoderChoices: SelectChoice[]
-  sourceMode: 'img' | 'dir'
-  sameAsInit: boolean
-  referenceImageData: string
-  folderPath: string
-  selectionMode: 'all' | 'count'
-  count: number
-  order: 'random' | 'sorted'
-  sortBy: 'name' | 'size' | 'created_at' | 'modified_at'
-  weight: number
-  startAt: number
-  endAt: number
+  blockingReason?: string
 }>(), {
   disabled: false,
   img2imgMode: false,
+  blockingReason: '',
 })
 
 const emit = defineEmits<{
-  (e: 'update:enabled', value: boolean): void
-  (e: 'update:model', value: string): void
-  (e: 'update:imageEncoder', value: string): void
-  (e: 'update:sourceMode', value: 'img' | 'dir'): void
-  (e: 'update:sameAsInit', value: boolean): void
-  (e: 'update:folderPath', value: string): void
-  (e: 'update:selectionMode', value: 'all' | 'count'): void
-  (e: 'update:count', value: number): void
-  (e: 'update:order', value: 'random' | 'sorted'): void
-  (e: 'update:sortBy', value: 'name' | 'size' | 'created_at' | 'modified_at'): void
-  (e: 'update:weight', value: number): void
-  (e: 'update:startAt', value: number): void
-  (e: 'update:endAt', value: number): void
+  (e: 'patch:ipAdapter', value: IpAdapterPatch): void
   (e: 'set:referenceImage', value: File): void
   (e: 'clear:referenceImage'): void
   (e: 'reject:referenceImage', payload: { reason: string; files: File[] }): void

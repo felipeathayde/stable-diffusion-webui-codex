@@ -4221,42 +4221,49 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         status_code=400,
                         detail="'init_source.kind' must be one of: uploaded_current, server_folder",
                     )
-                selection_mode = init_source_raw.get("selection_mode")
-                if selection_mode is None:
-                    selection_mode = "all"
-                elif not isinstance(selection_mode, str) or selection_mode.strip() not in {"all", "count"}:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="'init_source.selection_mode' must be one of: all, count",
-                    )
-                order = str(init_source_raw.get("order", "sorted") or "").strip()
-                if order not in {"random", "sorted"}:
-                    raise HTTPException(status_code=400, detail="'init_source.order' must be one of: random, sorted")
-                sort_by = init_source_raw.get("sort_by")
-                if sort_by is None:
-                    sort_by = "name"
-                elif not isinstance(sort_by, str) or sort_by.strip() not in {"name", "size", "created_at", "modified_at"}:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="'init_source.sort_by' must be one of: name, size, created_at, modified_at",
-                    )
-                selection_count = None
-                if selection_mode == "count":
-                    raw_count = init_source_raw.get("count")
-                    if raw_count is None:
+                if init_kind == "uploaded_current":
+                    for folder_only_key in ("folder_path", "selection_mode", "count", "order", "sort_by", "use_crop"):
+                        if folder_only_key in init_source_raw:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"'init_source.{folder_only_key}' is only valid when init_source.kind='server_folder'",
+                            )
+                    init_source = ImageAutomationInitSource(kind="uploaded_current")
+                else:
+                    selection_mode = init_source_raw.get("selection_mode")
+                    if selection_mode is None:
+                        selection_mode = "all"
+                    elif not isinstance(selection_mode, str) or selection_mode.strip() not in {"all", "count"}:
                         raise HTTPException(
                             status_code=400,
-                            detail="'init_source.count' is required when init_source.selection_mode='count'",
+                            detail="'init_source.selection_mode' must be one of: all, count",
                         )
-                    selection_count = _require_int_field(init_source_raw, "count", minimum=1)
-                elif init_source_raw.get("count") is not None:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="'init_source.count' is only valid when init_source.selection_mode='count'",
-                    )
-                use_crop = _require_bool_value(init_source_raw.get("use_crop", False), field_name="init_source.use_crop")
-                folder_path = None
-                if init_kind == "server_folder":
+                    order = str(init_source_raw.get("order", "sorted") or "").strip()
+                    if order not in {"random", "sorted"}:
+                        raise HTTPException(status_code=400, detail="'init_source.order' must be one of: random, sorted")
+                    sort_by = init_source_raw.get("sort_by")
+                    if sort_by is None:
+                        sort_by = "name"
+                    elif not isinstance(sort_by, str) or sort_by.strip() not in {"name", "size", "created_at", "modified_at"}:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="'init_source.sort_by' must be one of: name, size, created_at, modified_at",
+                        )
+                    selection_count = None
+                    if selection_mode == "count":
+                        raw_count = init_source_raw.get("count")
+                        if raw_count is None:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="'init_source.count' is required when init_source.selection_mode='count'",
+                            )
+                        selection_count = _require_int_field(init_source_raw, "count", minimum=1)
+                    elif init_source_raw.get("count") is not None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="'init_source.count' is only valid when init_source.selection_mode='count'",
+                        )
+                    use_crop = _require_bool_value(init_source_raw.get("use_crop", False), field_name="init_source.use_crop")
                     folder_raw = init_source_raw.get("folder_path")
                     if not isinstance(folder_raw, str) or not folder_raw.strip():
                         raise HTTPException(
@@ -4270,15 +4277,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             status_code=400,
                             detail="img2img folder automation does not support masks. Set the initial-image source back to IMG or clear the mask.",
                         )
-                init_source = ImageAutomationInitSource(
-                    kind=init_kind,
-                    folder_path=folder_path,
-                    selection_mode=str(selection_mode),
-                    count=selection_count,
-                    order=order,
-                    sort_by=str(sort_by),
-                    use_crop=use_crop,
-                )
+                    init_source = ImageAutomationInitSource(
+                        kind="server_folder",
+                        folder_path=_path_from_api(folder_raw),
+                        selection_mode=str(selection_mode),
+                        count=selection_count,
+                        order=order,
+                        sort_by=str(sort_by),
+                        use_crop=use_crop,
+                    )
             if init_source.kind == "uploaded_current":
                 init_image_data = template.get("img2img_init_image")
                 if not isinstance(init_image_data, str) or not init_image_data.strip():

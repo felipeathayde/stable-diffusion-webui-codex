@@ -12,7 +12,8 @@ starts `/api/txt2img`, `/api/img2img`, and `/api/image-automation` (when run act
 includes `settings_revision` in payloads, handles stale-revision conflicts (`409` + `current_revision`), and consumes task SSE events to update UI state.
 Consumes rich progress payload metadata (`progress.message` + `progress.data`) plus buffered `automation_iteration` events, and derives total-phase progress fields for dual run-card bars.
 Exposes task cancellation for active runs (`/api/tasks/:id/cancel`).
-Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
+Persists a per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`),
+reconstructing truthful `currentRun` / history-selection state and preserving wall-clock gentime for runs that finish after resume.
 FLUX.2 img2img guidance emission is variant-aware (`img2img_cfg_scale` xor `img2img_distilled_cfg_scale`), and img2img hires emission is
 shared with the canonical hires payload builder while remaining blocked for masked runs.
 
@@ -31,6 +32,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `buildIpAdapterPayload` (function): Normalizes the nested IP-Adapter request owner into the route-local `extras.ip_adapter` carrier.
 - `resolveAutomationLoop` (function): Builds the bounded vs `until_cancelled` automation loop contract from tab state.
 - `buildImageAutomationRequest` (function): Wraps a one-shot image template payload in the automation request envelope.
+- `inferRunModeFromSnapshot` (function): Recovers the truthful txt2img/img2img run mode from a persisted params snapshot.
+- `inferRunSummaryFromSnapshot` (function): Rebuilds a fallback run-summary string when older resume markers lack explicit summary metadata.
+- `buildRunItemFromResumeState` (function): Reconstructs the active/terminal run record from persisted resume metadata.
+- `resolveErrorRunStatus` (function): Distinguishes `cancelled` from generic terminal errors for history truthfulness.
 - `extractLoraNamesFromPrompt` (function): Extracts LoRA token names from prompt text (`<lora:name:weight>`).
 - `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
@@ -67,11 +72,13 @@ import { normalizeMaskEnforcement } from '../utils/image_params'
 import { normalizeImg2ImgResizeModeForEngine } from '../utils/img2img_resize'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 
+export type ImageRunStatus = 'running' | 'completed' | 'error' | 'cancelled'
+
 export interface ImageRunHistoryItem {
   taskId: string
   mode: 'txt2img' | 'img2img'
   createdAtMs: number
-  status: 'completed' | 'error' | 'cancelled'
+  status: ImageRunStatus
   summary: string
   promptPreview: string
   paramsSnapshot: Record<string, unknown>
@@ -120,10 +127,50 @@ type ResumeState = {
   lastEventId: number
   createdAtMs: number
   paramsSnapshot: Record<string, unknown>
+  mode: 'txt2img' | 'img2img'
+  promptPreview: string
+  summary: string
+  finishedAtMs: number | null
+  terminalStatus: Exclude<ImageRunStatus, 'running'> | null
 }
 
 function resumeKey(tabId: string): string {
   return `${RESUME_STORAGE_PREFIX}.${tabId}`
+}
+
+function inferRunModeFromSnapshot(paramsSnapshot: Record<string, unknown>): 'txt2img' | 'img2img' {
+  return normalizeBooleanParam(paramsSnapshot.useInitImage, false) ? 'img2img' : 'txt2img'
+}
+
+function inferPromptPreviewFromSnapshot(paramsSnapshot: Record<string, unknown>): string {
+  return String(paramsSnapshot.prompt || '').trim().slice(0, 120)
+}
+
+function inferRunSummaryFromSnapshot(paramsSnapshot: Record<string, unknown>): string {
+  const width = Math.trunc(Number(paramsSnapshot.width))
+  const height = Math.trunc(Number(paramsSnapshot.height))
+  const steps = Math.trunc(Number(paramsSnapshot.steps))
+  const cfgScale = Number(paramsSnapshot.cfgScale)
+  const sampler = String(paramsSnapshot.sampler || '').trim()
+  const scheduler = String(paramsSnapshot.scheduler || '').trim()
+  const batchCount = Math.max(1, Math.trunc(Number(paramsSnapshot.batchCount || 1)))
+  const batchSize = Math.max(1, Math.trunc(Number(paramsSnapshot.batchSize || 1)))
+  const seed = Number(paramsSnapshot.seed)
+  if (
+    !Number.isFinite(width) || width <= 0
+    || !Number.isFinite(height) || height <= 0
+    || !Number.isFinite(steps) || steps <= 0
+    || !Number.isFinite(cfgScale)
+  ) {
+    return inferRunModeFromSnapshot(paramsSnapshot) === 'img2img' ? 'Img2Img run' : 'Txt2Img run'
+  }
+  const seedLabel = seed === -1 ? 'seed random' : `seed ${seed}`
+  return `${width}×${height} px · ${steps} steps · cfg ${cfgScale} · ${sampler || 'sampler'} / ${scheduler || 'scheduler'} · ${seedLabel} · batch ${batchCount}×${batchSize}`
+}
+
+function normalizeResumeTerminalStatus(value: unknown): Exclude<ImageRunStatus, 'running'> | null {
+  if (value === 'completed' || value === 'error' || value === 'cancelled') return value
+  return null
 }
 
 function loadResumeState(key: string): ResumeState | null {
@@ -136,7 +183,29 @@ function loadResumeState(key: string): ResumeState | null {
     const lastEventId = typeof obj.lastEventId === 'number' && Number.isFinite(obj.lastEventId) ? Math.trunc(obj.lastEventId) : 0
     const createdAtMs = typeof obj.createdAtMs === 'number' && Number.isFinite(obj.createdAtMs) ? Math.trunc(obj.createdAtMs) : 0
     const paramsSnapshot = obj.paramsSnapshot && typeof obj.paramsSnapshot === 'object' ? (obj.paramsSnapshot as Record<string, unknown>) : {}
-    return { taskId: obj.taskId, lastEventId: Math.max(0, lastEventId), createdAtMs, paramsSnapshot }
+    const mode = obj.mode === 'img2img' || obj.mode === 'txt2img'
+      ? obj.mode
+      : inferRunModeFromSnapshot(paramsSnapshot)
+    const promptPreview = typeof obj.promptPreview === 'string' && obj.promptPreview.trim()
+      ? obj.promptPreview.trim()
+      : inferPromptPreviewFromSnapshot(paramsSnapshot)
+    const summary = typeof obj.summary === 'string' && obj.summary.trim()
+      ? obj.summary.trim()
+      : inferRunSummaryFromSnapshot(paramsSnapshot)
+    const finishedAtMs = typeof obj.finishedAtMs === 'number' && Number.isFinite(obj.finishedAtMs)
+      ? Math.trunc(obj.finishedAtMs)
+      : null
+    return {
+      taskId: obj.taskId,
+      lastEventId: Math.max(0, lastEventId),
+      createdAtMs,
+      paramsSnapshot,
+      mode,
+      promptPreview,
+      summary,
+      finishedAtMs,
+      terminalStatus: normalizeResumeTerminalStatus(obj.terminalStatus),
+    }
   } catch {
     return null
   }
@@ -158,13 +227,39 @@ function clearResumeState(key: string): void {
   }
 }
 
+function patchResumeState(key: string, patch: Partial<ResumeState>): void {
+  const current = loadResumeState(key)
+  if (!current) return
+  saveResumeState(key, { ...current, ...patch })
+}
+
 function updateResumeEventId(key: string, eventId: number): void {
   const v = Math.trunc(Number(eventId))
   if (!Number.isFinite(v) || v <= 0) return
   const cur = loadResumeState(key)
-  if (!cur) return
-  if (v <= cur.lastEventId) return
-  saveResumeState(key, { ...cur, lastEventId: v })
+  if (!cur || v <= cur.lastEventId) return
+  patchResumeState(key, { lastEventId: v })
+}
+
+function buildRunItemFromResumeState(
+  saved: ResumeState,
+  patch: Partial<ImageRunHistoryItem> = {},
+): ImageRunHistoryItem {
+  return {
+    taskId: saved.taskId,
+    mode: saved.mode,
+    createdAtMs: saved.createdAtMs,
+    status: 'running',
+    summary: saved.summary,
+    promptPreview: saved.promptPreview,
+    paramsSnapshot: saved.paramsSnapshot,
+    thumbnail: null,
+    ...patch,
+  }
+}
+
+function resolveErrorRunStatus(message: string): Exclude<ImageRunStatus, 'running' | 'completed'> {
+  return String(message || '').trim().toLowerCase() === 'cancelled' ? 'cancelled' : 'error'
 }
 
 function defaultState(): GenerationState {
@@ -518,18 +613,30 @@ export function useGeneration(tabId: string) {
   ): Record<string, unknown> | null {
     if (!p.ipAdapter.enabled) return null
     const source = p.ipAdapter.source
+    const model = String(p.ipAdapter.model || '').trim()
+    if (!model) {
+      throw new Error('Select an IP-Adapter model.')
+    }
+    const imageEncoder = String(p.ipAdapter.imageEncoder || '').trim()
+    if (!imageEncoder) {
+      throw new Error('Select an IP-Adapter image encoder.')
+    }
     const payload: Record<string, unknown> = {
       enabled: true,
-      model: p.ipAdapter.model,
-      image_encoder: p.ipAdapter.imageEncoder,
+      model,
+      image_encoder: imageEncoder,
       weight: p.ipAdapter.weight,
       start_at: p.ipAdapter.startAt,
       end_at: p.ipAdapter.endAt,
     }
     if (source.mode === 'dir') {
+      const folderPath = String(source.folderPath || '').trim()
+      if (!folderPath) {
+        throw new Error('IP-Adapter folder mode requires a folder path.')
+      }
       payload.source = {
         kind: 'server_folder',
-        folder_path: source.folderPath,
+        folder_path: folderPath,
         selection_mode: source.selectionMode,
         count: source.selectionMode === 'count' ? source.count : null,
         order: source.order,
@@ -544,9 +651,13 @@ export function useGeneration(tabId: string) {
       payload.source = { kind: 'same_as_init' }
       return payload
     }
+    const referenceImageData = String(source.referenceImageData || '').trim()
+    if (!referenceImageData) {
+      throw new Error('Select an IP-Adapter reference image.')
+    }
     payload.source = {
       kind: 'uploaded',
-      reference_image_data: source.referenceImageData,
+      reference_image_data: referenceImageData,
     }
     return payload
   }
@@ -655,7 +766,7 @@ export function useGeneration(tabId: string) {
   }
 
   function pushHistory(item: ImageRunHistoryItem): void {
-    state.value.history.unshift(item)
+    state.value.history = [item, ...state.value.history.filter((entry) => entry.taskId !== item.taskId)]
     if (state.value.history.length > MAX_HISTORY) state.value.history.length = MAX_HISTORY
   }
 
@@ -713,9 +824,10 @@ export function useGeneration(tabId: string) {
     state.value.info = null
     state.value.previewImage = null
     state.value.previewStep = null
+    state.value.selectedTaskId = ''
     resetProgress()
     state.value.progress.stage = 'starting'
-    state.value.startedAtMs = performance.now()
+    state.value.startedAtMs = Date.now()
     state.value.finishedAtMs = null
 
     const p = params.value
@@ -893,7 +1005,7 @@ export function useGeneration(tabId: string) {
     }
 
     const usesDistilledCfgModel = guidanceMode === 'distilled_cfg'
-    const createdAtMs = Date.now()
+    const createdAtMs = state.value.startedAtMs ?? Date.now()
     const promptPreview = String(p.prompt || '').trim().slice(0, 120)
     const summary = buildRunSummary(p, guidanceMode)
     const paramsSnapshot = buildParamsSnapshot(p, engineOverrideForRequest)
@@ -1034,7 +1146,7 @@ export function useGeneration(tabId: string) {
         taskId,
         mode: useInitImage ? 'img2img' : 'txt2img',
         createdAtMs,
-        status: 'completed',
+        status: 'running',
         summary,
         promptPreview,
         paramsSnapshot,
@@ -1044,7 +1156,17 @@ export function useGeneration(tabId: string) {
       state.value.progress.stage = 'submitted'
 
       const key = resumeKey(tabId)
-      saveResumeState(key, { taskId, lastEventId: 0, createdAtMs, paramsSnapshot })
+      saveResumeState(key, {
+        taskId,
+        lastEventId: 0,
+        createdAtMs,
+        paramsSnapshot,
+        mode: useInitImage ? 'img2img' : 'txt2img',
+        promptPreview,
+        summary,
+        finishedAtMs: null,
+        terminalStatus: null,
+      })
       resetAutomationRecoveryReplayState()
       const unsub = subscribeTask(state.value.taskId, handleTaskEvent, undefined, {
         onMeta: ({ eventId }) => {
@@ -1127,6 +1249,7 @@ export function useGeneration(tabId: string) {
         const firstResultImage = Array.isArray(event.images) && event.images.length > 0 ? event.images[0] : null
         state.value.previewImage = null
         state.value.previewStep = null
+        const finishedAtMs = Date.now()
         if (state.value.currentRun?.taskId) {
           state.value.currentRun.status = 'completed'
           if (firstResultImage) {
@@ -1149,7 +1272,8 @@ export function useGeneration(tabId: string) {
         } catch {
           // ignore seed parsing; keep lastSeed as-is
         }
-        state.value.finishedAtMs = performance.now()
+        state.value.finishedAtMs = finishedAtMs
+        patchResumeState(resumeKey(tabId), { finishedAtMs, terminalStatus: 'completed' })
         state.value.status = 'done'
         break
       case 'gap':
@@ -1159,12 +1283,14 @@ export function useGeneration(tabId: string) {
       case 'error':
         state.value.status = 'error'
         state.value.errorMessage = event.message
-        state.value.finishedAtMs = performance.now()
+        const terminalStatus = resolveErrorRunStatus(event.message)
+        const finishedAtMsOnError = Date.now()
+        state.value.finishedAtMs = finishedAtMsOnError
         const previewBeforeError = state.value.previewImage
         state.value.previewImage = null
         state.value.previewStep = null
         if (state.value.currentRun?.taskId) {
-          state.value.currentRun.status = 'error'
+          state.value.currentRun.status = terminalStatus
           if (previewBeforeError && !state.value.currentRun.thumbnail) {
             state.value.currentRun.thumbnail = previewBeforeError
           }
@@ -1173,6 +1299,7 @@ export function useGeneration(tabId: string) {
           state.value.selectedTaskId = state.value.currentRun.taskId
           state.value.currentRun = null
         }
+        patchResumeState(resumeKey(tabId), { finishedAtMs: finishedAtMsOnError, terminalStatus })
         clearResumeState(resumeKey(tabId))
         stopStream()
         break
@@ -1182,7 +1309,7 @@ export function useGeneration(tabId: string) {
           state.value.status = 'done'
         }
         if (state.value.finishedAtMs === null) {
-          state.value.finishedAtMs = performance.now()
+          state.value.finishedAtMs = Date.now()
         }
         state.value.previewImage = null
         state.value.previewStep = null
@@ -1200,6 +1327,9 @@ export function useGeneration(tabId: string) {
     try {
       const res = await fetchTaskResult(taskId)
       if (res.status === 'running') {
+        if (typeof res.started_at_ms === 'number' && Number.isFinite(res.started_at_ms)) {
+          state.value.startedAtMs = Math.trunc(res.started_at_ms)
+        }
         if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
         const p = res.progress
         if (p && typeof p === 'object') {
@@ -1208,6 +1338,11 @@ export function useGeneration(tabId: string) {
         if (res.preview_image) state.value.previewImage = res.preview_image
         if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
         applyAutomationRecoveryGallery(res.automation_gallery_images)
+        if (state.value.currentRun) {
+          state.value.currentRun.thumbnail = res.preview_image
+            ?? (Array.isArray(res.automation_gallery_images) ? res.automation_gallery_images[0] ?? null : null)
+            ?? state.value.currentRun.thumbnail
+        }
         markAutomationRecoveryWatermark(res.buffer_newest_event_id ?? res.last_event_id)
         return
       }
@@ -1245,7 +1380,11 @@ export function useGeneration(tabId: string) {
       state.value.status = 'running'
       state.value.taskId = saved.taskId
       state.value.errorMessage = ''
+      state.value.selectedTaskId = ''
       state.value.finishedAtMs = null
+      state.value.startedAtMs = typeof res.started_at_ms === 'number' && Number.isFinite(res.started_at_ms)
+        ? Math.trunc(res.started_at_ms)
+        : (saved.createdAtMs > 0 ? saved.createdAtMs : null)
       if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
       const p = res.progress
       if (p && typeof p === 'object') {
@@ -1254,6 +1393,12 @@ export function useGeneration(tabId: string) {
       if (res.preview_image) state.value.previewImage = res.preview_image
       if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
       applyAutomationRecoveryGallery(res.automation_gallery_images)
+      state.value.currentRun = buildRunItemFromResumeState(saved, {
+        status: 'running',
+        thumbnail: res.preview_image
+          ?? (Array.isArray(res.automation_gallery_images) ? res.automation_gallery_images[0] ?? null : null)
+          ?? null,
+      })
       markAutomationRecoveryWatermark(res.buffer_newest_event_id ?? res.last_event_id)
       const unsub = subscribeTask(saved.taskId, handleTaskEvent, undefined, {
         after: saved.lastEventId,
@@ -1272,24 +1417,43 @@ export function useGeneration(tabId: string) {
     // Task is terminal; hydrate UI and clear resume marker.
     clearResumeState(key)
     if (res.status === 'completed' && res.result) {
-      if (Array.isArray(res.automation_gallery_images) && res.automation_gallery_images.length > 0) {
-        state.value.gallery = [...res.automation_gallery_images]
-      } else {
-        state.value.gallery = res.result.images || []
-      }
+      const completedImages = Array.isArray(res.automation_gallery_images) && res.automation_gallery_images.length > 0
+        ? [...res.automation_gallery_images]
+        : (res.result.images || [])
+      state.value.gallery = completedImages
       state.value.info = res.result.info ?? null
+      state.value.errorMessage = ''
+      state.value.taskId = saved.taskId
       state.value.status = 'done'
       state.value.previewImage = null
       state.value.previewStep = null
-      state.value.finishedAtMs = performance.now()
+      state.value.startedAtMs = saved.createdAtMs > 0 ? saved.createdAtMs : null
+      state.value.finishedAtMs = saved.finishedAtMs
+      pushHistory(buildRunItemFromResumeState(saved, {
+        status: 'completed',
+        thumbnail: completedImages[0] ?? null,
+      }))
+      state.value.selectedTaskId = saved.taskId
+      state.value.currentRun = null
       return
     }
     if (res.status === 'error') {
+      const terminalStatus = saved.terminalStatus ?? resolveErrorRunStatus(String(res.error || 'Task failed.'))
       state.value.status = 'error'
       state.value.errorMessage = String(res.error || 'Task failed.')
-      state.value.finishedAtMs = performance.now()
+      state.value.taskId = saved.taskId
+      state.value.info = null
+      state.value.gallery = []
+      state.value.startedAtMs = saved.createdAtMs > 0 ? saved.createdAtMs : null
+      state.value.finishedAtMs = saved.finishedAtMs
       state.value.previewImage = null
       state.value.previewStep = null
+      pushHistory(buildRunItemFromResumeState(saved, {
+        status: terminalStatus,
+        errorMessage: state.value.errorMessage,
+      }))
+      state.value.selectedTaskId = saved.taskId
+      state.value.currentRun = null
     }
   }
 

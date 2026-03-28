@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Unified model-catalog invalidation + freshness authority.
 Owns backend-side cache invalidation across paths config, model checkpoint registry, and inventory scans so
 `/api/models` and `/api/models/inventory` share one freshness revision source, including process-local
-family-specific discovery caches derived from current asset roots.
+family-specific discovery caches derived from current asset roots and refresh-coupled runtime asset caches such as IP-Adapter bundles.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `current_models_revision` (function): Returns the current model-catalog revision (monotonic, process-local).
@@ -50,12 +50,14 @@ def invalidate_model_catalog(*, reason: str) -> int:
     reason_text = _normalize_reason(reason)
     from apps.backend.infra.config.paths import invalidate_paths_cache
     from apps.backend.inventory import cache as inventory_cache
+    from apps.backend.runtime.adapters.ip_adapter.assets import invalidate_ip_adapter_asset_cache
     from apps.backend.runtime.model_registry.ltx2_execution import invalidate_ltx2_execution_caches
     from apps.backend.runtime.models import api as model_api
 
     with _LOCK:
         invalidate_paths_cache()
         invalidate_ltx2_execution_caches()
+        invalidate_ip_adapter_asset_cache()
         inventory_cache.invalidate()
         model_api.invalidate()
         revision = _next_revision_locked()
@@ -68,12 +70,14 @@ def refresh_model_catalog(*, reason: str) -> tuple[int, Dict[str, List[Dict[str,
     reason_text = _normalize_reason(reason)
     from apps.backend.infra.config.paths import invalidate_paths_cache
     from apps.backend.inventory import cache as inventory_cache
+    from apps.backend.runtime.adapters.ip_adapter.assets import invalidate_ip_adapter_asset_cache
     from apps.backend.runtime.model_registry.ltx2_execution import invalidate_ltx2_execution_caches
     from apps.backend.runtime.models import api as model_api
 
     with _LOCK:
         invalidate_paths_cache()
         invalidate_ltx2_execution_caches()
+        invalidate_ip_adapter_asset_cache()
         model_api.refresh()
         checkpoint_count = len(model_api.list_checkpoints(refresh=False))
         inventory = inventory_cache.refresh()

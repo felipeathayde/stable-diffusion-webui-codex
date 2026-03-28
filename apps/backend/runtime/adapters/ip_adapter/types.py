@@ -37,11 +37,6 @@ class IpAdapterLayout(str, Enum):
 class IpAdapterSourceConfig:
     kind: str
     reference_image_data: str | None = None
-    folder_path: str | None = None
-    selection_mode: str | None = None
-    count: int | None = None
-    order: str = "sorted"
-    sort_by: str | None = None
 
 
 @dataclass(frozen=True)

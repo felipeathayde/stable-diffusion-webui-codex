@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
 Groups img2img controls (initial image upload or folder-backed `DIR|IMG` source selection) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
-including dropzone/thumb/zoom handling for init images, folder-source passthrough emits for parent state, rejected-file pass-through emits for parent toasts, and optional
+including dropzone/thumb/zoom handling for init images, nested `initSource` patch emits for parent state, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 When `Per-step blend` is active, the strength/step-limit sliders share one proportional desktop row instead of stacking as separate full-width rows.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
@@ -19,7 +19,7 @@ Init-image filename captions are centered in the footer area for clearer media i
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
 - `SOURCE_MODE_OPTIONS` (constant): Segmented-control options for init-image source mode switching.
-- `initSourceMode` (prop): Chooses between uploaded-image and server-folder init source controls.
+- `initSource` (prop): Nested init-image source owner (`DIR|IMG` + folder settings) rendered by the card.
 - `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select, slider, and split-toggle controls.
 - `perStepBlendStrength` (prop): Scales how strongly `Per-step blend` restores preserved outside-mask content each outer sampling step.
 - `perStepBlendSteps` (prop): Limits how many outer sampling steps `Per-step blend` stays active before the final preserved-content close.
@@ -45,16 +45,16 @@ Symbols (top-level; keep in sync; no ghosts):
         <span class="caption">{{ sectionSubtitle }}</span>
       </template>
       <CompactSegmentedControl
-        :modelValue="initSourceMode"
+        :modelValue="initSource.mode"
         :options="SOURCE_MODE_OPTIONS"
         :disabled="disabled"
         ariaLabel="Initial image source mode"
-        @update:modelValue="(value) => emit('update:initSourceMode', value as 'img' | 'dir')"
+        @update:modelValue="(value) => emit('patch:initSource', { mode: value as InitSourceFormState['mode'] })"
       />
     </WanSubHeader>
 
     <InitialImageCard
-      v-if="initSourceMode === 'img'"
+      v-if="initSource.mode === 'img'"
       :label="initImageLabel"
       :src="initImageData"
       :has-image="Boolean(initImageData)"
@@ -75,7 +75,7 @@ Symbols (top-level; keep in sync; no ghosts):
           <button
             class="btn btn-sm btn-outline"
             type="button"
-            :disabled="disabled || !maskImageData"
+      :disabled="disabled || !maskImageData"
             @click.stop.prevent="emit('clear:maskImage')"
           >
             Clear mask
@@ -121,28 +121,18 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
     </InitialImageCard>
 
-    <ImageFolderSourceFields
-      v-else
-      :folderPath="initFolderPath"
-      :selectionMode="initSelectionMode"
-      :count="initCount"
-      :order="initOrder"
-      :sortBy="initSortBy"
-      :useCrop="initUseCrop"
-      :showUseCrop="true"
-      :disabled="disabled"
-      pathLabel="Folder path"
-      pathPlaceholder="input/img2img-source"
-      countLabel="Images to generate"
-      @update:folderPath="(value) => emit('update:initFolderPath', value)"
-      @update:selectionMode="(value) => emit('update:initSelectionMode', value)"
-      @update:count="(value) => emit('update:initCount', value)"
-      @update:order="(value) => emit('update:initOrder', value)"
-      @update:sortBy="(value) => emit('update:initSortBy', value)"
-      @toggle:useCrop="emit('toggle:initUseCrop')"
-    />
+      <ImageFolderSourceFields
+        v-else
+        :source="initSource"
+        :showUseCrop="true"
+        :disabled="disabled"
+        pathLabel="Folder path"
+        pathPlaceholder="input/img2img-source"
+        countLabel="Images to generate"
+        @patch:source="(value) => emit('patch:initSource', value)"
+      />
 
-    <div v-if="useMask && initSourceMode === 'img'" class="img2img-mask-stack">
+    <div v-if="useMask && initSource.mode === 'img'" class="img2img-mask-stack">
       <WanSubHeader title="Inpaint Parameters">
         <template #subtitle>
           <span class="caption">Canvas mask tools + runtime parameters</span>
@@ -294,7 +284,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <InpaintMaskEditorOverlay
-      v-if="initSourceMode === 'img'"
+      v-if="initSource.mode === 'img'"
       v-model="maskEditorOpen"
       :init-image-data="initImageData"
       :initial-mask-data="maskImageData"
@@ -323,6 +313,7 @@ import HoverTooltip from './ui/HoverTooltip.vue'
 import SliderField from './ui/SliderField.vue'
 import { rgbaToMaskPlane } from './ui/inpaint_mask_editor_engine'
 import WanSubHeader from './wan/WanSubHeader.vue'
+import type { InitSourceFormState } from '../stores/model_tabs'
 import {
   computeInpaintMaskBlurSpillAlphaPlane,
   computeInpaintMaskPreviewGeometry,
@@ -447,13 +438,7 @@ const props = withDefaults(defineProps<{
   sectionTitle?: string
   sectionSubtitle?: string
   initImageLabel?: string
-  initSourceMode?: 'img' | 'dir'
-  initFolderPath?: string
-  initSelectionMode?: 'all' | 'count'
-  initCount?: number
-  initOrder?: 'random' | 'sorted'
-  initSortBy?: 'name' | 'size' | 'created_at' | 'modified_at'
-  initUseCrop?: boolean
+  initSource?: InitSourceFormState
   initImageData?: string
   initImageName?: string
   imageWidth: number
@@ -478,13 +463,15 @@ const props = withDefaults(defineProps<{
   sectionTitle: 'Img2Img Parameters',
   sectionSubtitle: 'Initial image',
   initImageLabel: 'Initial Image',
-  initSourceMode: 'img',
-  initFolderPath: '',
-  initSelectionMode: 'all',
-  initCount: 1,
-  initOrder: 'sorted',
-  initSortBy: 'name',
-  initUseCrop: false,
+  initSource: () => ({
+    mode: 'img',
+    folderPath: '',
+    selectionMode: 'all',
+    count: 1,
+    order: 'sorted',
+    sortBy: 'name',
+    useCrop: false,
+  }),
   initImageData: '',
   initImageName: '',
   maskImageData: '',
@@ -501,13 +488,7 @@ const emit = defineEmits<{
   (e: 'set:initImage', value: File): void
   (e: 'clear:initImage'): void
   (e: 'reject:initImage', payload: { reason: string; files: File[] }): void
-  (e: 'update:initSourceMode', value: 'img' | 'dir'): void
-  (e: 'update:initFolderPath', value: string): void
-  (e: 'update:initSelectionMode', value: 'all' | 'count'): void
-  (e: 'update:initCount', value: number): void
-  (e: 'update:initOrder', value: 'random' | 'sorted'): void
-  (e: 'update:initSortBy', value: 'name' | 'size' | 'created_at' | 'modified_at'): void
-  (e: 'toggle:initUseCrop'): void
+  (e: 'patch:initSource', value: Partial<InitSourceFormState>): void
   (e: 'clear:maskImage'): void
   (e: 'apply:maskImageData', value: string): void
   (e: 'notice:maskEditorReset', message: string): void
@@ -737,7 +718,7 @@ function onMaskEditorApply(maskDataUrl: string): void {
 }
 
 function onInitPreviewClick(): void {
-  if (props.disabled || props.initSourceMode !== 'img' || !props.initImageData) return
+  if (props.disabled || props.initSource.mode !== 'img' || !props.initImageData) return
   if (!hasNaturalImageDimensions.value) {
     emit('notice:maskEditorReset', 'Mask editor unavailable: init image dimensions are unavailable.')
     return

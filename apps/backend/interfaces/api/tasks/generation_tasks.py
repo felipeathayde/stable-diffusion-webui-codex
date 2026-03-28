@@ -1014,6 +1014,9 @@ def run_image_automation_task(
                 return
 
             push({"type": "status", "stage": "running"})
+            from apps.backend.interfaces.api.device_selection import apply_primary_device
+
+            apply_primary_device(device)
             emit_contract_trace(
                 task_id=task_id,
                 mode=f"{mode}_automation",

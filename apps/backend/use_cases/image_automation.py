@@ -12,7 +12,7 @@ and `after_current` stop boundaries while delegating concrete image execution ba
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageAutomationImmediateCancel` (exception): Signals an immediate automation cancellation boundary.
-- `AutomationIterationPlan` (dataclass): Concrete per-iteration payload plus scalar UI metadata.
+- `AutomationIterationPlan` (dataclass): Scalar per-iteration execution metadata used for progress and iteration events.
 - `AutomationRunResult` (dataclass): Final last-iteration result plus terminal automation summary.
 - `run_image_automation` (function): Executes the backend-owned automation loop around a shared image-execution callback.
 """
@@ -48,7 +48,6 @@ class AutomationIterationPlan:
     iteration_index: int
     iteration_total: int | None
     loop_mode: str
-    payload: dict[str, Any]
     requested_seed: int | None
     prompt_preview: str
     source_label: str | None
@@ -245,6 +244,36 @@ def _selected_folder_images(
     raise ValueError(f"Unsupported folder selection_mode {selection_mode!r}.")
 
 
+def _refresh_random_folder_cycle(
+    *,
+    selected_folder_images: list[Path] | None,
+    iteration_index: int,
+    folder_path: str | None,
+    selection_mode: str | None,
+    selection_count: int | None,
+    order: str,
+    sort_by: str | None,
+    rng: random.Random,
+) -> None:
+    if selected_folder_images is None or order != "random" or iteration_index <= 1:
+        return
+    if len(selected_folder_images) < 1:
+        raise ValueError("Random folder automation requires at least one selected image.")
+    if (iteration_index - 1) % len(selected_folder_images) != 0:
+        return
+    if not folder_path:
+        raise ValueError("Random folder automation requires a non-empty folder path.")
+    refreshed = _selected_folder_images(
+        folder_path=folder_path,
+        selection_mode=str(selection_mode or "all"),
+        selection_count=selection_count,
+        order=order,
+        sort_by=str(sort_by or "name"),
+        rng=rng,
+    )
+    selected_folder_images[:] = refreshed
+
+
 def _encode_image(image: Image.Image) -> str:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
@@ -291,6 +320,7 @@ def _resolve_img2img_source(
     payload: dict[str, Any],
     iteration_index: int,
     selected_folder_images: list[Path] | None,
+    rng: random.Random,
 ) -> str | None:
     init_source = request.init_source
     if init_source is None:
@@ -306,7 +336,16 @@ def _resolve_img2img_source(
         raise ValueError(f"Unsupported img2img init_source.kind {init_source.kind!r}.")
     if not selected_folder_images:
         raise ValueError("img2img server_folder automation requires at least one selected image.")
-
+    _refresh_random_folder_cycle(
+        selected_folder_images=selected_folder_images,
+        iteration_index=iteration_index,
+        folder_path=init_source.folder_path,
+        selection_mode=init_source.selection_mode,
+        selection_count=init_source.count,
+        order=str(init_source.order or "sorted"),
+        sort_by=init_source.sort_by,
+        rng=rng,
+    )
     source_path = selected_folder_images[(iteration_index - 1) % len(selected_folder_images)]
     payload[init_field] = _materialize_folder_image(
         path=source_path,
@@ -353,6 +392,7 @@ def _resolve_ip_adapter_source(
     payload: dict[str, Any],
     iteration_index: int,
     selected_folder_images: list[Path] | None,
+    rng: random.Random,
 ) -> str | None:
     extras_key = _extras_field_name(request.mode)
     extras = payload.get(extras_key)
@@ -386,6 +426,16 @@ def _resolve_ip_adapter_source(
         raise ValueError(f"Unsupported IP-Adapter automation source.kind {kind!r}.")
     if not selected_folder_images:
         raise ValueError("IP-Adapter server_folder automation requires at least one selected image.")
+    _refresh_random_folder_cycle(
+        selected_folder_images=selected_folder_images,
+        iteration_index=iteration_index,
+        folder_path=str(source.get("folder_path") or "").strip(),
+        selection_mode=str(source.get("selection_mode") or "all"),
+        selection_count=source.get("count") if isinstance(source.get("count"), int) else None,
+        order=str(source.get("order") or "sorted"),
+        sort_by=str(source.get("sort_by") or "name"),
+        rng=rng,
+    )
     source_path = selected_folder_images[(iteration_index - 1) % len(selected_folder_images)]
     ip_adapter["source"] = {
         "kind": "uploaded",
@@ -551,6 +601,7 @@ def run_image_automation(
                 payload=payload,
                 iteration_index=iteration_index,
                 selected_folder_images=selected_init_images,
+                rng=generator,
             )
             if init_source_label:
                 source_labels.append(f"Init: {init_source_label}")
@@ -559,6 +610,7 @@ def run_image_automation(
             payload=payload,
             iteration_index=iteration_index,
             selected_folder_images=selected_ip_adapter_images,
+            rng=generator,
         )
         if ip_adapter_source_label:
             source_labels.append(f"IP-Adapter: {ip_adapter_source_label}")
@@ -568,7 +620,6 @@ def run_image_automation(
             iteration_index=iteration_index,
             iteration_total=total_iterations,
             loop_mode=request.loop.mode,
-            payload=payload,
             requested_seed=requested_seed,
             prompt_preview=_prompt_preview(resolved_prompt),
             source_label=source_label,
@@ -577,7 +628,7 @@ def run_image_automation(
         attempted_iterations = iteration_index
 
         try:
-            iteration_result = execute_iteration(deepcopy(plan.payload))
+            iteration_result = execute_iteration(deepcopy(payload))
         except ImageAutomationImmediateCancel:
             raise
         except Exception as exc:

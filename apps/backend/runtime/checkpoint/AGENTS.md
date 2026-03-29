@@ -14,5 +14,6 @@ Notes:
 - 2026-03-11: `load_torch_file(...)` treats both `.safetensor` and `.safetensors` as lazy SafeTensors sources; singular-extension checkpoints must not fall through to guarded pickle loading.
 - 2026-03-12: `io.py` also exposes `read_safetensors_metadata(...)` so runtime-family loaders can carry exact SafeTensors header config (for example the real LTX 2.3 wrapped vocoder config) without materializing a second state dict or inventing hardcoded defaults.
 - 2026-03-12: `read_arbitrary_config(...)` now accepts both `config.json` and `scheduler_config.json` so vendored scheduler directories stay first-class config sources instead of special-case failures.
+- 2026-03-29: `runtime/models/safety.py::safe_torch_load(...)` now treats native `torch.load(..., weights_only=True)` as the authoritative safe path when the active torch build supports it, enables `mmap=True` only for zip/new-serialization checkpoints, and keeps the restricted pre-validation / restricted-pickle path as a legacy fallback for torch builds without native `weights_only`, because modern torch zip checkpoints carry archive metadata and persistent-storage references that the fallback validator does not fully model.
 
-Last Review: 2026-03-12
+Last Review: 2026-03-29

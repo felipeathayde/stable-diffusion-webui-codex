@@ -25,7 +25,6 @@ import argparse
 import json
 import logging
 import os
-import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -185,6 +184,15 @@ def _temporary_env(overrides: dict[str, str | None]):
 def collect_preflight() -> PreflightReport:
     cuda_available = bool(torch.cuda.is_available())
     cuda_device_count = int(torch.cuda.device_count()) if cuda_available else 0
+    cuda_home = _cuda_home()
+    nvcc_path = None
+    if cuda_home:
+        nvcc_executable_names = ("nvcc.exe", "nvcc") if os.name == "nt" else ("nvcc",)
+        for nvcc_executable_name in nvcc_executable_names:
+            nvcc_candidate = Path(cuda_home) / "bin" / nvcc_executable_name
+            if nvcc_candidate.is_file():
+                nvcc_path = str(nvcc_candidate)
+                break
     return PreflightReport(
         python=sys.version.split()[0],
         executable=sys.executable,
@@ -192,8 +200,8 @@ def collect_preflight() -> PreflightReport:
         torch_cuda_version=None if torch.version.cuda is None else str(torch.version.cuda),
         cuda_available=cuda_available,
         cuda_device_count=cuda_device_count,
-        cuda_home=_cuda_home(),
-        nvcc_path=shutil.which("nvcc"),
+        cuda_home=cuda_home,
+        nvcc_path=nvcc_path,
         kernel_dir=str(_kernel_dir()),
         setup_path=str(_setup_path()),
         built_modules=_built_modules(),

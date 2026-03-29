@@ -24,6 +24,9 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CUDA_HOME
 
 THIS_DIR = os.path.dirname(__file__)
 MODULE_NAME = "attention_sram_v1_cuda"
+IS_WINDOWS = os.name == "nt"
+NVCC_EXECUTABLE_NAMES = ("nvcc.exe", "nvcc") if IS_WINDOWS else ("nvcc",)
+CXX_COMPILE_ARGS = ["/O2"] if IS_WINDOWS else ["-O3"]
 
 if torch.version.cuda is None:
     raise RuntimeError(
@@ -38,15 +41,20 @@ if CUDA_HOME is None:
         "Install the CUDA toolkit and ensure `nvcc` is available, then retry."
     )
 
-nvcc_path = shutil.which("nvcc")
-if nvcc_path is None:
-    nvcc_candidate = os.path.join(CUDA_HOME, "bin", "nvcc")
+path_nvcc = shutil.which("nvcc")
+nvcc_path = None
+for nvcc_executable_name in NVCC_EXECUTABLE_NAMES:
+    nvcc_candidate = os.path.join(CUDA_HOME, "bin", nvcc_executable_name)
     if os.path.isfile(nvcc_candidate):
         nvcc_path = nvcc_candidate
+        break
 if nvcc_path is None:
     raise RuntimeError(
         f"Cannot build `{MODULE_NAME}`: `nvcc` not found. "
-        f"CUDA_HOME={CUDA_HOME!r}. Ensure `{os.path.join(CUDA_HOME, 'bin')}` is on PATH, then retry."
+        f"CUDA_HOME={CUDA_HOME!r}. BuildExtension will invoke "
+        f"`{os.path.join(CUDA_HOME, 'bin', NVCC_EXECUTABLE_NAMES[0])}`. "
+        + (f"`shutil.which('nvcc')` currently resolves to {path_nvcc!r}. " if path_nvcc else "")
+        + "Fix the CUDA toolkit installation or `CUDA_HOME`/`CUDA_PATH`, then retry."
     )
 
 cuda_arch_list_env = os.getenv("TORCH_CUDA_ARCH_LIST")
@@ -55,6 +63,11 @@ cuda_arch_list_source = "env" if cuda_arch_list_selected != "<torch-default>" el
 print(
     "[attention_sram_v1.build] "
     f"cuda_arch_list={cuda_arch_list_selected} cuda_arch_source={cuda_arch_list_source}"
+)
+print(
+    "[attention_sram_v1.build] "
+    f"host_compiler_flags={' '.join(CXX_COMPILE_ARGS)} nvcc_path={nvcc_path} "
+    f"path_nvcc={path_nvcc or '<none>'}"
 )
 
 sources = [
@@ -67,7 +80,7 @@ ext_modules = [
         name=MODULE_NAME,
         sources=sources,
         extra_compile_args={
-            "cxx": ["-O3"],
+            "cxx": CXX_COMPILE_ARGS,
             "nvcc": ["-O3", "--use_fast_math", "-lineinfo"],
         },
     )

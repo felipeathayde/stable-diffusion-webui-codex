@@ -64,7 +64,9 @@ Symbols (top-level; keep in sync; no ghosts):
           title="Choose run action"
           @click="toggleActionMenu"
         >
-          ▾
+          <svg class="run-primary-split__menu-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+            <path d="M5.5 7.75L10 12.25L14.5 7.75" />
+          </svg>
         </button>
       </div>
 
@@ -435,18 +437,23 @@ function onDocumentKeyDown(event: KeyboardEvent): void {
 
 function updateActionMenuPosition(): void {
   const toggle = actionMenuToggleEl.value
-  if (!toggle) return
+  const panel = actionMenuPanelEl.value
+  if (!toggle || !panel) return
   const rect = toggle.getBoundingClientRect()
+  const panelWidth = Math.max(panel.offsetWidth, panel.getBoundingClientRect().width)
   const viewportPadding = 8
   const gap = 6
   const top = rect.bottom + gap
-  const right = Math.max(viewportPadding, window.innerWidth - rect.right)
+  const left = Math.min(
+    Math.max(viewportPadding, rect.left),
+    window.innerWidth - panelWidth - viewportPadding,
+  )
   const maxHeight = Math.max(120, window.innerHeight - top - viewportPadding)
 
   actionMenuStyle.value = {
     position: 'fixed',
     top: `${top}px`,
-    right: `${right}px`,
+    left: `${left}px`,
     maxHeight: `${maxHeight}px`,
   }
 }

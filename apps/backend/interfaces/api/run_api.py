@@ -8,7 +8,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
-This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files only when explicit embedded app mode is enabled (uses lifespan handlers for startup hooks; no deprecated `on_event`).
+This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir/tests), and mounts the built UI as SPA static files only when explicit embedded app mode is enabled (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
 Bootstrap env publication includes LoRA loader policies (`CODEX_LORA_APPLY_MODE`, `CODEX_LORA_MERGE_MODE`, `CODEX_LORA_REFRESH_SIGNATURE`) from resolved runtime namespace values.
 Startup settings normalization preserves `codex_options_revision` while pruning unknown keys and failing loud on invalid reliability-critical values
@@ -61,7 +61,7 @@ from apps.backend.services.output_service import save_generated_images as _save_
 from apps.backend.services.media_service import MediaService
 from apps.backend.services.live_preview_service import LivePreviewService
 from apps.backend.interfaces.api.path_utils import CODEX_ROOT
-from apps.backend.interfaces.api.routers import generation, models, options, paths, settings, supir, system, tasks, tools, ui, upscale
+from apps.backend.interfaces.api.routers import generation, models, options, paths, settings, supir, system, tasks, tests, tools, ui, upscale
 from apps.backend.services import options_store
 from apps.backend.infra.config import args as config_args
 from apps.backend.runtime.diagnostics.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
@@ -445,6 +445,8 @@ def scan_range(r: Tuple[int, int], host: str = '0.0.0.0') -> Optional[int]:
 def pick_api_port_simple(base: int, host: str = '0.0.0.0') -> Tuple[int, bool]:
     # Try base -> base+10000 -> base+20000
     for i, candidate in enumerate((base, base + 10000, base + 20000)):
+        if candidate < 1 or candidate > 65535:
+            continue
         if port_free(candidate, host):
             return candidate, (i != 0)
     raise RuntimeError(f'No free API port among {base}, {base+10000}, {base+20000}')
@@ -669,6 +671,7 @@ def build_app(*, app_mode_profile: str | None = None) -> FastAPI:
         setting_type=_SettingType,
     ))
     app.include_router(tasks.build_router(codex_root=CODEX_ROOT, backend_state=backend_state))
+    app.include_router(tests.build_router())
     app.include_router(tools.build_router(codex_root=CODEX_ROOT))
     app.include_router(upscale.build_router(
         codex_root=CODEX_ROOT,
@@ -904,6 +907,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         if candidate is not None:
             # If chosen override busy, hop by +10000
             for c in (candidate, candidate + 10000, candidate + 20000):
+                if c < 1 or c > 65535:
+                    continue
                 if port_free(c, host):
                     port = c
                     used_fallback = (c != candidate)

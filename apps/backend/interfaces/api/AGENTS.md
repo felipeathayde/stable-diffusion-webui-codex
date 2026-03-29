@@ -16,6 +16,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/paths.py` — `apps/paths.json` endpoints.
 - `apps/backend/interfaces/api/routers/options.py` — options store read/update/validate endpoints.
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
+- `apps/backend/interfaces/api/routers/tests.py` — bounded backend diagnostics endpoints.
 - `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + SafeTensors merge + file browser endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
 - `apps/backend/interfaces/api/wan_video_request_keys.py` — backend API-owned WAN video request-key allowlists used by `routers/generation.py`.
@@ -31,6 +32,8 @@ Status: Active
 
 ## Notes
 - `run_api.py` is composition-only: it wires routers and mounts the UI; route logic lives in `routers/`.
+- `routers/tests.py` is the bounded live-diagnostics owner for backend validation routes; keep test/diagnostic logic out of `system.py` unless the surface is truly health-level and lightweight.
+- 2026-03-28: launcher-started API fallback truth now lives in `apps/launcher/services.py`, while `run_api.py` remains the direct-run self-defense seam; `run_api.py` also wires the bounded `/api/tests/attention/sram/splitkv` router for live SRAM split-KV diagnostics.
 - Task state is centralized in `task_registry.py` so generation + tasks routers share cancellation/status logic.
 - 2026-03-06: WAN video request allowlists are backend API-owned in `wan_video_request_keys.py`; `routers/generation.py` consumes them directly, and `runtime/state_dict/keymap_wan22_transformer.py` no longer owns HTTP request-key authority.
 - 2026-03-08: `/api/samplers` is the executable sampler surface: backend support flags are implementation-backed (not enum/catalog-only), the route must fail loud if a `supported=true` sampler is missing registry metadata, and frontend filtering is expected to honor `supported !== false`.

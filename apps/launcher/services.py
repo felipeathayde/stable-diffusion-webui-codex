@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Launcher service specs and process supervision (API + UI).
-Defines service specs/handles, spawns subprocesses with environment overrides, streams logs into a shared buffer, and performs strict port
-availability checks (IPv4/IPv6) before starting the API.
+Defines service specs/handles, spawns subprocesses with environment overrides, streams logs into a shared buffer, performs strict port
+availability checks (IPv4/IPv6), and resolves launcher-owned API fallback ports before spawning the backend child.
 Maps launcher env toggles to backend CLI flags, including main/mount/offload bootstrap device flags, with offload defaulting to CPU when unset,
 plus trace/profiler diagnostics toggles.
 App startup mode is explicit via mode profiles (`dev_service` or `embedded`) with fail-loud preflight gates before mode activation.
@@ -25,6 +25,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_parse_pytorch_cuda_alloc_conf` (function): Parses `PYTORCH_CUDA_ALLOC_CONF` entries into strict `key:value` pairs.
 - `_ensure_cuda_malloc_async_allocator_env` (function): Enforces allocator backend `cudaMallocAsync` when `CODEX_CUDA_MALLOC=1`.
 - `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings (device defaults, attention backend/SDPA policy, LoRA/runtime toggles; offload defaults to CPU when unset).
+- `_parse_port_like_value` (function): Parses a port-like value into a valid TCP port or returns `None`.
+- `_api_port_candidate_chain` (function): Returns the launcher/API fallback chain for a requested/base API port.
+- `_resolve_api_runtime_port` (function): Resolves the effective launcher-owned API port before spawn and reports whether fallback was used.
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
 - `_windows_no_activate` (function): Windows startupinfo helper to open consoles without stealing focus.
@@ -115,6 +118,7 @@ class CodexServiceHandle:
     started_at: Optional[float] = None
     last_exit_code: int | None = None
     process_group_id: int | None = None
+    effective_port: int | None = None
     _stop_requested: bool = False
     _stop_reason: str | None = None
     _stdout_thread: Optional[threading.Thread] = None
@@ -139,31 +143,21 @@ class CodexServiceHandle:
         _sanitize_allocator_env_contract(env, scope_label=self.spec.name)
 
         command = list(self.spec.command)
+        resolved_api_port: int | None = None
         if self.spec.name.upper() == "API":
             resolved_mode = _resolve_requested_mode_profile(preferred_profile=None, env=env)
             _assert_mode_preflight(resolved_mode, self.spec.cwd)
             if _env_truthy(env.get("CODEX_CUDA_MALLOC")):
                 _ensure_cuda_malloc_async_allocator_env(env)
             command.extend(_api_backend_args_from_env(env))
-            port = _extract_cli_port(command)
-            if port is None:
-                raw_env_port = env.get("API_PORT_OVERRIDE") or env.get("API_PORT")
-                if raw_env_port is not None:
-                    try:
-                        port = int(str(raw_env_port).strip())
-                    except Exception:
-                        port = None
-            if port is not None:
-                ok, blocked = _port_free_everywhere(port)
-                if not ok:
-                    hint = (
-                        f"API port {port} is busy ({blocked}). "
-                        "You may already have Codex running (WSL/Windows) or another service bound on IPv4/IPv6 localhost. "
-                        "Stop the other instance or set API_PORT_OVERRIDE/WEB_PORT to a free pair."
-                    )
-                    if self.log_buffer:
-                        self.log_buffer.log("launcher", hint)
-                    raise RuntimeError(hint)
+            resolved_api_port, requested_api_port, used_fallback = _resolve_api_runtime_port(command=command, env=env)
+            env["API_PORT_OVERRIDE"] = str(resolved_api_port)
+            if used_fallback:
+                fallback_message = (
+                    f"API port {requested_api_port} is busy; using fallback {resolved_api_port}."
+                )
+                if self.log_buffer:
+                    self.log_buffer.log("launcher", fallback_message)
         flags = 0
         startupinfo = None
         use_external = external_terminal and self.spec.allow_external_terminal
@@ -190,6 +184,7 @@ class CodexServiceHandle:
             self._stop_reason = None
             self.last_exit_code = None
             self.process_group_id = None
+            self.effective_port = resolved_api_port
         try:
             popen_kwargs: dict[str, object] = {}
             if os.name != "nt" and not use_external:
@@ -212,6 +207,7 @@ class CodexServiceHandle:
                 self.status = ServiceStatus.ERROR
                 self.pid = None
                 self.process = None
+                self.effective_port = None
             LOGGER.error("Failed to start %s: %s", self.spec.name, exc)
             raise
 
@@ -240,6 +236,7 @@ class CodexServiceHandle:
                 self.process = None
                 self.process_group_id = None
                 self.started_at = None
+                self.effective_port = None
                 return
             LOGGER.info("Stopping service %s", self.spec.name)
             self._stop_requested = True
@@ -279,6 +276,7 @@ class CodexServiceHandle:
                     self.process = None
                     self.process_group_id = None
                     self.started_at = None
+                    self.effective_port = None
             if self.log_buffer and exit_code is not None:
                 self.log_buffer.log(self.spec.name, f"{reason} (code {exit_code})", stream="event")
 
@@ -291,6 +289,7 @@ class CodexServiceHandle:
                 self.process = None
                 self.process_group_id = None
                 self.started_at = None
+                self.effective_port = None
                 return
             LOGGER.warning("Killing service %s", self.spec.name)
             self._stop_requested = True
@@ -318,6 +317,7 @@ class CodexServiceHandle:
                     self.process = None
                     self.process_group_id = None
                     self.started_at = None
+                    self.effective_port = None
             if self.log_buffer and exit_code is not None:
                 self.log_buffer.log(self.spec.name, f"{reason} (code {exit_code})", stream="event")
 
@@ -379,6 +379,7 @@ class CodexServiceHandle:
             self.process = None
             self.process_group_id = None
             self.started_at = None
+            self.effective_port = None
         if self.log_buffer and not self._stop_requested:
             self.log_buffer.log(self.spec.name, message, stream="event")
 
@@ -742,6 +743,49 @@ def _extract_cli_port(command: List[str]) -> int | None:
             except Exception:
                 return None
     return None
+
+
+def _parse_port_like_value(raw_value: object) -> int | None:
+    try:
+        parsed = int(str(raw_value or "").strip())
+    except (TypeError, ValueError):
+        return None
+    if parsed < 1 or parsed > 65535:
+        return None
+    return int(parsed)
+
+
+def _api_port_candidate_chain(base_port: int) -> tuple[int, int, int]:
+    normalized_base = int(base_port)
+    return (
+        normalized_base,
+        normalized_base + 10000,
+        normalized_base + 20000,
+    )
+
+
+def _resolve_api_runtime_port(*, command: List[str], env: Mapping[str, str]) -> tuple[int, int, bool]:
+    requested_port = _extract_cli_port(command)
+    if requested_port is None:
+        requested_port = _parse_port_like_value(env.get("API_PORT_OVERRIDE") or env.get("API_PORT"))
+    if requested_port is None:
+        requested_port = 7850
+    blocked_details: list[str] = []
+    for index, candidate in enumerate(_api_port_candidate_chain(requested_port)):
+        if candidate < 1 or candidate > 65535:
+            blocked_details.append(f"{candidate} (out_of_range)")
+            continue
+        ok, blocked = _port_free_everywhere(candidate)
+        if ok:
+            return int(candidate), int(requested_port), bool(index != 0)
+        blocked_details.append(f"{candidate} ({blocked or 'busy'})")
+    blocked_summary = ", ".join(blocked_details)
+    raise RuntimeError(
+        "No free API port in launcher fallback chain. "
+        f"Tried: {blocked_summary}. "
+        "You may already have Codex running (WSL/Windows) or another service bound on IPv4/IPv6 localhost. "
+        "Stop the other instance or set API_PORT_OVERRIDE/WEB_PORT to a free pair."
+    )
 
 
 def _port_free_everywhere(port: int) -> tuple[bool, str]:

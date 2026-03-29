@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Non-UI controller for the Tk launcher.
 Wraps launcher infrastructure (profiles, services, logs) behind a small imperative API so tabs don’t reach into internals.
-Builds service-scoped environments so API-only manual env overlays are applied only to API starts/restarts.
+Builds service-scoped environments so API-only manual env overlays are applied only to API starts/restarts, and so UI starts inherit the
+running API service's launcher-resolved port when available.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LauncherController` (class): Holds store/services/log_buffer and provides service + persistence helpers.
@@ -23,7 +24,7 @@ from typing import Dict, Mapping
 
 from apps.launcher.log_buffer import CodexLogBuffer
 from apps.launcher.profiles import LauncherProfileStore
-from apps.launcher.services import CodexServiceHandle
+from apps.launcher.services import CodexServiceHandle, ServiceStatus
 
 
 @dataclass(slots=True)
@@ -38,9 +39,18 @@ class LauncherController:
 
     def build_env_for_service(self, name: str) -> dict[str, str]:
         env = self.store.build_env()
-        if str(name or "").strip().upper() != "API":
+        normalized_name = str(name or "").strip().upper()
+        if normalized_name == "API":
+            env.update(self.store.build_manual_api_env_overlay())
             return env
-        env.update(self.store.build_manual_api_env_overlay())
+        if normalized_name == "UI":
+            api_service = self.services.get("API")
+            if (
+                api_service is not None
+                and api_service.status in {ServiceStatus.STARTING, ServiceStatus.RUNNING}
+                and api_service.effective_port is not None
+            ):
+                env["API_PORT"] = str(api_service.effective_port)
         return env
 
     @property

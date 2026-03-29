@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Services tab for the Tk launcher.
 Shows API/UI status and provides controls for start/restart/stop/kill, backed by `CodexServiceHandle`.
-Runtime env previews are service-scoped so API-only manual env overlays do not leak into UI service resolution.
+Runtime env previews are service-scoped so API-only manual env overlays do not leak into UI service resolution, and API endpoint/docs actions
+prefer the running API handle's launcher-resolved port when available.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ServicesTab` (class): Services tab view/controller for the launcher GUI.
@@ -298,7 +299,10 @@ class ServicesTab:
         service = self._controller.services[service_name]
         if service_name == "API":
             host = _browser_host(str(env.get("API_HOST", "localhost")))
-            api_port = self._parse_port(
+            runtime_port = None
+            if service.status in {ServiceStatus.STARTING, ServiceStatus.RUNNING} and service.effective_port is not None:
+                runtime_port = int(service.effective_port)
+            api_port = int(runtime_port) if runtime_port is not None else self._parse_port(
                 env.get("API_PORT_OVERRIDE", service.spec.base_env.get("API_PORT_OVERRIDE", "7850")),
                 default=7850,
             )

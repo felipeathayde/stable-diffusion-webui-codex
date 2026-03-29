@@ -39,6 +39,7 @@ Last Review: 2026-02-25
 - 2026-02-23: Runtime tab now renders from declarative descriptors via `form_schema.py` + `form_renderer.py` (reduces manual widget boilerplate and centralizes form behavior).
 - 2026-02-23: Services tab now shows resolved endpoints and quick actions (`Open`, API `Docs`) with no health polling/status row in the UI.
 - 2026-02-23: Services tab now resolves effective UI port via `.webui-ui-<port>.pid` (port-guard output) so endpoint/open follow fallback ports (`+10000/+20000`) when base `WEB_PORT` is busy.
+- 2026-03-28: `controller.py` now propagates the running API handle's launcher-resolved port into UI starts, and `tabs/services.py` now prefers that runtime API port for endpoint/docs actions while the API handle is active.
 - 2026-02-23: Visual revamp “Control Room”: updated palette/surfaces/buttons/inputs/status styles for stronger hierarchy and reduced legacy Tk look.
 - 2026-02-23: Runtime settings are now split into dedicated top-level tabs (`Bootstrap`, `Engine`, `Safety`) for clearer navigation and less nested chrome.
 - 2026-02-23: Advanced controls toggle moved to global footer (`app.py`) and now drives both Runtime and Diagnostics progressive disclosure.

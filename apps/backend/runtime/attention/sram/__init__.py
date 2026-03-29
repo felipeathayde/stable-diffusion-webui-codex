@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `is_rope_helper_available` (function): Returns whether the optional generic in-place RoPE helper op is available for the current SRAM mode.
 - `last_extension_error` (function): Returns the last extension load/build error details.
 - `warmup_extension_for_load` (function): Triggers extension load/build during model-load seam and performs a narrow readiness smoke call.
+- `warmup_extension_for_diagnostics` (function): Triggers a diagnostics-scoped build-enabled extension load retry before the same readiness smoke call.
 - `try_attention_pre_shaped` (function): Attempts generic SRAM attention dispatch for supported pre-shaped `[B,H,S,D]` Q/K/V tensors and returns output with `q` layout preserved.
 - `sram_attention_runtime_metrics_reset` (function): Resets per-run SRAM runtime metrics state.
 - `sram_attention_runtime_metrics_is_active` (function): Returns whether a SRAM runtime metrics context is active.
@@ -282,12 +283,12 @@ def _load_attempt_level(*, build: bool) -> int:
     return 1 if build else 0
 
 
-def _try_load_ext(*, build: bool) -> None:
+def _try_load_ext(*, build: bool, force_retry: bool = False) -> None:
     global _ext, _max_load_attempt_level, _rope_helper_available, _rope_helper_cache_attempt_level
     if _ext is not None and _has_ops():
         return
     attempt_level = _load_attempt_level(build=build)
-    if _max_load_attempt_level >= attempt_level:
+    if not force_retry and _max_load_attempt_level >= attempt_level:
         return
     _raise_on_retired_env_keys()
     _max_load_attempt_level = attempt_level
@@ -395,11 +396,16 @@ def _smoke_ready_call() -> str | None:
     return None
 
 
-def warmup_extension_for_load(mode: str | SramAttentionMode | None = None) -> SramAttentionWarmupStatus:
+def _warmup_extension(
+    *,
+    mode: str | SramAttentionMode | None,
+    build_enabled: bool,
+    force_retry: bool,
+    reason_label: str,
+) -> SramAttentionWarmupStatus:
     sram_mode = resolve_effective_sram_attention_mode(mode)
-    build_enabled = _jit_build_enabled()
     if sram_mode is SramAttentionMode.OFF:
-        logger.info("attention_sram warmup skipped at load (mode=off)")
+        logger.info("attention_sram warmup skipped at %s (mode=off)", reason_label)
         return SramAttentionWarmupStatus(
             mode=sram_mode,
             build_enabled=build_enabled,
@@ -409,8 +415,14 @@ def warmup_extension_for_load(mode: str | SramAttentionMode | None = None) -> Sr
             detail=None,
         )
 
-    logger.info("attention_sram warmup start (mode=%s jit_build=%s)", sram_mode.value, build_enabled)
-    _try_load_ext(build=build_enabled)
+    logger.info(
+        "attention_sram warmup start (%s mode=%s jit_build=%s force_retry=%s)",
+        reason_label,
+        sram_mode.value,
+        build_enabled,
+        force_retry,
+    )
+    _try_load_ext(build=build_enabled, force_retry=force_retry)
     loaded = _ext is not None and _has_ops()
     detail = last_extension_error()
     ready = False
@@ -423,7 +435,12 @@ def warmup_extension_for_load(mode: str | SramAttentionMode | None = None) -> Sr
             detail = smoke_error
 
     if ready:
-        logger.info("attention_sram warmup ready (mode=%s jit_build=%s)", sram_mode.value, build_enabled)
+        logger.info(
+            "attention_sram warmup ready (%s mode=%s jit_build=%s)",
+            reason_label,
+            sram_mode.value,
+            build_enabled,
+        )
         return SramAttentionWarmupStatus(
             mode=sram_mode,
             build_enabled=build_enabled,
@@ -445,7 +462,7 @@ def warmup_extension_for_load(mode: str | SramAttentionMode | None = None) -> Sr
         _fail(
             code=E_SRAM_ATTENTION_EXTENSION_UNAVAILABLE,
             message=(
-                "SRAM attention force mode requested but extension warmup failed during model load. "
+                f"SRAM attention force mode requested but extension warmup failed during {reason_label}. "
                 f"loaded={loaded} ready={ready} details={detail!r}"
             ),
         )
@@ -456,6 +473,24 @@ def warmup_extension_for_load(mode: str | SramAttentionMode | None = None) -> Sr
         loaded=loaded,
         ready=ready,
         detail=detail,
+    )
+
+
+def warmup_extension_for_load(mode: str | SramAttentionMode | None = None) -> SramAttentionWarmupStatus:
+    return _warmup_extension(
+        mode=mode,
+        build_enabled=_jit_build_enabled(),
+        force_retry=False,
+        reason_label="load",
+    )
+
+
+def warmup_extension_for_diagnostics(mode: str | SramAttentionMode | None = None) -> SramAttentionWarmupStatus:
+    return _warmup_extension(
+        mode=mode,
+        build_enabled=True,
+        force_retry=True,
+        reason_label="diagnostics",
     )
 
 

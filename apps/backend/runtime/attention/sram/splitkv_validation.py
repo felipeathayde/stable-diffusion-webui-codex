@@ -8,9 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Bounded live-validation helpers for the generic SRAM split-KV diagnostics route.
 Provides strict request parsing, a CPU-safe mirror of the current split-KV branch gate
-(split-count selection + temp-budget clamp), explicit bottom-right causal oracle math, and
-operator-useful live receipts that report exact execution failures instead of hiding expected
-precondition/runtime outcomes behind HTTP status gymnastics.
+(split-count selection + temp-budget clamp), diagnostics-scoped extension auto-build retry, explicit
+bottom-right causal oracle math, and operator-useful live receipts that report exact execution
+failures instead of hiding expected precondition/runtime outcomes behind HTTP status gymnastics.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SplitKvValidationInvalidRequest` (exception): Raised for invalid diagnostics request payload/config.
@@ -37,7 +37,7 @@ import torch
 from apps.backend.runtime.attention.sram import (
     SramAttentionContractError,
     try_attention_pre_shaped,
-    warmup_extension_for_load,
+    warmup_extension_for_diagnostics,
 )
 
 _HEAD_DIM: Final[int] = 128
@@ -208,7 +208,7 @@ def run_splitkv_validation(payload: SplitKvValidationRequest) -> SplitKvValidati
             reason_detail="CUDA is unavailable for SRAM split-KV validation",
         )
     try:
-        warmup = warmup_extension_for_load(mode=payload.mode)
+        warmup = warmup_extension_for_diagnostics(mode=payload.mode)
     except SramAttentionContractError as exc:
         return _build_failure_report(
             request=payload,

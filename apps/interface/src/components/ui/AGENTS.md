@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, ui, primitives -->
 # apps/interface/src/components/ui Overview
 Date: 2025-12-23
-Last Review: 2026-03-26
+Last Review: 2026-03-29
 Status: Active
 
 ## Purpose
@@ -22,9 +22,10 @@ Status: Active
 - `apps/interface/src/components/ui/inpaint_mask_editor_engine.ts` — Pure mask-editing engine used by the inpaint editor overlay (draw ops + bounded history + mask helpers).
 
 ## Notes
-- 2026-03-26: `InpaintMaskEditorOverlay.vue` now maps pointer coordinates from the actual mask-canvas rect/backing-store ratio instead of the generic content wrapper, and live brush/eraser moves coalesce through `requestAnimationFrame` while skipping full blur/crop preview recompute until commit/tool/param/source changes.
 - Keep components presentational: props in, emits out; no store calls or API fetching.
-- Styling should live under `apps/interface/src/styles/components/` and use `cdx-*` semantic classes.
+- Styling should live under `apps/interface/src/styles/components/` and use semantic classes.
+- If a reusable overlay or primitive keeps a sanctioned CSS-contract seam, the contract is owned by `.sangoi/reference/ui/frontend-css-contracts.md` and the verifier config; this file stays pointer-only and must not enumerate live exception symbols or rationales.
+- 2026-03-26: `InpaintMaskEditorOverlay.vue` now maps pointer coordinates from the actual mask-canvas rect/backing-store ratio instead of the generic content wrapper, and live brush/eraser moves coalesce through `requestAnimationFrame` while skipping full blur/crop preview recompute until commit/tool/param/source changes.
 - 2026-01-03: Added standardized file header blocks to UI primitive components (doc-only change; part of rollout).
 - 2026-01-13: `JsonTreeView.vue` supports expand/collapse-all signals (used by the metadata modal controls).
 - 2026-01-29: Added `Dropzone.vue` with styles in `apps/interface/src/styles/components/cdx-dropzone.css`.

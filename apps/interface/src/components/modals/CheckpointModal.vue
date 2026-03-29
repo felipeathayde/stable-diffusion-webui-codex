@@ -30,7 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
     <div class="panel-section modal-list-section">
       <ul class="list" role="listbox">
-        <li v-for="m in filtered" :key="m.title" class="list-item clickable" @click="apply(m.title)">
+        <li v-for="m in filtered" :key="m.title" class="cdx-list-item clickable" @click="apply(m.title)">
           <div class="flex items-center justify-between">
             <span>{{ m.title }}</span>
             <span class="caption opacity-70">{{ m.model_name }}</span>

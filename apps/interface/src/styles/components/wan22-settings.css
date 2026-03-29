@@ -18,18 +18,6 @@
   min-width: 0;
 }
 
-.wan22-field--sm {
-  flex: 1 1 12rem;
-}
-
-.wan22-field--wide {
-  flex: 2 1 24rem;
-}
-
-.wan22-field--full {
-  flex: 1 1 100%;
-}
-
 .wan22-toggle-row {
   display: flex;
   flex-wrap: wrap;

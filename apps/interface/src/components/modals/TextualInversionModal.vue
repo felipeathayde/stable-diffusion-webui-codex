@@ -29,7 +29,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
     <div class="panel-section modal-list-section">
       <ul class="list" role="listbox">
-        <li v-for="name in filtered" :key="name" class="list-item clickable" @click="insert(name)">
+        <li v-for="name in filtered" :key="name" class="cdx-list-item clickable" @click="insert(name)">
           {{ name }}
         </li>
       </ul>

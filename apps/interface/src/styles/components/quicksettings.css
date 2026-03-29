@@ -23,11 +23,29 @@
   }
 
   .quicksettings-advanced-collapse {
+    --qs-advanced-target-height: 0px;
     overflow: hidden;
     transform-origin: top;
     will-change: height, opacity;
     padding-left: calc(var(--control-h-md) + 0.8rem);
     position: relative;
+    height: var(--qs-advanced-target-height);
+    opacity: 1;
+    transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease;
+  }
+
+  .quicksettings-advanced-collapse[data-ready='false'] {
+    transition: none;
+  }
+
+  .quicksettings-advanced-collapse[data-state='closed'] {
+    height: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .quicksettings-advanced-collapse[data-state='open'] {
+    height: var(--qs-advanced-target-height);
   }
 
   .quicksettings-advanced-collapse::before {
@@ -79,7 +97,6 @@
   }
   .quicksettings .qs-group-overrides { flex: 0 0 auto; }
   .quicksettings .qs-group-advanced-toggle { flex: 0 0 auto; }
-  .quicksettings .qs-group-perf-vram { flex: 0 0 auto; min-width: 80px; }
   .quicksettings .qs-group-perf-offload,
   .quicksettings .qs-group-perf-fallback,
   .quicksettings .qs-group-perf-cache,
@@ -141,9 +158,6 @@
   .quicksettings .qs-refresh-btn { padding-inline: 0.6rem; font-size: 0.75rem; }
   .quicksettings .qs-overrides-btn { padding: 0.3rem 0.5rem; font-size: 0.7rem; white-space: nowrap; }
   
-  .qs-actions { display: flex; align-items: center; gap: 0.4rem; }
-  .qs-paths-hint { flex-direction: column; }
-
   .qs-toggle-btn {
     height: 100%;
     padding: 0.3rem 0.65rem;
@@ -191,10 +205,6 @@
     filter: saturate(0.75);
     cursor: not-allowed;
   }
-
-  /* Hide legacy */
-  .quicksettings .qs-group-mode { display: none; }
-  .quicksettings .qs-group-perf-dtype { display: none; }
 
   .quicksettings.quicksettings-loading .select-md {
     animation: qs-select-pulse 0.85s ease-in-out infinite alternate;
@@ -349,7 +359,7 @@
   }
 
   .qs-add-path-row:hover {
-    background: color-mix(in srgb, var(--color-panel) 72%, var(--color-accent) 28%);
+    background: color-mix(in srgb, var(--color-panel) 72%, var(--color-primary) 28%);
   }
 
   .qs-add-path-row.is-error {

@@ -25,7 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <Modal v-model="open" title="LoRA Selector" panel-class="lora-modal-panel" :show-footer="false">
     <div class="lora-modal-toolbar">
-      <div class="lora-modal-field lora-modal-field--search">
+      <div class="lora-modal-field">
         <label class="label-muted">Search</label>
         <input class="ui-input" v-model="q" placeholder="type to filter..." />
       </div>
@@ -45,7 +45,7 @@ Symbols (top-level; keep in sync; no ghosts):
           <span class="lora-modal-item__name" :title="item.name">{{ item.name }}</span>
           <span class="lora-modal-item__actions">
             <button
-              :class="['btn', 'btn-sm', 'btn-secondary', 'lora-modal-action', 'lora-modal-action--positive', { 'is-active': isSelected(item, 'positive') }]"
+              :class="['btn', 'btn-sm', 'btn-secondary', 'lora-modal-action', { 'is-active': isSelected(item, 'positive') }]"
               type="button"
               :aria-pressed="isSelected(item, 'positive') ? 'true' : 'false'"
               :title="isSelected(item, 'positive') ? 'Remove from Prompt' : 'Insert into Prompt'"
@@ -54,7 +54,7 @@ Symbols (top-level; keep in sync; no ghosts):
               {{ isSelected(item, 'positive') ? 'Prompt ✓' : 'Prompt' }}
             </button>
             <button
-              :class="['btn', 'btn-sm', 'btn-outline', 'lora-modal-action', 'lora-modal-action--negative', { 'is-active': isSelected(item, 'negative') }]"
+              :class="['btn', 'btn-sm', 'btn-outline', 'lora-modal-action', { 'is-active': isSelected(item, 'negative') }]"
               type="button"
               :aria-pressed="isSelected(item, 'negative') ? 'true' : 'false'"
               :title="isSelected(item, 'negative') ? 'Remove from Negative Prompt' : 'Insert into Negative Prompt'"

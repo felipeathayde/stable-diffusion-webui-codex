@@ -16,10 +16,8 @@ workspace state, not a second raw sampler/scheduler control surface in the share
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
-- `cancelAdvancedAnimation` (function): Cancels in-flight advanced-row animations (used by toggling/resize logic).
-- `easeOutCubic` (function): Easing helper used for advanced-row animations.
-- `syncAdvancedHeight` (function): Measures/synchronizes advanced-row height for smooth expand/collapse transitions.
-- `toggleAdvancedRow` (function): Toggles the advanced row (uses animation helpers and persisted UI state).
+- `syncAdvancedTargetHeight` (function): Measures/synchronizes the advanced-row `--qs-advanced-target-height` CSS variable for class-driven collapse transitions.
+- `toggleAdvancedRow` (function): Toggles the advanced row persisted UI state.
 - `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
 - `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
 - `resolvedRouteTabFamily` (computed): Resolves the route-tab family from hydrated tab state or persisted tab refs.
@@ -92,7 +90,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <section :class="['quicksettings', { 'quicksettings-loading': isLoadingQuicksettings }]">
-    <div class="quicksettings-row quicksettings-row--main">
+    <div class="quicksettings-row">
       <div class="quicksettings-group qs-group-advanced-toggle">
         <div class="qs-row">
           <button
@@ -462,7 +460,12 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <div v-if="qsNotice" class="caption">{{ qsNotice }}</div>
 
-    <div ref="advancedRowEl" class="quicksettings-advanced-collapse" :data-state="advancedOpen ? 'open' : 'closed'">
+    <div
+      ref="advancedRowEl"
+      class="quicksettings-advanced-collapse"
+      :data-ready="advancedRowReady ? 'true' : 'false'"
+      :data-state="advancedOpen ? 'open' : 'closed'"
+    >
       <div ref="advancedRowInnerEl" class="quicksettings-row quicksettings-row--advanced-inner">
         <QuickSettingsPerf
           :smart-offload="store.smartOffload"
@@ -604,8 +607,8 @@ const QUICKSETTINGS_ADVANCED_OPEN_STORAGE_KEY = 'codex.quicksettings.advanced_op
 const advancedOpen = ref(true)
 const advancedRowEl = ref<HTMLElement | null>(null)
 const advancedRowInnerEl = ref<HTMLElement | null>(null)
-const advancedAnimating = ref(false)
-let advancedRafId: number | null = null
+const advancedRowReady = ref(false)
+let advancedRowResizeObserver: ResizeObserver | null = null
 
 try {
   const stored = localStorage.getItem(QUICKSETTINGS_ADVANCED_OPEN_STORAGE_KEY)
@@ -623,82 +626,18 @@ watch(advancedOpen, (isOpen) => {
   }
 })
 
-function cancelAdvancedAnimation(): void {
-  if (advancedRafId !== null) cancelAnimationFrame(advancedRafId)
-  advancedRafId = null
-}
-
-function easeOutCubic(t: number): number {
-  const clamped = Math.min(1, Math.max(0, t))
-  return 1 - Math.pow(1 - clamped, 3)
-}
-
-function syncAdvancedHeight(): void {
+function syncAdvancedTargetHeight(): void {
   const el = advancedRowEl.value
   const inner = advancedRowInnerEl.value
   if (!el || !inner) return
-  if (advancedAnimating.value) return
-  if (!advancedOpen.value) {
-    el.style.height = '0px'
-    el.style.opacity = '0'
-    return
-  }
-  const nextHeight = inner.getBoundingClientRect().height
-  if (nextHeight > 0) {
-    el.style.height = `${nextHeight}px`
-    el.style.opacity = ''
-  }
+
+  const nextHeight = Math.ceil(inner.getBoundingClientRect().height)
+  el.style.setProperty('--qs-advanced-target-height', `${nextHeight}px`)
+  if (!advancedRowReady.value) advancedRowReady.value = true
 }
 
 function toggleAdvancedRow(): void {
-  const el = advancedRowEl.value
-  if (!el) {
-    advancedOpen.value = !advancedOpen.value
-    return
-  }
-  if (advancedAnimating.value) return
-
-  cancelAdvancedAnimation()
-
-  const startHeight = el.getBoundingClientRect().height
-
-  const next = !advancedOpen.value
-  advancedOpen.value = next
-  advancedAnimating.value = true
-
-  el.style.pointerEvents = 'none'
-
-  const inner = advancedRowInnerEl.value
-  const targetHeight = next ? (inner?.getBoundingClientRect().height ?? el.scrollHeight) : 0
-  const durationMs = next ? 280 : 260
-  const fromOpacity = next ? 0 : 1
-  const toOpacity = next ? 1 : 0
-
-  el.style.height = `${startHeight}px`
-  el.style.opacity = `${fromOpacity}`
-
-  const startMs = performance.now()
-  const tick = (nowMs: number) => {
-    const t = (nowMs - startMs) / durationMs
-    const eased = easeOutCubic(t)
-    const currentHeight = startHeight + (targetHeight - startHeight) * eased
-    const currentOpacity = fromOpacity + (toOpacity - fromOpacity) * eased
-    el.style.height = `${currentHeight}px`
-    el.style.opacity = `${currentOpacity}`
-
-    if (t < 1) {
-      advancedRafId = requestAnimationFrame(tick)
-      return
-    }
-
-    advancedRafId = null
-    el.style.height = `${targetHeight}px`
-    el.style.opacity = next ? '' : '0'
-    el.style.pointerEvents = ''
-    advancedAnimating.value = false
-  }
-
-  advancedRafId = requestAnimationFrame(tick)
+  advancedOpen.value = !advancedOpen.value
 }
 
 type UiPresetTab = 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid'
@@ -2354,8 +2293,14 @@ function openOverrides(): void {
 }
 
 onMounted(() => {
-  window.addEventListener('resize', syncAdvancedHeight)
-  requestAnimationFrame(syncAdvancedHeight)
+  const inner = advancedRowInnerEl.value
+  if (inner) {
+    advancedRowResizeObserver = new ResizeObserver(() => {
+      syncAdvancedTargetHeight()
+    })
+    advancedRowResizeObserver.observe(inner)
+  }
+  requestAnimationFrame(syncAdvancedTargetHeight)
   void Promise.allSettled([
     initQuicksettings(),
   ]).then((results) => {
@@ -2368,10 +2313,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  cancelAdvancedAnimation()
+  advancedRowResizeObserver?.disconnect()
+  advancedRowResizeObserver = null
   showAddPathModal.value = false
   closePathInputModal()
-  window.removeEventListener('resize', syncAdvancedHeight)
 })
 
 watch(() => route.path, async () => {

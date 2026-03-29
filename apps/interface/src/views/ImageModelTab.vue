@@ -421,7 +421,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <ResultsCard :showGenerate="false" headerClass="three-cols" headerRightClass="results-header-actions">
         <template #header-right>
-          <div class="gentime-display" v-if="gentimeSeconds !== null">
+          <div v-if="gentimeSeconds !== null">
             <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
           </div>
           <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">

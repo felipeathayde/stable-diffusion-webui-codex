@@ -19,8 +19,8 @@ Status: Active
 - 2025-12-15: Panels were restyled to render as cards (`.gen-card`) inside WANTab’s “Generation Parameters” panel, using responsive `.wan22-grid` + `.wan22-toggle*` classes.
 - 2025-12-20: Removed stage-level “Lightning/Use LoRA” checkboxes; LoRA selection is now a per-stage `<select>` shown only in `LightX2V` mode (WAN QuickSettings).
 - 2025-12-22: `WanStagePanel.vue` now uses SDXL-style sliders + steppers for Steps/CFG and moves seed actions (🎲/↺) inside the seed input.
-- 2025-12-22: `wan22-settings.css` switches `.wan22-grid` to flex-wrap and adds `wan22-field--{sm,wide,full}` sizing helpers; WAN panels now use these helpers to keep sliders readable without hard grid columns.
-- 2025-12-23: WAN panels now use shared gen-card layout primitives (`gc-row`, `gc-col`, `row-split`, `cdx-form-row`) and the new `gen-card--embedded` variant, reducing `wan22-*` layout classes in the tab UI.
+- 2025-12-22: `wan22-settings.css` keeps `wan22-grid` as the owner of the WAN 2.2 field wrap/layout; there is no second helper tier for per-field size aliases.
+- 2025-12-23: WAN panels use shared gen-card layout primitives (`gc-row`, `gc-col`, `row-split`) and the `gen-card--embedded` variant; do not reintroduce parallel `wan22-*` or `cdx-form-row` layout helper layers.
 - 2025-12-23: `WanStagePanel.vue` renders Steps/CFG via `components/ui/SliderField.vue` (label+input header, slider below) for parity with the rest of the WebUI.
 - 2025-12-23: WAN sliders use `cdx-input-w-md` sizing (removes WAN-only `w-step/w-cfg` CSS).
 - 2025-12-26: `WanStagePanel.vue` now places Sampler/Scheduler/Steps on the first row and Seed/CFG on the second; LoRA UI was extracted into `WanStageLoraField.vue`.

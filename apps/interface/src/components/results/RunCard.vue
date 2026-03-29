@@ -112,7 +112,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <template #header-right>
       <template v-if="props.showBatchControls">
-        <div class="run-control run-batch-menu" :class="{ 'is-open': isBatchMenuOpen }">
+        <div class="run-control run-batch-menu">
           <button
             ref="batchMenuToggleEl"
             class="btn btn-sm btn-outline run-batch-menu__toggle"

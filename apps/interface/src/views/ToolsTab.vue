@@ -54,7 +54,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="panel-body">
         <p class="subtitle">Utilities for model conversion and management</p>
 
-        <div class="gen-card cdx-tools-card">
+        <div class="gen-card">
           <div>
             <div class="h3">GGUF Converter</div>
             <p class="caption">Convert Safetensors weights to GGUF format</p>
@@ -128,7 +128,7 @@ Symbols (top-level; keep in sync; no ghosts):
 		            </button>
 		            <select
 		              v-if="ggufForm.mixed && mixedSupported"
-		              class="select-md cdx-tools-precision-mode"
+		              class="select-md"
 		              v-model="ggufForm.precisionMode"
 		              :disabled="isConverting"
 		              title="Select mixed precision policy"
@@ -200,7 +200,7 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
         </div>
 
-        <div class="gen-card cdx-tools-card">
+        <div class="gen-card">
           <div>
             <div class="h3">Safetensors Merger</div>
             <p class="caption">Merge Safetensors file, sharded index, or folder inputs into one output file</p>

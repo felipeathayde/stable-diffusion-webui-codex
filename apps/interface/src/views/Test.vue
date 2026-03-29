@@ -25,7 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <template>
   <section class="panels test-view">
     <div class="panel-stack">
-      <div class="panel test-view-panel">
+      <div class="panel">
         <div class="panel-header">WAN GGUF Harness</div>
         <div class="panel-body">
           <div class="test-section">

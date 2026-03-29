@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 -->
 
 <template>
-  <section class="panels pnginfo-panels">
+  <section class="panels">
     <div class="panel-stack">
       <div class="panel">
         <div class="panel-header">Drop PNG</div>

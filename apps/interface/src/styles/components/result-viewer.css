@@ -100,10 +100,6 @@
     line-height: 1.2;
     color: rgba(255, 255, 255, 0.9);
   }
-  .image-zoom-guide-edit-row {
-    display: grid;
-    gap: 0.25rem;
-  }
   .image-zoom-guide-size-grid {
     display: grid;
     grid-template-columns: auto 1fr;

@@ -1,6 +1,6 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Last Review: 2026-03-22
+Last Review: 2026-03-29
 Status: Active
 
 ## Purpose
@@ -53,6 +53,7 @@ Status: Active
 - 2026-03-24: `lora_loader.py` now normalizes GGUF re-quantization inputs through a NumPy-safe CPU float bridge; BF16 merged tensors are promoted to FP32 before `.numpy()` so GGUF-backed LoRA refresh does not die on `Got unsupported ScalarType BFloat16` while non-GGUF merge/output behavior stays unchanged.
 - 2026-03-02: `vae.py` now reports encode/decode block progress into `BackendState` during both tiled and non-tiled paths (including OOM fallback retries), so use-case progress polling can surface VAE phase progress in task streams.
 - 2026-03-05: `vae.py` now consumes shared tiled geometry policy from `runtime/common/vae_tiled.py` (`resolve_vae_decode_tiled_geometry` + `VaeTileGeometry`/window iterator); decode fallback defaults remain `64/64/16` for non-Anima, with `ModelFamily.ANIMA` override `48/48/24`.
+- 2026-03-29: `unet.py::_iter_transformer_coordinates()` must enumerate every internal `SpatialTransformer.transformer_blocks[]` entry, not merely the number of `SpatialTransformer` modules. The patch key `(block_name, block_index, transformer_index)` only has one transformer slot per block, so if a `TimestepEmbedSequential` ever carries more than one `SpatialTransformer`, the patcher must fail loud instead of silently collapsing coordinates.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

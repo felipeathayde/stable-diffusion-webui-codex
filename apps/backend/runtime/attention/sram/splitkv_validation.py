@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Bounded live-validation helpers for the generic SRAM split-KV diagnostics route.
 Provides strict request parsing, a CPU-safe mirror of the current split-KV branch gate
 (split-count selection + temp-budget clamp), explicit bottom-right causal oracle math, and
-live CUDA execution receipts for one control case plus one split-taking case.
+operator-useful live receipts that report exact execution failures instead of hiding expected
+precondition/runtime outcomes behind HTTP status gymnastics.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SplitKvValidationInvalidRequest` (exception): Raised for invalid diagnostics request payload/config.
@@ -55,11 +56,15 @@ class SplitKvValidationInvalidRequest(RuntimeError):
 
 
 class SplitKvValidationPreconditionFailure(RuntimeError):
-    pass
+    def __init__(self, *, code: str, message: str):
+        super().__init__(str(message))
+        self.code = str(code)
 
 
 class SplitKvValidationInternalInvariant(RuntimeError):
-    pass
+    def __init__(self, *, code: str, message: str):
+        super().__init__(str(message))
+        self.code = str(code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,15 +115,18 @@ class SplitKvCaseResult:
 @dataclass(frozen=True, slots=True)
 class SplitKvValidationReport:
     ok: bool
+    phase: str
+    reason_code: str | None
+    reason_detail: str | None
     mode: str
     seed: int
     atol: float
     rtol: float
-    device_name: str
-    device_index: int
-    num_sms: int
-    control_case: SplitKvCaseResult
-    split_case: SplitKvCaseResult
+    device_name: str | None
+    device_index: int | None
+    num_sms: int | None
+    control_case: SplitKvCaseResult | None
+    split_case: SplitKvCaseResult | None
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -140,14 +148,16 @@ _SPLIT_CASE_CANDIDATES: Final[tuple[SplitKvCaseDefinition, ...]] = (
 
 def parse_splitkv_validation_request(payload: Any) -> SplitKvValidationRequest:
     if payload is None:
-        payload = {}
+        raise SplitKvValidationInvalidRequest("payload must be a JSON object")
     if not isinstance(payload, dict):
         raise SplitKvValidationInvalidRequest("payload must be a JSON object")
     allowed_keys = {"mode", "seed", "atol", "rtol"}
     unknown_keys = sorted(str(key) for key in payload.keys() if key not in allowed_keys)
     if unknown_keys:
         raise SplitKvValidationInvalidRequest(f"unknown payload keys: {', '.join(unknown_keys)}")
-    mode = str(payload.get("mode", _DEFAULT_MODE) or "").strip().lower() or _DEFAULT_MODE
+    if "mode" not in payload:
+        raise SplitKvValidationInvalidRequest("mode is required and must be 'force'")
+    mode = str(payload.get("mode") or "").strip().lower()
     if mode != _DEFAULT_MODE:
         raise SplitKvValidationInvalidRequest("mode must be 'force'")
     try:
@@ -191,48 +201,178 @@ def run_splitkv_validation(payload: SplitKvValidationRequest) -> SplitKvValidati
     if str(payload.mode).strip().lower() != _DEFAULT_MODE:
         raise SplitKvValidationInvalidRequest("mode must be 'force'")
     if not torch.cuda.is_available():
-        raise SplitKvValidationPreconditionFailure("CUDA is unavailable for SRAM split-KV validation")
+        return _build_failure_report(
+            request=payload,
+            phase="preflight",
+            reason_code="E_SRAM_SPLITKV_CUDA_UNAVAILABLE",
+            reason_detail="CUDA is unavailable for SRAM split-KV validation",
+        )
     try:
         warmup = warmup_extension_for_load(mode=payload.mode)
     except SramAttentionContractError as exc:
-        raise SplitKvValidationPreconditionFailure(str(exc)) from exc
+        return _build_failure_report(
+            request=payload,
+            phase="warmup",
+            reason_code=str(exc.code),
+            reason_detail=str(exc),
+        )
     if not bool(warmup.loaded) or not bool(warmup.ready):
-        raise SplitKvValidationPreconditionFailure(
-            f"SRAM extension warmup failed: loaded={warmup.loaded} ready={warmup.ready} detail={warmup.detail!r}",
+        return _build_failure_report(
+            request=payload,
+            phase="warmup",
+            reason_code="E_SRAM_SPLITKV_WARMUP_NOT_READY",
+            reason_detail=(
+                f"SRAM extension warmup failed: loaded={warmup.loaded} "
+                f"ready={warmup.ready} detail={warmup.detail!r}"
+            ),
         )
     device_index = int(torch.cuda.current_device())
     device_properties = torch.cuda.get_device_properties(device_index)
+    device_name = str(torch.cuda.get_device_name(device_index))
     num_sms = int(device_properties.multi_processor_count)
     control_case = _select_case(_CONTROL_CASE_CANDIDATES, num_sms=num_sms, want_split=False)
     split_case = _select_case(_SPLIT_CASE_CANDIDATES, num_sms=num_sms, want_split=True)
     if control_case is None:
-        raise SplitKvValidationPreconditionFailure("No non-split control tuple matched the current device split-KV gate")
+        return _build_failure_report(
+            request=payload,
+            phase="case_selection",
+            reason_code="E_SRAM_SPLITKV_CONTROL_CASE_UNAVAILABLE",
+            reason_detail="No non-split control tuple matched the current device split-KV gate",
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+        )
     if split_case is None:
-        raise SplitKvValidationPreconditionFailure("No split-taking tuple matched the current device split-KV gate")
+        return _build_failure_report(
+            request=payload,
+            phase="case_selection",
+            reason_code="E_SRAM_SPLITKV_SPLIT_CASE_UNAVAILABLE",
+            reason_detail="No split-taking tuple matched the current device split-KV gate",
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+        )
     torch.manual_seed(int(payload.seed))
-    control_result = _run_live_case(
-        case=control_case,
-        request=payload,
-        device_index=device_index,
-        num_sms=num_sms,
-    )
-    split_result = _run_live_case(
-        case=split_case,
-        request=payload,
-        device_index=device_index,
-        num_sms=num_sms,
-    )
+    try:
+        control_result = _run_live_case(
+            case=control_case,
+            request=payload,
+            device_index=device_index,
+            num_sms=num_sms,
+        )
+    except SramAttentionContractError as exc:
+        return _build_failure_report(
+            request=payload,
+            phase="control_case",
+            reason_code=str(exc.code),
+            reason_detail=str(exc),
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+        )
+    except SplitKvValidationPreconditionFailure as exc:
+        return _build_failure_report(
+            request=payload,
+            phase="control_case",
+            reason_code=str(exc.code),
+            reason_detail=str(exc),
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+        )
+    except SplitKvValidationInternalInvariant as exc:
+        return _build_failure_report(
+            request=payload,
+            phase="control_case",
+            reason_code=str(exc.code),
+            reason_detail=str(exc),
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+        )
+    try:
+        split_result = _run_live_case(
+            case=split_case,
+            request=payload,
+            device_index=device_index,
+            num_sms=num_sms,
+        )
+    except SramAttentionContractError as exc:
+        return _build_failure_report(
+            request=payload,
+            phase="split_case",
+            reason_code=str(exc.code),
+            reason_detail=str(exc),
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+            control_case=control_result,
+        )
+    except SplitKvValidationPreconditionFailure as exc:
+        return _build_failure_report(
+            request=payload,
+            phase="split_case",
+            reason_code=str(exc.code),
+            reason_detail=str(exc),
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+            control_case=control_result,
+        )
+    except SplitKvValidationInternalInvariant as exc:
+        return _build_failure_report(
+            request=payload,
+            phase="split_case",
+            reason_code=str(exc.code),
+            reason_detail=str(exc),
+            device_name=device_name,
+            device_index=device_index,
+            num_sms=num_sms,
+            control_case=control_result,
+        )
     return SplitKvValidationReport(
         ok=True,
+        phase="completed",
+        reason_code=None,
+        reason_detail=None,
         mode=payload.mode,
         seed=int(payload.seed),
         atol=float(payload.atol),
         rtol=float(payload.rtol),
-        device_name=str(torch.cuda.get_device_name(device_index)),
+        device_name=device_name,
         device_index=device_index,
         num_sms=num_sms,
         control_case=control_result,
         split_case=split_result,
+    )
+
+
+def _build_failure_report(
+    *,
+    request: SplitKvValidationRequest,
+    phase: str,
+    reason_code: str,
+    reason_detail: str,
+    device_name: str | None = None,
+    device_index: int | None = None,
+    num_sms: int | None = None,
+    control_case: SplitKvCaseResult | None = None,
+    split_case: SplitKvCaseResult | None = None,
+) -> SplitKvValidationReport:
+    return SplitKvValidationReport(
+        ok=False,
+        phase=str(phase),
+        reason_code=str(reason_code),
+        reason_detail=str(reason_detail),
+        mode=request.mode,
+        seed=int(request.seed),
+        atol=float(request.atol),
+        rtol=float(request.rtol),
+        device_name=device_name,
+        device_index=device_index,
+        num_sms=num_sms,
+        control_case=control_case,
+        split_case=split_case,
     )
 
 
@@ -348,18 +488,25 @@ def _run_live_case(
     result = try_attention_pre_shaped(mode=request.mode, q=q, k=k, v=v, is_causal=case.is_causal)
     if result.output is None:
         raise SplitKvValidationPreconditionFailure(
-            "SRAM bridge returned fallback on a locked diagnostics tuple: "
-            f"reason_code={result.reason_code!r} reason_detail={result.reason_detail!r}",
+            code=str(result.reason_code or "E_SRAM_SPLITKV_ATTENTION_FALLBACK"),
+            message=(
+                "SRAM bridge returned fallback on a locked diagnostics tuple: "
+                f"reason_code={result.reason_code!r} reason_detail={result.reason_detail!r}"
+            ),
         )
     same_stride = tuple(int(value) for value in result.output.stride()) == tuple(int(value) for value in q.stride())
     out = result.output.float().cpu()
     max_abs_diff = float((out - ref).abs().max().item())
     allclose = bool(torch.allclose(out, ref, atol=request.atol, rtol=request.rtol))
     if not same_stride:
-        raise SplitKvValidationInternalInvariant(f"{case.name}: output stride no longer matches q layout")
+        raise SplitKvValidationInternalInvariant(
+            code="E_SRAM_SPLITKV_OUTPUT_STRIDE_DRIFT",
+            message=f"{case.name}: output stride no longer matches q layout",
+        )
     if not allclose:
         raise SplitKvValidationInternalInvariant(
-            f"{case.name}: parity failed (max_abs_diff={max_abs_diff:.6f}, atol={request.atol}, rtol={request.rtol})",
+            code="E_SRAM_SPLITKV_PARITY_FAILED",
+            message=f"{case.name}: parity failed (max_abs_diff={max_abs_diff:.6f}, atol={request.atol}, rtol={request.rtol})",
         )
     return SplitKvCaseResult(
         name=case.name,

@@ -42,10 +42,10 @@ Symbols (top-level; keep in sync; no ghosts):
     :showGenerate="false"
   >
     <template #header-center>
-      <div class="run-primary-split">
+      <div class="run-primary-split" :class="{ 'run-primary-split--split': showActionMenuButton }">
         <button
           :id="props.generateId || undefined"
-          :class="primaryButtonClass"
+          :class="[primaryButtonClass, 'run-primary-split__primary']"
           type="button"
           :disabled="primaryButtonDisabled"
           :title="primaryButtonTitle"
@@ -56,7 +56,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <button
           v-if="showActionMenuButton"
           ref="actionMenuToggleEl"
-          class="btn btn-md btn-primary results-generate run-primary-split__menu-toggle"
+          class="btn btn-md btn-primary run-primary-split__menu-toggle"
           type="button"
           :disabled="inputsDisabled"
           :aria-expanded="isActionMenuOpen ? 'true' : 'false'"
@@ -78,7 +78,7 @@ Symbols (top-level; keep in sync; no ghosts):
           aria-label="Run action menu"
         >
           <button
-            class="btn btn-sm btn-outline run-primary-split__menu-button"
+            class="btn btn-sm run-primary-split__menu-button"
             type="button"
             :disabled="inputsDisabled"
             @click="selectActionMode('generate')"
@@ -86,7 +86,7 @@ Symbols (top-level; keep in sync; no ghosts):
             {{ props.generateLabel }}
           </button>
           <button
-            class="btn btn-sm btn-outline run-primary-split__menu-button"
+            class="btn btn-sm run-primary-split__menu-button"
             type="button"
             :disabled="inputsDisabled"
             @click="selectActionMode('infinite')"
@@ -208,8 +208,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   title: 'Run',
   generateId: '',
-  generateButtonClass: 'btn btn-md btn-primary results-generate',
-  cancelButtonClass: 'btn btn-md btn-destructive results-generate',
+  generateButtonClass: 'btn btn-md btn-primary',
+  cancelButtonClass: 'btn btn-md btn-destructive',
   generateLabel: 'Generate',
   infiniteLabel: 'Infinite',
   runningLabel: 'Running…',

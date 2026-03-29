@@ -18,28 +18,23 @@
     padding-inline: 0;
     justify-content: center;
     align-items: center;
+    line-height: 0;
   }
 
   .run-primary-split__menu-icon {
-    width: 1rem;
-    height: 1rem;
+    width: 0.9375rem;
+    height: 0.9375rem;
     display: block;
-    stroke: currentColor;
-    stroke-width: 2.2;
-    fill: none;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    flex: 0 0 auto;
     pointer-events: none;
   }
 
   .run-primary-split--split > .run-primary-split__primary {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
+    border-radius: 0.625rem 0 0 0.625rem;
   }
 
   .run-primary-split--split > .run-primary-split__menu-toggle {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
+    border-radius: 0 0.625rem 0.625rem 0;
   }
 
   .run-primary-split__menu {

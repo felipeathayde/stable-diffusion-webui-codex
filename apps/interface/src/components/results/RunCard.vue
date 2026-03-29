@@ -64,8 +64,15 @@ Symbols (top-level; keep in sync; no ghosts):
           title="Choose run action"
           @click="toggleActionMenu"
         >
-          <svg class="run-primary-split__menu-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-            <path d="M5.5 7.75L10 12.25L14.5 7.75" />
+          <svg class="run-primary-split__menu-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path
+              d="M4 6.25L8 10.25L12 6.25"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
           </svg>
         </button>
       </div>
@@ -340,9 +347,12 @@ function toggleActionMenu(): void {
 
 function openActionMenu(): void {
   if (inputsDisabled.value || !showActionMenuButton.value) return
+  actionMenuStyle.value = hiddenMenuStyle()
   isActionMenuOpen.value = true
   void nextTick(() => {
-    updateActionMenuPosition()
+    window.requestAnimationFrame(() => {
+      updateActionMenuPosition()
+    })
   })
 }
 
@@ -390,18 +400,21 @@ function toggleBatchMenu(): void {
 function openBatchMenu(): void {
   if (inputsDisabled.value) return
 
+  batchMenuStyle.value = hiddenMenuStyle()
   isBatchMenuOpen.value = true
 
   void nextTick(() => {
-    updateBatchMenuPosition()
-    const firstInput = batchMenuPanelEl.value?.querySelector<HTMLInputElement>('input')
-    if (firstInput) {
-      try {
-        firstInput.focus({ preventScroll: true })
-      } catch {
-        firstInput.focus()
+    window.requestAnimationFrame(() => {
+      updateBatchMenuPosition()
+      const firstInput = batchMenuPanelEl.value?.querySelector<HTMLInputElement>('input')
+      if (firstInput) {
+        try {
+          firstInput.focus({ preventScroll: true })
+        } catch {
+          firstInput.focus()
+        }
       }
-    }
+    })
   })
 }
 
@@ -455,6 +468,7 @@ function updateActionMenuPosition(): void {
     top: `${top}px`,
     left: `${left}px`,
     maxHeight: `${maxHeight}px`,
+    visibility: 'visible',
   }
 }
 
@@ -474,6 +488,17 @@ function updateBatchMenuPosition(): void {
     top: `${top}px`,
     right: `${right}px`,
     maxHeight: `${maxHeight}px`,
+    visibility: 'visible',
+  }
+}
+
+function hiddenMenuStyle(): Record<string, string> {
+  return {
+    position: 'fixed',
+    top: '0px',
+    left: '-9999px',
+    maxHeight: '0px',
+    visibility: 'hidden',
   }
 }
 

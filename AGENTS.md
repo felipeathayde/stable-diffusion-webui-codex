@@ -28,14 +28,20 @@ You do **not** materialize eager `dict(...)` copies of checkpoint mappings as co
 
 ### ACT II – WHERE THE TRUTH LIVES: `.sangoi` AND REUSE
 
-Before you do anything else, you read `SUBSYSTEM-MAP.md`. You use it to find the real seam before you touch a file.
-If you don't know what to change, you don't guess — you search the map first.
-`SUBSYSTEM-MAP.md` is discovery and navigation only: concept-to-location, seam finding, and fast lookup.
+Before you do anything else, you read `SUBSYSTEM-MAP-INDEX.md` first. You use it to find the real seam, then jump into `SUBSYSTEM-MAP.md` only for the bounded hotspot/pipeline/owner section you need.
+If you don't know what to change, you don't guess — you search the index first.
+`SUBSYSTEM-MAP-INDEX.md` is lookup-only.
+`SUBSYSTEM-MAP.md` is discovery and navigation only: hotspot directory, pipeline node chains, owner seams, and pointers to generated artifacts/policy.
 Contract authority lives here in root `AGENTS.md` (policy) and in `.sangoi/reference/**` (detailed contracts). Keep those roles split. Do not dump contract matrices back into `SUBSYSTEM-MAP.md`.
-When touching `SUBSYSTEM-MAP.md`, run this operational checklist before handoff:
+When touching `SUBSYSTEM-MAP-INDEX.md` or `SUBSYSTEM-MAP.md`, run this operational checklist before handoff:
 
 - Keep it discovery-only (no contract matrices / drift ledgers).
+- Keep the index/map split honest:
+  - `SUBSYSTEM-MAP-INDEX.md` = lookup-only front door
+  - `SUBSYSTEM-MAP.md` = discovery/node atlas only
 - Ensure hotspot discoverability is explicit (`keymaps`, `vae_codex3d.py`, `hires_fix.py`).
+- Update `SUBSYSTEM-MAP-INDEX.md` and `SUBSYSTEM-MAP.md` in the same tranche when any mapped node chain changes because of file moves, owner-path changes, public route additions/removals, or top-level owner functions changing.
+- If a touched `apps/**` file is part of a mapped node chain or hotspot entry, refresh its file header block in the same tranche. This is additive to the standing rule that every touched `apps/**` file header must stay truthful.
 - Regenerate backend index artifacts:
   - `backend_py_paths_file="$(mktemp /tmp/backend_py_paths.XXXXXX.txt)"`
   - `git ls-files apps/backend | rg "\\.py$" | LC_ALL=C sort > "$backend_py_paths_file"`
@@ -80,6 +86,7 @@ When your turn is done:
 
 - You verify the **file header block** (top-of-file `Repository/SPDX/Purpose/Symbols`) for **every touched file** under `apps/**` (even if the diff "seems small”), and update Purpose/Symbols if needed.
 - Use `python3 .sangoi/.tools/review_apps_header_updates.py --show-body-diff` to review "changed body, unchanged header” cases.
+- If the touched `apps/**` file is referenced by a mapped node chain, hotspot entry, or owner seam in the subsystem docs, update the manual map/index in the same tranche instead of leaving the atlas stale.
 
 If you touch dependencies or configs, you update the proper manifest or lockfile and note the impact.
 

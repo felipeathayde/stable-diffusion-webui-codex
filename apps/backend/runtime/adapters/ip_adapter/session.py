@@ -24,6 +24,7 @@ from collections.abc import Iterator
 import torch
 
 from apps.backend.runtime.adapters.ip_adapter.assets import assert_ip_adapter_engine_supported, prepare_ip_adapter_assets
+from apps.backend.runtime.adapters.ip_adapter.layout import resolve_ip_adapter_transformer_coordinates
 from apps.backend.runtime.adapters.ip_adapter.modules import IpAdapterCrossAttentionPatch
 from apps.backend.runtime.adapters.ip_adapter.preprocess import prepare_ip_adapter_embeddings
 from apps.backend.runtime.adapters.ip_adapter.types import AppliedIpAdapterSession, IpAdapterConfig
@@ -51,7 +52,11 @@ def apply_ip_adapter_for_sampling(processing) -> Iterator[AppliedIpAdapterSessio
     patched_denoiser = previous_codex_objects.denoiser.clone()
     runtime_device, runtime_dtype = _resolve_runtime_device_and_dtype(patched_denoiser=patched_denoiser)
     sigma_start, sigma_end = _sigma_window(patched_denoiser=patched_denoiser, config=config)
-    coordinates = list(patched_denoiser._iter_transformer_coordinates())
+    coordinates = resolve_ip_adapter_transformer_coordinates(
+        patched_denoiser=patched_denoiser,
+        semantic_engine=assets.target_semantic_engine,
+        ip_layers=assets.ip_layers,
+    )
     if len(coordinates) != int(assets.slot_count):
         raise RuntimeError(
             f"IP-Adapter slot/layout mismatch: denoiser exposes {len(coordinates)} attn2 coordinates but adapter provides {assets.slot_count} slot(s)."

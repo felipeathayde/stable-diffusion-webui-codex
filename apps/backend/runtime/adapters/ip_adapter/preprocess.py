@@ -45,13 +45,13 @@ def prepare_ip_adapter_embeddings(
     projector.eval()
     with torch.inference_mode():
         encoded = encoder.encode(image_tensor, crop=True)
+        uncondition_encoded = encoder.encode(zero_image_tensor, crop=True)
         if assets.uses_hidden_states:
-            uncondition_encoded = encoder.encode(zero_image_tensor, crop=True)
             condition_inputs = encoded.penultimate_hidden_states
             uncondition_inputs = uncondition_encoded.penultimate_hidden_states
         else:
             condition_inputs = encoded.image_embeds
-            uncondition_inputs = torch.zeros_like(condition_inputs)
+            uncondition_inputs = uncondition_encoded.image_embeds
         condition = projector(condition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
         uncondition = projector(uncondition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
     logger.debug(

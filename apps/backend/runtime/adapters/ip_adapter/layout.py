@@ -73,12 +73,12 @@ def _sdxl_ip_adapter_layout() -> tuple[tuple[str, int, int], ...]:
         transformer_depth = 2 if block_index in (4, 5) else 10
         for transformer_index in range(transformer_depth):
             coordinates.append(("input", block_index, transformer_index))
-    for transformer_index in range(10):
-        coordinates.append(("middle", 0, transformer_index))
     for block_index in range(6):
         transformer_depth = 10 if block_index in (0, 1, 2) else 2
         for transformer_index in range(transformer_depth):
             coordinates.append(("output", block_index, transformer_index))
+    for transformer_index in range(10):
+        coordinates.append(("middle", 0, transformer_index))
     return tuple(coordinates)
 
 
@@ -158,14 +158,6 @@ def _sdxl_translated_attn2_to_k_order() -> tuple[str, ...]:
                     ]
                 )
 
-    transformer_depth_middle = int(config["transformer_depth_middle"])
-    for transformer_index in range(transformer_depth_middle):
-        translated.append(
-            diffusers_to_ldm[
-                f"mid_block.attentions.0.transformer_blocks.{transformer_index}.attn2.to_k.weight"
-            ]
-        )
-
     up_res_counts = list(reversed(num_res_blocks))
     for block_index in range(len(config["channel_mult"])):
         block_length = up_res_counts[block_index] + 1
@@ -177,6 +169,14 @@ def _sdxl_translated_attn2_to_k_order() -> tuple[str, ...]:
                         f"up_blocks.{block_index}.attentions.{res_index}.transformer_blocks.{transformer_index}.attn2.to_k.weight"
                     ]
                 )
+
+    transformer_depth_middle = int(config["transformer_depth_middle"])
+    for transformer_index in range(transformer_depth_middle):
+        translated.append(
+            diffusers_to_ldm[
+                f"mid_block.attentions.0.transformer_blocks.{transformer_index}.attn2.to_k.weight"
+            ]
+        )
     return tuple(translated)
 
 

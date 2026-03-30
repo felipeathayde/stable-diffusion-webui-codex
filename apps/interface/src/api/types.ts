@@ -33,6 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `RemoteUpscalerWeight` (type): Remote HF weight entry (either raw listing or curated + metadata).
 - `RemoteUpscalersResponse` (interface): `/api/upscalers/remote` response shape (manifest + raw weights fallback).
 - `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
+- `TaskErrorCode` (type): Machine-readable terminal task error classification used by task snapshots/SSE.
 - `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/events` (supports replay via `id:` / `after`, emits `gap` on truncation, and carries optional progress metadata via `message`/`data`).
 - `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`, including last progress snapshot metadata (`message`/`data`) when available.
 - `MemoryResponse` (interface): `/api/memory` response shape.
@@ -300,6 +301,13 @@ export interface GeneratedImage {
   data: string
 }
 
+export type TaskErrorCode =
+  | 'cancelled'
+  | 'out_of_memory'
+  | 'integrity_mismatch'
+  | 'engine_error'
+  | 'internal_error'
+
 export interface AutomationIterationEvent {
   type: 'automation_iteration'
   iteration_index: number
@@ -327,7 +335,7 @@ export type TaskEvent =
   | AutomationIterationEvent
   | { type: 'gap'; oldest_event_id: number; newest_event_id: number; last_event_id: number }
   | { type: 'result'; images?: GeneratedImage[]; info: unknown; video?: { rel_path?: string | null; mime?: string | null } }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; code?: TaskErrorCode; error_id?: string | null }
   | { type: 'end' }
 
 export interface TaskResult {
@@ -351,6 +359,8 @@ export interface TaskResult {
   buffer_newest_event_id?: number
   started_at_ms?: number | null
   error?: string
+  error_code?: TaskErrorCode
+  error_id?: string | null
   result?: {
     images?: GeneratedImage[]
     info: unknown

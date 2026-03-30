@@ -64,6 +64,7 @@ import type {
   GeneratedImage,
   GuidanceAdvancedCapabilities,
   ImageAutomationRequest,
+  TaskErrorCode,
   TaskEvent,
 } from '../api/types'
 import { resolveImageRequestEngineId, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
@@ -258,7 +259,11 @@ function buildRunItemFromResumeState(
   }
 }
 
-function resolveErrorRunStatus(message: string): Exclude<ImageRunStatus, 'running' | 'completed'> {
+function resolveErrorRunStatus(
+  code?: TaskErrorCode,
+  message?: string,
+): Exclude<ImageRunStatus, 'running' | 'completed'> {
+  if (code === 'cancelled') return 'cancelled'
   return String(message || '').trim().toLowerCase() === 'cancelled' ? 'cancelled' : 'error'
 }
 
@@ -1283,7 +1288,7 @@ export function useGeneration(tabId: string) {
       case 'error':
         state.value.status = 'error'
         state.value.errorMessage = event.message
-        const terminalStatus = resolveErrorRunStatus(event.message)
+        const terminalStatus = resolveErrorRunStatus(event.code, event.message)
         const finishedAtMsOnError = Date.now()
         state.value.finishedAtMs = finishedAtMsOnError
         const previewBeforeError = state.value.previewImage
@@ -1438,7 +1443,9 @@ export function useGeneration(tabId: string) {
       return
     }
     if (res.status === 'error') {
-      const terminalStatus = saved.terminalStatus ?? resolveErrorRunStatus(String(res.error || 'Task failed.'))
+      const terminalStatus = res.error_code
+        ? resolveErrorRunStatus(res.error_code, String(res.error || 'Task failed.'))
+        : (saved.terminalStatus ?? resolveErrorRunStatus(undefined, String(res.error || 'Task failed.')))
       state.value.status = 'error'
       state.value.errorMessage = String(res.error || 'Task failed.')
       state.value.taskId = saved.taskId
@@ -1467,6 +1474,16 @@ export function useGeneration(tabId: string) {
     try {
       const result = await fetchTaskResult(taskId)
       if (result.status === 'error') {
+        state.value.gallery = []
+        state.value.info = null
+        state.value.previewImage = null
+        state.value.previewStep = null
+        state.value.lastSeed = null
+        state.value.startedAtMs = null
+        state.value.finishedAtMs = null
+        state.value.taskId = taskId
+        state.value.selectedTaskId = taskId
+        state.value.currentRun = null
         state.value.status = 'error'
         state.value.errorMessage = result.error || 'Task failed.'
         return
@@ -1478,8 +1495,15 @@ export function useGeneration(tabId: string) {
           state.value.gallery = result.result.images || []
         }
         state.value.info = result.result.info ?? null
+        state.value.errorMessage = ''
         state.value.status = 'done'
+        state.value.taskId = taskId
+        state.value.startedAtMs = null
+        state.value.finishedAtMs = null
+        state.value.previewImage = null
+        state.value.previewStep = null
         state.value.selectedTaskId = taskId
+        state.value.currentRun = null
         return
       }
       state.value.status = 'error'

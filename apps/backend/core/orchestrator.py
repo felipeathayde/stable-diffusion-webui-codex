@@ -34,6 +34,8 @@ from apps.backend.runtime.load_authority import (
     coordinator_load_permit,
     require_load_authority,
 )
+from apps.backend.runtime.diagnostics.error_summary import summarize_exception_for_console
+from apps.backend.runtime.diagnostics.exception_hook import dump_exception
 
 
 logger = logging.getLogger(__name__)
@@ -470,7 +472,20 @@ class InferenceOrchestrator:
                 except LoadAuthorityViolationError:
                     raise
                 except Exception as exc:  # noqa: BLE001
-                    logger.exception("Engine '%s' failed during load (model=%s).", engine_key, model_ref)
+                    dump_exception(
+                        type(exc),
+                        exc,
+                        exc.__traceback__,
+                        where="core.orchestrator.run.load",
+                        context={"engine_key": engine_key, "model_ref": str(model_ref)},
+                    )
+                    logger.error(
+                        "Engine '%s' failed during load (model=%s): %s",
+                        engine_key,
+                        model_ref,
+                        summarize_exception_for_console(exc),
+                        exc_info=False,
+                    )
                     cleanup_failures: list[str] = []
                     with coordinator_load_permit(
                         owner="core.orchestrator.run",
@@ -514,7 +529,20 @@ class InferenceOrchestrator:
         except LoadAuthorityViolationError:
             raise
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Engine '%s' failed during '%s'", engine_key, task.value)
+            dump_exception(
+                type(exc),
+                exc,
+                exc.__traceback__,
+                where="core.orchestrator.run.execution",
+                context={"engine_key": engine_key, "task": task.value},
+            )
+            logger.error(
+                "Engine '%s' failed during '%s': %s",
+                engine_key,
+                task.value,
+                summarize_exception_for_console(exc),
+                exc_info=False,
+            )
             cleanup_failures: list[str] = []
             with coordinator_load_permit(
                 owner="core.orchestrator.run",

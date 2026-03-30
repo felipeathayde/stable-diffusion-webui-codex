@@ -72,7 +72,12 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from apps.backend.interfaces.api.path_utils import _path_for_api, _path_from_api
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.public_errors import public_http_error_detail, public_task_error_message
+from apps.backend.interfaces.api.public_errors import (
+    build_cancelled_task_error,
+    build_missing_result_task_error,
+    build_public_task_error,
+    public_http_error_detail,
+)
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, register_task, unregister_task
 
 _router_log = logging.getLogger("backend.api.routers.generation")
@@ -5850,7 +5855,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 prompt_hash_value="",
                 meta=error_meta(err),
             )
-            entry.error = public_task_error_message(err)
+            entry.error = build_public_task_error(err)
             entry.mark_finished(success=False)
             unregister_task(task_id)
             raise
@@ -5906,7 +5911,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     should_cancel=lambda: bool(entry.cancel_requested),
                 )
                 if not acquired:
-                    entry.error = "cancelled"
+                    entry.error = build_cancelled_task_error()
                     emit_contract_trace(
                         task_id=task_id,
                         mode=mode,
@@ -5968,7 +5973,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
                         if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
                             if not cancelled_immediate:
-                                entry.error = "cancelled"
+                                entry.error = build_cancelled_task_error()
                             cancelled_immediate = True
                             # Keep draining orchestrator events so teardown/finalizers complete
                             # before this worker marks done + releases inference gate.
@@ -6042,26 +6047,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             )
                 success = not cancelled_immediate
             except Exception as err:
+                engine_execution_error = False
                 try:
-                    from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
-                    _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
-                except Exception:
-                    pass
-                try:
-                    from apps.backend.core.exceptions import EngineExecutionError
+                    from apps.backend.core.exceptions import EngineExecutionError, EngineLoadError
 
-                    if isinstance(err, EngineExecutionError):
-                        _router_log.error(
-                            "EngineExecutionError in %s_worker "
-                            "(task_id=%s mode=%s engine=%s): %s",
-                            label,
-                            task_id,
-                            mode,
-                            engine_key,
-                            err,
-                        )
+                    engine_execution_error = isinstance(err, (EngineExecutionError, EngineLoadError))
                 except Exception:
                     pass
+                if not engine_execution_error:
+                    try:
+                        from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
+
+                        _dump_exc(type(err), err, err.__traceback__, where=f"{label}_worker", context={"task_id": task_id})
+                    except Exception:
+                        pass
                 cleanup_err: Exception | None = None
                 try:
                     from apps.backend.interfaces.api.tasks.generation_tasks import (
@@ -6083,7 +6082,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     )
                 if cleanup_err is not None:
                     err = RuntimeError(f"{err} [runtime_cleanup_error: {cleanup_err}]")
-                entry.error = public_task_error_message(err)
+                entry.error = build_public_task_error(err)
                 fallback_used = _fallback_used_now() or (fallback_enabled and ("fallback" in str(err).lower()))
                 emit_contract_trace(
                     task_id=task_id,
@@ -6106,7 +6105,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
                     if not isinstance(result_obj, dict):
                         invariant_err = RuntimeError("task completed without result payload")
-                        entry.error = "engine error: task completed without result payload"
+                        entry.error = build_missing_result_task_error()
                         success = False
                         emit_contract_trace(
                             task_id=task_id,

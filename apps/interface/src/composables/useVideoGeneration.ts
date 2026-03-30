@@ -56,7 +56,7 @@ import {
   type WanTxt2VidPayload,
   type WanVideoCommonInput,
 } from '../api/payloads_video'
-import type { GeneratedImage, TaskEvent } from '../api/types'
+import type { GeneratedImage, TaskErrorCode, TaskEvent } from '../api/types'
 import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
@@ -470,6 +470,11 @@ export function useVideoGeneration(tabId: string) {
 
   function setErrorMessage(message: string): void {
     state.value.errorMessage = message
+  }
+
+  function resolveVideoRunStatus(code?: TaskErrorCode, message?: string): VideoRunStatus {
+    if (code === 'cancelled') return 'cancelled'
+    return String(message || '').trim().toLowerCase() === 'cancelled' ? 'cancelled' : 'error'
   }
 
   function logRunStartError(run: PreparedWanRun, err: unknown): void {
@@ -923,18 +928,20 @@ export function useVideoGeneration(tabId: string) {
         }
         break
       case 'error':
-        setError(event.message)
+        const terminalStatus = resolveVideoRunStatus(event.code, event.message)
+        state.value.status = 'error'
+        state.value.errorMessage = event.message
+        state.value.frames = []
+        state.value.info = null
+        state.value.video = null
         clearResumeState(key)
         if (state.value.currentRun && state.value.currentRun.taskId) {
-          state.value.currentRun.status = state.value.cancelRequested ? 'cancelled' : 'error'
+          state.value.currentRun.status = terminalStatus
           state.value.currentRun.errorMessage = event.message
         }
         break
       case 'end':
         clearResumeState(key)
-        if (state.value.cancelRequested && state.value.currentRun && state.value.currentRun.taskId) {
-          state.value.currentRun.status = 'cancelled'
-        }
         if (state.value.status !== 'error') state.value.status = 'done'
         if (state.value.currentRun && state.value.currentRun.taskId) {
           pushHistory(state.value.currentRun)
@@ -1044,7 +1051,10 @@ export function useVideoGeneration(tabId: string) {
       state.value.frames = Array.isArray(res.result.images) ? res.result.images : []
       state.value.info = res.result.info ?? null
       state.value.video = res.result.video ?? null
+      state.value.errorMessage = ''
       state.value.status = 'done'
+      state.value.taskId = saved.taskId
+      state.value.cancelRequested = false
       pushHistory({
         taskId: saved.taskId,
         mode: saved.mode,
@@ -1056,16 +1066,23 @@ export function useVideoGeneration(tabId: string) {
         thumbnail: Array.isArray(res.result.images) && res.result.images.length > 0 ? res.result.images[0] : null,
       })
       state.value.selectedTaskId = saved.taskId
+      state.value.currentRun = null
       return
     }
     if (res.status === 'error') {
+      const terminalStatus = resolveVideoRunStatus(res.error_code, String(res.error || 'Task failed.'))
       state.value.status = 'error'
       state.value.errorMessage = String(res.error || 'Task failed.')
+      state.value.frames = []
+      state.value.info = null
+      state.value.video = null
+      state.value.taskId = saved.taskId
+      state.value.cancelRequested = false
       pushHistory({
         taskId: saved.taskId,
         mode: saved.mode,
         createdAtMs: saved.createdAtMs,
-        status: 'error',
+        status: terminalStatus,
         summary: saved.summary,
         promptPreview: saved.promptPreview,
         paramsSnapshot: saved.paramsSnapshot,
@@ -1073,6 +1090,7 @@ export function useVideoGeneration(tabId: string) {
         errorMessage: String(res.error || 'Task failed.'),
       })
       state.value.selectedTaskId = saved.taskId
+      state.value.currentRun = null
     }
   }
 
@@ -1113,15 +1131,25 @@ export function useVideoGeneration(tabId: string) {
     try {
       const result = await fetchTaskResult(taskId)
       if (result.status === 'error') {
-        setError(result.error || 'Task failed.')
+        state.value.status = 'error'
+        state.value.errorMessage = result.error || 'Task failed.'
+        state.value.frames = []
+        state.value.info = null
+        state.value.video = null
+        state.value.taskId = taskId
+        state.value.selectedTaskId = taskId
+        state.value.currentRun = null
         return
       }
       if (result.status === 'completed' && result.result) {
         state.value.frames = Array.isArray(result.result.images) ? result.result.images : []
         state.value.info = result.result.info ?? null
         state.value.video = result.result.video ?? null
+        state.value.errorMessage = ''
         state.value.status = 'done'
+        state.value.taskId = taskId
         state.value.selectedTaskId = taskId
+        state.value.currentRun = null
         return
       }
       setError('Task is still running.')

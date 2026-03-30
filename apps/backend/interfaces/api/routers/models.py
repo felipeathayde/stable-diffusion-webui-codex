@@ -55,6 +55,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.interfaces.api.public_errors import build_public_task_error
 from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
 from apps.backend.interfaces.api.json_store import _load_json, _save_json
 from apps.backend.runtime.sampling import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
@@ -869,7 +870,7 @@ def build_router(
                     len(inv.get("metadata", [])),
                 )
             except Exception as exc:
-                entry.error = f"inventory refresh failed: {exc}"
+                entry.error = build_public_task_error(exc)
                 entry.mark_finished(success=False)
                 inventory_log.error("inventory refresh task failed (task_id=%s): %s", task_id, exc)
 

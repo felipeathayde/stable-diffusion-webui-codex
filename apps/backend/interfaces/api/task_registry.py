@@ -7,8 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: In-process task registry for API jobs.
-Tracks task status, bounded SSE replay buffers, cancellation requests, and running progress snapshots (including progress message/data metadata) for API endpoints.
-Automation-gallery recovery is derived from the same bounded replay window, so reconnect snapshots never outgrow the task-event buffer contract.
+Tracks task status, bounded SSE replay buffers, cancellation requests, running progress snapshots (including progress message/data metadata),
+and one canonical public terminal error envelope for API endpoints. Automation-gallery recovery is derived from the same bounded replay window,
+so reconnect snapshots never outgrow the task-event buffer contract.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `tasks` (constant): In-memory task registry mapping task_id -> TaskEntry.
@@ -39,6 +40,8 @@ from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Deque, Dict, Optional, Tuple
+
+from apps.backend.interfaces.api.public_errors import PublicTaskError
 
 tasks: Dict[str, "TaskEntry"] = {}
 tasks_lock = threading.Lock()
@@ -213,7 +216,7 @@ class TaskEntry:
         self._started_at_ms: int | None = None
         self._finished_at_ms: int | None = None
         self.result: Dict[str, Any] | None = None
-        self.error: Optional[str] = None
+        self.error: PublicTaskError | None = None
         self.done: asyncio.Future[bool] = loop.create_future()
         self.cleanup_handle: Optional[asyncio.TimerHandle] = None
         self.cancel_requested: bool = False

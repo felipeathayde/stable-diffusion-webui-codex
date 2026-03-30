@@ -24,7 +24,7 @@ import threading
 from typing import Any, Callable, Mapping
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.public_errors import public_task_error_message
+from apps.backend.interfaces.api.public_errors import build_cancelled_task_error, build_public_task_error
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
 logger = logging.getLogger("backend.api.tasks.supir")
@@ -61,7 +61,7 @@ def run_supir_enhance_task(
                 should_cancel=lambda: bool(entry.cancel_requested),
             )
             if not acquired:
-                entry.error = "cancelled"
+                entry.error = build_cancelled_task_error()
                 return
 
             push({"type": "status", "stage": "running"})
@@ -71,7 +71,7 @@ def run_supir_enhance_task(
 
             push({"type": "progress", "stage": "enhance", "percent": None, "step": None, "total_steps": None, "eta_seconds": None})
             if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
-                entry.error = "cancelled"
+                entry.error = build_cancelled_task_error()
                 return
 
             from PIL import Image  # type: ignore
@@ -88,7 +88,7 @@ def run_supir_enhance_task(
             )
             raise RuntimeError("SUPIR enhance returned no result")
         except Exception as err:
-            entry.error = public_task_error_message(err)
+            entry.error = build_public_task_error(err)
             success = False
         finally:
             entry.mark_finished(success=success)

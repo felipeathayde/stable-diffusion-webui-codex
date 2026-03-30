@@ -40,7 +40,11 @@ from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.public_errors import public_task_error_message
+from apps.backend.interfaces.api.public_errors import (
+    build_cancelled_task_error,
+    build_missing_result_task_error,
+    build_public_task_error,
+)
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, unregister_task
 from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.runtime.diagnostics.contract_trace import error_meta
@@ -654,7 +658,7 @@ def run_image_task(
             prompt_hash_value="",
             meta=error_meta(err),
         )
-        entry.error = public_task_error_message(err)
+        entry.error = build_public_task_error(err)
         entry.mark_finished(success=False)
         unregister_task(task_id)
         raise
@@ -713,7 +717,7 @@ def run_image_task(
                 should_cancel=lambda: bool(entry.cancel_requested),
             )
             if not acquired:
-                entry.error = "cancelled"
+                entry.error = build_cancelled_task_error()
                 emit_contract_trace(
                     task_id=task_id,
                     mode=mode,
@@ -774,32 +778,27 @@ def run_image_task(
                 smart_offload=smart_offload,
                 smart_fallback=smart_fallback,
                 smart_cache=smart_cache,
-                on_immediate_cancel=lambda: setattr(entry, "error", "cancelled"),
+                on_immediate_cancel=lambda: setattr(entry, "error", build_cancelled_task_error()),
             )
             if prepared_result.result is not None:
                 entry.result = {"status": "completed", "result": prepared_result.result}
             success = not prepared_result.cancelled_immediate
         except Exception as err:  # pragma: no cover - surfaces runtime errors
+            engine_execution_error = False
             try:
-                from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
+                from apps.backend.core.exceptions import EngineExecutionError, EngineLoadError
 
-                _dump_exc(type(err), err, err.__traceback__, where="generation_image_worker", context={"task_id": task_id})
+                engine_execution_error = isinstance(err, (EngineExecutionError, EngineLoadError))
             except Exception:
                 pass
-            try:
-                from apps.backend.core.exceptions import EngineExecutionError
 
-                if isinstance(err, EngineExecutionError):
-                    logger.error(
-                        "EngineExecutionError in generation_image_worker "
-                        "(task_id=%s mode=%s engine=%s): %s",
-                        task_id,
-                        mode,
-                        engine_key,
-                        err,
-                    )
-            except Exception:
-                pass
+            if not engine_execution_error:
+                try:
+                    from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
+
+                    _dump_exc(type(err), err, err.__traceback__, where="generation_image_worker", context={"task_id": task_id})
+                except Exception:
+                    pass
 
             cleanup_err: Exception | None = None
             try:
@@ -818,7 +817,7 @@ def run_image_task(
                 )
             if cleanup_err is not None:
                 err = RuntimeError(f"{err} [runtime_cleanup_error: {cleanup_err}]")
-            entry.error = public_task_error_message(err)
+            entry.error = build_public_task_error(err)
             fallback_used = _fallback_used_now() or (fallback_enabled and ("fallback" in str(err).lower()))
             emit_contract_trace(
                 task_id=task_id,
@@ -841,7 +840,7 @@ def run_image_task(
                 result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
                 if not isinstance(result_obj, dict):
                     invariant_err = RuntimeError("task completed without result payload")
-                    entry.error = "engine error: task completed without result payload"
+                    entry.error = build_missing_result_task_error()
                     success = False
                     emit_contract_trace(
                         task_id=task_id,
@@ -945,7 +944,7 @@ def run_image_automation_task(
             prompt_hash_value="",
             meta=error_meta(err),
         )
-        entry.error = public_task_error_message(err)
+        entry.error = build_public_task_error(err)
         entry.mark_finished(success=False)
         unregister_task(task_id)
         raise
@@ -997,7 +996,7 @@ def run_image_automation_task(
                 should_cancel=lambda: bool(entry.cancel_requested),
             )
             if not acquired:
-                entry.error = "cancelled"
+                entry.error = build_cancelled_task_error()
                 emit_contract_trace(
                     task_id=task_id,
                     mode=f"{mode}_automation",
@@ -1095,7 +1094,7 @@ def run_image_automation_task(
                 entry.result["automation_gallery_images"] = gallery_images
             success = True
         except ImageAutomationImmediateCancel:
-            entry.error = "cancelled"
+            entry.error = build_cancelled_task_error()
             success = False
         except Exception as err:  # pragma: no cover - runtime surfaces
             cleanup_err: Exception | None = None
@@ -1115,7 +1114,7 @@ def run_image_automation_task(
                 )
             if cleanup_err is not None:
                 err = RuntimeError(f"{err} [runtime_cleanup_error: {cleanup_err}]")
-            entry.error = public_task_error_message(err)
+            entry.error = build_public_task_error(err)
             emit_contract_trace(
                 task_id=task_id,
                 mode=f"{mode}_automation",
@@ -1135,7 +1134,7 @@ def run_image_automation_task(
                 result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
                 if not isinstance(result_obj, dict):
                     invariant_err = RuntimeError("automation task completed without result payload")
-                    entry.error = "engine error: automation task completed without result payload"
+                    entry.error = build_missing_result_task_error("automation task")
                     success = False
                     emit_contract_trace(
                         task_id=task_id,

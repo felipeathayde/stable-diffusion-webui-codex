@@ -34,7 +34,11 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
-from apps.backend.interfaces.api.public_errors import public_task_error_message
+from apps.backend.interfaces.api.public_errors import (
+    build_cancelled_task_error,
+    build_missing_result_task_error,
+    build_public_task_error,
+)
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
 logger = logging.getLogger("backend.api.tasks.upscale")
@@ -133,7 +137,7 @@ def run_upscale_task(
                 should_cancel=lambda: bool(entry.cancel_requested),
             )
             if not acquired:
-                entry.error = "cancelled"
+                entry.error = build_cancelled_task_error()
                 return
 
             push({"type": "status", "stage": "running"})
@@ -142,7 +146,7 @@ def run_upscale_task(
             apply_primary_device(device)
 
             if entry.cancel_requested and entry.cancel_mode is TaskCancelMode.IMMEDIATE:
-                entry.error = "cancelled"
+                entry.error = build_cancelled_task_error()
                 return
 
             from PIL import Image  # type: ignore
@@ -197,13 +201,13 @@ def run_upscale_task(
             entry.result = {"status": "completed", "result": result}
             success = True
         except Exception as err:  # pragma: no cover - surfaces runtime errors
-            entry.error = public_task_error_message(err)
+            entry.error = build_public_task_error(err)
             success = False
         finally:
             if success:
                 result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
                 if not isinstance(result_obj, dict):
-                    entry.error = "engine error: task completed without result payload"
+                    entry.error = build_missing_result_task_error()
                     success = False
             entry.mark_finished(success=success)
             entry.schedule_cleanup(task_id)
@@ -324,13 +328,13 @@ def run_upscaler_download_task(
                     path.unlink(missing_ok=True)
                 except Exception:
                     pass
-            entry.error = public_task_error_message(err)
+            entry.error = build_public_task_error(err)
             success = False
         finally:
             if success:
                 result_obj = entry.result.get("result") if isinstance(entry.result, dict) else None
                 if not isinstance(result_obj, dict):
-                    entry.error = "engine error: task completed without result payload"
+                    entry.error = build_missing_result_task_error()
                     success = False
             entry.mark_finished(success=success)
             entry.schedule_cleanup(task_id)

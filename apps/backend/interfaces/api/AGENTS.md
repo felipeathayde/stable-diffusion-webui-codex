@@ -24,7 +24,7 @@ Status: Active
 - `apps/backend/interfaces/api/path_utils.py` — repo-relative path normalization helpers.
 - `apps/backend/interfaces/api/json_store.py` — JSON load/save helpers for persistence files.
 - `apps/backend/interfaces/api/task_registry.py` — in-process task registry (SSE queue + cancel flags).
-- `apps/backend/interfaces/api/public_errors.py` — public-safe error formatters for task channels and synchronous HTTP details.
+- `apps/backend/interfaces/api/public_errors.py` — public-safe async-task error envelopes (`message` + additive `code/error_id`) and synchronous HTTP error details.
 - `apps/backend/interfaces/api/tasks/generation_tasks.py` — shared generation task worker helpers (image task runners + engine options + PNG encoding).
 - `apps/backend/interfaces/api/serializers.py` — checkpoint serialization helper.
 - `apps/backend/interfaces/api/upscalers_manifest.py` — `upscalers/manifest.json` schema validation/normalization (used by `/api/upscalers/remote`).
@@ -35,6 +35,7 @@ Status: Active
 - `routers/tests.py` is the bounded live-diagnostics owner for backend validation routes; keep test/diagnostic logic out of `system.py` unless the surface is truly health-level and lightweight.
 - 2026-03-28: launcher-started API fallback truth now lives in `apps/launcher/services.py`, while `run_api.py` remains the direct-run self-defense seam; `run_api.py` also wires the bounded `/api/tests/attention/sram/splitkv` router for live SRAM split-KV diagnostics, and that route is operator-facing: malformed payloads 400, expected execution outcomes return structured receipts.
 - Task state is centralized in `task_registry.py` so generation + tasks routers share cancellation/status logic.
+- 2026-03-30: terminal async-task errors are stored as one `PublicTaskError` envelope in `task_registry.py`; `public_errors.py` shapes that envelope, `routers/tasks.py` serializes it without rewording, and raw engine exception dumps stay owned by `core/orchestrator.py` + `runtime/diagnostics`.
 - 2026-03-06: WAN video request allowlists are backend API-owned in `wan_video_request_keys.py`; `routers/generation.py` consumes them directly, and `runtime/state_dict/keymap_wan22_transformer.py` no longer owns HTTP request-key authority.
 - 2026-03-08: `/api/samplers` is the executable sampler surface: backend support flags are implementation-backed (not enum/catalog-only), the route must fail loud if a `supported=true` sampler is missing registry metadata, and frontend filtering is expected to honor `supported !== false`.
 - `/api/models/file-metadata` is intended for UI/debug; it returns `flat` plus a nested view of dotted keys. Codex-generated GGUF files use `model.*`, `codex.*`, and `gguf.*` keys (no legacy `general.*` provenance fields).

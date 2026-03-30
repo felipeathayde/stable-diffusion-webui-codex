@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import copy
 import contextlib
@@ -30,7 +31,7 @@ from apps.backend.runtime.adapters.ip_adapter.preprocess import prepare_ip_adapt
 from apps.backend.runtime.adapters.ip_adapter.types import AppliedIpAdapterSession, IpAdapterConfig
 from apps.backend.runtime.model_registry.capabilities import semantic_engine_for_engine_id
 
-logger = logging.getLogger("backend.runtime.adapters.ip_adapter.session")
+logger = get_backend_logger("backend.runtime.adapters.ip_adapter.session")
 
 
 @contextlib.contextmanager

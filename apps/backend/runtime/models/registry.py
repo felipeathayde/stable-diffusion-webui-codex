@@ -32,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import hashlib
 import json
@@ -59,7 +60,7 @@ from .types import (
     VAERecord,
 )
 
-_LOGGER = logging.getLogger("backend.registry")
+_LOGGER = get_backend_logger("backend.registry")
 
 _ALLOWED_CHECKPOINT_EXTS = {".ckpt", ".safetensor", ".safetensors", ".pt", ".pth", ".bin", ".gguf"}
 _CHECKPOINT_BLACKLIST_SUFFIXES = {".vae.ckpt", ".vae.safetensor", ".vae.safetensors", ".vae.pt", ".vae.pth", ".vae.bin"}

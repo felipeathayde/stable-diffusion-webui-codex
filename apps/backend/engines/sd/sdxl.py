@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
@@ -54,7 +55,7 @@ from apps.backend.runtime.model_registry.specs import ModelFamily
 
 # note: no extra device assertions here; diagnostics should be captured upstream
 
-logger = logging.getLogger("backend.engines.sd.sdxl")
+logger = get_backend_logger("backend.engines.sd.sdxl")
 
 _SDXL_FACTORY = CodexSDFamilyFactory(spec=SDXL_SPEC)
 _SDXL_REFINER_FACTORY = CodexSDFamilyFactory(spec=SDXL_REFINER_SPEC)

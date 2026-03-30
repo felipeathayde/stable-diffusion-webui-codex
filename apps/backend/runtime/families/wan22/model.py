@@ -31,6 +31,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import math
@@ -57,7 +58,7 @@ from apps.backend.runtime.sampling.block_progress import resolve_block_progress_
 from .inference import infer_wan22_latent_channels, infer_wan22_patch_embedding, infer_wan22_patch_size_and_in_channels
 from .sdpa import get_sram_attention_mode, sdpa as wan_sdpa
 
-logger = logging.getLogger("backend.runtime.wan22.model")
+logger = get_backend_logger("backend.runtime.wan22.model")
 
 
 def _wan_trace_verbose_enabled() -> bool:

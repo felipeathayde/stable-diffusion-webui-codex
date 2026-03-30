@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from typing import Iterable
@@ -25,7 +26,7 @@ import torch
 from .errors import ClipVisionInputError
 from .specs import ClipVisionPreprocessSpec
 
-logger = logging.getLogger("backend.runtime.vision.clip.preprocess")
+logger = get_backend_logger("backend.runtime.vision.clip.preprocess")
 
 
 def _ensure_mean_std(values: Iterable[float], *, expected: int) -> torch.Tensor:

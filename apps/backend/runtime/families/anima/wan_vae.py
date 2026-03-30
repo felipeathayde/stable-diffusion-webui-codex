@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import os
@@ -38,7 +39,7 @@ from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.state_dict.keymap_wan21_vae import resolve_wan21_vae_keyspace
 
-logger = logging.getLogger("backend.runtime.anima.wan_vae")
+logger = get_backend_logger("backend.runtime.anima.wan_vae")
 WAN_VAE_BASE_MARKER_KEY = "decoder.middle.0.residual.0.gamma"
 WAN_VAE_22_MARKER_KEY = "decoder.upsamples.0.upsamples.0.residual.2.weight"
 WanVaeVariant = Literal["2.1", "2.2"]

@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 import contextlib
 from dataclasses import dataclass
@@ -35,7 +36,7 @@ from apps.backend.runtime.state_dict.keymap_gemma3_text_encoder import resolve_g
 from .model import Ltx2TextEncoderAsset, Ltx2VendorPaths
 
 _ALLOWED_TEXT_ENCODER_SUFFIXES = (".gguf", ".safetensor", ".safetensors")
-logger = logging.getLogger("backend.runtime.families.ltx2.text_encoder")
+logger = get_backend_logger("backend.runtime.families.ltx2.text_encoder")
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,11 +246,12 @@ def load_ltx2_text_encoder_runtime(
         raise RuntimeError(f"LTX2 Gemma3 asset kind is unsupported: {asset.kind!r}")
 
     model.eval()
-    logger.info(
-        "[ltx2] loaded Gemma3 text encoder: alias=%s kind=%s device=%s dtype=%s",
-        asset.alias,
-        asset.kind,
-        device,
-        torch_dtype,
+    emit_backend_message(
+        "[ltx2] loaded Gemma3 text encoder",
+        logger=logger.name,
+        alias=asset.alias,
+        kind=asset.kind,
+        device=device,
+        dtype=torch_dtype,
     )
     return Ltx2TextEncoderRuntime(model=model, tokenizer=tokenizer)

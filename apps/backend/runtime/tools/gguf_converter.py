@@ -25,6 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 from dataclasses import replace
 import json
@@ -62,7 +63,7 @@ from apps.backend.runtime.tools.gguf_converter_types import (
     normalize_mixed_float_override,
 )
 
-logger = logging.getLogger("backend.runtime.tools.gguf_converter")
+logger = get_backend_logger("backend.runtime.tools.gguf_converter")
 
 
 class GGUFConversionCancelled(Exception):

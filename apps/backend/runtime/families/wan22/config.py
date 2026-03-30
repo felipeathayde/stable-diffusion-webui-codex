@@ -40,6 +40,7 @@ from typing import Any, Mapping, Optional
 
 import torch
 
+from apps.backend.runtime.logging import BackendLoggerProxy, emit_backend_message
 from apps.backend.runtime.memory import memory_management
 from .paths import normalize_win_path
 
@@ -296,7 +297,7 @@ def build_wan22_gguf_run_config(
     request: Any,
     device: str | None,
     dtype: str,
-    logger: Any = None,
+    logger: BackendLoggerProxy | None = None,
 ) -> RunConfig:
     """Build a validated WAN22 GGUF RunConfig from a request-like object.
 
@@ -825,11 +826,12 @@ def build_wan22_gguf_run_config(
 
     if logger is not None:
         try:
-            logger.info(
-                "[wan22.gguf] assets: metadata=%s te=%s vae=%s",
-                os.path.basename(str(meta_dir)) if meta_dir else None,
-                os.path.basename(str(te_path)) if te_path else None,
-                os.path.basename(str(vae_path)) if vae_path else None,
+            emit_backend_message(
+                "[wan22.gguf] assets",
+                logger=logger.name,
+                metadata=os.path.basename(str(meta_dir)) if meta_dir else None,
+                te=os.path.basename(str(te_path)) if te_path else None,
+                vae=os.path.basename(str(vae_path)) if vae_path else None,
             )
         except Exception:
             pass

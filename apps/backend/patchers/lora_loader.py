@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import hashlib
 import logging
@@ -44,7 +45,7 @@ from apps.backend.runtime.ops.operations_gguf import dequantize_tensor, is_packe
 from .lora_merge import merge_lora_to_weight
 from .lora_types import LoraPatchEntry
 
-logger = logging.getLogger("backend.patchers.lora")
+logger = get_backend_logger("backend.patchers.lora")
 
 
 def _trace_load_patch_debug_enabled() -> bool:

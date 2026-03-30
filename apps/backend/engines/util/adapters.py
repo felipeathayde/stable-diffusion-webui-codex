@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import math
 from typing import Any, Mapping
@@ -39,7 +40,7 @@ from apps.backend.runtime.processing.models import (
 )
 from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
-_log = logging.getLogger(__name__)
+_log = get_backend_logger(__name__)
 
 
 def _parse_batch_count(extras: Mapping[str, Any] | None) -> int:

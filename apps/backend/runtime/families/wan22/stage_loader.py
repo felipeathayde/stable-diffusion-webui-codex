@@ -24,6 +24,7 @@ from typing import Any, Optional, Sequence
 import torch
 
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.logging import BackendLoggerProxy, emit_backend_message
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
@@ -67,9 +68,10 @@ def mount_stage_model_from_gguf(
     stage: str,
     dtype: torch.dtype,
     loras: Optional[Sequence[tuple[str, float]]] = None,
-    logger: Any,
+    logger: BackendLoggerProxy | None,
 ):
     log = get_logger(logger)
+    logger_name = log.name
     dequantize = False
     mount_device = _resolve_stage_mount_device()
     log_cuda_mem(log, label=f"{stage}:before-mount-load")
@@ -100,28 +102,32 @@ def mount_stage_model_from_gguf(
             raise RuntimeError(
                 "SRAM attention force mode requested but warmup import failed during stage load."
             ) from exc
-        log.warning(
-            "[wan22.gguf] attention_sram warmup skipped: stage=%s import_failed=%s: %s",
-            stage,
-            type(exc).__name__,
-            exc,
+        emit_backend_message(
+            "[wan22.gguf] attention_sram warmup skipped",
+            logger=logger_name,
+            level="WARNING",
+            stage=stage,
+            import_failed=type(exc).__name__,
+            error=str(exc),
         )
     else:
         warmup = warmup_extension_for_load(mode=None)
-        log.info(
-            "[wan22.gguf] attention_sram warmup: stage=%s mode=%s attempted=%s loaded=%s ready=%s jit_build=%s detail=%r",
-            stage,
-            warmup.mode.value,
-            warmup.attempted,
-            warmup.loaded,
-            warmup.ready,
-            warmup.build_enabled,
-            warmup.detail,
+        emit_backend_message(
+            "[wan22.gguf] attention_sram warmup",
+            logger=logger_name,
+            stage=stage,
+            mode=warmup.mode.value,
+            attempted=warmup.attempted,
+            loaded=warmup.loaded,
+            ready=warmup.ready,
+            jit_build=warmup.build_enabled,
+            detail=warmup.detail,
         )
-    log.info(
-        "[wan22.gguf] mounted stage model: %s (dequantize=%s mount_device=%s)",
-        os.path.basename(gguf_path),
-        dequantize,
-        mount_device,
+    emit_backend_message(
+        "[wan22.gguf] mounted stage model",
+        logger=logger_name,
+        file=os.path.basename(gguf_path),
+        dequantize=dequantize,
+        mount_device=mount_device,
     )
     return model

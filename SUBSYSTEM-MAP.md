@@ -1,7 +1,7 @@
 <!-- tags: webui, architecture, map, discovery, backend -->
 # WebUI Subsystem Map
-Date: 2026-03-29
-Last Review: 2026-03-29
+Date: 2026-03-30
+Last Review: 2026-03-30
 Status: Active
 
 ## Purpose / ownership boundary
@@ -76,6 +76,7 @@ Status: Active
 - Secondary seams:
   - `apps/backend/interfaces/api/tasks/generation_tasks.py`
   - `apps/backend/interfaces/api/run_api.py`
+  - `apps/backend/runtime/logging.py`
 - Use this when a public generation route, payload parser, task spawn, or route-level fail-loud guard is the true owner.
 
 <a id="map-hotspot-task-streaming"></a>
@@ -174,7 +175,7 @@ Branch notes:
 ### API bootstrap
 | Node | Owner | What happens here | Next |
 | --- | --- | --- | --- |
-| App bootstrap | `apps/backend/interfaces/api/run_api.py` | Builds the FastAPI app, validates startup/runtime settings, and mounts the routers. | router module build |
+| App bootstrap | `apps/backend/interfaces/api/run_api.py` | Builds the FastAPI app, validates startup/runtime settings, and mounts the routers. Repo-owned bootstrap/server logs consume the canonical wrapper family from `apps/backend/runtime/logging.py`, while the remaining raw logger carve-out is the explicit `uvicorn.access` integration seam. | router module build |
 | Router mount | `apps/backend/interfaces/api/run_api.py` | Includes `system`, `settings`, `ui`, `models`, `paths`, `options`, `tasks`, `tests`, `tools`, `upscale`, `supir`, and `generation`. | public routes |
 | Public entry | router modules under `apps/backend/interfaces/api/routers/` | Expose the task-backed generation/system/tool surfaces. | task or direct route handling |
 
@@ -209,6 +210,22 @@ Branch notes:
   - terminal `result|error|end` emission
   - cancellation API
 - Open these files first when reconnect/replay/status drift is the seam.
+
+<a id="map-owner-backend-logging"></a>
+### Backend Logging seam
+- Canonical owner: `apps/backend/runtime/logging.py`
+- Owns:
+  - normalized repo-owned logger acquisition via `get_backend_logger(...)`
+  - logger-style repo-owned emission through the `BackendLoggerProxy`
+  - plain human-readable wrapper emission via `emit_backend_message(...)`
+  - structured telemetry emission via `emit_backend_event(...)`
+  - canonical uvicorn/bootstrap logging config via `build_backend_uvicorn_log_config(...)`
+- Secondary seams:
+  - `apps/backend/interfaces/api/run_api.py`
+  - `apps/backend/runtime/diagnostics/error_summary.py`
+  - `apps/backend/runtime/diagnostics/exception_hook.py`
+  - `apps/backend/infra/stdio.py`
+- Open this when the issue is logger namespace normalization, repo-owned backend log formatting/emission, bootstrap/server log config, or the split between operational logs, concise runtime summaries, full exception dumps, and exact stdout/stderr contracts.
 
 <a id="map-owner-orchestrator"></a>
 ### Orchestrator seam

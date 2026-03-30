@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 # // tags: refiner, pipeline, sdxl, hires, swap_model
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from dataclasses import dataclass
@@ -100,7 +101,7 @@ class RefinerStage:
             total_steps=original_steps,
         )
 
-        logger = logging.getLogger(f"backend.use_cases.txt2img.refiner.{self.label.replace(' ', '_').lower()}")
+        logger = get_backend_logger(f"{__name__}.refiner.{self.label.replace(' ', '_').lower()}")
         logger.info(
             "[refiner] starting %s model=%s swap_at_step=%d remaining_steps=%d cfg=%.3f seed=%d",
             self.label,
@@ -254,7 +255,7 @@ class SwapModelStage:
                 f"but runtime switch_at_step={swap_at_step}."
             )
 
-        logger = logging.getLogger(f"backend.use_cases.txt2img.swap_model.{self.label.replace(' ', '_').lower()}")
+        logger = get_backend_logger(f"{__name__}.swap_model.{self.label.replace(' ', '_').lower()}")
         logger.info(
             "[swap_model] starting %s model=%s swap_at_step=%d remaining_steps=%d cfg=%.3f seed=inherited",
             self.label,

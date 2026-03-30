@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 from contextvars import ContextVar
 import logging
@@ -34,7 +35,7 @@ from apps.backend.runtime.attention import attention_function_pre_shaped, set_at
 from apps.backend.runtime.attention.sram import resolve_effective_sram_attention_mode
 from apps.backend.runtime.memory.config import AttentionBackend
 
-_LOGGER = logging.getLogger("backend.runtime.wan22.sdpa")
+_LOGGER = get_backend_logger("backend.runtime.wan22.sdpa")
 _SDPA_CALL_COUNT_CTX: ContextVar[int] = ContextVar("wan22_sdpa_call_count", default=0)
 _CROSS_ATTN_SLIDING_FALLBACK_LOGGED_CTX: ContextVar[bool] = ContextVar(
     "wan22_cross_attn_sliding_fallback_logged",
@@ -113,17 +114,18 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
     call_count = int(_SDPA_CALL_COUNT_CTX.get()) + 1
     _SDPA_CALL_COUNT_CTX.set(call_count)
     if call_count == 1:
-        _LOGGER.info(
-            "[wan22.sdpa][req=%s] first_call policy=%s mode=%s chunk=%d device=%s dtype=%s qkv=%s sram_mode=%s env=%s",
-            request_id,
-            pol,
-            mode,
-            ch,
-            str(q.device),
-            str(q.dtype),
-            (tuple(q.shape), tuple(k.shape), tuple(v.shape)),
-            sram_mode,
-            _SRAM_MODE_ENV,
+        emit_backend_message(
+            "[wan22.sdpa] first call",
+            logger=_LOGGER.name,
+            request_id=request_id,
+            policy=pol,
+            mode=mode,
+            chunk=ch,
+            device=str(q.device),
+            dtype=str(q.dtype),
+            qkv=(tuple(q.shape), tuple(k.shape), tuple(v.shape)),
+            sram_mode=sram_mode,
+            env=_SRAM_MODE_ENV,
         )
 
     if mode == "sliding":
@@ -134,11 +136,14 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
         if kv_length != q_length:
             if not bool(_CROSS_ATTN_SLIDING_FALLBACK_LOGGED_CTX.get()):
                 _CROSS_ATTN_SLIDING_FALLBACK_LOGGED_CTX.set(True)
-                _LOGGER.warning(
-                    "[wan22.sdpa][req=%s] sliding mode fallback: q_len=%d differs from kv_len=%d; using full K/V per query chunk",
-                    request_id,
-                    q_length,
-                    kv_length,
+                emit_backend_message(
+                    "[wan22.sdpa] sliding mode fallback",
+                    logger=_LOGGER.name,
+                    level=logging.WARNING,
+                    request_id=request_id,
+                    q_len=q_length,
+                    kv_len=kv_length,
+                    reason="using full K/V per query chunk",
                 )
             out_accum: torch.Tensor | None = None
             for start in range(0, q_length, ch):

@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import threading
@@ -25,7 +26,7 @@ from typing import Dict, List
 
 _LOCK = threading.RLock()
 _MODELS_REVISION = 0
-_LOG = logging.getLogger("backend.model_catalog")
+_LOG = get_backend_logger("backend.model_catalog")
 
 
 def _normalize_reason(reason: object) -> str:

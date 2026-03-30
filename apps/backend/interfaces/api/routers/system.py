@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import gc
 import logging
@@ -42,7 +43,7 @@ from apps.backend.runtime.load_authority import (
     coordinator_load_permit,
 )
 
-_LOG = logging.getLogger(__name__)
+_LOG = get_backend_logger(__name__)
 
 _CRITICAL_PROCESS_BASENAMES: set[str] = {
     "explorer.exe",

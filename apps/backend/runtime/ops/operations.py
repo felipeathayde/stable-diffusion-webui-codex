@@ -36,6 +36,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import contextlib
 import logging
@@ -57,7 +58,7 @@ from .operations_gguf import (
     is_packed_gguf_artifact,
 )
 
-logger = logging.getLogger("backend.runtime.ops.operations")
+logger = get_backend_logger("backend.runtime.ops.operations")
 
 
 def _raise_packed_gguf_unsupported(where: str) -> None:

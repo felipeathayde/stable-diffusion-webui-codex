@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 import logging
 import os
@@ -33,7 +34,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.state_dict.keymap_qwen_text_encoder import resolve_qwen_text_encoder_keyspace
 
-logger = logging.getLogger("backend.runtime.flux2.text_encoder")
+logger = get_backend_logger("backend.runtime.flux2.text_encoder")
 
 FLUX2_QWEN_HIDDEN_SIZE = 2560
 FLUX2_QWEN_HIDDEN_LAYERS: tuple[int, int, int] = (9, 18, 27)
@@ -99,7 +100,11 @@ class Flux2TextEncoder(nn.Module):
             resolve_qwen3_gguf_keyspace,
         )
 
-        logger.info("Loading FLUX.2 Qwen3-4B text encoder from GGUF: %s", gguf_path)
+        emit_backend_message(
+            "Loading FLUX.2 Qwen3-4B text encoder from GGUF",
+            logger=logger.name,
+            path=gguf_path,
+        )
         gguf_state_dict = load_gguf_state_dict(gguf_path)
         state_dict = resolve_qwen3_gguf_keyspace(gguf_state_dict, num_layers=36)
 
@@ -119,7 +124,11 @@ class Flux2TextEncoder(nn.Module):
     ) -> "Flux2TextEncoder":
         from apps.backend.runtime.families.zimage.qwen3 import Qwen3_4B, Qwen3Config
 
-        logger.info("Loading FLUX.2 Qwen3-4B text encoder from state_dict (%d keys)", len(state_dict))
+        emit_backend_message(
+            "Loading FLUX.2 Qwen3-4B text encoder from state_dict",
+            logger=logger.name,
+            keys=len(state_dict),
+        )
         resolved = resolve_qwen_text_encoder_keyspace(
             {str(k): v for k, v in state_dict.items()},
             allow_lm_head_aux=True,
@@ -191,7 +200,11 @@ class Flux2TextEncoder(nn.Module):
                 continue
             try:
                 self._tokenizer = AutoTokenizer.from_pretrained(str(path), local_files_only=True, use_fast=True)
-                logger.info("Loaded FLUX.2 tokenizer from %s", path)
+                emit_backend_message(
+                    "Loaded FLUX.2 tokenizer",
+                    logger=logger.name,
+                    path=path,
+                )
                 return self._tokenizer
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{path}: {type(exc).__name__}: {exc}")

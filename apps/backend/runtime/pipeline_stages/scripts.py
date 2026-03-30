@@ -19,8 +19,8 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message
 
-import logging
 from typing import Any, Iterable, Sequence
 
 import torch
@@ -29,8 +29,6 @@ from apps.backend.runtime.adapters.lora import selections as lora_selections
 from apps.backend.core.state import state as backend_state
 from apps.backend.patchers.lora_apply import apply_loras_to_engine
 from apps.backend.runtime.processing.datatypes import PromptContext
-
-logger = logging.getLogger(__name__)
 
 
 def run_process_scripts(processing: Any) -> None:
@@ -55,7 +53,12 @@ def activate_extra_networks(processing: Any) -> None:
     if not selections:
         return
     stats = apply_loras_to_engine(processing.sd_model, selections)
-    logger.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
+    emit_backend_message(
+        "[native] Applied LoRA selections",
+        logger=__name__,
+        files=stats.files,
+        params_touched=stats.params_touched,
+    )
 
 
 def set_shared_job(processing: Any) -> None:

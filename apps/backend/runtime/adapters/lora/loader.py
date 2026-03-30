@@ -27,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import re
@@ -45,7 +46,7 @@ from apps.backend.runtime.adapters.lora.types import (
     make_spec,
 )
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_backend_logger(__name__)
 _RX_BLOCK_MODULATION_LOGICAL_KEY = re.compile(r"^blocks_(?P<idx>\d+)_modulation$")
 STANDARD_LORA_TENSOR_CANDIDATES = (
     (".lora_up.weight", ".lora_down.weight", ".lora_mid.weight"),

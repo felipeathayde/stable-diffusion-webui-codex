@@ -32,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import importlib
 import logging
@@ -46,7 +47,7 @@ from typing import Any
 
 import torch
 
-logger = logging.getLogger("backend.runtime.attention.sram")
+logger = get_backend_logger("backend.runtime.attention.sram")
 
 _MODE_ENV_KEY = "CODEX_ATTENTION_SRAM_MODE"
 _JIT_ENV_KEY = "CODEX_ATTENTION_SRAM_JIT"

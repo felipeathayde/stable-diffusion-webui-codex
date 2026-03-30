@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import time
@@ -93,7 +94,7 @@ class StreamingController(Generic[SegmentT]):
     window_size: int = 2
     non_blocking: bool = True
     logger: logging.Logger = field(
-        default_factory=lambda: logging.getLogger("backend.runtime.streaming.controller"),
+        default_factory=lambda: get_backend_logger("backend.runtime.streaming.controller"),
         repr=False,
     )
 

@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from typing import Mapping, Sequence
@@ -25,7 +26,7 @@ from typing import Mapping, Sequence
 from .errors import ClipVisionConfigError, ClipVisionLoadError
 from .specs import ClipVisionVariant, ClipVisionVariantSpec, get_variant_spec
 
-logger = logging.getLogger("backend.runtime.vision.clip.registry")
+logger = get_backend_logger("backend.runtime.vision.clip.registry")
 
 
 def _shape_of(state_dict: Mapping[str, object], key: str) -> tuple[int, ...] | None:

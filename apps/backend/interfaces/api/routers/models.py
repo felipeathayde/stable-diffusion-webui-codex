@@ -40,6 +40,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import asyncio
 import logging
@@ -371,8 +372,8 @@ def build_router(
     model_api: Any,
 ) -> APIRouter:
     router = APIRouter()
-    log = logging.getLogger("backend.api")
-    inventory_log = logging.getLogger("inventory")
+    log = get_backend_logger("backend.api")
+    inventory_log = get_backend_logger("inventory")
     repo_root = _REPO_ROOT.resolve(strict=False)
     from apps.backend.services.model_catalog import (
         current_models_revision,

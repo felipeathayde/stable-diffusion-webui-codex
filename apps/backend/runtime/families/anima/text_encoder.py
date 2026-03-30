@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 import logging
 import os
@@ -42,7 +43,7 @@ from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.state_dict.keymap_qwen_text_encoder import resolve_qwen_text_encoder_keyspace
 from apps.backend.runtime.text_processing.parsing import parse_prompt_attention
 
-logger = logging.getLogger("backend.runtime.anima.text_encoder")
+logger = get_backend_logger("backend.runtime.anima.text_encoder")
 
 
 def _resolve_dir_candidates(*, env_var: str, explicit: str | None, candidates: Iterable[Path]) -> list[Path]:
@@ -89,7 +90,13 @@ def _load_tokenizer_dir(
             continue
         try:
             tok = load_tokenizer(str(p))
-            logger.info("Loaded %s from %s (env=%s)", loader_name, p, env_var)
+            emit_backend_message(
+                "Loaded tokenizer",
+                logger=logger.name,
+                loader=loader_name,
+                path=p,
+                env=env_var,
+            )
             return tok
         except Exception as exc:  # noqa: BLE001 - try next candidate
             errors.append(f"{p}: {type(exc).__name__}: {exc}")
@@ -347,21 +354,24 @@ class AnimaQwenTextEncoder(nn.Module):
             batch_size = int(input_ids.shape[0])
             input_ids = torch.full((batch_size, 1), fill_value=pad_id, dtype=input_ids.dtype, device=input_ids.device)
             attention_mask = torch.zeros((batch_size, 1), dtype=attention_mask.dtype, device=attention_mask.device)
-            logger.debug(
-                "Qwen tokenizer produced empty sequence; synthesized masked pad token for min_length=1 "
-                "(batch_size=%d, pad_token_id=%d).",
-                batch_size,
-                pad_id,
+            emit_backend_message(
+                "Qwen tokenizer produced empty sequence; synthesized masked pad token for min_length=1",
+                logger=logger.name,
+                level=logging.DEBUG,
+                batch_size=batch_size,
+                pad_token_id=pad_id,
             )
 
         # Fail loud on truncation (transformers reports it via tokenizer warnings in some cases; we enforce via length).
         if input_ids.shape[1] >= int(max_length):
             # Best-effort check: if any row ends with a non-pad token while attention_mask indicates padding,
             # it likely truncated. We keep the message actionable rather than guessing.
-            logger.warning(
-                "Qwen tokenizer hit max_length=%d (seq_len=%d). Prompt may have been truncated.",
-                int(max_length),
-                int(input_ids.shape[1]),
+            emit_backend_message(
+                "Qwen tokenizer hit max_length; prompt may have been truncated",
+                logger=logger.name,
+                level=logging.WARNING,
+                max_length=int(max_length),
+                seq_len=int(input_ids.shape[1]),
             )
         return _QwenTokenBatch(input_ids=input_ids, attention_mask=attention_mask)
 
@@ -529,7 +539,12 @@ def load_anima_qwen3_06b_text_encoder(
         key_style = resolved.style
         sd = resolved.view
         style_label = key_style.value if hasattr(key_style, "value") else str(key_style)
-        logger.debug("Anima Qwen3-0.6B keymap style=%s", style_label)
+        emit_backend_message(
+            "Anima Qwen3-0.6B keymap style",
+            logger=logger.name,
+            level=logging.DEBUG,
+            style=style_label,
+        )
     except Exception as exc:  # noqa: BLE001 - surfaced as strict load-time context
         raise RuntimeError(f"Anima Qwen3-0.6B key mapping failed: {exc}") from exc
 

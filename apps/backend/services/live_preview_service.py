@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import base64
 from contextlib import contextmanager
@@ -39,7 +40,7 @@ from apps.backend.runtime.live_preview import (
     preview_runtime_overrides,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_backend_logger(__name__)
 
 
 class LivePreviewImageFormat(str, Enum):

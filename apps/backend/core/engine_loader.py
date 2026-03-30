@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from dataclasses import dataclass
@@ -41,7 +42,7 @@ from apps.backend.runtime.models.loader import (
     resolve_diffusion_bundle,
 )
 
-_LOG = logging.getLogger("backend.core.engine_loader")
+_LOG = get_backend_logger("backend.core.engine_loader")
 
 
 @dataclass

@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from typing import Any, Iterator, Sequence
@@ -30,7 +31,7 @@ from apps.backend.runtime.diagnostics.timeline import timeline
 from .txt2img_pipeline.runner import Txt2ImgPipelineRunner
 
 
-_logger = logging.getLogger("backend.use_cases.txt2img")
+_logger = get_backend_logger("backend.use_cases.txt2img")
 _RUNNER = Txt2ImgPipelineRunner()
 
 

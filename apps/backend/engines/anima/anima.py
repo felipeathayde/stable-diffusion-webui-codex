@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import os
 import logging
@@ -43,7 +44,7 @@ from .factory import CodexAnimaFactory
 from .spec import ANIMA_SPEC, AnimaEngineRuntime
 
 
-logger = logging.getLogger("backend.engines.anima")
+logger = get_backend_logger("backend.engines.anima")
 _ANIMA_FACTORY = CodexAnimaFactory(spec=ANIMA_SPEC)
 
 

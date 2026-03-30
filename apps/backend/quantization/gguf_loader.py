@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import warnings
@@ -29,7 +30,7 @@ import torch
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.memory import memory_management
 
-logger = logging.getLogger("backend.quantization.gguf_loader")
+logger = get_backend_logger("backend.quantization.gguf_loader")
 
 
 def _trace_load_patch_debug_enabled() -> bool:

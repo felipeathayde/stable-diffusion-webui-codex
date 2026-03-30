@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 from dataclasses import replace
 import json
@@ -75,7 +76,7 @@ from apps.backend.use_cases._image_streaming import (
 from apps.backend.use_cases.img2img import _compute_conditioning_payload
 
 
-logger = logging.getLogger("backend.engines.flux2.img2img")
+logger = get_backend_logger("backend.engines.flux2.img2img")
 
 
 def _conditioning_cache_hit_metadata(processing: CodexProcessingImg2Img) -> dict[str, object]:

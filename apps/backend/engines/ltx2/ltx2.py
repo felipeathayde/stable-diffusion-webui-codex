@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from typing import Any, Iterator
@@ -32,7 +33,7 @@ from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_dif
 from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
 from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
 
-logger = logging.getLogger("backend.engines.ltx2")
+logger = get_backend_logger("backend.engines.ltx2")
 _LTX2_FACTORY = CodexLtx2Factory(spec=LTX2_SPEC)
 
 

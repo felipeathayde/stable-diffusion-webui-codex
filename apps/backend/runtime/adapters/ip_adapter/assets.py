@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import threading
@@ -37,7 +38,7 @@ from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.model_registry.capabilities import ip_adapter_support_error
 from apps.backend.runtime.vision.clip.encoder import ClipVisionEncoder
 
-logger = logging.getLogger("backend.runtime.adapters.ip_adapter.assets")
+logger = get_backend_logger("backend.runtime.adapters.ip_adapter.assets")
 
 _ASSET_CACHE: dict[tuple[str, str, str, str, str], PreparedIpAdapterAssets] = {}
 _ASSET_CACHE_LOCK = threading.Lock()

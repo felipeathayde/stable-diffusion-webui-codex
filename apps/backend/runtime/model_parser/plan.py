@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 from collections.abc import MutableMapping
 from typing import Any, Dict
@@ -34,7 +35,7 @@ from .errors import MissingComponentError
 from .specs import ComponentState, ParserContext, ParserPlan
 
 
-_log = logging.getLogger("backend.model_parser")
+_log = get_backend_logger("backend.model_parser")
 
 
 def _keymap_paths() -> tuple[Path, Path]:

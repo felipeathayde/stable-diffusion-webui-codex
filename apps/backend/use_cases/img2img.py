@@ -34,6 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import gc
 import math
@@ -98,7 +99,7 @@ from PIL import Image
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
-logger = logging.getLogger(__name__)
+logger = get_backend_logger(__name__)
 
 _KONTEXT_MULTIPLE_OF = 16
 

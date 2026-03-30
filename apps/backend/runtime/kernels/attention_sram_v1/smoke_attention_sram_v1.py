@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import argparse
 import json
@@ -35,7 +36,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-logger = logging.getLogger("runtime.kernels.attention_sram_v1.smoke")
+logger = get_backend_logger("runtime.kernels.attention_sram_v1.smoke")
 
 _EXTENSION_NAME = "attention_sram_v1_cuda"
 _EXPECTED_FALLBACK_CODE = "E_SRAM_ATTENTION_HEAD_DIM_UNSUPPORTED"

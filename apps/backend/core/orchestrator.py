@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import gc
 import logging
@@ -38,7 +39,7 @@ from apps.backend.runtime.diagnostics.error_summary import summarize_exception_f
 from apps.backend.runtime.diagnostics.exception_hook import dump_exception
 
 
-logger = logging.getLogger(__name__)
+logger = get_backend_logger(__name__)
 
 
 class InferenceOrchestrator:

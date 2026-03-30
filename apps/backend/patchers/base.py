@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import copy
 import inspect
@@ -43,7 +44,7 @@ from apps.backend.runtime.memory.smart_offload import (
 )
 from .lora import CodexLoraLoader
 
-logger = logging.getLogger("backend.patchers.base")
+logger = get_backend_logger("backend.patchers.base")
 
 LoraPatchKey = Tuple[str, float, float, bool]
 PatchEntry = List[Any]

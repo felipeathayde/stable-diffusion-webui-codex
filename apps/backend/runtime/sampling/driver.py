@@ -29,13 +29,13 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_event, emit_backend_message, get_backend_logger
 
 # tags: sampling, diagnostics
 
 from dataclasses import dataclass
 from typing import Any, Optional, Callable, List, Mapping
 import math
-import logging
 import os
 
 import torch
@@ -80,7 +80,6 @@ from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload_invariants import enforce_smart_offload_pre_sampling_residency
 from apps.backend.runtime.diagnostics.timeline import timeline
 from apps.backend.runtime.diagnostics.profiler import profiler
-from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.patchers.base import set_model_options_post_cfg_function
 
 class _SamplingCancelled(Exception):
@@ -627,12 +626,12 @@ class CodexSampler:
     def __init__(self, sd_model: Any, *, algorithm: str | None = None) -> None:
         self.sd_model = sd_model
         self.algorithm = (algorithm or "euler a").strip().lower()
-        self._logger = logging.getLogger(__name__ + ".CodexSampler")
+        self._logger_name = get_backend_logger(f"{__name__}.sampler").name
         self._log_enabled = env_flag("CODEX_LOG_SAMPLER", default=False)
         self._log_sigmas = env_flag("CODEX_LOG_SIGMAS", default=False)
 
     def _emit_event(self, event: str, /, **fields: object) -> None:
-        emit_backend_event(event, logger=self._logger.name, **fields)
+        emit_backend_event(event, logger=self._logger_name, **fields)
 
     @staticmethod
     def _compact_series(values: list[float]) -> str:
@@ -822,10 +821,11 @@ class CodexSampler:
         diffusion_model = getattr(model, "diffusion_model", None)
         if diffusion_model is not None:
             diffusion_model.to(dtype=dtype)
-        self._logger.info(
-            "Diffusion core precision updated: %s -> %s",
-            str(previous),
-            str(dtype),
+        emit_backend_message(
+            "Diffusion core precision updated",
+            logger=self._logger_name,
+            previous=str(previous),
+            next=str(dtype),
         )
 
     @staticmethod
@@ -1418,7 +1418,11 @@ class CodexSampler:
             # to avoid double scaling which corrupts the output (sand texture artifact)
             if hasattr(self.sd_model, "use_distilled_cfg_scale") and self.sd_model.use_distilled_cfg_scale:
                 if cfg_scale != 1.0:
-                    self._logger.info("[flux] Distilled CFG active: forcing cfg_scale=1.0 (was %.2f)", cfg_scale)
+                    emit_backend_message(
+                        "[flux] Distilled CFG active: forcing cfg_scale=1.0",
+                        logger=self._logger_name,
+                        previous_cfg_scale=cfg_scale,
+                    )
                 cfg_scale = 1.0
 
             if steps <= 0:
@@ -1508,10 +1512,10 @@ class CodexSampler:
                         method = live_preview_method(default=LivePreviewMethod.FULL)
                         allow_vae_resident = method == LivePreviewMethod.FULL
                         if allow_vae_resident and not warned_full_preview:
-                            self._logger.warning(
-                                "Live preview FULL uses VAE decode during sampling. "
-                                "This increases VRAM usage and can reduce generation performance; "
-                                "prefer 'Approx cheap' when possible."
+                            emit_backend_message(
+                                "Live preview FULL uses VAE decode during sampling. This increases VRAM usage and can reduce generation performance; prefer 'Approx cheap' when possible.",
+                                logger=self._logger_name,
+                                level="WARNING",
                             )
                             warned_full_preview = True
                     except Exception:
@@ -2546,10 +2550,12 @@ class CodexSampler:
                     epsilon_output = (model_input - denoised_output) / max(sigma_value, 1e-8)
                     if strict and (torch.isnan(epsilon_output).any() or torch.isnan(denoised_output).any()):
                         reason = f"NaN detected at sampling step {current_step}"
-                        self._logger.warning(
-                            "NaN encountered at step %d with dtype=%s; attempting precision fallback.",
-                            current_step,
-                            str(getattr(model, "computation_dtype", model_input.dtype)),
+                        emit_backend_message(
+                            "NaN encountered during sampling; attempting precision fallback.",
+                            logger=self._logger_name,
+                            level="WARNING",
+                            step=current_step,
+                            dtype=str(getattr(model, "computation_dtype", model_input.dtype)),
                         )
                         next_dtype = memory_management.manager.report_precision_failure(
                             DeviceRole.CORE,
@@ -3421,10 +3427,12 @@ class CodexSampler:
                             eps = (x - eps_source) / max(float(sigma), 1e-8)
                             if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):
                                 reason = f"NaN detected at sampling step {i + 1}"
-                                self._logger.warning(
-                                    "NaN encountered at step %d with dtype=%s; attempting precision fallback.",
-                                    i + 1,
-                                    str(getattr(model, "computation_dtype", x.dtype)),
+                                emit_backend_message(
+                                    "NaN encountered during sampling; attempting precision fallback.",
+                                    logger=self._logger_name,
+                                    level="WARNING",
+                                    step=i + 1,
+                                    dtype=str(getattr(model, "computation_dtype", x.dtype)),
                                 )
                                 next_dtype = memory_management.manager.report_precision_failure(
                                     DeviceRole.CORE,
@@ -5047,10 +5055,12 @@ class CodexSampler:
                                                 )
                                         if strict and torch.isnan(denoised).any():
                                             reason = f"NaN detected at sampling step {i + 1}"
-                                            self._logger.warning(
-                                                "NaN encountered at step %d with dtype=%s; attempting precision fallback.",
-                                                i + 1,
-                                                str(getattr(model, "computation_dtype", x.dtype)),
+                                            emit_backend_message(
+                                                "NaN encountered during sampling; attempting precision fallback.",
+                                                logger=self._logger_name,
+                                                level="WARNING",
+                                                step=i + 1,
+                                                dtype=str(getattr(model, "computation_dtype", x.dtype)),
                                             )
                                             next_dtype = memory_management.manager.report_precision_failure(
                                                 DeviceRole.CORE,
@@ -5367,9 +5377,16 @@ class CodexSampler:
 
                 return SamplingResult(samples=x)
             except _PrecisionFallbackRequest:
-                self._logger.warning("Precision fallback requested for diffusion core; retrying with next dtype.")
+                emit_backend_message(
+                    "Precision fallback requested for diffusion core; retrying with next dtype.",
+                    logger=self._logger_name,
+                    level="WARNING",
+                )
             except _SamplingCancelled:
-                self._logger.info("Sampling cancelled by request; aborting current run.")
+                emit_backend_message(
+                    "Sampling cancelled by request; aborting current run.",
+                    logger=self._logger_name,
+                )
                 raise RuntimeError("cancelled")
             finally:
                 if block_progress_controller is not None:

@@ -24,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import json
 import os
@@ -35,7 +36,7 @@ from .repo_root import get_repo_root
 
 _PATHS_CACHE: Dict[str, List[str]] | None = None
 _PATHS_MTIME: float | None = None
-_LOG = logging.getLogger("backend.infra.config.paths")
+_LOG = get_backend_logger("backend.infra.config.paths")
 
 
 _MODEL_DIR_KEYS: tuple[str, ...] = (

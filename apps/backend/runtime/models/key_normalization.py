@@ -18,13 +18,14 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from typing import Any, Dict, Mapping
 
 from apps.backend.runtime.state_dict.views import KeyspaceLookupView
 
-UNET_LOG = logging.getLogger("apps.backend.runtime.models.loader.unet")
+UNET_LOG = get_backend_logger("apps.backend.runtime.models.loader.unet")
 
 _UNET_PREFIXES: tuple[str, ...] = (
     "model.diffusion_model.",

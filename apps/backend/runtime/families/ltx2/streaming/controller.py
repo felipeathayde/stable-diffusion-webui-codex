@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 
@@ -33,7 +34,7 @@ from apps.backend.runtime.streaming.controller import (
 
 from .specs import Ltx2Segment
 
-logger = logging.getLogger("backend.runtime.ltx2.streaming.controller")
+logger = get_backend_logger("backend.runtime.ltx2.streaming.controller")
 
 Ltx2StreamingPolicy = StreamingPolicy
 

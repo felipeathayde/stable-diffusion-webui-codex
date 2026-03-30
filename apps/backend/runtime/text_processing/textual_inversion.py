@@ -33,10 +33,11 @@ import json
 import zlib
 import numpy as np
 import safetensors.torch
+from apps.backend.runtime.logging import get_backend_logger
 
 from PIL import Image
 
-_log = logging.getLogger("backend.textual_inversion")
+_log = get_backend_logger("backend.textual_inversion")
 
 
 class EmbeddingEncoder(json.JSONEncoder):

@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import io
 import json
@@ -41,7 +42,7 @@ from apps.backend.interfaces.api.public_errors import (
 )
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
-logger = logging.getLogger("backend.api.tasks.upscale")
+logger = get_backend_logger("backend.api.tasks.upscale")
 
 _HF_MANIFEST_PATH = "upscalers/manifest.json"
 

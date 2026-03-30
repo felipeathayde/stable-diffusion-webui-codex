@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import json
 import logging
@@ -33,7 +34,7 @@ from apps.backend.runtime.misc import checkpoint_pickle
 
 from ..state_dict.views import LazySafetensorsDict
 
-_log = logging.getLogger("backend.runtime.utils")
+_log = get_backend_logger("backend.runtime.utils")
 _CONFIG_FILENAMES = ("config.json", "scheduler_config.json")
 
 

@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 from contextlib import nullcontext
 import logging
@@ -27,7 +28,7 @@ from torch import nn
 from .controller import Ltx2CoreController, create_controller
 from .specs import Ltx2ExecutionPlan, Ltx2Segment, build_execution_plan
 
-logger = logging.getLogger("backend.runtime.ltx2.streaming.wrapper")
+logger = get_backend_logger("backend.runtime.ltx2.streaming.wrapper")
 
 
 class StreamedLtx2Transformer(nn.Module):
@@ -46,10 +47,11 @@ class StreamedLtx2Transformer(nn.Module):
         self._install_segment_hooks()
         self._initialize_storage_residency()
 
-        logger.info(
-            "StreamedLtx2Transformer initialized: %d segments, %d blocks",
-            len(execution_plan),
-            execution_plan.block_count,
+        emit_backend_message(
+            "StreamedLtx2Transformer initialized",
+            logger=logger.name,
+            segments=len(execution_plan),
+            blocks=execution_plan.block_count,
         )
 
     @property

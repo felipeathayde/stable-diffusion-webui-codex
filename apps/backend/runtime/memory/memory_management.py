@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from copy import deepcopy
@@ -36,7 +37,7 @@ from .config import AttentionBackend, DeviceBackend, DeviceRole, RuntimeMemoryCo
 from .manager import CodexMemoryManager
 
 
-logger = logging.getLogger("backend.memory.facade")
+logger = get_backend_logger("backend.memory.facade")
 
 
 _CONFIG: RuntimeMemoryConfig | None = None

@@ -27,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import os
@@ -50,7 +51,7 @@ from apps.backend.runtime.sampling_adapters.prediction import (
     PredictionDiscreteFlow,
 )
 
-logger = logging.getLogger("backend.engines.anima.spec")
+logger = get_backend_logger("backend.engines.anima.spec")
 
 
 def _torch_dtype_label(dtype: torch.dtype) -> str:

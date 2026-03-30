@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 # Architecture notes (Qwen3-4B):
 # - hidden_size: 2560
@@ -50,7 +51,7 @@ from apps.backend.runtime.attention import attention_function_pre_shaped
 from apps.backend.runtime.memory.config import AttentionBackend
 from apps.backend.runtime.misc.autocast import autocast_disabled
 
-logger = logging.getLogger("backend.runtime.zimage.qwen3")
+logger = get_backend_logger("backend.runtime.zimage.qwen3")
 
 
 # =============================================================================
@@ -588,7 +589,12 @@ def resolve_qwen3_gguf_keyspace(
     )
     style = resolved.style
     style_label = style.value if hasattr(style, "value") else str(style)
-    logger.debug("Qwen3 keyspace: detected style=%s", style_label)
+    emit_backend_message(
+        "Qwen3 keyspace: detected style",
+        logger=logger.name,
+        level=logging.DEBUG,
+        style=style_label,
+    )
     return resolved.view
 
 

@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
@@ -32,7 +33,7 @@ import math
 from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig
 from apps.backend.runtime.vision.upscalers.specs import TileConfig, default_tile_config, tile_config_from_payload
 
-logger = logging.getLogger(__name__)
+logger = get_backend_logger(__name__)
 
 
 def _repeat_to_length(values: Sequence[Any], length: int, *, default: Any) -> List[Any]:

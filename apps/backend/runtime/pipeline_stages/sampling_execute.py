@@ -22,7 +22,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import datetime as _dt
-import logging
 import math
 import os
 from pathlib import Path
@@ -43,6 +42,8 @@ from apps.backend.runtime.live_preview import (
     maybe_log_preview_factors,
     preview_interval_steps,
 )
+from apps.backend.runtime.diagnostics.error_summary import summarize_exception_for_console
+from apps.backend.runtime.logging import emit_backend_message
 from apps.backend.runtime.processing.conditioners import txt2img_conditioning
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext, SamplingPlan
 from apps.backend.runtime.sampling.context import build_sampling_context
@@ -52,8 +53,6 @@ from apps.backend.infra.config.repo_root import get_repo_root
 
 from .ip_adapter import apply_processing_ip_adapter
 from .scripts import collect_lora_selections, run_before_sampling_hooks, run_post_sample_hooks
-
-logger = logging.getLogger(__name__)
 
 
 def _maybe_dump_latents(
@@ -108,9 +107,15 @@ def _maybe_dump_latents(
                     "s_noise": float(plan.er_sde.s_noise),
                 }
         torch.save(payload, target)
-        logger.info("[diagnostics] dumped latents to %s", target)
+        emit_backend_message("[diagnostics] dumped latents", logger=__name__, target=str(target))
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to dump latents to %s: %s", target, exc)
+        emit_backend_message(
+            "Failed to dump latents",
+            logger=__name__,
+            level="ERROR",
+            target=str(target),
+            error=summarize_exception_for_console(exc),
+        )
 
 
 def execute_sampling_result(
@@ -168,7 +173,12 @@ def execute_sampling_result(
     if hasattr(model, "codex_objects_after_applying_lora") and model.codex_objects_after_applying_lora is not None:
         stats = apply_loras_to_engine(model, merged)
         if merged:
-            logger.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
+            emit_backend_message(
+                "[native] Applied LoRA(s)",
+                logger=__name__,
+                files=stats.files,
+                params_touched=stats.params_touched,
+            )
         model.codex_objects = model.codex_objects_after_applying_lora.shallow_copy()
     elif merged:
         raise RuntimeError(

@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import math
@@ -40,7 +41,7 @@ from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, Se
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
-logger = logging.getLogger("backend.engines.flux2")
+logger = get_backend_logger("backend.engines.flux2")
 _FLUX2_FACTORY = CodexFlux2Factory(spec=FLUX2_SPEC)
 
 

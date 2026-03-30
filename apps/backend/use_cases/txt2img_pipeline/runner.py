@@ -24,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 # // tags: txt2img, pipeline, sdxl, hires, refiner
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import math
@@ -119,7 +120,7 @@ class Txt2ImgPipelineRunner:
     """Orchestrates txt2img generation through well-defined stages."""
 
     def __init__(self) -> None:
-        self._logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
+        self._logger = get_backend_logger(__name__)
         # SDXL conditioning cache (prompt + dims → (cond, uncond))
         # shared across runs for this runner instance.
         self._conditioning_cache: dict[tuple, tuple[object, object | None]] = {}
@@ -305,7 +306,7 @@ class Txt2ImgPipelineRunner:
 
     @staticmethod
     def _log_tensor_stats(label: str, tensor: torch.Tensor | None) -> None:
-        logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
+        logger = get_backend_logger(__name__)
         if tensor is None:
             logger.info("[sampling] %s: <none>", label)
             return

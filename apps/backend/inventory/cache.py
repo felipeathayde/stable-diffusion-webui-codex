@@ -33,6 +33,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import hashlib
 import logging
@@ -98,7 +99,7 @@ def _get_file_sha256(path: str) -> str:
             raise RuntimeError("hash cache returned empty sha256")
         return sha256
     except Exception as exc:
-        logging.getLogger("backend.inventory").warning(
+        get_backend_logger("backend.inventory").warning(
             "inventory sha cache failed for %s (%s); falling back to direct hashing",
             path,
             exc.__class__.__name__,
@@ -195,7 +196,7 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
             except TextEncoderSlotError:
                 pass
             except Exception as exc:
-                logging.getLogger("backend.inventory").debug(
+                get_backend_logger("backend.inventory").debug(
                     "text encoder slot classification failed for %s (%s)",
                     full,
                     exc.__class__.__name__,
@@ -247,7 +248,7 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
         from apps.backend.runtime.models.registry import get_registry
         get_registry().flush_hash_cache()
     except Exception as exc:
-        logging.getLogger("backend.inventory").warning(
+        get_backend_logger("backend.inventory").warning(
             "inventory hash cache flush failed (%s)",
             exc.__class__.__name__,
         )

@@ -79,6 +79,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, TYPE_CHECKING
+from apps.backend.runtime.logging import get_backend_logger
 
 import torch
 
@@ -145,9 +146,9 @@ from apps.backend.runtime.checkpoint.safetensors_header import (
     read_safetensors_header,
 )
 
-LOGGER = logging.getLogger(__name__)
-CLIP_LOG = logging.getLogger(__name__ + ".clip")
-_LOG = logging.getLogger(__name__)
+LOGGER = get_backend_logger(__name__)
+CLIP_LOG = get_backend_logger(__name__ + ".clip")
+_LOG = get_backend_logger(__name__)
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 SUPPORTED_INFERENCE_DTYPES: Dict[ModelFamily, tuple[torch.dtype, ...]] = {

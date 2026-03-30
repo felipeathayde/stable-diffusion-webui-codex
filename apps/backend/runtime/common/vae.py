@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import os
@@ -37,7 +38,7 @@ from apps.backend.runtime.common.vae_lane_policy import (
 from apps.backend.runtime.common.vae_ldm import AutoencoderKL_LDM, sanitize_ldm_vae_config
 from apps.backend.runtime.model_registry.specs import ModelFamily
 
-logger = logging.getLogger("backend.runtime.common.vae")
+logger = get_backend_logger("backend.runtime.common.vae")
 
 
 # Configuration for 16-channel flow-based VAE (used by Flux, Z Image)

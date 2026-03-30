@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import json
 import logging
@@ -31,7 +32,7 @@ class BaseVideoEngine(BaseInferenceEngine):
 
     def __init__(self) -> None:
         super().__init__()
-        self._logger = logging.getLogger(self.__class__.__name__)
+        self._logger = get_backend_logger(__name__)
 
     # Subclasses should implement: load(), unload(), capabilities(), txt2vid(), img2vid().
 

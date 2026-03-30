@@ -28,6 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import os
@@ -55,7 +56,7 @@ from .exceptions import HardwareProbeError, MemoryConfigurationError, MemoryLoad
 from .smart_offload import SmartOffloadAction, log_smart_offload_action, smart_offload_enabled
 
 
-logger = logging.getLogger("backend.memory.manager")
+logger = get_backend_logger("backend.memory.manager")
 
 
 _NATIVE_BF16_NAME_FRAGMENTS: Tuple[str, ...] = (

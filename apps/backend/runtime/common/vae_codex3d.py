@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from collections.abc import Mapping, MutableMapping, Sequence
@@ -548,7 +549,7 @@ class Codex3DDecoder(nn.Module):
         _ = first_chunk
         if feat_cache is not None and feat_idx is None:
             raise RuntimeError("AutoencoderCodex3D decoder cache requires feat_idx.")
-        trace_logger = logging.getLogger("backend.runtime.wan22.vae_codex3d")
+        trace_logger = get_backend_logger("backend.runtime.wan22.vae_codex3d")
         trace_enabled = _vae_trace_verbose_enabled() and trace_logger.isEnabledFor(logging.DEBUG)
         middle_count = int(len(self.middle))
         upsample_count = int(len(self.upsamples))
@@ -849,7 +850,7 @@ class AutoencoderCodex3D(nn.Module, ConfigMixin):
                 "AutoencoderCodex3D decode expects 4D or 5D latents ([B,C,H,W] or [B,C,T,H,W]), "
                 f"got shape={tuple(z.shape)}."
             )
-        trace_logger = logging.getLogger("backend.runtime.wan22.vae_codex3d")
+        trace_logger = get_backend_logger("backend.runtime.wan22.vae_codex3d")
         trace_enabled = _vae_trace_verbose_enabled() and trace_logger.isEnabledFor(logging.DEBUG)
         _, _, num_frame, _, _ = z.shape
         conv2_cache: torch.Tensor | None = None

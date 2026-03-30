@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import io
 import logging
@@ -27,7 +28,7 @@ from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, r
 from apps.backend.interfaces.api.public_errors import build_cancelled_task_error, build_public_task_error
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry
 
-logger = logging.getLogger("backend.api.tasks.supir")
+logger = get_backend_logger("backend.api.tasks.supir")
 
 
 def run_supir_enhance_task(

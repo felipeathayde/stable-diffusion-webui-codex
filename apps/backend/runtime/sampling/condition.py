@@ -25,6 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import math
 import logging
 import torch
+from apps.backend.runtime.logging import emit_backend_message
 
 
 def repeat_to_batch_size(tensor, batch_size):
@@ -237,12 +238,13 @@ def compile_conditions(cond):
             )
         result['model_conds']['image_latents'] = Condition(image_latents)
 
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "compiled conditions: cross_attn=%s pooled=%s",
-            tuple(cross_attn.shape),
-            None if pooled_output is None else tuple(pooled_output.shape),
-        )
+    emit_backend_message(
+        "compiled conditions",
+        logger=__name__,
+        level=logging.DEBUG,
+        cross_attn=tuple(cross_attn.shape),
+        pooled=None if pooled_output is None else tuple(pooled_output.shape),
+    )
     return [result]
 
 
@@ -267,4 +269,3 @@ def compile_weighted_conditions(cond, weights):
         results += h
 
     return results
-logger = logging.getLogger("backend.runtime.sampling.condition")

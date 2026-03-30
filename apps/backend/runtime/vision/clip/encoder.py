@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 import time
@@ -38,7 +39,7 @@ from .specs import ClipVisionVariantSpec
 from .state_dict import normalize_clip_vision_state_dict_with_layout
 from .types import ClipVisionOutput
 
-logger = logging.getLogger("backend.runtime.vision.clip.encoder")
+logger = get_backend_logger("backend.runtime.vision.clip.encoder")
 
 
 class ClipVisionEncoder:

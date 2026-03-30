@@ -26,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import base64
 import contextlib
@@ -57,7 +58,7 @@ from apps.backend.runtime.load_authority import (
     coordinator_load_permit,
 )
 
-logger = logging.getLogger("backend.api.tasks.generation")
+logger = get_backend_logger("backend.api.tasks.generation")
 
 
 def encode_images(images: Any, *, metadata: Optional[Mapping[str, str]] = None) -> list[dict[str, str]]:  # type: ignore[no-untyped-def]

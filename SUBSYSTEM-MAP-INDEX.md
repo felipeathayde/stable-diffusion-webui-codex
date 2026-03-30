@@ -1,7 +1,7 @@
 <!-- tags: webui, architecture, map, index, discovery -->
 # Subsystem Map Index
-Date: 2026-03-29
-Last Review: 2026-03-29
+Date: 2026-03-30
+Last Review: 2026-03-30
 Status: Active
 
 Read this first. This file is lookup-only.
@@ -29,7 +29,7 @@ Use `Jump to` to open the bounded section in `SUBSYSTEM-MAP.md`, then follow the
 | Pipeline | txt2vid | text-to-video | [txt2vid](SUBSYSTEM-MAP.md#map-pipeline-txt2vid) | `apps/backend/use_cases/txt2vid.py` |
 | Pipeline | img2vid | image-to-video | [img2vid](SUBSYSTEM-MAP.md#map-pipeline-img2vid) | `apps/backend/use_cases/img2vid.py` |
 | Pipeline | vid2vid | video-to-video; WAN animate rewrite lane | [vid2vid](SUBSYSTEM-MAP.md#map-pipeline-vid2vid) | `apps/backend/use_cases/vid2vid.py` |
-| Pipeline | API bootstrap | FastAPI mount; router registration | [API bootstrap](SUBSYSTEM-MAP.md#map-pipeline-api-bootstrap) | `apps/backend/interfaces/api/run_api.py` |
+| Pipeline | API bootstrap | FastAPI mount; router registration; shared bootstrap logging handoff | [API bootstrap](SUBSYSTEM-MAP.md#map-pipeline-api-bootstrap) | `apps/backend/interfaces/api/run_api.py` |
 
 ## Owner Seams
 | Type | Name | Aliases | Jump to | Canonical owner path |
@@ -37,6 +37,7 @@ Use `Jump to` to open the bounded section in `SUBSYSTEM-MAP.md`, then follow the
 | Owner Seam | Generation Router | route contract; task spawn; payload DTO parse | [Generation Router seam](SUBSYSTEM-MAP.md#map-owner-generation-router) | `apps/backend/interfaces/api/routers/generation.py` |
 | Owner Seam | Image Task Worker | image task lifecycle; result packaging | [Image Task Worker](SUBSYSTEM-MAP.md#map-owner-image-task-worker) | `apps/backend/interfaces/api/tasks/generation_tasks.py` |
 | Owner Seam | Task Registry + SSE | task snapshot; replay buffer; cancel/end | [Task Registry + SSE](SUBSYSTEM-MAP.md#map-owner-task-registry-sse) | `apps/backend/interfaces/api/task_registry.py` |
+| Owner Seam | Backend Logging | logger wrapper; BackendLoggerProxy; bootstrap log config; repo-owned emission path | [Backend Logging seam](SUBSYSTEM-MAP.md#map-owner-backend-logging) | `apps/backend/runtime/logging.py` |
 | Owner Seam | Orchestrator | engine load/cache; dispatch to wrappers | [Orchestrator seam](SUBSYSTEM-MAP.md#map-owner-orchestrator) | `apps/backend/core/orchestrator.py` |
 | Owner Seam | Shared Pipeline Stages | prompt; sampling; hires; video; adapters | [Shared pipeline stages](SUBSYSTEM-MAP.md#map-owner-shared-pipeline-stages) | `apps/backend/runtime/pipeline_stages/` |
 

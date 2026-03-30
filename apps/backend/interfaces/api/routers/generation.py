@@ -55,6 +55,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import asyncio
 import json
@@ -80,7 +81,7 @@ from apps.backend.interfaces.api.public_errors import (
 )
 from apps.backend.interfaces.api.task_registry import TaskCancelMode, TaskEntry, register_task, unregister_task
 
-_router_log = logging.getLogger("backend.api.routers.generation")
+_router_log = get_backend_logger("backend.api.routers.generation")
 
 
 def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapshot, generation_provenance, save_generated_images, param_utils) -> APIRouter:
@@ -5207,7 +5208,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return req, engine_key, model_ref
 
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
-        logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
+        get_backend_logger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
         settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
         video_engine_key = _canonical_engine_key(payload.get("engine")) if payload.get("engine") is not None else ""
         use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
@@ -5681,7 +5682,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
 
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
-        logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
+        get_backend_logger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, engine_key, model_ref
 
     def validate_pre_task_img2vid_payload(payload: Dict[str, Any]) -> None:
@@ -6277,7 +6278,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     @router.post('/api/img2vid')
     async def img2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
+        get_backend_logger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         _enforce_generation_settings_contract(payload)
@@ -6290,7 +6291,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         entry = TaskEntry(loop)
         task_id = f"task(api-img2vid-{uuid4().hex})"
         register_task(task_id, entry)
-        logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
+        get_backend_logger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
         run_video_task(task_id, payload, entry, TaskType.IMG2VID, device=device)
         return {"task_id": task_id}
 

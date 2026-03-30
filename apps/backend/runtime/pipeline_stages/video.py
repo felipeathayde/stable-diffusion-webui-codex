@@ -36,6 +36,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 from dataclasses import dataclass
 import logging
@@ -51,7 +52,7 @@ from apps.backend.video.export.ffmpeg_exporter import resolve_video_export_conta
 from apps.backend.video.interpolation import maybe_interpolate
 from apps.backend.video.upscaling.seedvr2 import run_seedvr2_upscaling
 
-logger = logging.getLogger(__name__)
+logger = get_backend_logger(__name__)
 _VIDEO_UPSCALING_COLOR_CORRECTIONS = {"lab", "wavelet", "wavelet_adaptive", "hsv", "adain", "none"}
 _LTX2_INTERNAL_EXTRA_KEYS = frozenset(
     {
@@ -229,10 +230,11 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
 
     stats = apply_loras_to_engine(engine, selections)
     if logger_:
-        logger_.info(
-            "[native] applied %d LoRA(s), %d params touched",
-            getattr(stats, "files", len(selections)),
-            getattr(stats, "params_touched", 0),
+        emit_backend_message(
+            "[native] applied LoRA(s)",
+            logger=getattr(logger_, "name", __name__),
+            files=getattr(stats, "files", len(selections)),
+            params_touched=getattr(stats, "params_touched", 0),
         )
     return stats
 
@@ -255,9 +257,19 @@ def configure_sampler(component: Any, plan: VideoPlan, logger_: logging.Logger |
     )
     for warning in outcome.warnings:
         if logger_:
-            logger_.warning("video sampler: %s", warning)
+            emit_backend_message(
+                "video sampler warning",
+                logger=getattr(logger_, "name", __name__),
+                level=logging.WARNING,
+                warning=warning,
+            )
         else:  # pragma: no cover - fallback logging
-            logger.warning("video sampler: %s", warning)
+            emit_backend_message(
+                "video sampler warning",
+                logger=__name__,
+                level=logging.WARNING,
+                warning=warning,
+            )
     return outcome
 
 

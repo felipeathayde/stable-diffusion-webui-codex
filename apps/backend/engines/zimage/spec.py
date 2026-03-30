@@ -27,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import logging
 from dataclasses import dataclass, field
@@ -43,7 +44,7 @@ from apps.backend.runtime.sampling_adapters.prediction import FlowMatchEulerPred
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 
-logger = logging.getLogger("backend.engines.zimage.spec")
+logger = get_backend_logger("backend.engines.zimage.spec")
 
 def _torch_dtype_label(dtype):
     import torch

@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import copy
 import logging
@@ -32,7 +33,7 @@ from apps.backend.runtime.controlnet.runtime import build_composite
 from apps.backend.runtime.sampling_adapters.sampler_model import SamplerModel
 from .base import ModelPatcher
 
-logger = logging.getLogger("backend.patchers.unet")
+logger = get_backend_logger("backend.patchers.unet")
 
 
 @dataclass

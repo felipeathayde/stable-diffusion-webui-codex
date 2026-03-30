@@ -29,6 +29,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import BackendLoggerProxy, emit_backend_message, get_backend_logger
 
 import math
 import logging
@@ -241,7 +242,7 @@ def make_scheduler(
                 )
 
     if sampler_lane == SamplerKind.EULER.value:
-        logging.getLogger("backend.runtime.wan22.sampling").warning(
+        get_backend_logger("backend.runtime.wan22.sampling").warning(
             "WAN22 GGUF: sampler=%r routed to experimental FlowMatch-Euler scheduler lane.",
             sampler,
         )
@@ -256,7 +257,7 @@ def make_scheduler(
         return scheduler_obj
 
     if sampler_lane == SamplerKind.EULER_A.value:
-        logging.getLogger("backend.runtime.wan22.sampling").warning(
+        get_backend_logger("backend.runtime.wan22.sampling").warning(
             "WAN22 GGUF: sampler=%r routed to experimental FlowMatch-Euler stochastic scheduler lane.",
             sampler,
         )
@@ -363,7 +364,7 @@ def prepare_stage_seed_latents(
     latents: torch.Tensor,
     target_geom: PatchGeometry,
     *,
-    logger: logging.Logger | None,
+    logger: BackendLoggerProxy | None,
 ) -> torch.Tensor:
     c_src = int(latents.shape[1])
     c_dst = int(target_geom.in_channels)
@@ -447,7 +448,7 @@ def assemble_i2v_state(
     mask4: torch.Tensor,
     image_latents: torch.Tensor,
     expected_cin: int,
-    logger: logging.Logger | None,
+    logger: BackendLoggerProxy | None,
 ) -> torch.Tensor:
     """Assemble I2V model input state to match expected Cin for patch embedding.
 
@@ -516,7 +517,13 @@ def assemble_i2v_state(
             f"assemble_i2v_state: produced C={int(assembled.shape[1])}, expected C_in={int(expected_cin)} ({layout})."
         )
     if logger is not None:
-        logger.info("[wan22.gguf] i2v assemble: order=%s %s → C=%d", order, layout, int(assembled.shape[1]))
+        emit_backend_message(
+            "[wan22.gguf] i2v assemble",
+            logger=logger.name,
+            order=order,
+            layout=layout,
+            channels=int(assembled.shape[1]),
+        )
     return assembled
 
 
@@ -530,7 +537,7 @@ def sample_stage_latents(
     negative_embeds: torch.Tensor,
     device: torch.device,
     dtype: torch.dtype,
-    logger: logging.Logger | None,
+    logger: BackendLoggerProxy | None,
     sampler_name: Optional[str] = None,
     scheduler_name: Optional[str] = None,
     metadata_dir: Optional[str] = None,
@@ -581,8 +588,13 @@ def sample_stage_latents(
             payload = {k: event[k] for k in ("step", "total", "percent", "eta_seconds", "step_seconds") if k in event}
             try:
                 on_progress(**payload)
-            except Exception:
-                get_logger(logger).debug("[wan22.gguf] progress callback raised", exc_info=True)
+            except Exception as exc:
+                emit_backend_message(
+                    "[wan22.gguf] progress callback raised",
+                    logger=logger.name if logger is not None else "backend.runtime.wan22.gguf",
+                    level=logging.DEBUG,
+                    error=str(exc),
+                )
 
 
 def sample_stage_latents_generator(
@@ -595,7 +607,7 @@ def sample_stage_latents_generator(
     negative_embeds: torch.Tensor,
     device: torch.device,
     dtype: torch.dtype,
-    logger: logging.Logger | None,
+    logger: BackendLoggerProxy | None,
     sampler_name: Optional[str] = None,
     scheduler_name: Optional[str] = None,
     metadata_dir: Optional[str] = None,

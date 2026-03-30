@@ -48,6 +48,7 @@ import logging
 import os
 import sys
 from typing import Mapping, MutableMapping, Sequence
+from apps.backend.runtime.logging import get_backend_logger
 
 from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
 from .lora_online_math import (
@@ -82,7 +83,7 @@ from apps.backend.runtime.memory.config import (
     SwapPolicy,
 )
 
-_LOG = logging.getLogger("backend.infra.config.args")
+_LOG = get_backend_logger("backend.infra.config.args")
 TRACE_DEBUG_DEFAULT = 10
 _DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda", "cpu", "mps", "xpu", "directml")
 _DEVICE_CHOICE_TO_BACKEND: dict[str, DeviceBackend] = {

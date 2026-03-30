@@ -32,6 +32,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import emit_backend_message, get_backend_logger
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -58,7 +59,7 @@ from .audio import is_ltx2_wrapped_vocoder_state, materialize_ltx2_generated_aud
 from .model import Ltx2BundleInputs, Ltx2ComponentStates, Ltx2TextEncoderAsset, Ltx2VendorPaths
 from .text_encoder import Ltx2TextEncoderRuntime, load_ltx2_text_encoder_runtime
 
-logger = logging.getLogger("backend.runtime.families.ltx2.runtime")
+logger = get_backend_logger("backend.runtime.families.ltx2.runtime")
 _LTX2_EFFECTIVE_SAMPLER = "euler"
 _LTX2_EFFECTIVE_SCHEDULER = "FlowMatchEulerDiscreteScheduler"
 _LTX2_ALLOWED_SAMPLERS = frozenset({"", "euler"})
@@ -343,10 +344,11 @@ def build_ltx2_native_components(
     torch_dtype = _as_torch_dtype(dtype)
     dtype_label = str(dtype).strip().lower()
     if resolved_device.type == "cpu" and torch_dtype != torch.float32:
-        logger.info(
-            "[ltx2] forcing fp32 on CPU (requested dtype=%s, resolved device=%s)",
-            dtype_label,
-            resolved_device,
+        emit_backend_message(
+            "[ltx2] forcing fp32 on CPU",
+            logger=logger.name,
+            requested_dtype=dtype_label,
+            resolved_device=resolved_device,
         )
         torch_dtype = torch.float32
         dtype_label = "fp32"
@@ -377,11 +379,12 @@ def build_ltx2_native_components(
         torch_dtype=torch_dtype,
     )
     if streaming_config.enabled:
-        logger.info(
-            "[ltx2] enabling transformer-core streaming (policy=%s blocks_per_segment=%d window_size=%d)",
-            streaming_config.policy,
-            streaming_config.blocks_per_segment,
-            streaming_config.window_size,
+        emit_backend_message(
+            "[ltx2] enabling transformer-core streaming",
+            logger=logger.name,
+            policy=streaming_config.policy,
+            blocks_per_segment=streaming_config.blocks_per_segment,
+            window_size=streaming_config.window_size,
         )
         transformer = wrap_for_streaming(
             transformer,

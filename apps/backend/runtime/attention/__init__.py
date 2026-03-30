@@ -45,6 +45,7 @@ import math
 from contextvars import ContextVar
 from contextlib import nullcontext
 from typing import Literal
+from apps.backend.runtime.logging import get_backend_logger
 
 import einops
 import torch
@@ -65,7 +66,7 @@ from apps.backend.runtime.attention.sram import (
     warmup_extension_for_load as warmup_sram_attention_extension_for_load,
 )
 
-_LOGGER = logging.getLogger("backend.attention")
+_LOGGER = get_backend_logger("backend.attention")
 
 # Avoid importing via backend facade during runtime package init to prevent cycles
 

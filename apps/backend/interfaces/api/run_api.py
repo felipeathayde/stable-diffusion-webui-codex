@@ -21,6 +21,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
 - `_parse_trace_max` (function): Parses `--trace-debug-max-per-func` / `--trace-call-debug-max-per-func` into a non-negative int (or `None`).
 - `_env_truthy` (function): Parses launcher/env boolean tokens (`1/true/yes/on`) from string values.
+- `_emit_run_api_message` (function): Emits repo-owned bootstrap/API operational logs through the canonical backend wrapper.
+- `_report_run_api_exception` (function): Dumps a handled bootstrap/API exception and emits one concise wrapper-owned summary line.
 - `_trace_debug_logging_requested` (function): Resolves whether any trace-debug category requests DEBUG logging bootstrap.
 - `_resolve_app_mode_profile` (function): Resolves explicit app mode profile (`dev_service|embedded`) from environment.
 - `_assert_embedded_dist_contract` (function): Enforces embedded SPA packaging contract (`dist/index.html` + assets bundles).
@@ -65,13 +67,12 @@ from apps.backend.interfaces.api.routers import generation, models, options, pat
 from apps.backend.services import options_store
 from apps.backend.infra.config import args as config_args
 from apps.backend.runtime.diagnostics.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
+from apps.backend.runtime.diagnostics.error_summary import summarize_exception_for_console
 from apps.backend.runtime.memory import memory_management as mem_management
 from apps.backend.runtime.models import api as model_api
 from apps.backend.core.strict_values import parse_bool_value
 from apps.backend.core.state import state as backend_state
-from apps.backend.runtime.logging import get_backend_logger
-
-_LOG = get_backend_logger(__name__)
+from apps.backend.runtime.logging import build_backend_uvicorn_log_config, emit_backend_message
 
 def _cli_arg_value(argv: Sequence[str], flag: str) -> Optional[str]:
     for idx, token in enumerate(argv):
@@ -97,6 +98,50 @@ def _parse_trace_max(argv: Sequence[str]) -> Optional[int]:
 
 def _env_truthy(raw: object) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _emit_run_api_message(
+    message: str,
+    /,
+    *,
+    level: int = logging.INFO,
+    logger: str | None = None,
+    **fields: object,
+) -> None:
+    emit_backend_message(
+        message,
+        logger=logger or __name__,
+        level=level,
+        **fields,
+    )
+
+
+def _report_run_api_exception(
+    exc: BaseException,
+    /,
+    *,
+    message: str,
+    where: str,
+    logger: str | None = None,
+    **context_fields: object,
+) -> None:
+    try:
+        from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exception
+
+        _dump_exception(
+            type(exc),
+            exc,
+            exc.__traceback__,
+            where=where,
+            context=context_fields or None,
+        )
+    except Exception:
+        pass
+    _emit_run_api_message(
+        f"{message}: {summarize_exception_for_console(exc)}",
+        level=logging.ERROR,
+        logger=logger,
+    )
 
 
 def _trace_debug_logging_requested(argv: Sequence[str], env: Mapping[str, str]) -> bool:
@@ -133,7 +178,11 @@ try:
         _call_trace.enable(max_calls_per_func=max_per_func)
 except Exception:
     # Never block startup because of tracing/logging issues, but don't fail silently.
-    _LOG.exception("startup: failed to bootstrap trace-debug logging/call-trace")
+    _report_run_api_exception(
+        sys.exc_info()[1] or RuntimeError("unknown trace-debug bootstrap failure"),
+        message="startup: failed to bootstrap trace-debug logging/call-trace",
+        where="interfaces.api.run_api.trace_bootstrap",
+    )
 
 try:
     from colorama import Fore, Style  # type: ignore
@@ -147,8 +196,12 @@ except Exception:  # pragma: no cover - optional dependency missing
 try:
     from apps.backend.runtime.diagnostics.exception_hook import install_exception_hooks as _install_exc_hooks
     _EXC_LOG_PATH = _install_exc_hooks(log_dir=str(CODEX_ROOT / 'logs'))
-except Exception:
-    _LOG.exception("startup: failed to install exception hooks")
+except Exception as exc:
+    _report_run_api_exception(
+        exc,
+        message="startup: failed to install exception hooks",
+        where="interfaces.api.run_api.install_exception_hooks",
+    )
     _EXC_LOG_PATH = None
 
 
@@ -277,9 +330,9 @@ def _try_disable_windows_power_throttling() -> None:
         get_current_process.restype = wintypes.HANDLE
 
         if not hasattr(kernel32, "SetProcessInformation"):
-            _LOG.warning(
-                "startup: SetProcessInformation is unavailable on this Windows runtime; "
-                "cannot disable process power throttling."
+            _emit_run_api_message(
+                "startup: SetProcessInformation is unavailable on this Windows runtime; cannot disable process power throttling.",
+                level=logging.WARNING,
             )
             return
 
@@ -308,16 +361,20 @@ def _try_disable_windows_power_throttling() -> None:
         if not ok:
             win_err = int(ctypes.get_last_error())
             win_err_text = str(ctypes.WinError(win_err))
-            _LOG.warning(
-                "startup: failed to disable Windows process power throttling "
-                "(SetProcessInformation error=%d: %s).",
-                win_err,
-                win_err_text,
+            _emit_run_api_message(
+                "startup: failed to disable Windows process power throttling",
+                level=logging.WARNING,
+                error=win_err,
+                detail=win_err_text,
             )
             return
-        _LOG.info("startup: disabled Windows process power throttling (execution_speed).")
-    except Exception:
-        _LOG.exception("startup: failed to apply Windows power-throttling patch")
+        _emit_run_api_message("startup: disabled Windows process power throttling (execution_speed).")
+    except Exception as exc:
+        _report_run_api_exception(
+            exc,
+            message="startup: failed to apply Windows power-throttling patch",
+            where="interfaces.api.run_api.windows_power_throttling",
+        )
 
 _UVICORN_ACCESS_NOISE_PREFIXES = (
     "/api/tools/convert-gguf/",
@@ -462,7 +519,7 @@ def banner(port: int) -> None:
         " Tip: set API_PORT or free blocked range.     \n"
         "==============================================\n"
     )
-    _LOG.info("%s", color_cyan(msg))
+    _emit_run_api_message(color_cyan(msg))
 
 
 class _DummyRequest:
@@ -495,8 +552,12 @@ def build_app(*, app_mode_profile: str | None = None) -> FastAPI:
                 except RuntimeError:
                     loop = asyncio.get_event_loop()
                 _attach_asyncio(loop)
-            except Exception:  # noqa: BLE001
-                _LOG.exception("startup: failed to attach asyncio exception hook")
+            except Exception as exc:  # noqa: BLE001
+                _report_run_api_exception(
+                    exc,
+                    message="startup: failed to attach asyncio exception hook",
+                    where="interfaces.api.run_api.attach_asyncio_hook",
+                )
             yield
 
         lifespan = _lifespan
@@ -553,7 +614,11 @@ def build_app(*, app_mode_profile: str | None = None) -> FastAPI:
         )
         _settings_registry_ok = True
     except Exception as _e:  # pragma: no cover - optional during transition
-        _LOG.warning("settings: registry not available: %s", _e)
+        _emit_run_api_message(
+            "settings: registry not available",
+            level=logging.WARNING,
+            reason=str(_e),
+        )
         _settings_registry_ok = False
         _schema_hardcoded = None
 
@@ -628,9 +693,10 @@ def build_app(*, app_mode_profile: str | None = None) -> FastAPI:
             changed = True
         if changed:
             if dropped:
-                _LOG.warning(
-                    "settings: dropped invalid/unknown keys from settings_values.json: %s",
-                    ", ".join(sorted(set(dropped))),
+                _emit_run_api_message(
+                    "settings: dropped invalid/unknown keys from settings_values.json",
+                    level=logging.WARNING,
+                    keys=", ".join(sorted(set(dropped))),
                 )
             _opts_save_native(saved)
 
@@ -638,7 +704,11 @@ def build_app(*, app_mode_profile: str | None = None) -> FastAPI:
     try:
         _apply_saved_settings()
     except Exception as e:  # pragma: no cover
-        _LOG.exception("settings: failed to validate saved settings: %s", e)
+        _report_run_api_exception(
+            e,
+            message="settings: failed to validate saved settings",
+            where="interfaces.api.run_api.settings_validation",
+        )
         raise
 
     # Honour pipeline debug env flag
@@ -716,9 +786,9 @@ def build_app(*, app_mode_profile: str | None = None) -> FastAPI:
         _assert_embedded_dist_contract(Path(_ui_dist_dir))
         app.mount("/", SPAStaticFiles(directory=str(_ui_dist_dir), html=True), name="ui")
     elif resolved_app_mode_profile == _APP_MODE_PROFILE_DEV_SERVICE:
-        _LOG.info(
-            "startup: app mode profile '%s' selected; skipping embedded SPA mount.",
-            _APP_MODE_PROFILE_DEV_SERVICE,
+        _emit_run_api_message(
+            "startup: app mode profile selected; skipping embedded SPA mount.",
+            profile=_APP_MODE_PROFILE_DEV_SERVICE,
         )
     else:  # pragma: no cover - guarded by _resolve_app_mode_profile
         raise RuntimeError(
@@ -771,19 +841,19 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
     ns.trace_inference_debug = _env_truthy(env.get("CODEX_TRACE_INFERENCE_DEBUG"))
     ns.trace_load_patch_debug = _env_truthy(env.get("CODEX_TRACE_LOAD_PATCH_DEBUG"))
     allocator_backend = _allocator_backend(raw_alloc_conf)
-    _LOG.info(
-        "startup: PYTORCH_CUDA_ALLOC_CONF=%s (backend=%s, cuda_malloc_flag=%s)",
-        raw_alloc_conf or "<unset>",
-        allocator_backend or "<default>",
-        bool(getattr(ns, "cuda_malloc", False)),
+    _emit_run_api_message(
+        "startup: PYTORCH_CUDA_ALLOC_CONF",
+        alloc_conf=raw_alloc_conf or "<unset>",
+        backend=allocator_backend or "<default>",
+        cuda_malloc_flag=bool(getattr(ns, "cuda_malloc", False)),
     )
-    _LOG.info(
-        "startup: attention_backend=%s attention_sdpa_policy=%s (resolved_backend=%s, flash=%s, mem_efficient=%s)",
-        str(getattr(ns, "attention_backend", "<unset>") or "<unset>"),
-        str(getattr(ns, "attention_sdpa_policy", "<unset>") or "<unset>"),
-        str(getattr(runtime_config.attention, "backend", "<unknown>")),
-        bool(getattr(runtime_config.attention, "enable_flash", False)),
-        bool(getattr(runtime_config.attention, "enable_mem_efficient", False)),
+    _emit_run_api_message(
+        "startup: attention backend bootstrap",
+        requested_backend=str(getattr(ns, "attention_backend", "<unset>") or "<unset>"),
+        requested_sdpa_policy=str(getattr(ns, "attention_sdpa_policy", "<unset>") or "<unset>"),
+        resolved_backend=str(getattr(runtime_config.attention, "backend", "<unknown>")),
+        flash=bool(getattr(runtime_config.attention, "enable_flash", False)),
+        mem_efficient=bool(getattr(runtime_config.attention, "enable_mem_efficient", False)),
     )
     _try_disable_windows_power_throttling()
     # Publish resolved bootstrap values (after CLI/env/settings precedence) without mutating os.environ.
@@ -835,16 +905,22 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
     try:
         from apps.backend.inventory import cache as _inv_cache
         inv = _inv_cache.refresh()
-        logging.getLogger("inventory").info(
-            "inventory: initialized at startup (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
-            len(inv.get("vaes", [])),
-            len(inv.get("text_encoders", [])),
-            len(inv.get("loras", [])),
-            len(inv.get("wan22", [])),
-            len(inv.get("metadata", [])),
+        _emit_run_api_message(
+            "inventory: initialized at startup",
+            logger="inventory",
+            vaes=len(inv.get("vaes", [])),
+            text_encoders=len(inv.get("text_encoders", [])),
+            loras=len(inv.get("loras", [])),
+            wan22_gguf=len(inv.get("wan22", [])),
+            metadata=len(inv.get("metadata", [])),
         )
     except Exception as e:
-        logging.getLogger("inventory").warning("inventory: failed to initialize at startup: %s", e)
+        _emit_run_api_message(
+            "inventory: failed to initialize at startup",
+            logger="inventory",
+            level=logging.WARNING,
+            reason=str(e),
+        )
     _RUNTIME_NAMESPACE = ns
     return ns
 
@@ -868,8 +944,12 @@ def _enable_trace_debug(ns: Any) -> None:
             from apps.backend.runtime.diagnostics import call_trace as _call_trace  # type: ignore
 
             _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
-    except Exception:
-        _LOG.exception("startup: failed to bootstrap trace-debug logging/call-trace")
+    except Exception as exc:
+        _report_run_api_exception(
+            exc,
+            message="startup: failed to bootstrap trace-debug logging/call-trace",
+            where="interfaces.api.run_api.enable_trace_debug",
+        )
 
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
@@ -892,7 +972,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     try:
         ensure_initialized()
     except Exception as exc:
-        _LOG.exception("startup: failed to initialize backend logging: %s", exc)
+        _report_run_api_exception(
+            exc,
+            message="startup: failed to initialize backend logging",
+            where="interfaces.api.run_api.main.ensure_initialized",
+        )
         raise SystemExit(1) from exc
 
     host = '0.0.0.0'
@@ -920,7 +1004,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             # default base 7850
             port, used_fallback = pick_api_port_simple(7850, host)
         except RuntimeError as e:
-            _LOG.error("[PORT GUARD] %s", e)
+            _emit_run_api_message("[PORT GUARD]", level=logging.ERROR, detail=str(e))
             raise SystemExit(1)
 
     if used_fallback:
@@ -930,52 +1014,18 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         argv_seq = list(argv) if argv is not None else sys.argv[1:]
         api_app = create_api_app(argv=argv_seq, env=os.environ)
     except Exception as exc:
-        _LOG.exception("[INIT] %s", exc)
+        _report_run_api_exception(
+            exc,
+            message="[INIT]",
+            where="interfaces.api.run_api.main.create_api_app",
+        )
         raise SystemExit(1) from exc
 
-    # Configure Uvicorn logging to match our unified format
-    suppress_access_prefixes = list(_UVICORN_ACCESS_NOISE_PREFIXES)
-
-    log_config = {
-        "version": 1,
-        "disable_existing_loggers": True,
-        "filters": {
-            "codex_access_noise": {
-                "()": "apps.backend.interfaces.api.run_api._SuppressUvicornAccessNoiseFilter",
-                "suppress_path_prefixes": suppress_access_prefixes,
-            }
-        },
-        "formatters": {
-            "default": {
-                "format": "[%(asctime)s] %(levelname)-8s %(message)s",
-                "datefmt": "%m/%d/%y %H:%M:%S",
-            },
-            "access": {
-                "()": "uvicorn.logging.AccessFormatter",
-                "format": "[%(asctime)s] %(levelname)-8s %(client_addr)s - %(request_line)s %(status_code)s",
-                "datefmt": "%m/%d/%y %H:%M:%S",
-            },
-        },
-        "handlers": {
-            "default": {
-                "formatter": "default",
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stderr",
-            },
-            "access": {
-                "formatter": "access",
-                "filters": ["codex_access_noise"],
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stderr",
-            },
-        },
-        "loggers": {
-            "": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
-        },
-    }
+    log_config = build_backend_uvicorn_log_config(
+        suppress_access_prefixes=list(_UVICORN_ACCESS_NOISE_PREFIXES),
+        access_filter_factory="apps.backend.interfaces.api.run_api._SuppressUvicornAccessNoiseFilter",
+        level="INFO",
+    )
     uvicorn.run(api_app, host=host, port=port, log_level='info', log_config=log_config)
 
 

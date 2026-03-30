@@ -28,6 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import BackendLoggerProxy, get_backend_logger
 
 import logging
 import os
@@ -62,7 +63,7 @@ from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 
 
-logger = logging.getLogger("backend.engines.common.base")
+logger = get_backend_logger(__name__)
 
 
 class EngineStatus(TypedDict, total=False):
@@ -302,7 +303,7 @@ class CodexObjects:
 class _ComponentTracker:
     """Tracks active/original/LoRA component snapshots for an engine."""
 
-    def __init__(self, *, logger: logging.Logger) -> None:
+    def __init__(self, *, logger: BackendLoggerProxy) -> None:
         self._logger = logger
         self._active: CodexObjects | None = None
         self._original: CodexObjects | None = None
@@ -403,9 +404,9 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         "sdxl": "is_sdxl",
     }
 
-    def __init__(self, *, logger: logging.Logger | None = None) -> None:  # noqa: D401
+    def __init__(self, *, logger: BackendLoggerProxy | None = None) -> None:  # noqa: D401
         super().__init__()
-        self._logger = logger or logging.getLogger(self.__class__.__name__)
+        self._logger = logger or get_backend_logger(__name__)
         self.model_config: object | None = None
         self.current_lora_hash = "[]"
         self._component_tracker = _ComponentTracker(logger=self._logger)

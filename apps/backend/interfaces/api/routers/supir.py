@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+from apps.backend.runtime.logging import get_backend_logger
 
 import asyncio
 import json
@@ -37,7 +38,7 @@ from apps.backend.runtime.families.supir.loader import resolve_supir_assets
 from apps.backend.runtime.families.supir.samplers.registry import iter_supir_sampler_labels
 from apps.backend.runtime.families.supir.weights import SupirVariant, supir_weights_diagnostics
 
-_router_log = logging.getLogger("backend.api.routers.supir")
+_router_log = get_backend_logger("backend.api.routers.supir")
 
 
 def _parse_explicit_device(payload: Dict[str, Any]) -> str:

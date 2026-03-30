@@ -1650,6 +1650,24 @@ class CodexMemoryManager:
             storage_dtype=storage_dtype,
         )
 
+    @staticmethod
+    def _module_compute_dtype(module: torch.nn.Module, *, fallback: torch.dtype | None = None) -> torch.dtype | None:
+        try:
+            dtype_attr = getattr(module, "computation_dtype", None)
+            if callable(dtype_attr):
+                resolved = dtype_attr()
+            elif dtype_attr is not None:
+                resolved = dtype_attr
+            elif hasattr(module, "dtype"):
+                resolved = getattr(module, "dtype")
+            else:
+                resolved = None
+        except Exception:  # pragma: no cover
+            resolved = None
+        if isinstance(resolved, torch.dtype):
+            return resolved
+        return fallback
+
     def _load_record(
         self,
         record: _LoadedModelRecord,
@@ -1710,10 +1728,14 @@ class CodexMemoryManager:
 
             before_load_counters = self._read_device_memory_counters_bytes(record.load_device)
 
+            compute_dtype = self._module_compute_dtype(module, fallback=record.storage_dtype)
+
             if hasattr(loader, "model_patches_to"):
                 logger.info("[memory-debug] calling model_patches_to(%s)", record.load_device)
                 loader.model_patches_to(record.load_device)
-                loader.model_patches_to(record.storage_dtype)
+                if compute_dtype is not None:
+                    logger.info("[memory-debug] calling model_patches_to(%s)", compute_dtype)
+                    loader.model_patches_to(compute_dtype)
             elif hasattr(loader, "to"):
                 logger.info("[memory-debug] calling loader.to(device=%s)", record.load_device)
                 loader.to(device=record.load_device)
@@ -1727,18 +1749,6 @@ class CodexMemoryManager:
             record.inclusive_memory = self.module_size(module)
             record.exclusive_memory = record.inclusive_memory
             record.model_accelerated = True
-            compute_dtype = None
-            try:
-                dtype_attr = getattr(module, "computation_dtype", None)
-                if callable(dtype_attr):
-                    compute_dtype = dtype_attr()
-                elif dtype_attr is not None:
-                    compute_dtype = dtype_attr
-                elif hasattr(module, "dtype"):
-                    compute_dtype = getattr(module, "dtype")
-            except Exception:  # pragma: no cover
-                compute_dtype = None
-
             # DEBUG: Log memory after load
             if self._primary_device.type == DeviceBackend.CUDA.value:
                 free_bytes, _ = torch.cuda.mem_get_info(self._primary_device)

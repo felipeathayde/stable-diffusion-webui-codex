@@ -16,6 +16,7 @@ Status: Active
 
 ## Notes
 - IP-Adapter slot order is not generic UNet discovery order. Keep the checkpoint slot contract in `layout.py`; do not bind slots straight from `UnetPatcher._iter_transformer_coordinates()`.
+- SDXL slot order must be proven against translated `attn2.to_k.weight` parameter names derived from the repo's canonical SDXL config + diffusers→LDM map. Width-only matching is insufficient because the middle block and multiple output groups share the same width.
 - `session.py` may validate against the generic UNet transformer inventory, but the authoritative order for slot assignment is the IP-Adapter semantic-engine layout.
 - Conditional vs unconditional branch selection belongs in `modules.py::IpAdapterCrossAttentionPatch`; request prep owns token construction only.
 - Base-layout unconditional tokens are the zero vector in pooled CLIP embedding space; use `zeros_like(image_embeds)` before the base projector.

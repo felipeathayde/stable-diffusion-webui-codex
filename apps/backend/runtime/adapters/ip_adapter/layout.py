@@ -19,6 +19,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from apps.backend.runtime.common.nn.unet.layers import SpatialTransformer
+from apps.backend.runtime.model_parser.builders import _CORE_CONFIG_PRESETS
+from apps.backend.runtime.model_registry.specs import ModelFamily
+from apps.backend.runtime.models.key_normalization import _build_diffusers_to_ldm_map
 
 
 def resolve_ip_adapter_transformer_coordinates(
@@ -41,6 +44,10 @@ def resolve_ip_adapter_transformer_coordinates(
         semantic_engine=normalized_engine,
         expected=expected,
         available=available,
+    )
+    _assert_layout_matches_translated_parameter_order(
+        semantic_engine=normalized_engine,
+        coordinates=expected,
     )
     _assert_slot_projection_widths_match(
         patched_denoiser=patched_denoiser,
@@ -66,12 +73,12 @@ def _sdxl_ip_adapter_layout() -> tuple[tuple[str, int, int], ...]:
         transformer_depth = 2 if block_index in (4, 5) else 10
         for transformer_index in range(transformer_depth):
             coordinates.append(("input", block_index, transformer_index))
-    for block_index in range(6):
-        transformer_depth = 2 if block_index in (3, 4, 5) else 10
-        for transformer_index in range(transformer_depth):
-            coordinates.append(("output", block_index, transformer_index))
     for transformer_index in range(10):
         coordinates.append(("middle", 0, transformer_index))
+    for block_index in range(6):
+        transformer_depth = 10 if block_index in (0, 1, 2) else 2
+        for transformer_index in range(transformer_depth):
+            coordinates.append(("output", block_index, transformer_index))
     return tuple(coordinates)
 
 
@@ -101,6 +108,87 @@ def _assert_layout_matches_expected(
     if details:
         mismatch_message = mismatch_message + " (" + "; ".join(details) + ")"
     raise RuntimeError(mismatch_message)
+
+
+def _assert_layout_matches_translated_parameter_order(
+    *,
+    semantic_engine: str,
+    coordinates: tuple[tuple[str, int, int], ...],
+) -> None:
+    if semantic_engine != "sdxl":
+        return
+    translated = tuple(_coordinate_attn2_to_k_key(coordinate) for coordinate in coordinates)
+    expected = _sdxl_translated_attn2_to_k_order()
+    if translated == expected:
+        return
+    if len(translated) != len(expected):
+        raise RuntimeError(
+            "IP-Adapter translated slot-order mismatch: "
+            f"semantic_engine={semantic_engine} expected_count={len(expected)} actual_count={len(translated)}."
+        )
+    mismatch_index = next(
+        index
+        for index, (expected_key, actual_key) in enumerate(zip(expected, translated))
+        if expected_key != actual_key
+    )
+    raise RuntimeError(
+        "IP-Adapter translated slot-order mismatch: "
+        f"semantic_engine={semantic_engine} slot={mismatch_index} "
+        f"expected='{expected[mismatch_index]}' actual='{translated[mismatch_index]}'."
+    )
+
+
+def _sdxl_translated_attn2_to_k_order() -> tuple[str, ...]:
+    config = _CORE_CONFIG_PRESETS[ModelFamily.SDXL]
+    diffusers_to_ldm = _build_diffusers_to_ldm_map(config)
+    num_res_blocks = list(config["num_res_blocks"])
+    transformer_depth = list(config["transformer_depth"])
+    transformer_depth_output = list(config["transformer_depth_output"])
+    translated: list[str] = []
+
+    depth_index = 0
+    for block_index in range(len(config["channel_mult"])):
+        for res_index in range(num_res_blocks[block_index]):
+            transformer_count = transformer_depth[depth_index]
+            depth_index += 1
+            for transformer_index in range(transformer_count):
+                translated.append(
+                    diffusers_to_ldm[
+                        f"down_blocks.{block_index}.attentions.{res_index}.transformer_blocks.{transformer_index}.attn2.to_k.weight"
+                    ]
+                )
+
+    transformer_depth_middle = int(config["transformer_depth_middle"])
+    for transformer_index in range(transformer_depth_middle):
+        translated.append(
+            diffusers_to_ldm[
+                f"mid_block.attentions.0.transformer_blocks.{transformer_index}.attn2.to_k.weight"
+            ]
+        )
+
+    up_res_counts = list(reversed(num_res_blocks))
+    for block_index in range(len(config["channel_mult"])):
+        block_length = up_res_counts[block_index] + 1
+        for res_index in range(block_length):
+            transformer_count = transformer_depth_output.pop() if transformer_depth_output else 0
+            for transformer_index in range(transformer_count):
+                translated.append(
+                    diffusers_to_ldm[
+                        f"up_blocks.{block_index}.attentions.{res_index}.transformer_blocks.{transformer_index}.attn2.to_k.weight"
+                    ]
+                )
+    return tuple(translated)
+
+
+def _coordinate_attn2_to_k_key(coordinate: tuple[str, int, int]) -> str:
+    block_name, block_index, transformer_index = coordinate
+    if block_name == "input":
+        return f"input_blocks.{block_index}.1.transformer_blocks.{transformer_index}.attn2.to_k.weight"
+    if block_name == "middle":
+        return f"middle_block.1.transformer_blocks.{transformer_index}.attn2.to_k.weight"
+    if block_name == "output":
+        return f"output_blocks.{block_index}.1.transformer_blocks.{transformer_index}.attn2.to_k.weight"
+    raise RuntimeError(f"Unsupported IP-Adapter block name '{block_name}'.")
 
 
 def _assert_slot_projection_widths_match(*, patched_denoiser, ip_layers, coordinates: tuple[tuple[str, int, int], ...]) -> None:

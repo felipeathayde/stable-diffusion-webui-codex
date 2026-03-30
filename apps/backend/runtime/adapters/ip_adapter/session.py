@@ -50,17 +50,18 @@ def apply_ip_adapter_for_sampling(processing) -> Iterator[AppliedIpAdapterSessio
     patched_codex_objects = previous_codex_objects.shallow_copy()
     patched_denoiser = previous_codex_objects.denoiser.clone()
     runtime_device, runtime_dtype = _resolve_runtime_device_and_dtype(patched_denoiser=patched_denoiser)
-    session_ip_layers = copy.deepcopy(assets.ip_layers).to(device=runtime_device, dtype=runtime_dtype)
-    condition_tokens = embeddings.condition.to(device=runtime_device, dtype=runtime_dtype)
-    uncondition_tokens = embeddings.uncondition.to(device=runtime_device, dtype=runtime_dtype)
     sigma_start, sigma_end = _sigma_window(patched_denoiser=patched_denoiser, config=config)
     coordinates = list(patched_denoiser._iter_transformer_coordinates())
     if len(coordinates) != int(assets.slot_count):
         raise RuntimeError(
             f"IP-Adapter slot/layout mismatch: denoiser exposes {len(coordinates)} attn2 coordinates but adapter provides {assets.slot_count} slot(s)."
         )
+    session_ip_layers = copy.deepcopy(assets.ip_layers).to(device=runtime_device, dtype=runtime_dtype)
+    condition_tokens = embeddings.condition.to(device=runtime_device, dtype=runtime_dtype)
+    uncondition_tokens = embeddings.uncondition.to(device=runtime_device, dtype=runtime_dtype)
+    attn2_patches: dict[tuple[str, int, int], IpAdapterCrossAttentionPatch] = {}
     for slot_index, (block_name, block_index, transformer_index) in enumerate(coordinates):
-        patch = IpAdapterCrossAttentionPatch(
+        attn2_patches[(block_name, block_index, transformer_index)] = IpAdapterCrossAttentionPatch(
             slot_index=slot_index,
             weight=float(config.weight),
             sigma_start=float(sigma_start),
@@ -69,7 +70,11 @@ def apply_ip_adapter_for_sampling(processing) -> Iterator[AppliedIpAdapterSessio
             condition=condition_tokens,
             uncondition=uncondition_tokens,
         )
-        patched_denoiser.set_model_attn2_replace(patch, block_name, block_index, transformer_index)
+    patched_denoiser.set_model_attn2_replace_many(attn2_patches)
+    del attn2_patches
+    del session_ip_layers
+    del condition_tokens
+    del uncondition_tokens
     patched_codex_objects.denoiser = patched_denoiser
     session = AppliedIpAdapterSession(
         previous_codex_objects=previous_codex_objects,

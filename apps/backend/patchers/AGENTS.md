@@ -54,6 +54,7 @@ Status: Active
 - 2026-03-02: `vae.py` now reports encode/decode block progress into `BackendState` during both tiled and non-tiled paths (including OOM fallback retries), so use-case progress polling can surface VAE phase progress in task streams.
 - 2026-03-05: `vae.py` now consumes shared tiled geometry policy from `runtime/common/vae_tiled.py` (`resolve_vae_decode_tiled_geometry` + `VaeTileGeometry`/window iterator); decode fallback defaults remain `64/64/16` for non-Anima, with `ModelFamily.ANIMA` override `48/48/24`.
 - 2026-03-29: `unet.py::_iter_transformer_coordinates()` must enumerate every internal `SpatialTransformer.transformer_blocks[]` entry, not merely the number of `SpatialTransformer` modules. The patch key `(block_name, block_index, transformer_index)` only has one transformer slot per block, so if a `TimestepEmbedSequential` ever carries more than one `SpatialTransformer`, the patcher must fail loud instead of silently collapsing coordinates.
+- 2026-03-29: Heavy slot-fanout replace patches such as IP-Adapter attn2 must register through one bounded batch mutation on the owned patcher clone; repeated per-slot `model_options` reassignment destroys shared module owners and can explode host RAM.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

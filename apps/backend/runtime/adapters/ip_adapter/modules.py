@@ -57,36 +57,33 @@ class MlpProjectionModel(nn.Module):
         return self.proj(image_embeds)
 
 
-class FeedForward(nn.Module):
+class FeedForward(nn.Sequential):
     def __init__(self, *, dim: int, mult: int = 4) -> None:
-        super().__init__()
         inner_dim = int(dim * mult)
-        self.net = nn.Sequential(
+        super().__init__(
             nn.LayerNorm(dim),
             nn.Linear(dim, inner_dim, bias=False),
             nn.GELU(),
             nn.Linear(inner_dim, dim, bias=False),
         )
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        return self.net(inputs)
-
 
 class PerceiverAttention(nn.Module):
     def __init__(self, *, dim: int, dim_head: int = 64, heads: int = 8) -> None:
         super().__init__()
+        self.scale = float(dim_head) ** -0.5
         self.dim_head = int(dim_head)
         self.heads = int(heads)
         inner_dim = self.dim_head * self.heads
-        self.norm_inputs = nn.LayerNorm(dim)
-        self.norm_latents = nn.LayerNorm(dim)
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
         self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
         self.to_out = nn.Linear(inner_dim, dim, bias=False)
 
     def forward(self, inputs: torch.Tensor, latents: torch.Tensor) -> torch.Tensor:
-        inputs = self.norm_inputs(inputs)
-        latents = self.norm_latents(latents)
+        inputs = self.norm1(inputs)
+        latents = self.norm2(latents)
         batch_size, latent_length, _ = latents.shape
         queries = self._reshape_heads(self.to_q(latents))
         kv_inputs = torch.cat((inputs, latents), dim=-2)

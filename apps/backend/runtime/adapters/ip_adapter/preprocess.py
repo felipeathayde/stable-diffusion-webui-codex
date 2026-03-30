@@ -17,16 +17,16 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import copy
-import logging
 
 import numpy as np
 import torch
 from PIL import Image
 
 from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig, PreparedIpAdapterAssets, PreparedIpAdapterEmbeddings
+from apps.backend.runtime.logging import get_backend_logger
 from apps.backend.services.media_service import MediaService
 
-logger = logging.getLogger("backend.runtime.adapters.ip_adapter.preprocess")
+logger = get_backend_logger(__name__)
 _MEDIA_SERVICE = MediaService()
 
 
@@ -38,20 +38,20 @@ def prepare_ip_adapter_embeddings(
 ) -> PreparedIpAdapterEmbeddings:
     image = _resolve_reference_image(processing=processing, config=config)
     image_tensor = _image_to_bhwc_tensor(image)
-    zero_image_tensor = torch.zeros_like(image_tensor)
     projector = copy.deepcopy(assets.image_projector)
     encoder = assets.image_encoder_runtime
     projector.to(device=encoder.load_device, dtype=encoder.runtime_dtype)
     projector.eval()
     with torch.inference_mode():
         encoded = encoder.encode(image_tensor, crop=True)
-        uncondition_encoded = encoder.encode(zero_image_tensor, crop=True)
         if assets.uses_hidden_states:
+            zero_image_tensor = torch.zeros_like(image_tensor)
+            uncondition_encoded = encoder.encode(zero_image_tensor, crop=True)
             condition_inputs = encoded.penultimate_hidden_states
             uncondition_inputs = uncondition_encoded.penultimate_hidden_states
         else:
             condition_inputs = encoded.image_embeds
-            uncondition_inputs = uncondition_encoded.image_embeds
+            uncondition_inputs = torch.zeros_like(condition_inputs)
         condition = projector(condition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
         uncondition = projector(uncondition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
     logger.debug(

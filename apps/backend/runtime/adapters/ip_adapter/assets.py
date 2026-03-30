@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: IP-Adapter asset loading and tranche-1 layout validation.
-Loads image encoders and adapter weights, validates supported SD15/SDXL layouts, and returns prepared runtime assets for the shared
-IP-Adapter stage.
+Loads image encoders and adapter weights, validates supported IP-Adapter checkpoint layouts, and returns prepared runtime assets for the
+shared IP-Adapter stage. CLIP vision image-encoder keyspace resolution is delegated to the canonical vision runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `assert_ip_adapter_engine_supported` (function): Fail-loud guard for exact engine-id and semantic-engine IP-Adapter support.
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 
 import torch
 
@@ -36,7 +36,6 @@ from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig, IpAd
 from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.model_registry.capabilities import ip_adapter_support_error
 from apps.backend.runtime.vision.clip.encoder import ClipVisionEncoder
-from apps.backend.runtime.vision.clip.state_dict import cleaned_state_dict, convert_openclip_checkpoint, rekey_vision_state_dict
 
 logger = logging.getLogger("backend.runtime.adapters.ip_adapter.assets")
 
@@ -133,33 +132,14 @@ def _prepare_assets(
 
 
 def _load_image_encoder(path: str) -> ClipVisionEncoder:
-    raw_state = load_torch_file(path, safe_load=True)
-    if not isinstance(raw_state, Mapping):
-        raise RuntimeError(f"IP-Adapter image encoder '{path}' did not load as a mapping.")
-    state_dict = _normalize_image_encoder_state_dict(raw_state)
-    return ClipVisionEncoder.from_state_dict(state_dict)
-
-
-def _normalize_image_encoder_state_dict(state_dict: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    keys = tuple(state_dict.keys())
-    if any(key.startswith("vision_model.") for key in keys):
-        filtered = cleaned_state_dict(state_dict, keep_prefixes=("vision_model.", "visual_projection."))
-        if not filtered:
-            raise RuntimeError("IP-Adapter image encoder checkpoint is missing supported HF vision keys.")
-        filtered.pop("vision_model.embeddings.position_ids", None)
-        return filtered
-    if any(key.startswith("image_encoder.vision_model.") for key in keys):
-        filtered = cleaned_state_dict(state_dict, keep_prefixes=("image_encoder.vision_model.", "image_encoder.visual_projection."))
-        rekey_vision_state_dict(filtered, prefix="image_encoder.")
-        filtered.pop("vision_model.embeddings.position_ids", None)
-        return filtered
-    if "visual.transformer.resblocks.0.attn.in_proj_weight" in state_dict:
-        converted = cleaned_state_dict(state_dict, keep_prefixes=("visual.",))
-        convert_openclip_checkpoint(converted, prefix="visual")
-        return converted
-    raise RuntimeError(
-        "Unsupported IP-Adapter image encoder layout. Expected HF 'vision_model.*' or explicit OpenCLIP 'visual.*' weights."
+    raw_state = load_torch_file(
+        path,
+        safe_load=True,
+        device=memory_management.manager.get_device(DeviceRole.TEXT_ENCODER),
     )
+    if not isinstance(raw_state, MutableMapping):
+        raise RuntimeError(f"IP-Adapter image encoder '{path}' did not load as a mutable mapping.")
+    return ClipVisionEncoder.from_state_dict(raw_state)
 
 
 def _load_ip_adapter_checkpoint(path: str) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:

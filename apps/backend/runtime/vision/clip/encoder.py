@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Runtime wrapper for Codex-native CLIP vision encoders.
-Constructs and loads HF `CLIPVisionModelWithProjection`, applies memory-management policies, and returns structured outputs.
+Constructs and loads HF `CLIPVisionModelWithProjection`, normalizes supported source keyspaces through the canonical state-dict resolver,
+applies memory-management policies, and returns structured outputs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger for clip vision encoder lifecycle and timing logs.
@@ -18,12 +19,14 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Mapping, Optional
+from collections.abc import Mapping, MutableMapping
+from typing import Optional
 
 import torch
 from transformers import CLIPVisionConfig, CLIPVisionModelWithProjection, modeling_utils
 
 from apps.backend.patchers.base import ModelPatcher
+from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime import ops as runtime_ops
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
@@ -32,6 +35,7 @@ from .errors import ClipVisionInputError, ClipVisionLoadError
 from .preprocess import preprocess_image
 from .registry import get_spec_for_state_dict, validate_state_dict
 from .specs import ClipVisionVariantSpec
+from .state_dict import normalize_clip_vision_state_dict_with_layout
 from .types import ClipVisionOutput
 
 logger = logging.getLogger("backend.runtime.vision.clip.encoder")
@@ -65,18 +69,28 @@ class ClipVisionEncoder:
         )
 
     @classmethod
-    def from_state_dict(cls, state_dict: Mapping[str, torch.Tensor]) -> "ClipVisionEncoder":
-        spec = get_spec_for_state_dict(state_dict)
+    def from_state_dict(cls, state_dict: MutableMapping[str, object]) -> "ClipVisionEncoder":
+        normalized_state_dict, layout = normalize_clip_vision_state_dict_with_layout(state_dict)
+        spec = get_spec_for_state_dict(normalized_state_dict)
         encoder = cls(spec)
-        encoder.load_state_dict(state_dict)
+        encoder.load_state_dict(normalized_state_dict)
+        logger.info(
+            "Clip vision image encoder resolved to canonical keyspace: variant=%s source_style=%s qkv_layout=%s projection_orientation=%s",
+            spec.variant.value,
+            layout.source_style,
+            layout.qkv_layout,
+            layout.projection_orientation,
+        )
         return encoder
 
-    def load_state_dict(self, state_dict: Mapping[str, torch.Tensor]) -> None:
+    def load_state_dict(self, state_dict: Mapping[str, object]) -> None:
         validate_state_dict(state_dict, self.spec)
-        missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
+        missing, unexpected = safe_load_state_dict(self.model, state_dict, log_name="ClipVisionEncoder")
         if missing or unexpected:
             raise ClipVisionLoadError(
-                f"Clip vision state dict mismatch (missing={len(missing)}, unexpected={len(unexpected)})."
+                "Clip vision state dict mismatch after canonical resolution: "
+                f"missing={len(missing)} unexpected={len(unexpected)} "
+                f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
             )
         logger.info(
             "Loaded clip vision encoder variant=%s with %d parameters.",

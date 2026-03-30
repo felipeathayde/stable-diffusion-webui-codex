@@ -187,6 +187,34 @@ You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`.
 - If this repo supports a `diffusers` surface, classification, component requirements, and family-specific constraints stay in repo-owned loader/detector/parser seams.
 - Family-native external asset slots stay explicit and named. Do **not** collapse multi-slot families into generic selector bags when the contract depends on slot identity.
 
+**IP-Adapter image-encoder postmortem: this was done wrong once, and never again.**
+
+- A prior IP-Adapter implementation loaded the image encoder through bespoke helpers instead of the canonical loader stack:
+  - `_normalize_image_encoder_state_dict(...)`
+  - `cleaned_state_dict(...)`
+  - `rekey_vision_state_dict(...)`
+  - `convert_openclip_checkpoint(...)`
+  - raw `nn.Module.load_state_dict(...)` inside `ClipVisionEncoder`
+- That was wrong because it bypassed the exact repo mechanisms that already exist to keep model loading honest:
+  - canonical keyspace resolution
+  - lazy mapping/view ownership
+  - `fail_on_key_name_rewrite(...)`
+  - `safe_load_state_dict(...)`
+- That bespoke path also violated the architectural rule already stated above:
+  - it eagerly materialized checkpoint mappings into `dict(...)`
+  - it rewrote stored keys in memory
+  - it created component-specific loader drift
+  - it caused avoidable RAM blow-ups during image-encoder load
+- The correct rule is simple:
+  - the IP-Adapter image encoder is **not** a special loader class
+  - if a VAE or text encoder would load through canonical keymap/view resolution plus `safe_load_state_dict(...)`, then the image encoder must do the same
+  - if a CLIP-vision layout needs support, extend the canonical loader/keymap ownership and keep it lazy
+  - if the layout is unsupported, fail loud
+- Never again:
+  - do **not** add adapter-local “cleaned state dict” helpers, prefix strippers, rekey shims, or raw `module.load_state_dict(...)` shortcuts just to get an auxiliary component loading quickly
+  - do **not** bypass the rewrite guard by normalizing keys before the canonical loader sees them
+  - do **not** ship a bespoke image-encoder loader when the rest of the repo already has the right loading contract
+
 Keymap law: see **ABSOLUTE LAW — DO NOT TOUCH LAYER NAMES** at the top of this file.
 The same no-rename/no-strip/no-punctuation-rewrite rule applies during model loading and engine/runtime keyspace interpretation.
 

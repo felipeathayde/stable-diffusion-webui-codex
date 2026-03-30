@@ -7,6 +7,7 @@ Key files:
 - `apps/backend/runtime/state_dict/keymap_flux2_transformer.py`: FLUX.2 transformer key-style resolver (legacy fused core layout or native/source Diffusers → Diffusers `Flux2Transformer2DModel` lookup space).
 - `apps/backend/runtime/state_dict/key_mapping.py`: Strict key-style detection + keyspace resolver core (fail loud; collision/ambiguity checks).
 - `apps/backend/runtime/state_dict/keymap_gemma3_text_encoder.py`: Gemma3 text-only GGUF key-style resolver (llama.cpp GGUF or native HF text-backbone layout → `Gemma3TextModel` lookup space).
+- `apps/backend/runtime/state_dict/keymap_clip_vision.py`: CLIP vision image-encoder key-style resolver (HF `vision_model.*`, wrapped `image_encoder.vision_model.*`, or explicit OpenCLIP `visual.*` → canonical HF `CLIPVisionModelWithProjection` lookup space).
 - `apps/backend/runtime/state_dict/keymap_llama_gguf.py`: llama.cpp-style GGUF tensor-name resolver for text models (HF key layout).
 - `apps/backend/runtime/state_dict/keymap_qwen_text_encoder.py`: Qwen text-encoder key-style resolver (native HF backbone or known wrapper/container surfaces -> canonical `model.*` lookup space; optional aux heads handled explicitly by policy).
 - `apps/backend/runtime/state_dict/keymap_sdxl_clip.py`: SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
@@ -23,6 +24,7 @@ Key files:
 Notes:
 - Views should stay lightweight and avoid eagerly materializing large state dicts.
 - 2026-03-21: `key_mapping.py` now fail-loud rejects any attempt to rewrite stored layer names during generic preprocessing (including prefix stripping / punctuation edits); keymaps must map source keyspaces explicitly through lookup views or computed views instead of mutating key strings.
+- 2026-03-29: `keymap_clip_vision.py` now owns IP-Adapter CLIP vision image-encoder source-style resolution (bare HF including the known full-CLIP extra text/logit keys, explicit `image_encoder.*` wrapped image-encoder checkpoints, and explicit OpenCLIP including the known full-CLIP extra text/logit keys) into the canonical HF `CLIPVisionModelWithProjection` keyspace; adapter-local filtering/rekey/conversion glue is forbidden.
 - 2026-03-28: `keymap_wan22_transformer.py` now owns explicit Wan LoRA wrapper-keyspace families (`diffusion_model.*`, `model.diffusion_model.*`, `model.model.diffusion_model.*`, `transformer.*`, `transformer_2.*`, `model.*`) for logical-key resolution; `stage_lora.py` no longer owns target-resolution fallback stripping for those families.
 - 2026-03-20: `keymap_sdxl_vae.py` now exposes the shared metadata-filter seam used by external override prep; only known SDXL/Flow bookkeeping keys are dropped before strict keyspace resolution.
 - 2026-03-25: `keymap_sdxl_clip.py` now treats missing CLIP `logit_scale` as an omitted-source case and lazily synthesizes the canonical `ln(100)` default, while duplicate native `logit_scale` sources still fail loud.
@@ -50,4 +52,4 @@ Notes:
 - 2026-03-12: Added strict Gemma3 text-only GGUF keyspace resolution in `keymap_gemma3_text_encoder.py` for the LTX2 Gemma3 external loader path; it accepts llama.cpp GGUF text keys or already-native `Gemma3TextModel` keys and exposes only a lookup view.
 - 2026-03-21: `keymap_gemma3_text_encoder.py` now rejects documented wrapper-prefix rewrite inputs (`model.`, `language_model.`, `base_text_encoder.`) until the source layout is modeled explicitly; the strict lookup view remains canonical GGUF-or-native-HF only.
 
-Last Review: 2026-03-28
+Last Review: 2026-03-29

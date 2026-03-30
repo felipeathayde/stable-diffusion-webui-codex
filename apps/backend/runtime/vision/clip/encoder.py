@@ -108,9 +108,30 @@ class ClipVisionEncoder:
     ) -> ClipVisionOutput:
         if not isinstance(image, torch.Tensor):
             raise ClipVisionInputError("ClipVisionEncoder.encode expects a torch.Tensor input.")
+        processed = self.prepare_pixels(image, crop=crop)
+        return self.encode_pixels(processed, return_all_hidden_states=return_all_hidden_states)
+
+    def prepare_pixels(self, image: torch.Tensor, *, crop: bool = True) -> torch.Tensor:
+        if not isinstance(image, torch.Tensor):
+            raise ClipVisionInputError("ClipVisionEncoder.prepare_pixels expects a torch.Tensor input.")
+        return preprocess_image(image, self.spec.preprocess, crop=crop)
+
+    def encode_pixels(
+        self,
+        pixel_values: torch.Tensor,
+        *,
+        return_all_hidden_states: bool = False,
+    ) -> ClipVisionOutput:
+        if not isinstance(pixel_values, torch.Tensor):
+            raise ClipVisionInputError("ClipVisionEncoder.encode_pixels expects a torch.Tensor input.")
+        if pixel_values.ndim != 4:
+            raise ClipVisionInputError(
+                "ClipVisionEncoder.encode_pixels expects a 4D tensor "
+                f"(batch, channels, height, width); got {tuple(pixel_values.shape)}."
+            )
         start = time.perf_counter()
         memory_management.manager.load_model(self.patcher)
-        processed = preprocess_image(image.to(self.load_device), self.spec.preprocess, crop=crop)
+        processed = pixel_values.to(device=self.load_device, dtype=self.runtime_dtype)
         outputs = self.model(
             pixel_values=processed,
             output_hidden_states=True,

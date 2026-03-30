@@ -52,21 +52,6 @@ When touching `SUBSYSTEM-MAP-INDEX.md` or `SUBSYSTEM-MAP.md`, run this operation
   - `bash .sangoi/.tools/link-check.sh .sangoi`
   - `bash .sangoi/.tools/link-check.sh .`
 
-Code references live in `.refs/`. It contains valuable vendored snapshots of:
-
-- Diffusers
-- ComfyUI
-- adetailer (Inpaint tool)
-- flash-attention
-- Forge-A1111
-- kohya-hiresfix
-- sd-scripts (Kohya training scripts)
-- llama.cpp
-- LyCORIS
-- SUPIR
-
-You read them. You do not import them into `apps/**`. You do not copy them into active code. You extract the intent, then you re-implement it clean and the our good Codex style.
-
 - If you touch an `apps/**` source file, you keep its **file header block** honest. If the purpose or top-level symbols changed, you update them.
   - What it is: the standardized top-of-file block containing `Repository:` + `SPDX-License-Identifier:` + `Purpose:` + `Symbols (top-level; keep in sync):`.
   - Where it lives: `.py` = module docstring (first statement); `.ts` = top block comment (`/* ... */`); `.vue` = top HTML comment (before `<template>`).
@@ -183,9 +168,17 @@ NotImplementedError("<feature> not yet implemented")
 
 Model loading is a minefield you cross with a map.
 You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`.
+
 - Supporting a family in `diffusers` format does **not** delegate contract truth to external `diffusers` helpers/imports.
 - If this repo supports a `diffusers` surface, classification, component requirements, and family-specific constraints stay in repo-owned loader/detector/parser seams.
 - Family-native external asset slots stay explicit and named. Do **not** collapse multi-slot families into generic selector bags when the contract depends on slot identity.
+- When debugging model/adapter/runtime integration, prefer bounded seam proofs before E2E guesses:
+  - preprocess parity against the canonical processor;
+  - encoder/load parity against the same checkpoint through the canonical repo seam;
+  - projector/module parity against the real checkpoint tensors;
+  - patch math parity in isolation;
+  - binding/layout parity by translated parameter names, not width-only heuristics.
+- Use real checkpoints plus the appropriate local/official reference shelf under `.refs/`, and keep each proof scoped to one seam so you know exactly what failed.
 
 **IP-Adapter image-encoder postmortem: this was done wrong once, and never again.**
 
@@ -255,7 +248,7 @@ This repo keeps a serious local reference shelf under `.refs/`. Use it before yo
 
 What lives there right now:
 
-- upstream or related codebases such as `ComfyUI`, `ComfyUI-GGUF`, `ComfyUI-SeedVR2_VideoUpscaler`, `Forge-A1111`, `diffusers`, `flash-attention`, `pytorch`, `sd-scripts`, `llama.cpp`, `k-diffusion`, `LyCORIS`, `adetailer`, `WanVideoWrapper`, `Stable-Video-Infinity`, `LightX2V`, and `open-tv`
+- upstream or related codebases such as `ComfyUI`, `ComfyUI-GGUF`, `ComfyUI-SeedVR2_VideoUpscaler`, `Forge-A1111`, `diffusers`, `flash-attention`, `pytorch`, `sd-scripts`, `llama.cpp`, `k-diffusion`, `LyCORIS`, `adetailer`, `WanVideoWrapper`, `Stable-Video-Infinity`, `LightX2V`, `IP-Adapter` and `open-tv`
 - git-backed extensions and nested repos inside `.refs/Forge-A1111`
 - model/index/reference artifacts such as `hf-model-indexes`, normalized stream JSON dumps, and local Gemini helper/reference files
 
@@ -265,3 +258,5 @@ Rules:
 - Before researching any git-backed reference under `.refs/`, run `git -C <that-reference-repo> pull --ff-only` so you are reading the freshest code.
 - In this repo, that pull-first rule applies to the current git-backed references under `.refs/`, including repositories like `ComfyUI`, `ComfyUI-GGUF`, `ComfyUI-SeedVR2_VideoUpscaler`, `diffusers`, `pytorch`, `sd-scripts`, `llama.cpp`, `k-diffusion`, `LyCORIS`, `adetailer`, `WanVideoWrapper`, `Stable-Video-Infinity`, `LightX2V`, `open-tv`, and the nested git-backed repos inside `.refs/Forge-A1111`.
 - `.refs/` stays reference-only. Durable conclusions belong in tracked docs, comments, or contracts inside this repo, not as ephemeral memory.
+
+You read them. You do not import them into `apps/**`. You do not copy them into active code. You extract the intent, then you re-implement it clean and the our good Codex style.

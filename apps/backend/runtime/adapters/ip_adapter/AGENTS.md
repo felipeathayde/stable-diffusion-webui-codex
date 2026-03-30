@@ -19,5 +19,5 @@ Status: Active
 - `session.py` may validate against the generic UNet transformer inventory, but the authoritative order for slot assignment is the IP-Adapter semantic-engine layout.
 - Conditional vs unconditional branch selection belongs in `modules.py::IpAdapterCrossAttentionPatch`; request prep owns token construction only.
 - Base-layout unconditional tokens are the zero vector in pooled CLIP embedding space; use `zeros_like(image_embeds)` before the base projector.
-- Plus-layout unconditional tokens come from the zero-image CLIP hidden-state path before the resampler projection.
+- Plus-layout unconditional tokens come from `zeros_like(pixel_values)` in already-preprocessed CLIP image space before the resampler projection; do not emulate this by encoding a black image through preprocessing.
 - Do not reintroduce adapter-local CLIP vision key rewriting or raw `nn.Module.load_state_dict(...)` paths here; image-encoder loading must stay on the canonical CLIP vision/state-dict seams.

@@ -135,7 +135,7 @@ def _load_image_encoder(path: str) -> ClipVisionEncoder:
     raw_state = load_torch_file(
         path,
         safe_load=True,
-        device=memory_management.manager.get_device(DeviceRole.TEXT_ENCODER),
+        device=memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER),
     )
     if not isinstance(raw_state, MutableMapping):
         raise RuntimeError(f"IP-Adapter image encoder '{path}' did not load as a mutable mapping.")

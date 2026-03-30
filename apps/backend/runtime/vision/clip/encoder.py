@@ -49,6 +49,7 @@ class ClipVisionEncoder:
         self.load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
         self.offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
         self.runtime_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        to_args = dict(device=self.load_device, dtype=self.runtime_dtype)
         logger.debug(
             "Initialising clip vision encoder variant=%s load_device=%s offload_device=%s dtype=%s",
             spec.variant.value,
@@ -57,10 +58,9 @@ class ClipVisionEncoder:
             self.runtime_dtype,
         )
         config = CLIPVisionConfig(**spec.to_huggingface_kwargs())
-        with runtime_ops.using_codex_operations():
+        with runtime_ops.using_codex_operations(**to_args, manual_cast_enabled=True):
             with modeling_utils.no_init_weights():
-                self.model = CLIPVisionModelWithProjection(config)
-        self.model.to(self.runtime_dtype)
+                self.model = CLIPVisionModelWithProjection(config).to(**to_args)
         self.model.eval()
         self.patcher = ModelPatcher(
             self.model,

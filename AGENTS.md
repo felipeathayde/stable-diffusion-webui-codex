@@ -205,15 +205,18 @@ You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`.
   - it rewrote stored keys in memory
   - it created component-specific loader drift
   - it caused avoidable RAM blow-ups during image-encoder load
+  - it violated the canonical build/mount pattern by constructing the runtime module outside the memory-owner device/dtype path, then relying on later runtime offload wrappers to clean it up
 - The correct rule is simple:
   - the IP-Adapter image encoder is **not** a special loader class
   - if a VAE or text encoder would load through canonical keymap/view resolution plus `safe_load_state_dict(...)`, then the image encoder must do the same
   - if a CLIP-vision layout needs support, extend the canonical loader/keymap ownership and keep it lazy
   - if the layout is unsupported, fail loud
+  - if a component is memory-managed, the module itself must also be built/mounted through the canonical owner path before weight load: resolve the owner device/dtype first, construct under the same `using_codex_operations(**to_args, ...)` pattern used by the central loaders, place the module on that owner device/dtype, then call `safe_load_state_dict(...)`, and only after that rely on runtime offload/reload
 - Never again:
   - do **not** add adapter-local “cleaned state dict” helpers, prefix strippers, rekey shims, or raw `module.load_state_dict(...)` shortcuts just to get an auxiliary component loading quickly
   - do **not** bypass the rewrite guard by normalizing keys before the canonical loader sees them
   - do **not** ship a bespoke image-encoder loader when the rest of the repo already has the right loading contract
+  - do **not** assume that wrapping a module in `ModelPatcher` later makes an off-pattern build/load canonical; the birth/load path must already follow the memory-manager owner contract
 
 Keymap law: see **ABSOLUTE LAW — DO NOT TOUCH LAYER NAMES** at the top of this file.
 The same no-rename/no-strip/no-punctuation-rewrite rule applies during model loading and engine/runtime keyspace interpretation.

@@ -246,3 +246,22 @@ Styles for `apps/interface/src/styles` are not a dumping ground.
 Common rules belong where they will be reused.
 Variants are named with intent.
 Do not litter with vague utilities that hide confusion.
+
+---
+
+### ACT VI – `.refs/` REFERENCE SOURCES
+
+This repo keeps a serious local reference shelf under `.refs/`. Use it before you reach for `web.run`.
+
+What lives there right now:
+
+- upstream or related codebases such as `ComfyUI`, `ComfyUI-GGUF`, `ComfyUI-SeedVR2_VideoUpscaler`, `Forge-A1111`, `diffusers`, `flash-attention`, `pytorch`, `sd-scripts`, `llama.cpp`, `k-diffusion`, `LyCORIS`, `adetailer`, `WanVideoWrapper`, `Stable-Video-Infinity`, `LightX2V`, and `open-tv`
+- git-backed extensions and nested repos inside `.refs/Forge-A1111`
+- model/index/reference artifacts such as `hf-model-indexes`, normalized stream JSON dumps, and local Gemini helper/reference files
+
+Rules:
+
+- When you need upstream behavior, loader details, extension behavior, API shape, or model-family reference code, search `.refs/` first instead of flailing with `web.run`.
+- Before researching any git-backed reference under `.refs/`, run `git -C <that-reference-repo> pull --ff-only` so you are reading the freshest code.
+- In this repo, that pull-first rule applies to the current git-backed references under `.refs/`, including repositories like `ComfyUI`, `ComfyUI-GGUF`, `ComfyUI-SeedVR2_VideoUpscaler`, `diffusers`, `pytorch`, `sd-scripts`, `llama.cpp`, `k-diffusion`, `LyCORIS`, `adetailer`, `WanVideoWrapper`, `Stable-Video-Infinity`, `LightX2V`, `open-tv`, and the nested git-backed repos inside `.refs/Forge-A1111`.
+- `.refs/` stays reference-only. Durable conclusions belong in tracked docs, comments, or contracts inside this repo, not as ephemeral memory.

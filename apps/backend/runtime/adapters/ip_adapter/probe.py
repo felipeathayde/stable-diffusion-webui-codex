@@ -45,6 +45,7 @@ from apps.backend.runtime.load_authority import LoadAuthorityStage, coordinator_
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
+from apps.backend.runtime.vision.clip.state_dict import normalize_clip_vision_state_dict_with_layout
 from apps.backend.services.media_service import MediaService
 
 _ALLOWED_SOURCE_KINDS: Final[frozenset[str]] = frozenset({"uploaded", "path"})
@@ -486,15 +487,18 @@ def _run_official_encoder_compare(
         safe_load=True,
         device=memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER),
     )
+    normalized_state, resolved_layout = normalize_clip_vision_state_dict_with_layout(raw_state)
     missing, unexpected = safe_load_state_dict(
         official_model,
-        raw_state,
+        normalized_state,
         log_name="IPAdapterProbeOfficialClipVision",
     )
     if missing or unexpected:
         raise RuntimeError(
             "Official CLIP vision compare load mismatch: "
-            f"missing={len(missing)} unexpected={len(unexpected)}."
+            f"source_style={resolved_layout.source_style} "
+            f"missing={len(missing)} unexpected={len(unexpected)} "
+            f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}."
         )
     official_processed = processor(
         images=[reference_image],

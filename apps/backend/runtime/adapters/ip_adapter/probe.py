@@ -18,14 +18,20 @@ Symbols (top-level; keep in sync; no ghosts):
 - `IpAdapterProbeImageMeta` (dataclass): Metadata summary for the resolved reference image.
 - `IpAdapterProbeReport` (dataclass): Structured live diagnostics response for the IP-Adapter probe route.
 - `parse_ip_adapter_probe_request` (function): Validates and normalizes the bounded diagnostics request payload.
+- `parse_ip_adapter_probe_report` (function): Validates and normalizes the child-process diagnostics receipt payload.
 - `run_ip_adapter_probe` (function): Executes the live IP-Adapter conditioning probe and returns a structured report.
+- `run_ip_adapter_probe_subprocess` (function): Runs the live probe in a child Python process so CUDA/OOM faults do not kill the API host.
 """
 
 from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any, Final
 
 import numpy as np
@@ -239,6 +245,91 @@ def run_ip_adapter_probe(request: IpAdapterProbeRequest) -> IpAdapterProbeReport
         )
 
 
+def run_ip_adapter_probe_subprocess(
+    request: IpAdapterProbeRequest,
+    *,
+    timeout_seconds: int = 600,
+) -> IpAdapterProbeReport:
+    payload = {
+        "model_path": request.model_path,
+        "image_encoder_path": request.image_encoder_path,
+        "source_kind": request.source_kind,
+        "reference_image_data": request.reference_image_data,
+        "reference_image_path": request.reference_image_path,
+        "crop": request.crop,
+    }
+    repo_root = Path(__file__).resolve().parents[5]
+    env = dict(os.environ)
+    env.setdefault("CODEX_ROOT", str(repo_root))
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    pythonpath_parts = [part for part in existing_pythonpath.split(os.pathsep) if part]
+    if str(repo_root) not in pythonpath_parts:
+        pythonpath_parts.insert(0, str(repo_root))
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    command = [sys.executable, "-m", "apps.backend.runtime.adapters.ip_adapter.probe", "--child"]
+    try:
+        completed = subprocess.run(
+            command,
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=int(timeout_seconds),
+            check=False,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return _failure_report(
+            request=request,
+            phase="subprocess",
+            reason_code="E_IP_ADAPTER_PROBE_TIMEOUT",
+            reason_detail=f"probe child timed out after {int(timeout_seconds)}s",
+        )
+    except Exception as exc:
+        return _failure_report(
+            request=request,
+            phase="subprocess",
+            reason_code="E_IP_ADAPTER_PROBE_SUBPROCESS",
+            reason_detail=str(exc),
+        )
+    stderr_tail = (completed.stderr or "").strip().splitlines()[-20:]
+    stderr_detail = " | ".join(stderr_tail)
+    if completed.returncode != 0:
+        detail = f"probe child exited with code {completed.returncode}"
+        if stderr_detail:
+            detail = f"{detail}: {stderr_detail}"
+        return _failure_report(
+            request=request,
+            phase="subprocess",
+            reason_code="E_IP_ADAPTER_PROBE_SUBPROCESS",
+            reason_detail=detail,
+        )
+    try:
+        output = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        detail = f"probe child returned invalid JSON: {exc}"
+        if stderr_detail:
+            detail = f"{detail}: {stderr_detail}"
+        return _failure_report(
+            request=request,
+            phase="subprocess",
+            reason_code="E_IP_ADAPTER_PROBE_SUBPROCESS_OUTPUT",
+            reason_detail=detail,
+        )
+    try:
+        normalized_output = parse_ip_adapter_probe_report(output)
+    except Exception as exc:
+        detail = f"probe child returned invalid report: {exc}"
+        if stderr_detail:
+            detail = f"{detail}: {stderr_detail}"
+        return _failure_report(
+            request=request,
+            phase="subprocess",
+            reason_code="E_IP_ADAPTER_PROBE_SUBPROCESS_OUTPUT",
+            reason_detail=detail,
+        )
+    return normalized_output
+
+
 def _load_reference_image(request: IpAdapterProbeRequest) -> Image.Image:
     if request.source_kind == "uploaded":
         return MediaService().decode_image(request.reference_image_data).convert("RGB")
@@ -360,3 +451,86 @@ def _parse_bool(raw: Any, *, field_name: str) -> bool:
     if isinstance(raw, bool):
         return raw
     raise IpAdapterProbeInvalidRequest(f"{field_name} must be a boolean")
+
+
+def parse_ip_adapter_probe_report(payload: Any) -> IpAdapterProbeReport:
+    if not isinstance(payload, dict):
+        raise IpAdapterProbeInvalidRequest("probe report payload must be an object")
+    return IpAdapterProbeReport(
+        ok=bool(payload.get("ok")),
+        phase=str(payload.get("phase")),
+        reason_code=payload.get("reason_code"),
+        reason_detail=payload.get("reason_detail"),
+        model_path=str(payload.get("model_path")),
+        image_encoder_path=str(payload.get("image_encoder_path")),
+        source_kind=str(payload.get("source_kind")),
+        crop=bool(payload.get("crop")),
+        layout=payload.get("layout"),
+        uses_hidden_states=payload.get("uses_hidden_states"),
+        slot_count=payload.get("slot_count"),
+        token_count=payload.get("token_count"),
+        output_cross_attention_dim=payload.get("output_cross_attention_dim"),
+        internal_cross_attention_dim=payload.get("internal_cross_attention_dim"),
+        encoder_variant=payload.get("encoder_variant"),
+        encoder_hidden_size=payload.get("encoder_hidden_size"),
+        encoder_projection_dim=payload.get("encoder_projection_dim"),
+        reference_image=_parse_image_meta(payload.get("reference_image")),
+        source_pixels=_parse_tensor_stats(payload.get("source_pixels")),
+        preprocessed_pixels=_parse_tensor_stats(payload.get("preprocessed_pixels")),
+        image_embeds=_parse_tensor_stats(payload.get("image_embeds")),
+        penultimate_hidden_states=_parse_tensor_stats(payload.get("penultimate_hidden_states")),
+        condition_tokens=_parse_tensor_stats(payload.get("condition_tokens")),
+        uncondition_tokens=_parse_tensor_stats(payload.get("uncondition_tokens")),
+        condition_uncondition_max_abs_diff=payload.get("condition_uncondition_max_abs_diff"),
+        condition_uncondition_mean_abs_diff=payload.get("condition_uncondition_mean_abs_diff"),
+    )
+
+
+def _parse_image_meta(payload: Any) -> IpAdapterProbeImageMeta | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise IpAdapterProbeInvalidRequest("probe image meta payload must be an object")
+    return IpAdapterProbeImageMeta(
+        mode=str(payload.get("mode")),
+        width=int(payload.get("width")),
+        height=int(payload.get("height")),
+    )
+
+
+def _parse_tensor_stats(payload: Any) -> IpAdapterProbeTensorStats | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise IpAdapterProbeInvalidRequest("probe tensor stats payload must be an object")
+    return IpAdapterProbeTensorStats(
+        shape=tuple(int(dim) for dim in payload.get("shape", ())),
+        dtype=str(payload.get("dtype")),
+        device=str(payload.get("device")),
+        numel=int(payload.get("numel")),
+        finite=bool(payload.get("finite")),
+        minimum=_optional_float(payload.get("minimum")),
+        maximum=_optional_float(payload.get("maximum")),
+        mean=_optional_float(payload.get("mean")),
+        std=_optional_float(payload.get("std")),
+        l2_norm=_optional_float(payload.get("l2_norm")),
+    )
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _main(argv: list[str]) -> int:
+    if len(argv) != 2 or argv[1] != "--child":
+        raise SystemExit("Use `python -m apps.backend.runtime.adapters.ip_adapter.probe --child`.")
+    request = parse_ip_adapter_probe_request(json.load(sys.stdin))
+    report = run_ip_adapter_probe(request)
+    json.dump(report.to_payload(), sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main(sys.argv))

@@ -33,7 +33,7 @@ from apps.backend.runtime.attention.sram.splitkv_validation import (
 from apps.backend.runtime.adapters.ip_adapter.probe import (
     IpAdapterProbeInvalidRequest,
     parse_ip_adapter_probe_request,
-    run_ip_adapter_probe,
+    run_ip_adapter_probe_subprocess,
 )
 
 
@@ -134,7 +134,7 @@ def build_router() -> APIRouter:
         try:
             normalized_payload = _normalize_ip_adapter_probe_payload(payload)
             request = parse_ip_adapter_probe_request(normalized_payload)
-            return run_ip_adapter_probe(request).to_payload()
+            return run_ip_adapter_probe_subprocess(request).to_payload()
         except IpAdapterProbeInvalidRequest as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except HTTPException:

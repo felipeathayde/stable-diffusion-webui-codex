@@ -21,6 +21,7 @@ Status: Active
 - `session.py` may validate against the generic UNet transformer inventory, but the authoritative order for slot assignment is the IP-Adapter semantic-engine layout.
 - Conditional vs unconditional branch selection belongs in `modules.py::IpAdapterCrossAttentionPatch`; request prep owns token construction only.
 - The bounded diagnostics route `/api/tests/ip-adapter/probe` is not a second generation API. `probe.py` owns the live conditioning receipt, while `interfaces/api/routers/tests.py` only resolves inventory-backed asset paths and repo-scoped reference-image paths.
+- The bounded diagnostics route `/api/tests/ip-adapter/probe` must keep the canonical CUDA/runtime codepath but execute it in a subprocess. If the live CLIP/IP-Adapter probe OOMs or dies, the route must return a structured failure receipt instead of taking down the API host.
 - Base-layout unconditional tokens are the zero vector in pooled CLIP embedding space; use `zeros_like(image_embeds)` before the base projector.
 - Plus-layout unconditional tokens come from `zeros_like(pixel_values)` in already-preprocessed CLIP image space before the resampler projection; do not emulate this by encoding a black image through preprocessing.
 - Image-encoder ownership is split on purpose: checkpoint IO may stage through the text-encoder offload lane, but the live CLIP vision runtime module and cached asset bundle must resolve device/dtype from `DeviceRole.CLIP_VISION`.

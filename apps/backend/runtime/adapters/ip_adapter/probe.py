@@ -25,7 +25,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import copy
 from dataclasses import asdict, dataclass
 import json
 import os
@@ -39,6 +38,7 @@ from PIL import Image
 import torch
 
 from apps.backend.runtime.adapters.ip_adapter.assets import prepare_ip_adapter_assets_for_paths
+from apps.backend.runtime.adapters.ip_adapter.preprocess import _prepare_ip_adapter_conditioning
 from apps.backend.runtime.load_authority import LoadAuthorityStage, coordinator_load_permit
 from apps.backend.services.media_service import MediaService
 
@@ -184,23 +184,11 @@ def run_ip_adapter_probe(request: IpAdapterProbeRequest) -> IpAdapterProbeReport
             assets=assets,
         )
     try:
-        source_pixels = _image_to_bhwc_tensor(reference_image)
-        encoder = assets.image_encoder_runtime
-        projector = copy.deepcopy(assets.image_projector)
-        projector.to(device=encoder.load_device, dtype=encoder.runtime_dtype)
-        projector.eval()
-        with torch.inference_mode():
-            processed = encoder.prepare_pixels(source_pixels, crop=request.crop)
-            encoded = encoder.encode_pixels(processed)
-            if assets.uses_hidden_states:
-                uncondition_encoded = encoder.encode_pixels(torch.zeros_like(processed))
-                condition_inputs = encoded.penultimate_hidden_states
-                uncondition_inputs = uncondition_encoded.penultimate_hidden_states
-            else:
-                condition_inputs = encoded.image_embeds
-                uncondition_inputs = torch.zeros_like(condition_inputs)
-            condition = projector(condition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
-            uncondition = projector(uncondition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
+        source_pixels, processed, encoded, condition, uncondition = _prepare_ip_adapter_conditioning(
+            image=reference_image,
+            assets=assets,
+            crop=request.crop,
+        )
         max_abs_diff, mean_abs_diff = _tensor_difference(condition, uncondition)
         return IpAdapterProbeReport(
             ok=True,

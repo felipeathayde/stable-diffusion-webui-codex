@@ -58,17 +58,25 @@ def apply_ip_adapter_for_sampling(processing) -> Iterator[AppliedIpAdapterSessio
         semantic_engine=assets.target_semantic_engine,
         ip_layers=assets.ip_layers,
     )
+    slot_specs = tuple(assets.ip_layers.slot_specs)
     if len(coordinates) != int(assets.slot_count):
         raise RuntimeError(
             f"IP-Adapter slot/layout mismatch: denoiser exposes {len(coordinates)} attn2 coordinates but adapter provides {assets.slot_count} slot(s)."
+        )
+    if len(slot_specs) != len(coordinates):
+        raise RuntimeError(
+            "IP-Adapter slot/source-key mismatch: "
+            f"parsed slot specs={len(slot_specs)} coordinates={len(coordinates)}."
         )
     session_ip_layers = copy.deepcopy(assets.ip_layers).to(device=runtime_device, dtype=runtime_dtype)
     condition_tokens = embeddings.condition.to(device=runtime_device, dtype=runtime_dtype)
     uncondition_tokens = embeddings.uncondition.to(device=runtime_device, dtype=runtime_dtype)
     attn2_patches: dict[tuple[str, int, int], IpAdapterCrossAttentionPatch] = {}
-    for slot_index, (block_name, block_index, transformer_index) in enumerate(coordinates):
+    for slot_index, ((block_name, block_index, transformer_index), slot_spec) in enumerate(zip(coordinates, slot_specs, strict=True)):
         attn2_patches[(block_name, block_index, transformer_index)] = IpAdapterCrossAttentionPatch(
             slot_index=slot_index,
+            k_source_key=slot_spec.k_source_key,
+            v_source_key=slot_spec.v_source_key,
             weight=float(config.weight),
             sigma_start=float(sigma_start),
             sigma_end=float(sigma_end),

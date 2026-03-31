@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `MlpProjectionModel` (class): Full-feature MLP projection module (unsupported in tranche 1 but kept as a typed loader target).
 - `PerceiverAttention` (class): Resampler attention block used by IP-Adapter Plus layouts.
 - `Resampler` (class): IP-Adapter Plus resampler implementation.
+- `IpAdapterKvSlotSpec` (dataclass): Canonical slot/source-key metadata derived from one IP-Adapter checkpoint KV inventory.
 - `IpAdapterKvProjectionSet` (class): Exact-source-key holder for IP-Adapter `to_k_ip` / `to_v_ip` linear projections.
 - `IpAdapterCrossAttentionPatch` (class): Shared attn2 replace patch that augments base cross-attention with image-conditioned K/V paths.
 """
@@ -23,11 +24,21 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
+from dataclasses import dataclass
 
 import torch
 from torch import nn
 
 from apps.backend.runtime.attention import attention_function
+
+
+@dataclass(frozen=True)
+class IpAdapterKvSlotSpec:
+    slot_number: int
+    k_source_key: str
+    v_source_key: str
+    input_dim: int
+    output_dim: int
 
 
 class ImageProjectionModel(nn.Module):
@@ -143,26 +154,59 @@ class Resampler(nn.Module):
 
 
 class IpAdapterKvProjectionSet(nn.Module):
-    def __init__(self, state_dict: dict[str, torch.Tensor]) -> None:
+    def __init__(self, state_dict) -> None:
         super().__init__()
         module_dict: OrderedDict[str, nn.Module] = OrderedDict()
         self._source_key_to_module_name: dict[str, str] = {}
-        self._slot_numbers: list[int] = []
+        self.slot_specs = self.inspect_state_dict(state_dict)
         for source_key, weight in self._ordered_weight_items(state_dict):
-            if weight.ndim != 2:
-                raise RuntimeError(
-                    f"IP-Adapter KV weight '{source_key}' must be 2-D; got shape={tuple(weight.shape)}."
-                )
-            slot_number = self._slot_number_from_source_key(source_key)
-            if slot_number not in self._slot_numbers:
-                self._slot_numbers.append(slot_number)
             module_name = self._module_name_from_source_key(source_key)
             layer = nn.Linear(int(weight.shape[1]), int(weight.shape[0]), bias=False)
             layer.weight.data.copy_(weight)
             module_dict[module_name] = layer
             self._source_key_to_module_name[source_key] = module_name
         self.to_kvs = nn.ModuleDict(module_dict)
-        self.slot_count = len(self._slot_numbers)
+        self.slot_count = len(self.slot_specs)
+
+    @classmethod
+    def inspect_state_dict(cls, state_dict) -> tuple[IpAdapterKvSlotSpec, ...]:
+        grouped_weights: dict[int, dict[str, tuple[str, torch.Tensor]]] = {}
+        for source_key, weight in cls._ordered_weight_items(state_dict):
+            slot_number, kind = cls._parse_source_key(source_key)
+            grouped_weights.setdefault(slot_number, {})[kind] = (source_key, weight)
+        slot_specs: list[IpAdapterKvSlotSpec] = []
+        for slot_number in sorted(grouped_weights):
+            slot_pair = grouped_weights[slot_number]
+            try:
+                k_source_key, k_weight = slot_pair["to_k_ip"]
+                v_source_key, v_weight = slot_pair["to_v_ip"]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"IP-Adapter KV state dict is missing matched to_k_ip/to_v_ip pairs for slot {slot_number}."
+                ) from exc
+            if k_weight.ndim != 2:
+                raise RuntimeError(
+                    f"IP-Adapter KV weight '{k_source_key}' must be 2-D; got shape={tuple(k_weight.shape)}."
+                )
+            if v_weight.ndim != 2:
+                raise RuntimeError(
+                    f"IP-Adapter KV weight '{v_source_key}' must be 2-D; got shape={tuple(v_weight.shape)}."
+                )
+            if tuple(k_weight.shape) != tuple(v_weight.shape):
+                raise RuntimeError(
+                    "IP-Adapter KV slot pair mismatch: "
+                    f"slot={slot_number} k_shape={tuple(k_weight.shape)} v_shape={tuple(v_weight.shape)}."
+                )
+            slot_specs.append(
+                IpAdapterKvSlotSpec(
+                    slot_number=int(slot_number),
+                    k_source_key=str(k_source_key),
+                    v_source_key=str(v_source_key),
+                    input_dim=int(k_weight.shape[1]),
+                    output_dim=int(k_weight.shape[0]),
+                )
+            )
+        return tuple(slot_specs)
 
     @staticmethod
     def _ordered_weight_items(state_dict: dict[str, torch.Tensor]) -> list[tuple[str, torch.Tensor]]:
@@ -236,6 +280,8 @@ class IpAdapterCrossAttentionPatch(nn.Module):
         self,
         *,
         slot_index: int,
+        k_source_key: str,
+        v_source_key: str,
         weight: float,
         sigma_start: float,
         sigma_end: float,
@@ -251,8 +297,8 @@ class IpAdapterCrossAttentionPatch(nn.Module):
         self.ip_layers = ip_layers
         self.register_buffer("condition_tokens", condition, persistent=False)
         self.register_buffer("uncondition_tokens", uncondition, persistent=False)
-        self.k_source_key = f"{self.slot_index * 2 + 1}.to_k_ip.weight"
-        self.v_source_key = f"{self.slot_index * 2 + 1}.to_v_ip.weight"
+        self.k_source_key = str(k_source_key)
+        self.v_source_key = str(v_source_key)
 
     def forward(
         self,
@@ -294,16 +340,23 @@ class IpAdapterCrossAttentionPatch(nn.Module):
 
     @staticmethod
     def _expand_tokens(tokens: torch.Tensor, *, batch_prompt: int) -> torch.Tensor:
-        if tokens.shape[0] == batch_prompt:
-            return tokens
-        if tokens.shape[0] > batch_prompt:
-            return tokens[:batch_prompt]
-        if tokens.shape[0] <= 0:
+        token_batch = int(tokens.shape[0])
+        if token_batch <= 0:
             raise RuntimeError("IP-Adapter token batch is empty.")
-        return torch.cat(
-            (tokens, tokens[-1:].repeat(batch_prompt - tokens.shape[0], 1, 1)),
-            dim=0,
-        )
+        if token_batch == batch_prompt:
+            return tokens
+        if batch_prompt < token_batch:
+            raise RuntimeError(
+                "IP-Adapter token batch mismatch: "
+                f"runtime batch_prompt={batch_prompt} is smaller than prepared token batch={token_batch}."
+            )
+        if batch_prompt % token_batch != 0:
+            raise RuntimeError(
+                "IP-Adapter token batch mismatch: "
+                f"runtime batch_prompt={batch_prompt} is not an integer multiple of prepared token batch={token_batch}."
+            )
+        repeat_factor = batch_prompt // token_batch
+        return tokens.repeat_interleave(repeat_factor, dim=0)
 
     @staticmethod
     def _select_cfg_branch(

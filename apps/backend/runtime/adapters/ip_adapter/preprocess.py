@@ -37,23 +37,11 @@ def prepare_ip_adapter_embeddings(
     assets: PreparedIpAdapterAssets,
 ) -> PreparedIpAdapterEmbeddings:
     image = _resolve_reference_image(processing=processing, config=config)
-    image_tensor = _image_to_bhwc_tensor(image)
-    projector = copy.deepcopy(assets.image_projector)
-    encoder = assets.image_encoder_runtime
-    projector.to(device=encoder.load_device, dtype=encoder.runtime_dtype)
-    projector.eval()
-    with torch.inference_mode():
-        processed = encoder.prepare_pixels(image_tensor, crop=True)
-        encoded = encoder.encode_pixels(processed)
-        if assets.uses_hidden_states:
-            uncondition_encoded = encoder.encode_pixels(torch.zeros_like(processed))
-            condition_inputs = encoded.penultimate_hidden_states
-            uncondition_inputs = uncondition_encoded.penultimate_hidden_states
-        else:
-            condition_inputs = encoded.image_embeds
-            uncondition_inputs = torch.zeros_like(condition_inputs)
-        condition = projector(condition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
-        uncondition = projector(uncondition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
+    _, _, _, condition, uncondition = _prepare_ip_adapter_conditioning(
+        image=image,
+        assets=assets,
+        crop=True,
+    )
     logger.debug(
         "Prepared IP-Adapter embeddings layout=%s cond_shape=%s uncond_shape=%s",
         assets.layout.value,
@@ -91,3 +79,29 @@ def _image_to_bhwc_tensor(image: Image.Image) -> torch.Tensor:
     if array.ndim != 3 or array.shape[2] != 3:
         raise RuntimeError(f"IP-Adapter reference image must decode to HWC RGB; got shape={array.shape}.")
     return torch.from_numpy(array / 255.0).unsqueeze(0)
+
+
+def _prepare_ip_adapter_conditioning(
+    *,
+    image: Image.Image,
+    assets: PreparedIpAdapterAssets,
+    crop: bool,
+) -> tuple[torch.Tensor, torch.Tensor, object, torch.Tensor, torch.Tensor]:
+    source_pixels = _image_to_bhwc_tensor(image)
+    projector = copy.deepcopy(assets.image_projector)
+    encoder = assets.image_encoder_runtime
+    projector.to(device=encoder.load_device, dtype=encoder.runtime_dtype)
+    projector.eval()
+    with torch.inference_mode():
+        processed = encoder.prepare_pixels(source_pixels, crop=bool(crop))
+        encoded = encoder.encode_pixels(processed)
+        if assets.uses_hidden_states:
+            uncondition_encoded = encoder.encode_pixels(torch.zeros_like(processed))
+            condition_inputs = encoded.penultimate_hidden_states
+            uncondition_inputs = uncondition_encoded.penultimate_hidden_states
+        else:
+            condition_inputs = encoded.image_embeds
+            uncondition_inputs = torch.zeros_like(condition_inputs)
+        condition = projector(condition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
+        uncondition = projector(uncondition_inputs.to(device=encoder.load_device, dtype=encoder.runtime_dtype))
+    return source_pixels, processed, encoded, condition, uncondition

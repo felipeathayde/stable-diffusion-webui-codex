@@ -192,9 +192,15 @@ def _coordinate_attn2_to_k_key(coordinate: tuple[str, int, int]) -> str:
 
 
 def _assert_slot_projection_widths_match(*, patched_denoiser, ip_layers, coordinates: tuple[tuple[str, int, int], ...]) -> None:
-    for slot_index, coordinate in enumerate(coordinates):
+    slot_specs = tuple(ip_layers.slot_specs)
+    if len(slot_specs) != len(coordinates):
+        raise RuntimeError(
+            "IP-Adapter slot/source-key mismatch during width validation: "
+            f"slot_specs={len(slot_specs)} coordinates={len(coordinates)}."
+        )
+    for slot_index, (coordinate, slot_spec) in enumerate(zip(coordinates, slot_specs, strict=True)):
         coordinate_width = _coordinate_attn2_to_k_width(patched_denoiser=patched_denoiser, coordinate=coordinate)
-        source_key = f"{slot_index * 2 + 1}.to_k_ip.weight"
+        source_key = slot_spec.k_source_key
         projection_width = int(ip_layers.projection(source_key).weight.shape[0])
         if projection_width != coordinate_width:
             raise RuntimeError(

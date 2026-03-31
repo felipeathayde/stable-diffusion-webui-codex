@@ -80,7 +80,7 @@ def build_router() -> APIRouter:
     def _normalize_ip_adapter_probe_payload(payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="payload must be a JSON object")
-        allowed_keys = {"model", "image_encoder", "source", "crop"}
+        allowed_keys = {"model", "image_encoder", "source", "crop", "compare_official_encoder"}
         unknown_keys = sorted(str(key) for key in payload.keys() if key not in allowed_keys)
         if unknown_keys:
             raise HTTPException(status_code=400, detail=f"unknown payload keys: {', '.join(unknown_keys)}")
@@ -109,6 +109,7 @@ def build_router() -> APIRouter:
             ),
             "source_kind": source_kind.strip().lower(),
             "crop": payload.get("crop", True),
+            "compare_official_encoder": payload.get("compare_official_encoder", False),
         }
         if normalized["source_kind"] == "path":
             try:

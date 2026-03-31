@@ -36,10 +36,15 @@ from typing import Any, Final
 import numpy as np
 from PIL import Image
 import torch
+from transformers import CLIPImageProcessor, CLIPVisionConfig, CLIPVisionModelWithProjection
 
 from apps.backend.runtime.adapters.ip_adapter.assets import prepare_ip_adapter_assets_for_paths
 from apps.backend.runtime.adapters.ip_adapter.preprocess import _prepare_ip_adapter_conditioning
+from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.load_authority import LoadAuthorityStage, coordinator_load_permit
+from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
+from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.services.media_service import MediaService
 
 _ALLOWED_SOURCE_KINDS: Final[frozenset[str]] = frozenset({"uploaded", "path"})
@@ -57,6 +62,7 @@ class IpAdapterProbeRequest:
     reference_image_data: str | None
     reference_image_path: str | None
     crop: bool
+    compare_official_encoder: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +114,17 @@ class IpAdapterProbeReport:
     uncondition_tokens: IpAdapterProbeTensorStats | None
     condition_uncondition_max_abs_diff: float | None
     condition_uncondition_mean_abs_diff: float | None
+    official_compare_enabled: bool
+    official_compare_root: str | None
+    official_preprocessed_pixels: IpAdapterProbeTensorStats | None
+    official_image_embeds: IpAdapterProbeTensorStats | None
+    official_penultimate_hidden_states: IpAdapterProbeTensorStats | None
+    official_preprocessed_max_abs_diff: float | None
+    official_preprocessed_mean_abs_diff: float | None
+    official_image_embeds_max_abs_diff: float | None
+    official_image_embeds_mean_abs_diff: float | None
+    official_penultimate_hidden_states_max_abs_diff: float | None
+    official_penultimate_hidden_states_mean_abs_diff: float | None
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -123,6 +140,7 @@ def parse_ip_adapter_probe_request(payload: Any) -> IpAdapterProbeRequest:
         "reference_image_data",
         "reference_image_path",
         "crop",
+        "compare_official_encoder",
     }
     unknown_keys = sorted(str(key) for key in payload.keys() if key not in allowed_keys)
     if unknown_keys:
@@ -136,6 +154,7 @@ def parse_ip_adapter_probe_request(payload: Any) -> IpAdapterProbeRequest:
     crop = _parse_bool(payload.get("crop", True), field_name="crop")
     reference_image_data = payload.get("reference_image_data")
     reference_image_path = payload.get("reference_image_path")
+    compare_official_encoder = _parse_bool(payload.get("compare_official_encoder", False), field_name="compare_official_encoder")
     if source_kind == "uploaded":
         if not isinstance(reference_image_data, str) or not reference_image_data.strip():
             raise IpAdapterProbeInvalidRequest("reference_image_data is required when source_kind='uploaded'")
@@ -157,6 +176,7 @@ def parse_ip_adapter_probe_request(payload: Any) -> IpAdapterProbeRequest:
         reference_image_data=normalized_reference_image_data,
         reference_image_path=normalized_reference_image_path,
         crop=crop,
+        compare_official_encoder=compare_official_encoder,
     )
 
 
@@ -190,6 +210,47 @@ def run_ip_adapter_probe(request: IpAdapterProbeRequest) -> IpAdapterProbeReport
             crop=request.crop,
         )
         max_abs_diff, mean_abs_diff = _tensor_difference(condition, uncondition)
+        official_compare_root = None
+        official_preprocessed_pixels = None
+        official_image_embeds = None
+        official_penultimate_hidden_states = None
+        official_preprocessed_max_abs_diff = None
+        official_preprocessed_mean_abs_diff = None
+        official_image_embeds_max_abs_diff = None
+        official_image_embeds_mean_abs_diff = None
+        official_penultimate_hidden_states_max_abs_diff = None
+        official_penultimate_hidden_states_mean_abs_diff = None
+        if request.compare_official_encoder:
+            try:
+                (
+                    official_compare_root,
+                    official_preprocessed_pixels,
+                    official_image_embeds,
+                    official_penultimate_hidden_states,
+                    (official_preprocessed_max_abs_diff, official_preprocessed_mean_abs_diff),
+                    (official_image_embeds_max_abs_diff, official_image_embeds_mean_abs_diff),
+                    (
+                        official_penultimate_hidden_states_max_abs_diff,
+                        official_penultimate_hidden_states_mean_abs_diff,
+                    ),
+                ) = _run_official_encoder_compare(
+                    image_encoder_path=request.image_encoder_path,
+                    reference_image=reference_image,
+                    crop=request.crop,
+                    processed=processed,
+                    encoded=encoded,
+                    assets=assets,
+                )
+            except Exception as exc:
+                return _failure_report(
+                    request=request,
+                    phase="official_encoder_compare",
+                    reason_code="E_IP_ADAPTER_PROBE_OFFICIAL_ENCODER_COMPARE",
+                    reason_detail=str(exc),
+                    assets=assets,
+                    reference_image=reference_image,
+                    source_pixels=source_pixels,
+                )
         return IpAdapterProbeReport(
             ok=True,
             phase="complete",
@@ -221,6 +282,17 @@ def run_ip_adapter_probe(request: IpAdapterProbeRequest) -> IpAdapterProbeReport
             uncondition_tokens=_tensor_stats(uncondition),
             condition_uncondition_max_abs_diff=max_abs_diff,
             condition_uncondition_mean_abs_diff=mean_abs_diff,
+            official_compare_enabled=bool(request.compare_official_encoder),
+            official_compare_root=official_compare_root,
+            official_preprocessed_pixels=_tensor_stats(official_preprocessed_pixels),
+            official_image_embeds=_tensor_stats(official_image_embeds),
+            official_penultimate_hidden_states=_tensor_stats(official_penultimate_hidden_states),
+            official_preprocessed_max_abs_diff=official_preprocessed_max_abs_diff,
+            official_preprocessed_mean_abs_diff=official_preprocessed_mean_abs_diff,
+            official_image_embeds_max_abs_diff=official_image_embeds_max_abs_diff,
+            official_image_embeds_mean_abs_diff=official_image_embeds_mean_abs_diff,
+            official_penultimate_hidden_states_max_abs_diff=official_penultimate_hidden_states_max_abs_diff,
+            official_penultimate_hidden_states_mean_abs_diff=official_penultimate_hidden_states_mean_abs_diff,
         )
     except Exception as exc:
         return _failure_report(
@@ -246,6 +318,7 @@ def run_ip_adapter_probe_subprocess(
         "reference_image_data": request.reference_image_data,
         "reference_image_path": request.reference_image_path,
         "crop": request.crop,
+        "compare_official_encoder": request.compare_official_encoder,
     }
     repo_root = Path(__file__).resolve().parents[5]
     env = dict(os.environ)
@@ -381,6 +454,100 @@ def _tensor_difference(left: torch.Tensor, right: torch.Tensor) -> tuple[float |
     return float(delta.max().item()), float(delta.mean().item())
 
 
+def _run_official_encoder_compare(
+    *,
+    image_encoder_path: str,
+    reference_image: Image.Image,
+    crop: bool,
+    processed: torch.Tensor,
+    encoded,
+    assets,
+) -> tuple[str, torch.Tensor, torch.Tensor, torch.Tensor, tuple[float | None, float | None], tuple[float | None, float | None], tuple[float | None, float | None]]:
+    encoder_root = _resolve_official_encoder_root(image_encoder_path)
+    processor = CLIPImageProcessor.from_pretrained(encoder_root)
+    image_size = int(assets.image_encoder_runtime.spec.preprocess.image_size)
+    try:
+        memory_management.manager.unload_model(
+            assets.image_encoder_runtime.patcher,
+            source="runtime.adapters.ip_adapter.probe.official_encoder_compare",
+            stage="official_encoder_compare",
+            component_hint="ClipVisionEncoder",
+            event_reason="free_current_encoder_before_official_compare",
+        )
+    except Exception:
+        pass
+    config = CLIPVisionConfig.from_pretrained(encoder_root)
+    runtime_device = assets.image_encoder_runtime.load_device
+    runtime_dtype = assets.image_encoder_runtime.runtime_dtype
+    official_model = CLIPVisionModelWithProjection(config).to(device=runtime_device, dtype=runtime_dtype)
+    official_model.eval()
+    raw_state = load_torch_file(
+        image_encoder_path,
+        safe_load=True,
+        device=memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER),
+    )
+    missing, unexpected = safe_load_state_dict(
+        official_model,
+        raw_state,
+        log_name="IPAdapterProbeOfficialClipVision",
+    )
+    if missing or unexpected:
+        raise RuntimeError(
+            "Official CLIP vision compare load mismatch: "
+            f"missing={len(missing)} unexpected={len(unexpected)}."
+        )
+    official_processed = processor(
+        images=[reference_image],
+        do_center_crop=bool(crop),
+        size={"shortest_edge": image_size} if crop else {"height": image_size, "width": image_size},
+        crop_size={"height": image_size, "width": image_size},
+        return_tensors="pt",
+    ).pixel_values.to(device=runtime_device, dtype=runtime_dtype)
+    with torch.inference_mode():
+        outputs = official_model(
+            pixel_values=official_processed,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+    hidden_states = outputs.hidden_states or ()
+    if len(hidden_states) < 1:
+        raise RuntimeError("Official CLIP vision compare did not return hidden states.")
+    penultimate_index = -2 if len(hidden_states) >= 2 else -1
+    official_image_embeds = outputs.image_embeds.detach().float().cpu()
+    official_penultimate = hidden_states[penultimate_index].detach().float().cpu()
+    official_processed_cpu = official_processed.detach().float().cpu()
+    processed_diff = _tensor_difference(processed, official_processed_cpu)
+    image_embeds_diff = _tensor_difference(encoded.image_embeds, official_image_embeds)
+    penultimate_diff = _tensor_difference(encoded.penultimate_hidden_states, official_penultimate)
+    return (
+        str(encoder_root),
+        official_processed_cpu,
+        official_image_embeds,
+        official_penultimate,
+        processed_diff,
+        image_embeds_diff,
+        penultimate_diff,
+    )
+
+
+def _resolve_official_encoder_root(image_encoder_path: str) -> str:
+    path = Path(image_encoder_path)
+    root = path if path.is_dir() else path.parent
+    config_path = root / "config.json"
+    preprocessor_path = root / "preprocessor_config.json"
+    if not config_path.is_file():
+        raise RuntimeError(
+            "Official CLIP vision compare requires a directory root with config.json; "
+            f"derived root '{root}' from '{image_encoder_path}'."
+        )
+    if not preprocessor_path.is_file():
+        raise RuntimeError(
+            "Official CLIP vision compare requires preprocessor_config.json beside config.json; "
+            f"derived root '{root}' from '{image_encoder_path}'."
+        )
+    return str(root)
+
+
 def _failure_report(
     *,
     request: IpAdapterProbeRequest,
@@ -427,6 +594,17 @@ def _failure_report(
         uncondition_tokens=None,
         condition_uncondition_max_abs_diff=None,
         condition_uncondition_mean_abs_diff=None,
+        official_compare_enabled=bool(request.compare_official_encoder),
+        official_compare_root=None,
+        official_preprocessed_pixels=None,
+        official_image_embeds=None,
+        official_penultimate_hidden_states=None,
+        official_preprocessed_max_abs_diff=None,
+        official_preprocessed_mean_abs_diff=None,
+        official_image_embeds_max_abs_diff=None,
+        official_image_embeds_mean_abs_diff=None,
+        official_penultimate_hidden_states_max_abs_diff=None,
+        official_penultimate_hidden_states_mean_abs_diff=None,
     )
 
 
@@ -472,6 +650,17 @@ def parse_ip_adapter_probe_report(payload: Any) -> IpAdapterProbeReport:
         uncondition_tokens=_parse_tensor_stats(payload.get("uncondition_tokens")),
         condition_uncondition_max_abs_diff=payload.get("condition_uncondition_max_abs_diff"),
         condition_uncondition_mean_abs_diff=payload.get("condition_uncondition_mean_abs_diff"),
+        official_compare_enabled=bool(payload.get("official_compare_enabled", False)),
+        official_compare_root=payload.get("official_compare_root"),
+        official_preprocessed_pixels=_parse_tensor_stats(payload.get("official_preprocessed_pixels")),
+        official_image_embeds=_parse_tensor_stats(payload.get("official_image_embeds")),
+        official_penultimate_hidden_states=_parse_tensor_stats(payload.get("official_penultimate_hidden_states")),
+        official_preprocessed_max_abs_diff=_optional_float(payload.get("official_preprocessed_max_abs_diff")),
+        official_preprocessed_mean_abs_diff=_optional_float(payload.get("official_preprocessed_mean_abs_diff")),
+        official_image_embeds_max_abs_diff=_optional_float(payload.get("official_image_embeds_max_abs_diff")),
+        official_image_embeds_mean_abs_diff=_optional_float(payload.get("official_image_embeds_mean_abs_diff")),
+        official_penultimate_hidden_states_max_abs_diff=_optional_float(payload.get("official_penultimate_hidden_states_max_abs_diff")),
+        official_penultimate_hidden_states_mean_abs_diff=_optional_float(payload.get("official_penultimate_hidden_states_mean_abs_diff")),
     )
 
 

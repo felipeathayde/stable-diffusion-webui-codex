@@ -24,12 +24,20 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 import torch
 from torch import nn
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.runtime.attention import attention_function
+from apps.backend.runtime.logging import emit_backend_message
+
+_IP_ADAPTER_PATCH_DEBUG_EMIT_COUNT: ContextVar[int] = ContextVar(
+    "ip_adapter_patch_debug_emit_count",
+    default=0,
+)
 
 
 @dataclass(frozen=True)
@@ -308,8 +316,27 @@ class IpAdapterCrossAttentionPatch(nn.Module):
         extra_options: dict[str, object],
     ) -> torch.Tensor:
         base = attention_function(queries, context_keys, context_values, int(extra_options["n_heads"]))
-        if not self._sigma_is_active(extra_options):
-            return base.to(dtype=queries.dtype)
+        sigma_value = self._sigma_value(extra_options)
+        sigma_active = self._sigma_is_active(extra_options, sigma_value=sigma_value)
+        if not sigma_active:
+            result = base.to(dtype=queries.dtype)
+            self._maybe_debug_emit(
+                extra_options=extra_options,
+                sigma_value=sigma_value,
+                sigma_active=sigma_active,
+                queries=queries,
+                context_keys=context_keys,
+                context_values=context_values,
+                cond_tokens=None,
+                uncond_tokens=None,
+                ip_keys=None,
+                ip_values=None,
+                base=base,
+                conditioned=None,
+                result=result,
+                batch_prompt=None,
+            )
+            return result
         cond_or_uncond = extra_options.get("cond_or_uncond")
         if not isinstance(cond_or_uncond, (list, tuple)) or len(cond_or_uncond) == 0:
             raise RuntimeError("IP-Adapter attention patch requires non-empty extra_options['cond_or_uncond'].")
@@ -328,12 +355,35 @@ class IpAdapterCrossAttentionPatch(nn.Module):
         ip_keys = self._select_cfg_branch(k_cond, k_uncond, cond_or_uncond).to(dtype=queries.dtype)
         ip_values = self._select_cfg_branch(v_cond, v_uncond, cond_or_uncond).to(dtype=queries.dtype)
         conditioned = attention_function(queries, ip_keys, ip_values, int(extra_options["n_heads"]))
-        return base.to(dtype=queries.dtype) + (conditioned.to(dtype=queries.dtype) * self.weight)
+        result = base.to(dtype=queries.dtype) + (conditioned.to(dtype=queries.dtype) * self.weight)
+        self._maybe_debug_emit(
+            extra_options=extra_options,
+            sigma_value=sigma_value,
+            sigma_active=sigma_active,
+            queries=queries,
+            context_keys=context_keys,
+            context_values=context_values,
+            cond_tokens=cond_tokens,
+            uncond_tokens=uncond_tokens,
+            ip_keys=ip_keys,
+            ip_values=ip_values,
+            base=base,
+            conditioned=conditioned,
+            result=result,
+            batch_prompt=batch_prompt,
+        )
+        return result
 
-    def _sigma_is_active(self, extra_options: dict[str, object]) -> bool:
+    @staticmethod
+    def _sigma_value(extra_options: dict[str, object]) -> float | None:
         sigma_value = extra_options.get("sigmas")
         if isinstance(sigma_value, torch.Tensor) and sigma_value.numel() > 0:
-            sigma = float(sigma_value.flatten()[0].item())
+            return float(sigma_value.flatten()[0].item())
+        return None
+
+    def _sigma_is_active(self, extra_options: dict[str, object], *, sigma_value: float | None = None) -> bool:
+        sigma = sigma_value if sigma_value is not None else self._sigma_value(extra_options)
+        if sigma is not None:
             if sigma > self.sigma_start or sigma < self.sigma_end:
                 return False
         return True
@@ -375,3 +425,94 @@ class IpAdapterCrossAttentionPatch(nn.Module):
                     f"Unsupported cond_or_uncond branch {branch!r}; expected 0 (cond) or 1 (uncond)."
                 )
         return torch.cat(selected, dim=0)
+
+    @classmethod
+    def _debug_enabled(cls) -> bool:
+        return env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH")
+
+    @classmethod
+    def _debug_limit(cls) -> int:
+        return env_int("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH_N", 6, min_value=0)
+
+    @classmethod
+    def reset_debug_counter(cls) -> None:
+        _IP_ADAPTER_PATCH_DEBUG_EMIT_COUNT.set(0)
+
+    @classmethod
+    def _debug_counter(cls) -> int:
+        return int(_IP_ADAPTER_PATCH_DEBUG_EMIT_COUNT.get())
+
+    @classmethod
+    def _increment_debug_counter(cls) -> None:
+        _IP_ADAPTER_PATCH_DEBUG_EMIT_COUNT.set(cls._debug_counter() + 1)
+
+    @staticmethod
+    def _tensor_stats(label: str, tensor: torch.Tensor | None) -> str:
+        if tensor is None or not torch.is_tensor(tensor):
+            return f"{label}=<none>"
+        with torch.no_grad():
+            data = tensor.detach()
+            stats = data.float()
+            return (
+                f"{label}:shape={tuple(data.shape)} dtype={data.dtype} dev={data.device} "
+                f"min={float(stats.min().item()):.6g} max={float(stats.max().item()):.6g} "
+                f"mean={float(stats.mean().item()):.6g} std={float(stats.std(unbiased=False).item()):.6g} "
+                f"norm={float(stats.norm().item()):.6g}"
+            )
+
+    def _maybe_debug_emit(
+        self,
+        *,
+        extra_options: dict[str, object],
+        sigma_value: float | None,
+        sigma_active: bool,
+        queries: torch.Tensor,
+        context_keys: torch.Tensor,
+        context_values: torch.Tensor,
+        cond_tokens: torch.Tensor | None,
+        uncond_tokens: torch.Tensor | None,
+        ip_keys: torch.Tensor | None,
+        ip_values: torch.Tensor | None,
+        base: torch.Tensor,
+        conditioned: torch.Tensor | None,
+        result: torch.Tensor,
+        batch_prompt: int | None,
+    ) -> None:
+        if not self._debug_enabled():
+            return
+        if self._debug_counter() >= self._debug_limit():
+            return
+        cond_or_uncond = extra_options.get("cond_or_uncond")
+        cond_summary = None
+        if isinstance(cond_or_uncond, (list, tuple)):
+            cond_summary = [int(branch) for branch in cond_or_uncond]
+        emit_backend_message(
+            "[zimage-debug] ip_adapter_patch",
+            logger=__name__,
+            slot_index=self.slot_index,
+            block=extra_options.get("block"),
+            transformer_index=extra_options.get("transformer_index"),
+            block_index=extra_options.get("block_index"),
+            k_source_key=self.k_source_key,
+            v_source_key=self.v_source_key,
+            weight=self.weight,
+            sigma=sigma_value,
+            sigma_active=sigma_active,
+            sigma_start=self.sigma_start,
+            sigma_end=self.sigma_end,
+            cond_or_uncond=cond_summary,
+            batch_total=int(queries.shape[0]),
+            batch_prompt=batch_prompt,
+            n_heads=extra_options.get("n_heads"),
+        )
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('queries', queries)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('context_keys', context_keys)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('context_values', context_values)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('condition_tokens', cond_tokens)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('uncondition_tokens', uncond_tokens)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('ip_keys', ip_keys)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('ip_values', ip_values)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('base', base)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('conditioned', conditioned)}", logger=__name__)
+        emit_backend_message(f"[zimage-debug] {self._tensor_stats('result', result)}", logger=__name__)
+        self._increment_debug_counter()

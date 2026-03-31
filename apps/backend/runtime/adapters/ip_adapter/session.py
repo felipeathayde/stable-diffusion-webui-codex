@@ -24,6 +24,7 @@ from collections.abc import Iterator
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.runtime.adapters.ip_adapter.assets import assert_ip_adapter_engine_supported, prepare_ip_adapter_assets
 from apps.backend.runtime.adapters.ip_adapter.layout import resolve_ip_adapter_transformer_coordinates
 from apps.backend.runtime.adapters.ip_adapter.modules import IpAdapterCrossAttentionPatch
@@ -67,6 +68,34 @@ def apply_ip_adapter_for_sampling(processing) -> Iterator[AppliedIpAdapterSessio
         raise RuntimeError(
             "IP-Adapter slot/source-key mismatch: "
             f"parsed slot specs={len(slot_specs)} coordinates={len(coordinates)}."
+        )
+    IpAdapterCrossAttentionPatch.reset_debug_counter()
+    if env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH"):
+        debug_limit = env_int("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH_MAP_N", 8, min_value=0)
+        slot_preview = [
+            {
+                "slot_index": slot_index,
+                "coordinate": [block_name, int(block_index), int(transformer_index)],
+                "k_source_key": slot_spec.k_source_key,
+                "v_source_key": slot_spec.v_source_key,
+            }
+            for slot_index, ((block_name, block_index, transformer_index), slot_spec) in enumerate(
+                zip(coordinates, slot_specs, strict=True)
+            )
+            if slot_index < debug_limit
+        ]
+        logger.info(
+            "[zimage-debug] ip_adapter session map | layout=%s slots=%d weight=%.3f start=%.3f end=%.3f sigma_start=%.6f sigma_end=%.6f token_shapes=(cond=%s uncond=%s) preview=%s",
+            assets.layout.value,
+            len(slot_specs),
+            float(config.weight),
+            float(config.start_at),
+            float(config.end_at),
+            float(sigma_start),
+            float(sigma_end),
+            tuple(int(dim) for dim in embeddings.condition.shape),
+            tuple(int(dim) for dim in embeddings.uncondition.shape),
+            slot_preview,
         )
     session_ip_layers = copy.deepcopy(assets.ip_layers).to(device=runtime_device, dtype=runtime_dtype)
     condition_tokens = embeddings.condition.to(device=runtime_device, dtype=runtime_dtype)

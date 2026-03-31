@@ -77,7 +77,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `usesImageAutomation` / `infiniteXyzConflict` / `automationBatchConflict` (const): Derived automation guards for the split-button and backend-owned automation route.
 - `showIpAdapterCard` / `initFolderMissingPath` / `dirInitMaskConflict` / `ipAdapterBlockingReason` (const): Card-visibility + preflight guards for Initial Image DIR mode and the dedicated IP-Adapter owner card.
 - `missingInpaintMask` (const): Derived guard flag used to disable generation when INPAINT is enabled without an applied mask.
-- `supportsImg2ImgMasking` (const): Truthful engine-level mask/inpaint support gate for img2img engines.
+- `supportsImg2ImgMasking` (const): Truthful backend-capability-driven mask/inpaint support gate for img2img engines.
 - `hideNegativePrompt` (const): Hides the base Negative Prompt field when the active checkpoint/model does not support it or effective base CFG is `<= 1`.
 - `recommendedSamplers` / `recommendedSchedulers` (const): Sanitized recommendation lists passed into sampler/scheduler selectors.
 - `resolveLiveSamplingDefaults` (function): Resolves executable sampler/scheduler defaults from backend capabilities plus per-family fallbacks.
@@ -593,7 +593,7 @@ import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import { useXyzStore } from '../stores/xyz'
-import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
+import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily } from '../utils/model_family_filters'
 import {
   img2imgResizeModeOptionsForEngine,
@@ -862,7 +862,7 @@ const xyzSchedulerChoices = computed(() => filteredSchedulers.value.map((entry) 
 const xyzRunning = computed(() => xyzStore.status === 'running')
 const isRunBusy = computed(() => isRunning.value || xyzRunning.value)
 const generateLabel = 'Generate'
-const supportsImg2ImgMasking = computed(() => supportsImg2ImgMaskingForEngineId(resolvedEngineForMode.value))
+const supportsImg2ImgMasking = computed(() => Boolean(engineSurface.value?.supports_img2img_masking))
 const usesImageAutomation = computed(() => (
   params.value.runAction === 'infinite'
   || (params.value.useInitImage && params.value.initSource.mode === 'dir')

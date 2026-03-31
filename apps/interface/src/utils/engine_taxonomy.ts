@@ -20,7 +20,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `semanticEngineFromTabFamily` (function): Converts tab family to semantic engine id.
 - `tabFamilyFromSemanticEngine` (function): Converts semantic engine id to tab family when representable.
 - `resolveImageRequestEngineId` (function): Canonical image request tab/mode -> engine-id mapper.
-- `supportsImg2ImgMaskingForEngineId` (function): Returns whether an img2img engine id truthfully supports mask/inpaint semantics.
 - `KNOWN_ENGINE_IDS` (constant): Known engine ids that must have valid semantic mapping.
 - `isKnownEngineId` (function): Type guard for `KNOWN_ENGINE_IDS`.
 - `resolveSemanticEngineForEngineId` (function): Resolves engine id to semantic id using backend map, failing loud for missing known mappings.
@@ -160,13 +159,6 @@ export function resolveImageRequestEngineId(tabType: string, useInitImage: boole
   if (family === 'chroma') return 'flux1_chroma'
   if (family === 'flux1' && useInitImage) return 'flux1_kontext'
   return family
-}
-
-export function supportsImg2ImgMaskingForEngineId(engineId: EngineRequestId | string): boolean {
-  if (!isKnownEngineId(engineId)) {
-    throw new Error(`Unknown engine id for img2img masking support: ${engineId}`)
-  }
-  return engineId !== 'flux1_kontext'
 }
 
 export function resolveSemanticEngineForEngineId(

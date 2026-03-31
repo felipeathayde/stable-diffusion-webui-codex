@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
-Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass with family-specific continuation semantics.
+Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, dispatches classic img2img conditioning by family, runs the sampler loop, and optionally performs a hires second pass with family-specific continuation semantics.
 Masked img2img (“inpaint”) uses Forge/A1111 “Only masked” semantics and supports optional ADetailer-style multi-region passes for disconnected masks.
 The hires pass init is prepared via the global family-dispatched hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass parses LoRA tags from the hires prompt/negative prompt pair, inherits base/request LoRAs when the hires
@@ -19,6 +19,8 @@ Base img2img/inpaint now use the shared proportional denoise-step contract, whil
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
+- `_resolve_classic_img2img_backend` (function): Decide whether classic img2img uses SD-style image conditioning or flow-family zero-conditioning fallback.
+- `_resolve_hires_target_dimensions` (function): Resolve the truthful hires target size for the active engine, including zimage `%16` snapping.
 - `_conditioning_cache_hit_metadata` (function): Build standardized `GenerationResult.metadata` cache-hit payload for img2img wrappers.
 - `_smart_cache_buckets_for_engine` (function): Resolve Smart Cache metric buckets used by each engine family.
 - `_smart_cache_bucket_snapshot` (function): Snapshot hit/miss counters for selected Smart Cache buckets.
@@ -75,6 +77,7 @@ from apps.backend.runtime.pipeline_stages.hires_fix import (
     prepare_hires_latents_and_conditioning,
     resolve_hires_family_strategy,
     resolve_pipeline_telemetry_context,
+    resolve_zimage_hires_pixel_multiple,
 )
 from apps.backend.runtime.pipeline_stages.masked_img2img import (
     apply_inpaint_full_res_composite,
@@ -102,6 +105,8 @@ _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") els
 logger = get_backend_logger(__name__)
 
 _KONTEXT_MULTIPLE_OF = 16
+_CLASSIC_SD_IMG2IMG_ENGINES = {"sd15", "sd20", "sdxl", "sdxl_refiner", "sd35"}
+_CLASSIC_FLOW_IMG2IMG_ENGINES = {"flux1", "flux1_fill", "flux1_chroma", "zimage", "anima"}
 
 # Recommended resolutions from upstream diffusers FluxKontextPipeline.
 _PREFERRED_KONTEXT_RESOLUTIONS: list[tuple[int, int]] = [
@@ -128,6 +133,42 @@ _PREFERRED_KONTEXT_RESOLUTIONS: list[tuple[int, int]] = [
 def _resolve_img2img_variant(processing: CodexProcessingImg2Img) -> str:
     engine_id = str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "")
     return "kontext" if engine_id == "flux1_kontext" else "classic"
+
+
+def _resolve_classic_img2img_backend(engine_id: str, *, has_mask: bool) -> str:
+    normalized_engine_id = str(engine_id or "").strip()
+    if normalized_engine_id == "":
+        raise RuntimeError("Classic img2img backend resolution requires a non-empty engine id.")
+
+    if normalized_engine_id in _CLASSIC_SD_IMG2IMG_ENGINES:
+        return "sd"
+    if normalized_engine_id in _CLASSIC_FLOW_IMG2IMG_ENGINES:
+        if has_mask:
+            raise NotImplementedError(f"masking is not supported for engine '{normalized_engine_id}' img2img yet")
+        return "flow"
+    raise NotImplementedError(
+        f"Classic img2img backend is not implemented for engine '{normalized_engine_id}'."
+    )
+
+
+def _resolve_hires_target_dimensions(
+    hi_cfg: Any,
+    *,
+    engine_id: str,
+    base_width: int,
+    base_height: int,
+) -> tuple[int, int]:
+    target_width, target_height = hi_cfg.resolve_target_dimensions(
+        base_width=int(base_width),
+        base_height=int(base_height),
+    )
+    zimage_pixel_multiple = resolve_zimage_hires_pixel_multiple(engine_id)
+    if zimage_pixel_multiple is None:
+        return int(target_width), int(target_height)
+    return (
+        _floor_multiple(int(target_width), multiple_of=zimage_pixel_multiple),
+        _floor_multiple(int(target_height), multiple_of=zimage_pixel_multiple),
+    )
 
 
 def _floor_multiple(value: int, *, multiple_of: int) -> int:
@@ -182,7 +223,7 @@ def _smart_cache_buckets_for_engine(sd_model: Any) -> tuple[str, ...]:
         return ("sdxl.base.text", "sdxl.base.embed")
     if engine_id == "sdxl_refiner":
         return ("sdxl.refiner.text", "sdxl.refiner.embed")
-    if engine_id in {"flux1", "flux1_kontext"}:
+    if engine_id in {"flux1", "flux1_kontext", "flux1_fill", "flux1_chroma"}:
         return ("flux.conditioning",)
     if engine_id == "zimage":
         return ("zimage.conditioning",)
@@ -465,7 +506,9 @@ def _resolve_hires_execution(
             f"Invalid 'hires.upscaler': {upscaler_id!r}. "
             "Expected a 'latent:*' or 'spandrel:*' upscaler id from GET /api/upscalers."
         )
-    target_width, target_height = hi_cfg.resolve_target_dimensions(
+    target_width, target_height = _resolve_hires_target_dimensions(
+        hi_cfg,
+        engine_id=engine_id,
         base_width=int(processing.width),
         base_height=int(processing.height),
     )
@@ -613,24 +656,6 @@ def _run_hires_pass(
         init_latent: torch.Tensor | None = latents
         sampling_image_conditioning = image_conditioning
         allow_txt2img_conditioning_fallback = True
-        image_conditioning_shape = (
-            tuple(int(dim) for dim in image_conditioning.shape)
-            if isinstance(image_conditioning, torch.Tensor)
-            else None
-        )
-        _emit_pipeline_event(
-            processing,
-            "pipeline.hires.inputs_ready",
-            stage="hires.inputs_ready",
-            engine_id=engine_id,
-            strategy=hires_strategy,
-            continuation_mode=continuation_mode,
-            latents_shape=tuple(int(dim) for dim in latents.shape),
-            image_conditioning_shape=image_conditioning_shape,
-            start_at_step=int(start_index),
-            total_steps=int(processing.steps),
-            allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
-        )
 
         hr_plan = replace(
             hires_runtime_plan,
@@ -664,6 +689,25 @@ def _run_hires_pass(
                     "[kontext] hires continuation ignores denoise schedule semantics (configured denoise=%.4f).",
                     float(denoise),
                 )
+        image_conditioning_shape = (
+            tuple(int(dim) for dim in sampling_image_conditioning.shape)
+            if isinstance(sampling_image_conditioning, torch.Tensor)
+            else None
+        )
+        _emit_pipeline_event(
+            processing,
+            "pipeline.hires.inputs_ready",
+            stage="hires.inputs_ready",
+            engine_id=engine_id,
+            strategy=hires_strategy,
+            continuation_mode=continuation_mode,
+            latents_shape=tuple(int(dim) for dim in latents.shape),
+            init_latent_present=init_latent is not None,
+            image_conditioning_shape=image_conditioning_shape,
+            start_at_step=int(start_index),
+            total_steps=int(processing.steps),
+            allow_txt2img_conditioning_fallback=allow_txt2img_conditioning_fallback,
+        )
         logger.info(
             "[hires] img2img continuation_mode=%s init_latent=%s image_conditioning=%s start_at_step=%d",
             continuation_mode,
@@ -739,12 +783,13 @@ def generate_img2img(
     )
     setattr(processing, "_codex_conditioning_cache_hit", False)
     variant = _resolve_img2img_variant(processing)
+    engine_id = str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "")
     _emit_pipeline_event(
         processing,
         "pipeline.run.start",
         stage="run.start",
         variant=variant,
-        engine_id=str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "unknown"),
+        engine_id=engine_id or "unknown",
     )
 
     if variant == "kontext":
@@ -769,6 +814,7 @@ def generate_img2img(
         )
         return GenerationResult(samples=samples, decoded=None, metadata=_conditioning_cache_hit_metadata(processing))
 
+    classic_backend = _resolve_classic_img2img_backend(engine_id, has_mask=processing.has_mask())
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
 
@@ -962,13 +1008,15 @@ def generate_img2img(
         bundle = prepare_init_bundle(processing)
         processing.init_latent = bundle.latents
 
-        image_conditioning = img2img_conditioning(
-            processing.sd_model,
-            bundle.tensor,
-            bundle.latents,
-            image_mask=bundle.mask,
-            round_mask=getattr(processing, "round_image_mask", True),
-        )
+        image_conditioning = None
+        if classic_backend == "sd":
+            image_conditioning = img2img_conditioning(
+                processing.sd_model,
+                bundle.tensor,
+                bundle.latents,
+                image_mask=bundle.mask,
+                round_mask=getattr(processing, "round_image_mask", True),
+            )
         processing.image_conditioning = image_conditioning
         init_latent = bundle.latents
 

@@ -10,7 +10,7 @@ Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/LTX/
 Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
 and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders. Asset-contract-derived selector
 hints now disappear when checkpoint inventory metadata lacks a valid `core_only` flag, preventing stale UI contract display. FLUX.2 stays
-first-class as the current Klein 4B / base-4B slice (single Qwen3-4B selector, shared-taxonomy img2img/inpaint gating, no FLUX.1 aliasing).
+first-class as the current Klein 4B / base-4B slice (single Qwen3-4B selector, backend-capability-driven img2img/inpaint gating, no FLUX.1 aliasing).
 For LTX, QuickSettings remains the owner of mode + checkpoint/VAE/text-encoder selection only; execution-profile defaults are checkpoint-aware
 workspace state, not a second raw sampler/scheduler control surface in the shared header.
 
@@ -66,8 +66,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
 - `canShowModeToggles` (computed): Enables IMG2IMG/INPAINT quicksettings controls when the active image tab supports img2img.
 - `useMask` (computed): Reflects active image-tab inpaint toggle state (`tab.params.useMask`).
-- `resolvedImageRequestEngineId` (computed): Resolves the shared frontend request engine id for the active image tab/mode.
-- `supportsInpaint` (computed): Flags whether the resolved active image-mode engine truthfully supports mask/inpaint semantics.
+- `supportsInpaint` (computed): Flags whether the active image-tab semantic capability truthfully supports mask/inpaint semantics.
 - `isActiveImageTabRunning` (computed): Tracks whether the active image tab currently has an in-flight generation task.
 - `inpaintToggleDisabled` (computed): Disables INPAINT when the current state cannot be changed safely from quick settings.
 - `inpaintToggleTitle` (computed): Tooltip reason for INPAINT enabled/disabled state.
@@ -545,9 +544,7 @@ import { isLtxGenerationRunningForTab, readPersistedLtxResumeModeForTab } from '
 import { useResultsCard } from '../composables/useResultsCard'
 import {
   normalizeTabFamily,
-  resolveImageRequestEngineId,
   semanticEngineFromTabFamily,
-  supportsImg2ImgMaskingForEngineId,
   tabFamilyFromSemanticEngine,
   type TabFamily,
 } from '../utils/engine_taxonomy'
@@ -1291,16 +1288,7 @@ const hasInitImage = computed(() => {
   if (!tab) return false
   return String(tab.params.initImageData || '').trim().length > 0
 })
-const resolvedImageRequestEngineId = computed(() => {
-  const tab = activeImageTab.value
-  if (!tab) return null
-  return resolveImageRequestEngineId(tab.type, useInitImage.value)
-})
-const supportsInpaint = computed(() => {
-  const engineId = resolvedImageRequestEngineId.value
-  if (!engineId) return false
-  return supportsImg2ImgMaskingForEngineId(engineId)
-})
+const supportsInpaint = computed(() => Boolean(activeImageSurface.value?.supports_img2img_masking))
 const isActiveImageTabRunning = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return false

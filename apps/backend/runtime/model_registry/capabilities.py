@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine,
-with executable defaults and recommendation hints for the live surface (for example SD15 `ddim`/`ddim`, WAN22 `uni-pc bh2`/`simple`, and LTX2
-`euler`/`simple` with no sampler fiction beyond the live runtime lane).
+including explicit masked-img2img/inpaint support, with executable defaults and recommendation hints for the live surface (for example SD15
+`ddim`/`ddim`, WAN22 `uni-pc bh2`/`simple`, and LTX2 `euler`/`simple` with no sampler fiction beyond the live runtime lane).
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
 `er sde` in the recommended sampler surface. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
 image-conditioned img2img with hires enabled only after the real backend continuation path landed; LoRA remains off.
@@ -18,7 +18,7 @@ WAN semantic capabilities are bound to explicit WAN22 variant families via prima
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
 - `GuidanceAdvancedSurface` (dataclass): Optional per-engine support map for advanced CFG/APG controls (`extras.guidance` keys).
-- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including IP-Adapter support + optional sampler/scheduler recommendations).
+- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including masked img2img/inpaint + IP-Adapter support + optional sampler/scheduler recommendations).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
 - `ip_adapter_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for IP-Adapter, or `None` when supported.
@@ -93,6 +93,7 @@ class EngineParamSurface:
 
     supports_txt2img: bool
     supports_img2img: bool
+    supports_img2img_masking: bool
     supports_txt2vid: bool
     supports_img2vid: bool
     supports_hires: bool
@@ -118,6 +119,7 @@ def build_ltx2_capability_surface() -> EngineParamSurface:
     return EngineParamSurface(
         supports_txt2img=False,
         supports_img2img=False,
+        supports_img2img_masking=False,
         supports_txt2vid=True,
         supports_img2vid=True,
         supports_hires=False,
@@ -151,6 +153,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.SD15: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
+        supports_img2img_masking=True,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -166,6 +169,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.SDXL: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
+        supports_img2img_masking=True,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -181,6 +185,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.FLUX: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
+        supports_img2img_masking=False,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -197,6 +202,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.FLUX2: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
+        supports_img2img_masking=True,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -213,6 +219,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.ZIMAGE: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
+        supports_img2img_masking=False,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -230,6 +237,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.ANIMA: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
+        supports_img2img_masking=False,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -247,6 +255,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.CHROMA: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
+        supports_img2img_masking=False,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -263,6 +272,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.WAN22: EngineParamSurface(
         supports_txt2img=False,
         supports_img2img=False,
+        supports_img2img_masking=False,
         supports_txt2vid=True,
         supports_img2vid=True,
         supports_hires=False,
@@ -281,6 +291,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.HUNYUAN_VIDEO: EngineParamSurface(
         supports_txt2img=False,
         supports_img2img=False,
+        supports_img2img_masking=False,
         supports_txt2vid=True,
         supports_img2vid=True,
         supports_hires=False,
@@ -295,6 +306,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.SVD: EngineParamSurface(
         supports_txt2img=False,
         supports_img2img=False,
+        supports_img2img_masking=False,
         supports_txt2vid=False,
         supports_img2vid=True,
         supports_hires=False,

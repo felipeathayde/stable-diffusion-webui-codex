@@ -67,7 +67,7 @@ import type {
   TaskErrorCode,
   TaskEvent,
 } from '../api/types'
-import { resolveImageRequestEngineId, supportsImg2ImgMaskingForEngineId } from '../utils/engine_taxonomy'
+import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
 import { buildExplicitImageRequestContract } from '../utils/image_request_contract'
 import { normalizeMaskEnforcement } from '../utils/image_params'
 import { normalizeImg2ImgResizeModeForEngine } from '../utils/img2img_resize'
@@ -421,7 +421,6 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
   }
   const payload: Record<string, unknown> = {
     img2img_init_image: params.initImageData,
-    img2img_mask: useMask ? params.maskImageData : '',
     img2img_prompt: params.prompt,
     img2img_neg_prompt: args.supportsNegativePrompt ? params.negativePrompt : '',
     img2img_styles: [],
@@ -887,7 +886,7 @@ export function useGeneration(tabId: string) {
           state.value.errorMessage = 'Mask editing is only available while the initial image source is set to IMG.'
           return
         }
-        if (!supportsImg2ImgMaskingForEngineId(engineOverrideForRequest)) {
+        if (!engineSurface.supports_img2img_masking) {
           state.value.status = 'error'
           state.value.errorMessage = `Masking is not supported for ${engineOverrideForRequest} img2img yet.`
           return

@@ -15,8 +15,8 @@ validates nested IP-Adapter selectors/source kinds before delegating runtime app
 Txt2img model-stage ownership is explicit: top-level `extras.swap_model` is the first-pass mid-generation stage config, `extras.hires.swap_model`
 is the selector-only second-pass replacement seam, and `extras.refiner` / `extras.hires.refiner` remain SDXL-native refiner stages.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
-Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), and supports optional multi-region inpaint passes via
-`img2img_mask_region_split`.
+Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), supports optional multi-region inpaint passes via
+`img2img_mask_region_split`, and is rejected at request time when the active engine capability surface does not support mask/inpaint semantics.
 Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope
 enforcement for sampler fields. Image-request sampler/scheduler validation also enforces family-scoped `supported_*` / `excluded_*` capability contracts
 (base pair + hires overrides) without promoting recommendation hints into allowlists.
@@ -2475,12 +2475,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 detail=f"Engine '{engine_key}' does not support route '{route_label}'.",
             ) from None
         surface = ENGINE_SURFACES[semantic_engine]
-        if getattr(surface, capability_attr):
-            return
-        raise HTTPException(
-            status_code=400,
-            detail=f"Engine '{engine_key}' does not support route '{route_label}'.",
-        )
+        if not getattr(surface, capability_attr):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Engine '{engine_key}' does not support route '{route_label}'.",
+            )
+        mask_value = payload.get("img2img_mask")
+        mask_requested = isinstance(mask_value, str) and bool(mask_value.strip())
+        if (
+            route_mode == GenerationRouteMode.IMG2IMG
+            and mask_requested
+            and not bool(surface.supports_img2img_masking)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Engine '{engine_key}' does not support img2img masking/inpaint.",
+            )
 
     def _resolve_image_family_capability_contract(
         engine_key: str,

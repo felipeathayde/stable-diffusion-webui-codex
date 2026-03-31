@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `start_at_step_from_denoise` (function): Maps `denoise` in [0..1] to `start_at_step` (0..steps-1) with correct monotonic semantics.
 - `resolve_pipeline_telemetry_context` (function): Resolve and persist canonical task-scoped correlation context (fail loud on missing mode).
 - `resolve_hires_family_strategy` (function): Global family strategy + capability gate for hires compatibility checks.
+- `resolve_zimage_hires_pixel_multiple` (function): Resolve the exact-family zimage pixel-alignment multiple required by hires targets.
 - `prepare_hires_latents_and_conditioning` (function): Prepares hires inputs via family-dispatched backends (SD, flow-like, Kontext, FLUX.2).
 """
 
@@ -32,7 +33,13 @@ from typing import Any, Callable, Literal, Optional
 import torch
 
 from apps.backend.runtime.logging import emit_backend_event
-from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
+from apps.backend.runtime.model_registry.capabilities import (
+    ENGINE_SURFACES,
+    primary_family_for_engine_id,
+    semantic_engine_for_engine_id,
+)
+from apps.backend.runtime.model_registry.family_runtime import get_family_spec
+from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.processing.conditioners import decode_latent_batch, encode_image_batch
 from apps.backend.runtime.vision.upscalers.registry import upscale_image_tensor, upscale_latent_tensor
 from apps.backend.runtime.vision.upscalers.specs import LATENT_UPSCALE_MODES, TileConfig, default_tile_config
@@ -299,6 +306,24 @@ def resolve_hires_family_strategy(engine_id: str) -> HiresBackend:
     return _resolve_hires_backend(normalized_engine_id)
 
 
+def resolve_zimage_hires_pixel_multiple(engine_id: str) -> int | None:
+    normalized_engine_id = str(engine_id or "").strip()
+    if normalized_engine_id == "":
+        raise RuntimeError("Z-Image hires pixel multiple resolution requires a non-empty engine id.")
+    family = primary_family_for_engine_id(normalized_engine_id)
+    if family is not ModelFamily.ZIMAGE:
+        return None
+    spec = get_family_spec(family)
+    scale = int(spec.latent_scale_factor)
+    patch = int(spec.patch_size)
+    if scale <= 0 or patch <= 0:
+        raise RuntimeError(
+            "Z-Image hires pixel multiple resolution requires positive latent_scale_factor and patch_size. "
+            f"Got family={family.value} scale={scale} patch={patch}."
+        )
+    return scale * patch
+
+
 def _prepare_flow_hires_latents(
     sd_model: Any,
     *,
@@ -396,6 +421,14 @@ def prepare_hires_latents_and_conditioning(
     sd_model = getattr(processing, "sd_model", None)
     if sd_model is None:
         raise ValueError("processing.sd_model is required for hires")
+    engine_id = str(getattr(sd_model, "engine_id", "") or "").strip()
+    zimage_pixel_multiple = resolve_zimage_hires_pixel_multiple(engine_id)
+    if zimage_pixel_multiple is not None:
+        if int(target_width) % zimage_pixel_multiple != 0 or int(target_height) % zimage_pixel_multiple != 0:
+            raise ValueError(
+                "Z-Image hires target dimensions must be multiples of "
+                f"{zimage_pixel_multiple}. Got target={int(target_width)}x{int(target_height)}."
+            )
 
     base_latent_h = int(base_samples.shape[-2])
     base_latent_w = int(base_samples.shape[-1])
@@ -413,7 +446,6 @@ def prepare_hires_latents_and_conditioning(
         processing.update_extra_param("Hires crop left", int(resize_plan.crop_left))
         processing.update_extra_param("Hires crop top", int(resize_plan.crop_top))
 
-    engine_id = str(getattr(sd_model, "engine_id", "") or "").strip()
     backend = resolve_hires_family_strategy(engine_id)
     telemetry = resolve_pipeline_telemetry_context(processing, require_mode=True)
     emit_backend_event(
@@ -582,5 +614,6 @@ __all__ = [
     "prepare_hires_latents_and_conditioning",
     "resolve_hires_family_strategy",
     "resolve_pipeline_telemetry_context",
+    "resolve_zimage_hires_pixel_multiple",
     "start_at_step_from_denoise",
 ]

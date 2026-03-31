@@ -75,9 +75,9 @@ def prepare_ip_adapter_assets(config: IpAdapterConfig) -> PreparedIpAdapterAsset
 
 
 def _asset_cache_key(config: IpAdapterConfig) -> tuple[str, str, str, str, str]:
-    load_device = str(memory_management.manager.get_device(DeviceRole.TEXT_ENCODER))
-    offload_device = str(memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER))
-    runtime_dtype = str(memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER))
+    load_device = str(memory_management.manager.get_device(DeviceRole.CLIP_VISION))
+    offload_device = str(memory_management.manager.get_offload_device(DeviceRole.CLIP_VISION))
+    runtime_dtype = str(memory_management.manager.dtype_for_role(DeviceRole.CLIP_VISION))
     return (
         str(config.model),
         str(config.image_encoder),

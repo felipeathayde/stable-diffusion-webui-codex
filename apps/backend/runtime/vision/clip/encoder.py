@@ -47,9 +47,9 @@ class ClipVisionEncoder:
 
     def __init__(self, spec: ClipVisionVariantSpec):
         self.spec = spec
-        self.load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-        self.offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
-        self.runtime_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        self.load_device = memory_management.manager.get_device(DeviceRole.CLIP_VISION)
+        self.offload_device = memory_management.manager.get_offload_device(DeviceRole.CLIP_VISION)
+        self.runtime_dtype = memory_management.manager.dtype_for_role(DeviceRole.CLIP_VISION)
         to_args = dict(device=self.load_device, dtype=self.runtime_dtype)
         logger.debug(
             "Initialising clip vision encoder variant=%s load_device=%s offload_device=%s dtype=%s",

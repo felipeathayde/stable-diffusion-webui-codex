@@ -21,4 +21,5 @@ Status: Active
 - Conditional vs unconditional branch selection belongs in `modules.py::IpAdapterCrossAttentionPatch`; request prep owns token construction only.
 - Base-layout unconditional tokens are the zero vector in pooled CLIP embedding space; use `zeros_like(image_embeds)` before the base projector.
 - Plus-layout unconditional tokens come from `zeros_like(pixel_values)` in already-preprocessed CLIP image space before the resampler projection; do not emulate this by encoding a black image through preprocessing.
+- Image-encoder ownership is split on purpose: checkpoint IO may stage through the text-encoder offload lane, but the live CLIP vision runtime module and cached asset bundle must resolve device/dtype from `DeviceRole.CLIP_VISION`.
 - Do not reintroduce adapter-local CLIP vision key rewriting or raw `nn.Module.load_state_dict(...)` paths here; image-encoder loading must stay on the canonical CLIP vision/state-dict seams.

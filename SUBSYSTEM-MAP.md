@@ -112,15 +112,16 @@ Status: Active
 ### img2img
 | Node | Owner | What happens here | Next |
 | --- | --- | --- | --- |
-| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/img2img`) | Validates payload + route capability, creates the task, and picks the explicit device. | shared image task worker |
+| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/img2img`) | Validates payload + route capability, rejects masked requests when the semantic engine capability surface says img2img masking is unsupported, then creates the task and picks the explicit device. | shared image task worker |
 | Shared image task worker | `apps/backend/interfaces/api/tasks/generation_tasks.py` | Calls `prepare_img2img(...)`, owns inference-gate/task lifecycle, and packages the terminal image result. | orchestrator |
 | Orchestrator | `apps/backend/core/orchestrator.py` | Resolves engine/load/cache state and dispatches to the mode wrapper. | engine `img2img(...)` wrapper |
 | Engine wrapper | `apps/backend/engines/common/base.py` | Delegates to the canonical img2img use-case. | `run_img2img(...)` |
-| Canonical use-case | `apps/backend/use_cases/img2img.py` | Owns init-image planning, prompt/sampling plans, optional masked img2img, and optional hires continuation. | shared stage helpers + sampler |
+| Canonical use-case | `apps/backend/use_cases/img2img.py` | Owns classic-family dispatch, init-image planning, prompt/sampling plans, optional masked img2img, and optional hires continuation. | shared stage helpers + sampler |
 | Shared stage helpers | `apps/backend/runtime/pipeline_stages/masked_img2img.py` and `apps/backend/runtime/pipeline_stages/hires_fix.py` | Prepare masked bundles, image conditioning, hires latents, and continuation hand-off. | API result packaging |
 | Terminal surfaces | `apps/backend/interfaces/api/tasks/generation_tasks.py` and `apps/backend/interfaces/api/routers/tasks.py` | Store the encoded result payload and expose terminal snapshot/SSE state. | end |
 
 Branch notes:
+- Classic base img2img resolves SD-vs-flow dispatch locally in `apps/backend/use_cases/img2img.py` before masked/unmasked prep.
 - Kontext-specific img2img work stays local to `apps/backend/use_cases/img2img.py`.
 - FLUX.2 keeps its own engine-side img2img seam at `apps/backend/engines/flux2/img2img.py`; the public route still enters through the same router/task/orchestrator chain.
 

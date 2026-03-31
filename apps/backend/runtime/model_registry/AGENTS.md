@@ -10,7 +10,7 @@ Status: Draft
 ## Current Status
 - Core dataclasses/enums (now `CodexCoreSignature`/`CodexCoreArchitecture`) in place with manifest-driven metadata harvesting.
 - Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), FLUX.2 Klein 4B/base-4B core-only SafeTensors, LTX2 monolithic combined checkpoints, AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, Qwen Image, and Anima (Cosmos Predict2 core `net.*` format).
-- `capabilities.py` defines `SemanticEngine` and an `EngineParamSurface` describing which high-level UI parameter sections (txt2img/img2img/video/hires/refiner/LoRA/ControlNet) are expected to be used for each semantic engine tag; exposed to the API for frontend gating.
+- `capabilities.py` defines `SemanticEngine` and an `EngineParamSurface` describing which high-level UI parameter sections (txt2img/img2img/video/hires/refiner/LoRA/ControlNet/masked-img2img) are expected to be used for each semantic engine tag; exposed to the API for frontend gating.
 - 2025-12-14: `ModelSignature` gained a legacy `unet` alias for `core`, keeping older call sites working while the new contract stays `signature.core`.
 - 2025-12-14: Qwen Image detector reintroduced (`detectors/qwen_image.py`) and enums extended (`ModelFamily.QWEN_IMAGE`, `LatentFormat.QWEN_IMAGE`).
 - 2025-12-12: Z Image runtime metadata was corrected (`context_dim=2560`, `flow_shift=3.0`) to match the canonical HF assets for Z-Image Turbo.
@@ -30,6 +30,7 @@ Status: Draft
 - 2026-02-20: WAN22 animate semantic/loader key was renamed to `wan22_14b_animate` (old `wan22_animate_14b` removed).
 - 2026-02-21: `capabilities.engine_supports_cfg(engine_id)` now resolves family from explicit `engine_id -> ModelFamily` mapping (including WAN22 variants) instead of semantic-primary-family fallback, removing hidden `wan22 -> WAN22_5B` drift at capability checks.
 - 2026-03-28: `capabilities.primary_family_for_engine_id(engine_id)` is the canonical runtime owner for exact same-family checks. `SemanticEngine` remains UI/workflow gating only and must not be reused as proof for strict family-equality runtime contracts such as exact top-level `swap_model` resume.
+- 2026-03-31: `EngineParamSurface` now includes explicit `supports_img2img_masking`; frontend img2img/inpaint gating and the `/api/img2img` router must consume that backend semantic-engine truth instead of carrying local engine-id blocklists.
 - 2026-03-02: `capabilities.py` semantic surfaces now declare `supports_hires=true` for non-SD image families implemented in the shared hires second-pass (`flux1`, `flux1_chroma`, `zimage`, `anima`).
 - 2026-03-04: Detector `SignalBundle` now carries source-format hints (`safetensors|gguf`) and header-backed `shape_of(...)` usage, so safetensors signature detection avoids full `state_dict.values()` scans/materialization during startup planning.
 - 2026-03-05: Added `detectors/flux2.py` for the truthful FLUX.2 Klein 4B/base-4B core-only SafeTensors layout (`double_blocks.*`, `single_blocks.*`, `img_in.*`, `txt_in.*`, `single_stream_modulation.*`, `final_layer.*`); unsupported FLUX.2 variants (for example 9B) intentionally do not match.

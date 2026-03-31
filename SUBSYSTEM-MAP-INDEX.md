@@ -1,7 +1,7 @@
 <!-- tags: webui, architecture, map, index, discovery -->
 # Subsystem Map Index
-Date: 2026-03-30
-Last Review: 2026-03-30
+Date: 2026-03-31
+Last Review: 2026-03-31
 Status: Active
 
 Read this first. This file is lookup-only.

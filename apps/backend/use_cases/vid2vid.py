@@ -22,7 +22,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_as_wan_animate_mode` (function): Normalizes/validates WAN animate mode string (`animate` vs `replace`).
 - `_validate_4n_plus_1` (function): Validates an integer is of the form `4N+1` (common WAN constraints).
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional preview frames) and attaches warnings.
-- `_apply_stage_loras_to_pipeline` (function): Loads and activates ordered stage LoRA adapters on a Diffusers WAN pipeline.
 - `_run_native_pipeline` (function): Runs the native WAN diffusers pipeline path for vid2vid (requires `comp.pipeline`).
 - `_run_wan_animate` (function): Runs the WAN “animate” path (stage planning + prompt/text guidance; includes nested option handling).
 - `_run_flow_chunks` (function): Applies flow-guided warping in chunks using RAFT and per-frame options (nested loop over frames).
@@ -49,6 +48,7 @@ from apps.backend.infra.config.repo_root import repo_scratch_path
 from apps.backend.runtime.logging import emit_backend_event
 from apps.backend.runtime.pipeline_stages.hires_fix import resolve_pipeline_telemetry_context
 from apps.backend.runtime.pipeline_stages.video import (
+    apply_wan_stage_loras,
     apply_video_interpolation,
     apply_video_upscaling,
     assemble_video_metadata,
@@ -186,50 +186,6 @@ def _validate_4n_plus_1(value: int, *, name: str) -> int:
     return v
 
 
-def _apply_stage_loras_to_pipeline(*, pipe: Any, stage_loras: tuple[tuple[str, float], ...], logger: Any, stage_label: str) -> None:
-    if hasattr(pipe, "unload_lora_weights"):
-        pipe.unload_lora_weights()  # type: ignore[attr-defined]
-
-    if not stage_loras:
-        return
-    if not hasattr(pipe, "load_lora_weights"):
-        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'load_lora_weights'.")
-    if not hasattr(pipe, "set_adapters"):
-        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'set_adapters' for multi-LoRA support.")
-
-    adapter_names: list[str] = []
-    adapter_weights: list[float] = []
-    total_stage_loras = len(stage_loras)
-    for index, (lora_path, lora_weight) in enumerate(stage_loras):
-        adapter_name = f"wan_{stage_label}_stage_lora_{index}"
-        if logger:
-            logger.info(
-                "[wan] loading %s-stage LoRA %d/%d: %s (weight=%s adapter=%s)",
-                stage_label,
-                index + 1,
-                total_stage_loras,
-                lora_path,
-                lora_weight,
-                adapter_name,
-            )
-        try:
-            pipe.load_lora_weights(lora_path, adapter_name=adapter_name)  # type: ignore[attr-defined]
-        except Exception as exc:
-            raise RuntimeError(
-                "vid2vid native stage LoRA apply failed "
-                f"(index={index + 1}/{total_stage_loras}, path={lora_path})"
-            ) from exc
-        adapter_names.append(adapter_name)
-        adapter_weights.append(float(lora_weight))
-
-    try:
-        pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)  # type: ignore[attr-defined]
-    except Exception as exc:
-        raise RuntimeError(
-            f"vid2vid native stage LoRA adapter activation failed for {stage_label} stage"
-        ) from exc
-
-
 def _build_result_payload(
     *,
     engine: Any,
@@ -322,10 +278,10 @@ def _run_native_pipeline(
     wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
     if wan_hi_opts and wan_hi_opts.loras:
         logger = getattr(engine, "_logger", None)
-        _apply_stage_loras_to_pipeline(
+        apply_wan_stage_loras(
             pipe=pipe,
             stage_loras=wan_hi_opts.loras,
-            logger=logger,
+            logger_=logger,
             stage_label="high",
         )
 

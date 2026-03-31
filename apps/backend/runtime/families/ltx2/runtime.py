@@ -11,12 +11,15 @@ Rebuilds the loader-produced LTX2 planning contract from a generic diffusion bun
 runtime from local `apps/**` modules (including optional wrapper-backed transformer-core streaming), enforces the
 truthful `euler` / `simple` execution contract, exposes explicit latent-stage / upsample / refine primitives for the
 `two_stage` profile, honors side-asset-carried SafeTensors config metadata for the x2 latent upsampler when present,
-and normalizes execution results into the family-local `frames + AudioExportAsset + metadata`
+preflights the `two_stage` distilled-LoRA side asset before any transformer mutation (using the cheap SafeTensors
+header path when available), and normalizes execution results into the family-local `frames + AudioExportAsset + metadata`
 contract consumed by the canonical video use-cases.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2RunResult` (dataclass): Family-local execution result consumed by canonical video use-cases.
 - `Ltx2NativeComponents` (dataclass): Loaded LTX2 runtime components reused across txt2vid/img2vid runs.
+- `_parse_ltx2_transformer_lora_specs` (function): Parses the `two_stage` distilled-LoRA side asset into typed transformer patch specs.
+- `_preflight_ltx2_transformer_lora_specs` (function): Verifies the `two_stage` distilled-LoRA shapes against the live native transformer before mutation.
 - `build_ltx2_request_generator` (function): Builds the shared request-scoped RNG owner reused across LTX2 stage boundaries.
 - `sample_ltx2_txt2vid_stage` (function): Execute a native LTX2 txt2vid latent stage and return the typed stage-result contract.
 - `sample_ltx2_img2vid_stage` (function): Execute a native LTX2 img2vid latent stage and return the typed stage-result contract.
@@ -46,7 +49,9 @@ import numpy as np
 from PIL import Image
 import torch
 
+from apps.backend.runtime.adapters.lora.preflight import collect_parameter_shapes
 from apps.backend.runtime.checkpoint.io import load_torch_file, read_arbitrary_config, read_safetensors_metadata
+from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_tensor_shapes
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.pipeline_stages.video import (
@@ -646,10 +651,18 @@ def _strip_ltx2_lora_target_prefix(target: str) -> str:
     return target
 
 
+def _shape_tuple_like(value: object) -> tuple[int, ...]:
+    shape = getattr(value, "shape", value)
+    if not isinstance(shape, (tuple, list)):
+        raise RuntimeError(f"Expected shape-like value, got {type(value).__name__}.")
+    return tuple(int(dim) for dim in shape)
+
+
 def _parse_ltx2_transformer_lora_specs(
     state_dict: Mapping[str, object],
     *,
     source_path: str,
+    shape_only: bool = False,
 ) -> tuple[_Ltx2TransformerLoraSpec, ...]:
     default_alpha = _parse_ltx2_default_lora_alpha(source_path)
     grouped: dict[str, dict[str, str]] = {}
@@ -685,12 +698,12 @@ def _parse_ltx2_transformer_lora_specs(
             )
         lora_a = state_dict[lora_a_key]
         lora_b = state_dict[lora_b_key]
-        if not isinstance(lora_a, torch.Tensor) or not isinstance(lora_b, torch.Tensor):
+        if not shape_only and (not isinstance(lora_a, torch.Tensor) or not isinstance(lora_b, torch.Tensor)):
             raise RuntimeError(
                 "LTX2 two_stage distilled LoRA expects tensor A/B weights; "
                 f"got A={type(lora_a).__name__} B={type(lora_b).__name__} for {prefix!r}."
             )
-        rank = int(lora_a.shape[0])
+        rank = int(_shape_tuple_like(lora_a)[0])
         if rank <= 0:
             raise RuntimeError(f"LTX2 two_stage distilled LoRA rank must be > 0 for {prefix!r}.")
         alpha_value: float | None = None
@@ -704,6 +717,8 @@ def _parse_ltx2_transformer_lora_specs(
                         f"LTX2 two_stage distilled LoRA alpha tensor must be scalar for {prefix!r}; got shape={tuple(alpha_tensor.shape)!r}."
                     )
                 alpha_value = float(alpha_tensor.item())
+            elif shape_only:
+                alpha_value = None
             else:
                 alpha_value = float(alpha_tensor)  # type: ignore[arg-type]
             break
@@ -721,6 +736,41 @@ def _parse_ltx2_transformer_lora_specs(
     if not specs:
         raise RuntimeError(f"LTX2 two_stage distilled LoRA produced zero valid A/B pairs from {source_path!r}.")
     return tuple(specs)
+
+
+def _preflight_ltx2_transformer_lora_specs(
+    *,
+    transformer: Any,
+    weights: Mapping[str, object],
+    specs: Sequence[_Ltx2TransformerLoraSpec],
+    source_path: str,
+) -> None:
+    target_shapes = collect_parameter_shapes(_resolve_ltx2_transformer_lora_owner(transformer))
+    for spec in specs:
+        target_shape = target_shapes.get(spec.target_parameter_name)
+        if target_shape is None:
+            raise RuntimeError(
+                f"LTX2 two_stage distilled LoRA target {spec.target_parameter_name!r} does not exist on the native transformer."
+            )
+        if len(target_shape) < 2:
+            raise RuntimeError(
+                f"LTX2 two_stage distilled LoRA target {spec.target_parameter_name!r} must have ndim >= 2; got {target_shape!r}."
+            )
+        a_shape = _shape_tuple_like(weights[spec.lora_a_key])
+        b_shape = _shape_tuple_like(weights[spec.lora_b_key])
+        a_matrix = (int(a_shape[0]), int(math.prod(a_shape[1:])))
+        b_matrix = (int(math.prod(b_shape[:-1])), int(b_shape[-1]))
+        if int(a_matrix[0]) != int(spec.rank) or int(b_matrix[1]) != int(spec.rank):
+            raise RuntimeError(
+                f"LTX2 two_stage distilled LoRA rank mismatch for target {spec.target_parameter_name!r}: "
+                f"expected rank={spec.rank}, got A={a_shape!r} B={b_shape!r} in {source_path!r}."
+            )
+        target_matrix = (int(target_shape[0]), int(math.prod(target_shape[1:])))
+        if int(a_matrix[1]) != int(target_matrix[1]) or int(b_matrix[0]) != int(target_matrix[0]):
+            raise RuntimeError(
+                f"LTX2 two_stage distilled LoRA target shape mismatch for {spec.target_parameter_name!r}: "
+                f"target={target_shape!r} A={a_shape!r} B={b_shape!r} file={source_path!r}."
+            )
 
 
 def _materialize_ltx2_lora_delta(
@@ -801,12 +851,31 @@ def _temporary_ltx2_two_stage_transformer(*, request: Any, native: Ltx2NativeCom
         "ltx_two_stage_distilled_lora_path",
         label="LTX2 two_stage distilled LoRA",
     )
+    if Path(lora_path).suffix.lower() in {".safetensor", ".safetensors"}:
+        header_shapes = read_safetensors_tensor_shapes(Path(lora_path))
+        header_specs = _parse_ltx2_transformer_lora_specs(
+            header_shapes,
+            source_path=lora_path,
+            shape_only=True,
+        )
+        _preflight_ltx2_transformer_lora_specs(
+            transformer=native.transformer,
+            weights=header_shapes,
+            specs=header_specs,
+            source_path=lora_path,
+        )
     state_dict = load_torch_file(lora_path, device="cpu")
     if not isinstance(state_dict, Mapping):
         raise RuntimeError(
             f"LTX2 two_stage distilled LoRA must resolve to a mapping state_dict, got {type(state_dict).__name__}: {lora_path!r}."
         )
     specs = _parse_ltx2_transformer_lora_specs(state_dict, source_path=lora_path)
+    _preflight_ltx2_transformer_lora_specs(
+        transformer=native.transformer,
+        weights=state_dict,
+        specs=specs,
+        source_path=lora_path,
+    )
     applied: list[_Ltx2TransformerLoraSpec] = []
     try:
         for spec in specs:

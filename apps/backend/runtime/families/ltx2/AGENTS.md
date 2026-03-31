@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/ltx2 Overview
 <!-- tags: backend, runtime, families, ltx2, video, audio, gemma3 -->
 Date: 2026-03-11
-Last Review: 2026-03-26
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose
@@ -28,6 +28,7 @@ Status: Active
 - The explicit `two_stage` profile is truthful-only: it is limited to dev/full SafeTensors checkpoints, requires one resolved `distilled-lora-384` asset plus one resolved `spatial-upscaler-x2` asset, additionally requires vendored `latent_upsampler/config.json`, and keeps public width/height as final output dimensions with a hard `%64` boundary because stage 1 runs at half resolution.
 - The explicit `two_stage` x2 spatial upsampler is a side-asset-owned source-style seam: resolve the file from the sanctioned LTX side-asset roots, and when the SafeTensors header carries a `config` JSON payload, treat that payload as the authoritative architecture/config surface instead of forcing the vendored diffusers-style config onto a legacy `LatentUpsampler` state dict.
 - `runtime.py` now owns the single request-scoped generator seam for both `one_stage` and `two_stage`: native helpers consume caller-owned generators only, stage 1 and stage 2 must reuse the same `torch.Generator`, stage-2 LoRA application stays temporary/in-place on the unwrapped native transformer owner even when core streaming wraps that transformer under `_base`, public stage helpers must not expose alternate transformer owners, and the x2 latent upsampler stays in `native/latent_upsampler.py`.
+- `runtime.py` now also owns the `two_stage` distilled-LoRA structural preflight seam: when the side asset is SafeTensors, run the cheap header pass first; for every supported side-asset format (`.safetensors`, `.pt`, `.bin`), run materialized shape validation against the live native transformer before mutating any parameter.
 - Side-asset config metadata is opportunistic, not universal: `runtime.py` reads `config` only from SafeTensors headers, and non-SafeTensors two-stage side assets must fall back to the vendored `latent_upsampler/config.json` contract instead of pretending header metadata exists.
 - The external text-encoder seam stays text-only for the current backend lane. `text_encoder.py` accepts exactly one `gemma3_12b` asset, rejects `mmproj` projectors, and for GGUF assets must load through the strict Gemma3 text keyspace resolver plus the Codex-aware embedding shim under GGUF operations support.
 - `runtime.py` must assemble through the local native package only: `load_ltx2_connectors(...)`, `load_ltx2_vocoder(...)`, and `load_strict_state_dict(...)` on transformer/video/audio VAEs. `load_ltx2_connectors(...)` owns optional `connectors.*` wrapper handling, must load the real 2.3 merged connector surface (`video_embeddings_connector.*` + `audio_embeddings_connector.*` + `text_embedding_projection.*`) without renaming keys, and must fail loud on mixed direct/wrapped surfaces. Do not reintroduce a generic `from_config(...)+load_state_dict(...)` path.

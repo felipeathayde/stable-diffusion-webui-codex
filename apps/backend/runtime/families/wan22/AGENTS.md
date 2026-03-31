@@ -1,7 +1,7 @@
 <!-- tags: backend, runtime, wan22, gguf, streaming, transformer -->
 # apps/backend/runtime/families/wan22 Overview
 Status: Active
-Last Review: 2026-03-28
+Last Review: 2026-03-31
 
 ## Purpose
 - WAN 2.2 GGUF runtime components used by WAN engines.
@@ -33,6 +33,7 @@ Last Review: 2026-03-28
 - `stage_lora.py` is a no-remap seam: it may interpret WAN22 LoRA logical keys through `keymap_wan22_transformer.py`, but it must not invent runtime state-dict remaps or alias shims outside that seam.
 - Current WAN22 stage-LoRA diagnostics must classify logical misses (`matched`, `resolver_none`, `resolved_target_missing`, `unsupported_i2v_branch`, `alias_collision`) and report unsupported tensor suffix families separately; the upstream I2V image branch (`k_img`, `v_img`, `norm_k_img`, `img_emb.proj.*`) stays explicitly unsupported in the local runtime.
 - `stage_lora.py` owns truthful stage-LoRA coverage diagnostics. It must distinguish local matcher gaps, missing local targets, and unsupported image-branch/suffix families instead of collapsing them into opaque partial-coverage noise.
-- `stage_lora.py` also owns the pre-patch structural compatibility gate for mapped standard LoRA pair weights. On the mounted `wan22_14b` profile, Wan2.1 480p-shape adapters must fail loud with the dedicated incompatibility error instead of falling through to opaque patch-shape failures; the supported Wan2.1 compatibility lane is the 720p-style structure.
+- `stage_lora.py` also owns the pre-patch structural compatibility gate for mapped standard LoRA pair weights plus the generic materialized patch-shape check for parsed WAN22 stage LoRAs. The mounted stage shape truth now comes from the live parameter owner, not `state_dict()` heuristics, and the cheap SafeTensors header pass must reject obvious mismatches before `sf.load_file(...)`.
+- Wan2.1 480p-shape adapters must still fail loud with the dedicated incompatibility error on the larger `wan22_14b` runtime profile, but that diagnosis is now derived from the actual mismatch records instead of a hardcoded mounted-profile heuristic deciding compatibility.
 - The current local WAN22 runtime does not expose the upstream I2V image branch (`k_img`, `v_img`, `norm_k_img`, `img_emb`). Stage LoRA reporting must keep those families explicitly unsupported until the runtime model grows the real branch.
 - Unsupported I2V image-branch families must stay visible in diagnostics and natural partial-coverage reporting. The stage-LoRA seam may apply supported keys from mixed adapters, but it must not pretend the unsupported image branch was loaded. The default threshold-free path keeps that partial read natural; a non-zero `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO` still remains an explicit strictness control and may hard-fail low coverage.

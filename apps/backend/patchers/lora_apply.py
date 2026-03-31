@@ -7,8 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Native LoRA application pipeline (no legacy modules).
-Converts LoRA files into patch dictionaries and applies them to the engine's denoiser and text encoders via the `ModelPatcher` system, then materializes LoRA application by refreshing LoRAs on the patchers (merge default; optional on-the-fly via `CODEX_LORA_APPLY_MODE=online`).
-Fails loud when selected LoRAs do not match any runtime parameters (unsupported/incompatible key layout).
+Preflights selected LoRAs against the active denoiser and text-encoder targets (cheap SafeTensors header fast path plus materialized structural validation),
+converts compatible files into patch dictionaries and applies them to the engine's denoiser and text encoders via the `ModelPatcher` system before
+materializing LoRA application by refreshing LoRAs on the patchers (merge default; optional on-the-fly via `CODEX_LORA_APPLY_MODE=online`).
+Fails loud when selected LoRAs do not match runtime parameters or fail structural compatibility checks.
 Patch dictionary keys may be plain parameter names or `(parameter, offset)` tuples for slice patches (e.g. fused-QKV text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -25,6 +27,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_reset_engine_lora_state` (function): Clears+refreshes all patchers and persists empty LoRA hash.
 - `_raise_apply_failure` (function): Raises fail-loud errors after best-effort reset recovery.
 - `_build_to_load_maps` (function): Builds LoRA-key → model patch-target maps for UNet and one text encoder.
+- `_collect_target_shape_by_key` (function): Collects live target shapes from a runtime model state dict for structural preflight.
+- `_run_header_only_preflight` (function): Runs the cheap SafeTensors header-only structural preflight for native UNet/text targets.
+- `_validate_materialized_patch_dict` (function): Verifies parsed native patch dictionaries against live target shapes before mutation.
 - `_apply_patches` (function): Adds patches to a patcher and returns the number of matched parameters.
 - `apply_loras_to_engine` (function): Applies selected LoRAs to the engine's patchers and refreshes LoRA application (merge or online).
 """
@@ -34,12 +39,20 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import Dict, Tuple, Any, Iterable
 
 import safetensors.torch as sf
 
 from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_apply_mode
 from apps.backend.runtime.adapters.base import PatchTarget
+from apps.backend.runtime.adapters.lora.preflight import (
+    build_standard_shape_patch_dict_from_shape_map,
+    format_shape_compatibility_samples,
+    shapeify_patch_dict,
+    validate_shape_patch_dict,
+)
+from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_tensor_shapes
 
 from .lora import model_lora_keys_unet, model_lora_keys_clip, load_lora
 
@@ -308,6 +321,98 @@ def _build_to_load_maps(
     return unet_map, text_map
 
 
+def _collect_target_shape_by_key(model: Any) -> Dict[str, tuple[int, ...]]:
+    state_dict = model.state_dict()
+    return {str(key): tuple(int(dim) for dim in tensor.shape) for key, tensor in state_dict.items()}
+
+
+def _run_header_only_preflight(
+    *,
+    path: str,
+    unet_map: Mapping[str, PatchTarget],
+    text_map: Mapping[str, PatchTarget],
+    unet_target_shapes: Mapping[str, tuple[int, ...]],
+    text_target_shapes: Mapping[str, tuple[int, ...]],
+) -> None:
+    suffix = Path(path).suffix.lower()
+    if suffix not in {".safetensor", ".safetensors"}:
+        return
+
+    shape_map = read_safetensors_tensor_shapes(Path(path))
+    unet_header = build_standard_shape_patch_dict_from_shape_map(shape_map, to_load=unet_map)
+    text_header = build_standard_shape_patch_dict_from_shape_map(shape_map, to_load=text_map)
+
+    if (
+        not unet_header.requires_materialized_preflight
+        and not text_header.requires_materialized_preflight
+        and not unet_header.shape_patch_dict
+        and not text_header.shape_patch_dict
+    ):
+        raise RuntimeError(
+            "LoRA key layout mismatch: no compatible layers were found for "
+            f"'{path}' on the active model keymap."
+        )
+
+    if unet_header.shape_patch_dict and not unet_header.requires_materialized_preflight:
+        summary = validate_shape_patch_dict(
+            unet_header.shape_patch_dict,
+            target_shape_by_key=unet_target_shapes,
+        )
+        if summary.mismatches:
+            raise RuntimeError(
+                "LoRA structural preflight failed for '{path}' on the active denoiser. "
+                "shape_compatible_targets={compatible}/{total}. samples={samples}".format(
+                    path=path,
+                    compatible=summary.compatible_targets,
+                    total=summary.total_targets,
+                    samples=format_shape_compatibility_samples(summary),
+                )
+            )
+
+    if text_header.shape_patch_dict and not text_header.requires_materialized_preflight:
+        summary = validate_shape_patch_dict(
+            text_header.shape_patch_dict,
+            target_shape_by_key=text_target_shapes,
+        )
+        if summary.mismatches:
+            raise RuntimeError(
+                "LoRA structural preflight failed for '{path}' on the active text encoder. "
+                "shape_compatible_targets={compatible}/{total}. samples={samples}".format(
+                    path=path,
+                    compatible=summary.compatible_targets,
+                    total=summary.total_targets,
+                    samples=format_shape_compatibility_samples(summary),
+                )
+            )
+
+
+def _validate_materialized_patch_dict(
+    *,
+    path: str,
+    patch_dict: Dict[PatchTarget, tuple],
+    target_shapes: Mapping[str, tuple[int, ...]],
+    label: str,
+) -> None:
+    if not patch_dict:
+        return
+    summary = validate_shape_patch_dict(
+        shapeify_patch_dict(patch_dict),
+        target_shape_by_key=target_shapes,
+    )
+    if not summary.mismatches:
+        return
+    raise RuntimeError(
+        "LoRA structural preflight failed for '{path}' on the active {label}. "
+        "shape_compatible_targets={compatible}/{total}. samples={samples}".format(
+            path=path,
+            label=label,
+            compatible=summary.compatible_targets,
+            total=summary.total_targets,
+            samples=format_shape_compatibility_samples(summary),
+        )
+    )
+
+
 def _apply_patches(patcher, filename: str, patch_dict: Dict[PatchTarget, Any], strength: float, *, online_mode: bool) -> int:
     """Add patches to a ModelPatcher and return number of matched parameters."""
     # The patchers expect a flattened dict of model_key -> patch tuple(s)
@@ -367,14 +472,27 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
     online_mode = apply_mode == LoraApplyMode.ONLINE
 
     normalized_selected = _normalize_unique_selections(selected)
+    mutation_started = False
     try:
-        # Single-owner semantics: each non-empty apply starts from a clean patch state.
-        _clear_lora_state(unet_patcher, label="denoiser")
-        for encoder_name, patcher in text_patchers.items():
-            _clear_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
-
         unet_map, text_map = _build_to_load_maps(engine, text_encoder_key=text_encoder_key)
+        unet_target_shapes = _collect_target_shape_by_key(
+            engine.codex_objects_after_applying_lora.denoiser.model
+        )
+        text_target_shapes = _collect_target_shape_by_key(
+            _resolve_text_encoder_model(
+                text_encoders[text_encoder_key],
+                label=f"text_encoders[{text_encoder_key!r}]",
+            )
+        )
+        prepared: list[tuple[str, float, float, Dict[PatchTarget, tuple], Dict[PatchTarget, tuple]]] = []
         for path, text_encoder_weight, unet_weight in normalized_selected:
+            _run_header_only_preflight(
+                path=path,
+                unet_map=unet_map,
+                text_map=text_map,
+                unet_target_shapes=unet_target_shapes,
+                text_target_shapes=text_target_shapes,
+            )
 
             # Load weights once
             try:
@@ -390,8 +508,27 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
                     "LoRA key layout mismatch: no compatible layers were found for "
                     f"'{path}' on the active model keymap."
                 )
+            _validate_materialized_patch_dict(
+                path=path,
+                patch_dict=unet_patch,
+                target_shapes=unet_target_shapes,
+                label="denoiser",
+            )
+            _validate_materialized_patch_dict(
+                path=path,
+                patch_dict=text_patch,
+                target_shapes=text_target_shapes,
+                label="text encoder",
+            )
+            prepared.append((path, text_encoder_weight, unet_weight, unet_patch, text_patch))
 
-            # Apply to patchers (record how many keys matched)
+        mutation_started = True
+        # Single-owner semantics: each non-empty apply starts from a clean patch state.
+        _clear_lora_state(unet_patcher, label="denoiser")
+        for encoder_name, patcher in text_patchers.items():
+            _clear_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
+
+        for path, text_encoder_weight, unet_weight, unet_patch, text_patch in prepared:
             unet_touched = _apply_patches(
                 unet_patcher,
                 filename=path,
@@ -420,14 +557,16 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
         for encoder_name, patcher in text_patchers.items():
             _refresh_lora_state(patcher, label=f"text_encoders[{encoder_name!r}]")
     except Exception as exc:  # noqa: BLE001
-        # Never leak partial/stale LoRA state across requests on failure.
-        _raise_apply_failure(
-            operation="LoRA apply execution",
-            original_error=exc,
-            engine=engine,
-            unet_patcher=unet_patcher,
-            text_patchers=text_patchers,
-        )
+        if mutation_started:
+            # Never leak partial/stale LoRA state across requests on failure after mutation starts.
+            _raise_apply_failure(
+                operation="LoRA apply execution",
+                original_error=exc,
+                engine=engine,
+                unet_patcher=unet_patcher,
+                text_patchers=text_patchers,
+            )
+        raise
 
     try:
         _set_engine_lora_hash(

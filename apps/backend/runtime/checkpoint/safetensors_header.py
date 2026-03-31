@@ -7,11 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: SafeTensors header readers for lightweight runtime tooling.
-Provides header-only helpers to read the SafeTensors JSON header and derive small metadata hints (e.g. primary dtype) without importing torch
-or loading tensor payloads.
+Provides header-only helpers to read the SafeTensors JSON header and derive small metadata hints (e.g. primary dtype, tensor shapes)
+without importing torch or loading tensor payloads.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `read_safetensors_header` (function): Reads and parses the SafeTensors JSON header (no tensor payload reads).
+- `extract_safetensors_tensor_shapes_from_header` (function): Extracts a tensor-name -> shape map from an already-read SafeTensors header.
+- `read_safetensors_tensor_shapes` (function): Reads a SafeTensors header and returns a tensor-name -> shape map.
 - `detect_safetensors_primary_dtype_from_header` (function): Best-effort primary dtype hint from an already-read SafeTensors header mapping.
 - `detect_safetensors_primary_dtype` (function): Best-effort dtype hint for `.safetensors` (header-only parse; whole-file).
 """
@@ -89,6 +91,35 @@ def detect_safetensors_primary_dtype_from_header(header: Mapping[str, object]) -
     return mapping.get(best)
 
 
+def extract_safetensors_tensor_shapes_from_header(header: Mapping[str, object]) -> dict[str, tuple[int, ...]]:
+    """Extract tensor-name -> shape tuples from an already-read SafeTensors header."""
+
+    shapes: dict[str, tuple[int, ...]] = {}
+    for name, meta in header.items():
+        if name == "__metadata__":
+            continue
+        if not isinstance(meta, Mapping):
+            continue
+        raw_shape = meta.get("shape")
+        if not isinstance(raw_shape, (list, tuple)):
+            continue
+        try:
+            shape = tuple(int(dim) for dim in raw_shape)
+        except Exception:
+            continue
+        shapes[str(name)] = shape
+    return shapes
+
+
+def read_safetensors_tensor_shapes(path: Path) -> dict[str, tuple[int, ...]]:
+    """Read a SafeTensors header and return a tensor-name -> shape map."""
+
+    header = read_safetensors_header(path)
+    if not isinstance(header, Mapping):
+        raise ValueError("Invalid safetensors header (expected a JSON object).")
+    return extract_safetensors_tensor_shapes_from_header(header)
+
+
 def detect_safetensors_primary_dtype(path: Path) -> str | None:
     """Best-effort dtype hint for `.safetensors` (header-only parse).
 
@@ -115,5 +146,7 @@ def detect_safetensors_primary_dtype(path: Path) -> str | None:
 __all__ = [
     "detect_safetensors_primary_dtype",
     "detect_safetensors_primary_dtype_from_header",
+    "extract_safetensors_tensor_shapes_from_header",
     "read_safetensors_header",
+    "read_safetensors_tensor_shapes",
 ]

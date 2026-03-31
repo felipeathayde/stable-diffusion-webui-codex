@@ -1,7 +1,7 @@
 <!-- tags: webui, architecture, map, discovery, backend -->
 # WebUI Subsystem Map
-Date: 2026-03-30
-Last Review: 2026-03-30
+Date: 2026-03-31
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose / ownership boundary
@@ -144,7 +144,7 @@ Branch notes:
 | Orchestrator | `apps/backend/core/orchestrator.py` | Resolves engine/load/cache state and dispatches to the engine wrapper. | engine `txt2vid(...)` wrapper |
 | Engine wrapper | `apps/backend/engines/ltx2/ltx2.py` or `apps/backend/engines/wan22/wan22_14b.py` | Delegates to the canonical use-case for the active engine family. | `run_txt2vid(...)` |
 | Canonical use-case | `apps/backend/use_cases/txt2vid.py` | Owns execution-profile branching, shared video plan/export helpers, optional upscaling/interpolation, and terminal `ResultEvent` emission. | export/result packaging |
-| Shared video helpers | `apps/backend/runtime/pipeline_stages/video.py` | Owns `build_video_plan(...)`, `build_ltx2_video_plan(...)`, export helpers, and post-generation video stages. | task result storage |
+| Shared video helpers | `apps/backend/runtime/pipeline_stages/video.py` | Owns `build_video_plan(...)`, `build_ltx2_video_plan(...)`, WAN Diffusers stage-LoRA preflight/apply, export helpers, and post-generation video stages. | task result storage |
 | Terminal surfaces | `apps/backend/interfaces/api/routers/generation.py` and `apps/backend/interfaces/api/routers/tasks.py` | Store the final result in the task entry and expose terminal snapshot/SSE state. | end |
 
 Branch notes:
@@ -160,7 +160,7 @@ Branch notes:
 | Orchestrator | `apps/backend/core/orchestrator.py` | Resolves engine/load/cache state and dispatches to the engine wrapper. | engine `img2vid(...)` wrapper |
 | Engine wrapper | `apps/backend/engines/ltx2/ltx2.py` or `apps/backend/engines/wan22/wan22_14b.py` | Delegates to the canonical use-case for the active engine family. | `run_img2vid(...)` |
 | Canonical use-case | `apps/backend/use_cases/img2vid.py` | Owns image-video execution profiles, WAN temporal-mode branching, shared video plan/export helpers, and terminal `ResultEvent` emission. | export/result packaging |
-| Shared video helpers | `apps/backend/runtime/pipeline_stages/video.py` | Owns plan/export/upscale/interpolation helpers shared with txt2vid. | task result storage |
+| Shared video helpers | `apps/backend/runtime/pipeline_stages/video.py` | Owns plan/export/upscale/interpolation helpers shared with txt2vid plus WAN Diffusers stage-LoRA preflight/apply. | task result storage |
 | Terminal surfaces | `apps/backend/interfaces/api/routers/generation.py` and `apps/backend/interfaces/api/routers/tasks.py` | Store the final result in the task entry and expose terminal snapshot/SSE state. | end |
 
 <a id="map-pipeline-vid2vid"></a>
@@ -245,6 +245,7 @@ Branch notes:
   - `video.py`
   - `ip_adapter.py`
 - Open this directory when the question is a shared stage reused by multiple canonical use-cases.
+- `video.py` is the current shared owner for WAN Diffusers stage-LoRA preflight/apply across `txt2vid`, `img2vid`, and `vid2vid`.
 
 ## Generated artifact pointers
 <a id="map-artifact-backend-header-snapshot"></a>

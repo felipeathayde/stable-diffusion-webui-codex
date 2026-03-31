@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-03-28
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose
@@ -16,7 +16,7 @@ Status: Active
 - `hires_fix.py` — Hires-fix helpers (denoise→start_at_step mapping + init latents/conditioning prep via global upscalers).
 - `image_init.py` — Utilities for encoding img2img/img2vid init images into tensor+latent bundles.
 - `masked_img2img.py` — Masked img2img (“inpaint”) helpers: mask normalize/invert/blur + full-res crop plan + latent mask enforcement inputs.
-- `video.py` — Video plan builder, LoRA/sampler configuration, shared interpolation stage helpers, metadata assembly, strict `build_ltx2_video_plan(...)`, and execution-only `build_ltx2_two_stage_geometry(...)` for the explicit LTX `two_stage` profile.
+- `video.py` — Video plan builder, native LoRA/sampler configuration, shared WAN Diffusers stage-LoRA preflight/apply owner, interpolation helpers, metadata assembly, strict `build_ltx2_video_plan(...)`, and execution-only `build_ltx2_two_stage_geometry(...)` for the explicit LTX `two_stage` profile.
 - `__init__.py` — Package marker (intentionally no re-export facade; callers import modules directly).
 
 ## Notes
@@ -71,4 +71,5 @@ Status: Active
 - 2026-03-11: `video.py` now owns the shared pre-export audio handoff contract via `AudioExportAsset`, replaces snapshot `audio_input` with `audio_source_kind` (`none|input|generated`), and records truthful `has_audio` export state in normalized video metadata instead of assuming audio is input-only.
 - 2026-03-16: `video.py::apply_engine_loras(...)` now gates video LoRA handling by semantic capability metadata (`supports_lora`) instead of probing `codex_objects_after_applying_lora` with `hasattr(...)`; unsupported video engines fail loud only when LoRA selections are present, and no-selection LTX2 runs no longer enter the patcher path.
 - 2026-03-16: `video.py` now exposes `resolve_generated_audio_export_policy(...)` for generated-audio video lanes, failing before heavy generation work when `save_output=true` targets a non-audio container and skipping temp-audio materialization when no saved output is requested.
+- 2026-03-31: `video.py::apply_wan_stage_loras(...)` is now the single shared owner for WAN Diffusers stage-LoRA preflight/apply across `txt2vid`, `img2vid`, and `vid2vid`. It picks the truthful transformer owner (`transformer` vs `transformer_2`), runs the cheap SafeTensors header fast path when possible, then materialized structural preflight before any upstream `load_lora_weights(...)` mutation.
 - 2026-03-24: `masked_img2img.py::LatentMaskEnforcer` now owns `per_step_blend_strength`. Exact `1.0` preserves the blend-total `pre_denoiser` + `post_denoiser` + `post_sample` path, while `0.0 <= strength < 1.0` uses partial pull-back only through the true once-per-outer-step `post_step_hook`; never partialize the re-entrant denoiser hooks.

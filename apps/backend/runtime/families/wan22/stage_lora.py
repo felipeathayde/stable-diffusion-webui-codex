@@ -10,11 +10,13 @@ Purpose: Apply per-stage LoRA patches to WAN22 GGUF stage models (merge or onlin
 Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys via
 `resolve_wan22_lora_logical_key` from `keymap_wan22_transformer.py` (canonical keymap authority),
 with optional strict logical-key coverage gating via `CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO`,
-structured no-remap diagnostics for logical misses plus unsupported tensor suffix families, and
-fail-loud structural validation against the mounted WAN22 stage model before patch construction.
+structured no-remap diagnostics for logical misses plus unsupported tensor suffix families, a cheap SafeTensors
+header-only preflight before tensor materialization, and fail-loud structural validation against the mounted WAN22
+stage model before patch construction and loader refresh.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_stage_lora_offload_device` (function): Resolves stage-LoRA offload device from memory-manager policy.
+- `_collect_target_shape_by_key` (function): Collects live runtime parameter shapes for the mounted WAN22 stage model.
 - `_validate_standard_lora_shapes` (function): Verifies mapped standard LoRA pair tensor shapes against mounted WAN22 target parameter shapes and raises explicit structural incompatibility errors.
 - `apply_wan22_stage_lora` (function): Applies an ordered LoRA sequence to a loaded stage model (merge or online).
 """
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence, Set
@@ -34,7 +37,14 @@ from apps.backend.infra.config.bootstrap_env import get_bootstrap_env
 from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_apply_mode
 from apps.backend.patchers.lora_loader import CodexLoraLoader
 from apps.backend.runtime.adapters.lora.pipeline import build_patch_dicts
+from apps.backend.runtime.adapters.lora.preflight import (
+    collect_parameter_shapes,
+    format_shape_compatibility_samples,
+    shapeify_patch_dict,
+    validate_shape_patch_dict,
+)
 from apps.backend.runtime.adapters.lora.loader import STANDARD_LORA_TENSOR_CANDIDATES
+from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_tensor_shapes
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.state_dict.keymap_wan22_transformer import resolve_wan22_lora_logical_key
 
@@ -99,9 +109,6 @@ _DIAGNOSTIC_EXAMPLE_LIMIT = 5
 _RX_BLOCK_MODULATION_ROOT = re.compile(r"^blocks\.(?P<idx>\d+)$")
 
 _ENV_WAN22_STAGE_LORA_MIN_MATCH_RATIO = "CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO"
-_WAN22_14B_ATTN_SHAPE = (5120, 5120)
-_WAN22_14B_FFN0_SHAPE = (13824, 5120)
-_WAN22_14B_FFN2_SHAPE = (5120, 13824)
 _WAN21_480P_ATTN_SHAPE = (1536, 1536)
 _WAN21_480P_FFN0_SHAPE = (8960, 1536)
 _WAN21_480P_FFN2_SHAPE = (1536, 8960)
@@ -401,13 +408,19 @@ def _format_stage_lora_diagnostics(inspection: _StageLoraInspection) -> str:
     return "; ".join(parts)
 
 
-def _shape_tuple(tensor: torch.Tensor) -> tuple[int, ...]:
-    return tuple(int(dim) for dim in tensor.shape)
+def _shape_tuple(value: Any) -> tuple[int, ...]:
+    shape = getattr(value, "shape", value)
+    return tuple(int(dim) for dim in shape)
+
+
+def _shape_numel(shape: Sequence[int]) -> int:
+    if not shape:
+        return 1
+    return math.prod(int(dim) for dim in shape)
 
 
 def _collect_target_shape_by_key(model: torch.nn.Module) -> dict[str, tuple[int, ...]]:
-    state_dict = model.state_dict()
-    return {str(key): _shape_tuple(tensor) for key, tensor in state_dict.items()}
+    return collect_parameter_shapes(model)
 
 
 def _expected_target_shape_from_standard_lora(
@@ -468,14 +481,6 @@ def _iter_standard_lora_shape_records(
     return records
 
 
-def _is_wan22_14b_profile(target_shape_by_key: Mapping[str, tuple[int, ...]]) -> bool:
-    return (
-        target_shape_by_key.get("blocks.0.cross_attn.k.weight") == _WAN22_14B_ATTN_SHAPE
-        and target_shape_by_key.get("blocks.0.ffn.0.weight") == _WAN22_14B_FFN0_SHAPE
-        and target_shape_by_key.get("blocks.0.ffn.2.weight") == _WAN22_14B_FFN2_SHAPE
-    )
-
-
 def _matches_wan21_480p_shape(record: _StandardLoraShapeRecord) -> bool:
     if record.target_key.endswith((".self_attn.q.weight", ".self_attn.k.weight", ".self_attn.v.weight", ".self_attn.o.weight")):
         return record.expected_target_shape == _WAN21_480P_ATTN_SHAPE
@@ -525,49 +530,49 @@ def _validate_standard_lora_shapes(
         return
 
     mismatched_records = [record for record in records if record.expected_target_shape != record.actual_target_shape]
-    if _is_wan22_14b_profile(target_shape_by_key):
-        saw_attention = any(
-            record.target_key.endswith(
-                (
-                    ".self_attn.q.weight",
-                    ".self_attn.k.weight",
-                    ".self_attn.v.weight",
-                    ".self_attn.o.weight",
-                    ".cross_attn.q.weight",
-                    ".cross_attn.k.weight",
-                    ".cross_attn.v.weight",
-                    ".cross_attn.o.weight",
-                )
+    saw_attention = any(
+        record.target_key.endswith(
+            (
+                ".self_attn.q.weight",
+                ".self_attn.k.weight",
+                ".self_attn.v.weight",
+                ".self_attn.o.weight",
+                ".cross_attn.q.weight",
+                ".cross_attn.k.weight",
+                ".cross_attn.v.weight",
+                ".cross_attn.o.weight",
             )
-            and record.expected_target_shape == _WAN21_480P_ATTN_SHAPE
-            for record in mismatched_records
         )
-        saw_ffn0 = any(
-            record.target_key.endswith(".ffn.0.weight") and record.expected_target_shape == _WAN21_480P_FFN0_SHAPE
-            for record in mismatched_records
-        )
-        saw_ffn2 = any(
-            record.target_key.endswith(".ffn.2.weight") and record.expected_target_shape == _WAN21_480P_FFN2_SHAPE
-            for record in mismatched_records
-        )
-        if (
-            not compatible_records
-            and mismatched_records
-            and saw_attention
-            and saw_ffn0
-            and saw_ffn2
-            and all(_matches_wan21_480p_shape(record) for record in mismatched_records)
-        ):
-            raise RuntimeError(
-                "WAN22 GGUF stage '{stage}': structural LoRA mismatch for wan22_14b. "
-                "This adapter matches the Wan2.1 480p profile (hidden=1536, ffn=8960), but the mounted wan22_14b stage expects the 720p-style 14B profile "
-                "(hidden=5120, ffn=13824). wan22_14b does not support Wan2.1 480p LoRAs; use a 720p-style adapter instead. "
-                "samples={samples} file={path}".format(
-                    stage=stage,
-                    samples=_format_shape_record_samples(mismatched_records),
-                    path=resolved_path,
-                )
+        and record.expected_target_shape == _WAN21_480P_ATTN_SHAPE
+        for record in mismatched_records
+    )
+    saw_ffn0 = any(
+        record.target_key.endswith(".ffn.0.weight") and record.expected_target_shape == _WAN21_480P_FFN0_SHAPE
+        for record in mismatched_records
+    )
+    saw_ffn2 = any(
+        record.target_key.endswith(".ffn.2.weight") and record.expected_target_shape == _WAN21_480P_FFN2_SHAPE
+        for record in mismatched_records
+    )
+    if (
+        not compatible_records
+        and mismatched_records
+        and saw_attention
+        and saw_ffn0
+        and saw_ffn2
+        and all(_matches_wan21_480p_shape(record) for record in mismatched_records)
+        and all(_shape_numel(record.actual_target_shape) > _shape_numel(record.expected_target_shape) for record in mismatched_records)
+    ):
+        raise RuntimeError(
+            "WAN22 GGUF stage '{stage}': structural LoRA mismatch for wan22_14b. "
+            "This adapter matches the Wan2.1 480p profile (hidden=1536, ffn=8960), but the mounted stage exposes larger runtime targets. "
+            "wan22_14b does not support Wan2.1 480p LoRAs; use a 720p-style adapter instead. "
+            "samples={samples} file={path}".format(
+                stage=stage,
+                samples=_format_shape_record_samples(mismatched_records),
+                path=resolved_path,
             )
+        )
 
     raise RuntimeError(
         "WAN22 GGUF stage '{stage}': LoRA target-shape mismatch after key resolution. "
@@ -628,6 +633,46 @@ def apply_wan22_stage_lora(
                 raise RuntimeError(
                     f"WAN22 GGUF stage '{stage}': loras[{index}] weight must be finite, got: {raw_weight!r}"
                 )
+
+        header_shapes = read_safetensors_tensor_shapes(Path(resolved_path))
+        header_inspection = _inspect_stage_lora_mapping(model_keys, header_shapes)
+        header_logical_key_count = header_inspection.logical_key_count
+        header_matched_count = header_inspection.matched_count
+        header_coverage = (header_matched_count / header_logical_key_count) if header_logical_key_count > 0 else 0.0
+        header_diagnostics = _format_stage_lora_diagnostics(header_inspection)
+        _validate_standard_lora_shapes(
+            tensors=header_shapes,
+            logical_to_target=header_inspection.logical_to_load,
+            target_shape_by_key=target_shape_by_key,
+            stage=stage,
+            resolved_path=resolved_path,
+        )
+        if not header_inspection.to_load:
+            raise RuntimeError(
+                "WAN22 GGUF stage '{stage}': LoRA file matched 0 targets; "
+                "this LoRA key layout is not supported by the WAN transformer mapping. "
+                "diagnostics={diagnostics} file={path}".format(
+                    stage=stage,
+                    diagnostics=header_diagnostics,
+                    path=resolved_path,
+                )
+            )
+        if min_match_ratio > 0.0 and header_coverage < min_match_ratio:
+            raise RuntimeError(
+                "WAN22 GGUF stage '{stage}': LoRA logical-key coverage below threshold "
+                f"(matched={matched}/{total} ratio={ratio:.4f} required>={required:.4f}). "
+                "diagnostics={diagnostics} "
+                "Adjust CODEX_WAN22_STAGE_LORA_MIN_MATCH_RATIO or use a compatible adapter mapping. "
+                "file={path}".format(
+                    stage=stage,
+                    matched=header_matched_count,
+                    total=header_logical_key_count,
+                    ratio=header_coverage,
+                    required=min_match_ratio,
+                    diagnostics=header_diagnostics,
+                    path=resolved_path,
+                )
+            )
 
         try:
             tensors = sf.load_file(resolved_path)
@@ -718,6 +763,21 @@ def apply_wan22_stage_lora(
                 "diagnostics={diagnostics} file={path}".format(
                     stage=stage,
                     diagnostics=diagnostics,
+                    path=resolved_path,
+                )
+            )
+        patch_summary = validate_shape_patch_dict(
+            shapeify_patch_dict(patch_dict),
+            target_shape_by_key=target_shape_by_key,
+        )
+        if patch_summary.mismatches:
+            raise RuntimeError(
+                "WAN22 GGUF stage '{stage}': structural LoRA mismatch after patch parsing. "
+                "shape_compatible_targets={compatible}/{total}. samples={samples} file={path}".format(
+                    stage=stage,
+                    compatible=patch_summary.compatible_targets,
+                    total=patch_summary.total_targets,
+                    samples=format_shape_compatibility_samples(patch_summary),
                     path=resolved_path,
                 )
             )

@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Shared helpers for Codex video generation pipelines.
 Builds generic `VideoPlan`/`VideoResult` helpers plus the strict LTX2 video-plan seam, applies LoRAs, configures sampler/scheduler,
-explicitly rejects native-only sampler variants unsupported by the diffusers video bridge, resolves generated-audio export policy
-before video runs, and assembles export metadata.
+explicitly rejects native-only sampler variants unsupported by the diffusers video bridge, preflights and applies stage-scoped WAN
+Diffusers LoRAs, resolves generated-audio export policy before video runs, and assembles export metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `logger` (constant): Module logger used by video pipeline helpers.
@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `Ltx2TwoStageGeometry` (dataclass): Execution-only geometry/scalar contract for the explicit LTX2 `two_stage` profile.
 - `build_ltx2_two_stage_geometry` (function): Derives the fixed stage-1/stage-2 execution geometry from final public LTX2 output dimensions.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
+- `apply_wan_stage_loras` (function): Preflights and applies ordered WAN Diffusers stage LoRAs to the selected transformer owner.
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
 - `read_video_interpolation_options` (function): Parses `extras.video_interpolation` into typed interpolation options when present.
 - `apply_video_interpolation` (function): Applies the shared interpolation stage and returns `(frames_out, interpolation_metadata)`.
@@ -40,11 +41,23 @@ from apps.backend.runtime.logging import emit_backend_message, get_backend_logge
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+import safetensors.torch as sf
 
 from apps.backend.core.params.video import VideoInterpolationOptions, VideoUpscalingOptions
 from apps.backend.core.strict_values import parse_bool_value
+from apps.backend.patchers.lora_state_dict import load_lora
+from apps.backend.runtime.adapters.lora import model_lora_keys_unet
+from apps.backend.runtime.adapters.lora.preflight import (
+    build_standard_shape_patch_dict_from_shape_map,
+    format_shape_compatibility_samples,
+    shapeify_patch_dict,
+    validate_shape_patch_dict,
+)
 from apps.backend.runtime.adapters.lora import selections as lora_selections
+from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_tensor_shapes
 from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, semantic_engine_for_engine_id
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
@@ -184,6 +197,163 @@ def build_ltx2_two_stage_geometry(plan: VideoPlan) -> Ltx2TwoStageGeometry:
         stage2_noise_scale=float(_LTX2_TWO_STAGE_STAGE2_SIGMAS[0]),
         stage2_guidance_scale=_LTX2_TWO_STAGE_STAGE2_GUIDANCE_SCALE,
     )
+
+
+def _collect_target_shape_by_key(model: Any) -> dict[str, tuple[int, ...]]:
+    state_dict = model.state_dict()
+    return {str(key): tuple(int(dim) for dim in tensor.shape) for key, tensor in state_dict.items()}
+
+
+def _resolve_wan_stage_lora_owner(
+    *,
+    pipe: Any,
+    stage_label: str,
+    use_transformer_2: bool,
+) -> tuple[str, Any, bool]:
+    if use_transformer_2:
+        transformer_2 = getattr(pipe, "transformer_2", None)
+        if transformer_2 is None:
+            raise RuntimeError(
+                f"{stage_label} stage LoRA requested the low-stage transformer_2 owner, but the pipeline does not expose it."
+            )
+        return "transformer_2", transformer_2, True
+    transformer = getattr(pipe, "transformer", None)
+    if transformer is None:
+        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with a non-null transformer module.")
+    return "transformer", transformer, False
+
+
+def _preflight_wan_stage_lora_file(
+    *,
+    path: str,
+    to_load: Mapping[str, Any],
+    target_shapes: Mapping[str, tuple[int, ...]],
+    target_label: str,
+) -> dict[Any, tuple]:
+    suffix = Path(path).suffix.lower()
+    if suffix not in {".safetensor", ".safetensors"}:
+        raise RuntimeError(f"{target_label} stage LoRA path must be a .safetensors file: {path}")
+
+    shape_map = read_safetensors_tensor_shapes(Path(path))
+    header_result = build_standard_shape_patch_dict_from_shape_map(shape_map, to_load=to_load)
+    if not header_result.requires_materialized_preflight and not header_result.shape_patch_dict:
+        raise RuntimeError(
+            "WAN diffusers stage LoRA key layout mismatch: no compatible layers were found for "
+            f"'{path}' on the active {target_label}."
+        )
+    if header_result.shape_patch_dict and not header_result.requires_materialized_preflight:
+        header_summary = validate_shape_patch_dict(
+            header_result.shape_patch_dict,
+            target_shape_by_key=target_shapes,
+        )
+        if header_summary.mismatches:
+            raise RuntimeError(
+                "WAN diffusers stage LoRA structural preflight failed for '{path}' on {label}. "
+                "shape_compatible_targets={compatible}/{total}. samples={samples}".format(
+                    path=path,
+                    label=target_label,
+                    compatible=header_summary.compatible_targets,
+                    total=header_summary.total_targets,
+                    samples=format_shape_compatibility_samples(header_summary),
+                )
+            )
+
+    try:
+        tensor_map = sf.load_file(path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load WAN diffusers stage LoRA '{path}': {exc}") from exc
+
+    patch_dict, _unused = load_lora(tensor_map, to_load=dict(to_load))
+    if not patch_dict:
+        raise RuntimeError(
+            "WAN diffusers stage LoRA key layout mismatch: no compatible layers were found for "
+            f"'{path}' on the active {target_label}."
+        )
+    materialized_summary = validate_shape_patch_dict(
+        shapeify_patch_dict(patch_dict),
+        target_shape_by_key=target_shapes,
+    )
+    if materialized_summary.mismatches:
+        raise RuntimeError(
+            "WAN diffusers stage LoRA structural preflight failed for '{path}' on {label}. "
+            "shape_compatible_targets={compatible}/{total}. samples={samples}".format(
+                path=path,
+                label=target_label,
+                compatible=materialized_summary.compatible_targets,
+                total=materialized_summary.total_targets,
+                samples=format_shape_compatibility_samples(materialized_summary),
+            )
+        )
+    return patch_dict
+
+
+def apply_wan_stage_loras(
+    *,
+    pipe: Any,
+    stage_loras: tuple[tuple[str, float], ...],
+    logger_: logging.Logger | None = None,
+    stage_label: str,
+    use_transformer_2: bool = False,
+) -> None:
+    target_name, target_module, load_into_transformer_2 = _resolve_wan_stage_lora_owner(
+        pipe=pipe,
+        stage_label=stage_label,
+        use_transformer_2=use_transformer_2,
+    )
+    to_load = model_lora_keys_unet(target_module)
+    target_shapes = _collect_target_shape_by_key(target_module)
+    prepared: list[tuple[str, float, str]] = []
+    total_stage_loras = len(stage_loras)
+
+    for index, (lora_path, lora_weight) in enumerate(stage_loras):
+        _preflight_wan_stage_lora_file(
+            path=lora_path,
+            to_load=to_load,
+            target_shapes=target_shapes,
+            target_label=target_name,
+        )
+        adapter_name = f"wan_{stage_label}_stage_lora_{index}"
+        if logger_:
+            logger_.info(
+                "[wan] loading %s-stage LoRA %d/%d: %s (weight=%s adapter=%s target=%s)",
+                stage_label,
+                index + 1,
+                total_stage_loras,
+                lora_path,
+                lora_weight,
+                adapter_name,
+                target_name,
+            )
+        prepared.append((lora_path, float(lora_weight), adapter_name))
+
+    if not stage_loras:
+        if hasattr(pipe, "unload_lora_weights"):
+            pipe.unload_lora_weights()  # type: ignore[attr-defined]
+        return
+    if not hasattr(pipe, "load_lora_weights"):
+        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'load_lora_weights'.")
+    if not hasattr(pipe, "set_adapters"):
+        raise RuntimeError(f"{stage_label} stage LoRA requires a pipeline with 'set_adapters' for multi-LoRA support.")
+    if hasattr(pipe, "unload_lora_weights"):
+        pipe.unload_lora_weights()  # type: ignore[attr-defined]
+
+    adapter_names: list[str] = []
+    adapter_weights: list[float] = []
+    try:
+        for lora_path, lora_weight, adapter_name in prepared:
+            kwargs = {"adapter_name": adapter_name}
+            if load_into_transformer_2:
+                kwargs["load_into_transformer_2"] = True
+            pipe.load_lora_weights(lora_path, **kwargs)  # type: ignore[attr-defined]
+            adapter_names.append(adapter_name)
+            adapter_weights.append(float(lora_weight))
+        pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)  # type: ignore[attr-defined]
+    except Exception as exc:
+        if hasattr(pipe, "unload_lora_weights"):
+            pipe.unload_lora_weights()  # type: ignore[attr-defined]
+        raise RuntimeError(
+            f"{stage_label} stage LoRA apply failed after successful preflight on target '{target_name}'."
+        ) from exc
 
 
 def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> Any | None:
@@ -962,6 +1132,7 @@ __all__ = [
     "GeneratedAudioExportPolicy",
     "Ltx2TwoStageGeometry",
     "apply_engine_loras",
+    "apply_wan_stage_loras",
     "build_ltx2_two_stage_geometry",
     "build_ltx2_video_plan",
     "build_video_plan",

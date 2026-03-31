@@ -39,6 +39,7 @@ from PIL import Image
 import torch
 
 from apps.backend.runtime.adapters.ip_adapter.assets import prepare_ip_adapter_assets_for_paths
+from apps.backend.runtime.load_authority import LoadAuthorityStage, coordinator_load_permit
 from apps.backend.services.media_service import MediaService
 
 _ALLOWED_SOURCE_KINDS: Final[frozenset[str]] = frozenset({"uploaded", "path"})
@@ -527,7 +528,11 @@ def _main(argv: list[str]) -> int:
     if len(argv) != 2 or argv[1] != "--child":
         raise SystemExit("Use `python -m apps.backend.runtime.adapters.ip_adapter.probe --child`.")
     request = parse_ip_adapter_probe_request(json.load(sys.stdin))
-    report = run_ip_adapter_probe(request)
+    with coordinator_load_permit(
+        owner="api.tests.ip_adapter.probe",
+        stage=LoadAuthorityStage.MATERIALIZE,
+    ):
+        report = run_ip_adapter_probe(request)
     json.dump(report.to_payload(), sys.stdout)
     return 0
 

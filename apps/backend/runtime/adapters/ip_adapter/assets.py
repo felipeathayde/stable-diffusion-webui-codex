@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `assert_ip_adapter_engine_supported` (function): Fail-loud guard for exact engine-id and semantic-engine IP-Adapter support.
 - `invalidate_ip_adapter_asset_cache` (function): Drops the process-local prepared-asset cache for IP-Adapter runtime bundles.
 - `prepare_ip_adapter_assets` (function): Loads and caches the validated IP-Adapter asset bundle for one model/image-encoder pair.
+- `prepare_ip_adapter_assets_for_paths` (function): Loads and caches the validated IP-Adapter asset bundle for explicit model/image-encoder paths.
 """
 
 from __future__ import annotations
@@ -55,16 +56,23 @@ def invalidate_ip_adapter_asset_cache() -> None:
 
 
 def prepare_ip_adapter_assets(config: IpAdapterConfig) -> PreparedIpAdapterAssets:
-    cache_key = _asset_cache_key(config)
+    return prepare_ip_adapter_assets_for_paths(
+        model_path=str(config.model),
+        image_encoder_path=str(config.image_encoder),
+    )
+
+
+def prepare_ip_adapter_assets_for_paths(*, model_path: str, image_encoder_path: str) -> PreparedIpAdapterAssets:
+    cache_key = _asset_cache_key(model_path=model_path, image_encoder_path=image_encoder_path)
     with _ASSET_CACHE_LOCK:
         cached = _ASSET_CACHE.get(cache_key)
         if cached is not None:
             return cached
-    image_encoder_runtime = _load_image_encoder(config.image_encoder)
-    image_proj_state, ip_adapter_state = _load_ip_adapter_checkpoint(config.model)
+    image_encoder_runtime = _load_image_encoder(image_encoder_path)
+    image_proj_state, ip_adapter_state = _load_ip_adapter_checkpoint(model_path)
     prepared = _prepare_assets(
-        model_path=config.model,
-        image_encoder_path=config.image_encoder,
+        model_path=model_path,
+        image_encoder_path=image_encoder_path,
         image_encoder_runtime=image_encoder_runtime,
         image_proj_state=image_proj_state,
         ip_adapter_state=ip_adapter_state,
@@ -74,13 +82,13 @@ def prepare_ip_adapter_assets(config: IpAdapterConfig) -> PreparedIpAdapterAsset
     return prepared
 
 
-def _asset_cache_key(config: IpAdapterConfig) -> tuple[str, str, str, str, str]:
+def _asset_cache_key(*, model_path: str, image_encoder_path: str) -> tuple[str, str, str, str, str]:
     load_device = str(memory_management.manager.get_device(DeviceRole.CLIP_VISION))
     offload_device = str(memory_management.manager.get_offload_device(DeviceRole.CLIP_VISION))
     runtime_dtype = str(memory_management.manager.dtype_for_role(DeviceRole.CLIP_VISION))
     return (
-        str(config.model),
-        str(config.image_encoder),
+        str(model_path),
+        str(image_encoder_path),
         load_device,
         offload_device,
         runtime_dtype,

@@ -9,6 +9,7 @@ Status: Active
 ## Key Files
 - `assets.py` — Loads/caches the validated IP-Adapter asset bundle and owns layout-family detection.
 - `layout.py` — Owns the canonical slot-to-UNet coordinate order per semantic engine.
+- `probe.py` — Owns the bounded live diagnostics report for `reference image -> CLIP preprocess -> CLIP encode -> projector/resampler`.
 - `preprocess.py` — Builds conditional/unconditional image tokens from the selected reference image.
 - `modules.py` — Defines the projector/resampler modules and the shared attn2 replace patch implementation.
 - `session.py` — Applies IP-Adapter to the active denoiser clone for one sampling pass and restores the baseline objects afterward.
@@ -19,6 +20,7 @@ Status: Active
 - SDXL slot order must be proven against translated `attn2.to_k.weight` parameter names derived from the repo's canonical SDXL config + diffusers→LDM map. For the official base/Plus SDXL checkpoints, the proved order is diffusers `down -> up -> mid` (LDM `input -> output -> middle`). Width-only matching is insufficient because the middle block and multiple output groups share the same width.
 - `session.py` may validate against the generic UNet transformer inventory, but the authoritative order for slot assignment is the IP-Adapter semantic-engine layout.
 - Conditional vs unconditional branch selection belongs in `modules.py::IpAdapterCrossAttentionPatch`; request prep owns token construction only.
+- The bounded diagnostics route `/api/tests/ip-adapter/probe` is not a second generation API. `probe.py` owns the live conditioning receipt, while `interfaces/api/routers/tests.py` only resolves inventory-backed asset paths and repo-scoped reference-image paths.
 - Base-layout unconditional tokens are the zero vector in pooled CLIP embedding space; use `zeros_like(image_embeds)` before the base projector.
 - Plus-layout unconditional tokens come from `zeros_like(pixel_values)` in already-preprocessed CLIP image space before the resampler projection; do not emulate this by encoding a black image through preprocessing.
 - Image-encoder ownership is split on purpose: checkpoint IO may stage through the text-encoder offload lane, but the live CLIP vision runtime module and cached asset bundle must resolve device/dtype from `DeviceRole.CLIP_VISION`.

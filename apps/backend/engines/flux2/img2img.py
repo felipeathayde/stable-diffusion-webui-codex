@@ -13,8 +13,8 @@ to match `Flux2KleinPipeline(image=...)`, and reuses the shared masked bundle/fu
 is requested instead of pretending SD-family `image_conditioning` semantics apply directly. Partial denoise now uses
 clean `image_latents` plus sampler-native continuation from `init_latent`, and unmasked hires reuses shared hires prep
 while keeping masked hires fail-loud; hires prompt parsing is LoRA-only, base/request LoRAs stay inherited unless prompt-local hires tags
-override them, explicit hires request overrides stay request-owned, and the shared mask-enforcement hook owner is reused instead of
-re-implementing it here.
+override them, explicit hires request overrides stay request-owned, the wrapper seeds a per-run progress-owner token before pre-sampling
+VAE encode begins, and the shared mask-enforcement hook owner is reused instead of re-implementing it here.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_flux2_sampling_inputs` (function): Resolves noise/init-latent/denoise args for FLUX.2 continuation sampling.
@@ -69,9 +69,12 @@ from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.use_cases._image_streaming import (
     _build_common_info,
     _decode_generation_output,
-    _iter_sampling_progress,
+    _ImageProgressProfile,
+    _iter_image_progress_events,
     _resolve_seed_plan,
+    _resolve_progress_owner_token,
     _run_inference_worker,
+    _seed_progress_owner_token,
 )
 from apps.backend.use_cases.img2img import _compute_conditioning_payload
 
@@ -494,7 +497,7 @@ def generate_flux2_img2img(
 def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"]:
     """Run FLUX.2 img2img as a canonical event stream."""
 
-    from apps.backend.core.requests import ProgressEvent, ResultEvent
+    from apps.backend.core.requests import ResultEvent
 
     if not isinstance(request, Img2ImgRequest):
         raise TypeError("run_flux2_img2img expects Img2ImgRequest")
@@ -516,6 +519,9 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
         setattr(proc, "_codex_correlation_id", task_id)
         setattr(proc, "_codex_hires_correlation_id", task_id)
         setattr(proc, "_codex_correlation_source", "task_id")
+    progress_owner_token = _resolve_progress_owner_token(task_context=task_context, task_id=task_id)
+    setattr(proc, "_codex_progress_owner_token", progress_owner_token)
+    _seed_progress_owner_token(progress_owner_token=progress_owner_token)
 
     base_seed, seeds, subseeds, subseed_strength = _resolve_seed_plan(
         seed=getattr(request, "seed", None),
@@ -625,153 +631,19 @@ def run_flux2_img2img(*, engine: Any, request: Any) -> Iterator["InferenceEvent"
         runtime_overrides=smart_flags,
     )
 
-    encode_weight = 10.0
-    sampling_weight = 80.0
-    decode_weight = 10.0
-    sampling_block_total_hint = 0
     img2img_mode = "masked_image_latents" if proc.has_mask() else "image_latents"
-    for (
-        phase,
-        phase_step,
-        phase_total,
-        phase_block_index,
-        phase_block_total,
-        phase_eta,
-        sampling_step,
-        sampling_total,
-        sampling_block_index,
-        sampling_block_total,
-    ) in _iter_sampling_progress(done=done, outcome=outcome):
-        if phase == "encode":
-            encode_ratio = (
-                min(float(phase_step), float(phase_total)) / float(phase_total)
-                if phase_total > 0
-                else 0.0
-            )
-            total_percent = encode_weight * encode_ratio if sampling_total is not None and sampling_total > 0 else None
-            yield ProgressEvent(
-                stage="encoding",
-                percent=None,
-                step=None,
-                total_steps=None,
-                eta_seconds=phase_eta,
-                message=f"VAE encode block {phase_step}/{phase_total}",
-                data={
-                    "block_index": int(phase_block_index),
-                    "block_total": int(phase_block_total),
-                    "total_phase": "encode",
-                    "total_percent": (float(total_percent) if total_percent is not None else None),
-                    "phase_step": int(phase_step),
-                    "phase_total_steps": int(phase_total),
-                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
-                    "img2img_mode": img2img_mode,
-                },
-            )
-            continue
-
-        if phase == "sampling":
-            if sampling_block_total > 0:
-                sampling_block_total_hint = int(sampling_block_total)
-            effective_sampling_block_total = (
-                int(sampling_block_total)
-                if sampling_block_total > 0
-                else int(sampling_block_total_hint)
-            )
-            has_block_progress = 0 < sampling_block_index < sampling_block_total
-            if sampling_total is not None and sampling_total > 0:
-                completed_units = float(sampling_step)
-                if has_block_progress:
-                    completed_units += float(sampling_block_index) / float(sampling_block_total)
-                sampling_ratio = min(float(sampling_total), completed_units) / float(sampling_total)
-                progress_percent = sampling_ratio * 100.0
-                pct = max(5.0, min(99.0, progress_percent))
-                total_percent = encode_weight + (sampling_weight * sampling_ratio)
-                phase_step_blocks = int(phase_step)
-                phase_total_blocks = int(phase_total)
-                if effective_sampling_block_total > 0:
-                    completed_sampling_steps = max(0, min(int(sampling_step), int(sampling_total)))
-                    intra_step_blocks = max(0, min(int(sampling_block_index), int(effective_sampling_block_total)))
-                    phase_total_blocks = int(sampling_total) * int(effective_sampling_block_total)
-                    phase_step_blocks = min(
-                        int(phase_total_blocks),
-                        (int(completed_sampling_steps) * int(effective_sampling_block_total)) + int(intra_step_blocks),
-                    )
-                if has_block_progress:
-                    message = (
-                        f"Sampling step {min(sampling_step + 1, sampling_total)}/{sampling_total} "
-                        f"(block {sampling_block_index}/{sampling_block_total})"
-                    )
-                else:
-                    message = f"Sampling step {sampling_step}/{sampling_total}"
-            else:
-                pct = None
-                total_percent = None
-                phase_step_blocks = None
-                phase_total_blocks = None
-                if has_block_progress:
-                    message = f"Sampling step {sampling_step} (block {sampling_block_index}/{sampling_block_total})"
-                else:
-                    message = f"Sampling step {sampling_step}"
-            yield ProgressEvent(
-                stage="sampling",
-                percent=pct,
-                step=sampling_step,
-                total_steps=(sampling_total if sampling_total is not None and sampling_total > 0 else None),
-                eta_seconds=phase_eta,
-                message=message,
-                data={
-                    "block_index": int(sampling_block_index),
-                    "block_total": int(sampling_block_total),
-                    "total_phase": "sampling",
-                    "total_percent": (float(total_percent) if total_percent is not None else None),
-                    "phase_step": (int(phase_step_blocks) if phase_step_blocks is not None else None),
-                    "phase_total_steps": (int(phase_total_blocks) if phase_total_blocks is not None else None),
-                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
-                    "img2img_mode": img2img_mode,
-                    **(
-                        {
-                            "sampling_block_index": int(sampling_block_index),
-                            "sampling_block_total": int(effective_sampling_block_total),
-                        }
-                        if effective_sampling_block_total > 0
-                        else {}
-                    ),
-                },
-            )
-        elif phase == "decode":
-            decode_ratio = (
-                min(float(phase_step), float(phase_total)) / float(phase_total)
-                if phase_total > 0
-                else 0.0
-            )
-            total_percent = (
-                min(100.0, encode_weight + sampling_weight + (decode_weight * decode_ratio))
-                if sampling_total is not None and sampling_total > 0
-                else None
-            )
-            sampling_terminal_step = int(sampling_total) if sampling_total is not None and sampling_total > 0 else None
-            yield ProgressEvent(
-                stage="decoding",
-                percent=100.0 if sampling_terminal_step is not None else None,
-                step=sampling_terminal_step,
-                total_steps=sampling_terminal_step,
-                eta_seconds=phase_eta,
-                message=f"VAE decode block {phase_step}/{phase_total}",
-                data={
-                    "block_index": int(phase_block_index),
-                    "block_total": int(phase_block_total),
-                    "total_phase": "decode",
-                    "total_percent": (float(total_percent) if total_percent is not None else None),
-                    "phase_step": int(phase_step),
-                    "phase_total_steps": int(phase_total),
-                    "phase_eta_seconds": (float(phase_eta) if phase_eta is not None else None),
-                    "sampling_step": int(sampling_step),
-                    "sampling_total_steps": (
-                        int(sampling_total) if sampling_total is not None and sampling_total > 0 else None
-                    ),
-                    "img2img_mode": img2img_mode,
-                },
-            )
+    yield from _iter_image_progress_events(
+        done=done,
+        outcome=outcome,
+        progress_owner_token=progress_owner_token,
+        profile=_ImageProgressProfile(
+            encode_weight=10.0,
+            sampling_weight=80.0,
+            decode_weight=10.0,
+            extra_data={"img2img_mode": img2img_mode},
+            include_sampling_block_alias=True,
+        ),
+    )
 
     if outcome.error is not None:
         raise outcome.error

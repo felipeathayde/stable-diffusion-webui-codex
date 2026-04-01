@@ -26,7 +26,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_ltx_execution_profile` (function): Reads the normalized LTX execution profile from the shared `VideoPlan`.
 - `_run_ltx2_img2vid` (function): Runs the native LTX2 img2vid branch, including explicit `two_stage` stage orchestration, and threads generated audio through the shared export seam.
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
-- `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
 - `_parse_img2vid_temporal_options` (function): Parses and validates explicit img2vid temporal controls from request extras (`solo|sliding|svi2|svi2_pro`).
 - `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
 """
@@ -66,6 +65,7 @@ from apps.backend.runtime.pipeline_stages.video import (
     resolve_generated_audio_export_policy,
     resolve_video_output_fps,
 )
+from apps.backend.use_cases._video_streaming import _yield_wan22_gguf_progress
 
 
 def _build_pipeline_telemetry_scope(*, mode: str) -> SimpleNamespace:
@@ -544,35 +544,6 @@ def _run_stage(
     if hasattr(output, "frames"):
         return list(output.frames[0])
     raise RuntimeError("img2vid pipeline returned no frames")
-
-
-def _yield_wan22_gguf_progress(ev: dict) -> Optional[ProgressEvent]:
-    if ev.get("type") != "progress":
-        return None
-    stage = str(ev.get("stage", "") or "")
-    step = int(ev.get("step", 0))
-    total = int(ev.get("total", 0))
-    pct = float(ev.get("percent", 0.0))
-    pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
-    eta_raw = ev.get("eta_seconds", None)
-    eta = float(eta_raw) if eta_raw is not None else None
-    message_raw = ev.get("message", None)
-    message = str(message_raw) if message_raw is not None else None
-    raw_data = ev.get("data", None)
-    data_payload: dict[str, Any] = dict(raw_data) if isinstance(raw_data, Mapping) else {}
-    for key in ("progress_adapter", "progress_granularity", "coarse_reason"):
-        if key in ev and ev.get(key) is not None:
-            data_payload[key] = ev.get(key)
-    return ProgressEvent(
-        stage=stage,
-        percent=pct_out,
-        step=step,
-        total_steps=total,
-        eta_seconds=eta,
-        message=message,
-        data=data_payload,
-    )
-
 
 @dataclass(frozen=True)
 class _Img2VidSlidingOptions:

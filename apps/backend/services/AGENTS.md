@@ -1,6 +1,6 @@
 # apps/backend/services Overview
 Date: 2025-10-28
-Last Review: 2026-02-22
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose
@@ -26,3 +26,4 @@ Status: Active
 - 2026-02-21: `live_preview_service.py` now parses `show_progress_every_n_steps` via shared strict integer parsing and raises on malformed/negative values (no silent fallback to `0` that disabled previews implicitly).
 - 2026-02-22: Rolled back the temporary global live-preview kill-switch; `live_preview_service.py` again derives runtime interval/method and SSE enablement from persisted preview options while keeping strict fail-loud option parsing.
 - 2026-02-22: `live_preview_service.py` now parses `show_progress_type` and `live_previews_image_format` in strict fail-loud mode (invalid persisted enum-like values raise instead of silently defaulting).
+- 2026-03-31: `live_preview_service.py` now consumes `core.state.live_preview_snapshot()` as the single preview read seam and only attaches preview payloads for the expected per-run owner token; task workers must not read raw preview fields from `BackendState` directly.

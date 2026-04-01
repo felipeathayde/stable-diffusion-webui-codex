@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-03-26
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose
@@ -11,6 +11,7 @@ Status: Active
 - `upscale.py` — Standalone upscaling pipeline (Spandrel/builtin upscalers) used by `/api/upscale`.
 - `txt2img_pipeline/` — Stage-based runner used by `txt2img.py` to prepare prompts, execute base sampling, and handle HiRes passes without monolithic functions.
 - `__init__.py` — Exposes helpers to orchestrator modules in `apps/backend/core`.
+- `_image_streaming.py` / `_video_streaming.py` — Narrow use-case-local streaming/progress helpers for canonical image and video wrappers; these files may shape `ProgressEvent`s but do not own task/SSE persistence.
 - Shared orchestration logic now lives in `apps/backend/runtime/pipeline_stages/`; use cases should prefer these helpers over bespoke copies of sampler/prompt setup.
 
 ## Notes
@@ -75,3 +76,5 @@ Status: Active
 - 2026-03-25: txt2img now has three distinct latent-stage owners: top-level `swap_model` for the first-pass mid-generation engine switch, `hires.swap_model` for whole-second-pass engine replacement, and `refiner` / `hires.refiner` for SDXL-native refiner stages. The first-pass swap persists its engine forward; refiner stages do not.
 - 2026-03-31: classic `img2img.py` now dispatches base image conditioning by family: SD-family engines keep `img2img_conditioning(...)`, flow-family classics (`flux1`, `flux1_fill`, `flux1_chroma`, `zimage`, `anima`) leave `image_conditioning=None` so the shared txt2img zero-conditioning fallback owns the no-`c_concat` path, and masked flow-family classic img2img fails loud instead of entering SD-only masked prep.
 - 2026-03-31: `img2img.py` now owns zimage hires target normalization in `_resolve_hires_target_dimensions(...)` before the second-pass plan/event handoff. Keep `CodexHiresConfig.resolve_target_dimensions(...)` shared-helper semantics unchanged for other callers; this zimage `%16` correction is use-case-local, not a generic hires-helper rewrite.
+- 2026-03-31: shared image progress shaping now lives in `_image_streaming.py`, and the WAN22 GGUF `dict -> ProgressEvent` mapper now lives in `_video_streaming.py`; task workers/registry still forward/persist those events without becoming new progress owners.
+- 2026-03-31: `_image_streaming.py` now consumes only the canonical `BackendState` snapshot APIs (`sampling_snapshot()`, `vae_progress_snapshot()`), and image wrappers must seed a per-run progress owner token before worker-side VAE/sampling writes begin; do not reintroduce raw-attribute compatibility fallbacks there.

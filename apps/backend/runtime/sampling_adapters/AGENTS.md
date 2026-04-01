@@ -24,4 +24,4 @@ Status: Active
 
 ## Logging
 - Logger `backend.runtime.sampling_adapters.sampler_model` em nível DEBUG registra shapes de `x`, `t`, `context` e `y` antes do forward do UNet.
-- 2025-12-12: Added opt-in deep logs for Z Image via `CODEX_ZIMAGE_DEBUG=1` / `CODEX_ZIMAGE_DEBUG_APPLY_MODEL=1` (SamplerModel.apply_model tensor stats + forwarded extra cond keys).
+- 2025-12-12: `SamplerModel.apply_model` deep logs are owned by the shared sampler-model seam; use `CODEX_SAMPLER_MODEL_DEBUG=1` or `CODEX_SAMPLER_MODEL_DEBUG_APPLY_MODEL=1` for tensor stats + forwarded extra cond keys in callers such as Z Image.

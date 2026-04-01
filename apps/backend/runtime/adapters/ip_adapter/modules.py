@@ -428,11 +428,11 @@ class IpAdapterCrossAttentionPatch(nn.Module):
 
     @classmethod
     def _debug_enabled(cls) -> bool:
-        return env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH")
+        return env_flag("CODEX_IP_ADAPTER_DEBUG") or env_flag("CODEX_IP_ADAPTER_DEBUG_PATCH")
 
     @classmethod
     def _debug_limit(cls) -> int:
-        return env_int("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH_N", 6, min_value=0)
+        return env_int("CODEX_IP_ADAPTER_DEBUG_PATCH_N", 6, min_value=0)
 
     @classmethod
     def reset_debug_counter(cls) -> None:
@@ -487,7 +487,7 @@ class IpAdapterCrossAttentionPatch(nn.Module):
         if isinstance(cond_or_uncond, (list, tuple)):
             cond_summary = [int(branch) for branch in cond_or_uncond]
         emit_backend_message(
-            "[zimage-debug] ip_adapter_patch",
+            "[ip-adapter-debug] patch",
             logger=__name__,
             slot_index=self.slot_index,
             block=extra_options.get("block"),
@@ -505,14 +505,14 @@ class IpAdapterCrossAttentionPatch(nn.Module):
             batch_prompt=batch_prompt,
             n_heads=extra_options.get("n_heads"),
         )
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('queries', queries)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('context_keys', context_keys)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('context_values', context_values)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('condition_tokens', cond_tokens)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('uncondition_tokens', uncond_tokens)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('ip_keys', ip_keys)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('ip_values', ip_values)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('base', base)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('conditioned', conditioned)}", logger=__name__)
-        emit_backend_message(f"[zimage-debug] {self._tensor_stats('result', result)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('queries', queries)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('context_keys', context_keys)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('context_values', context_values)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('condition_tokens', cond_tokens)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('uncondition_tokens', uncond_tokens)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('ip_keys', ip_keys)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('ip_values', ip_values)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('base', base)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('conditioned', conditioned)}", logger=__name__)
+        emit_backend_message(f"[ip-adapter-debug] {self._tensor_stats('result', result)}", logger=__name__)
         self._increment_debug_counter()

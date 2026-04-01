@@ -42,3 +42,4 @@ Status: Active
 - 2026-01-03: Added standardized file header docstrings to the remaining low-core `apps/` entrypoints (`__init__.py`, `backend/__init__.py`, and WebUI entrypoints/config) (doc-only change; part of rollout).
 - 2026-02-05: Added Anima model roots to `apps/paths.json` (`anima_ckpt`, `anima_tenc`, `anima_vae`, `anima_loras`) to mirror existing per-family directory conventions.
 - 2026-03-12: Added LTX2 model roots to `apps/paths.json` (`ltx2_ckpt`, `ltx2_tenc`, `ltx2_vae`, `ltx2_connectors`, `ltx2_loras`) so the backend provisions repo-local `models/ltx2*` folders for the current GGUF+side-asset intake lane.
+- 2026-03-31: Env-var hygiene contract: family-prefixed env vars belong only to that family's owner seams; shared runtime features must use shared feature prefixes (for example sampling, sampler-model, IP-Adapter) instead of piggybacking on a model-family namespace.

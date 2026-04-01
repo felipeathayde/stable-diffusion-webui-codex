@@ -70,8 +70,8 @@ def apply_ip_adapter_for_sampling(processing) -> Iterator[AppliedIpAdapterSessio
             f"parsed slot specs={len(slot_specs)} coordinates={len(coordinates)}."
         )
     IpAdapterCrossAttentionPatch.reset_debug_counter()
-    if env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH"):
-        debug_limit = env_int("CODEX_ZIMAGE_DEBUG_IP_ADAPTER_PATCH_MAP_N", 8, min_value=0)
+    if env_flag("CODEX_IP_ADAPTER_DEBUG") or env_flag("CODEX_IP_ADAPTER_DEBUG_PATCH"):
+        debug_limit = env_int("CODEX_IP_ADAPTER_DEBUG_PATCH_MAP_N", 8, min_value=0)
         slot_preview = [
             {
                 "slot_index": slot_index,
@@ -85,7 +85,7 @@ def apply_ip_adapter_for_sampling(processing) -> Iterator[AppliedIpAdapterSessio
             if slot_index < debug_limit
         ]
         logger.info(
-            "[zimage-debug] ip_adapter session map | layout=%s slots=%d weight=%.3f start=%.3f end=%.3f sigma_start=%.6f sigma_end=%.6f token_shapes=(cond=%s uncond=%s) preview=%s",
+            "[ip-adapter-debug] session map | layout=%s slots=%d weight=%.3f start=%.3f end=%.3f sigma_start=%.6f sigma_end=%.6f token_shapes=(cond=%s uncond=%s) preview=%s",
             assets.layout.value,
             len(slot_specs),
             float(config.weight),

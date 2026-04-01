@@ -67,8 +67,8 @@ class SamplerModel(torch.nn.Module):
     def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options=None, **kwargs):
         if transformer_options is None:
             transformer_options = {}
-        debug_enabled = env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_APPLY_MODEL")
-        debug_limit = env_int("CODEX_ZIMAGE_DEBUG_APPLY_MODEL_N", 3, min_value=0)
+        debug_enabled = env_flag("CODEX_SAMPLER_MODEL_DEBUG") or env_flag("CODEX_SAMPLER_MODEL_DEBUG_APPLY_MODEL")
+        debug_limit = env_int("CODEX_SAMPLER_MODEL_DEBUG_APPLY_MODEL_N", 3, min_value=0)
         debug_count = int(getattr(self, "_codex_apply_model_debug_count", 0) or 0)
 
         sigma = t
@@ -113,28 +113,28 @@ class SamplerModel(torch.nn.Module):
 
             extras_keys = sorted(str(k) for k in extra_conds.keys())
             emit_backend_message(
-                "[zimage-debug] apply_model",
+                "[sampler-model-debug] apply_model",
                 logger=__name__,
                 sigma=sigma0,
                 prediction_type=getattr(self.predictor, "prediction_type", None),
                 extras=extras_keys,
                 cond_or_uncond=cond_summary,
             )
-            emit_backend_message(f"[zimage-debug] {_tensor_stats('x', x)}", logger=__name__)
-            emit_backend_message(f"[zimage-debug] {_tensor_stats('xc', xc)}", logger=__name__)
-            emit_backend_message(f"[zimage-debug] {_tensor_stats('context', context)}", logger=__name__)
+            emit_backend_message(f"[sampler-model-debug] {_tensor_stats('x', x)}", logger=__name__)
+            emit_backend_message(f"[sampler-model-debug] {_tensor_stats('xc', xc)}", logger=__name__)
+            emit_backend_message(f"[sampler-model-debug] {_tensor_stats('context', context)}", logger=__name__)
             if isinstance(extra_conds.get("y"), torch.Tensor):
-                emit_backend_message(f"[zimage-debug] {_tensor_stats('y', extra_conds.get('y'))}", logger=__name__)
+                emit_backend_message(f"[sampler-model-debug] {_tensor_stats('y', extra_conds.get('y'))}", logger=__name__)
             if isinstance(extra_conds.get("guidance"), torch.Tensor):
                 emit_backend_message(
-                    f"[zimage-debug] {_tensor_stats('guidance', extra_conds.get('guidance'))}",
+                    f"[sampler-model-debug] {_tensor_stats('guidance', extra_conds.get('guidance'))}",
                     logger=__name__,
                 )
             # transformer_options often carries sigma/cond flags; keep it compact.
             if isinstance(transformer_options, dict):
                 try:
                     keys = sorted(str(k) for k in transformer_options.keys())
-                    emit_backend_message("[zimage-debug] transformer_options keys", logger=__name__, keys=keys)
+                    emit_backend_message("[sampler-model-debug] transformer_options keys", logger=__name__, keys=keys)
                 except Exception:
                     pass
             setattr(self, "_codex_apply_model_debug_count", debug_count + 1)
@@ -204,7 +204,7 @@ class SamplerModel(torch.nn.Module):
         ).float()
 
         if debug_enabled and debug_count < debug_limit:
-            emit_backend_message(f"[zimage-debug] {_tensor_stats('model_output', model_output)}", logger=__name__)
+            emit_backend_message(f"[sampler-model-debug] {_tensor_stats('model_output', model_output)}", logger=__name__)
         return self.predictor.calculate_denoised(sigma, model_output, x)
 
     def memory_required(self, input_shape):

@@ -50,7 +50,7 @@ from .condition import Condition, compile_conditions, compile_weighted_condition
 
 _DEBUG_LOGGER = get_backend_logger(__name__)
 
-_ZIMAGE_SAMPLING_DEBUG_COUNT = 0
+_SAMPLING_INNER_DEBUG_COUNT = 0
 
 _GUIDANCE_POLICY_KEY = "codex_guidance_policy"
 _GUIDANCE_STEP_INDEX_KEY = "codex_guidance_step_index"
@@ -618,10 +618,10 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
         cond_pred, uncond_pred = calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
 
     # Optional deep diagnostics for flow models (Z Image/Flux): log CFG routing and tensor norms.
-    global _ZIMAGE_SAMPLING_DEBUG_COUNT
-    debug_enabled = env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER")
-    debug_limit = env_int("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER_N", 3, min_value=0)
-    if debug_enabled and _ZIMAGE_SAMPLING_DEBUG_COUNT < debug_limit:
+    global _SAMPLING_INNER_DEBUG_COUNT
+    debug_enabled = env_flag("CODEX_SAMPLING_DEBUG") or env_flag("CODEX_SAMPLING_DEBUG_INNER")
+    debug_limit = env_int("CODEX_SAMPLING_DEBUG_INNER_N", 3, min_value=0)
+    if debug_enabled and _SAMPLING_INNER_DEBUG_COUNT < debug_limit:
         try:
             sigma0 = float(timestep.detach().view(-1)[0].item()) if isinstance(timestep, torch.Tensor) else float(timestep)
         except Exception:
@@ -635,7 +635,7 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
         except Exception:
             uncond_norm = float("nan")
         emit_backend_message(
-            "[zimage-debug] sampling_inner",
+            "[sampling-debug] sampling_inner",
             logger=__name__,
             sigma=sigma0,
             cond_scale=float(cond_scale),
@@ -644,7 +644,7 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
             cond_norm=cond_norm,
             uncond_norm=uncond_norm,
         )
-        _ZIMAGE_SAMPLING_DEBUG_COUNT += 1
+        _SAMPLING_INNER_DEBUG_COUNT += 1
 
     # Distilled / turbo models may omit unconditional conditioning entirely.
     # In that case, skip CFG math and return the conditional prediction as-is.

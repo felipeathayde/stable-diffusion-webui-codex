@@ -29,6 +29,9 @@ Status: Active
   - `CodexSampler` native runtime driver.
   - Runs native lanes including `ddpm` and `dpm++ sde` with deterministic driver-owned `ImageRNG` stochastic draws.
   - Handles progress/cancellation/preview hooks under the driver contract.
+- `block_progress.py`
+  - `RichBlockProgressController` owns the console-only block-progress bar contract.
+  - The controller must materialize its Rich task on the first real callback update, not with a fake `total=1` placeholder, so fast transformer lanes like Anima start with truthful block totals.
 - `interval_noise.py`
   - Nested-interval normalized-noise helper used by base `dpm++ sde` to reproduce Brownian-style interval covariance from driver-owned iid draws.
 - `__init__.py`
